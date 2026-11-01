@@ -319,9 +319,7 @@ function mayHoldInstanceOf(spec: TypeSpec, className: string): boolean {
   }
 }
 
-// A member that is passed its wrapper may answer it: `returns: b.self` is any object of the class, the receiver too.
-// A member that runs no JavaScript and is not passed its wrapper is handed `&self` alone, like a getter: it can neither keep the wrapper nor answer it.
-// One that runs no JavaScript and `returns: b.this` is handed its wrapper to answer it, and keeps nothing either.
+// Without its wrapper a body has `&self` alone, like a getter. With `returns: b.this` it has the wrapper to answer it.
 function computeReceiverUses(
   signature: Signature,
   className: string | null,

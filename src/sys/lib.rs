@@ -4230,6 +4230,18 @@ mod windows_impl {
         if sub.is_empty() || sub == b"." {
             return Ok(());
         }
+        // `\\?\C:\dir` is `C:\dir`, as it is for `open_dir_at`.
+        if sub.len() >= 6
+            && is_sep(sub[0])
+            && is_sep(sub[1])
+            && sub[2] == b'?'
+            && is_sep(sub[3])
+            && bun_paths::is_drive_letter(sub[4])
+            && sub[5] == b':'
+            && (sub.len() == 6 || is_sep(sub[6]))
+        {
+            sub = &sub[4..];
+        }
         let mut buf = bun_paths::path_buffer_pool::get();
         if sub.len() >= buf.0.len() {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
@@ -4300,9 +4312,7 @@ mod windows_impl {
             return Ok(());
         } // fully cancelled (e.g. `a/..`)
 
-        // Walk the normalized result. `ComponentIterator::init(.windows)` only
-        // errors on namespace-prefixed / `\\\x` inputs — pathological for
-        // makePath (NtCreateFile rejects them anyway).
+        // Walk the normalized result. `init` fails for a prefix that is still here: `\\?\UNC\`, `\\.\`, `\??\`.
         let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
             .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
         let mut z = bun_paths::path_buffer_pool::get();

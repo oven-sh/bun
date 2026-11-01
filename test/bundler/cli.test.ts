@@ -61,6 +61,13 @@ import path, { join } from "node:path";
       await testCompileAndExec(path.join("bun-build-outfile2", "b/u/n", "index.exe"));
     });
 
+    test.skipIf(!isWindows)("generating a standalone binary in a nested \\\\?\\ path", async () => {
+      using baseDir = tempDir("bun-build-outfile3", {});
+      const outfile = path.join(String(baseDir), "b/u/n", "index.exe");
+      await testCompile("\\\\?\\" + outfile);
+      await testExec(outfile);
+    });
+
     test("works with utf8 bom", async () => {
       const tmp = tmpdirSync();
       const src = path.join(tmp, "index.js");
@@ -461,6 +468,87 @@ test("--outdir creates folders beside the working directory", async () => {
 
   const out = await Bun.file(path.join(String(dir), "other", "deep", "dist", "entry.js")).text();
   expect(out).toContain("built");
+});
+
+// `\\?\` is the Windows long-path prefix: `\\?\C:\dir` is `C:\dir`.
+describe.concurrent.skipIf(!isWindows)("an output directory that starts with \\\\?\\ and does not exist", () => {
+  const files = { "entry.ts": `console.log("built");` };
+  const built = (dir: string) => Bun.file(path.join(dir, "fresh", "nested", "entry.js")).text();
+  // Each spells `fresh\nested` in the temporary directory.
+  const spellings: Record<string, (dir: string) => string> = {
+    "\\\\?\\C:\\": dir => `\\\\?\\${dir}\\fresh\\nested`,
+    "//?/C:/": dir => `//?/${dir.replaceAll("\\", "/")}/fresh/nested`,
+    "\\\\?\\C:\\ with a . component": dir => `\\\\?\\${dir}\\.\\fresh\\nested`,
+  };
+
+  test.each(Object.entries(spellings))("bun build --outdir %s", async (_, spell) => {
+    using dir = tempDir("build-outdir-verbatim", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--outdir", spell(String(dir))],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await built(String(dir))).toContain("built");
+  });
+
+  test("bun build --outfile \\\\?\\C:\\", async () => {
+    using dir = tempDir("build-outfile-verbatim", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--outfile", `\\\\?\\${dir}\\fresh\\nested\\entry.js`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await built(String(dir))).toContain("built");
+  });
+
+  test("Bun.build({ outdir: \\\\?\\C:\\ })", async () => {
+    using dir = tempDir("build-api-outdir-verbatim", files);
+    const result = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.ts")],
+      outdir: `\\\\?\\${dir}\\fresh\\nested`,
+    });
+    expect(result.success).toBe(true);
+    expect(await built(String(dir))).toContain("built");
+  });
+
+  test("bun build --metafile \\\\?\\C:\\", async () => {
+    using dir = tempDir("build-metafile-verbatim", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--outdir", "dist", `--metafile=\\\\?\\${dir}\\fresh\\nested\\meta.json`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const metafile = await Bun.file(path.join(String(dir), "fresh", "nested", "meta.json")).json();
+    expect(Object.keys(metafile.inputs)).toEqual(["entry.ts"]);
+  });
+
+  // `\\?\UNC\server\share\dir` is `\\server\share\dir`. bun does not create it yet, and it is not `UNC\server\...` here.
+  test("bun build --outdir \\\\?\\UNC\\ creates nothing in the working directory", async () => {
+    using dir = tempDir("build-outdir-verbatim-unc", files);
+    const outdir = `\\\\?\\UNC\\localhost\\${String(dir)[0]}$${String(dir).slice(2)}\\fresh\\nested`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--outdir", outdir],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("EINVAL");
+    expect({ exitCode, entries: fs.readdirSync(String(dir)) }).toEqual({ exitCode: 1, entries: ["entry.ts"] });
+  });
 });
 
 test("multi-entry build writes each entry point into the output directory", async () => {

@@ -218,6 +218,35 @@ describe("Bun.build() compile with subdirectories", () => {
     expect(existsSync(expectedPath)).toBe(true);
   });
 
+  // `\\?\` is the Windows long-path prefix: `\\?\C:\dir` is `C:\dir`.
+  test.skipIf(!isWindows).each([
+    ["a directory that exists", "app.exe"],
+    ["a directory that does not exist", "dist\\bin\\app.exe"],
+  ])("places executable at a \\\\?\\ outfile in %s via API", async (_, relative) => {
+    using dir = tempDir("api-compile-verbatim", {
+      "app.js": `console.log("API verbatim test!");`,
+    });
+    const expectedPath = join(String(dir), relative);
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      compile: {
+        outfile: "\\\\?\\" + expectedPath,
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using exe = Bun.spawn({
+      cmd: [expectedPath],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+
+    expect((await exe.stdout.text()).trim()).toBe("API verbatim test!");
+    expect(await exe.exited).toBe(0);
+  });
+
   test.if(isWindows)("API with Windows metadata and subdirectories", async () => {
     using dir = tempDir("api-metadata-subdir", {
       "app.js": `console.log("API with metadata!");`,

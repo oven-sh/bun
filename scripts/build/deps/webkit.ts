@@ -155,6 +155,18 @@ export function webkitTestAotPath(cfg: Config): string {
 
 export type WebKitAotFile = "directory" | "AOTSchema.def" | "schema-generator" | "builtins-generated" | "tests";
 
+/** Where the tests of the compiler find the engine of this configuration, by the name of the variable each reads. `aot-paths.ts` prints them for CI, and `bun bd test` hands them to the binary. */
+export function aotEnvironmentOf(cfg: Config): Record<string, string> {
+  return {
+    TESTAOT: webkitTestAotPath(cfg),
+    JSC: webkitJSCPath(cfg),
+    AOT_SCHEMA: webkitAotFile(cfg, "AOTSchema.def"),
+    AOT_BUILTINS_GENERATED: webkitAotFile(cfg, "builtins-generated"),
+    AOT_ENGINE_DIRECTORY: webkitAotFile(cfg, "directory"),
+    AOT_ENGINE_TESTS: webkitAotFile(cfg, "tests"),
+  };
+}
+
 /** A file or folder under JavaScriptCore's aot/ that Bun's build or tests read. The prebuilt tarball has it at the checkout's path. Absolute. It need not exist yet. */
 export function webkitAotFile(cfg: Config, name: WebKitAotFile): string {
   const aot =

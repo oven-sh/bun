@@ -8,7 +8,11 @@ import { bunExe, tempDir } from "harness";
 import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { schemaHashHeader, schemaRustFiles } from "../../scripts/build/aot.ts";
+import { raiseDefaultTimeout } from "../aot/harness/default-timeout";
 import { run } from "../aot/harness/run";
+
+// The generator takes 15 seconds under a debug build with ASAN, and each test runs it more than once.
+raiseDefaultTimeout(120_000);
 
 const schema = process.env.AOT_SCHEMA;
 const fileList = schema === undefined ? undefined : join(dirname(schema), "AOTSchemaFiles.cmake");

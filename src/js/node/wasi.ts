@@ -1663,12 +1663,10 @@ class WASI {
       },
       random_get: (bufPtr: number, bufLen: number) => {
         this.refreshMemory();
-        // getRandomValues refuses a view on shared memory, so fill an array of our own and copy it in.
-        const dest = new Uint8Array(this.memory.buffer, bufPtr, bufLen);
-        const chunk = new Uint8Array(Math.min(dest.length, 65536));
-        for (let offset = 0; offset < dest.length; offset += chunk.length) {
-          dest.set(crypto.getRandomValues(chunk.subarray(0, dest.length - offset)), offset);
-        }
+        // getRandomValues takes one integer-typed view and ignores any further
+        // arguments, so a bare `buffer, bufPtr, bufLen` randomized all of linear
+        // memory rather than the requested window.
+        crypto.getRandomValues(new Uint8Array(this.memory.buffer, bufPtr, bufLen));
         return WASI_ESUCCESS;
       },
       sched_yield() {

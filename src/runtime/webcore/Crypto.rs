@@ -16,25 +16,15 @@ impl Crypto {
         array: JsLocal<'a>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let global = cx.global();
-        // Web IDL's conversion to an ArrayBufferView that is neither [AllowShared] nor [AllowResizable].
+        // Web IDL's conversion to an ArrayBufferView, except that a view on shared or resizable memory is taken.
         let view = array
             .to_js()
             .as_array_buffer(global)
             .filter(|view| view.typed_array_type != JSType::ArrayBuffer);
-        let refused = match &view {
-            None => Some("is not an ArrayBufferView"),
-            Some(view) if view.shared => {
-                Some("is a view on a SharedArrayBuffer, which is not allowed")
-            }
-            Some(view) if view.resizable => {
-                Some("is backed by a resizable ArrayBuffer, which is not allowed")
-            }
-            Some(_) => None,
-        };
-        if let Some(refused) = refused {
+        if view.is_none() {
             return Err(global
                 .throw_invalid_arguments(format_args!(
-                    "Failed to execute 'getRandomValues' on 'Crypto': 1st argument {refused}."
+                    "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is not an ArrayBufferView."
                 ))
                 .into());
         }

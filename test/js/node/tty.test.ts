@@ -2835,20 +2835,40 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     });
 
     // The handle has a descriptor of its own from the start, also where it could not open the terminal again.
-    // libuv has the number of the caller alone there, and Node answers EBADF.
-    test.concurrent(
-      "a stream over a descriptor that cannot be reopened writes and says the size of the window after the caller has closed it",
-      async () => {
+    // libuv has the number of the caller alone there, and Node answers EBADF. destroy() closes the number of the
+    // caller only while it still names the file of the handle: a number that the caller closed is no longer the
+    // handle's, and another file of the program can have it.
+    test.concurrent.each([
+      ["and left the number closed", "const other = null;", { other: null, otherIsOpen: null }],
+      [
+        "and opened another file under its number",
+        `const other = fs.openSync("/dev/null", "r");`,
+        { other: 3, otherIsOpen: true },
+      ],
+    ])(
+      "a stream over a descriptor that cannot be reopened writes, says the size of the window and closes after the caller has closed it %s",
+      async (_name, reuse, { other, otherIsOpen }) => {
         const script = `
           const master = new tty.ReadStream(3);
           master.on("error", err => say({ error: err.code }));
           fs.closeSync(3);
+          ${reuse}
           const windowSize = [];
-          say({ getWindowSize: master._handle.getWindowSize(windowSize), windowSize });
-          master.write(bytes, err => say({ cb: err ? err.code : null }));
+          say({ other, getWindowSize: master._handle.getWindowSize(windowSize), windowSize });
+          master.on("close", () => {
+            let otherIsOpen = null;
+            if (other !== null) {
+              try { otherIsOpen = fs.fstatSync(other).isCharacterDevice(); } catch { otherIsOpen = false; }
+            }
+            say({ closed: true, otherIsOpen });
+          });
+          master.write(bytes, err => {
+            say({ cb: err ? err.code : null });
+            master.destroy();
+          });
         `;
         expect(await withPair(script, { readEnd: "slave" })).toEqual({
-          records: [{ getWindowSize: 0, windowSize: [0, 0] }, { cb: null }],
+          records: [{ other, getWindowSize: 0, windowSize: [0, 0] }, { cb: null }, { closed: true, otherIsOpen }],
           stderr: "",
           exitCode: 0,
           read: { got: size, sameBytes: true },

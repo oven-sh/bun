@@ -62,7 +62,7 @@ bitflags::bitflags! {
         const FINALIZED      = 1 << 5;
         /// The loop refused to poll the fd (kqueue on the macOS `/dev/tty` alias): `readStart()` reports `ENOTSUP`, everything else works.
         const UNPOLLABLE     = 1 << 6;
-        /// `close()` closes `fd` too: libuv owns a non-stdio fd it could not reopen. Off once a descriptor of the handle has taken that number, which the caller had closed.
+        /// `close()` closes `fd` too, where it still names the file of the handle: libuv owns a non-stdio fd it could not reopen. Off once a descriptor of the handle has taken that number, which the caller had closed.
         const OWNS_FD        = 1 << 7;
         /// Inside `with_reader`: a done/error the reader reports is parked.
         const IN_READER      = 1 << 8;
@@ -1059,12 +1059,25 @@ impl TTY {
                 || self.writes.get().as_ref().and_then(|q| q.poll_fd) != Some(self.fd),
             "close() would close a descriptor of the handle twice"
         );
+        #[cfg(unix)]
+        let closes_callers_fd =
+            self.flags.get().contains(Flags::OWNS_FD) && self.callers_fd_is_the_handles_file();
         self.close_internal();
         #[cfg(unix)]
-        if self.flags.get().contains(Flags::OWNS_FD) {
-            // JS may have closed it first: EBADF is not an invariant violation here.
-            let _ = self.fd.close_allowing_bad_file_descriptor(None);
+        if closes_callers_fd {
+            self.fd.close();
         }
+    }
+
+    /// Whether the number that the caller passed still names the file of the handle: the caller can have closed it, and another file can have the number since. Two pty masters of Linux look the same here, and so do two opens of one FIFO.
+    #[cfg(unix)]
+    fn callers_fd_is_the_handles_file(&self) -> bool {
+        let (Ok(theirs), Ok(ours)) = (sys::fstat(self.fd), sys::fstat(self.own_fd.get())) else {
+            return false;
+        };
+        theirs.st_dev == ours.st_dev
+            && theirs.st_ino == ours.st_ino
+            && theirs.st_rdev == ours.st_rdev
     }
 
     fn close_internal(&self) {

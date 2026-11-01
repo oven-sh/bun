@@ -2732,8 +2732,8 @@ Socket.prototype._onTimeout = function (this: $Node.Socket) {
   const handle = this._handle;
   // A write queue of a stream-wrap handle that moved since the last timeout is still going out. https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L872-L887
   const lastWriteQueueSize = this[kLastWriteQueueSize];
-  if (lastWriteQueueSize && handle) {
-    const { writeQueueSize } = handle as $Node.StreamWrapHandle;
+  if (lastWriteQueueSize && handle && isStreamWrapHandle(handle)) {
+    const { writeQueueSize } = handle;
     if (lastWriteQueueSize !== writeQueueSize) {
       this[kLastWriteQueueSize] = writeQueueSize;
       this._unrefTimer();

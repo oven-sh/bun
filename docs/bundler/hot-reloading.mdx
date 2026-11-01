@@ -26,6 +26,8 @@ import.meta.hot.dispose(() => {
 });
 ```
 
+The optional form `import.meta.hot?.dispose(...)` works too, for the APIs listed below. In production `import.meta.hot` is `undefined`, so the call is skipped at run time, but Bun does not remove it from the bundle.
+
 <Warning>
 For this dead-code elimination to work, Bun forces these APIs to be called without indirection. That means the following do not work:
 

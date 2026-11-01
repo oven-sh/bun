@@ -545,7 +545,7 @@ fn migrate_npm_lockfile(
         workspace_map.as_ref(),
         lockfile_name,
     )?;
-    clear_non_registry_platform_constraints(this);
+    clear_workspace_platform_constraints(this);
     npm_lock::apply_root_overrides(this, manager, log, dir, workspace_map.as_ref(), abs_path)?;
 
     this.tag_workspace_links(manager.options.link_workspace_packages);
@@ -594,19 +594,14 @@ pub(crate) fn warn_unlocked_dependencies(
     }
 }
 
-/// A fresh resolve only records `os`/`cpu`/`libc` for the root and npm registry
-/// packages (`Package::from_npm`); folder, tarball, git, and workspace packages
-/// install unconditionally, so a migrated lockfile must not constrain them.
-pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
+/// A workspace always installs: a fresh resolve records no `os`/`cpu`/`libc` for one.
+pub(crate) fn clear_workspace_platform_constraints(lockfile: &mut Lockfile) {
     for i in 0..lockfile.packages.len() {
-        match lockfile.packages.items_resolution()[i].tag {
-            resolution::Tag::Root | resolution::Tag::Npm => {}
-            _ => {
-                let meta = &mut lockfile.packages.items_meta_mut()[i];
-                meta.arch = Npm::Architecture::ALL;
-                meta.os = Npm::OperatingSystem::ALL;
-                meta.libc = Npm::Libc::NONE;
-            }
+        if lockfile.packages.items_resolution()[i].tag == resolution::Tag::Workspace {
+            let meta = &mut lockfile.packages.items_meta_mut()[i];
+            meta.arch = Npm::Architecture::ALL;
+            meta.os = Npm::OperatingSystem::ALL;
+            meta.libc = Npm::Libc::NONE;
         }
     }
 }

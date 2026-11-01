@@ -1649,6 +1649,12 @@ impl Diff {
             summary.script_only_updates += 1;
         }
 
+        // Changed platform fields, or an entry that an older bun wrote without them.
+        if from.resolution.tag == ResolutionTag::Folder && !to.meta.platform_eql(&from.meta) {
+            summary.update += 1;
+            summary.script_only_updates += 1;
+        }
+
         Ok(summary)
     }
 
@@ -3076,6 +3082,11 @@ impl Package<u64> {
                     Some(scripts::gypfile_from_json(json)),
                 );
             self.meta.set_has_install_script(has_scripts);
+        }
+
+        // The root and workspaces always install, and bun.lock records no platform for them.
+        if !(FEATURES.is_main || FEATURES.is_workspace) {
+            self.meta.read_platform(&json)?;
         }
 
         // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies

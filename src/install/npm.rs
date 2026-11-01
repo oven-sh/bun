@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use std::io::Write as _;
 
 use crate::Error;
@@ -832,8 +831,8 @@ pub use bun_install_types::resolver_hooks::{
 /// reachable from that crate.
 pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, AllocError> {
     let mut this = T::NONE.negatable();
-    if let JSON::ExprData::EArray(a) = &expr.data {
-        for item in a.items.slice() {
+    if let Some(mut items) = expr.as_array() {
+        while let Some(item) = items.next() {
             // JSON parsed via `parse_utf8` always yields UTF-8 EStrings,
             // so no transcode allocator is needed.
             if let Some(value) = item.as_utf8_string_literal() {

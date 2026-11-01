@@ -981,10 +981,11 @@ const projects: Record<string, Record<string, string>> = {
         console.log("written out", (await import("node:path")) === (await import(made("node:path"))), (await import("node:events")).default === (await import(made("events"))).default);
       });`,
   },
-  // What is printed is sorted before it is compared, so the order stands in one line.
+  // In parallel what is printed is sorted before it is compared, so the order stands in one line too.
   "a module that waits for bun": {
-    "helpers/waits.js": `globalThis.order = ["waits: start"];\nconst bun = await import("bun");\nglobalThis.order.push("waits: behind " + typeof bun.version);`,
-    "helpers/beside.js": `globalThis.order.push("beside");`,
+    "helpers/waits.js": `const say = globalThis.say = word => { (globalThis.order ??= []).push(word); console.log(word); };
+      say("waits: start");\nconst bun = await import("bun");\nsay("waits: behind " + typeof bun.version);`,
+    "helpers/beside.js": `globalThis.say("beside");`,
     "order.test.js": `${head}
       import "./helpers/waits.js";
       import "./helpers/beside.js";
@@ -1001,6 +1002,10 @@ const projects: Record<string, Record<string, string>> = {
   },
 };
 
+// Two processes print at once, and nobody knows whose line comes first. Every other way prints in one order, and that order is compared.
+const inOrderOfRun = (lines: string[], flags: string[]) =>
+  flags.some(flag => flag.startsWith("--parallel")) ? lines.sort() : lines;
+
 async function runTests(directory: string, words: string | undefined, ...flags: string[]) {
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
@@ -1008,7 +1013,7 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   // A crash prints only there, and the comparison below would hide it.
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   const printed = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
-  return { stdout: printed.sort(), results: results.sort(), exitCode };
+  return { stdout: inOrderOfRun(printed, flags), results: inOrderOfRun(results, flags), exitCode };
 }
 
 // A run of few test files is one program. The words ask for what a large run gets: the packages in one image, the other shared files in a second, and each test file in one of its own.
@@ -1067,9 +1072,9 @@ async function runFolders(directory: string, words: string | undefined, ...flags
     const [, result, name] = line.match(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/) ?? [];
     if (result) results.getOrInsertComputed(folder, () => []).push(`${result} ${name}`);
   }
-  for (const list of results.values()) list.sort();
+  for (const [folder, list] of results) results.set(folder, inOrderOfRun(list, flags));
   const printed = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
-  return { results, stdout: printed.sort(), exitCode };
+  return { results, stdout: inOrderOfRun(printed, flags), exitCode };
 }
 
 function declareProjectsThatShareARun(way: string, names: string[], flags: string[], words: string) {

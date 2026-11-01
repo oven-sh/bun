@@ -224,6 +224,45 @@ describe.concurrent("brace + glob composition", () => {
     const out = await $`echo {a,b}${"[c]"}*`.cwd(String(dir)).text();
     expect(words(out)).toEqual(["a[c]1.txt", "b[c]2.txt"]);
   });
+
+  test("an interpolated \\x01 in front of an interpolated * does not make the * a pattern", async () => {
+    using dir = tempDir("shell-brace-glob-tag", {
+      "azq1": "",
+      "bzq1": "",
+    });
+    // Were the data `\x01*` read back as a literal `*`, the first variant
+    // would be the pattern `a*q*`, which matches `azq1`.
+    const { stdout, stderr, exitCode } = await $`echo {a,b}${"\x01*q"}*`.cwd(String(dir)).quiet().nothrow();
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: "",
+      stderr: "bun: no matches found: a\x01*q*\n",
+      exitCode: 1,
+    });
+  });
+
+  test("in an assignment the variants after one with no match are still expanded", async () => {
+    using dir = tempDir("shell-brace-glob-assign", {
+      "d1/f1": "",
+    });
+    // In an assignment a variant with no match stays as written. The order of
+    // the variants is kept, so the output is not sorted here.
+    const list = (out: string) => out.trim().replaceAll("\\", "/").split(" ");
+    const noMatchFirst = await $`FOO={nope,d1}/*; echo $FOO`.cwd(String(dir)).text();
+    expect(list(noMatchFirst)).toEqual(["nope/*", "d1/f1"]);
+    const noMatchLast = await $`FOO={d1,nope}/*; echo $FOO`.cwd(String(dir)).text();
+    expect(list(noMatchLast)).toEqual(["d1/f1", "nope/*"]);
+  });
+
+  test("a variant keeps a byte that is not UTF-8", async () => {
+    using dir = tempDir("shell-brace-glob-bytes", {
+      "xa": "",
+    });
+    // The variant is the glob pattern, so the brace lexer has to give back the
+    // bytes it got. `y\xe9*` matches no file and an assignment keeps it as written.
+    const script = String.raw`FOO={x,$(echo -e 'y\xe9')}*; echo $FOO`;
+    const { stdout } = await $`${{ raw: script }}`.cwd(String(dir)).quiet();
+    expect(stdout.toString("latin1")).toBe("xa y\xe9*\n");
+  });
 });
 
 // $.braces() recursed once per `{` group (parse_atom <-> parse_expansion /

@@ -380,6 +380,7 @@ expectType(vi.advanceTimersToNextTimerAsync()).is<Promise<typeof vi>>();
 expectType(vi.runAllTimersAsync()).is<Promise<typeof vi>>();
 expectType(vi.runOnlyPendingTimersAsync()).is<Promise<typeof vi>>();
 expectType(vi.advanceTimersToNextTimer(2).advanceTimersToNextFrame().runAllTicks()).is<typeof vi>();
+expectType(jest.clearAllTimers().useRealTimers()).is<typeof jest>();
 expectType(jest.advanceTimersToNextTimer(2).advanceTimersToNextFrame().runAllTicks().runAllImmediates()).is<
   typeof jest
 >();

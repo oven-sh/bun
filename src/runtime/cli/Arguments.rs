@@ -1667,7 +1667,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.preconnect = args.options(b"--fetch-preconnect").to_vec();
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
-        ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
+        if args.flag(b"--expose-gc") {
+            bun_jsc::virtual_machine::Bun__Node__ExposeGC
+                .store(true, core::sync::atomic::Ordering::Relaxed);
+        }
         if args.flag(b"--expose-internals") {
             // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`
             // sets (VirtualMachine::configure_from_env): allows resolving

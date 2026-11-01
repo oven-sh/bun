@@ -2,6 +2,10 @@
 
 #include "root.h"
 #include "JavaScriptCore/JSGlobalObject.h"
+#include <atomic>
+
+// V8's `--expose-gc`, from the command line or `v8.setFlagsFromString()`: an `AtomicBool` on the Rust side (src/jsc/VirtualMachine.rs).
+extern "C" std::atomic<bool> Bun__Node__ExposeGC;
 
 namespace Bun {
 
@@ -12,6 +16,17 @@ class GlobalScope : public JSC::JSGlobalObject {
 
 protected:
     void finishCreation(JSC::VM& vm);
+
+    // The flag is the process's, as in Node.js: a global object made while it is set has `gc`.
+    void addGCFunctionIfExposed(JSC::VM& vm)
+    {
+        // Relaxed: the flag guards no other memory. A global object made while another thread stores it gets either value.
+        if (Bun__Node__ExposeGC.load(std::memory_order_relaxed)) [[unlikely]]
+            addGCFunction(vm);
+    }
+
+private:
+    void addGCFunction(JSC::VM&);
 
 public:
     GlobalScope(JSC::VM& vm, JSC::Structure* structure)

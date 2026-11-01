@@ -39,6 +39,10 @@ pub static isBunTest: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 #[unsafe(no_mangle)]
 pub(crate) static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
     core::sync::atomic::AtomicI32::new(10);
+/// V8's `--expose-gc`, from the command line or `v8.setFlagsFromString()`. C++ reads it as a `std::atomic<bool>` each time it makes a global object. Relaxed at each site: it guards no other memory.
+#[unsafe(no_mangle)]
+pub static Bun__Node__ExposeGC: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 // TODO: evaluate if this has any measurable performance impact.
 pub(crate) static SYNTHETIC_ALLOCATION_LIMIT: core::sync::atomic::AtomicUsize =
@@ -452,6 +456,8 @@ pub struct TestIsolationState {
     /// The synthetic allocation limit at startup, restored after every file.
     /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
     pub synthetic_allocation_limit: Option<usize>,
+    /// `--expose-gc` at startup, restored after every file. `v8.setFlagsFromString()` stores it process-wide.
+    pub expose_gc: bool,
     /// `--isolate=modules`: all files share one global object, and each gets its own `Bun.ModuleGraph`.
     pub shares_global: bool,
     /// The context of the running file's graph. Its callbacks run in this context.
@@ -6523,6 +6529,8 @@ impl VirtualMachine {
         self.set_main(None);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
+        // Before the next global object is made, which reads the flag.
+        self.undo_expose_gc();
 
         if shares_global {
             self.undo_process_env_side_effects();
@@ -6584,6 +6592,12 @@ impl VirtualMachine {
             SYNTHETIC_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
             STRING_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
         }
+    }
+
+    /// `v8.setFlagsFromString()` stores `--expose-gc` process-wide. Put the startup value back so a file's flag stays with that file.
+    fn undo_expose_gc(&self) {
+        let at_startup = self.test_isolation_state.expose_gc;
+        Bun__Node__ExposeGC.store(at_startup, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// The `process.env` keys with a custom setter (`applySharedEnvSideEffects`

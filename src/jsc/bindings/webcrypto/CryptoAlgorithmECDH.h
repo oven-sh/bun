@@ -31,6 +31,7 @@
 
 namespace WebCore {
 
+class CryptoAlgorithmEcdhKeyDeriveParams;
 class CryptoKeyEC;
 
 class CryptoAlgorithmECDH final : public CryptoAlgorithm {
@@ -41,6 +42,9 @@ public:
 
     // Operations can be performed directly.
     WEBCORE_EXPORT static std::optional<Vector<uint8_t>> platformDeriveBits(const CryptoKeyEC&, const CryptoKeyEC&);
+
+    // The keyless checks of deriveBits, shared with SubtleCrypto::supports.
+    static ExceptionOr<void> validateDeriveBits(const CryptoAlgorithmEcdhKeyDeriveParams&);
 
 private:
     CryptoAlgorithmECDH() = default;

@@ -722,7 +722,7 @@ pub(crate) fn edit_target(
     updates: &mut &mut [UpdateRequest],
     package_json: &mut Expr,
     dependency_list: &[u8],
-    options: EditOptions,
+    options: EditOptions<'_>,
 ) -> Result<(), AllocError> {
     if !manager.catalog_add.enabled {
         PackageJSONEditor::edit(manager, updates, package_json, dependency_list, options)?;

@@ -350,19 +350,17 @@ for (const [adapter, image, url, failing, message] of [
       expect([first, error.stack]).toEqual([error.name + ": changed", error.name + ": changed"]);
     });
 
-    test("is an own property that is not enumerable, before and after the first read", async () => {
+    test("is an own data property that is not enumerable, before and after the first read", async () => {
       await container.ready;
       await using sql = connect();
 
       const error = await rejectionOf(sql.unsafe(failing));
       const before = Object.getOwnPropertyDescriptor(error, "stack");
-      const stack = error.stack;
-      expect({
-        before: { enumerable: before?.enumerable, configurable: before?.configurable },
-        after: Object.getOwnPropertyDescriptor(error, "stack"),
-      }).toEqual({
-        before: { enumerable: false, configurable: true },
-        after: { value: stack, writable: true, enumerable: false, configurable: true },
+      const descriptor = { value: message, writable: true, enumerable: false, configurable: true };
+      expect({ before, stack: error.stack, after: Object.getOwnPropertyDescriptor(error, "stack") }).toEqual({
+        before: descriptor,
+        stack: message,
+        after: descriptor,
       });
 
       const assigned = await rejectionOf(sql.unsafe(failing));

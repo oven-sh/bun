@@ -5,6 +5,7 @@
 #include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include "BunClientData.h"
+#include "FormatStackTraceForJS.h"
 #include "InternalModuleRegistry.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
@@ -69,7 +70,8 @@ extern "C" JSC::EncodedJSValue Bun__SQLError__create(JSC::JSGlobalObject* global
     JSObject::deleteProperty(error, globalObject, vm.propertyNames->line, deleteSlot);
     JSObject::deleteProperty(error, globalObject, vm.propertyNames->column, deleteSlot);
     // The first read makes `stack`, in the code of the reader and not in the client.
-    error->putDirectCustomAccessor(vm, vm.propertyNames->stack, realm->m_lazyStackCustomGetterSetter.get(realm), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor);
+    // A custom value with no setter: JavaScript sees a data property, and JSC does every assignment.
+    error->putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceLazyStackCustomGetter, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
     // Own and enumerable, as `this.name = ...` in the constructor of the class makes it.
     auto& strings = commonStrings(vm);
     error->putDirect(vm, vm.propertyNames->name, errorClass == SQLErrorClass::MySQL ? strings.mySQLErrorString() : strings.postgresErrorString(), 0);

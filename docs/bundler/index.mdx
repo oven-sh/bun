@@ -377,7 +377,8 @@ When you use `target: "bun"` and `format: "cjs"` together, the bundler adds the 
 
 <Card title="node" icon="node">
   For bundles that run in Node.js. Prioritizes the `"node"` export condition when resolving imports. Bun does not
-  polyfill the `Bun` global or the built-in `bun:*` modules.
+  polyfill the `Bun` global or the built-in `bun:*` modules. Bun names JavaScript output files `.js`. See
+  [`format`](#format) to name them `.mjs` or `.cjs`.
 </Card>
 
 ### format
@@ -409,6 +410,10 @@ The default format. Supports ES Module syntax, including top-level await and `im
 
 To use ES Module syntax in browsers, set `format` to `"esm"` and load the bundle with a `<script type="module">` tag.
 
+Node.js reads the format of a `.js` file from the `"type"` field of the nearest `package.json`. In a package with `"type": "commonjs"`, give the entry and chunk templates of [`naming`](#naming) the `.mjs` extension: `naming: { entry: "[dir]/[name].mjs", chunk: "[name]-[hash].mjs" }`. On the command line, use `--entry-naming` and `--chunk-naming`.
+
+An entrypoint that imports CSS needs `[ext]` in the entry template, because Bun names the CSS file with the same template. For that build, keep the default `naming` and add a `package.json` that contains `{ "type": "module" }` to the output directory.
+
 #### format: "cjs" - CommonJS
 
 To build a CommonJS module, set `format` to `"cjs"`. When you choose `"cjs"`, the default target changes from `"browser"` (esm) to `"node"` (cjs). CommonJS modules transpiled with `format: "cjs"`, `target: "node"` run in both Bun and Node.js (assuming both support the APIs in use).
@@ -420,15 +425,21 @@ To build a CommonJS module, set `format` to `"cjs"`. When you choose `"cjs"`, th
       entrypoints: ['./index.tsx'],
       outdir: './out',
       format: "cjs",
+      target: "node",
+      naming: "[dir]/[name].cjs",
     })
     ```
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build ./index.tsx --outdir ./out --format cjs
+    bun build ./index.tsx --outdir ./out --format cjs --target node --entry-naming "[dir]/[name].cjs"
     ```
   </Tab>
 </Tabs>
+
+Without `naming`, Bun writes `out/index.js`. Node.js reads the format of a `.js` file from the `"type"` field of the nearest `package.json`, which `bun init` sets to `"module"`. Node.js then loads the bundle as an ES module, and it fails with an error such as `ReferenceError: module is not defined in ES module scope`. Node.js always loads a `.cjs` file as CommonJS. The Bun runtime runs both files, so check the bundle with `node`.
+
+An entrypoint that imports CSS needs `[ext]` in the template. For that build, keep the default `naming` and add a `package.json` that contains `{ "type": "commonjs" }` to the output directory.
 
 #### format: "iife" - IIFE
 

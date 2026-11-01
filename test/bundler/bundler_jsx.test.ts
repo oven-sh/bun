@@ -291,6 +291,8 @@ describe("bundler", () => {
         backend,
         target: "bun",
         compile: true,
+        // esbuild has no executable compilation mode.
+        skipOnEsbuild: backend === "cli",
         ...(source === "option" ? { jsx: { runtime: "preserve" } } : {}),
         bundleErrors: { "/in.jsx": ["Cannot preserve JSX when compiling an executable"] },
       });

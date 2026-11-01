@@ -11,7 +11,7 @@ workspace = true
 
 # No dependencies. This is a tier-0 `#![no_std]` leaf crate of raw Win32
 # typedefs / consts / `extern "system"` blocks over `core::ffi` only. Keeping
-# the dep graph empty is load-bearing: `bun_shim_impl.exe` (the freestanding
+# the dep graph empty is load-bearing: `bun-shim-impl.exe` (the freestanding
 # Windows .bin/ shim PE) depends on this crate alone, and any `std`-using
 # transitive dep would defeat its `#![no_std]` build and bloat the embedded
 # binary that gets copied into every `node_modules/.bin/`.

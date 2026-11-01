@@ -34,16 +34,16 @@ pub enum SupportsCondition {
 // cannot carry inherent methods).
 pub struct Declaration {
     /// The property id for the declaration.
-    pub property_id: PropertyId,
+    pub(crate) property_id: PropertyId,
     /// The raw value of the declaration.
     ///
     /// What happens if the value is a URL? A URL in this context does nothing
     /// e.g. `@supports (background-image: url('example.png'))`
-    pub value: &'static [u8],
+    pub(crate) value: &'static [u8],
 }
 
 impl Declaration {
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // `PropertyId` is `Copy`; `value` is an arena-owned slice → identity copy.
         Self {
             property_id: self.property_id,
@@ -53,24 +53,13 @@ impl Declaration {
 }
 
 impl Declaration {
-    pub(crate) fn eql(&self, other: &Self) -> bool {
-        // `PropertyId` carries its own tag+prefix `PartialEq` (see
-        // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
-        // byte-slice equality.
+    fn eql(&self, other: &Self) -> bool {
         self.property_id == other.property_id && self.value == other.value
     }
 }
 
 impl SupportsCondition {
-    pub fn clone_with_import_records(
-        &self,
-        bump: &bun_alloc::Arena,
-        _: &mut Vec<bun_ast::ImportRecord>,
-    ) -> Self {
-        self.deep_clone(bump)
-    }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
         // Hand-rolled variant-walk —
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
         // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
@@ -98,32 +87,7 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // Hand-expanded because `#[derive(CssHash)]` would require
-        // `PropertyId: CssHash` (it only provides `core::hash::Hash`).
-        // Hash the discriminant, then field-wise structural hash.
-        use core::hash::{Hash, Hasher};
-        core::mem::discriminant(self).hash(hasher);
-        match self {
-            Self::Not(c) => c.hash(hasher),
-            Self::And(v) | Self::Or(v) => {
-                hasher.write_usize(v.len());
-                for c in v.iter() {
-                    c.hash(hasher);
-                }
-            }
-            Self::Declaration(d) => {
-                d.property_id.hash(hasher);
-                hasher.write(d.value);
-            }
-            Self::Selector(s) | Self::Unknown(s) => hasher.write(s),
-        }
-    }
-
     pub fn eql(&self, other: &SupportsCondition) -> bool {
-        // Hand-expanded because `#[derive(CssEql)]` would require
-        // `PropertyId: CssEql` (it only provides the custom tag+prefix
-        // `PartialEq`). Tag mismatch → false, then field-wise structural eq.
         match (self, other) {
             (Self::Not(a), Self::Not(b)) => a.eql(b),
             (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {
@@ -137,14 +101,54 @@ impl SupportsCondition {
     }
 }
 
-impl crate::generics::CssEql for SupportsCondition {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        SupportsCondition::eql(self, other)
-    }
-}
-
 impl SupportsCondition {
+    /// The color features that every browser in which the condition holds has.
+    fn tested_color_features(&self, arena: &bun_alloc::Arena) -> css::Features {
+        use css::css_values::color::{CssColor, LABColor, PredefinedColor};
+        let color = match self {
+            Self::And(conditions) => {
+                return conditions
+                    .iter()
+                    .fold(css::Features::empty(), |features, condition| {
+                        features | condition.tested_color_features(arena)
+                    });
+            }
+            // Any value is valid for a custom property, so that tests nothing.
+            Self::Declaration(declaration)
+                if matches!(declaration.property_id, PropertyId::Custom(_)) =>
+            {
+                return css::Features::empty();
+            }
+            Self::Declaration(declaration) => {
+                css::parse_utility::parse_string(arena, declaration.value, CssColor::parse)
+            }
+            // `parse_in_parens` keeps `(property: value)` as raw text.
+            Self::Unknown(group) => css::parse_utility::parse_string(arena, group, |input| {
+                input.expect_parenthesis_block()?;
+                input.parse_nested_block(|input| {
+                    if input.expect_ident()?.starts_with(b"--") {
+                        return Err(input.new_custom_error(css::ParserError::invalid_value));
+                    }
+                    input.expect_colon()?;
+                    CssColor::parse(input)
+                })
+            }),
+            Self::Not(_) | Self::Or(_) | Self::Selector(_) => return css::Features::empty(),
+        };
+        match color {
+            Ok(CssColor::Lab(lab)) => match *lab {
+                LABColor::Lab(_) | LABColor::Lch(_) => css::Features::LAB_COLORS,
+                LABColor::Oklab(_) | LABColor::Oklch(_) => css::Features::OKLAB_COLORS,
+            },
+            Ok(CssColor::Predefined(color)) => match *color {
+                // Safari 10.1 to 14 has `color(display-p3 ..)` and no other space.
+                PredefinedColor::DisplayP3(_) => css::Features::P3_COLORS,
+                _ => css::Features::COLOR_FUNCTION,
+            },
+            _ => css::Features::empty(),
+        }
+    }
+
     fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {
             SupportsCondition::Not(_) => true,
@@ -154,7 +158,7 @@ impl SupportsCondition {
         }
     }
 
-    pub fn to_css_with_parens_if_needed(
+    pub(crate) fn to_css_with_parens_if_needed(
         &self,
         dest: &mut Printer,
         needs_parens: bool,
@@ -172,7 +176,7 @@ impl SupportsCondition {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             SupportsCondition::Not(condition) => {
-                dest.write_str(b" not ")?;
+                dest.write_str(b"not ")?;
                 condition.to_css_with_parens_if_needed(dest, condition.needs_parens(self))?;
             }
             SupportsCondition::And(conditions) => {
@@ -230,7 +234,8 @@ impl SupportsCondition {
                 .copied()
                 .filter(|f| prefix.contains(*f)),
             |d| d.write_str(b") or ("),
-            |d, _flag| {
+            |d, flag| {
+                flag.to_css(d)?;
                 d.serialize_name(name)?;
                 d.delim(b':', false)?;
                 // Raw parser-input slice: may span newlines.
@@ -243,13 +248,6 @@ impl SupportsCondition {
         }
         dest.write_char(b')')?;
         Ok(())
-    }
-}
-
-impl css::generic::ToCss for SupportsCondition {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        SupportsCondition::to_css(self, dest)
     }
 }
 
@@ -279,7 +277,7 @@ impl SupportsCondition {
             let _condition =
                 input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                     let location = i.current_source_location();
-                    let s = i.expect_ident_cloned()?;
+                    let s = i.expect_ident()?;
                     let found_type: i32 = crate::match_ignore_ascii_case! { s, {
                         b"and" => 1,
                         b"or" => 2,
@@ -355,13 +353,13 @@ impl SupportsCondition {
         Ok(in_parens)
     }
 
-    pub fn parse_declaration(input: &mut css::Parser) -> css::Result<SupportsCondition> {
+    pub(crate) fn parse_declaration(input: &mut css::Parser) -> css::Result<SupportsCondition> {
         let property_id = PropertyId::parse(input)?;
         input.expect_colon()?;
         input.skip_whitespace();
         let pos = input.position();
         input.expect_no_error_token()?;
-        let value = input.slice_from_cloned(pos);
+        let value = input.slice_from(pos);
         Ok(SupportsCondition::Declaration(Declaration {
             property_id,
             value,
@@ -373,7 +371,7 @@ impl SupportsCondition {
         input.skip_whitespace();
         let location = input.current_source_location();
         let pos = input.position();
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match tok {
             css::Token::Function(f) => {
                 if strings::eql_case_insensitive_ascii_check_length(b"selector", f) {
@@ -381,7 +379,7 @@ impl SupportsCondition {
                         i.parse_nested_block(|i2| {
                             let p = i2.position();
                             i2.expect_no_error_token()?;
-                            let s = i2.slice_from_cloned(p);
+                            let s = i2.slice_from(p);
                             Ok(SupportsCondition::Selector(s))
                         })
                     });
@@ -401,7 +399,7 @@ impl SupportsCondition {
 
         input.parse_nested_block(|i| i.expect_no_error_token())?;
 
-        let s = input.slice_from_cloned(pos);
+        let s = input.slice_from(pos);
         Ok(SupportsCondition::Unknown(s))
     }
 }
@@ -438,7 +436,7 @@ pub struct SupportsRule<R> {
 }
 
 impl<R> SupportsRule<R> {
-    pub fn minify(
+    pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext,
         parent_is_unused: bool,
@@ -454,7 +452,12 @@ impl<R> SupportsRule<R> {
         // behind it multiply against the enclosing nesting levels exactly like
         // plain nested rules — leaving them unvisited here lets the printer
         // expand them exponentially.
-        self.rules.minify(context, parent_is_unused)
+        let exclude = context.handler_context.targets.exclude;
+        let tested = self.condition.tested_color_features(context.arena);
+        context.handler_context.targets.exclude.insert(tested);
+        let result = self.rules.minify(context, parent_is_unused);
+        context.handler_context.targets.exclude = exclude;
+        result
     }
 }
 
@@ -473,7 +476,7 @@ impl<R> SupportsRule<R> {
 }
 
 impl<R> SupportsRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {

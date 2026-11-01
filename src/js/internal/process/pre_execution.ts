@@ -4,7 +4,7 @@
 // file, worker, or `-e` eval — is evaluated. Must stay cheap: one execArgv
 // scan, bail early when nothing applies.
 
-let writeSync: typeof import("node:fs").writeSync;
+let writeSync: $BunModules["internal/trace_events"]["rawWriteSync"];
 let envTracePrintMessage = false;
 let envTracePrintJsStack = false;
 let inEnvTrace = false;
@@ -235,7 +235,7 @@ function installExitTracing(): void {
   // Replaces node's native `Environment::Exit` warning: the wrapper frame
   // below stands in for node's `at process.exit` top frame, so stack counts
   // under --stack-trace-limit match node exactly.
-  function exit(code?: number | string | null): never {
+  function exit(code?: number | string | null) {
     const resolved = code ?? process.exitCode ?? 0;
     let prefix: string;
     if (Bun.isMainThread) {
@@ -254,7 +254,7 @@ function installExitTracing(): void {
 }
 
 {
-  const execArgv = process.execArgv;
+  const execArgv: string[] = process.execArgv;
   let catString: string | null = null;
   let filePattern: string | null = null;
   let stackTraceLimit: string | null = null;

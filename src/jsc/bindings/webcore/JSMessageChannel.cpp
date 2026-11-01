@@ -22,7 +22,6 @@
 
 #include "JSMessageChannel.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
@@ -60,7 +59,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSMessageChannelPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSMessageChannelPrototype* ptr = new (NotNull, JSC::allocateCell<JSMessageChannelPrototype>(vm)) JSMessageChannelPrototype(vm, globalObject, structure);
+        JSMessageChannelPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSMessageChannelPrototype))) JSMessageChannelPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -74,7 +73,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -91,6 +90,7 @@ using JSMessageChannelDOMConstructor = JSDOMConstructor<JSMessageChannel, Bun::E
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, JSMessageChannelDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSMessageChannelDOMConstructor>(callFrame->jsCallee());
@@ -98,15 +98,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConst
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "MessageChannel"_s);
+    auto* structure = structureForNewTarget<MessageChannel>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = MessageChannel::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<MessageChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<MessageChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<MessageChannel>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSMessageChannelDOMConstructorConstruct, JSMessageChannelDOMConstructor::construct);
@@ -121,11 +121,7 @@ template<> JSValue JSMessageChannelDOMConstructor::prototypeForStructure(JSC::VM
 
 template<> void JSMessageChannelDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "MessageChannel"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSMessageChannel::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "MessageChannel"_s, JSMessageChannel::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -141,8 +137,8 @@ const ClassInfo JSMessageChannelPrototype::s_info = { "MessageChannel"_s, &Base:
 void JSMessageChannelPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSMessageChannel::info(), JSMessageChannelPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSMessageChannel::info(), JSMessageChannelPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSMessageChannel::s_info = { "MessageChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageChannel) };
@@ -215,12 +211,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port2, (JSGlobalObject * lexicalGlobal
 
 JSC::GCClient::IsoSubspace* JSMessageChannel::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSMessageChannel, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMessageChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessageChannel = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMessageChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMessageChannel = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSMessageChannel, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessageChannel, m_subspaceForMessageChannel));
 }
 
 template<typename Visitor>
@@ -254,53 +245,8 @@ void JSMessageChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSMessageChannelOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSMessageChannelOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsMessageChannel = static_cast<JSMessageChannel*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsMessageChannel->wrapped(), jsMessageChannel);
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7MessageChannel@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore14MessageChannelE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<MessageChannel>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<MessageChannel>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7MessageChannel@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore14MessageChannelE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // MessageChannel has subclasses. If MessageChannel has subclasses that get passed
-        // to toJS() we currently require MessageChannel you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<MessageChannel>(globalObject, WTF::move(impl));
 }
 

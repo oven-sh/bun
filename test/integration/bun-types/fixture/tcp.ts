@@ -102,6 +102,7 @@ Bun.listen({
     cert: "asdf",
     key: Bun.file("adsf"),
     ca: Buffer.from("asdf"),
+    crl: ["asdf", Buffer.from("asdf"), new Uint8Array(1), Bun.file("asdf")],
   },
 });
 

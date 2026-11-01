@@ -1,0 +1,166 @@
+# function swapMany(list: Item[], rounds) { .. [list[at], list[other]] = [list[other], list[at]]; list[at] = { name: "x" + round, text: "yy" }; sum += list[at].text.length .. }   the list got an element in front
+# The accesses of a swap need one test of the array's storage: the later ones stand behind the first one's yes. A validating build makes the later tests all the same and compares.
+# The test compares the whole byte that names the kind of storage, and the lock of the cell lies in that byte. Another thread takes and releases the lock all the while. The storage stays what it was, so the run comes to its end
+# FORM: AsRead
+# OPTIONS: validate
+# RUN: run-in-shell globalThis.register = (make, swapMany) => { const list = make(); print(callWhileAnotherThreadLocksCell(list, () => swapMany(list, 300000))); };
+# CHECK-NOT: AOT validation
+# CHECK: 2001
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Item" module=m0 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}]
+data d0 root=Array{contents=undefined|null|L0} module=m0
+data d1 root=Object{layout=L0 members=[{key="name" value=String{value="n"}}, {key="text" value=String{value="t"}}]} module=m0
+data d2 root=Object{layout=L0 members=[{key="name" value=String{value="first"}}, {key="text" value=String{value="t"}}]} module=m0
+
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v1, v3 calleeName="register"
+    v7 = Undefined
+    Return v7
+}
+
+function f1 name="make" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Data data=d0
+    v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
+    v6 = Integer integer=2000
+    v7 = Less v4, v6
+    Branch v7 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v8):
+    Jump -> next b4()
+  b4():
+    v9 = PropGet v1 key="push"
+    v10 = Data data=d1
+    v11 = Call v9, v1, v10 calleeKey="push" calleeName="list.push"
+    v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody
+    Jump -> next b5()
+  b5():
+    v13 = Increment v8
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b2(v14)
+  b6(v15):
+    Jump -> next b7()
+  b7():
+    v16 = PropGet v1 key="splice"
+    v17 = Integer
+    v18 = Integer
+    v19 = Data data=d2
+    v20 = Call v16, v1, v17, v18, v19 calleeKey="splice" calleeName="list.splice"
+    v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Return v1
+}
+
+function f2 name="swapMany" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
+  b0(v0: undefined|null|Array<undefined|null|L0>, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(| 0, 1), notTaken b10(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Integer integer=1
+    v13 = PropGet v0 key="length"
+    v14 = Convert v13 declared={type=number} illTypedCause=Assertion
+    v15 = Integer integer=1
+    v16 = Sub v14, v15
+    v17 = Mod v10, v16
+    v18 = Add v12, v17
+    v19 = Convert v18 declared={type=number}
+    v20 = Integer integer=7
+    v21 = Mod v10, v20
+    v22 = Convert v21 declared={type=number}
+    v23 = ElemGet v0, v22
+    v24 = Convert v23 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v25 = ElemGet v0, v19
+    v26 = Convert v25 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v27 = NewArray v24, v26 contents=undefined|null|L0
+    v28 = IteratorOpen v27 elementCount=2 [isDestructuring]
+    Jump -> next b5()
+  b5() handler=b9():
+    v29 = IteratorResume v28 stepIndex=0
+    v30 = ResultAt v29
+    v31 = ResultAt v29 index=1
+    v32 = Convert v31 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    ElemSet v0, v19, v32
+    v34 = IteratorResume v28 stepIndex=1
+    v35 = ResultAt v34
+    v36 = ResultAt v34 index=1
+    v37 = Convert v36 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    ElemSet v0, v22, v37
+    Jump -> next b6()
+  b6():
+    IteratorClose v28
+    Jump -> next b7()
+  b7():
+    v40 = String string="x"
+    v41 = Add v40, v10
+    v42 = Convert v41 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v43 = String string="yy"
+    v44 = Convert v43 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v45 = NewObject -, v42, v44 layout=L0 fields=[0, 1]
+    v46 = FinishObject v45
+    v47 = Convert v46 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    ElemSet v0, v19, v47
+    v49 = ElemGet v0, v19
+    v50 = Convert v49 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v51 = PropGet v50 key="text"
+    v52 = PropGet v51 key="length"
+    v53 = Add v6, v52
+    v54 = Convert v53 declared={type=number}
+    Jump -> next b8()
+  b8():
+    v55 = Increment v10
+    v56 = Convert v55 declared={type=number}
+    Jump -> next b2(v54, v56)
+  b9() role=IterationCleanup subject=v28:
+    v57 = CatchException
+    IteratorClose v28 completion=Throw
+    Rethrow v57
+  b10(v59, v60):
+    Jump -> next b11()
+  b11():
+    v61 = Integer integer=2
+    v62 = Mul v60, v61
+    v63 = StrictEq v6, v62
+    Branch v63 -> taken b12(| 0), notTaken b14(| 0)
+  b12(v64):
+    Jump -> next b13()
+  b13():
+    v65 = PropGet v0 key="length"
+    v66 = Convert v65 declared={type=number} illTypedCause=Assertion
+    Jump -> next b16(v66)
+  b14(v67):
+    Jump -> next b15()
+  b15():
+    v68 = Integer integer=-1
+    Jump -> next b16(v68)
+  b16(v69):
+    v70 = Convert v69 declared={type=number}
+    Return v70
+}

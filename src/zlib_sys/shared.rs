@@ -64,11 +64,7 @@ pub enum FlushValue {
 //
 // zlib (and zlib-ng compat) typedef `uLong` as `unsigned long`, so one
 // `c_ulong`-based definition is ABI-correct on LP64 (8-byte) *and* LLP64
-// (4-byte) targets. The two per-platform copies in posix.rs / win32.rs were
-// already field-for-field identical; win32.rs had even normalized its
-// `struct_internal_state` to match posix so rustc's
-// `clashing_extern_declarations` lint saw the extern fns as compatible. This
-// hoist makes that the actual single definition.
+// (4-byte) targets.
 // ---------------------------------------------------------------------------
 use core::ffi::{c_char, c_uint, c_ulong, c_void};
 
@@ -76,47 +72,18 @@ use core::ffi::{c_char, c_uint, c_ulong, c_void};
 // typedef void   (*free_func) (voidpf opaque, voidpf address);
 pub type alloc_func = Option<unsafe extern "C" fn(*mut c_void, c_uint, c_uint) -> *mut c_void>;
 pub type free_func = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
-// Legacy spellings the per-platform modules exported; keep both so downstream
-// `pub use` re-exports stay source-compatible.
-pub type z_alloc_fn = alloc_func;
-pub type z_free_fn = free_func;
-pub type z_alloc_func = alloc_func;
-pub type z_free_func = free_func;
 
 // ---------------------------------------------------------------------------
 // zconf.h scalar typedefs — single source of truth.
 //
-// Previously duplicated in win32.rs and bun_zlib::lib.rs.
 // All resolve to ABI-identical primitives on every
 // target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
 // Unix) for the same reason zStream_struct above uses `c_ulong` directly.
 // ---------------------------------------------------------------------------
-pub type Byte = u8;
 pub type Bytef = u8;
 pub type uInt = c_uint;
 pub type uLong = c_ulong;
 pub type uLongf = uLong;
-pub type voidpf = *mut c_void;
-
-// ---------------------------------------------------------------------------
-// gzFile — opaque handle.
-//
-// zlib.h exposes `struct gzFile_s { unsigned have; unsigned char *next;
-// z_off64_t pos; }` purely so the `gzgetc()` macro can inline a fast path;
-// every other API treats `gzFile` as an opaque pointer. Bun never derefs it,
-// so one definition suffices for all targets. `pos` is `z_off64_t` — `__int64`
-// on Windows, `off64_t` on LP64 Unix — i.e. `i64` everywhere Bun ships, hence
-// the divergence between the old win32.rs (`c_longlong`) and bun_zlib
-// (`c_long`) copies was immaterial.
-// ---------------------------------------------------------------------------
-#[repr(C)]
-pub struct struct_gzFile_s {
-    pub have: c_uint,
-    pub next: *mut u8,
-    pub pos: i64,
-}
-pub type gzFile_s = struct_gzFile_s;
-pub type gzFile = *mut struct_gzFile_s;
 
 /// zlib's opaque `struct internal_state { int dummy; }` stub — applications
 /// never look inside, only carry the pointer.
@@ -124,7 +91,6 @@ pub type gzFile = *mut struct_gzFile_s;
 pub struct struct_internal_state {
     dummy: c_int,
 }
-pub type internal_state = struct_internal_state;
 
 // https://zlib.net/manual.html#Stream
 #[repr(C)]
@@ -156,7 +122,7 @@ pub struct zStream_struct {
     pub user_data: *mut c_void,
 
     /// best guess about the data type: binary or text for deflate, or the decoding state for inflate
-    pub data_type: DataType,
+    pub data_type: c_int,
 
     /// Adler-32 or CRC-32 value of the uncompressed data
     pub adler: c_ulong,
@@ -166,11 +132,8 @@ pub struct zStream_struct {
 
 pub type z_stream = zStream_struct;
 pub type z_streamp = *mut z_stream;
-// Alternate spellings (win32.rs historically used these).
-pub type struct_z_stream_s = zStream_struct;
-pub type z_stream_s = zStream_struct;
 
-// SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
-// allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
+// SAFETY: `#[repr(C)]` POD — raw pointers, integers, and `Option<extern fn>`
+// allocators. All-zero
 // is the documented pre-`inflateInit`/`deflateInit` state (S021).
 unsafe impl bun_core::ffi::Zeroable for zStream_struct {}

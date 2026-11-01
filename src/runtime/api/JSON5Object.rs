@@ -1,25 +1,19 @@
 use bun_collections::HashMap;
 use bun_core::StackCheck;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_js_parser::lexer;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
 
-pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
-    jsc::create_host_function_object(
-        global,
-        &[
-            ("parse", __jsc_host_parse, 1),
-            ("stringify", __jsc_host_stringify, 3),
-        ],
-    )
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [value, replacer, space_value] = frame.arguments_as_array::<3>();
-
-    value.ensure_still_alive();
+pub(crate) fn stringify<'a>(
+    cx: &mut JsScope<'a>,
+    value: JsLocal<'a>,
+    replacer: JsLocal<'a>,
+    space: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (value, replacer, space_value) = (value.to_js(), replacer.to_js(), space.to_js());
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);
@@ -43,16 +37,13 @@ pub(crate) fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     stringifier.builder.to_string(global)
 }
 
-#[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    super::with_text_format_source(
-        global,
-        frame,
-        b"input.json5",
-        true,
-        true,
-        |bump, log, source| {
-            let root = match json5::JSON5Parser::parse(source, log, bump) {
+pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
+    // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
+    // defined and not set. What throws returns without reading `input` again.
+    let global = unsafe { heap.global() };
+    super::with_text_format_source(global, input, b"input.json5", |bump, log, source| {
+        let root =
+            match json5::JSON5Parser::parse(source, log, bump) {
                 Ok(r) => r,
                 Err(json5::ExternalError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(json5::ExternalError::StackOverflow) => {
@@ -74,9 +65,8 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 }
             };
 
-            super::expr_to_js(root, global)
-        },
-    )
+        super::expr_to_js(root, global)
+    })
 }
 
 struct Stringifier {
@@ -108,11 +98,11 @@ enum Space {
     Minified,
     Number(u32),
     /// +1 WTF ref owned for the lifetime of the `Stringifier`.
-    Str(OwnedString),
+    Str(bun_core::String),
 }
 
 impl Space {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
@@ -125,7 +115,7 @@ impl Space {
             return Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }));
         }
         if space.is_string() {
-            let str = OwnedString::new(space.to_bun_string(global)?);
+            let str = space.to_bun_string(global)?;
             if str.length() == 0 {
                 return Ok(Space::Minified);
             }
@@ -136,7 +126,7 @@ impl Space {
 }
 
 impl Stringifier {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
@@ -146,11 +136,7 @@ impl Stringifier {
         })
     }
 
-    pub(crate) fn stringify_value(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> StringifyResult<()> {
+    fn stringify_value(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
@@ -196,7 +182,7 @@ impl Stringifier {
         }
 
         if unwrapped.is_string() {
-            let str = OwnedString::new(unwrapped.to_bun_string(global)?);
+            let str = unwrapped.to_bun_string(global)?;
             self.append_quoted_string(&str);
             return Ok(());
         }
@@ -280,7 +266,7 @@ impl Stringifier {
     }
 
     fn stringify_object(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
-        let mut iter = jsc::JSPropertyIterator::init(
+        let iter = jsc::JSPropertyIterator::init(
             global,
             value.to_object(global)?,
             jsc::JSPropertyIteratorOptions {
@@ -300,11 +286,8 @@ impl Stringifier {
         match self.space {
             Space::Minified => {
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
                     if !first {
@@ -313,17 +296,14 @@ impl Stringifier {
                     first = false;
                     self.append_key(&prop_name);
                     self.builder.append_lchar(b':');
-                    self.stringify_value(global, iter.value)?;
+                    self.stringify_value(global, value)?;
                 }
             }
             Space::Number(_) | Space::Str(_) => {
                 self.indent += 1;
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
                     if !first {
@@ -333,7 +313,7 @@ impl Stringifier {
                     self.newline();
                     self.append_key(&prop_name);
                     self.builder.append_latin1(b": ");
-                    self.stringify_value(global, iter.value)?;
+                    self.stringify_value(global, value)?;
                 }
                 self.indent -= 1;
                 if !first {
@@ -365,7 +345,7 @@ impl Stringifier {
         };
 
         if is_identifier {
-            self.builder.append_string(*name);
+            self.builder.append_string(name);
         } else {
             self.append_quoted_string(name);
         }
@@ -412,13 +392,9 @@ impl Stringifier {
             }
             Space::Str(space_str) => {
                 self.builder.append_lchar(b'\n');
-                let clamped: BunString = if space_str.length() > 10 {
-                    space_str.substring_with_len(0, 10)
-                } else {
-                    **space_str
-                };
+                let clamped = space_str.trunc(10);
                 for _ in 0..self.indent {
-                    self.builder.append_string(clamped);
+                    self.builder.append_string(&clamped);
                 }
             }
         }

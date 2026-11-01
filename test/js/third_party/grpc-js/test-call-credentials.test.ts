@@ -31,7 +31,7 @@ function makeAfterMsElapsedGenerator(ms: number) {
 }
 
 const generateFromServiceURL = (options, cb) => {
-  const metadata: Metadata = new Metadata();
+  const metadata: grpc.Metadata = new Metadata();
   metadata.add("service_url", options.service_url);
   cb(null, metadata);
 };
@@ -67,7 +67,7 @@ describe("CallCredentials", () => {
   describe("generateMetadata", () => {
     it("should call the function passed to createFromMetadataGenerator", async () => {
       const callCredentials = CallCredentials.createFromMetadataGenerator(generateFromServiceURL);
-      const metadata: Metadata = await callCredentials.generateMetadata({
+      const metadata: grpc.Metadata = await callCredentials.generateMetadata({
         method_name: "bar",
         service_url: "foo",
       });
@@ -77,7 +77,7 @@ describe("CallCredentials", () => {
 
     it("should emit an error if the associated metadataGenerator does", async () => {
       const callCredentials = CallCredentials.createFromMetadataGenerator(generateWithError);
-      let metadata: Metadata | null = null;
+      let metadata: grpc.Metadata | null = null;
       try {
         metadata = await callCredentials.generateMetadata({ method_name: "", service_url: "" });
       } catch (err) {
@@ -109,7 +109,7 @@ describe("CallCredentials", () => {
       await Promise.all(
         testCases.map(async testCase => {
           const { credentials, expected } = testCase;
-          const metadata: Metadata = await credentials.generateMetadata({
+          const metadata: grpc.Metadata = await credentials.generateMetadata({
             method_name: "",
             service_url: "",
           });

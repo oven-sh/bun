@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "JSCallbackArgs.h"
 #include "ncrypto.h"
 
 namespace Bun {
@@ -11,7 +12,7 @@ struct SecretKeyJobCtx {
     ~SecretKeyJobCtx() = default;
 
     void runTask(JSC::JSGlobalObject* lexicalGlobalObject);
-    void runFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject* lexicalGlobalObject);
     void deinit();
 
     static std::optional<SecretKeyJobCtx> fromJS(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue typeValue, JSC::JSValue optionsValue);
@@ -25,10 +26,7 @@ struct SecretKeyJobCtx {
 };
 
 struct SecretKeyJob {
-    static SecretKeyJob* create(JSC::JSGlobalObject*, size_t length, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, SecretKeyJobCtx&&, JSC::JSValue callback);
-
-    void schedule();
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsGenerateKey);

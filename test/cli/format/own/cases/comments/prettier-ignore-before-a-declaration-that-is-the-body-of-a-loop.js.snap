@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+for (;;) /* prettier-ignore */ var a   = b;
+c();
+
+for (x in y) /* prettier-ignore */ var a   = b;
+c();
+
+for (x of y)
+  // prettier-ignore
+  var a   = b;
+[c].d();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+for (;;) /* prettier-ignore */ var a   = b;
+c();
+
+for (x in y) /* prettier-ignore */ var a   = b;
+c();
+
+for (x of y)
+  // prettier-ignore
+  var a   = b;
+[c].d();
+
+===================== End =====================

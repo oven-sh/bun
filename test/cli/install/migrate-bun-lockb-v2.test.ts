@@ -1,12 +1,12 @@
 import { file, spawn } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, type DirectoryTree } from "harness";
 import { cp } from "node:fs/promises";
 import { join } from "node:path";
 const { parseLockfile } = install_test_helpers;
 
-const tests = [
+const tests: { name: string; lockfile: string; files: DirectoryTree }[] = [
   {
     name: "migrate-bun-lockb-v2",
     lockfile: "bun.lockb.v2",

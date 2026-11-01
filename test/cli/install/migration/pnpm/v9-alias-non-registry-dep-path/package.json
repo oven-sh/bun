@@ -1,0 +1,7 @@
+{
+  "name": "v9-alias-non-registry-dep-path",
+  "version": "1.0.0",
+  "dependencies": {
+    "outer": "file:outer"
+  }
+}

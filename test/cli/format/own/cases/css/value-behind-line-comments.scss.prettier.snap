@@ -1,0 +1,83 @@
+------------------
+{ printWidth: 80 }
+------------------
+a {
+  background:
+    radial-gradient(
+      circle at 25% 25%,
+      rgba(255, 255, 255, 0.1) 0%,
+      transparent 50%
+    ),
+    // a comment
+    radial-gradient(
+        circle at 75% 75%,
+        rgba(255, 255, 255, 0.05) 0%,
+        transparent 50%
+      );
+  width: pow(
+    2,
+    pow(
+      2,
+      // c
+      pow(2, 2)
+    )
+  );
+  transition:
+    // one
+    // two
+    opacity 1s,
+    // three
+    color;
+}
+b {
+  prop: // comment
+    value;
+}
+@import // Comment
+  "mixins",
+  "variables",
+  // Comment
+  "reset",
+  "scaffolding", "type",
+  // Comment
+  "bar",
+  "tabs";
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a {
+  background:
+    radial-gradient(circle at 25% 25%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+    // a comment
+    radial-gradient(circle at 75% 75%, rgba(255, 255, 255, 0.05) 0%, transparent 50%);
+  width: pow(
+    2,
+    pow(
+      2,
+      // c
+      pow(2, 2)
+    )
+  );
+  transition:
+    // one
+    // two
+    opacity 1s,
+    // three
+    color;
+}
+b {
+  prop: // comment
+    value;
+}
+@import // Comment
+  "mixins",
+  "variables",
+  // Comment
+  "reset",
+  "scaffolding", "type",
+  // Comment
+  "bar",
+  "tabs";
+
+===================== End =====================

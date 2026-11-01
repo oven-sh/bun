@@ -9,15 +9,15 @@ use crate::css_values::length::LengthValue as Length;
 #[derive(Clone, PartialEq)]
 pub struct TextShadow {
     /// The color of the text shadow.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The x offset of the text shadow.
-    pub x_offset: Length,
+    pub(crate) x_offset: Length,
     /// The y offset of the text shadow.
-    pub y_offset: Length,
+    pub(crate) y_offset: Length,
     /// The blur radius of the text shadow.
-    pub blur: Length,
+    pub(crate) blur: Length,
     /// The spread distance of the text shadow.
-    pub spread: Length, // added in Level 4 spec
+    pub(crate) spread: Length, // added in Level 4 spec
 }
 
 impl TextShadow {
@@ -87,7 +87,7 @@ impl TextShadow {
         Ok(())
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.color.is_compatible(browsers)
             && self.x_offset.is_compatible(browsers)
             && self.y_offset.is_compatible(browsers)

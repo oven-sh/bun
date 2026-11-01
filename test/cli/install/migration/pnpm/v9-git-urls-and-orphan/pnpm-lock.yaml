@@ -1,0 +1,35 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      a:
+        specifier: git+ssh://git@example.com:2222/org/a.git
+        version: git+ssh://git@example.com:2222/org/a.git#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      b:
+        specifier: git+https://TOKEN:x-oauth-basic@github.com/foo/bar.git
+        version: git+https://TOKEN:x-oauth-basic@github.com/foo/bar.git#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+packages:
+
+  a@git+ssh://git@example.com:2222/org/a.git#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:
+    resolution: {commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, repo: ssh://git@example.com:2222/org/a.git, type: git}
+    version: 1.0.0
+
+  b@git+https://TOKEN:x-oauth-basic@github.com/foo/bar.git#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:
+    resolution: {commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, repo: https://TOKEN:x-oauth-basic@github.com/foo/bar.git, type: git}
+    version: 1.0.0
+
+  orphan@1.0.0:
+    resolution: {integrity: sha512-orphan==}
+
+snapshots:
+
+  a@git+ssh://git@example.com:2222/org/a.git#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: {}
+
+  b@git+https://TOKEN:x-oauth-basic@github.com/foo/bar.git#bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: {}

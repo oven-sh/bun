@@ -19,9 +19,9 @@ use crate::collections::IdMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
 };
-use crate::hir::visitors::each_pattern_operand;
+use crate::hir::visitors::pattern_operands;
 use crate::hir::{
-    BlockKind, DeclarationId, HirFunction, InstructionKind, InstructionValue, ParamPattern, Place,
+    BlockKind, DeclarationId, HirFunction, InstructionId, InstructionKind, InstructionValue, Place,
 };
 
 use crate::hir::environment::Environment;
@@ -101,16 +101,22 @@ fn format_place(place: &Place, env: &Environment) -> String {
 /// map stores references to LValue/LValuePattern and mutates `kind` through them.
 /// In Rust, we track instruction indices and apply changes in a second pass.
 enum DeclarationLoc {
-    /// An LValue from DeclareLocal or StoreLocal — identified by (block_index, instr_index_in_block)
-    Instruction {
-        block_index: usize,
-        instr_local_index: usize,
-    },
+    /// An LValue from DeclareLocal or StoreLocal, or an LValuePattern from Destructure
+    Instruction(InstructionId),
     /// A parameter or context variable (seeded as Let, may be upgraded to Let on reassignment — already Let)
     ParamOrContext,
 }
 
-pub fn rewrite_instruction_kinds_based_on_reassignment(
+impl DeclarationLoc {
+    fn instruction(&self) -> Option<InstructionId> {
+        match self {
+            DeclarationLoc::Instruction(instr_id) => Some(*instr_id),
+            DeclarationLoc::ParamOrContext => None,
+        }
+    }
+}
+
+pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
     func: &mut HirFunction,
     env: &Environment,
 ) -> Result<(), CompilerError> {
@@ -119,21 +125,18 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
     // Track: for each DeclarationId, the location of its first declaration,
     // and whether it needs to be changed to Let (because of reassignment).
     let mut declarations: IdMap<DeclarationId, DeclarationLoc> = IdMap::new();
-    // Track which (block_index, instr_local_index) should have their lvalue.kind set to Reassign
-    let mut reassign_locs: Vec<(usize, usize)> = Vec::new();
+    // Track which instructions should have their lvalue.kind set to Reassign
+    let mut reassign_locs: Vec<InstructionId> = Vec::new();
     // Track which declaration locations need to be set to Let
-    let mut let_locs: Vec<(usize, usize)> = Vec::new();
-    // Track which (block_index, instr_local_index) should have their lvalue.kind set to Const
-    let mut const_locs: Vec<(usize, usize)> = Vec::new();
-    // Track which (block_index, instr_local_index) Destructure instructions get a specific kind
-    let mut destructure_kind_locs: Vec<(usize, usize, InstructionKind)> = Vec::new();
+    let mut let_locs: Vec<InstructionId> = Vec::new();
+    // Track which instructions should have their lvalue.kind set to Const
+    let mut const_locs: Vec<InstructionId> = Vec::new();
+    // Track which Destructure instructions get a specific kind
+    let mut destructure_kind_locs: Vec<(InstructionId, InstructionKind)> = Vec::new();
 
     // Seed with parameters
     for param in &func.params {
-        let place: &Place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place: &Place = param.place();
         let ident = &env.identifiers[place.identifier.0 as usize];
         if ident.name.is_some() {
             declarations.insert(ident.declaration_id, DeclarationLoc::ParamOrContext);
@@ -149,11 +152,9 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
     }
 
     // Process all blocks
-    let block_keys: Vec<_> = func.body.blocks.keys().cloned().collect();
-    for (block_index, block_id) in block_keys.iter().enumerate() {
-        let block = &func.body.blocks[block_id];
+    for block in func.body.blocks.values() {
         let block_kind = block.kind;
-        for (local_idx, instr_id) in block.instructions.iter().enumerate() {
+        for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
                 InstructionValue::DeclareLocal { lvalue, .. } => {
@@ -169,13 +170,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                             lvalue.place.loc,
                         ));
                     }
-                    declarations.insert(
-                        decl_id,
-                        DeclarationLoc::Instruction {
-                            block_index,
-                            instr_local_index: local_idx,
-                        },
-                    );
+                    declarations.insert(decl_id, DeclarationLoc::Instruction(instr_id));
                 }
                 InstructionValue::StoreLocal { lvalue, .. } => {
                     let ident = &env.identifiers[lvalue.place.identifier.0 as usize];
@@ -183,18 +178,11 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                         let decl_id = ident.declaration_id;
                         if let Some(existing) = declarations.get(decl_id) {
                             // Reassignment: mark existing declaration as Let, current as Reassign
-                            match existing {
-                                DeclarationLoc::Instruction {
-                                    block_index: bi,
-                                    instr_local_index: ili,
-                                } => {
-                                    let_locs.push((*bi, *ili));
-                                }
-                                DeclarationLoc::ParamOrContext => {
-                                    // Already Let, no-op
-                                }
+                            // A parameter or context variable is already Let.
+                            if let Some(loc) = existing.instruction() {
+                                let_locs.push(loc);
                             }
-                            reassign_locs.push((block_index, local_idx));
+                            reassign_locs.push(instr_id);
                         } else {
                             // First store — mark as Const
                             // Mirrors TS: CompilerError.invariant(!declarations.has(...))
@@ -208,20 +196,14 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                                     lvalue.place.loc,
                                 ));
                             }
-                            declarations.insert(
-                                decl_id,
-                                DeclarationLoc::Instruction {
-                                    block_index,
-                                    instr_local_index: local_idx,
-                                },
-                            );
-                            const_locs.push((block_index, local_idx));
+                            declarations.insert(decl_id, DeclarationLoc::Instruction(instr_id));
+                            const_locs.push(instr_id);
                         }
                     }
                 }
                 InstructionValue::Destructure { lvalue, .. } => {
                     let mut kind: Option<InstructionKind> = None;
-                    for place in each_pattern_operand(&lvalue.pattern) {
+                    for place in pattern_operands(&lvalue.pattern) {
                         let ident = &env.identifiers[place.identifier.0 as usize];
                         if ident.name.is_none() {
                             if !(kind.is_none() || kind == Some(InstructionKind::Const)) {
@@ -230,7 +212,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                                     Some(format!(
                                         "other places were `{}` but '{}' is const",
                                         format_kind(kind),
-                                        format_place(&place, env),
+                                        format_place(place, env),
                                     )),
                                     place.loc,
                                 ));
@@ -246,22 +228,15 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                                         Some(format!(
                                             "Other places were `{}` but '{}' is reassigned",
                                             format_kind(kind),
-                                            format_place(&place, env),
+                                            format_place(place, env),
                                         )),
                                         place.loc,
                                     ));
                                 }
                                 kind = Some(InstructionKind::Reassign);
-                                match existing {
-                                    DeclarationLoc::Instruction {
-                                        block_index: bi,
-                                        instr_local_index: ili,
-                                    } => {
-                                        let_locs.push((*bi, *ili));
-                                    }
-                                    DeclarationLoc::ParamOrContext => {
-                                        // Already Let
-                                    }
+                                // A parameter or context variable is already Let.
+                                if let Some(loc) = existing.instruction() {
+                                    let_locs.push(loc);
                                 }
                             } else {
                                 // New declaration
@@ -272,20 +247,14 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                                         place.loc,
                                     ));
                                 }
-                                declarations.insert(
-                                    decl_id,
-                                    DeclarationLoc::Instruction {
-                                        block_index,
-                                        instr_local_index: local_idx,
-                                    },
-                                );
+                                declarations.insert(decl_id, DeclarationLoc::Instruction(instr_id));
                                 if !(kind.is_none() || kind == Some(InstructionKind::Const)) {
                                     return Err(invariant_error_with_loc(
                                         "Expected consistent kind for destructuring",
                                         Some(format!(
                                             "Other places were `{}` but '{}' is const",
                                             format_kind(kind),
-                                            format_place(&place, env),
+                                            format_place(place, env),
                                         )),
                                         place.loc,
                                     ));
@@ -296,7 +265,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                     }
                     let kind =
                         kind.ok_or_else(|| invariant_error("Expected at least one operand", None))?;
-                    destructure_kind_locs.push((block_index, local_idx, kind));
+                    destructure_kind_locs.push((instr_id, kind));
                 }
                 InstructionValue::PostfixUpdate { lvalue, .. }
                 | InstructionValue::PrefixUpdate { lvalue, .. } => {
@@ -309,16 +278,9 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                             lvalue.loc,
                         ));
                     };
-                    match existing {
-                        DeclarationLoc::Instruction {
-                            block_index: bi,
-                            instr_local_index: ili,
-                        } => {
-                            let_locs.push((*bi, *ili));
-                        }
-                        DeclarationLoc::ParamOrContext => {
-                            // Already Let
-                        }
+                    // A parameter or context variable is already Let.
+                    if let Some(loc) = existing.instruction() {
+                        let_locs.push(loc);
                     }
                 }
                 _ => {}
@@ -328,11 +290,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
 
     // Phase 2: Apply all collected mutations.
 
-    // Helper: given (block_index, instr_local_index), get the InstructionId
-    // and mutate the instruction's lvalue kind.
-    for (bi, ili) in const_locs {
-        let block_id = &block_keys[bi];
-        let instr_id = func.body.blocks[block_id].instructions[ili];
+    for instr_id in const_locs {
         let instr = &mut func.instructions[instr_id.0 as usize];
         match &mut instr.value {
             InstructionValue::StoreLocal { lvalue, .. } => {
@@ -342,9 +300,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
         }
     }
 
-    for (bi, ili) in reassign_locs {
-        let block_id = &block_keys[bi];
-        let instr_id = func.body.blocks[block_id].instructions[ili];
+    for instr_id in reassign_locs {
         let instr = &mut func.instructions[instr_id.0 as usize];
         match &mut instr.value {
             InstructionValue::StoreLocal { lvalue, .. } => {
@@ -360,9 +316,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
     // let_locs afterwards allows it to override the Const set here, matching
     // the TS behaviour where `declaration.kind = Let` mutates the original
     // lvalue reference after the Destructure's own `lvalue.kind = kind`.
-    for (bi, ili, kind) in destructure_kind_locs {
-        let block_id = &block_keys[bi];
-        let instr_id = func.body.blocks[block_id].instructions[ili];
+    for (instr_id, kind) in destructure_kind_locs {
         let instr = &mut func.instructions[instr_id.0 as usize];
         match &mut instr.value {
             InstructionValue::Destructure { lvalue, .. } => {
@@ -372,9 +326,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
         }
     }
 
-    for (bi, ili) in let_locs {
-        let block_id = &block_keys[bi];
-        let instr_id = func.body.blocks[block_id].instructions[ili];
+    for instr_id in let_locs {
         let instr = &mut func.instructions[instr_id.0 as usize];
         match &mut instr.value {
             InstructionValue::DeclareLocal { lvalue, .. }

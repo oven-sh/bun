@@ -3,7 +3,7 @@ import { availableParallelism } from "node:os";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { build, buildWithNodeGyp, isBuilt, parseBindingGyp } from "./harness";
+import { build, buildWithNodeGyp, isBuilt, parseBindingGyp, warmNodeGyp } from "./harness";
 
 const dirs = [...new Set(process.argv.slice(2).map(dir => resolve(dir)))];
 if (dirs.length === 0) {
@@ -22,6 +22,7 @@ const failed: string[] = [];
 
 if (pending.length) {
   if (process.platform !== "win32") {
+    await warmNodeGyp();
     const width = Math.max(2, Math.min(8, availableParallelism()));
     let next = 0;
     const worker = async () => {

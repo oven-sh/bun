@@ -5,31 +5,26 @@ use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
-pub struct Stmt {
-    pub base: Base,
+pub(crate) struct Stmt {
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Stmt>,
-    pub idx: usize,
-    pub last_exit_code: Option<ExitCode>,
-    pub currently_executing: Option<NodeId>,
-    pub io: IO,
+    pub(crate) idx: usize,
+    pub(crate) last_exit_code: Option<ExitCode>,
+    pub(crate) currently_executing: Option<NodeId>,
+    pub(crate) io: IO,
 }
 
 impl Stmt {
     pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Stmt,
+        node: &ast::Stmt,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Stmt(Stmt {
             base: Base::new(parent, shell),
-            // SAFETY: `node` is non-null and points into the AST arena
-            // (`ShellArgs::__arena`), which the interpreter holds for its
-            // entire lifetime — strictly outliving every state node (the
-            // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Stmt) },
+            node: bun_ptr::BackRef::new(node),
             idx: 0,
             last_exit_code: None,
             currently_executing: None,
@@ -86,6 +81,10 @@ impl Stmt {
         if !matches!(interp.node(child).kind(), StateKind::Async) {
             interp.deinit_node(child);
         }
+        if interp.interrupted(this) {
+            let me = interp.as_stmt_mut(this);
+            me.idx = Self::expr_count(me);
+        }
         Yield::Next(this)
     }
 
@@ -94,7 +93,6 @@ impl Stmt {
         if let Some(exec) = exec {
             interp.deinit_node(exec);
         }
-        interp.as_stmt_mut(this).base.end_scope();
     }
 
     #[inline]

@@ -33,11 +33,7 @@
 #include "config.h"
 #include "PerformanceResourceTiming.h"
 
-// #include "Document.h"
-// #include "DocumentLoadTiming.h"
-// #include "DocumentLoader.h"
 #include "PerformanceServerTiming.h"
-// #include "ResourceResponse.h"
 #include "ResourceTiming.h"
 #include <wtf/URL.h>
 

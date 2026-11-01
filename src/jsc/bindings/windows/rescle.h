@@ -49,18 +49,13 @@
 #include <windows.h>
 #include <memory> // unique_ptr
 
-#define RU_VS_COMMENTS L"Comments"
 #define RU_VS_COMPANY_NAME L"CompanyName"
 #define RU_VS_FILE_DESCRIPTION L"FileDescription"
 #define RU_VS_FILE_VERSION L"FileVersion"
-#define RU_VS_INTERNAL_NAME L"InternalName"
 #define RU_VS_LEGAL_COPYRIGHT L"LegalCopyright"
-#define RU_VS_LEGAL_TRADEMARKS L"LegalTrademarks"
 #define RU_VS_ORIGINAL_FILENAME L"OriginalFilename"
-#define RU_VS_PRIVATE_BUILD L"PrivateBuild"
 #define RU_VS_PRODUCT_NAME L"ProductName"
 #define RU_VS_PRODUCT_VERSION L"ProductVersion"
-#define RU_VS_SPECIAL_BUILD L"SpecialBuild"
 
 namespace rescle {
 
@@ -152,39 +147,23 @@ public:
     bool Load(const WCHAR* filename);
     bool SetVersionString(WORD languageId, const WCHAR* name, const WCHAR* value);
     bool SetVersionString(const WCHAR* name, const WCHAR* value);
-    const WCHAR* GetVersionString(WORD languageId, const WCHAR* name);
-    const WCHAR* GetVersionString(const WCHAR* name);
     bool SetProductVersion(WORD languageId, UINT id, unsigned short v1, unsigned short v2, unsigned short v3, unsigned short v4);
     bool SetProductVersion(unsigned short v1, unsigned short v2, unsigned short v3, unsigned short v4);
     bool SetFileVersion(WORD languageId, UINT id, unsigned short v1, unsigned short v2, unsigned short v3, unsigned short v4);
     bool SetFileVersion(unsigned short v1, unsigned short v2, unsigned short v3, unsigned short v4);
-    bool ChangeString(WORD languageId, UINT id, const WCHAR* value);
-    bool ChangeString(UINT id, const WCHAR* value);
-    bool ChangeRcData(UINT id, const WCHAR* pathToResource);
-    const WCHAR* GetString(WORD languageId, UINT id);
-    const WCHAR* GetString(UINT id);
     bool SetIcon(const WCHAR* path, const LANGID& langId, UINT iconBundle);
     bool SetIcon(const WCHAR* path, const LANGID& langId);
     bool SetIcon(const WCHAR* path);
-    bool SetExecutionLevel(const WCHAR* value);
-    bool IsExecutionLevelSet();
-    bool SetApplicationManifest(const WCHAR* value);
-    bool IsApplicationManifestSet();
     bool Commit();
 
 private:
     bool SerializeStringTable(const StringValues& values, UINT blockId, std::vector<char>* out);
 
     static BOOL CALLBACK OnEnumResourceName(HMODULE hModule, LPCWSTR lpszType, LPWSTR lpszName, LONG_PTR lParam);
-    static BOOL CALLBACK OnEnumResourceManifest(HMODULE hModule, LPCWSTR lpszType, LPWSTR lpszName, LONG_PTR lParam);
     static BOOL CALLBACK OnEnumResourceLanguage(HANDLE hModule, LPCWSTR lpszType, LPCWSTR lpszName, WORD wIDLanguage, LONG_PTR lParam);
 
     HMODULE module_;
     std::wstring filename_;
-    std::wstring executionLevel_;
-    std::wstring originalExecutionLevel_;
-    std::wstring applicationManifestPath_;
-    std::wstring manifestString_;
     VersionStampMap versionStampMap_;
     StringTableMap stringTableMap_;
     IconTableMap iconBundleMap_;

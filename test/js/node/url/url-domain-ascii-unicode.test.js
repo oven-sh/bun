@@ -1,3 +1,4 @@
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import url from "node:url";
 
@@ -67,8 +68,9 @@ const pairs = [
 const invalids = [
   ["@", ""],
   ["a@b", ""],
-  [null, null],
-  [undefined, undefined],
+  // Node stringifies the argument, so these parse as the domains "null"/"undefined".
+  [null, "null"],
+  [undefined, "undefined"],
   ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", ""],
 ];
 
@@ -97,5 +99,18 @@ describe("url.domainToUnicode", () => {
     test(`-> '${input}' is '${expected}'`, () => {
       expect(url.domainToASCII(input)).toEqual(expected);
     });
+  }
+});
+
+test("rejects a host too long for the IDNA conversion buffer", () => {
+  // With a 1 MiB limit the buffer is capped at 524288 code units.
+  const rest = Buffer.alloc(524288, "a").toString();
+  const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+  try {
+    expect(() => url.domainToUnicode("xn--nxa." + rest).length).toThrow("Out of memory");
+    expect(url.domainToASCII("xn--mgbh0fb." + rest).length).toBe(0);
+    expect(URL.canParse("http://xn--mgbh0fb." + rest)).toBe(false);
+  } finally {
+    setSyntheticAllocationLimitForTesting(originalLimit);
   }
 });

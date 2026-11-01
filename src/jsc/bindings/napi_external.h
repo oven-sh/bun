@@ -37,12 +37,7 @@ public:
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
 
-        return WebCore::subspaceForImpl<NapiExternal, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNapiExternal.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiExternal = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNapiExternal.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiExternal = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<NapiExternal, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNapiExternal, m_subspaceForNapiExternal));
     }
 
     ~NapiExternal();
@@ -50,8 +45,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype,
-            JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, napi_finalize callback, WTF::RefPtr<NapiEnv> env = nullptr)

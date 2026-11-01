@@ -18,7 +18,7 @@
  */
 
 import { spawn } from "bun";
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 
 interface FlagInfo {
@@ -160,6 +160,9 @@ function parseFlag(line: string): FlagInfo | null {
         continue;
       }
 
+      // The help printer drops escaped <placeholder> tags, leaving doubled spaces behind
+      description = description.replace(/\s{2,}/g, " ").trim();
+
       // Extract additional info from description
       const hasValue = !!valueSpec;
       let valueType: string | undefined;
@@ -188,7 +191,7 @@ function parseFlag(line: string): FlagInfo | null {
       return {
         name: longName.replace(/^--/, ""),
         shortName: shortName?.replace(/^-/, ""),
-        description: description.trim(),
+        description,
         hasValue,
         valueType,
         defaultValue,
@@ -343,6 +346,24 @@ function parsePmSubcommands(helpText: string): Record<string, SubcommandInfo> {
             rm: {
               name: "rm",
               description: "clear the cache",
+            },
+            prune: {
+              name: "prune",
+              description: "remove the packages that are older than 30 days",
+              flags: [
+                {
+                  name: "max-age",
+                  description: "Remove cache entries older than this many days (default 30)",
+                  hasValue: true,
+                  valueType: "days",
+                  defaultValue: "30",
+                },
+                {
+                  name: "dry-run",
+                  description: "Print what would be removed without deleting anything",
+                  hasValue: false,
+                },
+              ],
             },
           };
         } else if (name === "pkg") {
@@ -588,6 +609,7 @@ function parseGlobalFlags(helpText: string): FlagInfo[] {
 function addCommandAliases(commands: Record<string, CommandInfo>): void {
   const aliasMap: Record<string, string[]> = {
     "install": ["i"],
+    "update": ["up"],
     "add": ["a"],
     "remove": ["rm"],
     "create": ["c"],

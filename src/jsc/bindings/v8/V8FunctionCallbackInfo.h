@@ -46,9 +46,11 @@ public:
         kFirstJSArgumentIndex = 10,
     };
 
-    // v8::internal::Internals::kFrameTypeApiCallExit. Stored Smi-encoded in
-    // the kFrameTypeIndex slot; IsConstructCall() compares against it.
+    // v8::internal::Internals::kFrameTypeApi{Call,Construct}Exit. Stored
+    // Smi-encoded in the kFrameTypeIndex slot; IsConstructCall() compares
+    // against kFrameTypeApiConstructExit.
     static constexpr int kFrameTypeApiCallExit = 18;
+    static constexpr int kFrameTypeApiConstructExit = 19;
 
     // V8 declares this as `internal::Address values_[1]` and indexes it
     // out-of-bounds in both directions; the object provides a view of the

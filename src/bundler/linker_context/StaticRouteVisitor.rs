@@ -10,17 +10,24 @@ use bun_core::env_var;
 use crate::import_record;
 use crate::{Index, LinkerContext, UseDirective};
 
-pub struct StaticRouteVisitor<'a> {
-    pub c: &'a LinkerContext<'a>,
-    pub cache: ArrayHashMap</* Index::Int */ u32, bool>,
-    pub visited: AutoBitSet,
+pub(crate) struct StaticRouteVisitor<'a> {
+    pub(crate) c: &'a LinkerContext<'a>,
+    pub(crate) cache: ArrayHashMap</* Index::Int */ u32, bool>,
+    pub(crate) visited: AutoBitSet,
+    pub(crate) stack: Vec<Frame>,
+}
+
+/// A file being traversed and the index of its next import record to check.
+pub(crate) struct Frame {
+    source_index: Index,
+    next_record: usize,
 }
 
 impl<'a> StaticRouteVisitor<'a> {
     /// This the quickest, simplest, dumbest way I can think of doing this.
     /// Investigate performance. It can have false negatives (it doesn't properly
     /// handle cycles), but that's okay as it's just used an optimization
-    pub fn has_transitive_use_client(&mut self, entry_point_source_index: u32) -> bool {
+    pub(crate) fn has_transitive_use_client(&mut self, entry_point_source_index: u32) -> bool {
         if cfg!(debug_assertions)
             && env_var::BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR
                 .get()
@@ -53,11 +60,14 @@ impl<'a> StaticRouteVisitor<'a> {
     }
 
     /// 1. Get AST for `source_index`
-    /// 2. Recursively traverse its imports in import records
+    /// 2. Traverse its imports in import records, depth-first
     /// 3. If any of the imports match any item in
     ///    `referenced_source_indices` which has `use_directive ==
     ///    .client`, then we know `source_index` is NOT fully
     ///    static.
+    ///
+    /// The traversal uses an explicit stack. Once a file reaches a client
+    /// boundary, so does every file on the stack.
     fn has_transitive_use_client_impl(
         &mut self,
         all_import_records: &[import_record::List<'_>],
@@ -65,51 +75,66 @@ impl<'a> StaticRouteVisitor<'a> {
         use_directives: &[UseDirective],
         source_index: Index,
     ) -> bool {
-        if let Some(result) = self.cache.get(&source_index.get()) {
-            return *result;
+        debug_assert!(self.stack.is_empty());
+        if let Some(known) = self.enter(source_index) {
+            return known;
         }
-        if self.visited.is_set(source_index.get() as usize) {
-            return false;
-        }
-        self.visited.set(source_index.get() as usize);
 
-        let import_records = &all_import_records[source_index.get() as usize];
-
-        let result = 'result: {
-            for import_record in import_records.as_slice() {
-                if !import_record.source_index.is_valid() {
-                    continue;
-                }
-
-                // check if this import is a client boundary
-                debug_assert_eq!(referenced_source_indices.len(), use_directives.len());
-                for (referenced_source_index, use_directive) in
-                    referenced_source_indices.iter().zip(use_directives)
-                {
-                    if *use_directive != UseDirective::Client {
-                        continue;
-                    }
-                    // it's a client boundary
-                    if *referenced_source_index == import_record.source_index.get() {
-                        break 'result true;
-                    }
-                }
-
-                // otherwise check its children
-                if self.has_transitive_use_client_impl(
-                    all_import_records,
-                    referenced_source_indices,
-                    use_directives,
-                    import_record.source_index,
-                ) {
-                    break 'result true;
-                }
+        let mut result = false;
+        while let Some(frame) = self.stack.last_mut() {
+            if result {
+                let finished = self.stack.pop().expect("stack is non-empty");
+                self.cache.insert(finished.source_index.get(), true);
+                continue;
             }
-            false
-        };
 
-        self.cache.insert(source_index.get(), result);
+            let import_records = &all_import_records[frame.source_index.get() as usize];
+            let Some(import_record) = import_records.as_slice().get(frame.next_record) else {
+                let finished = self.stack.pop().expect("stack is non-empty");
+                self.cache.insert(finished.source_index.get(), false);
+                continue;
+            };
+            frame.next_record += 1;
+
+            if !import_record.source_index.is_valid() {
+                continue;
+            }
+
+            // check if this import is a client boundary
+            debug_assert_eq!(referenced_source_indices.len(), use_directives.len());
+            if referenced_source_indices.iter().zip(use_directives).any(
+                |(referenced_source_index, use_directive)| {
+                    *use_directive == UseDirective::Client
+                        && *referenced_source_index == import_record.source_index.get()
+                },
+            ) {
+                result = true;
+                continue;
+            }
+
+            // otherwise check its children
+            if let Some(known) = self.enter(import_record.source_index) {
+                result = known;
+            }
+        }
 
         result
+    }
+
+    /// Pushes `source_index` onto the stack. Returns the result instead if it's
+    /// cached or the file was already visited.
+    fn enter(&mut self, source_index: Index) -> Option<bool> {
+        if let Some(result) = self.cache.get(&source_index.get()) {
+            return Some(*result);
+        }
+        if self.visited.is_set(source_index.get() as usize) {
+            return Some(false);
+        }
+        self.visited.set(source_index.get() as usize);
+        self.stack.push(Frame {
+            source_index,
+            next_record: 0,
+        });
+        None
     }
 }

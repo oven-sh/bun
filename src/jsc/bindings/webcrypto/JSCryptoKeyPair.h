@@ -27,8 +27,6 @@
 
 namespace WebCore {
 
-template<> CryptoKeyPair convertDictionary<CryptoKeyPair>(JSC::JSGlobalObject&, JSC::JSValue);
-
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoKeyPair&);
 
 } // namespace WebCore

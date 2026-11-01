@@ -1,0 +1,7 @@
+try { a }
+// prettier-ignore
+catch ( b ) { c }
+try { d } /* prettier-ignore */ catch ( e ) { f }
+try { g }
+// prettier-ignore
+finally { h }

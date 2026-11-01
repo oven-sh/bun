@@ -15,11 +15,11 @@ pub struct MaxBuf {
     /// depend on the pipe reader's parent vtable (which changes to `FileReader`
     /// once the `.stdout`/`.stderr` stream getter is touched). `None` after
     /// subprocess finalize or once the overflow callback has fired.
-    pub owned_by_subprocess: Cell<Option<Owner>>,
+    pub(crate) owned_by_subprocess: Cell<Option<Owner>>,
     /// `false` after pipereader finalize.
-    pub owned_by_reader: Cell<bool>,
+    pub(crate) owned_by_reader: Cell<bool>,
     /// If this goes negative, `on_max_buffer` is called on the subprocess.
-    pub remaining_bytes: Cell<i64>,
+    pub(crate) remaining_bytes: Cell<i64>,
     // (once both are cleared, it is freed)
 }
 
@@ -110,7 +110,7 @@ impl MaxBuf {
         v.owned_by_reader.set(true);
     }
 
-    pub fn remove_from_pipereader(ptr: &mut Option<NonNull<MaxBuf>>) {
+    pub(crate) fn remove_from_pipereader(ptr: &mut Option<NonNull<MaxBuf>>) {
         let Some(this_nn) = *ptr else { return };
         let this = Self::live(&this_nn);
         debug_assert!(this.owned_by_reader.get());
@@ -121,7 +121,7 @@ impl MaxBuf {
         }
     }
 
-    pub fn transfer_to_pipereader(
+    pub(crate) fn transfer_to_pipereader(
         prev: &mut Option<NonNull<MaxBuf>>,
         next: &mut Option<NonNull<MaxBuf>>,
     ) {
@@ -144,7 +144,7 @@ impl MaxBuf {
     /// projection (the back-ref invariant: `this` is live while
     /// `owned_by_reader` is set, which every caller has just checked via
     /// `Some(maxbuf)`).
-    pub fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
+    pub(crate) fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
         let mb = Self::live(&this);
         let delta = i64::try_from(bytes).unwrap_or(0);
         let remaining = mb.remaining_bytes.get().checked_sub(delta).unwrap_or(-1);
@@ -167,7 +167,7 @@ impl MaxBuf {
     /// Trims `buf` to the remaining budget plus `OVERREAD_ALLOWANCE`: unclamped,
     /// a 256 KB scratch read off a socketpair overshoots `maxBuffer` by hundreds
     /// of KB. Never empties a non-empty `buf` (that would read as EOF).
-    pub fn clamp_read_buf(this: Option<NonNull<MaxBuf>>, buf: &mut [u8]) -> &mut [u8] {
+    pub(crate) fn clamp_read_buf(this: Option<NonNull<MaxBuf>>, buf: &mut [u8]) -> &mut [u8] {
         let Some(this) = this else {
             return buf;
         };

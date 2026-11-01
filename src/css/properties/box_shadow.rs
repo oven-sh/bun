@@ -15,17 +15,17 @@ use bun_alloc::ArenaVecExt as _; // bumpalo::Bump re-export (CSS is an AST crate
 /// A value for the [box-shadow](https://drafts.csswg.org/css-backgrounds/#box-shadow) property.
 pub struct BoxShadow {
     /// The color of the box shadow.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The x offset of the shadow.
-    pub x_offset: Length,
+    pub(crate) x_offset: Length,
     /// The y offset of the shadow.
-    pub y_offset: Length,
+    pub(crate) y_offset: Length,
     /// The blur radius of the shadow.
-    pub blur: Length,
+    pub(crate) blur: Length,
     /// The spread distance of the shadow.
-    pub spread: Length,
+    pub(crate) spread: Length,
     /// Whether the shadow is inset within the box.
-    pub inset: bool,
+    pub(crate) inset: bool,
 }
 
 // `SmallList::{deep_clone,eql,is_compatible}` are bounded on the
@@ -144,7 +144,7 @@ impl BoxShadow {
         Ok(())
     }
 
-    pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
+    fn deep_clone(&self, arena: &Arena) -> Self {
         // Expanded field-wise — keep in sync with the BoxShadow field list. `Length`
         // has no `DeepClone` trait impl yet but is `Clone` (Box<Calc> deep-clones).
         BoxShadow {
@@ -157,7 +157,7 @@ impl BoxShadow {
         }
     }
 
-    pub(crate) fn eql(&self, rhs: &Self) -> bool {
+    fn eql(&self, rhs: &Self) -> bool {
         // Expanded field-wise — keep in sync with the BoxShadow field list.
         self.color.eql(&rhs.color)
             && self.x_offset == rhs.x_offset
@@ -167,7 +167,7 @@ impl BoxShadow {
             && self.inset == rhs.inset
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.color.is_compatible(browsers)
             && self.x_offset.is_compatible(browsers)
             && self.y_offset.is_compatible(browsers)
@@ -178,8 +178,8 @@ impl BoxShadow {
 
 #[derive(Default)]
 pub struct BoxShadowHandler {
-    pub box_shadows: Option<(SmallList<BoxShadow, 1>, VendorPrefix)>,
-    pub flushed: bool,
+    pub(crate) box_shadows: Option<(SmallList<BoxShadow, 1>, VendorPrefix)>,
+    pub(crate) flushed: bool,
 }
 
 impl BoxShadowHandler {
@@ -248,7 +248,7 @@ impl BoxShadowHandler {
         self.flushed = false;
     }
 
-    pub(crate) fn flush(
+    fn flush(
         &mut self,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,

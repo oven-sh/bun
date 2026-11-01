@@ -8,7 +8,7 @@ test("req.body.locked is true after body is consumed", async () => {
 
   await new Response(req.body).arrayBuffer();
 
-  expect(req.body.locked).toBe(true);
+  expect(req.body!.locked).toBe(true);
 });
 
 test("req.bodyUsed is true after body is consumed", async () => {
@@ -50,7 +50,7 @@ test("await fetch(req) throws if req.body is already consumed (stream that has b
     method: "POST",
   });
 
-  await req.body.getReader().read();
+  await req.body!.getReader().read();
   expect(() => fetch(req)).toThrow();
   expect(req.bodyUsed).toBe(true);
 });
@@ -61,7 +61,7 @@ test("await fetch(req) throws if req.body is already consumed (stream)", async (
     method: "POST",
   });
 
-  req.body.getReader();
+  req.body!.getReader();
   expect(() => fetch(req)).toThrow();
   expect(req.bodyUsed).toBe(true);
 });

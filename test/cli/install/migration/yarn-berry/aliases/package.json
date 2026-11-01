@@ -1,0 +1,10 @@
+{
+  "name": "berry-aliases",
+  "dependencies": {
+    "aliased": "npm:no-deps@^1.0.0",
+    "no-deps": "^2.0.0",
+    "one-dep": "^1.0.0",
+    "v-alias": "npm:various-requires@^1.0.0",
+    "seven": "npm:7-no-deps@^1.0.0"
+  }
+}

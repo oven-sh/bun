@@ -18,10 +18,10 @@ use bun_sys::Fd;
 #[derive(Clone, Copy)]
 pub struct CompileTarget {
     pub os: OperatingSystem,
-    pub arch: Architecture,
-    pub baseline: bool,
-    pub version: Version,
-    pub libc: Libc,
+    pub(crate) arch: Architecture,
+    pub(crate) baseline: bool,
+    pub(crate) version: Version,
+    pub(crate) libc: Libc,
 }
 
 impl Default for CompileTarget {
@@ -62,7 +62,7 @@ pub enum Libc {
 
 impl Libc {
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub(crate) const fn npm_name(self) -> &'static str {
+    const fn npm_name(self) -> &'static str {
         match self {
             Libc::Default => "",
             Libc::Musl => "-musl",
@@ -99,7 +99,7 @@ pub enum ParseError {
 }
 
 impl CompileTarget {
-    pub fn eql(&self, other: &CompileTarget) -> bool {
+    pub(crate) fn eql(&self, other: &CompileTarget) -> bool {
         self.os == other.os
             && self.arch == other.arch
             && self.baseline == other.baseline
@@ -109,6 +109,17 @@ impl CompileTarget {
 
     pub fn is_default(&self) -> bool {
         self.eql(&CompileTarget::default())
+    }
+
+    /// Same os, arch and libc as this bun (a different bun version for this platform still counts).
+    pub fn is_host_platform(&self) -> bool {
+        let host = CompileTarget::default();
+        self.os == host.os && self.arch == host.arch && self.libc == host.libc
+    }
+
+    /// This bun itself: the host platform at this version. x64 ships as one build, which `-baseline` names too.
+    pub fn is_this_bun(&self) -> bool {
+        self.is_host_platform() && self.version.eql(CompileTarget::default().version)
     }
 
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
@@ -123,7 +134,7 @@ impl CompileTarget {
         self.to_npm_registry_url_with_url(buf, b"https://registry.npmjs.org")
     }
 
-    pub fn to_npm_registry_url_with_url<'a>(
+    pub(crate) fn to_npm_registry_url_with_url<'a>(
         &self,
         buf: &'a mut [u8],
         registry_url: &[u8],
@@ -187,38 +198,42 @@ impl CompileTarget {
         version_str: &'a ZStr,
         _env: &mut bun_dotenv::Loader,
         needs_download: &mut bool,
-    ) -> &'a ZStr {
+    ) -> Result<&'a ZStr, crate::Error> {
         if self.is_default() {
             'brk: {
                 let Ok(self_exe_path) = bun_core::self_exe_path() else {
                     break 'brk;
                 };
+                if self_exe_path.len() >= buf.len() {
+                    return Err(crate::Error::BufferTooSmall);
+                }
                 buf[..self_exe_path.len()].copy_from_slice(self_exe_path.as_bytes());
                 buf[self_exe_path.len()] = 0;
                 *needs_download = false;
                 // SAFETY: buf[self_exe_path.len()] == 0 written above
-                return ZStr::from_buf(&buf[..], self_exe_path.len());
+                return Ok(ZStr::from_buf(&buf[..], self_exe_path.len()));
             }
         }
 
         if bun_sys::exists_at(Fd::cwd(), version_str) {
             *needs_download = false;
-            return version_str;
+            return Ok(version_str);
         }
 
         // T1 fallback ignores `_env` (full env-override chain lives in bun_install).
         let cache_dir = bun_sys::fetch_cache_directory_path();
-        let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+        let dest = path::resolve_path::join_abs_string_buf_z_checked::<path::platform::Auto>(
             path::fs::FileSystem::instance().top_level_dir(),
             &mut buf[..],
             &[cache_dir.as_slice(), version_str.as_bytes()],
-        );
+        )
+        .ok_or(crate::Error::BufferTooSmall)?;
 
         if bun_sys::exists_at(Fd::cwd(), dest) {
             *needs_download = false;
         }
 
-        dest
+        Ok(dest)
     }
 
     // `download_to_path` moved up to `bun_standalone_graph` so it can name
@@ -368,7 +383,7 @@ impl CompileTarget {
                     bun_core::err_generic!(
                         "Unsupported target {} in \"bun{}\"\n\
                          To see the supported targets:\n  \
-                         https://bun.com/docs/bundler/executables",
+                         https://bun.com/docs/compiler/executables",
                         bun_fmt::quote(token),
                         bstr::BStr::new(input_),
                     );

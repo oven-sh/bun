@@ -4,20 +4,14 @@ pub enum Error {
     InvalidOptions,
     #[error("ConnectionClosed")]
     ConnectionClosed,
-    #[error("DeflateInitFailed")]
-    DeflateInitFailed,
-    #[error("InflateInitFailed")]
-    InflateInitFailed,
 }
 
 impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::InvalidOptions => "InvalidOptions",
             Self::ConnectionClosed => "ConnectionClosed",
-            Self::DeflateInitFailed => "DeflateInitFailed",
-            Self::InflateInitFailed => "InflateInitFailed",
         }
     }
 }

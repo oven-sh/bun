@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 test("issue #22475: cookie.isExpired() should return true for Unix epoch (0)", () => {
   const cookies = ["a=; Expires=Thu, 01 Jan 1970 00:00:00 GMT", "b=; Expires=Thu, 01 Jan 1970 00:00:01 GMT"];
 
-  const results = [];
+  const results: { name: string; expires: Date | undefined; isExpired: boolean }[] = [];
   for (const _cookie of cookies) {
     const cookie = new Bun.Cookie(_cookie);
     results.push({

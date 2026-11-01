@@ -5,6 +5,7 @@
 #define HWY_TARGET_INCLUDE "highway_json.cpp"
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
+#include "highway_dispatch.h"
 
 #include <string.h>
 
@@ -172,7 +173,7 @@ HWY_EXPORT(JsonIndexImpl);
 extern "C" size_t highway_json_index_chunk(const uint8_t* input, size_t len, size_t base_offset,
     uint32_t* out_indices, uint64_t* out_dirty, uint64_t* inout_state, uint32_t* out_flags)
 {
-    return HWY_DYNAMIC_DISPATCH(JsonIndexImpl)(
+    return BUN_HWY_DISPATCH(JsonIndexImpl)(
         input, len, base_offset, out_indices, out_dirty, inout_state, out_flags);
 }
 
@@ -181,7 +182,7 @@ extern "C" size_t highway_json_index(const uint8_t* input, size_t len, uint32_t*
     uint64_t* out_dirty, uint32_t* out_flags)
 {
     uint64_t state[3] = { 0, 0, 0 };
-    size_t n = HWY_DYNAMIC_DISPATCH(JsonIndexImpl)(
+    size_t n = BUN_HWY_DISPATCH(JsonIndexImpl)(
         input, len, 0, out_indices, out_dirty, state, out_flags);
     out_indices[n] = (uint32_t)len;
     out_indices[n + 1] = (uint32_t)len;

@@ -1,0 +1,36 @@
+//! JavaScript, JSX and TypeScript.
+
+pub(crate) mod ast_nodes;
+pub(crate) mod attach;
+pub(crate) mod builders;
+pub(crate) mod comments;
+pub(crate) mod context;
+pub(crate) mod fields;
+pub(crate) mod format;
+pub(crate) mod jsdoc;
+pub(crate) mod owners;
+pub(crate) mod parentheses;
+pub(crate) mod print;
+pub(crate) mod sort_imports;
+pub(crate) mod source_text;
+pub(crate) mod trivia;
+pub(crate) mod utils;
+
+use crate::prelude::*;
+
+pub(crate) mod prelude {
+    pub(crate) use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement};
+    pub(crate) use super::builders::FormatSeparatedIter;
+    pub(crate) use super::comments::{Comment, CommentExt, CommentList, Comments};
+    pub(crate) use super::fields::{ExprFields, StmtFields};
+    pub(crate) use super::source_text::SourceText;
+    pub(crate) use super::trivia::{
+        DanglingIndentMode, FormatDanglingComments, FormatLeadingComments, FormatTrailingComments,
+        dangling_comments, leading_comments, trailing_comments,
+    };
+    pub(crate) use super::utils::operators::{BinOpExt, Precedence, UnOpExt};
+}
+
+pub(crate) fn format_file<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
+    print::program::write_program(file, f);
+}

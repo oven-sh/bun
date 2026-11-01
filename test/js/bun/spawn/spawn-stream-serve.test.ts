@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import "harness";
+import { bunRun } from "harness";
 import { fileURLToPath } from "url";
 
-test("Subprocess stdout can be used in Bun.serve()", async () => {
-  expect([fileURLToPath(import.meta.resolve("./spawn-stream-http-fixture.js"))]).toRun("hello world");
+test.concurrent("Subprocess stdout can be used in Bun.serve()", async () => {
+  expect(await bunRun(fileURLToPath(import.meta.resolve("./spawn-stream-http-fixture.js")))).toSpawn("hello world");
 });

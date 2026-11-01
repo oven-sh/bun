@@ -1,0 +1,8 @@
+{
+  "name": "v9-codeload-tarballs",
+  "version": "1.0.0",
+  "dependencies": {
+    "camelcase": "denolib/camelcase#aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b",
+    "is-negative": "github:kevva/is-negative#master"
+  }
+}

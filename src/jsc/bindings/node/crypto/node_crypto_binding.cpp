@@ -4,17 +4,6 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "ZigGlobalObject.h"
-#include "webcrypto/JSCryptoKey.h"
-#include "webcrypto/JSSubtleCrypto.h"
-#include "webcrypto/CryptoKeyOKP.h"
-#include "webcrypto/CryptoKeyEC.h"
-#include "webcrypto/CryptoKeyRSA.h"
-#include "webcrypto/CryptoKeyAES.h"
-#include "webcrypto/CryptoKeyHMAC.h"
-#include "webcrypto/CryptoKeyRaw.h"
-#include "webcrypto/CryptoKeyUsage.h"
-#include "webcrypto/JsonWebKey.h"
-#include "webcrypto/JSJsonWebKey.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "headers-handwritten.h"
@@ -24,16 +13,6 @@
 #include <openssl/pem.h>
 #include <openssl/curve25519.h>
 #include "JSBuffer.h"
-#include "CryptoAlgorithmHMAC.h"
-#include "CryptoAlgorithmEd25519.h"
-#include "CryptoAlgorithmRSA_OAEP.h"
-#include "CryptoAlgorithmRSA_PSS.h"
-#include "CryptoAlgorithmRSASSA_PKCS1_v1_5.h"
-#include "CryptoAlgorithmECDSA.h"
-#include "CryptoAlgorithmEcdsaParams.h"
-#include "CryptoAlgorithmRsaOaepParams.h"
-#include "CryptoAlgorithmRsaPssParams.h"
-#include "CryptoAlgorithmRegistry.h"
 #include "wtf/ForbidHeapAllocation.h"
 #include "wtf/Noncopyable.h"
 #include "ncrypto.h"
@@ -139,6 +118,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
+    // Not `false`: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_spkac.cc#L26
+    if (buffer.empty()) {
+        return JSValue::encode(jsEmptyString(vm));
+    }
+
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     bool result = ncrypto::VerifySpkac(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     return JSValue::encode(JSC::jsBoolean(result));
 }
@@ -158,6 +143,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto bio = ncrypto::ExportPublicKey(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     if (!bio) {
         return JSValue::encode(jsEmptyString(vm));
@@ -169,7 +155,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    return JSValue::encode(jsString(vm, String::fromUTF8({ data, static_cast<size_t>(len) })));
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(len))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -187,20 +173,14 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    auto cert = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-    if (!cert.data || cert.len == 0) {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+    auto exported = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    ncrypto::DataPointer challenge(exported.data, exported.len);
+    if (!challenge) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto result = JSC::ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(cert.data), cert.len });
-    if (!result) {
-        return JSValue::encode(jsEmptyString(vm));
-    }
-
-    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(result), 0, cert.len);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(bufferResult);
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, challenge.span())));
 }
 
 // From node.js
@@ -211,8 +191,11 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue nameOrNid = callFrame->argument(0);
+    // Read through the validator: asInt32() is not valid for an integral number the
+    // JSValue holds as a double.
+    int32_t nid = 0;
     if (nameOrNid.isNumber()) {
-        Bun::V::validateInt32(scope, lexicalGlobalObject, nameOrNid, "nameOrNid"_s, jsUndefined(), jsUndefined());
+        Bun::V::validateInt32(scope, lexicalGlobalObject, nameOrNid, "nameOrNid"_s, jsUndefined(), jsUndefined(), &nid);
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!nameOrNid.isString()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "nameOrNid"_s, "string or number"_s, nameOrNid);
@@ -247,7 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
 
     const ncrypto::Cipher cipher = [&] {
         if (nameOrNid.isNumber()) {
-            return ncrypto::Cipher::FromNid(nameOrNid.asInt32());
+            return ncrypto::Cipher::FromNid(nid);
         }
 
         String name = nameOrNid.toWTFString(lexicalGlobalObject);
@@ -268,6 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     String name = cipher.getName();
 
     if (keyLengthOpt.has_value() || ivLengthOpt.has_value()) {
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         auto ctx = ncrypto::CipherCtxPointer::New();
         if (!ctx.init(cipher, true)) {
             return JSValue::encode(jsUndefined());
@@ -303,26 +287,26 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     JSObject* result = JSC::constructEmptyObject(lexicalGlobalObject);
 
     if (!modeLabel.isEmpty()) {
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "mode"_s), jsString(vm, String::fromUTF8(modeLabel)));
+        Bun::putDirectNamed(vm, result, "mode"_s, jsString(vm, String::fromUTF8(modeLabel)));
     }
 
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), jsString(vm, name.convertToASCIILowercase()));
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "nid"_s), jsNumber(cipher.getNid()));
+    Bun::putDirectNamed(vm, result, "name"_s, jsString(vm, name.convertToASCIILowercase()));
+    Bun::putDirectNamed(vm, result, "nid"_s, jsNumber(cipher.getNid()));
 
     if (!cipher.isStreamMode()) {
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "blockSize"_s), jsNumber(blockSize));
+        Bun::putDirectNamed(vm, result, "blockSize"_s, jsNumber(blockSize));
     }
 
     if (ivLength != 0) {
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "ivLength"_s), jsNumber(ivLength));
+        Bun::putDirectNamed(vm, result, "ivLength"_s, jsNumber(ivLength));
     }
 
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "keyLength"_s), jsNumber(keyLength));
+    Bun::putDirectNamed(vm, result, "keyLength"_s, jsNumber(keyLength));
 
     return JSValue::encode(result);
 }
 
-JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
+__attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     JSObject* obj = constructEmptyObject(globalObject);
@@ -385,12 +369,6 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "KeyObject"_s)),
         globalObject->m_JSKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "SecretKeyObject"_s)),
-        globalObject->m_JSSecretKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PublicKeyObject"_s)),
-        globalObject->m_JSPublicKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PrivateKeyObject"_s)),
-        globalObject->m_JSPrivateKeyObjectClassStructure.constructor(globalObject));
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "publicEncrypt"_s)),
         JSFunction::create(vm, globalObject, 2, "publicEncrypt"_s, jsPublicEncrypt, ImplementationVisibility::Public, NoIntrinsic), 0);

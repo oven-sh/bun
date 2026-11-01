@@ -1,0 +1,36 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+  injectWorkspacePackages: true
+
+importers:
+
+  .:
+    dependencies:
+      dir:
+        specifier: workspace:*
+        version: file:packages/dir(no-deps@1.0.0)
+      local:
+        specifier: file:vendor/local
+        version: file:vendor/local(no-deps@1.0.0)
+
+  packages/dir: {}
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==}
+
+snapshots:
+
+  dir@file:packages/dir(no-deps@1.0.0): {}
+
+  local@file:vendor/local(no-deps@1.0.0):
+    dependencies:
+      no-deps: 1.0.0
+
+  no-deps@1.0.0: {}
+
+  tb@file:vendor/tb-1.0.0.tgz(no-deps@1.0.0): {}

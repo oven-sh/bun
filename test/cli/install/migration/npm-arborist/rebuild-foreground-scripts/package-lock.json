@@ -1,0 +1,29 @@
+{
+  "name": "rebuild-foreground-scripts",
+  "lockfileVersion": 2,
+  "requires": true,
+  "packages": {
+    "": {
+      "dependencies": {
+        "a": "",
+        "b": ""
+      }
+    },
+    "node_modules/a": {
+      "version": "1.2.3",
+      "hasInstallScript": true
+    },
+    "node_modules/b": {
+      "version": "1.2.3",
+      "hasInstallScript": true
+    }
+  },
+  "dependencies": {
+    "a": {
+      "version": "1.2.3"
+    },
+    "b": {
+      "version": "1.2.3"
+    }
+  }
+}

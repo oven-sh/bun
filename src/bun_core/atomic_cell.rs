@@ -34,7 +34,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 /// handles, and `Option<NonNull<_>>` that more than one thread touches.
 ///
 /// `T` must implement [`Atom`] (no padding, `size_of::<T>() ∈ {1,2,4,8}`).
-/// Larger or padded `T` is a compile error — use `bun_threading::RwLock<T>` or
+/// Larger or padded `T` is a compile error — use `bun_threading::Guarded<T>` or
 /// restructure. There is **no** seqlock fallback (unlike crossbeam's
 /// `AtomicCell`): if it doesn't fit in a native atomic word, it doesn't
 /// compile.
@@ -114,7 +114,8 @@ impl<T: Atom> AtomicCell<T> {
     /// Returns `Ok(previous)` if `f` produced a new value (and it was
     /// installed), `Err(current)` if `f` returned `None`.
     #[inline]
-    pub fn fetch_update(&self, mut f: impl FnMut(T) -> Option<T>) -> Result<T, T> {
+    #[cfg(test)]
+    pub(crate) fn fetch_update(&self, mut f: impl FnMut(T) -> Option<T>) -> Result<T, T> {
         let mut prev = self.load();
         while let Some(next) = f(prev) {
             match self.compare_exchange(prev, next) {
@@ -158,7 +159,7 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   reinterpreting as `uN` reads only initialized bits).
 /// - Round-tripping `Self → uN → Self` (where every `uN` value observed was
 ///   produced from a valid `Self`) yields the original value. This is weaker
-///   than `bytemuck::AnyBitPattern` — `#[repr(u8)]` enums qualify because the
+///   than [`AnyBitPattern`](crate::AnyBitPattern) — `#[repr(u8)]` enums qualify because the
 ///   cell only ever stores valid discriminants.
 /// - `Self` is safe to transport across threads when stored in an
 ///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
@@ -383,44 +384,6 @@ unsafe impl<U> Atom for *mut U {
     }
 }
 
-// SAFETY: same as `*mut U`; the cast goes through `*mut U`.
-unsafe impl<U> Atom for *const U {
-    #[inline]
-    unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is `AtomicCell<*const U>::inner.get()`, 8-aligned via
-        // `_align`; `*const U` and `AtomicPtr<U>` have identical layout.
-        unsafe { (*(p as *const AtomicPtr<U>)).load(ord).cast_const() }
-    }
-    #[inline]
-    unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).store(v.cast_mut(), ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_cas(
-        p: *mut Self,
-        cur: Self,
-        new: Self,
-        s: Ordering,
-        f: Ordering,
-    ) -> Result<Self, Self> {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(
-                cur.cast_mut(),
-                new.cast_mut(),
-                s,
-                f,
-            ) {
-                Ok(x) => Ok(x.cast_const()),
-                Err(x) => Err(x.cast_const()),
-            }
-        }
-    }
-}
-
 #[inline(always)]
 fn nn_to_raw<U>(v: Option<NonNull<U>>) -> *mut U {
     v.map_or(core::ptr::null_mut(), |n| n.as_ptr())
@@ -498,9 +461,6 @@ pub struct ThreadCell<T: ?Sized> {
 // SAFETY: same lie as `RacyCell` (caller promises thread-affinity), now
 // *checked* in debug via `owner`.
 unsafe impl<T: ?Sized> Sync for ThreadCell<T> {}
-// SAFETY: `UnsafeCell<T>: Send` when `T: Send`, and `owner: AtomicU64` is
-// `Send`; sending the cell just moves the (still thread-affine) `T`.
-unsafe impl<T: ?Sized + Send> Send for ThreadCell<T> {}
 
 #[cfg(debug_assertions)]
 const UNCLAIMED: u64 = 0;
@@ -541,7 +501,7 @@ impl<T: ?Sized> ThreadCell<T> {
 
     /// Debug-panic if the cell is claimed by a different thread.
     #[inline]
-    pub fn assert_owner(&self) {
+    pub(crate) fn assert_owner(&self) {
         #[cfg(debug_assertions)]
         {
             let owner = self.owner.load(Ordering::Acquire);
@@ -572,18 +532,6 @@ impl<T: ?Sized> ThreadCell<T> {
     #[inline]
     pub fn get_unchecked(&self) -> *mut T {
         self.inner.get()
-    }
-
-    /// `&mut T` scoped to the closure (debug-asserts owner if claimed).
-    ///
-    /// # Safety
-    /// Caller guarantees no other live reference to the inner `T` for the
-    /// closure's duration (the same invariant `RacyCell` already imposed).
-    #[inline]
-    pub unsafe fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        self.assert_owner();
-        // SAFETY: caller contract above.
-        f(unsafe { &mut *self.inner.get() })
     }
 }
 

@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
 use bun_core::strings;
+use bun_jsc::HostReturn as _;
 use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
 
@@ -14,7 +15,7 @@ fn create_uninitialized_uint8_array(global: &JSGlobalObject, len: usize) -> JsRe
 /// # Safety
 /// `ptr` must be valid for reading `len` bytes of Latin-1 data.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn TextEncoder__encode8(
+unsafe extern "C" fn TextEncoder__encode8(
     global_this: &JSGlobalObject,
     ptr: *const u8,
     len: usize,
@@ -43,8 +44,8 @@ pub(crate) unsafe extern "C" fn TextEncoder__encode8(
     };
     debug_assert!(array_buffer.len == utf8_len);
     let result = strings::copy_latin1_into_utf8(array_buffer.byte_slice_mut(), slice);
-    debug_assert!(result.written as usize == utf8_len);
-    debug_assert!(result.read as usize == slice.len());
+    debug_assert!(result.written == utf8_len);
+    debug_assert!(result.read == slice.len());
     uint8array
 }
 
@@ -68,8 +69,8 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
         if result.read == 0 || result.written == 0 {
             return replacement_char_uint8_array(global_this);
         }
-        let written = result.written as usize;
-        debug_assert!(result.read as usize == slice.len());
+        let written = result.written;
+        debug_assert!(result.read == slice.len());
         let Ok(uint8array) = create_uninitialized_uint8_array(global_this, written) else {
             return JSValue::ZERO;
         };
@@ -98,20 +99,20 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
     debug_assert!(array_buffer.len == need);
     let result =
         strings::copy_utf16_into_utf8_with_utf8_len(array_buffer.byte_slice_mut(), slice, need);
-    if result.written as usize == need && result.read as usize == slice.len() {
+    if result.written == need && result.read == slice.len() {
         return uint8array;
     }
 
     let bytes = strings::to_utf8_alloc_with_type(slice);
     ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
         .to_js_unchecked(global_this)
-        .unwrap_or(JSValue::ZERO)
+        .or_pending_exception()
 }
 
 /// # Safety
 /// `ptr` must be valid for reading `len` UTF-16 code units.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn TextEncoder__encode16(
+unsafe extern "C" fn TextEncoder__encode16(
     global_this: &JSGlobalObject,
     ptr: *const u16,
     len: usize,
@@ -124,11 +125,7 @@ pub(crate) unsafe extern "C" fn TextEncoder__encode16(
 /// # Safety
 /// `ptr` must be valid for reading `len` UTF-16 code units.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn c(
-    global_this: &JSGlobalObject,
-    ptr: *const u16,
-    len: usize,
-) -> JSValue {
+unsafe extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
     // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     encode16_impl(global_this, slice)
@@ -172,7 +169,7 @@ impl<'a> RopeStringEncoder<'a> {
 
     // The four rope-iteration callbacks coerce (safe → unsafe `extern "C"`) to
     // the `JSStringIterator` callback-pointer field types at `iter()` below.
-    pub(crate) extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
+    extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
@@ -180,26 +177,21 @@ impl<'a> RopeStringEncoder<'a> {
             &mut this.buf[this.tail..],
             src,
         );
-        if result.read == u32::MAX && result.written == u32::MAX {
+        if result.read == usize::MAX && result.written == usize::MAX {
             it.stop = 1;
             this.any_non_ascii = true;
         } else {
-            this.tail += result.written as usize;
+            this.tail += result.written;
         }
     }
 
-    pub(crate) extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
+    extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
         let (it, this) = Self::resolve(it);
         this.any_non_ascii = true;
         it.stop = 1;
     }
 
-    pub(crate) extern "C" fn write8(
-        it: *mut JSStringIterator,
-        ptr: *const u8,
-        len: u32,
-        offset: u32,
-    ) {
+    extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
@@ -207,19 +199,19 @@ impl<'a> RopeStringEncoder<'a> {
             &mut this.buf[offset as usize..],
             src,
         );
-        if result.read == u32::MAX && result.written == u32::MAX {
+        if result.read == usize::MAX && result.written == usize::MAX {
             it.stop = 1;
             this.any_non_ascii = true;
         }
     }
 
-    pub(crate) extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
+    extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
         let (it, this) = Self::resolve(it);
         this.any_non_ascii = true;
         it.stop = 1;
     }
 
-    pub(crate) fn iter(&mut self) -> JSStringIterator {
+    fn iter(&mut self) -> JSStringIterator {
         JSStringIterator {
             data: std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             stop: 0,
@@ -235,7 +227,7 @@ impl<'a> RopeStringEncoder<'a> {
 // It's not suitable for UTF-16 strings, because getting the byteLength is unpredictable
 // It also isn't usable for latin1 strings which contain non-ascii characters
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn TextEncoder__encodeRopeString(
+extern "C" fn TextEncoder__encodeRopeString(
     global_this: &JSGlobalObject,
     rope_str: &JSString,
 ) -> JSValue {
@@ -268,44 +260,36 @@ pub(crate) extern "C" fn TextEncoder__encodeRopeString(
 
 /// # Safety
 /// `input_ptr` must be valid for reading `input_len` UTF-16 code units and
-/// `buf_ptr` must be valid for writing `buf_len` bytes.
+/// `buf_ptr` must be valid for writing `buf_len` bytes. A null `WTF::String` and a
+/// detached view are both `(null, 0)`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn TextEncoder__encodeInto16(
+unsafe extern "C" fn TextEncoder__encodeInto16(
     input_ptr: *const u16,
     input_len: usize,
     buf_ptr: *mut u8,
     buf_len: usize,
-) -> u64 {
+) -> strings::EncodeIntoResult {
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
+    let output = unsafe { bun_core::ffi::slice_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
-    let result: strings::EncodeIntoResult = strings::copy_utf16_into_utf8(output, input);
-    // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
-    let mut b = [0u8; 8];
-    b[..4].copy_from_slice(&result.read.to_ne_bytes());
-    b[4..].copy_from_slice(&result.written.to_ne_bytes());
-    u64::from_ne_bytes(b)
+    let input = unsafe { bun_core::ffi::slice(input_ptr, input_len) };
+    strings::copy_utf16_into_utf8(output, input)
 }
 
 /// # Safety
 /// `input_ptr` must be valid for reading `input_len` bytes of Latin-1 data and
-/// `buf_ptr` must be valid for writing `buf_len` bytes.
+/// `buf_ptr` must be valid for writing `buf_len` bytes. A null `WTF::String` and a
+/// detached view are both `(null, 0)`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn TextEncoder__encodeInto8(
+unsafe extern "C" fn TextEncoder__encodeInto8(
     input_ptr: *const u8,
     input_len: usize,
     buf_ptr: *mut u8,
     buf_len: usize,
-) -> u64 {
+) -> strings::EncodeIntoResult {
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
+    let output = unsafe { bun_core::ffi::slice_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
-    let result: strings::EncodeIntoResult = strings::copy_latin1_into_utf8(output, input);
-    // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
-    let mut b = [0u8; 8];
-    b[..4].copy_from_slice(&result.read.to_ne_bytes());
-    b[4..].copy_from_slice(&result.written.to_ne_bytes());
-    u64::from_ne_bytes(b)
+    let input = unsafe { bun_core::ffi::slice(input_ptr, input_len) };
+    strings::copy_latin1_into_utf8(output, input)
 }

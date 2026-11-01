@@ -1,8 +1,8 @@
 use core::ffi::c_void;
 use core::fmt;
-use core::sync::atomic::AtomicU32;
 
 use crate::Ordinal;
+use crate::internal_source_map::ObjectBrace;
 
 use crate::mapping;
 use crate::vlq::VLQ;
@@ -14,18 +14,13 @@ use crate::{
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
 /// source map store (SavedSourceMap), so the reference count must be thread-safe.
 pub struct ParsedSourceMap {
-    // bun.ptr.ThreadSafeRefCount → intrusive atomic count; managed via
-    // `bun_ptr::RefPtr<ParsedSourceMap>`. `ref`/`deref` are methods on RefPtr.
-    pub ref_count: AtomicU32,
-
-    pub input_line_count: usize,
     pub mappings: mapping::List,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
     /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
     /// `Drop`) unless [`Self::is_standalone_module_graph`] — in that case the
     /// bytes live in the embedded `bun build --compile` section and are
     /// borrowed.
-    pub internal: Option<InternalSourceMap>,
+    pub(crate) internal: Option<InternalSourceMap>,
 
     /// If this is empty, this implies that the source code is a single file
     /// transpiled on-demand. If there are items, then it means this is a file
@@ -68,8 +63,6 @@ impl Drop for ParsedSourceMap {
 impl Default for ParsedSourceMap {
     fn default() -> Self {
         Self {
-            ref_count: AtomicU32::new(1),
-            input_line_count: 0,
             mappings: mapping::List::default(),
             internal: None,
             external_source_names: Vec::new(),
@@ -155,24 +148,24 @@ pub struct SourceContentPtr {
 }
 
 impl SourceContentPtr {
-    pub const NONE: SourceContentPtr = SourceContentPtr {
+    pub(crate) const NONE: SourceContentPtr = SourceContentPtr {
         data: 0,
         load_hint: SourceMapLoadHint::None,
         get_source_map: None,
     };
 
     #[inline]
-    pub fn load_hint(self) -> SourceMapLoadHint {
+    pub(crate) fn load_hint(self) -> SourceMapLoadHint {
         self.load_hint
     }
 
     #[inline]
-    pub fn set_load_hint(&mut self, hint: SourceMapLoadHint) {
+    pub(crate) fn set_load_hint(&mut self, hint: SourceMapLoadHint) {
         self.load_hint = hint;
     }
 
     #[inline]
-    pub fn data(self) -> u64 {
+    pub(crate) fn data(self) -> u64 {
         self.data
     }
 
@@ -214,8 +207,7 @@ impl ParsedSourceMap {
     /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
     /// `Arc::decrement_strong_count` instead — same observable
     /// `deref()` semantics, with the allocator that
-    /// actually owns the bytes. The embedded `ref_count` field is kept for
-    /// layout/ABI parity but is NOT the live counter.
+    /// actually owns the bytes.
     ///
     /// # Safety
     /// `this` must come from `Arc::<Self>::into_raw` and must still have at
@@ -234,8 +226,6 @@ impl ParsedSourceMap {
     /// [`Self::is_standalone_module_graph`].
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
-            ref_count: AtomicU32::new(1),
-            input_line_count: internal.input_line_count(),
             mappings: mapping::List::default(),
             internal: Some(internal),
             external_source_names: Vec::new(),
@@ -255,11 +245,34 @@ impl ParsedSourceMap {
         self.mappings.find(line, column)
     }
 
-    pub fn internal_cursor(&self) -> Option<crate::internal_source_map::Cursor> {
-        self.internal.as_ref().map(|ism| ism.cursor())
+    /// Every mapping, in generated order.
+    pub fn for_each_mapping(&self, mut each: impl FnMut(Mapping)) {
+        if let Some(ism) = &self.internal {
+            return ism.for_each(each);
+        }
+        let (generated, original, source_index) = (
+            self.mappings.generated(),
+            self.mappings.original(),
+            self.mappings.source_index(),
+        );
+        for i in 0..generated.len() {
+            each(Mapping {
+                generated: generated[i],
+                original: original[i],
+                source_index: source_index[i],
+                name_index: -1,
+            });
+        }
     }
 
-    pub fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {
+    /// The mappings of the braces of object literals, if the printer marked them.
+    pub fn for_each_object_brace(&self, each: impl FnMut(ObjectBrace)) {
+        if let Some(ism) = &self.internal {
+            ism.for_each_object_brace(each);
+        }
+    }
+
+    pub(crate) fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {
         debug_assert!(self.is_standalone_module_graph);
         self.underlying_provider.data() as usize as *mut crate::SerializedSourceMap::Loaded
     }
@@ -275,7 +288,10 @@ impl ParsedSourceMap {
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
     }
 
-    pub fn write_vlqs<W: bun_io::Write + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> bun_io::Result<()> {
         if let Some(ism) = &self.internal {
             let mut buf = bun_core::MutableString::init_empty();
             ism.append_vlq_to(&mut buf);

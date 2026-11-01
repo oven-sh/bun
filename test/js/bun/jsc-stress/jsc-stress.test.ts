@@ -23,10 +23,15 @@ function parseJSCFlags(filePath: string): Record<string, string> {
     if (line === "// @bun" || line.trim() === "") continue;
     if (!line.startsWith("//@")) break;
 
-    const match = line.match(/^\/\/@ (runDefault|runFTLNoCJIT|runDefaultWasm)\((.*)\)/);
-    if (!match) continue;
+    const match = line.match(/^\/\/@ (runDefault|runFTLNoCJIT|runDefaultWasm|requireOptions)\((.*)\)/);
+    const noJIT = /^\/\/@ runNoJIT\b/.test(line);
+    if (!match && !noJIT) continue;
 
-    const [, mode, argsStr] = match;
+    if (noJIT) {
+      env["BUN_JSC_useJIT"] = "false";
+      continue;
+    }
+    const [, mode, argsStr] = match!;
 
     // runFTLNoCJIT implies these flags (from WebKit's run-jsc-stress-tests)
     if (mode === "runFTLNoCJIT") {
@@ -116,6 +121,17 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
+  // RegExp
+  "regexp-greedy-group-in-tail-position.js",
+  "regexp-greedy-group-with-minimum-can-match-empty.js",
+  "regexp-repeated-group-saves-the-alternative-that-matched.js",
+  "regexp-long-source.js",
+  "regexp-lookaround-releases-paren-contexts.js",
+  "regexp-tail-loop-with-many-alternatives.js",
+  "regexp-repeated-group-with-many-alternatives.js",
+  "regexp-many-single-character-alternatives.js",
+  // Builtins
+  "function-prototype-call-not-called-as-a-method.js",
 ];
 
 const wasmFixtures = [
@@ -144,6 +160,43 @@ const wasmFixtures = [
   "jspi-resuspension.js",
   "jspi-exceptions-from-wasm.js",
   "jspi-exceptions-from-js.js",
+];
+
+const ffiFixturesDir = path.join(fixturesDir, "ffi");
+const ffiFixtures = [
+  "ffi-align.js",
+  "ffi-arena-depth.js",
+  "ffi-arity-ladders.js",
+  "ffi-arity.js",
+  "ffi-buffer-length.js",
+  "ffi-callback-throw-unwind.js",
+  "ffi-callbacks.js",
+  "ffi-callffi-was-compiled.js",
+  "ffi-canary.js",
+  "ffi-conversion-errors-host.js",
+  "ffi-conversion-errors.js",
+  "ffi-fuzz-signatures.js",
+  "ffi-hooks-and-owner.js",
+  "ffi-host-path.js",
+  "ffi-jsvalue.js",
+  "ffi-no-jit.js",
+  "ffi-non-int32-int-args.js",
+  "ffi-osr-and-exceptions.js",
+  "ffi-pointers-and-buffers.js",
+  "ffi-ptr-non-view-cell-arg.js",
+  "ffi-ptr-object-arg.js",
+  "ffi-signature-errors.js",
+  "ffi-subword-and-returns.js",
+  "ffi-tailcall.js",
+  "ffi-threadsafe-callback-burst.js",
+  "ffi-threadsafe-callback-throw.js",
+  "ffi-threadsafe-callback.js",
+  "ffi-tier-differential.js",
+  "ffi-typedarray-storage-modes.js",
+  "ffi-types-echo.js",
+  "ffi-untyped-float-args.js",
+  "ffi-untyped-int-stack-args.js",
+  "ffi-view-args.js",
 ];
 
 const preloadPath = path.join(import.meta.dir, "preload.js");
@@ -197,6 +250,79 @@ describe.concurrent("JSC JIT Stress Tests", () => {
     }
   });
 
+  describe("RegExp", () => {
+    // Bytecode for the interpreter is compiled, and with this option printed, only for a match that the JIT's code gave up on.
+    test.each([
+      { script: `"aa a".match(/(?:a|[ ]?)*/g)`, result: `["aa a",""]`, interpreted: false },
+      { script: `"aa a".match(/(?:a|[ ]?)+/g)`, result: `["aa a",""]`, interpreted: false },
+      { script: `"aa a".match(/(?:(a)|[ ]?)+/g)`, result: `["aa a",""]`, interpreted: false },
+      { script: `/^(?:a|[ ]?){2,}$/.test("aa a")`, result: `true`, interpreted: false },
+      { script: `/(?:a|[ ]?)+/.exec("aa a")`, result: `["aa a"]`, interpreted: false },
+      { script: `/(?:(a)|[ ]?)+/.exec("aa a")`, result: `["aa a","a"]`, interpreted: true },
+      // The JIT's code ran out of stack after some number of start positions, and the interpreter then ran out of steps.
+      { script: `/(?=((?:ab|c)+))\\1x/.exec("ab".repeat(512) + "yabx")?.index`, result: `1025`, interpreted: false },
+      { script: `/(?=((?:ab|c)+))\\1x/.exec("ab".repeat(2048) + "yabx")?.index`, result: `4097`, interpreted: false },
+    ])("$script", async ({ script, result, interpreted }) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `console.log(JSON.stringify(${script}))`],
+        env: { ...fixtureEnv, BUN_JSC_dumpCompiledRegExpPatterns: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ result: stdout.trim(), interpreted: stderr.includes("BodyAlternativeBegin") }).toEqual({
+        result,
+        interpreted,
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test(
+    "the DFG inlines the callee of Function.prototype.call.bind(callee)",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { hasOwnProperty } = Object.prototype;
+          const hasOwn = Function.prototype.call.bind(hasOwnProperty);
+          function bound(object, key) { return hasOwn(object, key); }
+          function direct(object, key) { return hasOwnProperty.call(object, key); }
+          const objects = [{ a: 1 }, { b: 2 }];
+          let count = 0;
+          for (let i = 0; i < 100000; i++) count += bound(objects[i & 1], "a") + direct(objects[i & 1], "b");
+          console.log(count);
+        `,
+        ],
+        env: {
+          ...fixtureEnv,
+          BUN_JSC_useConcurrentJIT: "0",
+          BUN_JSC_useFTLJIT: "0",
+          BUN_JSC_dumpGraphAfterParsing: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const graphs = stderr.split("Graph after parsing:");
+      const hasNode = (name: string) =>
+        graphs.find(graph => graph.includes(`DFG for ${name}#`))?.includes("\tHasOwnProperty(");
+      expect({ stdout: stdout.trim(), direct: hasNode("direct"), bound: hasNode("bound") }).toEqual({
+        stdout: "100000",
+        direct: true,
+        bound: true,
+      });
+      expect(exitCode).toBe(0);
+    },
+    fixtureTimeout,
+  );
+
   describe("Wasm (BBQ/OMG)", () => {
     for (const fixture of wasmFixtures) {
       test(
@@ -209,6 +335,50 @@ describe.concurrent("JSC JIT Stress Tests", () => {
             cmd: [bunExe(), "--preload", preloadPath, fixturePath],
             env: { ...fixtureEnv, ...jscEnv },
             cwd: wasmFixturesDir,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
+
+          if (exitCode !== 0) {
+            console.log("stdout:", stdout);
+            console.log("stderr:", stderr);
+          }
+          expect(exitCode).toBe(0);
+        },
+        fixtureTimeout,
+      );
+    }
+  });
+
+  describe("FFI (bun:ffi engine)", () => {
+    const probeEnv = { ...bunEnv, BUN_JSC_useDollarVM: "1" };
+    const probe = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        'process.stdout.write(typeof globalThis.$vm === "object" && typeof $vm.ffiFunction === "function" ? "1" : "0")',
+      ],
+      env: probeEnv,
+      stdout: "pipe",
+    });
+    const hasDollarVM = probe.stdout.toString() === "1";
+
+    for (const fixture of ffiFixtures) {
+      test.skipIf(!hasDollarVM)(
+        fixture,
+        async () => {
+          const fixturePath = path.join(ffiFixturesDir, fixture);
+          const jscEnv = parseJSCFlags(fixturePath);
+
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
+            env: { ...fixtureEnv, ...jscEnv, BUN_JSC_useDollarVM: "1" },
             stdout: "pipe",
             stderr: "pipe",
           });

@@ -15,8 +15,6 @@ fn hash(buf: &[u8]) -> u32 {
   return hash;
 }
 
-
-
 #[cfg(feature="enable-napi")]
 #[napi] pub fn napi_noop() {
   // do nothing
@@ -26,18 +24,21 @@ fn hash(buf: &[u8]) -> u32 {
   // do nothing
 }
 
-
-
 #[cfg(feature="enable-napi")]
 #[napi] pub fn napi_string() -> &'static str {
   return &STRING[0..(STRING.len() - 1)];
 }
 
+#[no_mangle] unsafe extern "C" fn ffi_strlen(p: *const u8) -> u32 {
+    if p.is_null() { return 0; }
+    let mut n = 0u32;
+    while *p.add(n as usize) != 0 { n += 1; }
+    n
+}
+
 #[no_mangle] unsafe extern "C" fn ffi_string() -> *const u8 {
   return STRING.as_ptr();
 }
-
-
 
 #[cfg(feature="enable-napi")]
 #[napi] pub fn napi_hash(buffer: Buffer) -> u32 {

@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+// prettier-ignore
+@M({ a: [1,   2] })
+export   class B {}
+
+// prettier-ignore
+@M({ a: [1,   2] })
+export   default   class C {}
+
+@M({
+  // prettier-ignore
+  a: [1,   2],
+  b: 2,
+})
+export class A {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// prettier-ignore
+@M({ a: [1,   2] })
+export   class B {}
+
+// prettier-ignore
+@M({ a: [1,   2] })
+export   default   class C {}
+
+@M({
+  // prettier-ignore
+  a: [1,   2],
+  b: 2,
+})
+export class A {}
+
+===================== End =====================

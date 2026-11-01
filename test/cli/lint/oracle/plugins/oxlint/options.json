@@ -1,0 +1,15600 @@
+{
+ "accessor-pairs": [
+  [
+   {
+    "setWithoutGet": true,
+    "getWithoutSet": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "setWithoutGet": false,
+    "getWithoutSet": false
+   }
+  ],
+  [
+   {
+    "setWithoutGet": true,
+    "getWithoutSet": false
+   }
+  ],
+  [
+   {
+    "setWithoutGet": false,
+    "getWithoutSet": true
+   }
+  ],
+  [
+   {
+    "setWithoutGet": false
+   }
+  ],
+  [
+   {
+    "getWithoutSet": true
+   }
+  ],
+  [
+   {
+    "enforceForClassMembers": true
+   }
+  ],
+  [
+   {
+    "enforceForClassMembers": false
+   }
+  ],
+  [
+   {
+    "setWithoutGet": true,
+    "getWithoutSet": true,
+    "enforceForClassMembers": false
+   }
+  ],
+  [
+   {
+    "setWithoutGet": true,
+    "getWithoutSet": false,
+    "enforceForClassMembers": true
+   }
+  ],
+  [
+   {
+    "setWithoutGet": false,
+    "getWithoutSet": true,
+    "enforceForClassMembers": true
+   }
+  ],
+  [
+   {
+    "setWithoutGet": false,
+    "getWithoutSet": false,
+    "enforceForClassMembers": true
+   }
+  ],
+  [
+   {
+    "setWithoutGet": true,
+    "getWithoutSet": true,
+    "enforceForClassMembers": true
+   }
+  ],
+  [
+   {
+    "enforceForTSTypes": true
+   }
+  ],
+  [
+   {
+    "getWithoutSet": true,
+    "enforceForClassMembers": true
+   }
+  ],
+  [
+   {
+    "enforceForTSTypes": true,
+    "getWithoutSet": true
+   }
+  ]
+ ],
+ "array-callback-return": [
+  [
+   {
+    "allowImplicit": false
+   }
+  ],
+  [
+   {
+    "allowImplicit": true
+   }
+  ],
+  [
+   {
+    "checkForEach": true
+   }
+  ],
+  [
+   {
+    "allowImplicit": true,
+    "checkForEach": true
+   }
+  ],
+  [
+   {
+    "checkForEach": true,
+    "allowVoid": true
+   }
+  ],
+  [
+   {
+    "allowVoid": true,
+    "checkForEach": true
+   }
+  ],
+  [
+   {
+    "allowVoid": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "checkForEach": false,
+    "allowVoid": true
+   }
+  ],
+  [
+   {
+    "allowImplicit": true,
+    "checkForEach": true,
+    "allowVoid": true
+   }
+  ]
+ ],
+ "arrow-body-style": [
+  [
+   "always"
+  ],
+  [
+   "never"
+  ],
+  [
+   "as-needed",
+   {
+    "requireReturnForObjectLiteral": true
+   }
+  ],
+  [
+   "as-needed"
+  ]
+ ],
+ "block-scoped-var": [],
+ "capitalized-comments": [
+  [
+   "always"
+  ],
+  [
+   "never"
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "match"
+   }
+  ],
+  [
+   "never",
+   {
+    "ignorePattern": "Match"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "foo|bar"
+   }
+  ],
+  [
+   "never",
+   {
+    "ignorePattern": "Foo|Bar"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignoreInlineComments": true
+   }
+  ],
+  [
+   "never",
+   {
+    "ignoreInlineComments": true
+   }
+  ],
+  [
+   "always",
+   {
+    "ignoreConsecutiveComments": true
+   }
+  ],
+  [
+   "always",
+   {
+    "line": {
+     "ignorePattern": "lineCommentIgnorePattern"
+    },
+    "block": {
+     "ignorePattern": "blockCommentIgnorePattern"
+    }
+   }
+  ],
+  [
+   "always",
+   {
+    "ignoreInlineComments": false
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "ignored?"
+   }
+  ],
+  [
+   "never",
+   {
+    "ignorePattern": "ignored?"
+   }
+  ],
+  [
+   "never",
+   {
+    "ignoreConsecutiveComments": true
+   }
+  ],
+  [
+   "always",
+   {
+    "ignoreConsecutiveComments": false
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "pragma"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "x|a"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "a|b"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "a$"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "PRAGMA"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "[Pp]ragma"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "\\w+"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "\\p{Ll}"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "."
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "a.$"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": ""
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "^pragma"
+   }
+  ],
+  [
+   "always",
+   {
+    "ignorePattern": "^ pragma"
+   }
+  ],
+  [
+   "never",
+   {
+    "ignorePattern": "Pragma"
+   }
+  ],
+  [
+   "always",
+   {
+    "line": {
+     "ignorePattern": "a"
+    }
+   }
+  ],
+  [
+   "always",
+   {
+    "block": {
+     "ignorePattern": "b"
+    }
+   }
+  ],
+  [
+   "always",
+   {
+    "line": {
+     "ignorePattern": "a"
+    },
+    "block": {}
+   }
+  ],
+  [
+   "always",
+   {
+    "line": {},
+    "block": {
+     "ignorePattern": "a"
+    }
+   }
+  ],
+  [
+   "always",
+   {
+    "line": {}
+   }
+  ],
+  [
+   "always",
+   {
+    "line": {
+     "ignoreInlineComments": true
+    }
+   }
+  ],
+  [
+   "always",
+   {
+    "block": {
+     "ignoreInlineComments": true
+    }
+   }
+  ],
+  [
+   "always",
+   {
+    "line": {
+     "ignoreConsecutiveComments": true
+    }
+   }
+  ],
+  [
+   "always",
+   {
+    "block": {
+     "ignoreConsecutiveComments": true
+    }
+   }
+  ]
+ ],
+ "class-methods-use-this": [
+  [
+   {
+    "exceptMethods": [
+     "bar"
+    ]
+   }
+  ],
+  [
+   {
+    "exceptMethods": [
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "exceptMethods": [
+     "42"
+    ]
+   }
+  ],
+  [
+   {
+    "exceptMethods": [
+     "#bar"
+    ]
+   }
+  ],
+  [
+   {
+    "enforceForClassFields": false
+   }
+  ],
+  [
+   {
+    "ignoreOverrideMethods": true
+   }
+  ],
+  [
+   {
+    "ignoreOverrideMethods": true,
+    "ignoreClassesWithImplements": "all"
+   }
+  ],
+  [
+   {
+    "ignoreOverrideMethods": true,
+    "ignoreClassesWithImplements": "public-fields"
+   }
+  ],
+  [
+   {
+    "ignoreClassesWithImplements": "all"
+   }
+  ],
+  [
+   {
+    "ignoreClassesWithImplements": "public-fields"
+   }
+  ],
+  [
+   {
+    "exceptMethods": [
+     "#foo"
+    ]
+   }
+  ],
+  [
+   {
+    "exceptMethods": [
+     "m",
+     "#m",
+     "1",
+     "16",
+     "1000",
+     "1.5",
+     "m n",
+     "constructor",
+     "static",
+     "get",
+     "accessor",
+     "",
+     "undefined",
+     "null"
+    ]
+   }
+  ],
+  [
+   {
+    "enforceForClassFields": true
+   }
+  ],
+  [
+   {
+    "ignoreOverrideMethods": true,
+    "ignoreClassesWithImplements": "public-fields",
+    "enforceForClassFields": false
+   }
+  ],
+  [
+   {
+    "exceptMethods": [
+     "#m"
+    ]
+   }
+  ],
+  [
+   {
+    "exceptMethods": [
+     "m"
+    ]
+   }
+  ],
+  [
+   {
+    "exceptMethods": [
+     "true",
+     "0",
+     "10",
+     "0.5",
+     "1e+21",
+     "3",
+     "7",
+     "16"
+    ]
+   }
+  ],
+  [
+   {
+    "exceptMethods": []
+   }
+  ]
+ ],
+ "complexity": [
+  [
+   1
+  ],
+  [
+   2
+  ],
+  [
+   3
+  ],
+  [
+   4
+  ],
+  [
+   {
+    "max": 2,
+    "variant": "modified"
+   }
+  ],
+  [
+   {
+    "max": 3,
+    "variant": "modified"
+   }
+  ],
+  [
+   {
+    "max": 1
+   }
+  ],
+  [
+   {
+    "max": 2
+   }
+  ],
+  [
+   0
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "max": 1,
+    "variant": "modified"
+   }
+  ],
+  [
+   {
+    "max": 0
+   }
+  ],
+  [
+   {
+    "max": 3
+   }
+  ],
+  [
+   {
+    "maximum": 1
+   }
+  ],
+  [
+   {
+    "maximum": 2
+   }
+  ],
+  [
+   {
+    "maximum": 0
+   }
+  ]
+ ],
+ "constructor-super": [],
+ "curly": [
+  [
+   "multi"
+  ],
+  [
+   "multi-line"
+  ],
+  [
+   "multi-or-nest"
+  ],
+  [
+   "multi",
+   "consistent"
+  ],
+  [
+   "multi-or-nest",
+   "consistent"
+  ],
+  [
+   "all"
+  ]
+ ],
+ "default-case": [
+  [
+   {
+    "commentPattern": "default case omitted"
+   }
+  ],
+  [
+   {
+    "commentPattern": "^skip default"
+   }
+  ],
+  [
+   {
+    "commentPattern": "default"
+   }
+  ],
+  [
+   {
+    "commentPattern": ".?"
+   }
+  ],
+  [
+   {
+    "commentPattern": "skipped default case"
+   }
+  ],
+  [
+   {
+    "commentPattern": "default omitted"
+   }
+  ],
+  [
+   {
+    "commentPattern": "^skip\\sdefault"
+   }
+  ]
+ ],
+ "default-case-last": [],
+ "default-param-last": [],
+ "eqeqeq": [
+  [
+   "always"
+  ],
+  [
+   "smart"
+  ],
+  [
+   "always",
+   {
+    "null": "ignore"
+   }
+  ],
+  [
+   "always",
+   {
+    "null": "always"
+   }
+  ],
+  [
+   "always",
+   {
+    "null": "never"
+   }
+  ],
+  [
+   "smart",
+   {
+    "null": "ignore"
+   }
+  ]
+ ],
+ "for-direction": [],
+ "func-name-matching": [
+  [
+   "always"
+  ],
+  [
+   "never"
+  ],
+  [
+   {
+    "includeCommonJSModuleExports": false
+   }
+  ],
+  [
+   "always",
+   {
+    "includeCommonJSModuleExports": false
+   }
+  ],
+  [
+   "never",
+   {
+    "includeCommonJSModuleExports": false
+   }
+  ],
+  [
+   {
+    "considerPropertyDescriptor": true
+   }
+  ],
+  [
+   "always",
+   {
+    "considerPropertyDescriptor": true
+   }
+  ],
+  [
+   "never",
+   {
+    "considerPropertyDescriptor": true
+   }
+  ],
+  [
+   {
+    "includeCommonJSModuleExports": true
+   }
+  ],
+  [
+   "always",
+   {
+    "includeCommonJSModuleExports": true
+   }
+  ],
+  [
+   "never",
+   {
+    "includeCommonJSModuleExports": true
+   }
+  ],
+  [
+   "always",
+   {}
+  ],
+  [
+   {}
+  ]
+ ],
+ "func-names": [
+  [
+   "always"
+  ],
+  [
+   "as-needed"
+  ],
+  [
+   "never"
+  ],
+  [
+   "always",
+   {
+    "generators": "always"
+   }
+  ],
+  [
+   "always",
+   {
+    "generators": "as-needed"
+   }
+  ],
+  [
+   "as-needed",
+   {
+    "generators": "always"
+   }
+  ],
+  [
+   "as-needed",
+   {
+    "generators": "as-needed"
+   }
+  ],
+  [
+   "never",
+   {
+    "generators": "always"
+   }
+  ],
+  [
+   "never",
+   {
+    "generators": "as-needed"
+   }
+  ],
+  [
+   "never",
+   {
+    "generators": "never"
+   }
+  ],
+  [
+   "always",
+   {
+    "generators": "never"
+   }
+  ],
+  [
+   "as-needed",
+   {
+    "generators": "never"
+   }
+  ]
+ ],
+ "func-style": [
+  [
+   "declaration"
+  ],
+  [
+   "expression"
+  ],
+  [
+   "declaration",
+   {
+    "allowArrowFunctions": true
+   }
+  ],
+  [
+   "expression",
+   {
+    "overrides": {
+     "namedExports": "declaration"
+    }
+   }
+  ],
+  [
+   "declaration",
+   {
+    "overrides": {
+     "namedExports": "declaration"
+    }
+   }
+  ],
+  [
+   "expression",
+   {
+    "overrides": {
+     "namedExports": "ignore"
+    }
+   }
+  ],
+  [
+   "declaration",
+   {
+    "overrides": {
+     "namedExports": "ignore"
+    }
+   }
+  ],
+  [
+   "declaration",
+   {
+    "overrides": {
+     "namedExports": "expression"
+    }
+   }
+  ],
+  [
+   "expression",
+   {
+    "overrides": {
+     "namedExports": "expression"
+    }
+   }
+  ],
+  [
+   "declaration",
+   {
+    "allowArrowFunctions": true,
+    "overrides": {
+     "namedExports": "expression"
+    }
+   }
+  ],
+  [
+   "expression",
+   {
+    "allowArrowFunctions": true,
+    "overrides": {
+     "namedExports": "expression"
+    }
+   }
+  ],
+  [
+   "declaration",
+   {
+    "allowArrowFunctions": true,
+    "overrides": {
+     "namedExports": "ignore"
+    }
+   }
+  ],
+  [
+   "declaration",
+   {
+    "allowTypeAnnotation": true
+   }
+  ],
+  [
+   "expression",
+   {
+    "allowTypeAnnotation": true,
+    "overrides": {
+     "namedExports": "declaration"
+    }
+   }
+  ]
+ ],
+ "getter-return": [
+  [
+   {
+    "allowImplicit": true
+   }
+  ]
+ ],
+ "grouped-accessor-pairs": [
+  [
+   "getBeforeSet"
+  ],
+  [
+   "setBeforeGet"
+  ],
+  [
+   "anyOrder"
+  ],
+  [
+   "anyOrder",
+   {
+    "enforceForTSTypes": true
+   }
+  ],
+  [
+   "getBeforeSet",
+   {
+    "enforceForTSTypes": true
+   }
+  ],
+  [
+   "setBeforeGet",
+   {
+    "enforceForTSTypes": true
+   }
+  ]
+ ],
+ "guard-for-in": [],
+ "id-denylist": [
+  [
+   "bar"
+  ],
+  [
+   "foo"
+  ],
+  [
+   "f",
+   "fo",
+   "fooo",
+   "bar"
+  ],
+  [
+   "f",
+   "fo",
+   "fooo",
+   "b",
+   "ba",
+   "baz"
+  ],
+  [
+   "f",
+   "fo",
+   "fooo",
+   "b",
+   "ba",
+   "barr",
+   "bazz"
+  ],
+  [
+   "f",
+   "fo",
+   "fooo",
+   "b",
+   "ba",
+   "barr",
+   "bazz",
+   "bingg"
+  ],
+  [
+   "foo",
+   "bar"
+  ],
+  [
+   "bar",
+   "baz"
+  ],
+  [
+   "qux"
+  ],
+  [
+   "baz"
+  ],
+  [
+   "array",
+   "date",
+   "mydate",
+   "myarray",
+   "new",
+   "var"
+  ],
+  [
+   "Number"
+  ],
+  [
+   "undefined"
+  ],
+  [
+   "myGlobal"
+  ],
+  [
+   "Map"
+  ],
+  [
+   "window"
+  ],
+  [
+   "import",
+   "meta"
+  ],
+  [
+   "new",
+   "target"
+  ],
+  [
+   "type"
+  ],
+  [
+   "with",
+   "type"
+  ],
+  [
+   "f",
+   "fo",
+   "foo",
+   "bar"
+  ],
+  [
+   "f",
+   "fo",
+   "foo",
+   "b",
+   "ba",
+   "baz"
+  ],
+  [
+   "f",
+   "fo",
+   "foo",
+   "b",
+   "ba",
+   "barr",
+   "bazz"
+  ],
+  [
+   "f",
+   "fo",
+   "fooo",
+   "b",
+   "ba",
+   "bar",
+   "bazz"
+  ],
+  [
+   "f",
+   "fo",
+   "foo",
+   "b",
+   "ba",
+   "barr",
+   "bazz",
+   "bingg"
+  ],
+  [
+   "obj"
+  ],
+  [
+   "key"
+  ],
+  [
+   "arr"
+  ],
+  [
+   "f",
+   "fo",
+   "fooo",
+   "b",
+   "ba",
+   "bar",
+   "bazz",
+   "bingg"
+  ],
+  [
+   "array",
+   "date",
+   "myDate",
+   "myarray",
+   "new",
+   "var"
+  ],
+  [
+   "array",
+   "date",
+   "mydate",
+   "myArray",
+   "new",
+   "var"
+  ],
+  [
+   "foo",
+   "bar",
+   "baz"
+  ],
+  [
+   "bar",
+   "baz",
+   "qux"
+  ],
+  [
+   "a",
+   "bar",
+   "baz",
+   "qux"
+  ],
+  [
+   "Foo"
+  ],
+  [
+   "camelCase"
+  ],
+  [
+   "snake_case"
+  ],
+  [
+   "json"
+  ]
+ ],
+ "id-length": [
+  [
+   {
+    "min": 1
+   }
+  ],
+  [
+   {
+    "min": 0
+   }
+  ],
+  [
+   {
+    "max": 6
+   }
+  ],
+  [
+   {
+    "exceptions": [
+     "h",
+     "q"
+    ]
+   }
+  ],
+  [
+   {
+    "min": 3
+   }
+  ],
+  [
+   {
+    "max": 3
+   }
+  ],
+  [
+   {
+    "min": 3,
+    "max": 5
+   }
+  ],
+  [
+   {
+    "exceptions": [
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "properties": "never"
+   }
+  ],
+  [
+   {
+    "max": 5
+   }
+  ],
+  [
+   {
+    "max": 4,
+    "properties": "never"
+   }
+  ],
+  [
+   {
+    "properties": "always"
+   }
+  ],
+  [
+   {
+    "min": 3,
+    "max": 5,
+    "exceptionPatterns": [
+     "^BEFORE_"
+    ]
+   }
+  ],
+  [
+   {
+    "min": 3,
+    "max": 5,
+    "exceptionPatterns": [
+     "^BEFORE_",
+     "send$"
+    ]
+   }
+  ],
+  [
+   {
+    "min": 3,
+    "max": 5,
+    "exceptionPatterns": [
+     "^BEFORE_",
+     "^A",
+     "^Z"
+    ]
+   }
+  ],
+  [
+   {
+    "min": 3,
+    "max": 5,
+    "exceptionPatterns": [
+     "^A",
+     "^BEFORE_",
+     "^Z"
+    ]
+   }
+  ],
+  [
+   {
+    "min": 3,
+    "max": 5,
+    "exceptionPatterns": [
+     "[x-z]"
+    ]
+   }
+  ],
+  [
+   {
+    "min": 1,
+    "max": 1
+   }
+  ],
+  [
+   {
+    "min": 1,
+    "max": 3,
+    "properties": "always"
+   }
+  ],
+  [
+   {
+    "min": 2,
+    "max": 4
+   }
+  ],
+  [
+   {
+    "max": 10,
+    "exceptions": []
+   }
+  ],
+  [
+   {
+    "exceptions": [
+     "x"
+    ]
+   }
+  ],
+  [
+   {
+    "min": 2,
+    "checkGeneric": false
+   }
+  ],
+  [
+   {
+    "min": 2,
+    "checkGeneric": true
+   }
+  ]
+ ],
+ "id-match": [
+  [
+   "^[a-z]+$",
+   {
+    "onlyDeclarations": true
+   }
+  ],
+  [
+   "^[a-z]+$"
+  ],
+  [
+   "[a-z]+"
+  ],
+  [
+   "^f"
+  ],
+  [
+   "^[a-z]+(_[A-Z][a-z]+)*$"
+  ],
+  [
+   "^[a-z]+(_[A-Z][a-z])*$"
+  ],
+  [
+   "^[^_]+$"
+  ],
+  [
+   "^[a-z$]+([A-Z][a-z]+)*$"
+  ],
+  [
+   "^[^_]+$",
+   {
+    "properties": true,
+    "onlyDeclarations": true
+   }
+  ],
+  [
+   "^[^_]+$",
+   {
+    "properties": true
+   }
+  ],
+  [
+   "^[^_]+$",
+   {
+    "properties": true,
+    "ignoreDestructuring": true
+   }
+  ],
+  [
+   "^[^_]+$",
+   {
+    "properties": false
+   }
+  ],
+  [
+   "^\\$?[a-z]+([A-Z0-9][a-z0-9]+)*$",
+   {
+    "properties": true
+   }
+  ],
+  [
+   "^[^_]+$",
+   {
+    "onlyDeclarations": true
+   }
+  ],
+  [
+   "^[^_]+$",
+   {
+    "properties": false,
+    "onlyDeclarations": false
+   }
+  ],
+  [
+   "^[^a]",
+   {
+    "properties": true,
+    "onlyDeclarations": true
+   }
+  ],
+  [
+   "^[^_]+$",
+   {
+    "classFields": false
+   }
+  ],
+  [
+   "^$"
+  ],
+  [
+   "^foo$"
+  ],
+  [
+   "^foo",
+   {
+    "properties": true
+   }
+  ],
+  [
+   "^def",
+   {
+    "properties": true
+   }
+  ],
+  [
+   "^z"
+  ],
+  [
+   "^[^_]+$",
+   {
+    "classFields": true
+   }
+  ],
+  [
+   "^[^_]+$",
+   {
+    "properties": true,
+    "onlyDeclarations": false
+   }
+  ],
+  [
+   "^[^a]",
+   {
+    "properties": true,
+    "onlyDeclarations": false
+   }
+  ],
+  [
+   "^[^a]",
+   {
+    "properties": false,
+    "onlyDeclarations": false
+   }
+  ],
+  [
+   "^[^_]+$",
+   {
+    "ignoreDestructuring": true
+   }
+  ],
+  [
+   "^[a-z_]+$"
+  ],
+  [
+   "^[a-z]+([A-Z][a-z]+)*$"
+  ],
+  [
+   "^[^_]+$",
+   {
+    "classFields": true,
+    "onlyDeclarations": true
+   }
+  ]
+ ],
+ "init-declarations": [
+  [
+   "always"
+  ],
+  [
+   "never"
+  ],
+  [
+   "never",
+   {
+    "ignoreForLoopInit": true
+   }
+  ]
+ ],
+ "logical-assignment-operators": [
+  [
+   "always",
+   {
+    "enforceForIfStatements": false
+   }
+  ],
+  [
+   "always",
+   {
+    "enforceForIfStatements": true
+   }
+  ],
+  [
+   "never"
+  ],
+  [
+   "always"
+  ]
+ ],
+ "max-classes-per-file": [
+  [
+   1
+  ],
+  [
+   2
+  ],
+  [
+   {
+    "max": 1
+   }
+  ],
+  [
+   {
+    "max": 2
+   }
+  ],
+  [
+   {
+    "ignoreExpressions": true,
+    "max": 1
+   }
+  ],
+  [
+   {
+    "ignoreExpressions": true,
+    "max": 2
+   }
+  ]
+ ],
+ "max-depth": [
+  [
+   3
+  ],
+  [
+   {
+    "max": 3
+   }
+  ],
+  [
+   2
+  ],
+  [
+   1
+  ],
+  [
+   {
+    "max": 2
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "max": 0
+   }
+  ],
+  [
+   0
+  ]
+ ],
+ "max-lines": [
+  [
+   1
+  ],
+  [
+   2
+  ],
+  [
+   {
+    "max": 2
+   }
+  ],
+  [
+   {
+    "max": 0,
+    "skipComments": true
+   }
+  ],
+  [
+   {
+    "max": 1,
+    "skipComments": true
+   }
+  ],
+  [
+   {
+    "max": 2,
+    "skipComments": true
+   }
+  ],
+  [
+   {
+    "max": 2,
+    "skipBlankLines": true
+   }
+  ],
+  [
+   {
+    "max": 2,
+    "skipComments": true,
+    "skipBlankLines": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "max": 0
+   }
+  ],
+  [
+   {
+    "max": 1
+   }
+  ]
+ ],
+ "max-lines-per-function": [
+  [
+   1
+  ],
+  [
+   4
+  ],
+  [
+   {
+    "max": 7,
+    "skipComments": false,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 4,
+    "skipComments": false,
+    "skipBlankLines": true
+   }
+  ],
+  [
+   {
+    "max": 4,
+    "skipComments": true,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 5,
+    "skipComments": true,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 7,
+    "skipComments": true,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 4,
+    "skipComments": true,
+    "skipBlankLines": false,
+    "IIFEs": true
+   }
+  ],
+  [
+   {
+    "max": 10,
+    "skipComments": true,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 7,
+    "skipComments": true,
+    "skipBlankLines": false,
+    "IIFEs": true
+   }
+  ],
+  [
+   {
+    "max": 2,
+    "skipComments": true,
+    "skipBlankLines": false,
+    "IIFEs": false
+   }
+  ],
+  [
+   3
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "max": 6,
+    "skipComments": false,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 6,
+    "skipComments": true,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 2,
+    "skipComments": true,
+    "skipBlankLines": true
+   }
+  ],
+  [
+   {
+    "max": 1,
+    "skipComments": true,
+    "skipBlankLines": true
+   }
+  ],
+  [
+   {
+    "max": 1,
+    "skipComments": false,
+    "skipBlankLines": true
+   }
+  ],
+  [
+   {
+    "max": 3,
+    "skipComments": true,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 4,
+    "skipComments": false,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 2,
+    "skipComments": true,
+    "skipBlankLines": false
+   }
+  ],
+  [
+   {
+    "max": 2,
+    "skipComments": true,
+    "skipBlankLines": false,
+    "IIFEs": true
+   }
+  ],
+  [
+   {
+    "max": 9,
+    "skipComments": true,
+    "skipBlankLines": false
+   }
+  ]
+ ],
+ "max-nested-callbacks": [
+  [
+   3
+  ],
+  [
+   2
+  ],
+  [
+   {
+    "max": 3
+   }
+  ],
+  [
+   {
+    "max": 0
+   }
+  ],
+  [
+   0
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "max": 2
+   }
+  ]
+ ],
+ "max-params": [
+  [
+   3
+  ],
+  [
+   {
+    "max": 3
+   }
+  ],
+  [
+   {
+    "max": 4
+   }
+  ],
+  [
+   {
+    "maximum": 4
+   }
+  ],
+  [
+   {
+    "max": 0
+   }
+  ],
+  [
+   {
+    "max": 1
+   }
+  ],
+  [
+   {
+    "countVoidThis": true,
+    "max": 2
+   }
+  ],
+  [
+   {
+    "max": 2
+   }
+  ],
+  [
+   {
+    "max": 3,
+    "countThis": "never"
+   }
+  ],
+  [
+   {
+    "max": 3,
+    "countThis": "except-void"
+   }
+  ],
+  [
+   2
+  ],
+  [
+   1
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "countVoidThis": true,
+    "max": 1
+   }
+  ],
+  [
+   {
+    "countThis": "always",
+    "max": 1
+   }
+  ],
+  [
+   {
+    "countThis": "except-void",
+    "max": 1
+   }
+  ],
+  [
+   {
+    "countVoidThis": false,
+    "max": 1
+   }
+  ],
+  [
+   {
+    "max": 3,
+    "countThis": "always"
+   }
+  ],
+  [
+   0
+  ],
+  [
+   4
+  ],
+  [
+   {
+    "maximum": 0
+   }
+  ],
+  [
+   {
+    "maximum": 1
+   }
+  ],
+  [
+   {
+    "max": 3,
+    "countVoidThis": true
+   }
+  ],
+  [
+   {
+    "max": 3,
+    "countVoidThis": false
+   }
+  ],
+  [
+   {
+    "countThis": "never"
+   }
+  ],
+  [
+   {
+    "countThis": "always"
+   }
+  ],
+  [
+   {
+    "countThis": "except-void"
+   }
+  ],
+  [
+   {
+    "max": 0,
+    "countThis": "never"
+   }
+  ],
+  [
+   {
+    "max": 0,
+    "countThis": "always"
+   }
+  ],
+  [
+   {
+    "countVoidThis": true
+   }
+  ]
+ ],
+ "max-statements": [
+  [
+   3
+  ],
+  [
+   6
+  ],
+  [
+   5
+  ],
+  [
+   1,
+   {
+    "ignoreTopLevelFunctions": true
+   }
+  ],
+  [
+   2
+  ],
+  [
+   {
+    "max": 2
+   }
+  ],
+  [
+   2,
+   {
+    "ignoreTopLevelFunctions": true
+   }
+  ],
+  [
+   4
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "max": 0
+   }
+  ],
+  [
+   1
+  ],
+  [
+   0
+  ],
+  [
+   {
+    "maximum": 0
+   }
+  ],
+  [
+   {
+    "maximum": 0,
+    "max": 1
+   }
+  ],
+  [
+   {
+    "maximum": 1,
+    "max": 5
+   }
+  ],
+  [
+   {
+    "maximum": 5,
+    "max": 1
+   }
+  ],
+  [
+   {
+    "maximum": 1
+   }
+  ],
+  [
+   {
+    "max": 1
+   },
+   {}
+  ],
+  [
+   {
+    "max": 1
+   },
+   {
+    "ignoreTopLevelFunctions": false
+   }
+  ],
+  [
+   {
+    "max": 1
+   },
+   {
+    "ignoreTopLevelFunctions": true
+   }
+  ],
+  [
+   {
+    "maximum": 0
+   },
+   {
+    "ignoreTopLevelFunctions": true
+   }
+  ],
+  [
+   {},
+   {
+    "ignoreTopLevelFunctions": true
+   }
+  ]
+ ],
+ "new-cap": [
+  [
+   {
+    "capIsNew": false
+   }
+  ],
+  [
+   {
+    "newIsCap": false
+   }
+  ],
+  [
+   {
+    "capIsNew": true,
+    "capIsNewExceptions": [
+     "Foo"
+    ]
+   }
+  ],
+  [
+   {
+    "capIsNewExceptionPattern": "^Foo"
+   }
+  ],
+  [
+   {
+    "newIsCap": true,
+    "newIsCapExceptions": [
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptionPattern": "^foo"
+   }
+  ],
+  [
+   {
+    "capIsNewExceptions": [
+     "Foo"
+    ]
+   }
+  ],
+  [
+   {
+    "capIsNewExceptions": [
+     "Bar"
+    ]
+   }
+  ],
+  [
+   {
+    "capIsNewExceptions": [
+     "Foo.Bar"
+    ]
+   }
+  ],
+  [
+   {
+    "capIsNewExceptionPattern": "^Foo\\.."
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "bar"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "foo.bar"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptionPattern": "^foo\\.."
+   }
+  ],
+  [
+   {
+    "properties": false
+   }
+  ],
+  [
+   {
+    "capIsNew": false,
+    "properties": false
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "toString"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "constructor"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "hasOwnProperty"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "isPrototypeOf"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "propertyIsEnumerable"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "valueOf"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "toLocaleString"
+    ]
+   }
+  ],
+  [
+   {
+    "capIsNewExceptions": [
+     "String"
+    ]
+   }
+  ],
+  [
+   {
+    "capIsNewExceptionPattern": "^String$"
+   }
+  ],
+  [
+   {
+    "capIsNewExceptions": [
+     "obj.String"
+    ]
+   }
+  ],
+  [
+   {
+    "capIsNewExceptionPattern": "^obj\\."
+   }
+  ],
+  [
+   {
+    "capIsNewExceptions": [
+     "UTC"
+    ]
+   }
+  ],
+  [
+   {
+    "newIsCapExceptions": [
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "capIsNewExceptions": [
+     "Intl.DateTimeFormat"
+    ]
+   }
+  ]
+ ],
+ "no-alert": [],
+ "no-array-constructor": [],
+ "no-async-promise-executor": [],
+ "no-await-in-loop": [],
+ "no-bitwise": [
+  [
+   {
+    "allow": [
+     "~"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "~",
+     "<<"
+    ]
+   }
+  ],
+  [
+   {
+    "int32Hint": true
+   }
+  ],
+  [
+   {
+    "allow": [
+     "|"
+    ],
+    "int32Hint": false
+   }
+  ],
+  [
+   {
+    "int32Hint": false,
+    "allow": [
+     "|"
+    ]
+   }
+  ]
+ ],
+ "no-caller": [],
+ "no-case-declarations": [],
+ "no-class-assign": [],
+ "no-compare-neg-zero": [],
+ "no-cond-assign": [
+  [
+   "always"
+  ],
+  [
+   "except-parens"
+  ]
+ ],
+ "no-console": [
+  [
+   {
+    "allow": [
+     "info"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "warn"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "error"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "log"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "warn",
+     "info"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "error",
+     "warn"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "log",
+     "error"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "info",
+     "log",
+     "warn"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "warn",
+     "error"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "warn",
+     "info",
+     "log"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "warn",
+     "error",
+     "log"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "info",
+     "log"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "log",
+     "error",
+     "warn"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": []
+   }
+  ],
+  [
+   {
+    "allow": [
+     "lo\\x67"
+    ]
+   }
+  ]
+ ],
+ "no-const-assign": [],
+ "no-constant-binary-expression": [
+  [
+   {
+    "checkRelationalComparisons": false
+   }
+  ],
+  [
+   {
+    "checkRelationalComparisons": true
+   }
+  ]
+ ],
+ "no-constant-condition": [
+  [
+   {
+    "checkLoops": false
+   }
+  ],
+  [
+   {
+    "checkLoops": "none"
+   }
+  ],
+  [
+   {
+    "checkLoops": "allExceptWhileTrue"
+   }
+  ],
+  [
+   {
+    "checkLoops": "all"
+   }
+  ],
+  [
+   {
+    "checkLoops": true
+   }
+  ]
+ ],
+ "no-constructor-return": [],
+ "no-continue": [],
+ "no-control-regex": [],
+ "no-debugger": [],
+ "no-delete-var": [],
+ "no-div-regex": [],
+ "no-dupe-class-members": [],
+ "no-dupe-else-if": [],
+ "no-dupe-keys": [],
+ "no-duplicate-case": [],
+ "no-duplicate-imports": [
+  [
+   {
+    "includeExports": true
+   }
+  ],
+  [
+   {
+    "allowSeparateTypeImports": true
+   }
+  ],
+  [
+   {
+    "allowSeparateTypeImports": true,
+    "includeExports": true
+   }
+  ]
+ ],
+ "no-else-return": [
+  [
+   {
+    "allowElseIf": true
+   }
+  ],
+  [
+   {
+    "allowElseIf": false
+   }
+  ]
+ ],
+ "no-empty": [
+  [
+   {
+    "allowEmptyCatch": true
+   }
+  ]
+ ],
+ "no-empty-character-class": [],
+ "no-empty-function": [
+  [
+   {
+    "allow": [
+     "functions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "arrowFunctions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "generatorFunctions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "methods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "generatorMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "getters"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "setters"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "constructors"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "asyncMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "asyncFunctions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "decoratedFunctions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "overrideMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "privateConstructors"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "protectedConstructors"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "private-constructors"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "protected-constructors"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "decorated-functions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "arrowFunctions",
+     "functions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "generator-functions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "async-functions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "async-methods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "generator-methods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "getter"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "setter"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "methods",
+     "decoratedFunctions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "methods",
+     "overrideMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "methods",
+     "decoratedFunctions",
+     "overrideMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "getters",
+     "decoratedFunctions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "getters",
+     "overrideMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "setters",
+     "decoratedFunctions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "setters",
+     "overrideMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "constructors",
+     "privateConstructors"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "constructors",
+     "protectedConstructors"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "asyncMethods",
+     "decoratedFunctions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "asyncMethods",
+     "overrideMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "privateConstructors",
+     "constructors"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "protectedConstructors",
+     "constructors"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "decoratedFunctions",
+     "methods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "decoratedFunctions",
+     "getters"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "decoratedFunctions",
+     "setters"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "decoratedFunctions",
+     "asyncMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "decoratedFunctions",
+     "methods",
+     "overrideMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "overrideMethods",
+     "getters"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "overrideMethods",
+     "setters"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "overrideMethods",
+     "asyncMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "overrideMethods",
+     "methods",
+     "decoratedFunctions"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "overrideMethods",
+     "methods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "decoratedFunctions",
+     "overrideMethods"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "getters",
+     "setters"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "asyncFunctions",
+     "generatorFunctions"
+    ]
+   }
+  ]
+ ],
+ "no-empty-pattern": [
+  [
+   {
+    "allowObjectPatternsAsParameters": true
+   }
+  ],
+  [
+   {}
+  ]
+ ],
+ "no-empty-static-block": [],
+ "no-eq-null": [],
+ "no-eval": [
+  [
+   {
+    "allowIndirect": true
+   }
+  ],
+  [
+   {
+    "allowIndirect": false
+   }
+  ]
+ ],
+ "no-ex-assign": [],
+ "no-extend-native": [
+  [
+   {
+    "exceptions": [
+     "Object"
+    ]
+   }
+  ]
+ ],
+ "no-extra-bind": [],
+ "no-extra-boolean-cast": [
+  [
+   {
+    "enforceForLogicalOperands": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "enforceForLogicalOperands": false
+   }
+  ],
+  [
+   {
+    "enforceForInnerExpressions": true
+   }
+  ],
+  [
+   {
+    "enforceForInnerExpressions": false
+   }
+  ]
+ ],
+ "no-extra-label": [],
+ "no-fallthrough": [
+  [
+   {
+    "commentPattern": "no break"
+   }
+  ],
+  [
+   {
+    "commentPattern": "no break:\\s?\\w+"
+   }
+  ],
+  [
+   {
+    "commentPattern": "falling through"
+   }
+  ],
+  [
+   {
+    "commentPattern": "break omitted"
+   }
+  ],
+  [
+   {
+    "commentPattern": "break[\\s\\w]+omitted"
+   }
+  ],
+  [
+   {
+    "allowEmptyCase": true
+   }
+  ],
+  [
+   {
+    "allowEmptyCase": false
+   }
+  ],
+  [
+   {
+    "reportUnusedFallthroughComment": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "reportUnusedFallthroughComment": false
+   }
+  ]
+ ],
+ "no-func-assign": [],
+ "no-global-assign": [
+  [
+   {
+    "exceptions": [
+     "Object"
+    ]
+   }
+  ]
+ ],
+ "no-implicit-coercion": [
+  [
+   {
+    "boolean": false
+   }
+  ],
+  [
+   {
+    "number": false
+   }
+  ],
+  [
+   {
+    "string": false
+   }
+  ],
+  [
+   {
+    "boolean": true,
+    "allow": [
+     "!!"
+    ]
+   }
+  ],
+  [
+   {
+    "boolean": true,
+    "allow": [
+     "~"
+    ]
+   }
+  ],
+  [
+   {
+    "boolean": true
+   }
+  ],
+  [
+   {
+    "boolean": true,
+    "allow": [
+     "*"
+    ]
+   }
+  ],
+  [
+   {
+    "number": true,
+    "allow": [
+     "- -"
+    ]
+   }
+  ],
+  [
+   {
+    "number": true,
+    "allow": [
+     "-"
+    ]
+   }
+  ],
+  [
+   {
+    "boolean": true,
+    "allow": [
+     "+"
+    ]
+   }
+  ],
+  [
+   {
+    "boolean": true,
+    "string": true,
+    "allow": [
+     "+"
+    ]
+   }
+  ],
+  [
+   {
+    "disallowTemplateShorthand": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "disallowTemplateShorthand": false
+   }
+  ]
+ ],
+ "no-implicit-globals": [
+  [
+   {
+    "lexicalBindings": false
+   }
+  ],
+  [
+   {
+    "lexicalBindings": true
+   }
+  ]
+ ],
+ "no-implied-eval": [],
+ "no-import-assign": [],
+ "no-inline-comments": [
+  [
+   {
+    "ignorePattern": "(?:webpackChunkName):\\s.+"
+   }
+  ],
+  [
+   {
+    "ignorePattern": "Note: "
+   }
+  ],
+  [
+   {
+    "ignorePattern": "otherthing"
+   }
+  ],
+  [
+   {
+    "ignorePattern": "something"
+   }
+  ],
+  [
+   {
+    "ignorePattern": "Note:"
+   }
+  ]
+ ],
+ "no-inner-declarations": [
+  [
+   "both"
+  ],
+  [
+   "functions",
+   {
+    "blockScopedFunctions": "allow"
+   }
+  ],
+  [
+   "functions"
+  ],
+  [
+   "both",
+   {
+    "blockScopedFunctions": "disallow"
+   }
+  ],
+  [
+   "both",
+   {
+    "blockScopedFunctions": "allow"
+   }
+  ]
+ ],
+ "no-invalid-regexp": [
+  [
+   {
+    "allowConstructorFlags": [
+     "u"
+    ]
+   }
+  ],
+  [
+   {
+    "allowConstructorFlags": [
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "allowConstructorFlags": []
+   }
+  ],
+  [
+   {
+    "allowConstructorFlags": [
+     "a",
+     "z"
+    ]
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "allowConstructorFlags": [
+     "A"
+    ]
+   }
+  ],
+  [
+   {
+    "allowConstructorFlags": [
+     "z"
+    ]
+   }
+  ],
+  [
+   {
+    "allowConstructorFlags": [
+     "a",
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "allowConstructorFlags": [
+     "😀"
+    ]
+   }
+  ],
+  [
+   {
+    "allowConstructorFlags": [
+     "g"
+    ]
+   }
+  ],
+  [
+   {
+    "allowConstructorFlags": [
+     "u",
+     "a"
+    ]
+   }
+  ]
+ ],
+ "no-irregular-whitespace": [
+  [
+   {
+    "skipComments": true
+   }
+  ],
+  [
+   {
+    "skipRegExps": true
+   }
+  ],
+  [
+   {
+    "skipTemplates": true
+   }
+  ],
+  [
+   {
+    "skipJSXText": true
+   }
+  ],
+  [
+   {
+    "skipStrings": false
+   }
+  ],
+  [
+   {
+    "skipTemplates": false
+   }
+  ],
+  [
+   {
+    "skipComments": false
+   }
+  ],
+  [
+   {
+    "skipRegExps": false
+   }
+  ],
+  [
+   {
+    "skipJSXText": false
+   }
+  ]
+ ],
+ "no-iterator": [],
+ "no-label-var": [],
+ "no-labels": [
+  [
+   {
+    "allowLoop": true
+   }
+  ],
+  [
+   {
+    "allowSwitch": true
+   }
+  ]
+ ],
+ "no-lone-blocks": [],
+ "no-lonely-if": [],
+ "no-loop-func": [],
+ "no-loss-of-precision": [],
+ "no-magic-numbers": [
+  [
+   {
+    "enforceConst": false
+   }
+  ],
+  [
+   {
+    "ignore": [
+     0,
+     1,
+     2,
+     -2
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     0,
+     1
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreArrayIndexes": true
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "100n"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "-100n"
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreDefaultValues": true
+   }
+  ],
+  [
+   {
+    "ignoreClassFieldInitialValues": true
+   }
+  ],
+  [
+   {
+    "ignoreNumericLiteralTypes": true
+   }
+  ],
+  [
+   {
+    "ignoreEnums": true
+   }
+  ],
+  [
+   {
+    "ignoreReadonlyClassProperties": true
+   }
+  ],
+  [
+   {
+    "ignoreTypeIndexes": true
+   }
+  ],
+  [
+   {
+    "ignoreTypeIndexes": false
+   }
+  ],
+  [
+   {
+    "ignore": [
+     1
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -2
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "3n"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "-4n"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     5.6
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -7.8
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     10
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -188
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     100
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -30000
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     0.000005
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -7e-8
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     110
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -31000
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     0.0000051
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -7.1e-8
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     1
+    ],
+    "ignoreNumericLiteralTypes": true
+   }
+  ],
+  [
+   {
+    "ignore": [
+     1000,
+     -1,
+     2
+    ],
+    "ignoreEnums": false
+   }
+  ],
+  [
+   {
+    "ignore": [
+     1,
+     2,
+     3,
+     4,
+     -5,
+     6,
+     "100n",
+     "-2000n"
+    ],
+    "ignoreReadonlyClassProperties": false
+   }
+  ],
+  [
+   {
+    "ignore": [
+     0
+    ],
+    "ignoreTypeIndexes": false
+   }
+  ],
+  [
+   {
+    "ignore": [
+     0,
+     3
+    ],
+    "ignoreTypeIndexes": true
+   }
+  ],
+  [
+   {
+    "ignoreClassFieldInitialValues": true,
+    "ignoreReadonlyClassProperties": true
+   }
+  ],
+  [
+   {
+    "enforceConst": true
+   }
+  ],
+  [
+   {
+    "detectObjects": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "ignoreArrayIndexes": false
+   }
+  ],
+  [
+   {
+    "ignoreDefaultValues": false
+   }
+  ],
+  [
+   {
+    "ignoreClassFieldInitialValues": false
+   }
+  ],
+  [
+   {
+    "ignoreNumericLiteralTypes": false
+   }
+  ],
+  [
+   {
+    "ignoreEnums": false
+   }
+  ],
+  [
+   {
+    "ignoreReadonlyClassProperties": false
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -1
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     2
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "-3n"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "4n"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -5.6
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     7.8
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -10
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     188
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -100
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     30000
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -0.000005
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     7e-8
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -110
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     31000
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     -0.0000051
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     7.1e-8
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreNumericLiteralTypes": true,
+    "ignore": [
+     1
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreEnums": false,
+    "ignore": [
+     1000,
+     -1,
+     2
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreReadonlyClassProperties": false,
+    "ignore": [
+     1,
+     2,
+     3,
+     4,
+     -5,
+     6,
+     "100n",
+     "-2000n"
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreTypeIndexes": false,
+    "ignore": [
+     0
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreTypeIndexes": true,
+    "ignore": [
+     0,
+     3
+    ]
+   }
+  ]
+ ],
+ "no-misleading-character-class": [
+  [
+   {
+    "allowEscape": true
+   }
+  ],
+  [
+   {
+    "allowEscape": false
+   }
+  ],
+  [
+   {}
+  ]
+ ],
+ "no-multi-assign": [
+  [
+   {
+    "ignoreNonDeclaration": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "ignoreNonDeclaration": false
+   }
+  ]
+ ],
+ "no-multi-str": [],
+ "no-negated-condition": [],
+ "no-nested-ternary": [],
+ "no-new": [],
+ "no-new-func": [],
+ "no-new-native-nonconstructor": [],
+ "no-new-wrappers": [],
+ "no-nonoctal-decimal-escape": [],
+ "no-obj-calls": [],
+ "no-object-constructor": [],
+ "no-param-reassign": [
+  [
+   {
+    "props": true
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsFor": [
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsFor": [
+     "a",
+     "x"
+    ]
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsForRegex": [
+     "^a.*$"
+    ]
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsForRegex": [
+     "^a.*$",
+     "^x.*$"
+    ]
+   }
+  ],
+  [
+   {
+    "props": false
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsForRegex": [
+     "^(foo|bar)$"
+    ],
+    "ignorePropertyModificationsFor": [
+     "baz"
+    ]
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsForRegex": [
+     "^B.*$"
+    ]
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsFor": [
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsForRegex": [
+     "^f"
+    ]
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsForRegex": [
+     "^F"
+    ]
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsForRegex": [
+     "^.{2}$"
+    ]
+   }
+  ],
+  [
+   {
+    "props": true,
+    "ignorePropertyModificationsForRegex": [
+     "^.{3}$"
+    ]
+   }
+  ]
+ ],
+ "no-plusplus": [
+  [
+   {
+    "allowForLoopAfterthoughts": true
+   }
+  ]
+ ],
+ "no-promise-executor-return": [
+  [
+   {
+    "allowVoid": true
+   }
+  ],
+  [
+   {
+    "allowVoid": false
+   }
+  ]
+ ],
+ "no-proto": [],
+ "no-prototype-builtins": [],
+ "no-redeclare": [
+  [
+   {
+    "builtinGlobals": false
+   }
+  ],
+  [
+   {
+    "builtinGlobals": true
+   }
+  ]
+ ],
+ "no-regex-spaces": [],
+ "no-restricted-exports": [
+  [
+   {}
+  ],
+  [
+   {
+    "restrictedNamedExports": []
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "x"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "undefined"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     " "
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     ""
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "B"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "A"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^get"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "bar$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "default"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "default"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "direct": false
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "named": false
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "defaultFrom": false
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "defaultFrom": true
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "named": true,
+     "defaultFrom": false
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "namedFrom": false
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "namedFrom": true
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "defaultFrom": false,
+     "namedFrom": true
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "namespaceFrom": false
+    }
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "someFunction"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "b"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     " b "
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "👍"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "a",
+     "b"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "a",
+     "c"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "b",
+     "c"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "foo",
+     "a",
+     "b",
+     "bar",
+     "d",
+     "e",
+     "baz"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "foo",
+     "b",
+     "bar",
+     "d",
+     "e",
+     "f",
+     "baz"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "get*"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "User$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "(b|y)$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^privateUser"
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "direct": true
+    }
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "bar"
+    ],
+    "restrictDefaultExports": {
+     "direct": true
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "named": true
+    }
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "namespaceFrom": true
+    }
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^a|b$"
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "direct": true,
+     "named": true,
+     "defaultFrom": true,
+     "namedFrom": true,
+     "namespaceFrom": true
+    },
+    "restrictedNamedExports": [
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "."
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^.$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^..$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "\\p{Lu}"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^\\p{Emoji}$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^[\\u{1F600}]$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "[^a]"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "\\bfoo\\b"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "(?i:A)"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^\\w+$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "\\u{61}"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "a{2}"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^(a|b)+$"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": "^d"
+   }
+  ],
+  [
+   {
+    "restrictedNamedExportsPattern": ""
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {}
+   }
+  ],
+  [
+   {
+    "restrictDefaultExports": {
+     "direct": false,
+     "named": true
+    }
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "a"
+    ],
+    "restrictedNamedExportsPattern": "b",
+    "restrictDefaultExports": {
+     "named": true
+    }
+   }
+  ],
+  [
+   {
+    "restrictedNamedExports": [
+     "default"
+    ],
+    "restrictedNamedExportsPattern": "b"
+   }
+  ]
+ ],
+ "no-restricted-globals": [
+  [
+   "bar"
+  ],
+  [
+   "foo"
+  ],
+  [
+   {
+    "name": "bar",
+    "message": "Use baz instead."
+   }
+  ],
+  [
+   {
+    "globals": [
+     "bar"
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     {
+      "name": "bar",
+      "message": "Use baz instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     "foo"
+    ],
+    "globalObjects": [
+     "myGlobal"
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     "foo"
+    ],
+    "checkGlobalObject": true
+   }
+  ],
+  [
+   {
+    "globals": [
+     "foo"
+    ],
+    "checkGlobalObject": true,
+    "globalObjects": [
+     "myGlobal"
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     "bar"
+    ],
+    "checkGlobalObject": true
+   }
+  ],
+  [
+   {
+    "globals": [
+     "bar"
+    ],
+    "checkGlobalObject": true,
+    "globalObjects": [
+     "myGlobal"
+    ]
+   }
+  ],
+  [
+   "status"
+  ],
+  [
+   "event"
+  ],
+  [
+   "bigint"
+  ],
+  [
+   "boolean"
+  ],
+  [
+   "never"
+  ],
+  [
+   "null"
+  ],
+  [
+   "number"
+  ],
+  [
+   "object"
+  ],
+  [
+   "string"
+  ],
+  [
+   "symbol"
+  ],
+  [
+   "undefined"
+  ],
+  [
+   "unknown"
+  ],
+  [
+   "void"
+  ],
+  [
+   "[]"
+  ],
+  [
+   "{}"
+  ],
+  [
+   "Test"
+  ],
+  [
+   "Test1",
+   "Test2"
+  ],
+  [
+   "NS"
+  ],
+  [
+   "NS.Test"
+  ],
+  [
+   "Type",
+   "Test"
+  ],
+  [
+   "Test",
+   "any"
+  ],
+  [
+   "Test",
+   "A",
+   "B"
+  ],
+  [
+   "foo",
+   "event"
+  ],
+  [
+   {
+    "name": "foo"
+   }
+  ],
+  [
+   "foo",
+   {
+    "name": "event"
+   }
+  ],
+  [
+   {
+    "name": "foo",
+    "message": "Use bar instead."
+   }
+  ],
+  [
+   "foo",
+   {
+    "name": "event",
+    "message": "Use local event parameter."
+   }
+  ],
+  [
+   "hasOwnProperty"
+  ],
+  [
+   {
+    "globals": [
+     "foo",
+     "event"
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     {
+      "name": "foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     "foo",
+     {
+      "name": "event"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     {
+      "name": "foo",
+      "message": "Use bar instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     "foo",
+     {
+      "name": "event",
+      "message": "Use local event parameter."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     "hasOwnProperty"
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     "foo",
+     "bar"
+    ],
+    "checkGlobalObject": true,
+    "globalObjects": [
+     "myGlobal",
+     "myOtherGlobal"
+    ]
+   }
+  ],
+  [
+   {
+    "globals": [
+     "event"
+    ],
+    "checkGlobalObject": true
+   }
+  ],
+  [
+   {
+    "globals": [
+     "event"
+    ],
+    "checkGlobalObject": true,
+    "globalObjects": [
+     "myGlobal"
+    ]
+   }
+  ],
+  [
+   "Promise"
+  ],
+  [
+   {
+    "name": "Date",
+    "message": "Use helpers or date-fns instead"
+   }
+  ],
+  [
+   "location"
+  ]
+ ],
+ "no-restricted-imports": [
+  [
+   "osx"
+  ],
+  [
+   "crypto"
+  ],
+  [
+   "crypto",
+   "stream",
+   "os"
+  ],
+  [
+   "foo"
+  ],
+  [
+   {
+    "paths": [
+     "foo",
+     "bar"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "foo/c*"
+    ]
+   }
+  ],
+  [
+   "../foo"
+  ],
+  [
+   {
+    "paths": [
+     "../foo"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "../foo"
+    ]
+   }
+  ],
+  [
+   "/foo"
+  ],
+  [
+   {
+    "paths": [
+     "/foo"
+    ]
+   }
+  ],
+  [
+   "../notFoo"
+  ],
+  [
+   {
+    "paths": [
+     "../notFoo"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "notFoo"
+    ]
+   }
+  ],
+  [
+   "/notFoo"
+  ],
+  [
+   {
+    "paths": [
+     "/notFoo"
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     "foo"
+    ],
+    "patterns": [
+     "foo/c*"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "foo/*",
+     "!foo/bar"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/*",
+       "!foo/bar"
+      ],
+      "message": "foo is forbidden, use bar instead"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "FOO"
+      ],
+      "message": "foo is forbidden, use bar instead",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObject"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "bar",
+      "importNames": [
+       "DisallowedObject"
+      ],
+      "message": "Please import 'DisallowedObject' from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObject"
+      ],
+      "message": "Please import 'DisallowedObject' from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       ""
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       " "
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObject",
+       "DisallowedObjectTwo"
+      ],
+      "message": "Please import 'DisallowedObject' and 'DisallowedObjectTwo' from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   "bar"
+  ],
+  [
+   {
+    "name": "bar",
+    "importNames": [
+     "DisallowedObject"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNames": [
+       "Foo"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "importNamePattern": "^Foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "importNames": [
+       "Foo"
+      ],
+      "group": [
+       "foo"
+      ],
+      "importNamePattern": "^Foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNamePattern": "^Foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "importNames": [
+       "Foo"
+      ],
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNamePattern": "^Foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNamePattern": "^(Foo|Bar)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "importNames": [
+       "Foo"
+      ],
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNamePattern": "^Bar"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject"
+      ],
+      "message": "Please import anything except 'AllowedObject' from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "foo"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNames": [
+       "foo"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "bar"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNames": [
+       "bar"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNamePattern": "^Foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "foo/(?!bar)",
+      "message": "foo is forbidden, use bar instead"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "FOO",
+      "message": "foo is forbidden, use bar instead",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "my/relative-module",
+      "importNamePattern": "^Foo"
+     }
+    ]
+   }
+  ],
+  [
+   "import1",
+   "import2"
+  ],
+  [
+   {
+    "paths": [
+     "import1",
+     "import2"
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     "import1",
+     "import2"
+    ],
+    "patterns": [
+     "import1/private/*",
+     "import2/*",
+     "!import2/good"
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "message": "Please use import-bar instead.",
+      "name": "import-foo"
+     },
+     {
+      "message": "Please use import-quux instead.",
+      "name": "import-baz"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "importNames": [
+       "Bar"
+      ],
+      "message": "Please use Bar from /import-bar/baz/ instead.",
+      "name": "import-foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "import1/private/*"
+      ],
+      "message": "usage of import1 private modules not allowed."
+     },
+     {
+      "group": [
+       "import2/*",
+       "!import2/good"
+      ],
+      "message": "import2 is deprecated, except the modules in import2/good."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "importNames": [
+       "foo"
+      ],
+      "message": "Please use Bar from /import-bar/baz/ instead.",
+      "name": "foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "allowTypeImports": true,
+      "message": "Please use import-bar instead.",
+      "name": "import-foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "allowTypeImports": true,
+      "importNames": [
+       "Bar"
+      ],
+      "message": "Please use Bar from /import-bar/baz/ instead.",
+      "name": "import-foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "allowTypeImports": true,
+      "group": [
+       "import1/private/*"
+      ],
+      "message": "usage of import1 private modules not allowed."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "allowTypeImports": true,
+      "group": [
+       "fail"
+      ],
+      "message": "Please do not load from 'fail'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "allowTypeImports": true,
+      "group": [
+       "import1/private/*"
+      ],
+      "message": "usage of import1 private modules not allowed."
+     },
+     {
+      "allowTypeImports": true,
+      "group": [
+       "import2/private/*"
+      ],
+      "message": "usage of import2 private modules not allowed."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "import/private/*"
+      ],
+      "importNames": [
+       "Baz"
+      ],
+      "allowTypeImports": true,
+      "message": "Please use 'Baz' from 'import/private/*' as a type only."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "import/private/*"
+      ],
+      "importNames": [
+       "Bar"
+      ],
+      "allowTypeImports": true,
+      "message": "Please use 'Baz' from 'import/private/*' as a type only."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "import/private/*"
+      ],
+      "allowImportNames": [
+       "Foo"
+      ],
+      "allowTypeImports": true,
+      "message": "Please use 'Baz' from 'import/private/*' as a type only."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "import/private/*"
+      ],
+      "allowImportNames": [
+       "Baz"
+      ],
+      "allowTypeImports": true,
+      "message": "Please use 'Baz' from 'import/private/*' as a type only."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "import/private/*"
+      ],
+      "allowImportNamePattern": "^Foo",
+      "allowTypeImports": true,
+      "message": "Please use 'Baz' from 'import/private/*' as a type only."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "import/private/*"
+      ],
+      "allowImportNamePattern": "^Baz",
+      "allowTypeImports": true,
+      "message": "Please use 'Baz' from 'import/private/*' as a type only."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "import-foo",
+      "allowImportNames": [
+       "bar"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "allowTypeImports": true,
+      "message": "usage of import1 private modules not allowed.",
+      "regex": "import1/.*"
+     },
+     {
+      "allowTypeImports": true,
+      "message": "usage of import2 private modules not allowed.",
+      "regex": "import2/.*"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "allowTypeImports": true,
+      "caseSensitive": true,
+      "message": "usage of import1 private modules not allowed.",
+      "regex": "import1/[A-Z]+"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "allowTypeImports": true,
+      "importNames": [
+       "Bar"
+      ],
+      "name": "import-foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "f*"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "bar"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   "fs"
+  ],
+  [
+   "fs",
+   "crypto ",
+   "stream",
+   "os"
+  ],
+  [
+   "foo/bar"
+  ],
+  [
+   {
+    "paths": [
+     "foo/bar"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "bar"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/*",
+       "!foo/bar"
+      ],
+      "message": "foo is forbidden, use foo/bar instead"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/bar",
+       "foo/baz"
+      ],
+      "message": "some foo subimports are restricted"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/bar"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "FOO"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "foo/*",
+     "!foo/baz"
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "fs",
+      "importNames": [
+       "foo"
+      ],
+      "message": "Don't import 'foo'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "fs",
+      "importNames": [
+       "👍"
+      ],
+      "message": "Don't import '👍'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "fs",
+      "importNames": [
+       ""
+      ],
+      "message": "Don't import ''."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "name": "foo",
+    "message": "Please import from 'bar' instead."
+   }
+  ],
+  [
+   "foo",
+   {
+    "name": "bar",
+    "message": "Please import from 'baz' instead."
+   },
+   "baz"
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "message": "Please import from 'bar' instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "default"
+      ],
+      "message": "Please import the default import of 'foo' from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "name": "foo",
+    "importNames": [
+     "DisallowedObject1",
+     "DisallowedObject2"
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "👍"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObjectTwo",
+       "DisallowedObject"
+      ],
+      "message": "Please import 'DisallowedObject' and 'DisallowedObjectTwo' from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObjectOne",
+       "DisallowedObjectTwo"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObjectOne",
+       "DisallowedObjectTwo"
+      ],
+      "message": "Please import this module from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "bar"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "react-native",
+      "importNames": [
+       "Text"
+      ],
+      "message": "import Text from ui/_components instead"
+     },
+     {
+      "name": "react-native",
+      "importNames": [
+       "TextInput"
+      ],
+      "message": "import TextInput from ui/_components instead"
+     },
+     {
+      "name": "react-native",
+      "importNames": [
+       "View"
+      ],
+      "message": "import View from ui/_components instead "
+     },
+     {
+      "name": "react-native",
+      "importNames": [
+       "ScrollView"
+      ],
+      "message": "import ScrollView from ui/_components instead"
+     },
+     {
+      "name": "react-native",
+      "importNames": [
+       "KeyboardAvoidingView"
+      ],
+      "message": "import KeyboardAvoidingView from ui/_components instead"
+     },
+     {
+      "name": "react-native",
+      "importNames": [
+       "ImageBackground"
+      ],
+      "message": "import ImageBackground from ui/_components instead"
+     },
+     {
+      "name": "react-native",
+      "importNames": [
+       "Image"
+      ],
+      "message": "import Image from ui/_components instead"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "foo"
+      ],
+      "message": "Import foo from qux instead."
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "baz"
+      ],
+      "message": "Import baz from qux instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "bar"
+      ],
+      "message": "Use `barbaz` instead of `bar`."
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "foo",
+       "qux"
+      ],
+      "message": "Don't use 'foo' and `qux` from 'mod'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "foo",
+       "baz"
+      ],
+      "message": "Don't use 'foo' or 'baz' from 'mod'."
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "a",
+       "c"
+      ],
+      "message": "Don't use 'a' or 'c' from 'mod'."
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "b",
+       "bar"
+      ],
+      "message": "Use 'b' or `bar` from 'quux/mod' instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "foo"
+      ],
+      "message": "Import foo from qux instead."
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "bar"
+      ],
+      "message": "Import bar from qux instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod"
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "bar"
+      ],
+      "message": "Import bar from qux instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "default"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "a"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "x"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\#foo"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNames": [
+       "Foo",
+       "Bar"
+      ],
+      "message": "Import from @/utils instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNames": [
+       "Foo"
+      ],
+      "message": "Import from @/utils instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**"
+      ],
+      "importNames": [
+       "Foo",
+       "Bar"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**/*-*-baz"
+      ],
+      "importNames": [
+       "Foo",
+       "Bar"
+      ],
+      "message": "Use only 'Baz'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "mod"
+      ],
+      "importNames": [
+       "default"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "importNamePattern": "^(Foo|Bar)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNamePattern": "^Foo|^Bar"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNamePattern": "^Foo",
+      "message": "Import from @/utils instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "importNames": [
+       "Foo"
+      ],
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNamePattern": "^Foo",
+      "message": "Import from @/utils instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "importNames": [
+       "Foo",
+       "Bar"
+      ],
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNamePattern": "^Foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "importNames": [
+       "Bar"
+      ],
+      "group": [
+       "**/my/relative-module"
+      ],
+      "importNamePattern": "^Foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "importNames": [
+       "Bar"
+      ],
+      "group": [
+       "foo"
+      ],
+      "importNamePattern": "^Foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNamePattern": "^Foo",
+      "message": "Only imports that match the pattern '/^Foo/u' are allowed to be imported from 'foo'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject"
+      ],
+      "message": "Only 'AllowedObject' is allowed to be imported from 'foo'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "GoodThing",
+       "AlsoGood"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "GoodThing",
+       "AlsoGood"
+      ],
+      "message": "Only good stuff allowed."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNames": [
+       "AllowedObject"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNames": [
+       "AllowedObject"
+      ],
+      "message": "Only 'AllowedObject' is allowed to be imported from 'foo'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo-bar-baz"
+      ],
+      "allowImportNames": [
+       "foo",
+       "bar",
+       "baz"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNames": [
+       "Allowed1",
+       "Allowed2"
+      ],
+      "message": "Fix this please."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject",
+       "AnotherObject"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject",
+       "AnotherObject"
+      ],
+      "message": "Nothing else."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/*"
+      ],
+      "allowImportNames": [
+       "AllowedObject"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/*"
+      ],
+      "allowImportNames": [
+       "AllowedObject"
+      ],
+      "message": "Only 'AllowedObject' is allowed to be imported from 'foo'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/*"
+      ],
+      "allowImportNames": [
+       "Foo",
+       "Bar"
+      ]
+     },
+     {
+      "group": [
+       "*/bar"
+      ],
+      "allowImportNames": [
+       "Foo",
+       "Bar"
+      ],
+      "message": "Good luck!"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/*"
+      ],
+      "allowImportNamePattern": "^Allow"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/*"
+      ],
+      "allowImportNamePattern": "^Allow",
+      "message": "Only import names starting with 'Allow' are allowed to be imported from 'foo'."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "FOO"
+      ],
+      "message": "foo is forbidden, use bar instead",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "@app/(?!(api/enums$)).*",
+      "importNamePattern": "_Enum$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "import-foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "allowTypeImports": true,
+      "name": "import-foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "allowTypeImports": true,
+      "message": "usage of import1 private modules not allowed.",
+      "regex": "import1/.*"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "allowTypeImports": true,
+      "caseSensitive": true,
+      "message": "usage of import1 private modules not allowed.",
+      "regex": "import1/private-[a-z]*"
+     }
+    ]
+   }
+  ],
+  [
+   "import1"
+  ],
+  [
+   {
+    "patterns": [
+     "@typescript-eslint/utils/dist/*"
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "allowTypeImports": true,
+      "importNames": [
+       "Bar",
+       "Baz"
+      ],
+      "message": "Please use Bar and Baz from /import-bar/baz/ instead.",
+      "name": "import-foo"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "restricted-path",
+      "allowTypeImports": false,
+      "message": "This import is restricted."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "restricted-path",
+      "allowTypeImports": false,
+      "message": "This export is restricted."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "foo"
+      ],
+      "allowTypeImports": true,
+      "message": "import 'foo' only as type"
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "bar"
+      ],
+      "message": "don't import 'bar' at all"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "f*"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "bar"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "bar",
+      "importNames": [
+       "DisallowedObject"
+      ],
+      "message": "Please import \"DisallowedObject\" from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObject"
+      ],
+      "message": "Please import \"DisallowedObject\" from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObject",
+       "DisallowedObjectTwo"
+      ],
+      "message": "Please import \"DisallowedObject\" and \"DisallowedObjectTwo\" from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject"
+      ],
+      "message": "Please import anything except \"AllowedObject\" from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "foo",
+      "importNames": [
+       "Bar"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "[@a-z]*",
+       "!.*/**"
+      ],
+      "message": "foo is forbidden, use bar instead"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "allowTypeImports": true,
+      "group": [
+       "fail"
+      ],
+      "message": "Please do not load from \"fail\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": []
+   }
+  ],
+  [
+   {
+    "patterns": []
+   }
+  ],
+  [
+   {
+    "paths": [],
+    "patterns": []
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "fs",
+      "importNames": [
+       "foo"
+      ],
+      "message": "Don\"t import \"foo\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "fs",
+      "importNames": [
+       "👍"
+      ],
+      "message": "Don\"t import \"👍\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "fs",
+      "importNames": [
+       ""
+      ],
+      "message": "Don\"t import \"\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "name": "foo",
+    "message": "Please import from \"bar\" instead."
+   }
+  ],
+  [
+   "foo",
+   {
+    "name": "bar",
+    "message": "Please import from \"baz\" instead."
+   },
+   "baz"
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "message": "Please import from \"bar\" instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "default"
+      ],
+      "message": "Please import the default import of \"foo\" from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "name": "foo",
+    "importNames": [
+     "DisallowedObject1, DisallowedObject2"
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "importNames": [
+       "DisallowedObjectTwo",
+       "DisallowedObject"
+      ],
+      "message": "Please import \"DisallowedObject\" and \"DisallowedObjectTwo\" from /bar/ instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "bar"
+      ],
+      "message": "Use `barbaz` instead of `bar`."
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "foo",
+       "qux"
+      ],
+      "message": "Don\"t use \"foo\" and `qux` from \"mod\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "mod",
+      "importNames": [
+       "foo",
+       "baz"
+      ],
+      "message": "Don\"t use \"foo\" or \"baz\" from \"mod\"."
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "a",
+       "c"
+      ],
+      "message": "Don\"t use \"a\" or \"c\" from \"mod\"."
+     },
+     {
+      "name": "mod",
+      "importNames": [
+       "b",
+       "bar"
+      ],
+      "message": "Use \"b\" or `bar` from \"quux/mod\" instead."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNamePattern": "^Foo",
+      "message": "Only imports that match the pattern \"/^Foo/u\" are allowed to be imported from \"foo\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "allowImportNames": [
+       "AllowedObject"
+      ],
+      "message": "Only \"AllowedObject\" is allowed to be imported from \"foo\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "allowImportNames": [
+       "AllowedObject"
+      ],
+      "message": "Only \"AllowedObject\" is allowed to be imported from \"foo\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/*"
+      ],
+      "allowImportNames": [
+       "AllowedObject"
+      ],
+      "message": "Only \"AllowedObject\" is allowed to be imported from \"foo\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo/*"
+      ],
+      "allowImportNamePattern": "^Allow",
+      "message": "Only import names starting with \"Allow\" are allowed to be imported from \"foo\"."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "[@a-z]*",
+       "!.*/**",
+       "./index.mjs"
+      ],
+      "message": "foo is forbidden, use bar instead"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "foo",
+      "message": "foo is forbidden, use bar instead"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "foo"
+      ],
+      "message": "foo is forbidden, use bar instead"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "foo",
+      "message": "foo is forbidden, use bar instead"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "name": "react",
+    "message": "Example: React is not allowed to be imported"
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "paths": [
+     "m"
+    ],
+    "patterns": [
+     "m"
+    ]
+   }
+  ],
+  [
+   "m",
+   "n"
+  ],
+  [
+   "n",
+   {
+    "name": "m"
+   }
+  ],
+  [
+   {
+    "name": "m"
+   },
+   {
+    "name": "m",
+    "message": "x"
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "importNames": [
+     "a"
+    ]
+   },
+   {
+    "name": "m",
+    "importNames": [
+     "a"
+    ],
+    "message": "x"
+   },
+   {
+    "name": "m",
+    "allowImportNames": [
+     "b"
+    ]
+   }
+  ],
+  [
+   "m",
+   {
+    "name": "m"
+   }
+  ],
+  [
+   {
+    "name": "paths"
+   }
+  ],
+  [
+   "__proto__"
+  ],
+  [
+   "m"
+  ],
+  [
+   "hasOwnProperty"
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "__proto__",
+      "message": "x"
+     }
+    ]
+   }
+  ],
+  [
+   " m "
+  ],
+  [
+   "é"
+  ],
+  [
+   "😀"
+  ],
+  [
+   "it's"
+  ],
+  [
+   "a{{b}}"
+  ],
+  [
+   "{{importSource}}"
+  ],
+  [
+   {
+    "name": "m",
+    "message": "{{importSource}} {{customMessage}} {{x}}"
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "importNames": [
+     "a"
+    ],
+    "message": "use {{importName}}"
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "importNames": [
+     "{{importSource}}"
+    ]
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "importNames": [
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "importNames": [
+     "😀"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "^.$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "^\\p{L}$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "importNames": [
+     ""
+    ]
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "allowImportNames": [
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "a/b"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "a/b"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "a\\/b"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "a\\/b"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "[/]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "[/]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "[a/b]/c"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "[a/b]/c"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\\[/"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\\[/"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "a\\\\/b"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "a\\\\/b"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\\n"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\\n"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\n"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\n"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\r"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\r"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": " "
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": " "
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "[\n]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "[\n]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "(?:)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "(?:)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "^(?:a|b)$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "^(?:a|b)$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\\u{61}"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\\u{61}"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\\p{Lu}"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\\p{Lu}"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "(?<n>a)\\k<n>"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "(?<n>a)\\k<n>"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "a|"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "a|"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "[\\]/]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "[\\]/]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "[[/]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "[[/]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\\d+"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\\d+"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "é"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "é"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "😀"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "😀"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\\/\\/"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\\/\\/"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "//"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "//"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "a{1,2}"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "a{1,2}"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "(?=a)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "(?=a)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "(?<!a)b"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "(?<!a)b"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "(?i:a)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "(?i:a)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "[^/]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "[^/]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\\."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\\."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "\\$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "\\$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^m"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^m",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^m",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^M"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^M",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^M",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "m$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "m$",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "m$",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^\\p{L}+$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^\\p{L}+$",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^\\p{L}+$",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^.$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^.$",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^.$",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "\\bm\\b"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "\\bm\\b",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "\\bm\\b",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^@a/(?!b)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^@a/(?!b)",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^@a/(?!b)",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "K"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "K",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "K",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "K"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "K",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "K",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "s"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "s",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "s",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "ß"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "ß",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "ß",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^[a-z]+$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^[a-z]+$",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^[a-z]+$",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "\\w"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "\\w",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "\\w",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "[^\\W]"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "[^\\W]",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "[^\\W]",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": ""
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "(?:)"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "(?:)",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "(?:)",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^$",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^$",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^ m $"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^ m $",
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^ m $",
+      "caseSensitive": false
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "importNames": [
+     "b",
+     "c",
+     "default"
+    ]
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "importNames": [
+     "b"
+    ]
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "importNames": [
+     "a",
+     "b"
+    ]
+   }
+  ],
+  [
+   {
+    "name": "m",
+    "allowImportNames": [
+     "b"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "m"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     " m"
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "a"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": [
+       "a"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "a"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "x"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": [
+       "x"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "x"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNames": [
+       "x"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "x"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "a"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": [
+       "b"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "^b",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNames": [
+       "b"
+      ],
+      "importNamePattern": "^a"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "a",
+       "b"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "x y",
+       "b"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "^a",
+      "message": "msg"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": ""
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "message": "msg"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNames": [
+       "a",
+       "b"
+      ],
+      "message": "msg"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^m$",
+      "importNames": [
+       "a"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "*"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": []
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "^a"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": ""
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "message": "msg"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": []
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNames": [
+       "a"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^m$"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "default"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": [
+       "a",
+       "b",
+       "default"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNames": [
+       "a",
+       "default"
+      ],
+      "message": "msg"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "^a",
+      "message": "msg"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "a",
+       "b",
+       "c"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "."
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "a"
+      ],
+      "message": "msg"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": [
+       "a"
+      ],
+      "message": "msg"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNames": [
+       "a"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "^a"
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "a"
+      ],
+      "message": "msg",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": [
+       "a"
+      ],
+      "message": "msg",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNames": [
+       "b"
+      ],
+      "importNamePattern": "^a",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": ".",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "a",
+       "b",
+       "c"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNames": [
+       "a",
+       "default"
+      ],
+      "message": "msg",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "^a",
+      "message": "msg",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "default"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": [
+       "a",
+       "b",
+       "default"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNames": [
+       "a"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^m$",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "message": "msg",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "^a",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "*"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": [],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "message": "msg",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNames": [
+       "a",
+       "b"
+      ],
+      "message": "msg",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "regex": "^m$",
+      "importNames": [
+       "a"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "allowImportNames": [
+       "a"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNamePattern": "^a",
+      "message": "msg",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "a",
+       "b"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "paths": [
+     {
+      "name": "m",
+      "importNames": [
+       "x y",
+       "b"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "importNames": [
+       "a"
+      ],
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "m"
+      ],
+      "allowImportNamePattern": "^a",
+      "allowTypeImports": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "["
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "a\t?.$"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "éab!"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/**/",
+       "./\\#../b[a-c]"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "@s/[^a]1c-a",
+     "{.js\\*$"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\*a-c**a["
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "[a-c]?/^1",
+       "\\?",
+       "+"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "|"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "é\\[a-c]\\ ",
+     "$A|[!a]$",
+     "$.js*-#"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\\[é[!a]\\\\$"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "c-a^"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "//\\![]"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "?**"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\ !#_\\*",
+     "**/{",
+     "[ab]"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "_{"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\?ab\\\\\t**/"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "[!a]"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "][!a][/[^a]"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/**c.js"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\\0-9"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       " [^a]?!]"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\\?1(-"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "é[a-c]",
+     "\\!/./[[a-c]",
+     "/**["
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "+éé/"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "(b"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "/**./",
+     "**/ab@s/",
+     "![a-c]"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/*+*@s/.js"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\1..c-a["
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\?",
+     "1.js/*/.",
+     "**/1a-c"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "[^a]*.js@s/"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "/*",
+     "..\\\\",
+     "é/**_/0-9"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     ".js[a-c]c-a,+",
+     "\\ ,\\!(.",
+     "/**_][!a][ab]"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\t"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "/[ab]0-9\t"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "@s/}[a-c]"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "*Aab"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/*([a-c]",
+       "+/\\ ",
+       "**/"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "_Aab.js"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "1(.[!a]"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "b/**0-90-9"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "~",
+       "~}1\\!",
+       "a/**~{\\#"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\[#\\/**"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "$"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "/*"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/1/**"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\\["
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\\*",
+       "@s/~"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "+\\ "
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "***",
+       "!ab\\[",
+       "é[a-c]/"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "+\\?0-9"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "0-9\t "
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\t@s/{/"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "*a./a",
+     "0-9a*# ",
+     "]"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "[ab]/\\ "
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\ ^"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "?\\!"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\\\"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\tab"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "_.js|[a-c]{"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\!**ab\\?",
+     ".b",
+     "ab)?"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "(+"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "[^a]"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "a\\\\\t"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "**/\\ /"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       ".js",
+       "**/*\\?"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "./"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "_c[^a]c$"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "*"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "ab"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/*c-aé-A",
+       "/../[!a]\\[",
+       "1b0-9"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\?}@s/#"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "/"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "*.js#ab"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\#\\[,ab@s/"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/*"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "~]\\*"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "$1~"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "./$}*.js*.js"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "a|/a~"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "a-"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "0-9"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/**\\ -/",
+       "\\\\ ",
+       "\\ @s/**/é\\["
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "+**/..c-a@s/"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "{0-9$\t"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\?,a/**"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "*.js\\[é"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       ",b.js*.js"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\\*.js\\"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "~?$\\ ]"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "*/./"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "(*/*"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "!c/A ",
+       ".",
+       "?"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "\\*bé"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "+[^a]"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\\ \tc-aa**"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "c-a~\\!",
+       "bc#",
+       "+/"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       ")"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "a"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "c-a",
+       "a-c[!a]/é"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "a-c"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "c***[ab]../",
+       "c",
+       "~-[a"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\\\\\\@s/\\#$"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "}../}",
+       ")..*"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "\\a-c!\\[?"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "-a[a-c]~a"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "+,#"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "a-c./"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "[!a]~"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "/*,./",
+       "Ac,\t1",
+       "?*"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "+/**-|/**"
+      ],
+      "caseSensitive": true
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "~a/***"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "$*.js** ",
+       "(c",
+       "#[^a]/ "
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "[!a]c-a/*a(",
+       "ab**/[!a]",
+       "\\ /**"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "?"
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     {
+      "group": [
+       "1b"
+      ]
+     }
+    ]
+   }
+  ],
+  [
+   {
+    "patterns": [
+     "ab|,é_",
+     "(]./@s/"
+    ]
+   }
+  ]
+ ],
+ "no-restricted-properties": [
+  [
+   {
+    "object": "someObject",
+    "property": "disallowedProperty"
+   }
+  ],
+  [
+   {
+    "object": "someObject",
+    "property": "disallowedProperty",
+    "message": "Please use someObject.allowedProperty instead."
+   }
+  ],
+  [
+   {
+    "object": "obj",
+    "property": "__proto__"
+   }
+  ],
+  [
+   {
+    "object": "obj",
+    "property": "foo"
+   }
+  ],
+  [
+   {
+    "property": "baz"
+   }
+  ],
+  [
+   {
+    "object": "baz"
+   }
+  ],
+  [
+   {
+    "object": "foo"
+   }
+  ],
+  [
+   {
+    "property": "null"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "bar"
+   }
+  ],
+  [
+   {
+    "property": "bar"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "1"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "0"
+   }
+  ],
+  [
+   {
+    "property": "#foo"
+   }
+  ],
+  [
+   {
+    "property": "disallowedProperty",
+    "allowObjects": [
+     "someObject"
+    ]
+   }
+  ],
+  [
+   {
+    "property": "disallowedProperty",
+    "allowObjects": [
+     "someObject",
+     "anotherObject"
+    ]
+   }
+  ],
+  [
+   {
+    "property": "bar",
+    "allowObjects": [
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "property": "baz",
+    "allowObjects": [
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "someObject",
+    "allowProperties": [
+     "disallowedProperty"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "someObject",
+    "allowProperties": [
+     "disallowedProperty",
+     "anotherDisallowedProperty"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "allowProperties": [
+     "bar"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "allowProperties": [
+     "baz"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "someObject",
+    "property": "disallowedProperty"
+   },
+   {
+    "object": "anotherObject",
+    "property": "anotherDisallowedProperty"
+   }
+  ],
+  [
+   {
+    "property": "__proto__",
+    "message": "Please use Object.getPrototypeOf instead."
+   }
+  ],
+  [
+   {
+    "property": "/(?<zero>0)/"
+   }
+  ],
+  [
+   {
+    "object": "require",
+    "message": "Please call require() directly."
+   }
+  ],
+  [
+   {
+    "object": "require"
+   }
+  ],
+  [
+   {
+    "object": "baz",
+    "property": "foo"
+   }
+  ],
+  [
+   {
+    "property": "bad"
+   }
+  ],
+  [
+   {
+    "property": "disallowedProperty",
+    "allowObjects": [
+     "anotherObject"
+    ]
+   }
+  ],
+  [
+   {
+    "property": "disallowedProperty",
+    "allowObjects": [
+     "anotherObject"
+    ],
+    "message": "Please use someObject.allowedProperty instead."
+   }
+  ],
+  [
+   {
+    "property": "disallowedProperty",
+    "allowObjects": [
+     "anotherObject"
+    ]
+   },
+   {
+    "property": "anotherDisallowedProperty",
+    "allowObjects": [
+     "someObject"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "someObject",
+    "allowProperties": [
+     "allowedProperty"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "someObject",
+    "allowProperties": [
+     "allowedProperty"
+    ],
+    "message": "Please use someObject.allowedProperty instead."
+   }
+  ],
+  [
+   {
+    "object": "someObject",
+    "allowProperties": [
+     "anotherDisallowedProperty"
+    ]
+   },
+   {
+    "object": "anotherObject",
+    "allowProperties": [
+     "disallowedProperty"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "baz"
+   }
+  ],
+  [
+   {
+    "object": "legacyApi",
+    "allowProperties": [
+     "safe"
+    ]
+   }
+  ],
+  [
+   {
+    "property": "0"
+   }
+  ],
+  [
+   {
+    "property": "1"
+   }
+  ],
+  [
+   {
+    "property": "true"
+   }
+  ],
+  [
+   {
+    "property": "foo"
+   }
+  ],
+  [
+   {
+    "object": "obj",
+    "property": "100"
+   }
+  ],
+  [
+   {
+    "object": "legacyApi"
+   }
+  ],
+  [
+   {
+    "property": "10"
+   }
+  ],
+  [
+   {
+    "property": "null"
+   },
+   {
+    "property": "true"
+   },
+   {
+    "property": "false"
+   },
+   {
+    "property": "undefined"
+   },
+   {
+    "property": "NaN"
+   }
+  ],
+  [
+   {
+    "property": "/a/g"
+   }
+  ],
+  [
+   {
+    "property": "1e+21"
+   },
+   {
+    "property": "1e-7"
+   },
+   {
+    "property": "0.5"
+   },
+   {
+    "property": "5"
+   },
+   {
+    "property": "-1"
+   },
+   {
+    "property": "1"
+   }
+  ],
+  [
+   {
+    "property": "9007199254740992"
+   },
+   {
+    "property": "9007199254740993"
+   },
+   {
+    "property": "18446744073709551615"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "10"
+   }
+  ],
+  [
+   {
+    "property": "null"
+   },
+   {
+    "property": "true"
+   },
+   {
+    "property": "/a/"
+   }
+  ],
+  [
+   {
+    "property": ""
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": ""
+   }
+  ],
+  [
+   {
+    "property": "a b"
+   },
+   {
+    "property": "é"
+   },
+   {
+    "property": "😀"
+   }
+  ],
+  [
+   {
+    "property": "__proto__"
+   },
+   {
+    "property": "constructor"
+   },
+   {
+    "object": "__proto__"
+   },
+   {
+    "object": "constructor"
+   },
+   {
+    "object": "toString",
+    "property": "a"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "bar",
+    "message": "A"
+   },
+   {
+    "object": "foo",
+    "property": "bar",
+    "message": "B"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "bar"
+   },
+   {
+    "object": "foo"
+   }
+  ],
+  [
+   {
+    "object": "foo"
+   },
+   {
+    "object": "foo",
+    "property": "bar",
+    "message": "M"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "baz"
+   },
+   {
+    "property": "bar"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "bar",
+    "message": "O"
+   },
+   {
+    "property": "bar",
+    "message": "P"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "message": "O"
+   },
+   {
+    "property": "bar",
+    "message": "P"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "allowProperties": [
+     "bar"
+    ]
+   },
+   {
+    "property": "bar"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "allowProperties": [
+     "bar"
+    ]
+   },
+   {
+    "property": "bar",
+    "allowObjects": [
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "allowProperties": [
+     "bar"
+    ]
+   },
+   {
+    "object": "foo",
+    "allowProperties": [
+     "baz"
+    ]
+   }
+  ],
+  [
+   {
+    "property": "bar",
+    "allowObjects": [
+     "foo"
+    ]
+   },
+   {
+    "property": "bar",
+    "allowObjects": [
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "allowProperties": []
+   }
+  ],
+  [
+   {
+    "property": "bar",
+    "allowObjects": []
+   }
+  ],
+  [
+   {
+    "property": "bar",
+    "allowObjects": [
+     "foo",
+     "a"
+    ],
+    "message": "M."
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "allowProperties": [
+     "bar",
+     "x"
+    ],
+    "message": "M."
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "bar",
+    "message": ""
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "bar",
+    "message": " "
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "bar",
+    "message": "{{objectName}} {{ propertyName }} {{x}}"
+   }
+  ],
+  [
+   {
+    "object": "foo",
+    "property": "bar",
+    "message": "é😀\n"
+   }
+  ],
+  [
+   {
+    "property": "{{message}}",
+    "message": "M"
+   }
+  ],
+  [
+   {
+    "object": "arguments",
+    "property": "callee"
+   }
+  ],
+  [
+   {
+    "object": "undefined"
+   },
+   {
+    "object": "NaN"
+   },
+   {
+    "object": "null"
+   },
+   {
+    "object": "true"
+   }
+  ],
+  [
+   {
+    "property": "a"
+   }
+  ],
+  [
+   {
+    "property": "class"
+   },
+   {
+    "property": "null"
+   },
+   {
+    "property": "this"
+   },
+   {
+    "property": "await"
+   }
+  ]
+ ],
+ "no-return-assign": [
+  [
+   "except-parens"
+  ],
+  [
+   "always"
+  ]
+ ],
+ "no-script-url": [],
+ "no-self-assign": [
+  [
+   {
+    "props": true
+   }
+  ],
+  [
+   {
+    "props": false
+   }
+  ]
+ ],
+ "no-self-compare": [],
+ "no-sequences": [
+  [
+   {}
+  ],
+  [
+   {
+    "allowInParentheses": true
+   }
+  ],
+  [
+   {
+    "allowInParentheses": false
+   }
+  ]
+ ],
+ "no-setter-return": [],
+ "no-shadow": [
+  [
+   {
+    "hoist": "never"
+   }
+  ],
+  [
+   {
+    "builtinGlobals": true
+   }
+  ],
+  [
+   {
+    "allow": [
+     "cb"
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreOnInitialization": true
+   }
+  ],
+  [
+   {
+    "ignoreTypeValueShadow": true
+   }
+  ],
+  [
+   {
+    "builtinGlobals": false,
+    "ignoreTypeValueShadow": false
+   }
+  ],
+  [
+   {
+    "ignoreFunctionTypeParameterNameValueShadow": true
+   }
+  ],
+  [
+   {
+    "builtinGlobals": false,
+    "ignoreFunctionTypeParameterNameValueShadow": true
+   }
+  ],
+  [
+   {
+    "ignoreTypeValueShadow": false
+   }
+  ],
+  [
+   {
+    "ignoreFunctionTypeParameterNameValueShadow": false
+   }
+  ],
+  [
+   {
+    "hoist": "functions"
+   }
+  ],
+  [
+   {
+    "hoist": "all"
+   }
+  ],
+  [
+   {
+    "builtinGlobals": true,
+    "ignoreTypeValueShadow": false
+   }
+  ],
+  [
+   {
+    "builtinGlobals": true,
+    "ignoreFunctionTypeParameterNameValueShadow": false
+   }
+  ],
+  [
+   {
+    "hoist": "types"
+   }
+  ],
+  [
+   {
+    "hoist": "functions-and-types"
+   }
+  ],
+  [
+   {
+    "builtinGlobals": true,
+    "ignoreOnInitialization": true
+   }
+  ],
+  [
+   {
+    "builtinGlobals": true,
+    "hoist": "never"
+   }
+  ],
+  [
+   {
+    "builtinGlobals": true,
+    "allow": [
+     "Object"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "a"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": []
+   }
+  ],
+  [
+   {
+    "allow": [
+     "A",
+     "aa",
+     ""
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "é"
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreTypeValueShadow": false,
+    "ignoreFunctionTypeParameterNameValueShadow": false,
+    "hoist": "all"
+   }
+  ],
+  [
+   {
+    "ignoreTypeValueShadow": false,
+    "ignoreFunctionTypeParameterNameValueShadow": false
+   }
+  ],
+  [
+   {
+    "ignoreTypeValueShadow": false,
+    "ignoreFunctionTypeParameterNameValueShadow": false,
+    "hoist": "never"
+   }
+  ],
+  [
+   {
+    "builtinGlobals": true,
+    "ignoreTypeValueShadow": false,
+    "ignoreFunctionTypeParameterNameValueShadow": false
+   }
+  ],
+  [
+   {
+    "ignoreTypeValueShadow": false,
+    "ignoreFunctionTypeParameterNameValueShadow": false,
+    "builtinGlobals": true
+   }
+  ]
+ ],
+ "no-shadow-restricted-names": [
+  [
+   {
+    "reportGlobalThis": false
+   }
+  ],
+  [
+   {}
+  ]
+ ],
+ "no-sparse-arrays": [],
+ "no-template-curly-in-string": [],
+ "no-ternary": [],
+ "no-this-before-super": [],
+ "no-throw-literal": [],
+ "no-unassigned-vars": [],
+ "no-undef": [
+  [
+   {
+    "typeof": true
+   }
+  ],
+  [
+   {
+    "typeof": false
+   }
+  ]
+ ],
+ "no-undefined": [],
+ "no-underscore-dangle": [
+  [
+   {}
+  ],
+  [
+   {
+    "allow": [
+     "_foo"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "__proto__"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "_bar"
+    ]
+   }
+  ],
+  [
+   {
+    "allowAfterThis": true
+   }
+  ],
+  [
+   {
+    "allowAfterSuper": true
+   }
+  ],
+  [
+   {
+    "allow": [
+     "_onClick"
+    ],
+    "enforceInMethodNames": true
+   }
+  ],
+  [
+   {
+    "allowAfterThisConstructor": true
+   }
+  ],
+  [
+   {
+    "allowFunctionParams": true
+   }
+  ],
+  [
+   {
+    "allowFunctionParams": false
+   }
+  ],
+  [
+   {
+    "allowFunctionParams": false,
+    "allow": [
+     "_bar"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInArrayDestructuring": true
+   }
+  ],
+  [
+   {
+    "allowInArrayDestructuring": false
+   }
+  ],
+  [
+   {
+    "allowInArrayDestructuring": false,
+    "allow": [
+     "_bar"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInObjectDestructuring": true
+   }
+  ],
+  [
+   {
+    "allowInObjectDestructuring": false,
+    "allow": [
+     "_bar"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInObjectDestructuring": false
+   }
+  ],
+  [
+   {
+    "enforceInClassFields": false
+   }
+  ],
+  [
+   {
+    "enforceInMethodNames": true
+   }
+  ],
+  [
+   {
+    "allowInArrayDestructuring": false,
+    "allowInObjectDestructuring": false
+   }
+  ],
+  [
+   {
+    "allowInArrayDestructuring": true,
+    "allowInObjectDestructuring": false
+   }
+  ],
+  [
+   {
+    "enforceInClassFields": true
+   }
+  ],
+  [
+   {
+    "allowInUsingDeclarations": true
+   }
+  ],
+  [
+   {
+    "allowInUsingDeclarations": false
+   }
+  ]
+ ],
+ "no-unexpected-multiline": [],
+ "no-unmodified-loop-condition": [
+  [
+   {
+    "checkConditionalExpressions": true
+   }
+  ]
+ ],
+ "no-unneeded-ternary": [
+  [
+   {
+    "defaultAssignment": false
+   }
+  ]
+ ],
+ "no-unreachable": [],
+ "no-unreachable-loop": [
+  [
+   {
+    "ignore": [
+     "WhileStatement"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "DoWhileStatement"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "ForStatement"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "ForInStatement"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "ForOfStatement"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "ForInStatement",
+     "ForOfStatement"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": [
+     "WhileStatement",
+     "DoWhileStatement",
+     "ForStatement",
+     "ForInStatement",
+     "ForOfStatement"
+    ]
+   }
+  ],
+  [
+   {
+    "ignore": []
+   }
+  ]
+ ],
+ "no-unsafe-finally": [],
+ "no-unsafe-negation": [
+  [
+   {}
+  ],
+  [
+   {
+    "enforceForOrderingRelations": false
+   }
+  ],
+  [
+   {
+    "enforceForOrderingRelations": true
+   }
+  ]
+ ],
+ "no-unsafe-optional-chaining": [
+  [
+   {
+    "disallowArithmeticOperators": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "disallowArithmeticOperators": false
+   }
+  ]
+ ],
+ "no-unused-expressions": [
+  [
+   {
+    "allowShortCircuit": true
+   }
+  ],
+  [
+   {
+    "allowTernary": true
+   }
+  ],
+  [
+   {
+    "allowShortCircuit": true,
+    "allowTernary": true
+   }
+  ],
+  [
+   {
+    "allowTaggedTemplates": true
+   }
+  ],
+  [
+   {
+    "enforceForJSX": true
+   }
+  ],
+  [
+   {
+    "ignoreDirectives": true
+   }
+  ],
+  [
+   {
+    "allowTaggedTemplates": false
+   }
+  ],
+  [
+   {
+    "enforceForJSX": true,
+    "allowShortCircuit": true,
+    "allowTernary": true
+   }
+  ]
+ ],
+ "no-unused-labels": [],
+ "no-unused-private-class-members": [],
+ "no-unused-vars": [
+  [
+   "all"
+  ],
+  [
+   "local"
+  ],
+  [
+   {
+    "vars": "all"
+   }
+  ],
+  [
+   {
+    "vars": "all",
+    "args": "after-used"
+   }
+  ],
+  [
+   {
+    "vars": "all",
+    "args": "none"
+   }
+  ],
+  [
+   {
+    "vars": "local",
+    "args": "all"
+   }
+  ],
+  [
+   {
+    "vars": "all",
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "vars": "local",
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "args": "all",
+    "argsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "args": "after-used",
+    "argsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "vars": "all",
+    "varsIgnorePattern": "[iI]gnored"
+   }
+  ],
+  [
+   {
+    "destructuredArrayIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "destructuredArrayIgnorePattern": "^_",
+    "ignoreRestSiblings": true
+   }
+  ],
+  [
+   {
+    "destructuredArrayIgnorePattern": "Error$"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "none"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "all"
+   }
+  ],
+  [
+   {
+    "caughtErrorsIgnorePattern": "^ignore"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "all",
+    "caughtErrorsIgnorePattern": "^ignore"
+   }
+  ],
+  [
+   {
+    "caughtErrorsIgnorePattern": "message|stack"
+   }
+  ],
+  [
+   {
+    "caughtErrorsIgnorePattern": "Error$"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "none",
+    "vars": "all",
+    "args": "all"
+   }
+  ],
+  [
+   {
+    "ignoreRestSiblings": true
+   }
+  ],
+  [
+   {
+    "argsIgnorePattern": "c"
+   }
+  ],
+  [
+   {
+    "argsIgnorePattern": "d"
+   }
+  ],
+  [
+   {
+    "argsIgnorePattern": "[cd]"
+   }
+  ],
+  [
+   {
+    "args": "all",
+    "ignoreRestSiblings": true
+   }
+  ],
+  [
+   {
+    "ignoreClassWithStaticInitBlock": true
+   }
+  ],
+  [
+   {
+    "ignoreClassWithStaticInitBlock": true,
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "ignoreClassWithStaticInitBlock": false,
+    "varsIgnorePattern": "^Foo"
+   }
+  ],
+  [
+   {
+    "args": "all",
+    "varsIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "args": "all",
+    "argsIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "destructuredArrayIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "ignoreUsingDeclarations": true
+   }
+  ],
+  [
+   {
+    "vars": "all",
+    "args": "all"
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "args": "all",
+    "argsIgnorePattern": "[iI]gnored"
+   }
+  ],
+  [
+   {
+    "destructuredArrayIgnorePattern": "^_",
+    "varsIgnorePattern": "ignore"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "all",
+    "varsIgnorePattern": "^err"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "all",
+    "varsIgnorePattern": "^."
+   }
+  ],
+  [
+   {
+    "vars": "all",
+    "args": "all",
+    "caughtErrors": "all"
+   }
+  ],
+  [
+   {
+    "vars": "all",
+    "args": "all",
+    "caughtErrors": "all",
+    "argsIgnorePattern": "^er"
+   }
+  ],
+  [
+   {
+    "args": "all",
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "args": "all",
+    "caughtErrorsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "ignoreClassWithStaticInitBlock": false
+   }
+  ],
+  [
+   {
+    "destructuredArrayIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true,
+    "varsIgnorePattern": "[iI]gnored"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "all",
+    "caughtErrorsIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "caughtErrorsIgnorePattern": "message",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "caughtErrorsIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "caughtErrorsIgnorePattern": "foo"
+   }
+  ],
+  [
+   {
+    "caughtErrorsIgnorePattern": "ignored",
+    "varsIgnorePattern": "_"
+   }
+  ],
+  [
+   {
+    "caughtErrorsIgnorePattern": "\\w"
+   }
+  ],
+  [
+   {
+    "argsIgnorePattern": "ignored",
+    "varsIgnorePattern": "_"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "argsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "^tooCompli[cated]"
+   }
+  ],
+  [
+   {
+    "ignoreRestSiblings": true,
+    "vars": "all"
+   }
+  ],
+  [
+   {
+    "ignoreRestSiblings": true,
+    "vars": "local"
+   }
+  ],
+  [
+   {
+    "args": "none",
+    "caughtErrors": "none",
+    "ignoreRestSiblings": true,
+    "vars": "all"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "none",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "caughtErrorsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "all",
+    "caughtErrorsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "all",
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "caughtErrors": "all",
+    "caughtErrorsIgnorePattern": "^ignored"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "^(h|React|createElement)$"
+   }
+  ],
+  [
+   {
+    "args": "none",
+    "varsIgnorePattern": "^(h|React|createElement)$"
+   }
+  ],
+  [
+   {
+    "fix": {
+     "imports": "off"
+    }
+   }
+  ],
+  [
+   {
+    "fix": {
+     "variables": "off"
+    }
+   }
+  ],
+  [
+   {
+    "fix": {
+     "imports": "fix"
+    }
+   }
+  ],
+  [
+   {
+    "fix": {
+     "variables": "fix"
+    }
+   }
+  ],
+  [
+   {
+    "fix": {
+     "imports": "safe-fix"
+    }
+   }
+  ],
+  [
+   {
+    "fix": {
+     "variables": "safe-fix"
+    }
+   }
+  ],
+  [
+   {
+    "args": "after-used"
+   }
+  ],
+  [
+   {
+    "args": "none"
+   }
+  ],
+  [
+   {
+    "argsIgnorePattern": "^ignored"
+   }
+  ],
+  [
+   {
+    "args": "all"
+   }
+  ],
+  [
+   {
+    "reportVarsOnlyUsedAsTypes": false,
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "reportVarsOnlyUsedAsTypes": true,
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "ignoreRestSiblings": true,
+    "reportUsedIgnorePattern": false
+   }
+  ],
+  [
+   {
+    "ignoreRestSiblings": true,
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "ignoreRestSiblings": true,
+    "reportUsedIgnorePattern": true,
+    "destructuredArrayIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "reportUsedIgnorePattern": true,
+    "argsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "reportUsedIgnorePattern": true,
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "ignoreRestSiblings": true,
+    "reportUsedIgnorePattern": true,
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "ignoreRestSiblings": true,
+    "reportUsedIgnorePattern": true,
+    "argsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "reportUsedIgnorePattern": true,
+    "destructuredArrayIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "reportUsedIgnorePattern": true,
+    "caughtErrorsIgnorePattern": "^_"
+   }
+  ],
+  [
+   {
+    "args": "after-used",
+    "argsIgnorePattern": "^_",
+    "ignoreRestSiblings": true,
+    "varsIgnorePattern": "^_$"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "^_",
+    "reportUnusedIgnorePattern": false
+   }
+  ],
+  [
+   {
+    "vars": "local",
+    "args": "none",
+    "caughtErrors": "none",
+    "ignoreClassWithStaticInitBlock": true,
+    "ignoreUsingDeclarations": true
+   }
+  ],
+  [
+   {
+    "args": "all",
+    "ignoreRestSiblings": true,
+    "caughtErrors": "all"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "^_",
+    "argsIgnorePattern": "^_",
+    "caughtErrorsIgnorePattern": "^_",
+    "destructuredArrayIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "(?:)"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "é|𝒳"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "^\\p{Lu}"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "^.$"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "^a$"
+   }
+  ],
+  [
+   {
+    "varsIgnorePattern": "(?i:a)"
+   }
+  ],
+  [
+   {
+    "argsIgnorePattern": "a/",
+    "caughtErrorsIgnorePattern": "b/",
+    "destructuredArrayIgnorePattern": "c/",
+    "varsIgnorePattern": "d/"
+   }
+  ]
+ ],
+ "no-use-before-define": [
+  [
+   "nofunc"
+  ],
+  [
+   {
+    "functions": false
+   }
+  ],
+  [
+   {
+    "classes": false
+   }
+  ],
+  [
+   {
+    "variables": false
+   }
+  ],
+  [
+   {
+    "allowNamedExports": true
+   }
+  ],
+  [
+   {
+    "typedefs": false
+   }
+  ],
+  [
+   {
+    "typedefs": false,
+    "ignoreTypeReferences": false
+   }
+  ],
+  [
+   {
+    "ignoreTypeReferences": true
+   }
+  ],
+  [
+   {
+    "enums": false
+   }
+  ],
+  [
+   {
+    "ignoreTypeReferences": false
+   }
+  ],
+  [
+   {
+    "functions": false,
+    "classes": false
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "allowNamedExports": false
+   }
+  ],
+  [
+   {
+    "classes": false,
+    "functions": false
+   }
+  ],
+  [
+   {
+    "ignoreTypeReferences": false,
+    "typedefs": true
+   }
+  ],
+  [
+   {
+    "enums": true
+   }
+  ],
+  [
+   {
+    "allowNamedExports": false,
+    "ignoreTypeReferences": true
+   }
+  ],
+  [
+   {
+    "ignoreTypeReferences": true,
+    "variables": true
+   }
+  ]
+ ],
+ "no-useless-assignment": [],
+ "no-useless-backreference": [],
+ "no-useless-call": [],
+ "no-useless-catch": [],
+ "no-useless-computed-key": [
+  [
+   {
+    "enforceForClassMembers": true
+   }
+  ],
+  [
+   {
+    "enforceForClassMembers": false
+   }
+  ],
+  [
+   {}
+  ]
+ ],
+ "no-useless-concat": [],
+ "no-useless-constructor": [],
+ "no-useless-escape": [
+  [
+   {
+    "allowRegexCharacters": [
+     "#"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     ";"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "#",
+     ";"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "-"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "?"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "."
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "|"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "$"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "("
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "["
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "/"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "B"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "^"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "&"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "!"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "%"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "*"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "+"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     ","
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     ":"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "<"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "="
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     ">"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "@"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "`"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "~"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "!",
+     "-"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "😀"
+    ]
+   }
+  ],
+  [
+   {
+    "allowRegexCharacters": [
+     "é"
+    ]
+   }
+  ],
+  [
+   {}
+  ]
+ ],
+ "no-useless-rename": [
+  [
+   {
+    "ignoreDestructuring": true
+   }
+  ],
+  [
+   {
+    "ignoreImport": true
+   }
+  ],
+  [
+   {
+    "ignoreExport": true
+   }
+  ],
+  [
+   {
+    "ignoreDestructuring": true,
+    "ignoreImport": true,
+    "ignoreExport": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "ignoreDestructuring": false
+   }
+  ]
+ ],
+ "no-useless-return": [],
+ "no-var": [],
+ "no-void": [
+  [
+   {
+    "allowAsStatement": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "allowAsStatement": false
+   }
+  ]
+ ],
+ "no-warning-comments": [
+  [
+   {
+    "terms": [
+     "fixme"
+    ]
+   }
+  ],
+  [
+   {
+    "terms": [
+     "fixme",
+     "todo"
+    ]
+   }
+  ],
+  [
+   {
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "location": "start"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "todo"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "[aeiou]"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "foo-bar"
+    ]
+   }
+  ],
+  [
+   {
+    "decoration": [
+     "*"
+    ]
+   }
+  ],
+  [
+   {
+    "terms": [
+     "fixme"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "FIXME"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "fixme",
+     "todo"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "[litera|$]"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "eslint"
+    ]
+   }
+  ],
+  [
+   {
+    "terms": [
+     "one"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "todo!"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "!todo"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "FIX!"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "!FIX"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "!xxx"
+    ],
+    "location": "anywhere"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "!xxx"
+    ],
+    "location": "start"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "todo"
+    ],
+    "location": "start"
+   }
+  ],
+  [
+   {
+    "terms": [
+     "todo"
+    ],
+    "location": "start",
+    "decoration": [
+     "*",
+     "/"
+    ]
+   }
+  ],
+  [
+   {
+    "terms": [
+     "*todo"
+    ],
+    "location": "start",
+    "decoration": [
+     "*"
+    ]
+   }
+  ],
+  [
+   {
+    "terms": [
+     "todo!"
+    ],
+    "location": "start"
+   }
+  ]
+ ],
+ "no-with": [],
+ "object-shorthand": [
+  [
+   "properties"
+  ],
+  [
+   "methods"
+  ],
+  [
+   "never"
+  ],
+  [
+   "always",
+   {
+    "ignoreConstructors": true
+   }
+  ],
+  [
+   "methods",
+   {
+    "ignoreConstructors": true
+   }
+  ],
+  [
+   "always",
+   {
+    "methodsIgnorePattern": "^foo$"
+   }
+  ],
+  [
+   "methods",
+   {
+    "methodsIgnorePattern": "^foo$"
+   }
+  ],
+  [
+   "always",
+   {
+    "methodsIgnorePattern": "^foo$",
+    "avoidExplicitReturnArrows": true
+   }
+  ],
+  [
+   "always",
+   {
+    "methodsIgnorePattern": "^123$"
+   }
+  ],
+  [
+   "always",
+   {
+    "methodsIgnorePattern": "foo"
+   }
+  ],
+  [
+   "always",
+   {
+    "methodsIgnorePattern": "^.foo.$"
+   }
+  ],
+  [
+   "always",
+   {
+    "avoidQuotes": true
+   }
+  ],
+  [
+   "methods",
+   {
+    "avoidQuotes": true
+   }
+  ],
+  [
+   "properties",
+   {
+    "avoidQuotes": true
+   }
+  ],
+  [
+   "consistent"
+  ],
+  [
+   "consistent-as-needed"
+  ],
+  [
+   "always",
+   {
+    "avoidExplicitReturnArrows": false
+   }
+  ],
+  [
+   "always",
+   {
+    "avoidExplicitReturnArrows": true
+   }
+  ],
+  [
+   "always"
+  ],
+  [
+   "methods",
+   {
+    "ignoreConstructors": false
+   }
+  ]
+ ],
+ "one-var": [
+  [
+   "always"
+  ],
+  [
+   "never"
+  ],
+  [
+   {
+    "initialized": "never"
+   }
+  ],
+  [
+   {
+    "initialized": "always"
+   }
+  ],
+  [
+   {
+    "uninitialized": "never"
+   }
+  ],
+  [
+   {
+    "uninitialized": "always"
+   }
+  ],
+  [
+   {
+    "uninitialized": "always",
+    "initialized": "always"
+   }
+  ],
+  [
+   {
+    "uninitialized": "never",
+    "initialized": "never"
+   }
+  ],
+  [
+   {
+    "uninitialized": "always",
+    "initialized": "never"
+   }
+  ],
+  [
+   {
+    "uninitialized": "never",
+    "initialized": "always"
+   }
+  ],
+  [
+   {
+    "var": "always",
+    "let": "never",
+    "const": "never"
+   }
+  ],
+  [
+   {
+    "var": "always",
+    "let": "always",
+    "const": "never"
+   }
+  ],
+  [
+   {
+    "var": "always"
+   }
+  ],
+  [
+   {
+    "var": "never"
+   }
+  ],
+  [
+   {
+    "const": "never"
+   }
+  ],
+  [
+   {
+    "var": "always",
+    "let": "always"
+   }
+  ],
+  [
+   {
+    "const": "always"
+   }
+  ],
+  [
+   {
+    "initialized": "never",
+    "uninitialized": "always"
+   }
+  ],
+  [
+   {
+    "separateRequires": false,
+    "var": "always"
+   }
+  ],
+  [
+   {
+    "separateRequires": true,
+    "var": "always"
+   }
+  ],
+  [
+   "consecutive"
+  ],
+  [
+   {
+    "const": "consecutive",
+    "separateRequires": true
+   }
+  ],
+  [
+   {
+    "initialized": "consecutive",
+    "uninitialized": "always"
+   }
+  ],
+  [
+   {
+    "initialized": "consecutive",
+    "uninitialized": "never"
+   }
+  ],
+  [
+   {
+    "uninitialized": "consecutive",
+    "initialized": "always"
+   }
+  ],
+  [
+   {
+    "uninitialized": "consecutive",
+    "initialized": "never"
+   }
+  ],
+  [
+   {
+    "var": "consecutive"
+   }
+  ],
+  [
+   {
+    "let": "consecutive"
+   }
+  ],
+  [
+   {
+    "const": "consecutive"
+   }
+  ],
+  [
+   {
+    "let": "consecutive",
+    "const": "always"
+   }
+  ],
+  [
+   {
+    "let": "consecutive",
+    "const": "never"
+   }
+  ],
+  [
+   {
+    "const": "consecutive",
+    "let": "always"
+   }
+  ],
+  [
+   {
+    "const": "consecutive",
+    "let": "never"
+   }
+  ],
+  [
+   {
+    "initialized": "consecutive"
+   }
+  ],
+  [
+   {
+    "var": "never",
+    "let": "consecutive",
+    "const": "consecutive"
+   }
+  ],
+  [
+   {
+    "let": "always"
+   }
+  ],
+  [
+   {
+    "let": "never"
+   }
+  ],
+  [
+   {
+    "separateRequires": true,
+    "let": "always"
+   }
+  ],
+  [
+   {
+    "separateRequires": true,
+    "const": "always"
+   }
+  ]
+ ],
+ "operator-assignment": [
+  [
+   "always"
+  ],
+  [
+   "never"
+  ]
+ ],
+ "prefer-arrow-callback": [
+  [
+   {
+    "allowNamedFunctions": true
+   }
+  ],
+  [
+   {
+    "allowNamedFunctions": false
+   }
+  ],
+  [
+   {
+    "allowUnboundThis": false
+   }
+  ]
+ ],
+ "prefer-const": [
+  [
+   {
+    "destructuring": "all"
+   }
+  ],
+  [
+   {
+    "ignoreReadBeforeAssign": true
+   }
+  ],
+  [
+   {
+    "destructuring": "any"
+   }
+  ],
+  [
+   {
+    "destructuring": "any",
+    "ignoreReadBeforeAssign": true
+   }
+  ],
+  [
+   {
+    "ignoreReadBeforeAssign": false
+   }
+  ]
+ ],
+ "prefer-destructuring": [
+  [
+   {
+    "VariableDeclarator": {
+     "object": true
+    }
+   }
+  ],
+  [
+   {
+    "object": true
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "object": true
+    }
+   },
+   {
+    "enforceForRenamedProperties": false
+   }
+  ],
+  [
+   {
+    "object": true
+   },
+   {
+    "enforceForRenamedProperties": false
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "object": true
+    }
+   },
+   {
+    "enforceForRenamedProperties": true
+   }
+  ],
+  [
+   {
+    "object": true
+   },
+   {
+    "enforceForRenamedProperties": true
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "array": false
+    }
+   }
+  ],
+  [
+   {
+    "array": false
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "object": false
+    }
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "array": false
+    }
+   },
+   {
+    "enforceForRenamedProperties": true
+   }
+  ],
+  [
+   {
+    "array": false
+   },
+   {
+    "enforceForRenamedProperties": true
+   }
+  ],
+  [
+   {
+    "AssignmentExpression": {
+     "object": false
+    }
+   },
+   {
+    "enforceForRenamedProperties": true
+   }
+  ],
+  [
+   {
+    "AssignmentExpression": {
+     "object": false
+    }
+   },
+   {
+    "enforceForRenamedProperties": false
+   }
+  ],
+  [
+   {
+    "AssignmentExpression": {
+     "array": false
+    }
+   },
+   {
+    "enforceForRenamedProperties": true
+   }
+  ],
+  [
+   {
+    "AssignmentExpression": {
+     "array": false
+    }
+   },
+   {
+    "enforceForRenamedProperties": false
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "array": true
+    },
+    "AssignmentExpression": {
+     "array": false
+    }
+   },
+   {
+    "enforceForRenamedProperties": false
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "array": false
+    },
+    "AssignmentExpression": {
+     "array": true
+    }
+   },
+   {
+    "enforceForRenamedProperties": false
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "object": true
+    },
+    "AssignmentExpression": {
+     "object": false
+    }
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "object": false
+    },
+    "AssignmentExpression": {
+     "object": true
+    }
+   }
+  ],
+  [
+   {
+    "array": true,
+    "object": true
+   },
+   {
+    "enforceForRenamedProperties": true
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "array": true
+    }
+   },
+   {
+    "enforceForRenamedProperties": true
+   }
+  ],
+  [
+   {
+    "AssignmentExpression": {
+     "array": true
+    }
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "array": true
+    },
+    "AssignmentExpression": {
+     "array": false
+    }
+   },
+   {
+    "enforceForRenamedProperties": true
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "array": true
+    },
+    "AssignmentExpression": {
+     "array": false
+    }
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "array": false
+    },
+    "AssignmentExpression": {
+     "array": true
+    }
+   }
+  ],
+  [
+   {
+    "VariableDeclarator": {
+     "array": true,
+     "object": false
+    },
+    "AssignmentExpression": {
+     "object": true
+    }
+   }
+  ],
+  [
+   {
+    "AssignmentExpression": {
+     "object": true,
+     "array": true
+    }
+   }
+  ],
+  [
+   {
+    "AssignmentExpression": {
+     "object": true
+    }
+   }
+  ],
+  [
+   {
+    "AssignmentExpression": {
+     "array": false
+    }
+   }
+  ]
+ ],
+ "prefer-exponentiation-operator": [],
+ "prefer-named-capture-group": [],
+ "prefer-numeric-literals": [],
+ "prefer-object-has-own": [],
+ "prefer-object-spread": [],
+ "prefer-promise-reject-errors": [
+  [
+   {
+    "allowEmptyReject": true
+   }
+  ],
+  [
+   {
+    "allowEmptyReject": false
+   }
+  ],
+  [
+   {}
+  ]
+ ],
+ "prefer-regex-literals": [
+  [
+   {
+    "disallowRedundantWrapping": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "disallowRedundantWrapping": false
+   }
+  ]
+ ],
+ "prefer-rest-params": [],
+ "prefer-spread": [],
+ "prefer-template": [],
+ "preserve-caught-error": [
+  [
+   {
+    "requireCatchParameter": false
+   }
+  ],
+  [
+   {
+    "requireCatchParameter": true
+   }
+  ],
+  [
+   {}
+  ]
+ ],
+ "radix": [
+  [
+   "always"
+  ],
+  [
+   "as-needed"
+  ]
+ ],
+ "require-await": [],
+ "require-unicode-regexp": [
+  [
+   {
+    "requireFlag": "u"
+   }
+  ],
+  [
+   {
+    "requireFlag": "v"
+   }
+  ]
+ ],
+ "require-yield": [],
+ "sort-imports": [
+  [
+   {
+    "memberSyntaxSortOrder": [
+     "single",
+     "multiple",
+     "none",
+     "all"
+    ]
+   }
+  ],
+  [
+   {
+    "ignoreCase": true
+   }
+  ],
+  [
+   {
+    "ignoreDeclarationSort": true
+   }
+  ],
+  [
+   {
+    "ignoreMemberSort": true
+   }
+  ],
+  [
+   {
+    "allowSeparatedGroups": true
+   }
+  ],
+  [
+   {
+    "memberSyntaxSortOrder": [
+     "all",
+     "single",
+     "multiple",
+     "none"
+    ]
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "allowSeparatedGroups": false
+   }
+  ]
+ ],
+ "sort-keys": [
+  [
+   "desc"
+  ],
+  [
+   "asc"
+  ],
+  [
+   "asc",
+   {
+    "minKeys": 4
+   }
+  ],
+  [
+   "asc",
+   {
+    "caseSensitive": false
+   }
+  ],
+  [
+   "asc",
+   {
+    "caseSensitive": false,
+    "minKeys": 5
+   }
+  ],
+  [
+   "asc",
+   {
+    "natural": true
+   }
+  ],
+  [
+   "asc",
+   {
+    "natural": true,
+    "minKeys": 4
+   }
+  ],
+  [
+   "asc",
+   {
+    "natural": true,
+    "caseSensitive": false
+   }
+  ],
+  [
+   "asc",
+   {
+    "natural": true,
+    "caseSensitive": false,
+    "minKeys": 4
+   }
+  ],
+  [
+   "desc",
+   {
+    "minKeys": 4
+   }
+  ],
+  [
+   "desc",
+   {
+    "caseSensitive": false
+   }
+  ],
+  [
+   "desc",
+   {
+    "caseSensitive": false,
+    "minKeys": 5
+   }
+  ],
+  [
+   "desc",
+   {
+    "natural": true
+   }
+  ],
+  [
+   "desc",
+   {
+    "natural": true,
+    "minKeys": 4
+   }
+  ],
+  [
+   "desc",
+   {
+    "natural": true,
+    "caseSensitive": false
+   }
+  ],
+  [
+   "desc",
+   {
+    "natural": true,
+    "caseSensitive": false,
+    "minKeys": 4
+   }
+  ],
+  [
+   "asc",
+   {
+    "allowLineSeparatedGroups": true
+   }
+  ],
+  [
+   "asc",
+   {
+    "minKeys": 3
+   }
+  ],
+  [
+   "asc",
+   {
+    "caseSensitive": false,
+    "minKeys": 3
+   }
+  ],
+  [
+   "asc",
+   {
+    "natural": true,
+    "minKeys": 2
+   }
+  ],
+  [
+   "asc",
+   {
+    "natural": true,
+    "caseSensitive": false,
+    "minKeys": 3
+   }
+  ],
+  [
+   "desc",
+   {
+    "minKeys": 3
+   }
+  ],
+  [
+   "desc",
+   {
+    "caseSensitive": false,
+    "minKeys": 2
+   }
+  ],
+  [
+   "desc",
+   {
+    "natural": true,
+    "minKeys": 3
+   }
+  ],
+  [
+   "desc",
+   {
+    "natural": true,
+    "caseSensitive": false,
+    "minKeys": 2
+   }
+  ],
+  [
+   "asc",
+   {
+    "allowLineSeparatedGroups": false
+   }
+  ]
+ ],
+ "sort-vars": [
+  [
+   {
+    "ignoreCase": true
+   }
+  ]
+ ],
+ "symbol-description": [],
+ "unicode-bom": [
+  [
+   "always"
+  ],
+  [
+   "never"
+  ]
+ ],
+ "use-isnan": [
+  [
+   {
+    "enforceForSwitchCase": false
+   }
+  ],
+  [
+   {
+    "enforceForSwitchCase": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "enforceForIndexOf": false
+   }
+  ],
+  [
+   {
+    "enforceForIndexOf": true
+   }
+  ]
+ ],
+ "valid-typeof": [
+  [
+   {
+    "requireStringLiterals": true
+   }
+  ]
+ ],
+ "vars-on-top": [],
+ "yoda": [
+  [
+   "never"
+  ],
+  [
+   "always"
+  ],
+  [
+   "never",
+   {
+    "exceptRange": true
+   }
+  ],
+  [
+   "always",
+   {
+    "exceptRange": true
+   }
+  ],
+  [
+   "never",
+   {
+    "onlyEquality": true
+   }
+  ],
+  [
+   "always",
+   {
+    "onlyEquality": true
+   }
+  ],
+  [
+   "always",
+   {
+    "exceptRange": false
+   }
+  ]
+ ],
+ "typescript/adjacent-overload-signatures": [],
+ "typescript/array-type": [
+  [
+   {
+    "default": "array"
+   }
+  ],
+  [
+   {
+    "default": "array",
+    "readonly": "array"
+   }
+  ],
+  [
+   {
+    "default": "array",
+    "readonly": "array-simple"
+   }
+  ],
+  [
+   {
+    "default": "array",
+    "readonly": "generic"
+   }
+  ],
+  [
+   {
+    "default": "array-simple"
+   }
+  ],
+  [
+   {
+    "default": "array-simple",
+    "readonly": "array"
+   }
+  ],
+  [
+   {
+    "default": "array-simple",
+    "readonly": "array-simple"
+   }
+  ],
+  [
+   {
+    "default": "array-simple",
+    "readonly": "generic"
+   }
+  ],
+  [
+   {
+    "default": "generic"
+   }
+  ],
+  [
+   {
+    "default": "generic",
+    "readonly": "generic"
+   }
+  ],
+  [
+   {
+    "default": "generic",
+    "readonly": "array"
+   }
+  ],
+  [
+   {
+    "default": "generic",
+    "readonly": "array-simple"
+   }
+  ],
+  [
+   {
+    "readonly": "array-simple"
+   }
+  ]
+ ],
+ "typescript/ban-ts-comment": [
+  [
+   {
+    "ts-expect-error": false
+   }
+  ],
+  [
+   {
+    "ts-expect-error": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 21,
+    "ts-expect-error": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 10,
+    "ts-expect-error": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-ignore": false
+   }
+  ],
+  [
+   {
+    "ts-ignore": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 21,
+    "ts-ignore": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 10,
+    "ts-ignore": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-nocheck": false
+   }
+  ],
+  [
+   {
+    "ts-nocheck": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 21,
+    "ts-nocheck": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 10,
+    "ts-nocheck": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-check": false
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 3,
+    "ts-check": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 10,
+    "ts-check": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-check": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "ts-check": true
+   }
+  ],
+  [
+   {
+    "ts-expect-error": true
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 10,
+    "ts-expect-error": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 25,
+    "ts-expect-error": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-expect-error": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-expect-error": true,
+    "ts-ignore": true
+   }
+  ],
+  [
+   {
+    "ts-expect-error": "allow-with-description",
+    "ts-ignore": true
+   }
+  ],
+  [
+   {
+    "ts-ignore": true
+   }
+  ],
+  [
+   {
+    "ts-expect-error": false,
+    "ts-ignore": true
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 25,
+    "ts-ignore": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-ignore": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-nocheck": true
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 25,
+    "ts-nocheck": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-nocheck": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "minimumDescriptionLength": 25,
+    "ts-check": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-check": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    }
+   }
+  ],
+  [
+   {
+    "ts-expect-error": "allow-with-description",
+    "minimumDescriptionLength": 21
+   }
+  ],
+  [
+   {
+    "ts-expect-error": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    },
+    "minimumDescriptionLength": 10
+   }
+  ],
+  [
+   {
+    "ts-ignore": "allow-with-description",
+    "minimumDescriptionLength": 21
+   }
+  ],
+  [
+   {
+    "ts-ignore": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    },
+    "minimumDescriptionLength": 10
+   }
+  ],
+  [
+   {
+    "ts-nocheck": "allow-with-description",
+    "minimumDescriptionLength": 21
+   }
+  ],
+  [
+   {
+    "ts-nocheck": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    },
+    "minimumDescriptionLength": 10
+   }
+  ],
+  [
+   {
+    "ts-check": "allow-with-description",
+    "minimumDescriptionLength": 3
+   }
+  ],
+  [
+   {
+    "ts-check": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    },
+    "minimumDescriptionLength": 10
+   }
+  ],
+  [
+   {
+    "ts-expect-error": "allow-with-description",
+    "minimumDescriptionLength": 10
+   }
+  ],
+  [
+   {
+    "ts-expect-error": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    },
+    "minimumDescriptionLength": 25
+   }
+  ],
+  [
+   {
+    "ts-ignore": true,
+    "ts-expect-error": true
+   }
+  ],
+  [
+   {
+    "ts-ignore": true,
+    "ts-expect-error": "allow-with-description"
+   }
+  ],
+  [
+   {
+    "ts-ignore": true,
+    "ts-expect-error": false
+   }
+  ],
+  [
+   {
+    "ts-ignore": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    },
+    "minimumDescriptionLength": 25
+   }
+  ],
+  [
+   {
+    "ts-nocheck": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    },
+    "minimumDescriptionLength": 25
+   }
+  ],
+  [
+   {
+    "ts-check": {
+     "descriptionFormat": "^: TS\\d+ because .+$"
+    },
+    "minimumDescriptionLength": 25
+   }
+  ]
+ ],
+ "typescript/ban-tslint-comment": [],
+ "typescript/class-literal-property-style": [
+  [
+   "fields"
+  ],
+  [
+   "getters"
+  ]
+ ],
+ "typescript/consistent-generic-constructors": [
+  [
+   "type-annotation"
+  ]
+ ],
+ "typescript/consistent-indexed-object-style": [
+  [
+   "index-signature"
+  ],
+  [
+   "record"
+  ]
+ ],
+ "typescript/consistent-type-assertions": [
+  [
+   {
+    "assertionStyle": "as",
+    "objectLiteralTypeAssertions": "allow"
+   }
+  ],
+  [
+   {
+    "assertionStyle": "angle-bracket",
+    "objectLiteralTypeAssertions": "allow"
+   }
+  ],
+  [
+   {
+    "assertionStyle": "as",
+    "objectLiteralTypeAssertions": "allow-as-parameter"
+   }
+  ],
+  [
+   {
+    "assertionStyle": "angle-bracket",
+    "objectLiteralTypeAssertions": "allow-as-parameter"
+   }
+  ],
+  [
+   {
+    "assertionStyle": "as"
+   }
+  ],
+  [
+   {
+    "assertionStyle": "angle-bracket"
+   }
+  ],
+  [
+   {
+    "arrayLiteralTypeAssertions": "allow-as-parameter",
+    "assertionStyle": "as"
+   }
+  ],
+  [
+   {
+    "arrayLiteralTypeAssertions": "allow-as-parameter",
+    "assertionStyle": "angle-bracket"
+   }
+  ],
+  [
+   {
+    "assertionStyle": "never"
+   }
+  ],
+  [
+   {
+    "assertionStyle": "as",
+    "objectLiteralTypeAssertions": "never"
+   }
+  ],
+  [
+   {
+    "assertionStyle": "angle-bracket",
+    "objectLiteralTypeAssertions": "never"
+   }
+  ],
+  [
+   {
+    "arrayLiteralTypeAssertions": "never",
+    "assertionStyle": "as"
+   }
+  ],
+  [
+   {
+    "arrayLiteralTypeAssertions": "never",
+    "assertionStyle": "angle-bracket"
+   }
+  ]
+ ],
+ "typescript/consistent-type-definitions": [
+  [
+   "interface"
+  ],
+  [
+   "type"
+  ]
+ ],
+ "typescript/consistent-type-imports": [
+  [
+   {
+    "disallowTypeAnnotations": false
+   }
+  ],
+  [
+   {
+    "prefer": "no-type-imports"
+   }
+  ],
+  [
+   {
+    "fixStyle": "inline-type-imports"
+   }
+  ],
+  [
+   {
+    "fixStyle": "inline-type-imports",
+    "prefer": "type-imports"
+   }
+  ],
+  [
+   {
+    "fixStyle": "inline-type-imports",
+    "prefer": "no-type-imports"
+   }
+  ],
+  [
+   {
+    "prefer": "type-imports"
+   }
+  ],
+  [
+   {
+    "prefer": "type-imports",
+    "fixStyle": "inline-type-imports"
+   }
+  ],
+  [
+   {
+    "prefer": "no-type-imports",
+    "fixStyle": "inline-type-imports"
+   }
+  ],
+  [
+   {
+    "disallowTypeAnnotations": false,
+    "prefer": "no-type-imports"
+   }
+  ],
+  [
+   {
+    "disallowTypeAnnotations": true,
+    "prefer": "no-type-imports"
+   }
+  ],
+  [
+   {}
+  ]
+ ],
+ "typescript/explicit-function-return-type": [
+  [
+   {
+    "allowExpressions": true
+   }
+  ],
+  [
+   {
+    "allowTypedFunctionExpressions": true
+   }
+  ],
+  [
+   {
+    "allowHigherOrderFunctions": true
+   }
+  ],
+  [
+   {
+    "allowDirectConstAssertionInArrowFunctions": true
+   }
+  ],
+  [
+   {
+    "allowConciseArrowFunctionExpressionsStartingWithVoid": true
+   }
+  ],
+  [
+   {
+    "allowFunctionsWithoutTypeParameters": true
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "test1",
+     "test2"
+    ]
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "prop",
+     "method",
+     "arrow"
+    ]
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "arrowFn",
+     "fn"
+    ]
+   }
+  ],
+  [
+   {
+    "allowHigherOrderFunctions": true,
+    "allowTypedFunctionExpressions": true
+   }
+  ],
+  [
+   {
+    "allowHigherOrderFunctions": false,
+    "allowTypedFunctionExpressions": true
+   }
+  ],
+  [
+   {
+    "allowIIFEs": true
+   }
+  ],
+  [
+   {
+    "allowHigherOrderFunctions": false,
+    "allowIIFEs": true
+   }
+  ],
+  [
+   {
+    "allowHigherOrderFunctions": true,
+    "allowIIFEs": true
+   }
+  ],
+  [
+   {
+    "allowTypedFunctionExpressions": false
+   }
+  ],
+  [
+   {
+    "allowHigherOrderFunctions": true,
+    "allowTypedFunctionExpressions": false
+   }
+  ],
+  [
+   {
+    "allowHigherOrderFunctions": false,
+    "allowTypedFunctionExpressions": false
+   }
+  ],
+  [
+   {
+    "allowDirectConstAssertionInArrowFunctions": false
+   }
+  ],
+  [
+   {
+    "allowConciseArrowFunctionExpressionsStartingWithVoid": false
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "test",
+     "1"
+    ]
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "ignoredName"
+    ]
+   }
+  ],
+  [
+   {
+    "allowIIFEs": false
+   }
+  ],
+  [
+   {
+    "allowTypedFunctionExpressions": true,
+    "allowHigherOrderFunctions": true
+   }
+  ],
+  [
+   {
+    "allowTypedFunctionExpressions": true,
+    "allowHigherOrderFunctions": false
+   }
+  ],
+  [
+   {
+    "allowIIFEs": true,
+    "allowHigherOrderFunctions": false
+   }
+  ],
+  [
+   {
+    "allowIIFEs": true,
+    "allowHigherOrderFunctions": true
+   }
+  ],
+  [
+   {
+    "allowTypedFunctionExpressions": false,
+    "allowHigherOrderFunctions": true
+   }
+  ],
+  [
+   {
+    "allowTypedFunctionExpressions": false,
+    "allowHigherOrderFunctions": false
+   }
+  ]
+ ],
+ "typescript/explicit-member-accessibility": [
+  [
+   {
+    "accessibility": "explicit",
+    "overrides": {
+     "parameterProperties": "explicit"
+    }
+   }
+  ],
+  [
+   {
+    "accessibility": "explicit",
+    "overrides": {
+     "parameterProperties": "off"
+    }
+   }
+  ],
+  [
+   {
+    "accessibility": "explicit"
+   }
+  ],
+  [
+   {
+    "accessibility": "no-public"
+   }
+  ],
+  [
+   {
+    "overrides": {
+     "accessors": "off",
+     "constructors": "off"
+    }
+   }
+  ],
+  [
+   {
+    "overrides": {
+     "methods": "off"
+    }
+   }
+  ],
+  [
+   {
+    "accessibility": "no-public",
+    "overrides": {
+     "parameterProperties": "off"
+    }
+   }
+  ],
+  [
+   {
+    "ignoredMethodNames": [
+     "getX"
+    ]
+   }
+  ],
+  [
+   {
+    "overrides": {
+     "properties": "off"
+    }
+   }
+  ],
+  [
+   {
+    "overrides": {
+     "properties": "explicit"
+    }
+   }
+  ],
+  [
+   {
+    "overrides": {
+     "properties": "no-public"
+    }
+   }
+  ],
+  [
+   {
+    "accessibility": "off",
+    "overrides": {
+     "parameterProperties": "explicit"
+    }
+   }
+  ],
+  [
+   {
+    "accessibility": "off",
+    "overrides": {
+     "constructors": "explicit",
+     "parameterProperties": "explicit"
+    }
+   }
+  ],
+  [
+   {
+    "overrides": {
+     "constructors": "no-public"
+    }
+   }
+  ],
+  [
+   {
+    "overrides": {
+     "parameterProperties": "no-public"
+    }
+   }
+  ],
+  [
+   {
+    "accessibility": "off",
+    "overrides": {
+     "parameterProperties": "no-public"
+    }
+   }
+  ],
+  [
+   {
+    "accessibility": "off",
+    "overrides": {
+     "properties": "explicit"
+    }
+   }
+  ],
+  [
+   {
+    "accessibility": "off",
+    "overrides": {
+     "properties": "no-public"
+    }
+   }
+  ],
+  [
+   {
+    "accessibility": "no-public",
+    "overrides": {
+     "parameterProperties": "no-public"
+    }
+   }
+  ]
+ ],
+ "typescript/explicit-module-boundary-types": [
+  [
+   {
+    "allowTypedFunctionExpressions": true
+   }
+  ],
+  [
+   {
+    "allowHigherOrderFunctions": true
+   }
+  ],
+  [
+   {
+    "allowDirectConstAssertionInArrowFunctions": true
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "func1",
+     "func2"
+    ]
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "prop",
+     "method",
+     "null",
+     "foo"
+    ]
+   }
+  ],
+  [
+   {
+    "allowTypedFunctionExpressions": false
+   }
+  ],
+  [
+   {
+    "allowArgumentsExplicitlyTypedAsAny": true
+   }
+  ],
+  [
+   {
+    "allowOverloadFunctions": true
+   }
+  ],
+  [
+   {
+    "allowDirectConstAssertionInArrowFunctions": false
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "prop"
+    ]
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "func2"
+    ]
+   }
+  ],
+  [
+   {
+    "allowHigherOrderFunctions": false
+   }
+  ],
+  [
+   {
+    "allowArgumentsExplicitlyTypedAsAny": false
+   }
+  ],
+  [
+   {
+    "allowedNames": []
+   }
+  ]
+ ],
+ "typescript/method-signature-style": [
+  [
+   "method"
+  ]
+ ],
+ "typescript/no-confusing-non-null-assertion": [],
+ "typescript/no-duplicate-enum-values": [],
+ "typescript/no-dynamic-delete": [],
+ "typescript/no-empty-interface": [
+  [
+   {
+    "allowSingleExtends": true
+   }
+  ],
+  [
+   {
+    "allowSingleExtends": false
+   }
+  ],
+  [
+   {
+    "allow_single_extends": true
+   }
+  ],
+  [
+   {
+    "allow_single_extends": false
+   }
+  ]
+ ],
+ "typescript/no-empty-object-type": [
+  [
+   {
+    "allowInterfaces": "always"
+   }
+  ],
+  [
+   {
+    "allowInterfaces": "with-single-extends"
+   }
+  ],
+  [
+   {
+    "allowObjectTypes": "always"
+   }
+  ],
+  [
+   {
+    "allowWithName": "Base"
+   }
+  ],
+  [
+   {
+    "allowWithName": "Props$"
+   }
+  ],
+  [
+   {
+    "allowInterfaces": "never"
+   }
+  ],
+  [
+   {
+    "allowObjectTypes": "never"
+   }
+  ],
+  [
+   {
+    "allowWithName": "Mismatch"
+   }
+  ],
+  [
+   {
+    "allowWithName": ".*Props$"
+   }
+  ],
+  [
+   {
+    "allowWithName": "BaseProps"
+   }
+  ],
+  [
+   {
+    "allowWithName": "Props"
+   }
+  ]
+ ],
+ "typescript/no-explicit-any": [
+  [
+   {
+    "ignoreRestArgs": true
+   }
+  ],
+  [
+   {
+    "fixToUnknown": true,
+    "ignoreRestArgs": true
+   }
+  ],
+  [
+   {
+    "fixToUnknown": true
+   }
+  ],
+  [
+   {
+    "ignoreRestArgs": true,
+    "fixToUnknown": true
+   }
+  ]
+ ],
+ "typescript/no-extra-non-null-assertion": [],
+ "typescript/no-extraneous-class": [
+  [
+   {
+    "allowEmpty": true
+   }
+  ],
+  [
+   {
+    "allowConstructorOnly": true
+   }
+  ],
+  [
+   {
+    "allowStaticOnly": true
+   }
+  ],
+  [
+   {
+    "allowWithDecorator": true
+   }
+  ],
+  [
+   {
+    "allowWithDecorator": false
+   }
+  ],
+  [
+   {
+    "allowEmpty": true,
+    "allowConstructorOnly": true,
+    "allowStaticOnly": true
+   }
+  ],
+  [
+   {}
+  ]
+ ],
+ "typescript/no-import-type-side-effects": [],
+ "typescript/no-inferrable-types": [
+  [
+   {
+    "ignoreParameters": true
+   }
+  ],
+  [
+   {
+    "ignoreProperties": true
+   }
+  ],
+  [
+   {
+    "ignoreParameters": false
+   }
+  ],
+  [
+   {
+    "ignoreParameters": false,
+    "ignoreProperties": false
+   }
+  ],
+  [
+   {
+    "ignoreProperties": false
+   }
+  ],
+  [
+   {
+    "ignoreParameters": true,
+    "ignoreProperties": true
+   }
+  ]
+ ],
+ "typescript/no-invalid-void-type": [
+  [
+   {
+    "allowInGenericTypeArguments": false
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "Allowed"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "Ex.Mx.Tx"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "Ex.Mx . Tx"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "Ex . Mx . Tx"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "Promise"
+    ]
+   }
+  ],
+  [
+   {
+    "allowAsThisParameter": true
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "Tx"
+    ]
+   }
+  ],
+  [
+   {
+    "allowAsThisParameter": true,
+    "allowInGenericTypeArguments": true
+   }
+  ],
+  [
+   {
+    "allowAsThisParameter": true,
+    "allowInGenericTypeArguments": false
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "Producer"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "Base"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "A",
+     "Promise"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "A.B"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "A . B"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "B"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "A"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     "X"
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     " A "
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": [
+     ""
+    ]
+   }
+  ],
+  [
+   {
+    "allowInGenericTypeArguments": true
+   }
+  ],
+  [
+   {}
+  ],
+  [
+   {
+    "allowAsThisParameter": false
+   }
+  ],
+  [
+   {
+    "allowAsThisParameter": true,
+    "allowInGenericTypeArguments": [
+     "A"
+    ]
+   }
+  ]
+ ],
+ "typescript/no-misused-new": [],
+ "typescript/no-namespace": [
+  [
+   {
+    "allowDeclarations": true
+   }
+  ],
+  [
+   {
+    "allowDefinitionFiles": true
+   }
+  ],
+  [
+   {
+    "allowDeclarations": false
+   }
+  ],
+  [
+   {
+    "allowDefinitionFiles": false
+   }
+  ],
+  [
+   {
+    "allowDeclarations": true,
+    "allowDefinitionFiles": false
+   }
+  ]
+ ],
+ "typescript/no-non-null-asserted-nullish-coalescing": [],
+ "typescript/no-non-null-asserted-optional-chain": [],
+ "typescript/no-non-null-assertion": [],
+ "typescript/no-require-imports": [
+  [
+   {
+    "allow": [
+     "/package\\.json$"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "\\.json$"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "^some-package$"
+    ]
+   }
+  ],
+  [
+   {
+    "allowAsImport": true
+   }
+  ]
+ ],
+ "typescript/no-restricted-types": [
+  [
+   {
+    "types": {
+     "Object": true
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "NS.Banned": true
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "bigint": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "boolean": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "never": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "null": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "number": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "object": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "string": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "symbol": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "undefined": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "unknown": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "void": "Use Ok instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "[]": "Use unknown[] instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Banned": true
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Banned": "Use '{}' instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Banned": ""
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Banned": {
+      "fixWith": "Ok",
+      "message": "Use Ok instead."
+     }
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Banned1": {
+      "fixWith": "Ok1",
+      "message": "Use Ok1 instead."
+     },
+     "Banned2": {
+      "fixWith": "Ok2",
+      "message": "Use Ok2 instead."
+     }
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Omit": {
+      "fixWith": "Ok",
+      "message": "Use Ok instead."
+     }
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "NS.Banned": {
+      "fixWith": "NS.Ok",
+      "message": "Use NS.Ok instead."
+     }
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "{}": {
+      "fixWith": "object",
+      "message": "Use object instead."
+     }
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "  NS.Banned  ": {
+      "fixWith": "NS.Ok",
+      "message": "Use NS.Ok instead."
+     }
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "       Banned      ": {
+      "fixWith": "Ok",
+      "message": "Use Ok instead."
+     }
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Banned<any>": "Don't use `any` as a type parameter to `Banned`"
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Banned<A, B>": "Don't pass `A, B` as parameters to `Banned`"
+    }
+   }
+  ],
+  [
+   {
+    "types": {}
+   }
+  ],
+  [
+   {
+    "types": {
+     "any": "Use unknown instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Banned": "Use \"{}\" instead."
+    }
+   }
+  ],
+  [
+   {
+    "types": {
+     "Banned": {
+      "message": "Use a safer type",
+      "suggest": [
+       "SafeType",
+       "AnotherType"
+      ]
+     }
+    }
+   }
+  ]
+ ],
+ "typescript/no-this-alias": [
+  [
+   {
+    "allowDestructuring": true
+   }
+  ],
+  [
+   {
+    "allowedNames": [
+     "self"
+    ]
+   }
+  ],
+  [
+   {
+    "allowDestructuring": false
+   }
+  ]
+ ],
+ "typescript/no-unnecessary-parameter-property-assignment": [],
+ "typescript/no-unnecessary-type-constraint": [],
+ "typescript/no-unsafe-declaration-merging": [],
+ "typescript/no-unsafe-function-type": [],
+ "typescript/no-useless-empty-export": [],
+ "typescript/no-var-requires": [],
+ "typescript/no-wrapper-object-types": [],
+ "typescript/parameter-properties": [
+  [
+   {
+    "prefer": "class-property"
+   }
+  ],
+  [
+   {
+    "allow": [
+     "readonly"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "private"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "protected"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "public"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "private readonly"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "protected readonly"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "public readonly"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "readonly",
+     "private"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "public readonly",
+     "private"
+    ]
+   }
+  ],
+  [
+   {
+    "prefer": "parameter-property"
+   }
+  ],
+  [
+   {
+    "allow": [
+     "public"
+    ],
+    "prefer": "parameter-property"
+   }
+  ],
+  [
+   {
+    "allow": [
+     "public readonly"
+    ],
+    "prefer": "parameter-property"
+   }
+  ],
+  [
+   {
+    "allow": [
+     "protected"
+    ],
+    "prefer": "parameter-property"
+   }
+  ],
+  [
+   {
+    "allow": [
+     "protected readonly"
+    ],
+    "prefer": "parameter-property"
+   }
+  ],
+  [
+   {
+    "allow": [
+     "private"
+    ],
+    "prefer": "parameter-property"
+   }
+  ],
+  [
+   {
+    "allow": [
+     "private readonly"
+    ],
+    "prefer": "parameter-property"
+   }
+  ],
+  [
+   {
+    "allow": [
+     "readonly",
+     "private",
+     "public",
+     "protected readonly"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "readonly",
+     "private",
+     "protected",
+     "protected readonly",
+     "public readonly"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "readonly",
+     "protected",
+     "private readonly",
+     "public readonly"
+    ]
+   }
+  ],
+  [
+   {
+    "allow": [
+     "protected",
+     "private",
+     "readonly"
+    ],
+    "prefer": "parameter-property"
+   }
+  ]
+ ],
+ "typescript/prefer-as-const": [],
+ "typescript/prefer-enum-initializers": [],
+ "typescript/prefer-for-of": [],
+ "typescript/prefer-function-type": [],
+ "typescript/prefer-literal-enum-member": [
+  [
+   {
+    "allowBitwiseExpressions": true
+   }
+  ],
+  [
+   {
+    "allowBitwiseExpressions": false
+   }
+  ]
+ ],
+ "typescript/prefer-namespace-keyword": [],
+ "typescript/prefer-ts-expect-error": [],
+ "typescript/triple-slash-reference": [
+  [
+   {
+    "lib": "never",
+    "path": "never",
+    "types": "never"
+   }
+  ],
+  [
+   {
+    "lib": "always",
+    "path": "always",
+    "types": "always"
+   }
+  ],
+  [
+   {
+    "path": "never"
+   }
+  ],
+  [
+   {
+    "types": "never"
+   }
+  ],
+  [
+   {
+    "lib": "never"
+   }
+  ],
+  [
+   {
+    "types": "prefer-import"
+   }
+  ]
+ ],
+ "typescript/unified-signatures": [
+  [
+   {
+    "ignoreDifferentlyNamedParameters": true
+   }
+  ],
+  [
+   {
+    "ignoreOverloadsWithDifferentJSDoc": true
+   }
+  ]
+ ]
+}

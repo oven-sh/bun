@@ -1,0 +1,8 @@
+const a = <div b= /* 1 */ "c
+d" />;
+e(); /* 2 */
+
+const f = <div b=
+// 1
+"c
+d" />; /* 2 */

@@ -1,0 +1,21 @@
+[package]
+name = "bun_lint_plugins"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_lint.workspace = true
+bun_lint_oxlint.workspace = true
+bun_core.workspace = true
+bun_glob.workspace = true
+bun_semver.workspace = true
+bun_text_diff.workspace = true
+bstr.workspace = true
+smallvec.workspace = true
+rustc-hash = "2"
+
+[lints]
+workspace = true

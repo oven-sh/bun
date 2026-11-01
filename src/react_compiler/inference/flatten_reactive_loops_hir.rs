@@ -15,7 +15,7 @@ use crate::hir::{BlockId, HirFunction, Terminal};
 
 /// Flattens reactive scopes that are inside loops by converting `Scope` terminals
 /// to `PrunedScope` terminals.
-pub fn flatten_reactive_loops_hir(func: &mut HirFunction) {
+pub(crate) fn flatten_reactive_loops_hir(func: &mut HirFunction) {
     let mut active_loops: Vec<BlockId> = Vec::new();
 
     // Collect block ids in iteration order so we can iterate while mutating terminals

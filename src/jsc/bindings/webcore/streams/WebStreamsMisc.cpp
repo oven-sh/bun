@@ -19,9 +19,10 @@
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/TypedArrayType.h>
 #include <cmath>
+#include <wtf/StackPointer.h>
+#include <wtf/StdLibExtras.h>
 
 namespace Bun {
 namespace WebStreams {
@@ -96,10 +97,16 @@ static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
 
 JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::Vector<uint8_t> joinedStorage;
     std::span<const uint8_t> joined = chunk;
     if (unsigned pendingLen = state.pendingLen()) {
-        joinedStorage.reserveInitialCapacity(pendingLen + chunk.size());
+        // Script picks the chunk length, and reserveInitialCapacity CRASH()es past INT32_MAX bytes.
+        if (!joinedStorage.tryReserveInitialCapacity(pendingLen + chunk.size())) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
         joinedStorage.append(std::span<const uint8_t> { state.pending, pendingLen });
         joinedStorage.append(chunk);
         joined = joinedStorage.span();
@@ -126,8 +133,6 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
     if (toDecode.empty())
         return nullptr;
 
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     if (exceedsStringLimit(toDecode.size())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
@@ -137,6 +142,17 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
     JSValue decoded = JSValue::decode(Bun__encoding__toStringUTF8(toDecode.data(), toDecode.size(), globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
     return asString(decoded);
+}
+
+bool nativeSinkWriteIsBackpressure(JSC::VM& vm, JSValue wrote)
+{
+    if (wrote.isNumber())
+        return wrote.asNumber() < 0;
+    if (auto* p = dynamicDowncast<JSC::JSPromise>(wrote)) {
+        markPromiseAsHandled(vm, p);
+        return p->status() == JSC::JSPromise::Status::Pending;
+    }
+    return false;
 }
 
 // spec IsNonNegativeNumber(v). Non-throwing leaf: pure type + range test, no coercion.
@@ -155,6 +171,17 @@ void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JS
 {
     QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context };
     globalObject->vm().queueMicrotask(WTF::move(task));
+}
+
+bool streamLinkMustDefer(JSC::VM& vm)
+{
+    // Leave room for the source's pull() or cancel() at the end of a chain. A JS call throws RangeError at the soft limit.
+#if ASAN_ENABLED
+    static constexpr size_t headroom = 384 * KB;
+#else
+    static constexpr size_t headroom = 128 * KB;
+#endif
+    return reinterpret_cast<uintptr_t>(currentStackPointer()) < reinterpret_cast<uintptr_t>(vm.softStackLimit()) + headroom;
 }
 
 bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)
@@ -353,24 +380,8 @@ QueuingStrategyDict convertQueuingStrategyDict(JSGlobalObject* globalObject, JSV
 // For values that are provably not thenables (undefined, internal arrays/objects we
 // created): fulfill directly instead of running the observable resolve machinery.
 StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, JSReadableStream* stream)
-    : m_vm(globalObject->vm())
+    : AsyncContextScope(globalObject, stream->m_asyncContext.get())
 {
-    JSValue snapshot = stream->m_asyncContext.get();
-    if (!snapshot || snapshot.isUndefinedOrNull())
-        return;
-    auto* asyncContextData = globalObject->m_asyncContextData.get();
-    JSValue current = asyncContextData->getInternalField(0);
-    m_asyncContextData = asyncContextData;
-    m_previous = current;
-    if (snapshot == current)
-        return;
-    asyncContextData->putInternalField(m_vm, 0, snapshot);
-}
-
-StreamAsyncContextScope::~StreamAsyncContextScope()
-{
-    if (m_asyncContextData)
-        m_asyncContextData->putInternalField(m_vm, 0, m_previous);
 }
 
 // obj.name(args...) with obj as |this|; the EMPTY value if `name` is not callable.
@@ -385,25 +396,28 @@ JSValue invokeOptionalMethod(JSGlobalObject* globalObject, JSObject* object, con
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, object, args, "method is not a function"_s));
 }
 
-bool errorCodeIs(JSGlobalObject* globalObject, JSValue error, ASCIILiteral code)
+JSPromise* invokeCallbackReturningPromise(JSGlobalObject* globalObject, JSObject* callback, JSValue thisValue, const MarkedArgumentBuffer& args)
 {
-    auto& vm = getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (!error || !error.isObject())
-        return false;
-    JSValue codeValue = asObject(error)->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).codePublicName());
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return false;
-    }
-    if (!codeValue || !codeValue.isString())
-        return false;
-    String codeString = asString(codeValue)->value(globalObject);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return false;
-    }
-    return codeString == StringView(code);
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        auto callData = JSC::getCallData(callback);
+        ASSERT(callData.type != JSC::CallData::Type::None);
+        JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+    });
+}
+
+JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSObject* callback, JSValue thisValue, const MarkedArgumentBuffer& args)
+{
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        auto callData = JSC::getCallData(callback);
+        ASSERT(callData.type != JSC::CallData::Type::None);
+        JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseResolvedWithFast(globalObject, result));
+    });
 }
 
 // Shared [bound-convention] wrapper: target(contextCell, ...callArgs).
@@ -433,6 +447,16 @@ JSPromise* promiseResolvedWith(JSGlobalObject* globalObject, JSValue value)
     return promise;
 }
 
+JSPromise* promiseResolvedWithFast(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isObject()) [[likely]]
+        return nullptr;
+    // A vanilla JSPromise with an unpatched .then takes internal reactions as it is; a subclass or a patched .then is adopted.
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(value); promise && promise->isThenFastAndNonObservable())
+        return promise;
+    return promiseResolvedWith(globalObject, value);
+}
+
 JSPromise* promiseRejectedWith(JSGlobalObject* globalObject, JSValue reason)
 {
     return JSPromise::rejectedPromise(globalObject, reason);
@@ -452,6 +476,19 @@ void rejectPromise(JSGlobalObject* globalObject, JSPromise* promise, JSValue rea
 void markPromiseAsHandled(VM&, JSPromise* promise)
 {
     promise->markAsHandled();
+}
+
+void rejectPromiseAsHandled(JSGlobalObject* globalObject, JSPromise* promise, JSValue reason)
+{
+    promise->rejectAsHandled(getVM(globalObject), reason);
+}
+
+JSPromise* promiseRejectedWithAsHandled(JSGlobalObject* globalObject, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->rejectAsHandled(vm, reason);
+    return promise;
 }
 
 // The stream-level closed promise. The Pending guard makes every settle site unconditionally
@@ -547,18 +584,6 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
     }
     stream->m_closedPromise.set(vm, stream, promise);
     return promise;
-}
-
-// The ONE sanctioned completion-record catch: the spec's "interpreting X as a completion
-// record" sites only. Empty return = a VM termination the caller must propagate.
-JSValue takeAbruptCompletion(JSGlobalObject*, TopExceptionScope& catchScope)
-{
-    const JSC::Exception* exception = catchScope.exception();
-    ASSERT(exception);
-    JSValue thrown = exception->value();
-    if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
-        return {};
-    return thrown;
 }
 
 } // namespace WebStreams

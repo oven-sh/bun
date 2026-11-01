@@ -12,11 +12,15 @@
 #pragma once
 
 #include "root.h"
+#include "BunClientData.h"
+#include "SqliteCallbackRoots.h"
+#include "SqliteColumnNames.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/SentinelLinkedList.h>
 #include <wtf/text/StringHash.h>
 #include <array>
 
@@ -60,7 +64,7 @@ static constexpr size_t kNodeSqliteLimitCount = 11;
 //                 deletes the orphaned handle on its next entry point
 //   inUse       — a sqlite3session_changeset/patchset is on the C stack for
 //                 this handle (it re-enters the authorizer via its internal
-//                 SAVEPOINT/SELECT). session.close()/Symbol.dispose refuse
+//                 SAVEPOINT/SELECT). session.close()/Symbol.dispose throw
 //                 while set. The BusyScope taken before inUse is set means
 //                 deleteTrackedSessions()/sweepOrphanedSessions() are never
 //                 reached while any record is inUse; the sweep loops ASSERT
@@ -106,7 +110,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSDatabaseSync* create(JSC::VM& vm, JSC::Structure* structure, WTF::String&& location, DatabaseSyncOpenConfiguration&& config);
@@ -125,23 +129,23 @@ public:
     // Open the underlying connection. Throws on the scope if it fails or the
     // database is already open.
     bool open(JSC::JSGlobalObject*, JSC::ThrowScope&);
-    void closeInternal();
+    // The database reads as closed from here on. finishDeferredClose() takes
+    // the connection down: at once, or when the outermost BusyScope unwinds.
+    // mayCallScript is false when this is called from the GC, at process exit
+    // or for a disposed graph. This cell can already be dead in those cases.
+    void closeInternal(bool mayCallScript = true);
 
     sqlite3* connection() const { return m_db; }
     bool isOpen() const { return m_db != nullptr; }
-    // Bumped on every successful open(). Statements/sessions capture this
-    // at creation and compare instead of the raw sqlite3* — after
-    // close()+open() the allocator may recycle the exact same address for
-    // the new connection (ABA), so pointer equality isn't a sound
-    // "same connection" check.
-    unsigned openGeneration() const { return m_openGeneration; }
-    // deserialize() replaces the backing database without a
-    // close()+open() cycle, so it bumps the generation manually to
-    // invalidate every outstanding StatementSync/Session wrapper. We do
-    // NOT sqlite3_finalize() those stmts here — the JS wrappers still
-    // hold the raw handle and will free it themselves on GC, so a
-    // pre-emptive finalize would make them double-free.
-    void bumpOpenGeneration() { ++m_openGeneration; }
+
+    // close() and deserialize() finalize the StatementSyncs of this connection, as Node does. Not
+    // sqlite3_next_stmt(), which also returns the private statements of virtual table modules (FTS5).
+    void trackStatement(JSStatementSync&);
+    void finalizeStatements(bool mayCallScript = true);
+    // ~JSStatementSync() queues a statement here if its commit would call the authorizer.
+    // The next outermost BusyScope finalizes it, or whatever closes the connection does.
+    void orphanStatement(sqlite3_stmt* stmt) { m_orphanedStatements.append(stmt); }
+    void finalizeOrphanedStatements();
     bool allowLoadExtension() const { return m_config.allowExtension; }
     bool enableLoadExtensionIsOn() const { return m_enableLoadExtension; }
     void setEnableLoadExtension(bool v) { m_enableLoadExtension = v; }
@@ -154,7 +158,7 @@ public:
         m_sessions.removeFirstMatching([&](auto& r) { return r.ptr() == record; });
     }
     // Free every tracked sqlite3_session* and mark its record dbGone.
-    // Called from closeInternal() and from deserialize() after a successful
+    // Called from finishDeferredClose() and from deserialize() after a successful
     // schema swap — Session wrappers observe "the database freed my handle"
     // through the shared record, never by touching this cell.
     void deleteTrackedSessions();
@@ -173,32 +177,14 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_authorizer;
     JSC::WriteBarrier<JSNodeSqliteLimits> m_limits;
 
-    // Callbacks registered via function()/aggregate(), traced from
-    // visitChildren so a db → callback-closure → db cycle stays collectable.
-    // The sqlite-owned UDF contexts hold raw pointers to these values and
-    // rely on this vector for liveness (see the comment above NodeSqliteUDF
-    // in the .cpp). Returns the slot index; new registrations reuse slots
-    // released by releaseSupersededRegistration(), and the whole vector is
-    // dropped on close()/teardown. Releasing superseded roots happens at the
-    // registration site (keyed by name + SQL arg count, the identity SQLite
-    // replaces on), NEVER from xDestroy — with unfinalized statements the
-    // connection is zombified and xDestroy can run long after this cell has
-    // been swept.
-    size_t addRegisteredCallback(JSC::VM&, JSC::JSValue);
-    static constexpr size_t kNoCallbackSlot = SIZE_MAX;
-    // Clear the slots of a previous registration of (name, argc) — call only
-    // after sqlite3_create_*function succeeded, which is when SQLite has
-    // dropped the old registration.
-    void releaseSupersededRegistration(const WTF::String& name, int argc);
-    void rememberRegistration(const WTF::String& name, int argc, const std::array<size_t, 4>& slots);
+    SqliteCallbackRoots m_callbacks;
 
     // Incremented for the duration of any native call that may re-enter JS.
     // close()/deserialize()/process-exit consult it. Node permits re-entrant
-    // close(), so closeInternal() runs when busy but defers sqlite3_close_v2
-    // itself until the outermost BusyScope unwinds: while a statement is
-    // outstanding close_v2 only zombifies, but from an authorizer callback
-    // during prepare() no Vdbe exists yet and close_v2 would free the handle
-    // under the parser's feet.
+    // close(), so closeInternal() runs when busy but leaves the connection
+    // until the outermost BusyScope unwinds: one of its statements may be
+    // stepping, and from an authorizer callback during prepare() close_v2
+    // would free the handle under the parser's feet.
     bool isBusy() const { return m_busyDepth > 0; }
     struct BusyScope {
         JSDatabaseSync* db;
@@ -211,7 +197,9 @@ public:
                 // the depth bump so re-entrant calls from UDF/authorizer
                 // callbacks are skipped by the m_busyDepth guard.
                 db->sweepOrphanedSessions();
-                ++db->m_busyDepth;
+                // This can run a callback that closes the database, so callers check that it's open after this.
+                if (++db->m_busyDepth == 1 && !db->m_orphanedStatements.isEmpty()) [[unlikely]]
+                    db->finalizeOrphanedStatements();
             }
         }
         ~BusyScope()
@@ -225,7 +213,7 @@ public:
         BusyScope(BusyScope&&) = delete;
         BusyScope& operator=(BusyScope&&) = delete;
     };
-    void finishDeferredClose();
+    void finishDeferredClose(bool mayCallScript = true);
 
 private:
     JSDatabaseSync(JSC::VM& vm, JSC::Structure* structure)
@@ -238,28 +226,18 @@ private:
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};
     sqlite3* m_db = nullptr;
-    // Handle whose sqlite3_close_v2 was deferred by a re-entrant close()
-    // until the outermost BusyScope unwinds; see finishDeferredClose().
+    // The handle between closeInternal() and finishDeferredClose().
     sqlite3* m_deferredClose = nullptr;
-    unsigned m_openGeneration = 0;
     unsigned m_busyDepth = 0;
+    // Not roots. A cell on the list has not run its destructor: a statement's
+    // unlinks it, and the database's unlinks whatever is left.
+    WTF::SentinelLinkedList<JSStatementSync, WTF::BasicRawSentinelNode<JSStatementSync>> m_statements;
+    WTF::Vector<sqlite3_stmt*> m_orphanedStatements;
     // Sessions must be deleted before sqlite3_close_v2() to avoid
     // use-after-free inside the preupdate hook; track them through shared
     // records (not JS objects) so close() can sweep regardless of GC
     // ordering.
     WTF::Vector<Ref<NodeSqliteSessionRecord>> m_sessions;
-    // GC-traced roots for function()/aggregate() callbacks; mutated and
-    // visited under cellLock() because visitChildren runs concurrently.
-    WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> m_registeredCallbacks;
-    // Which slots belong to which (name, SQL arg count) registration, so a
-    // re-registration can release the superseded roots. Holds no JSValues;
-    // touched only on the JS thread.
-    struct NamedRegistration {
-        WTF::String name;
-        int argc;
-        std::array<size_t, 4> slots;
-    };
-    WTF::Vector<NamedRegistration> m_namedRegistrations;
     bool m_enableLoadExtension = false;
 };
 
@@ -270,7 +248,7 @@ public:
 
     static JSDatabaseSyncPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSDatabaseSyncPrototype>(vm)) JSDatabaseSyncPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDatabaseSyncPrototype))) JSDatabaseSyncPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -284,7 +262,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -306,7 +284,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -324,7 +302,7 @@ private:
 // StatementSync
 // ─────────────────────────────────────────────────────────────────────────────
 
-class JSStatementSync final : public JSC::JSDestructibleObject {
+class JSStatementSync final : public JSC::JSDestructibleObject, public WTF::BasicRawSentinelNode<JSStatementSync> {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
@@ -335,7 +313,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSStatementSync* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, sqlite3_stmt* stmt);
@@ -354,17 +332,13 @@ public:
     sqlite3_stmt* statement() const { return m_stmt; }
     sqlite3* connection() const;
     JSDatabaseSync* database() const { return m_database.get(); }
-    // A statement is considered finalized either when it has been
-    // explicitly finalized or when its owning database has been closed
-    // (the underlying sqlite3_stmt* then points into a zombie connection
-    // and must not be stepped).
+    // close() / deserialize() finalized it, or a close() is waiting for the
+    // outermost BusyScope to do so.
     bool isFinalized() const;
-    void finalizeStatement();
+    void finalizeStatement(bool mayCallScript = true);
 
     bool useBigInts() const { return m_useBigInts; }
     bool returnArrays() const { return m_returnArrays; }
-    bool allowBareNamedParams() const { return m_allowBareNamedParams; }
-    bool allowUnknownNamedParams() const { return m_allowUnknownNamedParams; }
     void setUseBigInts(bool v) { m_useBigInts = v; }
     void setReturnArrays(bool v) { m_returnArrays = v; }
     void setAllowBareNamedParams(bool v) { m_allowBareNamedParams = v; }
@@ -374,11 +348,13 @@ public:
     // so a live StatementSyncIterator can detect that its cursor position
     // has been invalidated by another call on the same statement.
     unsigned resetGeneration() const { return m_resetGeneration; }
-    void bumpResetGeneration() { ++m_resetGeneration; }
+    // Resets the statement under a SteppingScope. If a parked iterator stopped a
+    // write on a row, the reset commits it, and the commit can run JS.
+    void reset();
 
-    // True while a sqlite3_step on this statement is on the C stack. A UDF
-    // that re-enters run()/get()/all()/iterate() on the same statement would
-    // sqlite3_reset a running VDBE and segfault; REQUIRE_STMT_IDLE checks
+    // True while a sqlite3_step or sqlite3_reset on this statement is on the C
+    // stack. A UDF that re-enters run()/get()/all()/iterate() on the same statement
+    // would sqlite3_reset a running VDBE and segfault; REQUIRE_STMT_IDLE checks
     // this. Not sqlite3_stmt_busy(): that also reports a parked iterator
     // (stepped, yielded SQLITE_ROW, returned to JS), which is safe to reset.
     bool isStepping() const { return m_steppingDepth > 0; }
@@ -413,11 +389,9 @@ public:
     // object's inline storage, we precompute one null-prototype Structure
     // with a slot per distinct column name and then fill each row via
     // putDirectOffset instead of running the generic put machinery per
-    // cell. Built lazily on the first step() that yields columns;
-    // invalidated when the statement is reset with a different shape.
+    // cell. Built on the first step() that yields columns, rebuilt when the
+    // names change. Null: the rows of this statement take the generic path.
     JSC::Structure* ensureRowStructure(JSC::JSGlobalObject*);
-    void invalidateRowStructure();
-    JSC::Structure* rowStructure() const { return m_rowStructure.get(); }
     // Per-result-column index into the structure's inline slots.
     // Duplicate column names share the first occurrence's slot so the
     // later column overwrites it — last-wins, matching Node's V8
@@ -439,22 +413,9 @@ private:
     // at creation via SQLITE_STMTSTATUS_MEMUSED (mirrors bun:sqlite's
     // JSSQLStatement).
     size_t m_extraMemorySize = 0;
-    int m_rowColumnCount = -1;
-    // Reset-generation the cached row structure was built at. Column
-    // *count* alone isn't a sufficient shape key: sqlite3_prepare_v2
-    // transparently re-prepares on SQLITE_SCHEMA, so after an ALTER
-    // TABLE … RENAME COLUMN the same statement returns the same
-    // count with different names. Keying on reset-generation rebuilds
-    // once per run/get/all/iterate — still O(1) per .all() — instead
-    // of serving stale property names forever.
+    SqliteColumnNames m_rowColumnNames;
+    // Reset-generation m_rowStructure was last checked against m_rowColumnNames in.
     unsigned m_rowResetGeneration = 0;
-    // Open-generation this statement was prepared on. After db.close()
-    // + db.open() the JSDatabaseSync may even get the *same* sqlite3*
-    // back (allocator reuse — ABA), so compare the generation counter
-    // rather than the raw handle to let isFinalized() detect a stale
-    // statement instead of stepping a dead handle and reporting
-    // `errcode: 0 "not an error"` from the new connection.
-    unsigned m_originGeneration = 0;
     unsigned m_resetGeneration = 0;
     unsigned m_steppingDepth = 0;
     bool m_useBigInts : 1 = false;
@@ -470,7 +431,7 @@ public:
 
     static JSStatementSyncPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSStatementSyncPrototype>(vm)) JSStatementSyncPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatementSyncPrototype))) JSStatementSyncPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -484,7 +445,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -506,7 +467,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -539,7 +500,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSStatementSyncIterator* create(JSC::VM& vm, JSC::Structure* structure, JSStatementSync* stmt);
@@ -580,7 +541,7 @@ public:
 
     static JSStatementSyncIteratorPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSStatementSyncIteratorPrototype>(vm)) JSStatementSyncIteratorPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatementSyncIteratorPrototype))) JSStatementSyncIteratorPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -594,7 +555,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -623,7 +584,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSNodeSqliteSession* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, Ref<NodeSqliteSessionRecord>&& record);
@@ -669,7 +630,7 @@ public:
 
     static JSNodeSqliteSessionPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSNodeSqliteSessionPrototype>(vm)) JSNodeSqliteSessionPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSNodeSqliteSessionPrototype))) JSNodeSqliteSessionPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -683,7 +644,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -705,7 +666,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -742,7 +703,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSNodeSqliteLimits* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db);
@@ -792,7 +753,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSNodeSqliteTagStore* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, size_t capacity);
@@ -848,7 +809,7 @@ public:
 
     static JSNodeSqliteTagStorePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSNodeSqliteTagStorePrototype>(vm)) JSNodeSqliteTagStorePrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSNodeSqliteTagStorePrototype))) JSNodeSqliteTagStorePrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -862,7 +823,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -884,7 +845,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);

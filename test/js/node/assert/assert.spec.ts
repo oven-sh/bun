@@ -11,8 +11,11 @@ describe("assert(expr)", () => {
     expect(() => assert(expr)).toThrow(AssertionError);
   });
 
-  it("is an alias for assert.ok", () => {
-    expect(assert as Function).toBe(assert.ok);
+  it("behaves like assert.ok (a distinct function since node 25)", () => {
+    // node >= 25 builds the namespace from Assert.prototype, so assert !== assert.ok.
+    expect(assert as Function).not.toBe(assert.ok);
+    expect(() => assert.ok(1)).not.toThrow();
+    expect(() => assert.ok(0)).toThrow(AssertionError);
   });
 });
 

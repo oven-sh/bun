@@ -1,4 +1,4 @@
-/// <reference path="../../../../../src/bake/bake.d.ts" />
+/// <reference path="../../../../../src/runtime/bake/bake.d.ts" />
 import type { Bake } from "bun";
 import * as svelte from "svelte/server";
 import { uneval } from "devalue";

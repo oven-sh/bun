@@ -1,6 +1,6 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //
-// `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
+// `TokenList::{parse, parse_into, to_css, to_css_raw}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
 // `EnvironmentVariable::{parse, parse_nested, to_css}`,
 // `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
@@ -15,7 +15,7 @@ use crate::printer::Printer;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
-use css_values::color::{ColorFallbackKind, CssColor, RGBA};
+use css_values::color::{ColorFallbackKind, CssColor};
 use css_values::ident::{
     CustomIdent, CustomIdentFns, DashedIdent, DashedIdentReference, Ident, IdentFns,
 };
@@ -37,96 +37,10 @@ use bun_alloc::Arena;
 
 // ─── leaf fn inlines ───────────────────────────────────────────────────────
 // `TokenList::{parse,to_css}` bottom out on a handful of leaf fns from
-// `values/{url,ident}.rs` / `css_modules.rs`; inlined here so the hub does
+// `values/ident.rs` / `css_modules.rs`; inlined here so the hub does
 // not circularly depend on those modules.
 mod ext {
     use super::*;
-    use crate::dependencies;
-
-    /// Inline of `Url::parse`.
-    pub(super) fn url_parse(input: &mut Parser) -> Result<Url> {
-        let start_pos = input.position();
-        let loc = input.current_source_location();
-        let url = input.expect_url()?;
-        // SAFETY: `url` borrows the parser source/arena which outlives the
-        // `add_import_record` call (same lifetime erasure as `src_str`).
-        let url: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
-        let import_record_idx =
-            input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
-        Ok(Url {
-            import_record_idx,
-            loc: dependencies::Location::from_source_location(loc),
-        })
-    }
-
-    /// Inline of `Url::to_css`.
-    pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
-        let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
-            // `get_import_records` borrows &mut *dest, so capture
-            // arena/filename first.
-            let arena = dest.arena;
-            // SAFETY: filename borrows the printer arena/options which outlive `dest`.
-            let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
-            let records = dest.get_import_records()?;
-            Some(dependencies::UrlDependency::new(
-                arena, this, filename, records,
-            ))
-        } else {
-            None
-        };
-
-        // If adding dependencies, always write url() with quotes so that the placeholder can
-        // be replaced without escaping more easily. Quotes may be removed later during minification.
-        if let Some(d) = dep {
-            dest.write_str("url(")?;
-            // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-            dest.write_char(b')')?;
-
-            if let Some(dependencies) = &mut dest.dependencies {
-                dependencies.push(crate::Dependency::Url(d));
-            }
-
-            return Ok(());
-        }
-
-        let import_record = dest.import_record(this.import_record_idx)?;
-        let is_internal = import_record.tag.is_internal();
-        // `get_import_record_url` reborrows &mut *dest, so capture
-        // `is_internal` first.
-        let url: &'static [u8] = {
-            let u = dest.get_import_record_url(this.import_record_idx)?;
-            // SAFETY: import-record paths are arena/source-owned and outlive `dest`.
-            unsafe { &*std::ptr::from_ref::<[u8]>(u) }
-        };
-
-        if dest.minify && !is_internal {
-            let mut buf: Vec<u8> = Vec::new();
-            // PERF(alloc) we could use stack fallback here?
-            let _ = Token::UnquotedUrl(url).to_css_generic(&mut buf);
-
-            // If the unquoted url is longer than it would be quoted (e.g. `url("...")`)
-            // then serialize as a string and choose the shorter version.
-            if buf.len() > url.len() + 7 {
-                let mut buf2: Vec<u8> = Vec::new();
-                // PERF(alloc) we could use stack fallback here?
-                let _ = css_parser::serializer::serialize_string(url, &mut buf2);
-                if buf2.len() + 5 < buf.len() {
-                    dest.write_str("url(")?;
-                    dest.write_str(&buf2)?;
-                    return dest.write_char(b')');
-                }
-            }
-
-            dest.write_str(&buf)?;
-        } else {
-            dest.write_str("url(")?;
-            dest.serialize_string(url)?;
-            dest.write_char(b')')?;
-        }
-        Ok(())
-    }
 
     /// Forwarder to `DashedIdentReference::parse_with_options`. Honors
     /// `options.css_modules.dashed_idents` and parses the
@@ -162,7 +76,7 @@ mod ext {
 
 // ─── Token protocol impls ──────────────────────────────────────────────────
 // `Token` / `Num` / `Dimension` are defined data-only at crate root (lib.rs);
-// their `eql`/`hash` bodies in css_parser.rs forward to `generic::implement_*`
+// their `hash` bodies in css_parser.rs forward to `generic::implement_*`
 // which bound on these traits — provide them here so the cycle closes and
 // `#[derive(CssEql/CssHash/DeepClone)]` on `TokenOrValue` resolves the
 // `Token(Token)` arm. Hand-written (not derived) because `Token` carries
@@ -281,7 +195,7 @@ impl<'bump> DeepClone<'bump> for Token {
     fn deep_clone(&self, _bump: &'bump Arena) -> Self {
         // All `&'static [u8]` payloads borrow the parser source/arena (`'static`
         // is a placeholder) — identity copy is correct. `Num`/`Dimension` are POD.
-        self.clone()
+        *self
     }
 }
 
@@ -293,7 +207,7 @@ pub use css_parser::CssResult as Result;
 /// PERF: nullable optimization
 #[derive(Default, CssEql, CssHash, DeepClone)]
 pub struct TokenList {
-    pub v: Vec<TokenOrValue>,
+    pub(crate) v: Vec<TokenOrValue>,
 }
 
 impl TokenList {
@@ -304,17 +218,11 @@ impl TokenList {
             return Ok(());
         }
 
-        let mut has_whitespace = false;
+        // A blank can mean something (`.a .b`, `type(<number>)`): only the stored ones print.
         for (i, token_or_value) in self.v.iter().enumerate() {
             match token_or_value {
-                TokenOrValue::Color(color) => {
-                    color.to_css(dest)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::UnresolvedColor(color) => {
-                    color.to_css(dest, is_custom_property)?;
-                    has_whitespace = false;
-                }
+                TokenOrValue::Color(color) => color.to_css(dest)?,
+                TokenOrValue::UnresolvedColor(color) => color.to_css(dest, is_custom_property)?,
                 TokenOrValue::Url(url) => {
                     if dest.dependencies.is_some()
                         && is_custom_property
@@ -330,128 +238,85 @@ impl TokenList {
                             Some(url.loc),
                         );
                     }
-                    ext::url_to_css(url, dest)?;
-                    has_whitespace = false;
+                    url.to_css(dest)?;
                 }
-                TokenOrValue::Var(var) => {
-                    var.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
-                }
-                TokenOrValue::Env(env) => {
-                    env.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
-                }
-                TokenOrValue::Function(f) => {
-                    f.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
-                }
+                TokenOrValue::Var(var) => var.to_css(dest, is_custom_property)?,
+                TokenOrValue::Env(env) => env.to_css(dest, is_custom_property)?,
+                TokenOrValue::Function(f) => f.to_css(dest, is_custom_property)?,
                 TokenOrValue::Length(v) => {
                     // Do not serialize unitless zero lengths in custom properties as it may break calc().
                     let (value, unit) = v.to_unit_value();
                     css_parser::serializer::serialize_dimension(value, unit, dest)?;
-                    has_whitespace = false;
                 }
-                TokenOrValue::Angle(v) => {
-                    v.to_css(dest)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::Time(v) => {
-                    v.to_css(dest)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::Resolution(v) => {
-                    v.to_css(dest)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::DashedIdent(v) => {
-                    dest.write_dashed_ident(v, true)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::AnimationName(v) => {
-                    v.to_css(dest)?;
-                    has_whitespace = false;
-                }
+                TokenOrValue::Angle(v) => v.to_css(dest)?,
+                TokenOrValue::Time(v) => v.to_css(dest)?,
+                TokenOrValue::Resolution(v) => v.to_css(dest)?,
+                TokenOrValue::DashedIdent(v) => dest.write_dashed_ident(v, true)?,
+                TokenOrValue::AnimationName(v) => v.to_css(dest)?,
+                TokenOrValue::RawNumber(number) => number.to_css(dest)?,
                 TokenOrValue::Token(token) => match token {
-                    Token::Delim(d) => {
-                        if *d == b'+' as u32 || *d == b'-' as u32 {
-                            dest.write_char(b' ')?;
-                            debug_assert!(*d <= 0x7F);
-                            dest.write_char(*d as u8)?;
-                            dest.write_char(b' ')?;
-                        } else {
-                            let ws_before =
-                                !has_whitespace && (*d == b'/' as u32 || *d == b'*' as u32);
-                            debug_assert!(*d <= 0x7F);
-                            dest.delim(*d as u8, ws_before)?;
-                            // `delim()` emits no surrounding whitespace when minifying, so
-                            // consecutive `/` and `*` delims would be printed adjacently and
-                            // form a `/*` or `*/` comment delimiter. Emit a real space when
-                            // the next token is the other half of that pair.
-                            if dest.minify && (*d == b'/' as u32 || *d == b'*' as u32) {
-                                if let Some(TokenOrValue::Token(Token::Delim(next))) =
-                                    self.v.get(i + 1)
-                                {
-                                    if (*d == b'/' as u32 && *next == b'*' as u32)
-                                        || (*d == b'*' as u32 && *next == b'/' as u32)
-                                    {
-                                        dest.write_char(b' ')?;
-                                    }
-                                }
-                            }
-                        }
-                        has_whitespace = true;
-                    }
-                    Token::Comma => {
-                        dest.delim(b',', false)?;
-                        has_whitespace = true;
-                    }
-                    Token::CloseParen | Token::CloseSquare | Token::CloseCurly => {
-                        token.to_css(dest)?;
-                        has_whitespace = self.write_whitespace_if_needed(i, dest)?;
-                    }
+                    Token::Whitespace(_) if dest.minify && self.can_omit_whitespace(i) => {}
+                    Token::Comma => dest.delim(b',', false)?,
                     Token::Dimension(dim) => {
                         css_parser::serializer::serialize_dimension(dim.num.value, dim.unit, dest)?;
-                        has_whitespace = false;
                     }
-                    Token::Number(v) => {
-                        CSSNumberFns::to_css(v.value, dest)?;
-                        has_whitespace = false;
-                    }
-                    _ => {
-                        token.to_css(dest)?;
-                        has_whitespace = matches!(token, Token::Whitespace(_));
-                    }
+                    Token::Number(v) => CSSNumberFns::to_css(v.value, dest)?,
+                    _ => token.to_css(dest)?,
                 },
             }
         }
         Ok(())
     }
 
-    pub fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
+    /// Whether the items around the blank at `i` read the same without it.
+    fn can_omit_whitespace(&self, i: usize) -> bool {
+        let (Some(prev), Some(next)) = (self.v[..i].last(), self.v.get(i + 1)) else {
+            return false;
+        };
+        let delim = |item: &TokenOrValue| match item {
+            TokenOrValue::Token(Token::Delim(d)) => char::from_u32(*d),
+            _ => None,
+        };
+        match (delim(prev), delim(next)) {
+            // calc() needs the blanks around `+` and `-`.
+            (Some('+' | '-'), _) | (_, Some('+' | '-')) => false,
+            // `/*` and `*/` delimit a comment, `*=` is one token.
+            (Some('/'), Some('*')) | (Some('*'), Some('/' | '=')) => false,
+            (Some('/'), _) if matches!(next, TokenOrValue::Token(Token::SubstringMatch)) => false,
+            (Some('*' | '/'), _) | (_, Some('*' | '/')) => true,
+            _ => {
+                let closes = |item: &TokenOrValue| {
+                    matches!(
+                        item,
+                        TokenOrValue::Token(
+                            Token::CloseParen | Token::CloseSquare | Token::CloseCurly
+                        )
+                    )
+                };
+                closes(prev)
+                    || closes(next)
+                    || matches!(
+                        prev,
+                        TokenOrValue::Var(_)
+                            | TokenOrValue::Env(_)
+                            | TokenOrValue::Function(_)
+                            | TokenOrValue::Token(
+                                Token::OpenParen | Token::OpenSquare | Token::OpenCurly
+                            )
+                    )
+            }
+        }
+    }
+
+    pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
         for token_or_value in self.v.iter() {
-            if let TokenOrValue::Token(token) = token_or_value {
-                token.to_css(dest)?;
-            } else {
-                return Err(dest.add_fmt_error());
+            match token_or_value {
+                TokenOrValue::Token(token) => token.to_css(dest)?,
+                TokenOrValue::RawNumber(number) => number.to_css(dest)?,
+                _ => return Err(dest.add_fmt_error()),
             }
         }
         Ok(())
-    }
-
-    pub fn write_whitespace_if_needed(&self, i: usize, dest: &mut Printer) -> PrintResult<bool> {
-        if !dest.minify
-            && i != self.v.len() - 1
-            && !matches!(
-                &self.v[i + 1],
-                TokenOrValue::Token(Token::Comma | Token::CloseParen)
-            )
-        {
-            // Whitespace is removed during parsing, so add it back if we aren't minifying.
-            dest.write_char(b' ')?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
     }
 
     pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
@@ -472,11 +337,7 @@ impl TokenList {
         Ok(TokenList { v: tokens })
     }
 
-    pub fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> Result<TokenList> {
-        Self::parse(input, options, 0)
-    }
-
-    pub fn parse_raw(
+    pub(crate) fn parse_raw(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
         options: &ParserOptions,
@@ -493,7 +354,7 @@ impl TokenList {
             };
             match token {
                 Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
-                    let tok = token.clone();
+                    let tok = *token;
                     let closing_delimiter = match tok {
                         Token::OpenParen => Token::CloseParen,
                         Token::OpenSquare => Token::CloseSquare,
@@ -507,7 +368,7 @@ impl TokenList {
                     tokens.push(TokenOrValue::Token(closing_delimiter));
                 }
                 Token::Function(_) => {
-                    tokens.push(TokenOrValue::Token(token.clone()));
+                    tokens.push(TokenOrValue::Token(*token));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_raw(input2, tokens, options, depth + 1)
                     })?;
@@ -517,12 +378,16 @@ impl TokenList {
                     if token.is_parse_error() {
                         return Err(ParseError {
                             kind: ParserErrorKind::basic(BasicParseErrorKind::unexpected_token(
-                                token.clone(),
+                                *token,
                             )),
                             location: state.source_location(),
                         });
                     }
-                    tokens.push(TokenOrValue::Token(token.clone()));
+                    let token = *token;
+                    tokens.push(match input.raw_number_text() {
+                        Some(text) => TokenOrValue::RawNumber(RawNumber(text)),
+                        None => TokenOrValue::Token(token),
+                    });
                 }
             }
         }
@@ -530,7 +395,7 @@ impl TokenList {
         Ok(())
     }
 
-    pub fn parse_into(
+    pub(crate) fn parse_into(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
         options: &ParserOptions,
@@ -554,40 +419,39 @@ impl TokenList {
             return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
         }
 
-        let mut last_is_delim = false;
-        let mut last_is_whitespace = false;
-
         loop {
             let state = input.state();
-            let Ok(tok) = input.next_including_whitespace() else {
+            let Ok(tok) = input.next_including_whitespace_and_comments() else {
                 break;
             };
             // Clone the token so we can call &mut methods on `input` below.
-            let tok = tok.clone();
+            let tok = *tok;
             match &tok {
                 Token::Whitespace(_) | Token::Comment(_) => {
-                    // Skip whitespace if the last token was a delimiter.
-                    // Otherwise, replace all whitespace and comments with a single space character.
-                    if !last_is_delim {
+                    // A run of whitespace and comments is one space, or nothing next to a comma.
+                    if !matches!(
+                        tokens.last(),
+                        Some(TokenOrValue::Token(Token::Whitespace(_) | Token::Comma))
+                    ) {
                         tokens.push(TokenOrValue::Token(Token::Whitespace(b" ")));
-                        last_is_whitespace = true;
                     }
                     continue;
+                }
+                Token::Comma => {
+                    if tokens.last().is_some_and(TokenOrValue::is_whitespace) {
+                        tokens.pop();
+                    }
                 }
                 Token::Function(f) => {
                     // Attempt to parse embedded color values into hex tokens.
                     if let Some(color) = try_parse_color_token(f, &state, input) {
                         tokens.push(TokenOrValue::Color(color));
-                        last_is_delim = false;
-                        last_is_whitespace = false;
                         continue;
                     }
                     let failures_before = input.token_list_parse_failures();
                     match input.try_parse(|i| UnresolvedColor::parse(i, f, options, depth)) {
                         Ok(color) => {
                             tokens.push(TokenOrValue::UnresolvedColor(color));
-                            last_is_delim = false;
-                            last_is_whitespace = false;
                             continue;
                         }
                         Err(err) => {
@@ -603,19 +467,15 @@ impl TokenList {
                             }
                         }
                     }
-                    if strings::eql(*f, b"url") {
+                    if strings::eql(*f, b"url") && !input.flags.raw_url_tokens() {
                         input.reset(&state);
-                        tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
-                        last_is_delim = false;
-                        last_is_whitespace = false;
+                        tokens.push(TokenOrValue::Url(Url::parse(input)?));
                     } else if strings::eql(*f, b"var") {
                         let var = input.parse_nested_block(|input2| {
                             let thevar = Variable::parse(input2, options, depth + 1)?;
                             Ok(TokenOrValue::Var(thevar))
                         })?;
                         tokens.push(var);
-                        last_is_delim = true;
-                        last_is_whitespace = false;
                     } else if strings::eql(*f, b"env") {
                         let env = input.parse_nested_block(|input2| {
                             let env =
@@ -623,8 +483,6 @@ impl TokenList {
                             Ok(TokenOrValue::Env(env))
                         })?;
                         tokens.push(env);
-                        last_is_delim = true;
-                        last_is_whitespace = false;
                     } else {
                         let arguments = input.parse_nested_block(|input2| {
                             TokenListFns::parse(input2, options, depth + 1)
@@ -635,33 +493,22 @@ impl TokenList {
                             },
                             arguments,
                         }));
-                        last_is_delim = true; // Whitespace is not required after any of these chars.
-                        last_is_whitespace = false;
                     }
                     continue;
                 }
                 Token::UnrestrictedHash(h) | Token::IdHash(h) => {
                     'brk: {
-                        let Some((r, g, b, a)) = css_parser::color::parse_hash_color(h) else {
+                        let Some(rgba) = css_parser::color::parse_hash_color(h) else {
                             tokens.push(TokenOrValue::Token(Token::UnrestrictedHash(*h)));
                             break 'brk;
                         };
-                        tokens.push(TokenOrValue::Color(CssColor::Rgba(RGBA::from_floats(
-                            r as f32 / 255.0,
-                            g as f32 / 255.0,
-                            b as f32 / 255.0,
-                            a,
-                        ))));
+                        tokens.push(TokenOrValue::Color(CssColor::Rgba(rgba)));
                     }
-                    last_is_delim = false;
-                    last_is_whitespace = false;
                     continue;
                 }
-                Token::UnquotedUrl(_) => {
+                Token::UnquotedUrl(_) if !input.flags.raw_url_tokens() => {
                     input.reset(&state);
-                    tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
-                    last_is_delim = false;
-                    last_is_whitespace = false;
+                    tokens.push(TokenOrValue::Url(Url::parse(input)?));
                     continue;
                 }
                 Token::Ident(name) => {
@@ -669,9 +516,10 @@ impl TokenList {
                         tokens.push(TokenOrValue::DashedIdent(DashedIdent {
                             v: std::ptr::from_ref::<[u8]>(*name),
                         }));
-                        last_is_delim = false;
-                        last_is_whitespace = false;
                         continue;
+                    }
+                    if strings::eql_case_insensitive_ascii_check_length(name, b"revert-rule") {
+                        input.note_may_revert_rule();
                     }
                 }
                 Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
@@ -681,17 +529,23 @@ impl TokenList {
                         Token::OpenCurly => Token::CloseCurly,
                         _ => unreachable!(),
                     };
-                    tokens.push(TokenOrValue::Token(tok.clone()));
+                    tokens.push(TokenOrValue::Token(tok));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_into(input2, tokens, options, depth + 1)
                     })?;
                     tokens.push(TokenOrValue::Token(closing_delimiter));
-                    last_is_delim = true; // Whitespace is not required after any of these chars.
-                    last_is_whitespace = false;
                     continue;
                 }
+                Token::Number(_) | Token::Percentage { .. } => {
+                    if let Some(text) = input.raw_number_text() {
+                        tokens.push(TokenOrValue::RawNumber(RawNumber(text)));
+                        continue;
+                    }
+                }
                 Token::Dimension(_) => {
-                    let value = if let Ok(length) = LengthValue::try_from_token(&tok) {
+                    let value = if let Some(text) = input.raw_number_text() {
+                        TokenOrValue::RawNumber(RawNumber(text))
+                    } else if let Ok(length) = LengthValue::try_from_token(&tok) {
                         TokenOrValue::Length(length)
                     } else if let Ok(angle) = Angle::try_from_token(&tok) {
                         TokenOrValue::Angle(angle)
@@ -700,13 +554,10 @@ impl TokenList {
                     } else if let Ok(resolution) = Resolution::try_from_token(&tok) {
                         TokenOrValue::Resolution(resolution)
                     } else {
-                        TokenOrValue::Token(tok.clone())
+                        TokenOrValue::Token(tok)
                     };
 
                     tokens.push(value);
-
-                    last_is_delim = false;
-                    last_is_whitespace = false;
                     continue;
                 }
                 _ => {}
@@ -718,24 +569,13 @@ impl TokenList {
                     location: state.source_location(),
                 });
             }
-            last_is_delim = matches!(&tok, Token::Delim(_) | Token::Comma);
-
-            // If this is a delimiter, and the last token was whitespace,
-            // replace the whitespace with the delimiter since both are not required.
-            if last_is_delim && last_is_whitespace {
-                let last = tokens.last_mut().expect("unreachable");
-                *last = TokenOrValue::Token(tok);
-            } else {
-                tokens.push(TokenOrValue::Token(tok));
-            }
-
-            last_is_whitespace = false;
+            tokens.push(TokenOrValue::Token(tok));
         }
 
         Ok(())
     }
 
-    pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         let mut tokens = TokenList::default();
         tokens.v.reserve_exact(self.v.len());
         for old in self.v.iter() {
@@ -751,7 +591,7 @@ impl TokenList {
         tokens
     }
 
-    pub fn get_fallbacks(
+    pub(crate) fn get_fallbacks(
         &mut self,
         bump: &Arena,
         targets: &css::targets::Targets,
@@ -804,14 +644,17 @@ impl TokenList {
         res
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+    pub(crate) fn get_necessary_fallbacks(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         for token_or_value in self.v.iter() {
             match token_or_value {
                 TokenOrValue::Color(color) => {
                     fallbacks.insert(color.get_possible_fallbacks(targets));
                 }
-                TokenOrValue::Function(f) => {
+                TokenOrValue::Function(f) if !f.is_relative_color() => {
                     fallbacks.insert(f.arguments.get_necessary_fallbacks(targets));
                 }
                 TokenOrValue::Var(v) => {
@@ -880,7 +723,7 @@ impl UnresolvedColor {
 
     // deinit(): body only freed owned `TokenList` fields — handled by `Drop`.
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         fn conv(c: f32) -> i32 {
             css_values::color::clamp_unit_f32(c) as i32
         }
@@ -897,6 +740,7 @@ impl UnresolvedColor {
                     css_parser::to_css::integer(conv(*g), dest)?;
                     dest.delim(b',', false)?;
                     css_parser::to_css::integer(conv(*b), dest)?;
+                    dest.delim(b',', false)?;
                     alpha.to_css(dest, is_custom_property)?;
                     dest.write_char(b')')?;
                     return Ok(());
@@ -940,7 +784,10 @@ impl UnresolvedColor {
                 dest.write_char(b')')
             }
             UnresolvedColor::LightDark { light, dark } => {
-                if !dest.targets.is_compatible(css::compat::Feature::LightDark) {
+                if dest
+                    .targets
+                    .should_compile_same(css::compat::Feature::LightDark)
+                {
                     dest.write_str("var(--buncss-light")?;
                     dest.delim(b',', false)?;
                     light.to_css(dest, is_custom_property)?;
@@ -961,20 +808,21 @@ impl UnresolvedColor {
         }
     }
 
-    pub(crate) fn parse(
+    fn parse(
         input: &mut Parser,
         f: &[u8],
         options: &ParserOptions,
         depth: usize,
     ) -> Result<UnresolvedColor> {
         use css_values::color::{
-            ComponentParser, HSL, SRGB, parse_hsl_hwb_components, parse_rgb_components,
+            ComponentParser, HSL, RgbComponents, SRGB, parse_hsl_hwb_components,
+            parse_rgb_components,
         };
         let mut parser = ComponentParser::new(false);
         crate::match_ignore_ascii_case! { f, {
             b"rgb" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
-                    let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
+                    let RgbComponents { r, g, b, is_legacy } = parse_rgb_components(i, p)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
@@ -985,7 +833,7 @@ impl UnresolvedColor {
             }),
             b"hsl" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
-                    let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
+                    let (h, s, l, is_legacy) = parse_hsl_hwb_components(i, p, false)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
@@ -1025,10 +873,7 @@ impl UnresolvedColor {
         Err(input.new_custom_error(ParserError::invalid_value))
     }
 
-    pub(crate) fn light_dark_owned(
-        light: UnresolvedColor,
-        dark: UnresolvedColor,
-    ) -> UnresolvedColor {
+    fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {
         UnresolvedColor::LightDark {
             light: TokenList {
                 v: vec![TokenOrValue::UnresolvedColor(light)],
@@ -1063,7 +908,7 @@ pub struct Variable {
 impl Variable {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    pub(crate) fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<Self> {
+    fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<Self> {
         let name = ext::dashed_ident_ref_parse(input, options)?;
 
         let fallback = if input.try_parse(|i| i.expect_comma()).is_ok() {
@@ -1075,7 +920,7 @@ impl Variable {
         Ok(Variable { name, fallback })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         dest.write_str("var(")?;
         ext::dashed_ident_ref_to_css(&self.name, dest)?;
         if let Some(fallback) = &self.fallback {
@@ -1085,7 +930,7 @@ impl Variable {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         Variable {
             name: self.name,
             fallback: self
@@ -1105,7 +950,7 @@ pub struct EnvironmentVariable {
     pub name: EnvironmentVariableName,
     /// Optional indices into the dimensions of the environment variable.
     /// TODO(zack): this could totally be a smallvec, why isn't it?
-    pub indices: Vec<CSSInteger>,
+    pub(crate) indices: Vec<CSSInteger>,
     /// A fallback value in case the variable is not defined.
     pub fallback: Option<TokenList>,
 }
@@ -1122,7 +967,7 @@ impl EnvironmentVariable {
         input.parse_nested_block(|i| EnvironmentVariable::parse_nested(i, options, depth))
     }
 
-    pub(crate) fn parse_nested(
+    fn parse_nested(
         input: &mut Parser,
         options: &ParserOptions,
         depth: usize,
@@ -1163,7 +1008,7 @@ impl EnvironmentVariable {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         EnvironmentVariable {
             name: self.name,
             indices: self.indices.clone(),
@@ -1191,7 +1036,7 @@ pub enum EnvironmentVariableName {
 impl EnvironmentVariableName {
     // eql / hash — provided by `#[derive(CssEql, CssHash)]`.
 
-    pub(crate) fn parse(input: &mut Parser) -> Result<EnvironmentVariableName> {
+    fn parse(input: &mut Parser) -> Result<EnvironmentVariableName> {
         if let Ok(ua) = input.try_parse(UAEnvironmentVariable::parse) {
             return Ok(EnvironmentVariableName::Ua(ua));
         }
@@ -1206,7 +1051,7 @@ impl EnvironmentVariableName {
         Ok(EnvironmentVariableName::Unknown(ident))
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             EnvironmentVariableName::Ua(ua) => ua.to_css(dest),
             EnvironmentVariableName::Custom(custom) => ext::dashed_ident_ref_to_css(custom, dest),
@@ -1291,13 +1136,13 @@ pub struct Function {
     /// The function name.
     pub name: Ident,
     /// The function arguments.
-    pub arguments: TokenList,
+    pub(crate) arguments: TokenList,
 }
 
 impl Function {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         IdentFns::to_css(&self.name, dest)?;
         dest.write_char(b'(')?;
         self.arguments.to_css(dest, is_custom_property)?;
@@ -1306,11 +1151,45 @@ impl Function {
 
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    /// Whether this is a relative color, as `rgb(from ...)`. A browser that reads one reads every
+    /// color space, so its origin needs no fallback.
+    fn is_relative_color(&self) -> bool {
+        matches!(
+            self.arguments.v.first(),
+            Some(TokenOrValue::Token(Token::Ident(ident)))
+                if strings::eql_case_insensitive_ascii_check_length(ident, b"from")
+        ) && strings::eql_any_case_insensitive_ascii(
+            self.name.v(),
+            &[
+                b"rgb", b"rgba", b"hsl", b"hsla", b"hwb", b"lab", b"lch", b"oklab", b"oklch",
+                b"color",
+            ],
+        )
+    }
+
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         Function {
             name: self.name,
             arguments: self.arguments.get_fallback(bump, kind),
         }
+    }
+}
+
+/// The source text of a number, percentage or dimension token.
+#[derive(Clone, Copy, CssEql, CssHash)]
+pub struct RawNumber(&'static [u8]);
+
+impl RawNumber {
+    fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
+        dest.write_bytes(self.0)
+    }
+}
+
+impl<'bump> DeepClone<'bump> for RawNumber {
+    #[inline]
+    fn deep_clone(&self, _bump: &'bump Arena) -> Self {
+        // Borrows the parser source, as the slices of `Token` do.
+        *self
     }
 }
 
@@ -1343,6 +1222,8 @@ pub enum TokenOrValue {
     DashedIdent(DashedIdent),
     /// An animation name.
     AnimationName(AnimationName),
+    /// A numeric token that prints as written. See `Parser::raw_number_text`.
+    RawNumber(RawNumber),
 }
 
 impl TokenOrValue {
@@ -1350,7 +1231,7 @@ impl TokenOrValue {
 
     // deinit(): all arms only freed owned fields — handled by `Drop`.
 
-    pub(crate) fn is_whitespace(&self) -> bool {
+    fn is_whitespace(&self) -> bool {
         matches!(self, TokenOrValue::Token(Token::Whitespace(_)))
     }
 }
@@ -1372,14 +1253,10 @@ impl Clone for TokenList {
 impl Clone for TokenOrValue {
     fn clone(&self) -> Self {
         match self {
-            TokenOrValue::Token(t) => TokenOrValue::Token(t.clone()),
+            TokenOrValue::Token(t) => TokenOrValue::Token(*t),
             TokenOrValue::Color(c) => TokenOrValue::Color(c.clone()),
             TokenOrValue::UnresolvedColor(c) => TokenOrValue::UnresolvedColor(c.clone()),
-            // `Url` has no `#[derive(Clone)]` but both fields are `Copy`.
-            TokenOrValue::Url(u) => TokenOrValue::Url(Url {
-                import_record_idx: u.import_record_idx,
-                loc: u.loc,
-            }),
+            TokenOrValue::Url(u) => TokenOrValue::Url(u.clone()),
             TokenOrValue::Var(v) => TokenOrValue::Var(v.clone()),
             TokenOrValue::Env(e) => TokenOrValue::Env(e.clone()),
             TokenOrValue::Function(f) => TokenOrValue::Function(f.clone()),
@@ -1389,6 +1266,7 @@ impl Clone for TokenOrValue {
             TokenOrValue::Resolution(v) => TokenOrValue::Resolution(*v),
             TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(*v),
             TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(*v),
+            TokenOrValue::RawNumber(v) => TokenOrValue::RawNumber(*v),
         }
     }
 }
@@ -1460,9 +1338,9 @@ impl core::fmt::Debug for EnvironmentVariable {
 /// In this case, the raw tokens are stored instead.
 pub struct UnparsedProperty {
     /// The id of the property.
-    pub property_id: css::properties::PropertyId,
+    pub(crate) property_id: css::properties::PropertyId,
     /// The property value, stored as a raw token list.
-    pub value: TokenList,
+    pub(crate) value: TokenList,
 }
 
 impl UnparsedProperty {
@@ -1512,8 +1390,6 @@ impl UnparsedProperty {
     }
 
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
-        // `PropertyId` is `Copy` (tag + optional `VendorPrefix`/`CustomPropertyName`)
-        // and derives `PartialEq` in `properties_generated.rs` — use `==` directly.
         self.property_id == rhs.property_id && self.value.eql(&rhs.value)
     }
 }
@@ -1523,7 +1399,7 @@ pub struct CustomProperty {
     /// The name of the property.
     pub name: CustomPropertyName,
     /// The property value, stored as a raw token list.
-    pub value: TokenList,
+    pub(crate) value: TokenList,
 }
 
 impl CustomProperty {
@@ -1561,16 +1437,6 @@ pub enum CustomPropertyName {
     Unknown(Ident),
 }
 
-// `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
-// intentionally don't derive `PartialEq` (pointer-eq would be wrong).
-// `PropertyId` derives `PartialEq`, so compare the underlying bytes here.
-impl PartialEq for CustomPropertyName {
-    fn eq(&self, other: &Self) -> bool {
-        // SAFETY: arena-owned slices live for the parse session.
-        unsafe { (&*self.as_ptr()).eq(&*other.as_ptr()) }
-    }
-}
-
 impl CustomPropertyName {
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
@@ -1587,7 +1453,7 @@ impl CustomPropertyName {
         }
     }
 
-    pub fn from_str(name: &[u8]) -> CustomPropertyName {
+    pub(crate) fn from_str(name: &[u8]) -> CustomPropertyName {
         if name.starts_with(b"--") {
             return CustomPropertyName::Custom(DashedIdent {
                 v: std::ptr::from_ref::<[u8]>(name),
@@ -1610,7 +1476,7 @@ impl CustomPropertyName {
     /// SAFETY: caller must ensure the parser arena outlives the borrow
     /// (slices are arena-owned `*const [u8]`; see `DashedIdent::as_slice`).
     #[inline]
-    pub fn as_str(&self) -> &[u8] {
+    pub(crate) fn as_str(&self) -> &[u8] {
         // SAFETY: see doc comment.
         unsafe { crate::arena_str(self.as_ptr()) }
     }
@@ -1618,11 +1484,7 @@ impl CustomPropertyName {
     // deep_clone / eql — provided by `#[derive(DeepClone, CssEql)]`.
 }
 
-pub(crate) fn try_parse_color_token(
-    f: &[u8],
-    state: &ParserState,
-    input: &mut Parser,
-) -> Option<CssColor> {
+fn try_parse_color_token(f: &[u8], state: &ParserState, input: &mut Parser) -> Option<CssColor> {
     if strings::eql_any_case_insensitive_ascii(
         f,
         &[

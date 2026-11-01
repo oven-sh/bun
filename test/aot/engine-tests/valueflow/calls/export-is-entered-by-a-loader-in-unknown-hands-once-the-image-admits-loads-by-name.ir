@@ -1,0 +1,55 @@
+# readline = require("node:readline"); readline.first(); require(input); somethingNoTableLists(process.getBuiltinModule)
+# The program loads by a name nobody knows, so the run time admits such loads, and it admits them to every loader: the permission is the image's. A second loader is in hands nobody follows,
+# and a value nobody knows is called: that call may load by name too. So native code holds what the modules in the image export, as it does where unseen code runs
+# (held-export-is-entered-once-seen-code-calls-it.ir): the export that seen code calls is entered with operands nobody knows as well, the export beside it is only held.
+# Once the answers went to the result of the first loader's call alone: `first` was typed by the one call that flow saw, and answered wrongly, in silence, to whoever came the other way
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve calls
+# CHECK: f0 v6 -> ModuleRequire
+# CHECK: f2 v1 -> unknown
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+# UNSEEN-NEXT: held f3
+# UNSEEN-NOT: held
+# RUN(ESCAPED): valueflow-why escaped=f2 escaped=f3
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f3
+# ESCAPED-NEXT: not held
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:readline"
+    v1 = PropGet v0 key="first"
+    v2 = Call v1, -
+    v3 = Builtin builtin=ModuleRequire
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName]
+    v6 = Call v3, -, v5
+    v7 = Builtin builtin=ProcessGetBuiltinModule
+    v8 = PropGet v4 key="somethingThatNoTableLists" [isFreeName]
+    v9 = Call v8, -, v7
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+function f2 name="first" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return
+}
+function f3 name="second" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}

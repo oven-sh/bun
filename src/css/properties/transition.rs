@@ -12,6 +12,7 @@ use crate::css_properties::Property;
 use crate::css_properties::PropertyId;
 use crate::css_properties::masking;
 use crate::css_values::easing::EasingFunction;
+use crate::css_values::ident::CustomIdent;
 use crate::css_values::time::Time;
 
 use crate::VendorPrefix;
@@ -22,13 +23,13 @@ use crate::prefixes::Feature;
 #[derive(Clone, PartialEq)]
 pub struct Transition {
     /// The property to transition.
-    pub property: PropertyId,
+    pub(crate) property: PropertyId,
     /// The duration of the transition.
-    pub duration: Time,
+    pub(crate) duration: Time,
     /// The delay before the transition starts.
-    pub delay: Time,
+    pub(crate) delay: Time,
     /// The easing function for the transition.
-    pub timing_function: EasingFunction,
+    pub(crate) timing_function: EasingFunction,
 }
 
 impl Transition {
@@ -109,13 +110,45 @@ impl Transition {
     }
 }
 
+/// A value for the [view-transition-name](https://drafts.csswg.org/css-view-transitions-1/#view-transition-name-prop) property.
+///
+/// Under CSS modules the `<custom-ident>` is scoped with the same hash as the
+/// `::view-transition-*(<name>)` pseudo-element selectors, so the two keep
+/// matching after renaming.
+#[derive(Clone, Copy, crate::Parse, crate::ToCss, crate::CssEql, crate::DeepClone)]
+pub enum ViewTransitionName {
+    /// The `none` keyword.
+    None,
+    /// The `auto` keyword.
+    Auto,
+    /// The `match-element` keyword.
+    MatchElement,
+    /// A custom name.
+    Custom(CustomIdent),
+}
+
+/// A value for the [view-transition-group](https://drafts.csswg.org/css-view-transitions-2/#view-transition-group-prop) property.
+#[derive(Clone, Copy, crate::Parse, crate::ToCss, crate::CssEql, crate::DeepClone)]
+pub enum ViewTransitionGroup {
+    /// The `normal` keyword.
+    Normal,
+    /// The `contain` keyword.
+    Contain,
+    /// The `nearest` keyword.
+    Nearest,
+    /// A custom group, the `view-transition-name` of an ancestor.
+    Custom(CustomIdent),
+}
+
 #[derive(Default)]
 pub struct TransitionHandler {
-    pub properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
-    pub durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
-    pub delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
-    pub timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
-    pub has_any: bool,
+    pub(crate) properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
+    pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
+    pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
+    pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
+    /// `flush` writes `transition` only if the rule did: it also resets `transition-behavior`.
+    pub(crate) has_shorthand: bool,
+    pub(crate) has_any: bool,
 }
 
 // Passing both `&mut self` and `&mut self.<field>` to a generic fn trips
@@ -292,6 +325,7 @@ mod transition_handler_body {
                         &timing_functions,
                         vp
                     );
+                    self.has_shorthand = true;
                 }
                 Property::Unparsed(x) => {
                     if is_transition_property(&x.property_id) {
@@ -304,6 +338,16 @@ mod transition_handler_body {
                     } else {
                         return false;
                     }
+                }
+                Property::Custom(x) => {
+                    // `transition` resets it, so it stays behind a buffered `transition`.
+                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        x.name.as_str(),
+                        b"transition-behavior",
+                    ) {
+                        self.flush(dest, context);
+                    }
+                    return false;
                 }
                 _ => return false,
             }
@@ -324,6 +368,7 @@ mod transition_handler_body {
                 return;
             }
             self.has_any = false;
+            let has_shorthand = core::mem::take(&mut self.has_shorthand);
 
             let arena = dest.bump();
 
@@ -357,7 +402,12 @@ mod transition_handler_body {
                 // prefixes will be handled by outputting individual properties below.
                 let intersection =
                     *property_prefixes & *duration_prefixes & *delay_prefixes & *timing_prefixes;
-                if !intersection.is_empty() {
+                // Only `transition` gives the prefixed copy the targets add its own times.
+                let adds_copy = properties
+                    .slice()
+                    .iter()
+                    .any(|p| p.prefix().bits().count_ones() > 1);
+                if (has_shorthand || adds_copy) && !intersection.is_empty() {
                     let transitions =
                         get_transitions(arena, properties, durations, delays, timing_functions);
 
@@ -424,7 +474,7 @@ mod transition_handler_body {
             self.reset();
         }
 
-        pub(crate) fn reset(&mut self) {
+        fn reset(&mut self) {
             self.properties = None;
             self.durations = None;
             self.delays = None;

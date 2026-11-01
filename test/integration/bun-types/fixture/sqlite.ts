@@ -1,4 +1,4 @@
-import { type Changes, Database, constants } from "bun:sqlite";
+import { type Changes, Database, type UpdateHook, constants } from "bun:sqlite";
 import { expectType } from "./utilities";
 
 expectType(constants.SQLITE_FCNTL_BEGIN_ATOMIC_WRITE).is<number>();
@@ -50,3 +50,62 @@ insertManyCats([
   // @ts-expect-error - Should fail
   { fail: true },
 ]);
+
+expectType(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0)).is<number>();
+expectType(db.fileControl(constants.SQLITE_FCNTL_DATA_VERSION, new Uint32Array(2))).is<number>();
+expectType(db.fileControl(constants.SQLITE_FCNTL_RESET_CACHE, null)).is<number>();
+expectType(db.fileControl(constants.SQLITE_FCNTL_RESET_CACHE)).is<number>();
+expectType(db.fileControl("main", constants.SQLITE_FCNTL_RESET_CACHE)).is<number>();
+// @ts-expect-error - an object that is not an ArrayBufferView throws at runtime
+db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, {});
+
+expectType(query1.safeIntegers(true)).is<typeof query1>();
+expectType(query1.safeIntegers()).is<boolean>();
+expectType(query1.reader).is<boolean>();
+expectType(query1.readonly).is<boolean>();
+expectType(query1.isFinalized).is<boolean>();
+expectType(query1.toJSON().columnNames).is<string[]>();
+expectType(query1.values({ $id: "asdf" })).is<Array<Array<string | bigint | number | Uint8Array | null>>>();
+expectType(db.clearQueryCache()).is<void>();
+db.query<unknown, [ArrayBuffer]>("select ?").get(new ArrayBuffer(1));
+
+expectType(db.function("add2", (a: number, b: number) => a + b)).is<Database>();
+expectType(
+  db.function(
+    "count_args",
+    { varargs: true, deterministic: true, directOnly: true, safeIntegers: true },
+    (...args: bigint[]) => args.length,
+  ),
+).is<Database>();
+db.function("nothing", () => {});
+db.function("bytes", () => new ArrayBuffer(1));
+// @ts-expect-error - SQLite cannot hold an object
+db.function("object", () => ({ a: 1 }));
+// @ts-expect-error - the function must be synchronous
+db.function("promise", async () => 1);
+// @ts-expect-error - there is no such option
+db.function("option", { useBigIntArguments: true }, () => 1);
+
+expectType(db.aggregate("add_all", { start: 0, step: (total, value: number) => total + value })).is<Database>();
+db.aggregate<string[]>("list", {
+  start: () => [],
+  step: (list, value: string) => void list.push(value),
+  inverse: list => void list.shift(),
+  result: list => list.join(),
+  varargs: false,
+});
+// @ts-expect-error - `step` is required
+db.aggregate("no_step", { start: 0 });
+
+expectType(db.onInsert).is<UpdateHook | null>();
+db.onInsert = function (database, tableName, rowid, schemaName) {
+  expectType(this).is<Database>();
+  expectType(database).is<Database>();
+  expectType(tableName).is<string>();
+  expectType(rowid).is<number | bigint>();
+  expectType(schemaName).is<string>();
+};
+db.onUpdate = null;
+db.onDelete = undefined;
+// @ts-expect-error - a function, null or undefined
+db.onDelete = "cats";

@@ -23,6 +23,10 @@ runs:
   steps:
     - name: Setup Bun
       shell: bash
+      env:
+        BUN_VERSION: ${{ inputs.bun-version }}
+        BUN_BASELINE: ${{ inputs.baseline }}
+        BUN_DOWNLOAD_URL: ${{ inputs.download-url }}
       run: |
         case "$(uname -s)" in
           Linux*)  os=linux;;
@@ -33,19 +37,19 @@ runs:
           arm64 | aarch64)  arch=aarch64;;
           *)                arch=x64;;
         esac
-        case "${{ inputs.baseline }}" in
+        case "$BUN_BASELINE" in
           true | 1) target="bun-${os}-${arch}-baseline";;
           *)        target="bun-${os}-${arch}";;
         esac
-        case "${{ inputs.bun-version }}" in
+        case "$BUN_VERSION" in
           latest) release="latest";;
           canary) release="canary";;
-          *)      release="bun-v${{ inputs.bun-version }}";;
+          *)      release="bun-v${BUN_VERSION}";;
         esac
-        curl -LO "${{ inputs.download-url }}/${release}/${target}.zip" --retry 5
-        unzip ${target}.zip
-        mkdir -p ${{ runner.temp }}/.bun/bin
-        mv ${target}/bun* ${{ runner.temp }}/.bun/bin/
-        chmod +x ${{ runner.temp }}/.bun/bin/*
-        ln -fs ${{ runner.temp }}/.bun/bin/bun ${{ runner.temp }}/.bun/bin/bunx
-        echo "${{ runner.temp }}/.bun/bin" >> ${GITHUB_PATH}
+        curl -LO "${BUN_DOWNLOAD_URL}/${release}/${target}.zip" --retry 5
+        unzip "${target}.zip"
+        mkdir -p "$RUNNER_TEMP/.bun/bin"
+        mv "${target}"/bun* "$RUNNER_TEMP/.bun/bin/"
+        chmod +x "$RUNNER_TEMP"/.bun/bin/*
+        ln -fs "$RUNNER_TEMP/.bun/bin/bun" "$RUNNER_TEMP/.bun/bin/bunx"
+        echo "$RUNNER_TEMP/.bun/bin" >> "$GITHUB_PATH"

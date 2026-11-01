@@ -119,6 +119,7 @@ describe.concurrent("fd leak", () => {
       const impl = /* ts */ `
               import { heapStats } from "bun:jsc";
               const TestBuilder = createTestBuilder(import.meta.path);
+              const rss = process.memoryUsage.rss;
 
               const threshold = ${threshold}
               let prev: number | undefined = undefined;
@@ -137,7 +138,7 @@ describe.concurrent("fd leak", () => {
                   process.exit(1);
                 }
 
-                const val = process.memoryUsage.rss();
+                const val = rss();
                 if (prev === undefined) {
                   prev = val;
                   prevprev = val;
@@ -408,7 +409,7 @@ describe.concurrent("fd leak", () => {
           "input.txt": Array(2048).fill("a").join(""),
         });
         for (let j = 0; j < 10; j++) {
-          const promises = [];
+          const promises: $.ShellPromise[] = [];
           for (let i = 0; i < 10; i++) {
             if (builtin) {
               promises.push($`cat ${files}/input.txt`.quiet());
@@ -454,7 +455,7 @@ describe.concurrent("fd leak", () => {
         // this causes the array to be kept alive for the scope
         function run() {
           for (let j = 0; j < 10; j++) {
-            const promises = [];
+            const promises: $.ShellPromise[] = [];
             for (let i = 0; i < 10; i++) {
               if (builtin) {
                 promises.push($`cat ${files}/input.txt`);

@@ -1,0 +1,11 @@
+{
+  "name": "v9-peer-variant-missing-resolution",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "pkg-a": "workspace:*"
+  }
+}

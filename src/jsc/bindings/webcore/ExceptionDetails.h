@@ -48,13 +48,3 @@ struct ExceptionDetails {
 };
 
 } // namespace WebCore
-
-namespace WTF {
-template<> struct EnumTraits<WebCore::ExceptionDetails::Type> {
-    using values = EnumValues<
-        WebCore::ExceptionDetails::Type,
-        WebCore::ExceptionDetails::Type::Script,
-        WebCore::ExceptionDetails::Type::InvalidTargetFrame,
-        WebCore::ExceptionDetails::Type::AppBoundDomain>;
-};
-}

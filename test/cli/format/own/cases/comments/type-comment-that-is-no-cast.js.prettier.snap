@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = {
+  map: result.map
+    ? /** @type {RawSourceMap} */
+      result.map.toJSON()
+    : undefined,
+};
+const predicate = logic
+  ? /** @type {RangeValueCallback} */
+    ([value]) => value <= minMax
+  : /** @type {RangeValueCallback} */
+    ([value]) => value >= minMax;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = {
+  map: result.map
+    ? /** @type {RawSourceMap} */
+      result.map.toJSON()
+    : undefined,
+};
+const predicate = logic
+  ? /** @type {RangeValueCallback} */
+    ([value]) => value <= minMax
+  : /** @type {RangeValueCallback} */
+    ([value]) => value >= minMax;
+
+===================== End =====================

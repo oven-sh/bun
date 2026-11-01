@@ -14,7 +14,6 @@
 #include <JavaScriptCore/Operations.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/JSBoundFunction.h>
 using namespace JSC;
 
 namespace Zig {
@@ -91,8 +90,8 @@ void CallSitePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    reifyStaticProperties(vm, CallSite::info(), CallSitePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, CallSite::info(), CallSitePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // TODO: doesn't recognize thisValue as global object
@@ -143,8 +142,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber, (JSGlobalObject * globa
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    // https://github.com/mozilla/source-map/blob/60adcb064bf033702d954d6d3f9bc3635dcb744b/lib/source-map-consumer.js#L488-L489
-    return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().zeroBasedInt(), 0)));
+    return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().oneBasedInt(), 1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptId, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -169,24 +167,8 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
 {
     ENTER_PROTO_FUNC();
 
-    if (JSValue functionValue = callSite->function()) {
-        if (JSObject* fn = functionValue.getObject()) {
-            if (JSFunction* function = dynamicDowncast<JSFunction>(fn)) {
-                if (function->inherits<JSC::JSBoundFunction>()) {
-                    return JSC::JSValue::encode(JSC::jsBoolean(false));
-                }
-
-                if (function->isHostFunction()) {
-                    return JSC::JSValue::encode(JSC::jsBoolean(true));
-                }
-
-                if (auto* executable = function->jsExecutable()) {
-                    return JSValue::encode(jsBoolean(executable->isProgramExecutable() || executable->isModuleProgramExecutable()));
-                }
-            } else if (dynamicDowncast<InternalFunction>(functionValue)) {
-                return JSC::JSValue::encode(JSC::jsBoolean(true));
-            }
-        }
+    if (callSite->isSloppyFunctionCall()) {
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
     }
 
     JSC::JSValue thisValue = callSite->thisValue();
@@ -257,6 +239,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToString, (JSGlobalObject * globalObje
     ENTER_PROTO_FUNC();
     WTF::StringBuilder sb;
     callSite->formatAsString(vm, globalObject, sb);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(jsString(vm, sb.toString()));
 }
 
@@ -264,10 +247,10 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject
 {
     ENTER_PROTO_FUNC();
     JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "sourceURL"_s), callSite->sourceURL());
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "lineNumber"_s), jsNumber(callSite->lineNumber().oneBasedInt()));
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "columnNumber"_s), jsNumber(callSite->columnNumber().zeroBasedInt()));
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "functionName"_s), callSite->functionName());
+    Bun::putDirectNamed(vm, obj, "sourceURL"_s, callSite->sourceURL());
+    Bun::putDirectNamed(vm, obj, "lineNumber"_s, jsNumber(callSite->lineNumber().oneBasedInt()));
+    Bun::putDirectNamed(vm, obj, "columnNumber"_s, jsNumber(callSite->columnNumber().oneBasedInt()));
+    Bun::putDirectNamed(vm, obj, "functionName"_s, callSite->functionName());
     return JSC::JSValue::encode(obj);
 }
 

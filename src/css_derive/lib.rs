@@ -683,13 +683,11 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
         let vname = &v.ident;
         let kw = variant_keyword(vname, &v.attrs);
-        let kw_bytes = syn::LitByteStr::new(kw.as_bytes(), vname.span());
+        // Keys are matched against an ASCII-lowercased copy of the ident, so
+        // store them lowercased; `to_str` keeps the canonical spelling.
+        let kw_bytes = syn::LitByteStr::new(kw.to_ascii_lowercase().as_bytes(), vname.span());
         to_str_arms.push(quote! { #name::#vname => #kw, });
-        from_ident_arms.push(quote! {
-            if __ident.eq_ignore_ascii_case(#kw_bytes) {
-                return ::core::option::Option::Some(#name::#vname);
-            }
-        });
+        from_ident_arms.push(quote! { #kw_bytes => #name::#vname, });
     }
 
     Ok(quote! {
@@ -705,8 +703,12 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
         impl ::bun_css::EnumProperty for #name {
             #[inline]
             fn from_ascii_case_insensitive(__ident: &[u8]) -> ::core::option::Option<Self> {
-                #(#from_ident_arms)*
-                ::core::option::Option::None
+                // One lowercase pass plus a `match len` of constant compares,
+                // instead of an `eq_ignore_ascii_case` loop per variant.
+                ::bun_core::comptime_string_map! {
+                    static __KEYWORDS: #name = { #(#from_ident_arms)* };
+                }
+                __KEYWORDS.get_ascii_case_insensitive(__ident).copied()
             }
         }
 
@@ -747,7 +749,6 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #name {
             /// CSS keyword for this variant.
             #[inline]
@@ -864,8 +865,7 @@ fn has_css_flag(attrs: &[Attribute], flag: &str) -> bool {
 /// Emit the `__generateToCss` field-sequence body shared by the struct branch
 /// and named-field enum variants: each field is `to_css`'d in declaration
 /// order, `Option<_>` fields are unwrapped, and a single space is written
-/// between fields (unconditionally — the separator is not elided when an
-/// optional field is `None`).
+/// after every field but the last (a `None` field writes neither).
 ///
 /// `access` maps a field ident to the expression that reads it (`self.f` for
 /// a struct, the binding name for a destructured enum variant).
@@ -878,21 +878,21 @@ fn gen_field_seq_to_css<'a>(
     let stmts = fields.enumerate().map(|(j, f)| {
         let fname = f.ident.as_ref().unwrap();
         let slot = access(fname);
-        let body = if is_option_type(&f.ty) {
-            quote! {
-                if let ::core::option::Option::Some(__v) = &#slot {
-                    __v.to_css(__dest)?;
-                }
-            }
-        } else {
-            quote! { #slot.to_css(__dest)?; }
-        };
         let sep = if len > 1 && j != last {
             quote! { __dest.write_char(b' ')?; }
         } else {
             quote! {}
         };
-        quote! { #body #sep }
+        if is_option_type(&f.ty) {
+            quote! {
+                if let ::core::option::Option::Some(__v) = &#slot {
+                    __v.to_css(__dest)?;
+                    #sep
+                }
+            }
+        } else {
+            quote! { #slot.to_css(__dest)?; #sep }
+        }
     });
     quote! { #(#stmts)* }
 }
@@ -927,8 +927,7 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let body = match &input.data {
         // ── Struct branch ──────────────────────────────────────────────────
         // Auto-serializer for a payload struct: the printer is the field
-        // sequence, space-separated, with optionals unwrapped (and the
-        // inter-field space emitted unconditionally).
+        // sequence, space-separated, with optionals unwrapped.
         //
         // Proc-macros cannot see through a type name, so `ToCss` is derived
         // directly on the payload struct; the enum arm's
@@ -1013,7 +1012,6 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #impl_g #name #ty_g #where_g {
             #[inline]
             pub fn to_css(
@@ -1081,11 +1079,7 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 let __id = __p.expect_ident()?;
                 #(#arms)*
                 ::core::result::Result::Err(
-                    __loc.new_unexpected_token_error(::bun_css::Token::Ident(
-                        // SAFETY: `__id` is a sub-slice of the parser's source
-                        // buffer (see `enum_property_util::parse`).
-                        unsafe { ::bun_css::css_parser::src_str(__id) },
-                    )),
+                    __loc.new_unexpected_token_error(::bun_css::Token::Ident(__id)),
                 )
             }
         }
@@ -1153,8 +1147,8 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // Emit the body in the **trait** impl so `css::generic::parse[_with_options]`
-    // (bounded on `T: generics::Parse[WithOptions]`) resolves. An inherent
+    // Emit the body in the **trait** impl so `css::generic::parse_with_options`
+    // (bounded on `T: generics::ParseWithOptions`) resolves. An inherent
     // `parse` is kept as a thin forwarder for call sites that don't import the
     // trait. `ParseWithOptions` ignores options — types that
     // genuinely consume options hand-write their own impl instead of deriving.
@@ -1186,7 +1180,6 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #b_impl_g #name #ty_g #b_where_g {
             #[inline]
             pub fn parse(

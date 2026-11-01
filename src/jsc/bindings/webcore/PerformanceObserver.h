@@ -28,6 +28,7 @@
 #include "ExceptionOr.h"
 #include "PerformanceEntry.h"
 #include "PerformanceObserverCallback.h"
+#include "ScriptWrappable.h"
 #include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/Vector.h>
@@ -38,7 +39,9 @@ namespace WebCore {
 class Performance;
 class ScriptExecutionContext;
 
-class PerformanceObserver : public RefCounted<PerformanceObserver> {
+class PerformanceObserver : public ScriptWrappable, public RefCounted<PerformanceObserver> {
+    WTF_MAKE_TZONE_ALLOCATED(PerformanceObserver);
+
 public:
     struct Init {
         std::optional<Vector<String>> entryTypes;
@@ -57,12 +60,11 @@ public:
 
     ExceptionOr<void> observe(Init&&);
     void disconnect();
+    // The context of the script that made it.
+    ScriptExecutionContext* scriptExecutionContext() const;
     Vector<RefPtr<PerformanceEntry>> takeRecords();
 
     OptionSet<PerformanceEntry::Type> typeFilter() const { return m_typeFilter; }
-
-    bool hasNavigationTiming() const { return m_hasNavigationTiming; }
-    void addedNavigationTiming() { m_hasNavigationTiming = true; }
 
     void queueEntry(PerformanceEntry&);
     void deliver();
@@ -79,7 +81,6 @@ private:
     OptionSet<PerformanceEntry::Type> m_typeFilter;
     bool m_registered { false };
     bool m_isTypeObserver { false };
-    bool m_hasNavigationTiming { false };
 };
 
 } // namespace WebCore

@@ -306,7 +306,7 @@ const testPlatforms: Platform[] = [
   // These three version-specific lanes run on main and on opt-in (see
   // darwinTestsEnabled). PR builds instead get one aarch64 lane that any mac
   // agent of that arch can take (prDarwinTestPlatforms), so the whole arm64
-  // pool serves one PR lane and the whole x64 pool the other.
+  // pool serves it. PR builds get no x64 test lane (see there).
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
@@ -1874,10 +1874,13 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   // The asan and hardened profiles are PR-only (see includeEveryProfile above),
   // so their test lanes are dropped on main along with their builds.
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
-  const prDarwinTestPlatforms: Platform[] = [
-    { os: "darwin", arch: "aarch64", release: "any" },
-    { os: "darwin", arch: "x64", release: "any" },
-  ];
+  // No x64 lane on PR builds: the Intel pool cannot keep up with PR volume
+  // (#47389). x64 tests run where darwinTestsEnabled is true (main, manual
+  // builds, `[macos tests]`) and on the merge queue, which has few builds.
+  const prDarwinTestPlatforms: Platform[] = [{ os: "darwin", arch: "aarch64", release: "any" }];
+  if (isMergeQueue()) {
+    prDarwinTestPlatforms.push({ os: "darwin", arch: "x64", release: "any" });
+  }
   const darwinTestsEnabled =
     isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage() ?? "");
   // The macOS beta lane: a single home-hosted mini on the next macOS,

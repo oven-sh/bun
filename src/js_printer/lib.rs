@@ -2681,6 +2681,33 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        fn can_print_jsx_property_key(&self, key: Expr) -> bool {
+            let ExprData::EString(str_) = &key.data else {
+                return true;
+            };
+            let str_ = str_.flattened(self.bump);
+            let text = str_.string(self.bump);
+            let text = bun_core::handle_oom(text);
+            let iter = CodepointIterator::init(text);
+            let mut cursor = strings::Cursor::default();
+            let mut needs_start = true;
+            let mut has_namespace = false;
+            while iter.next(&mut cursor) {
+                if needs_start {
+                    if !bun_core::identifier::is_identifier_start(cursor.c) {
+                        return false;
+                    }
+                    needs_start = false;
+                } else if cursor.c == 0x3A && !has_namespace {
+                    needs_start = true;
+                    has_namespace = true;
+                } else if cursor.c != 0x2D && !lexer::is_identifier_continue(cursor.c) {
+                    return false;
+                }
+            }
+            !needs_start
+        }
+
         pub(crate) fn print_clause_alias(&mut self, alias: &[u8]) {
             if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
                 self.print_space_before_identifier();
@@ -4788,10 +4815,22 @@ pub(crate) mod __gated_printer {
                                 continue;
                             }
 
+                            let key = prop.key.expect("infallible: prop has key");
+                            if !self.can_print_jsx_property_key(key) {
+                                self.print(b" {...{");
+                                self.print_expr(key, Level::Comma, ExprFlag::none());
+                                self.print(b": ");
+                                self.print_expr(
+                                    prop.value.expect("infallible: shorthand prop has value"),
+                                    Level::Comma,
+                                    ExprFlag::none(),
+                                );
+                                self.print(b"}}");
+                                continue;
+                            }
+
                             self.print(b" ");
-                            self.print_jsx_property_key(
-                                prop.key.expect("infallible: prop has key"),
-                            );
+                            self.print_jsx_property_key(key);
                             if prop.flags.contains(js_ast::flags::Property::WasShorthand) {
                                 continue;
                             }

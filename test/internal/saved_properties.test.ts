@@ -96,19 +96,25 @@ describe("SavedProperties", () => {
     expect(root.added).toBe(1);
     expect("left" in Earlier.prototype).toBe(false);
 
-    saved.save({ Before }, true);
+    root.trap = 1;
+    saved.save(root, true);
     delete Before.prototype.left;
+    root.added = 2;
     saved.restore();
     expect(Before.prototype.left).toBe(1);
+    expect(root.added).toBe(1);
   });
 
   test("does not descend into the global object", () => {
     const saved = new SavedProperties();
     saved.save({ global: globalThis, Class: class {} }, true);
     globalThis.leftByTheTest = 1;
-    saved.restore();
-    expect(globalThis.leftByTheTest).toBe(1);
-    delete globalThis.leftByTheTest;
+    try {
+      saved.restore();
+      expect(globalThis.leftByTheTest).toBe(1);
+    } finally {
+      delete globalThis.leftByTheTest;
+    }
   });
 
   test("leaves alone what the filters name", () => {

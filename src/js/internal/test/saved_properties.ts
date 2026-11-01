@@ -116,7 +116,7 @@ class SavedProperties {
   #isTracked: KeyFilter | undefined;
   #objects: object[] = [];
   #properties: Properties[] = [];
-  #seen = new Map<object, true>();
+  #seen = new $Map<object, true>();
   // Nearly all of the objects are untouched by a test file. Native code tells which ones may not be.
   #shapes: unknown[] = [];
   #alwaysComparedCount = 0;
@@ -134,7 +134,7 @@ class SavedProperties {
     const start = objects.length;
     try {
       walk(root, descendsIntoObjects, this.#isTracked, this.#seen, object => {
-        const saved: Properties = new Map();
+        const saved: Properties = new $Map();
         $arrayPush(objects, object);
         $arrayPush(properties, saved);
         return saved;
@@ -151,7 +151,7 @@ class SavedProperties {
   // Forgets what isn't reachable from `root`. The rest keeps its saved properties.
   keepReachableFrom(root: object, descendsIntoObjects: boolean) {
     this.restore();
-    const reachable = new Map<object, true>();
+    const reachable = new $Map<object, true>();
     walk(root, descendsIntoObjects, this.#isTracked, reachable, () => undefined);
     const objects = this.#objects;
     const properties = this.#properties;

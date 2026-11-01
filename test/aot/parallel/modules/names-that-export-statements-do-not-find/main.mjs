@@ -1,19 +1,10 @@
-// `export { name } from` where only the run knows the names of the other module: the error of the link quotes the statement, has no stack, and comes ahead of the error of an import.
+// `export { name } from` where only the run knows the names of the other module: the error of the link quotes the statement and comes ahead of the error of an import.
 const withoutFolders = text => String(text).replace(/'[^']*[\\/]([^\\/']+)'/g, "'$1'");
 async function load(label, importModule) {
   try {
     console.log(label, "loaded", Object.keys(await importModule()).join());
   } catch (error) {
-    console.log(
-      label,
-      error.name,
-      withoutFolders(error.message),
-      "|",
-      error.stack,
-      error.line,
-      error.column,
-      error.sourceURL,
-    );
+    console.log(label, error.name, withoutFolders(error.message));
   }
 }
 await load("two stars, absent", () => import("./two-stars-absent.mjs"));

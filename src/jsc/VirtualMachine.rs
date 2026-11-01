@@ -7021,6 +7021,42 @@ impl VirtualMachine {
         self.remap_stack_frames_mutex.unlock();
     }
 
+    /// The text of the module at `source_url` as it was written, empty if there is none to read.
+    pub(crate) fn original_source_text(
+        &mut self,
+        global: &JSGlobalObject,
+        source_url: &bun_core::String,
+        must_reset_parser_arena_later: &mut bool,
+    ) -> bun_core::Utf8Bytes<'static> {
+        // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
+        let path = source_url.to_utf8();
+        if crate::compiled_program::is_compiled_module(path.slice()) {
+            if !crate::compiled_program::runs_in_place() {
+                return bun_core::Utf8Bytes::EMPTY;
+            }
+            let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), path.slice());
+            return bun_core::Utf8Bytes::Owned(text.unwrap_or_default());
+        }
+        let mut log = bun_ast::Log::default();
+        let Ok(original_source) = bun_removable_features::call_removable_or!(
+            RuntimeTranspiler,
+            ReturnDefault,
+            { return bun_core::Utf8Bytes::EMPTY },
+            VirtualMachine::fetch_without_on_load_plugins,
+            self,
+            global,
+            source_url,
+            &bun_core::String::EMPTY,
+            None,
+            &mut log,
+            FetchFlags::PrintSource,
+        ) else {
+            return bun_core::Utf8Bytes::EMPTY;
+        };
+        *must_reset_parser_arena_later = true;
+        original_source.source_code.into_utf8()
+    }
+
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.
     /// `source_code` receives the text that `exception`'s source lines borrow.
     pub(crate) fn remap_zig_exception<'a>(
@@ -7251,34 +7287,12 @@ impl VirtualMachine {
                     // Avoid printing "export default 'native'"
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
-                // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
-                let top_path = frames[top].source_url.to_utf8();
-                if crate::compiled_program::is_compiled_module(top_path.slice()) {
-                    if !crate::compiled_program::runs_in_place() {
-                        break 'code bun_core::Utf8Bytes::EMPTY;
-                    }
-                    let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), top_path.slice());
-                    break 'code bun_core::Utf8Bytes::Owned(text.unwrap_or_default());
-                }
-                let mut log = bun_ast::Log::default();
-                let Ok(original_source) = bun_removable_features::call_removable_or!(
-                    RuntimeTranspiler,
-                    ReturnDefault,
-                    { break 'code bun_core::Utf8Bytes::EMPTY },
-                    VirtualMachine::fetch_without_on_load_plugins,
-                    self,
+                // Empty when the source is gone; the frames still get remapped below.
+                self.original_source_text(
                     global,
                     &frames[top].source_url,
-                    &bun_core::String::EMPTY,
-                    None,
-                    &mut log,
-                    FetchFlags::PrintSource,
-                ) else {
-                    // Source is gone; the frames still get remapped below.
-                    break 'code bun_core::Utf8Bytes::EMPTY;
-                };
-                *must_reset_parser_arena_later = true;
-                original_source.source_code.into_utf8()
+                    must_reset_parser_arena_later,
+                )
             };
             *source_code = code;
             let code: &'a [u8] = source_code.slice();

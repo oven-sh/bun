@@ -81,6 +81,31 @@ pub(crate) fn remap_stack_frame_positions(
     }
 }
 
+// HOST_EXPORT(Bun__positionOfModuleLinkError, c)
+pub(crate) fn position_of_module_link_error(
+    vm: &mut VirtualMachine,
+    importer_url: &bun_core::String,
+    site: u8,
+    name: &bun_core::String,
+    line: &mut u32,
+    column: &mut u32,
+) -> bool {
+    let Some(position) = bun_removable_features::call_removable_or!(
+        RuntimeTranspiler,
+        ReturnDefault,
+        { None },
+        bun_jsc::module_link_error::position,
+        vm,
+        importer_url,
+        site,
+        name,
+    ) else {
+        return false;
+    };
+    (*line, *column) = position;
+    true
+}
+
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm, is_patched)`
 // HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMain, c)
 pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: bool) {

@@ -126,6 +126,6 @@ for (const where of programs) {
       expect(await seenIn(String(dir))).toEqual(expected);
       expect(await seenIn(String(dir), words)).toEqual(expected);
     },
-    600_000,
+    300_000,
   );
 }

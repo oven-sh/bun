@@ -2568,7 +2568,6 @@ library-modules/choice-names-passed-require-another-file.mjs
 library-modules/emit-on-a-date.mjs
 library-modules/file-handle-method-under-a-symbol-or-key/main.mjs
 library-modules/get-store-in-a-loop-looks-up-no-name.mjs
-library-modules/global-agent-of-the-module-is-an-accessor.cjs
 library-modules/global-defined-with-define-property.js
 library-modules/global-object-kept-in-a-variable.js
 library-modules/isatty-and-the-standard-output-bring-no-stream.js

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, promises as fs, mkdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
 import { createRequire } from "module";
 import * as path from "path";
 
@@ -261,6 +261,22 @@ describe.concurrent("a file or package created after the resolver read its direc
     expect(req("#b")).toBe("b");
   });
 
+  test("a package.json that did not parse, written again with an imports entry after a miss", async () => {
+    using dir = tempDir("runtime-cache-unparsed-package-json", {
+      "package.json": `{ not json`,
+      "lib/a.js": `module.exports = "a";`,
+      "warm.js": `module.exports = "warm";`,
+      "main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.js"));
+
+    expect(req("./warm.js")).toBe("warm");
+    expect(() => req("#a")).toThrow("Cannot find module '#a'");
+    writeFileSync(path.join(root, "package.json"), `{ "name": "app", "imports": { "#a": "./lib/a.js" } }`);
+    expect(req("#a")).toBe("a");
+  });
+
   test("a paths entry added to the tsconfig.json next to the importer after a miss", async () => {
     using dir = tempDir("runtime-cache-edited-tsconfig", {
       "tsconfig.json": `{ "compilerOptions": { "paths": { "@a": ["./src/a.ts"] } } }`,
@@ -278,6 +294,23 @@ describe.concurrent("a file or package created after the resolver read its direc
       `{ "compilerOptions": { "paths": { "@a": ["./src/a.ts"], "@b": ["./src/b.ts"] } } }`,
     );
     expect(req("@b")).toEqual({ b: 2 });
+  });
+
+  test("a tsconfig.json that did not parse, written again with a paths entry after a miss", async () => {
+    using dir = tempDir("runtime-cache-unparsed-tsconfig", {
+      "tsconfig.json": `{ not json`,
+      "package.json": `{ "name": "app" }`,
+      "lib/a.js": `module.exports = "a";`,
+      "warm.js": `module.exports = "warm";`,
+      "main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.js"));
+
+    expect(req("./warm.js")).toBe("warm");
+    expect(() => req("@alias/a.js")).toThrow("Cannot find module '@alias/a.js'");
+    writeFileSync(path.join(root, "tsconfig.json"), `{ "compilerOptions": { "paths": { "@alias/*": ["./lib/*"] } } }`);
+    expect(req("@alias/a.js")).toBe("a");
   });
 
   test("a file where a directory of the import path was, replaced by the directory", async () => {
@@ -413,4 +446,39 @@ test("a kept listing still lets a link be stat'ed again", async () => {
   mkdirSync(target, { recursive: true });
   writeFileSync(path.join(target, "index.js"), `module.exports = "linked";`);
   expect(req("linked")).toBe("linked");
+});
+
+// The mode of a directory does not hold root back, so under root the program runs as another user.
+// Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+test.serial.skipIf(isWindows)("a file added to a directory that could not be opened at a miss", async () => {
+  using dir = tempDir("runtime-cache-unreadable-dir", {
+    "lib/a.js": `module.exports = "a";`,
+    "warm.js": `module.exports = "warm";`,
+    "main.js": `
+      const { chmodSync, writeFileSync } = require("node:fs");
+      const { join } = require("node:path");
+      const lib = join(__dirname, "lib");
+      console.log(require("./lib/a.js"));
+      chmodSync(lib, 0o000);
+      try {
+        console.log(require("./warm.js"));
+        try { require("./lib/b.js"); } catch (e) { console.log(e.code); }
+      } finally {
+        chmodSync(lib, 0o755);
+      }
+      writeFileSync(join(lib, "b.js"), "module.exports = 'b';");
+      console.log(require("./lib/b.js"));
+    `,
+  });
+  using unprivileged = unprivilegedSpawnOptions(String(dir));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    ...unprivileged,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "a\nwarm\nMODULE_NOT_FOUND\nb\n", stderr: "", exitCode: 0 });
 });

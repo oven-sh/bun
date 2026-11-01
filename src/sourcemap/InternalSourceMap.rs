@@ -1001,6 +1001,7 @@ pub fn from_vlq(vlq: &[u8]) -> Result<Box<[u8]>, FromVlqError> {
         generated_column = accumulate(generated_column, gc.value)?;
         remain = &remain[gc.start as usize..];
 
+        // `mapping::parse` keeps a row for a one-field segment. The input here is a map that Bun wrote, which has none.
         if remain.is_empty() || remain[0] == b',' || remain[0] == b';' {
             if !remain.is_empty() && remain[0] == b',' {
                 remain = &remain[1..];

@@ -359,6 +359,66 @@ describe("source map remapping of the printed stack", () => {
     expect(exitCode).toBe(1);
   });
 
+  // A segment with one field marks generated code that comes from no source,
+  // such as the glue a bundler adds. A frame in it is not remapped: it keeps
+  // the position it has when the file has no map at all.
+  test.concurrent("external map with a segment that has no source", async () => {
+    const main = [
+      "// @bun",
+      'function app() { throw new Error("APP"); } function glue() { throw new Error("GLUE"); }',
+      "const out = {};",
+      "try { app(); } catch (e) { out.appInspect = Bun.inspect(e); }",
+      "try { app(); } catch (e) { out.appStack = e.stack; }",
+      "try { glue(); } catch (e) { out.glueInspect = Bun.inspect(e); }",
+      "try { glue(); } catch (e) { out.glueStack = e.stack; }",
+      "console.log(JSON.stringify(out));",
+      "glue();",
+    ];
+    expect(main[1].indexOf("function glue")).toBe(43);
+    // Line 1 maps to orig.ts:11:5 up to column 43, where the one-field segment
+    // "2C" starts. Lines 3, 4, 5, 6 and 8 map to orig.ts:21:5, 31:5, 41:5, 51:5
+    // and 61:5.
+    const mappings = ";AAUI,2C;;AAUA;AAUA;AAUA;AAUA;;AAUA";
+    const source = main.join("\n") + "\n";
+    const withMap = moreLines => ({
+      "main.js": source + "//# sourceMappingURL=main.js.map\n",
+      "main.js.map": JSON.stringify({
+        version: 3,
+        sources: ["orig.ts"],
+        sourcesContent: [null],
+        names: [],
+        mappings: mappings + moreLines,
+      }),
+    });
+    const files = ["orig.ts", "main.js"];
+    const read = ({ dir, out, stderr, exitCode }) => ({
+      appInspect: frames(out.appInspect, dir, files),
+      appStack: frames(out.appStack, dir, files),
+      glueInspect: frames(out.glueInspect, dir, files),
+      glueStack: frames(out.glueStack, dir, files),
+      uncaught: frames(stderr, dir, files),
+      exitCode,
+    });
+
+    // A `mappings` string of 128 bytes or more is read by the SIMD decoder, a
+    // shorter one by the scalar decoder.
+    const [unmapped, scalar, simd] = (
+      await Promise.all([run({ "main.js": source }), run(withMap("")), run(withMap(Buffer.alloc(128, ";").toString()))])
+    ).map(read);
+
+    const inMain = expect.stringMatching(/^at glue \(main\.js:2:\d+\)$/);
+    expect([unmapped.glueInspect[0], unmapped.glueStack[0], unmapped.uncaught[0]]).toEqual([inMain, inMain, inMain]);
+    const expected = {
+      appInspect: ["at app (orig.ts:11:5)", "at orig.ts:21:5"],
+      appStack: ["at app (orig.ts:11:5)", "at orig.ts:31:5"],
+      glueInspect: [unmapped.glueInspect[0], "at orig.ts:41:5"],
+      glueStack: [unmapped.glueStack[0], "at orig.ts:51:5"],
+      uncaught: [unmapped.uncaught[0], "at orig.ts:61:5"],
+      exitCode: 1,
+    };
+    expect({ scalar, simd }).toEqual({ scalar: expected, simd: expected });
+  });
+
   // Modules bun transpiled itself. `present.ts` stays on disk; `deleted.ts` is
   // removed after it was loaded, so the code frame can no longer be read back.
   // Reading error.stack first makes the printer start from the already

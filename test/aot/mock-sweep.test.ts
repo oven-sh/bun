@@ -1,7 +1,8 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { afterAll } from "./harness/default-timeout";
 import { mockSweep } from "./harness/mock-sweep";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";

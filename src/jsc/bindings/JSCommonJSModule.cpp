@@ -1017,8 +1017,12 @@ static NEVER_INLINE EncodedJSValue compileAsESModuleAfterCommonJSThrew(Zig::Glob
     String keyString = key.string();
 
     // A name that holds something else keeps the CommonJS error. An ES module that is registered under it is the one that loads, as in Node's load cache.
-    if (!graph && Bun::isCompiledModule(keyString))
-        return rethrow();
+    if (!graph && Bun::hasCompiledModules()) [[unlikely]] {
+        // In an ahead-of-time executable __filename says where the file lay when the program was built.
+        String known = Bun::pathInExecutable(keyString);
+        if (Bun::isCompiledModule(known.isNull() ? keyString : known))
+            return rethrow();
+    }
     if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules; virtualModules && virtualModules->contains(keyString))
         return rethrow();
     ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript);

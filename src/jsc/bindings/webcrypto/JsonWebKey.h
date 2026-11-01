@@ -37,10 +37,9 @@ namespace WebCore {
 struct JsonWebKey {
     String kty;
     String use;
-    // Strings, as in the Web Crypto IDL, where WebKit has CryptoKeyUsage: any string is a
-    // valid entry (RFC 7517 section 4.3). `usages` is the bitmap of the entries that name a
-    // KeyUsage, set by normalizeJsonWebKey().
+    // Any string is a valid entry (RFC 7517 section 4.3), so not WebKit's Vector<CryptoKeyUsage>.
     std::optional<Vector<String>> key_ops;
+    // The key_ops entries that name a KeyUsage, set by normalizeJsonWebKey().
     CryptoKeyUsageBitmap usages;
     String alg;
 
@@ -73,11 +72,11 @@ bool hasRepeatedJwkKeyOp(const Vector<String>&);
 // before the operations/usages mismatch check.
 inline bool hasDuplicateJwkKeyOps(const JsonWebKey& jwk)
 {
-    // `usages` has one bit for each distinct entry that names a KeyUsage, so equal
-    // counts mean that no entry is repeated and none is foreign.
-    if (!jwk.key_ops || jwk.key_ops->size() == static_cast<size_t>(std::popcount(static_cast<unsigned>(jwk.usages))))
+    if (!jwk.key_ops)
         return false;
-    return hasRepeatedJwkKeyOp(*jwk.key_ops);
+    size_t distinctKeyUsageCount = std::popcount(static_cast<unsigned>(jwk.usages));
+    bool everyEntryIsADistinctKeyUsage = jwk.key_ops->size() == distinctKeyUsageCount;
+    return !everyEntryIsADistinctKeyUsage && hasRepeatedJwkKeyOp(*jwk.key_ops);
 }
 
 // Whether `key_ops`, if the key has any, is well formed and covers `usages`.

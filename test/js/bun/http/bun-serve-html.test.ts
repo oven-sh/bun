@@ -1014,7 +1014,7 @@ describe("html route whose file a plugin resolves to a different file", () => {
       stdout: JSON.stringify({ devServer: [failurePage, failurePage], ...builtWithout[target] }),
       exitCode: 0,
     });
-    // Printed by the dev server (and by the development build when it fails too). Production says nothing.
+    // Printed by the dev server, and by the other two builds when they fail too.
     expect(stderr).toMatch(
       /error: Bundling "[^"]*index\.html" did not produce an html page for it\. A plugin may have resolved it to another file or loaded it as something other than html\./,
     );
@@ -1390,6 +1390,47 @@ test.concurrent("a route keeps failing when its broken module was imported throu
   expect({ stdout, exitCode }, stderr).toEqual({ stdout: "500 200 500", exitCode: 0 });
 });
 
+test.concurrent(
+  "a production route whose build failed answers every request with 500 and prints the error once",
+  async () => {
+    using dir = tempDir("bun-serve-html-build-failed", {
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./missing.js"></script></head><body></body></html>`,
+      "serve.ts": /*ts*/ `
+      import net from "node:net";
+      import html from "./index.html";
+
+      using server = Bun.serve({ port: 0, development: false, idleTimeout: 0, routes: { "/": html } });
+      // This request waits for the build. The response has "Connection: close", so the server must close the socket.
+      const first = await new Promise((resolve, reject) => {
+        let response = "";
+        const socket = net.connect(server.port, "127.0.0.1", () => socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
+        socket.on("data", chunk => (response += chunk));
+        socket.on("error", reject);
+        socket.on("close", () => resolve(response.split("\\r\\n")[0]));
+      });
+      const later = [];
+      for (const method of ["GET", "HEAD"]) {
+        const response = await fetch(server.url, { method });
+        later.push([response.status, response.headers.get("content-length"), await response.text()]);
+      }
+      console.log(JSON.stringify({ first, later }));
+    `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect(stderr.split(`Could not resolve: "./missing.js"`)).toHaveLength(2);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        first: "HTTP/1.1 500 Build Failed",
+        later: [
+          [500, "0", ""],
+          [500, "0", ""],
+        ],
+      }),
+      exitCode: 0,
+    });
+  },
+);
+
 // A stylesheet link must not put a script in the page. The route fails, and no response runs the linked file.
 describe("html route whose page has a stylesheet link to a script", () => {
   // Serves the route in each mode. For each response: the status, and whether the page's script holds the linked file.
@@ -1412,8 +1453,7 @@ describe("html route whose page has a stylesheet link to a script", () => {
       JSON.stringify({
         devServer: await serve(true, 2),
         devWithoutHmr: await serve({ hmr: false }, 2),
-        // Requests after a failed build are the subject of #37916.
-        production: await serve(false, 1),
+        production: await serve(false, 2),
       }),
     );
   `;
@@ -1431,11 +1471,17 @@ describe("html route whose page has a stylesheet link to a script", () => {
     });
     const failed = { status: 500, runsTheFile: false };
     expect({ stdout, exitCode }, stderr).toEqual({
-      stdout: JSON.stringify({ devServer: [failed, failed], devWithoutHmr: [failed, failed], production: [failed] }),
+      stdout: JSON.stringify({
+        devServer: [failed, failed],
+        devWithoutHmr: [failed, failed],
+        production: [failed, failed],
+      }),
       exitCode: 0,
     });
-    // Printed by the dev server and by the development build. Production says nothing.
-    expect(stderr).toContain('error: Cannot use "theme.js" as a stylesheet');
+    // The dev server prints the error for each bundle of the page: one bundle with BUN_ASSUME_PERFECT_INCREMENTAL=1,
+    // two with 0. The development build prints it for each request, and the production build once.
+    const devServerPrints = assumePerfectIncremental === "1" ? 1 : 2;
+    expect(stderr.split('error: Cannot use "theme.js" as a stylesheet')).toHaveLength(devServerPrints + 2 + 1 + 1);
   });
 
   // A plugin can make a script of a stylesheet, to add the styles at run time. That page is served.
@@ -1457,7 +1503,11 @@ describe("html route whose page has a stylesheet link to a script", () => {
     const { stdout, stderr, exitCode } = await runServeFixture(dir);
     const served = { status: 200, runsTheFile: true };
     expect({ stdout, exitCode }, stderr).toEqual({
-      stdout: JSON.stringify({ devServer: [served, served], devWithoutHmr: [served, served], production: [served] }),
+      stdout: JSON.stringify({
+        devServer: [served, served],
+        devWithoutHmr: [served, served],
+        production: [served, served],
+      }),
       exitCode: 0,
     });
   });
@@ -1475,7 +1525,7 @@ describe("html route whose page has a stylesheet link to a script", () => {
       stdout: JSON.stringify({
         devServer: [{ status: 200 }, { status: 200 }],
         devWithoutHmr: [{ status: 200 }, { status: 200 }],
-        production: [{ status: 200 }],
+        production: [{ status: 200 }, { status: 200 }],
       }),
       exitCode: 0,
     });

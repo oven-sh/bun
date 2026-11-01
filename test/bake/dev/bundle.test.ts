@@ -672,9 +672,15 @@ devTest("removing 'use client' from a component with a pending resolution failur
       `,
     },
     async test(dev) {
-      expect((await dev.fetch("/")).status).toBe(500);
+      const browserError = 'Browser build cannot import Bun builtin: "bun"';
+      // The build for the server and the build of the other component each report the component.
+      await using c = await dev.client("/", {
+        errors: [`components/Comp.ts:2:22: error: ${browserError}`, `components/Comp.ts:2:22: error: ${browserError}`],
+      });
       await dev.write("components/Comp.ts", serverComponent, { errors: null });
-      expect((await dev.fetch("/")).status).toBe(500);
+      // The client copy of the component is gone, so the overlay has no file name for its build error.
+      const messages = (await c.readErrorOverlay()).map(error => error.replace(/^.*?: error: /, ""));
+      expect([...new Set(messages)]).toEqual([browserError]);
     },
   });
 }

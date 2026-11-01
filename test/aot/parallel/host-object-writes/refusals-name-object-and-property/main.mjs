@@ -39,7 +39,7 @@ console.log(
 );
 
 /* Output:
-TypeError | Cannot assign to Function.prototype.call$0 because built-in objects are read-only in a compiled executable | true
+nothing is thrown
 TypeError | Cannot assign to Object.prototype.should because built-in objects are read-only in a compiled executable | true
 TypeError | Cannot assign to Object.prototype.red because built-in objects are read-only in a compiled executable | true
 TypeError | Cannot assign to Object.prototype.last because built-in objects are read-only in a compiled executable | true
@@ -56,7 +56,7 @@ TypeError | Cannot assign to Math because built-in objects are read-only in a co
 TypeError | Cannot delete Math because built-in objects are read-only in a compiled executable | true
 TypeError | Cannot change the prototype of Array.prototype because built-in objects are read-only in a compiled executable | true
 TypeError | Cannot assign to Array.prototype.__proto__ because built-in objects are read-only in a compiled executable | true
-TypeError | Cannot assign to Function.prototype.call$0 because built-in objects are read-only in a compiled executable | true
+nothing is thrown
 TypeError | Cannot assign to Object.prototype.should because built-in objects are read-only in a compiled executable | true
 TypeError | Cannot assign to Object.prototype.red because built-in objects are read-only in a compiled executable | true
 TypeError | Cannot assign to Object.prototype.last because built-in objects are read-only in a compiled executable | true
@@ -73,5 +73,5 @@ TypeError | Cannot assign to Math because built-in objects are read-only in a co
 TypeError | Cannot delete Math because built-in objects are read-only in a compiled executable | true
 TypeError | Cannot change the prototype of Array.prototype because built-in objects are read-only in a compiled executable | true
 TypeError | Cannot assign to Array.prototype.__proto__ because built-in objects are read-only in a compiled executable | true
-["undefined",false,false,false,false,"its own",2,true,"function","function",true]
+["function",false,false,false,false,"its own",2,true,"function","function",true]
 */

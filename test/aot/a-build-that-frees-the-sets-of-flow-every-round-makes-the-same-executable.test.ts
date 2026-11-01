@@ -1,11 +1,12 @@
 // Whole-program analysis frees the sets that nobody holds any more once they have grown by half. Whoever holds a set has to be listed where they are freed (ValueFlowSolver::freeSetsThatNobodyHolds()):
 // a holder that is missing there names a set that is gone, or another set that has taken its number. freeAOTFlowSetsEveryRound frees after every round, so that a small program meets what only a large one
 // meets otherwise. The executable must be the same, byte for byte, and a Bun with assertions stops at the first read of a freed set.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { mkdirSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
 import { describe, test } from "./supported";
 

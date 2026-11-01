@@ -17,6 +17,7 @@ use super::code_types::predicted_type_files;
 use super::*;
 use crate::file_analysis::FileAnalysis;
 use crate::fold::StoredByMocks;
+use crate::hir_from_data::{DataValue, HostValue};
 use crate::import_sites::{ImportSiteKind, ImportSpecifier};
 use crate::resolve::{
     CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload, ParsedFile,
@@ -44,6 +45,7 @@ struct WalkedFile<'s, 'r> {
     loaded_by: LoadedBy,
     imported_requires: Vec<ImportedRequire>,
     imported_constants: Vec<ImportedConstant>,
+    texts_of_data_files: Vec<TextOfDataFile>,
     foldings_with_constants: u32,
     /// `ParsedFile::version`
     version: u32,
@@ -301,6 +303,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             ),
             imported_requires: known.map_or(Vec::new(), |it| it.hir.imported_requires.to_vec()),
             imported_constants: known.map_or(Vec::new(), |it| it.hir.imported_constants.to_vec()),
+            texts_of_data_files: known.map_or(Vec::new(), |it| it.hir.texts_of_data_files.to_vec()),
             foldings_with_constants: 0,
             version: 0,
         });
@@ -551,6 +554,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 && (fold_files_that_import_constants_again(context, &mut state)
                     || forget_files_called_before_they_run(&mut state)
                     || forget_files_that_import_requires(&context.atoms, &mut state)
+                    || forget_files_that_ask_for_texts_of_data_files(&context.atoms, &mut state)
                     || forget_files_that_another_loader_reads(context, &mut state));
             let goes_on = learns_from_other_files
                 || finish_files(&mut state)
@@ -777,6 +781,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 let is_only_imported = file.loaded_by.is_import_alone();
                 let requires = file.imported_requires.clone();
                 let constants = file.imported_constants.clone();
+                let texts = file.texts_of_data_files.clone();
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
                 let inputs = LoadInputs {
@@ -785,8 +790,9 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     is_only_imported,
                     imported_requires: &requires,
                     imported_constants: &constants,
+                    texts_of_data_files: &texts,
                 };
-                let parsed = Box::new(load_code_file(context, arena, target, text, inputs));
+                let parsed = Box::new(load_code_file(context, arena, target, text, &inputs));
                 state = self.state.lock();
                 self.add_parsed_file(&mut state, index, parsed, false);
                 let has_more;
@@ -1175,6 +1181,92 @@ fn forget_files_that_import_requires(atoms: &Interner<'_>, state: &mut WalkState
         forget_parsed_file(state, index);
     }
     has_importers
+}
+
+fn read_text_of_data(mut value: &DataValue<'_>, atoms: &Interner<'_>, path: &[u8]) -> Option<Atom> {
+    for key in bun_core::strings::split(path, b"\0") {
+        value = match *value {
+            DataValue::Object(properties) => {
+                let name = atoms.intern(key);
+                &properties.iter().rfind(|it| it.0 == name)?.1
+            }
+            DataValue::Array(places) => {
+                let index: usize = std::str::from_utf8(key).ok()?.parse().ok()?;
+                places.get(index)?
+            }
+            _ => return None,
+        };
+    }
+    match *value {
+        DataValue::String(text) => Some(text),
+        _ => None,
+    }
+}
+
+fn find_texts_of_data_files(
+    atoms: &Interner<'_>,
+    files: &[WalkedFile<'_, '_>],
+    file: &WalkedFile<'_, '_>,
+) -> Vec<TextOfDataFile> {
+    let Some(parsed) = &file.parsed else {
+        return Vec::new();
+    };
+    let analysis = &parsed.code.analyzed.analysis;
+    let asked = analysis.asked_of_data_files;
+    let mut found = Vec::new();
+    let mut next_target = 0;
+    for (site, &resolution) in (analysis.import_sites.iter()).zip(&parsed.code.resolutions) {
+        let target = next_target;
+        next_target += files_of(resolution).count();
+        let ImportSpecifier::Constant(specifier) = site.specifier else {
+            continue;
+        };
+        if next_target == target || file.targets[target] == NOT_LOADED {
+            continue;
+        }
+        let Some(holder) = &files[file.targets[target] as usize].parsed else {
+            continue;
+        };
+        let [(_, HostValue::Data(data))] = holder.code.analyzed.host_values else {
+            continue;
+        };
+        for &(_, path) in asked.iter().filter(|it| it.0 == specifier) {
+            if let Some(text) = read_text_of_data(data, atoms, atoms.bytes(path)) {
+                found.push(TextOfDataFile {
+                    specifier,
+                    path,
+                    text,
+                });
+            }
+        }
+    }
+    found.shared_sort_unstable_by_key(|it| (it.specifier.0, it.path.0, it.text.0));
+    found.dedup();
+    found
+}
+
+fn forget_files_that_ask_for_texts_of_data_files(
+    atoms: &Interner<'_>,
+    state: &mut WalkState<'_, '_>,
+) -> bool {
+    let mut askers: Vec<(u32, Vec<TextOfDataFile>)> = Vec::new();
+    for (index, file) in state.files.iter().enumerate() {
+        let asks = (file.parsed.as_ref())
+            .is_some_and(|it| !it.code.analyzed.analysis.asked_of_data_files.is_empty());
+        if !asks {
+            continue;
+        }
+        let found = find_texts_of_data_files(atoms, &state.files, file);
+        if found != file.texts_of_data_files {
+            askers.push((index as u32, found));
+        }
+    }
+    let has_askers = !askers.is_empty();
+    for (index, found) in askers {
+        state.files[index as usize].texts_of_data_files = found;
+        forget_parsed_file(state, index);
+    }
+    has_askers
 }
 
 fn erase_sites_nothing_asked_for(state: &mut WalkState<'_, '_>) {

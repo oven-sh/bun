@@ -272,7 +272,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v9: undefined = Undefined
 # CHECK-NEXT: v10: null|boolean|number|string|object = CallBuiltin -, v8, v9 overload=JSONParse/0 accessSite=6
 # CHECK-NEXT: v11: null|boolean|number|string|object ~ null|L0 = Upcast v10 castType=anything
-# CHECK-NEXT: v12: L2 = NewObject -, v3 layout=L2 fields=[0] storage=Frame allocationClass=2 [listsOnlyStoredValues]
+# CHECK-NEXT: v12: L2 = NewObject -, v3 layout=L2 fields=[0] storage=Frame allocationClass=2 [listsOnlyStoredValues, isMadeForOneUse]
 # CHECK-NEXT: v13: undefined = CallDirect v11, v12 function=f1 accessSite=8
 # CHECK-NEXT: v14: "[]" = String string="[]"
 # CHECK-NEXT: v15: undefined = Undefined

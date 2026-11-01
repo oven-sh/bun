@@ -7,7 +7,8 @@ use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    ExportSpecId, ExprId, ExprKind, File, Flags, MemberKey, PatId, PatKind, PropKey, StmtKind, UnOp,
+    BinOp, ExportSpecId, ExprId, ExprKind, File, Flags, MemberKey, PatId, PatKind, PropKey,
+    StmtKind, UnOp,
 };
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_module_call_of_plugin};
 use bun_sema::program::Files;
@@ -16,8 +17,9 @@ use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
 use crate::load::is_in_node_modules;
 use crate::load::runtime_modules::find_module_named;
 use crate::load::sources::parsed_source;
+use crate::module_keys::places_of_form;
 use crate::modules::evicted::{
-    FileOfKey, find_file_of_key, find_files_named_with_query,
+    FileOfKey, PathChangedOnDisk, find_file_of_key, find_files_named_with_query,
     find_names_that_unspelled_keys_may_be, find_paths_changed_on_disk,
     stands_where_a_throw_is_caught,
 };
@@ -39,17 +41,24 @@ pub(super) struct ReplacedModules {
     /// `delete require.cache[require.resolve("./a")]`
     pub evicted: Vec<Atom>,
     /// `find_paths_changed_on_disk`
-    pub changed_on_disk: Vec<(Atom, bool)>,
+    pub changed_on_disk: Vec<PathChangedOnDisk<Atom>>,
     /// As `evicted`, of a file that this one does not spell.
     pub evicts_any: bool,
     /// `ReplacedByTests::files_required_where_throws_are_caught`
     pub required_where_throws_are_caught: Vec<Atom>,
+    /// `ReplacedByTests::data_files_imported_with_types`
+    pub imported_with_types: Vec<Atom>,
     /// `import("./a?again")`
     pub names_file_with_query: bool,
     /// `ReplacedByTests::files_imported_by_statements`, `files_imported_by_calls` and `files_required`
     pub imported_by_statements: Vec<Atom>,
     pub imported_by_calls: Vec<Atom>,
     pub required: Vec<Atom>,
+}
+
+/// Whether the loader keeps a file that is imported with this `type` in one place with what the other such types make of it. "json" has a place of its own.
+pub(crate) fn shares_place_in_loader(type_attribute: &[u8]) -> bool {
+    type_attribute != b"json" && places_of_form(b"", type_attribute).is_some()
 }
 
 fn is_spy(builtin: BuiltinId) -> bool {
@@ -120,8 +129,6 @@ pub(crate) struct SpiesOnUnknownObjects {
     /// Such a spy under a name that the file does not spell, as in a helper that takes the name: whoever calls the helper spells it.
     /// A name that nobody spells opens nothing, and the spy that meets an export under it fails by name.
     pub takes_names_from_outside: bool,
-    /// Such a spy under a name that is no constant where it is called, spelled or not: `for (const name of ["a", "b"]) spyOn(holder.it, name)`.
-    pub has_name_that_is_no_constant: bool,
     /// A spy on an object for which the file spells built-ins and objects of modules alone, through a variable, a list or a parameter: the names that stand
     /// for the objects of modules there: `fs` in `const files = fs as Record<string, F>; spyOn(files, name)`.
     pub module_objects_behind_other_names: Vec<ExprId>,
@@ -184,6 +191,52 @@ fn takes_names_alone<'s>(
     }
 }
 
+/// Whether `value` is only tested where it stands, so that what it stands for goes nowhere: `typeof jest !== "undefined"`, as react-dom and
+/// many more packages ask whether a test runs them, `jest === undefined`, `!jest`, `if (jest)`, `jest ? a : b`, `jest && ..`, which
+/// answers its left side only where that is no object. Both the look for spies and the look for mocks ask here.
+fn is_only_tested(hir: &File<'_>, bound: &Bound<'_>, mut value: ExprId) -> bool {
+    loop {
+        let user = match bound.parent_of_expr(value) {
+            Parent::Expr(user) => user,
+            Parent::Stmt(statement) => {
+                return match hir[statement].kind {
+                    StmtKind::Expr(_) => true,
+                    StmtKind::If { test, .. }
+                    | StmtKind::While { test, .. }
+                    | StmtKind::DoWhile { test, .. }
+                    | StmtKind::For { test, .. } => test == value,
+                    _ => false,
+                };
+            }
+            _ => return false,
+        };
+        match hir[user].kind {
+            ExprKind::Unary {
+                op: UnOp::Typeof | UnOp::Not | UnOp::Void,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq,
+                ..
+            } => return true,
+            ExprKind::Binary {
+                op: BinOp::And,
+                left,
+                ..
+            } if left == value => return true,
+            ExprKind::Cond { test, .. } if test == value => return true,
+            // `typeof jest !== "undefined" && jest ? a : b`: it may be what the whole answers, so it goes where that goes.
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                ..
+            }
+            | ExprKind::Cond { .. } => value = user,
+            _ if hir.type_assertion_operand(user) == Some(value) => value = user,
+            _ => return false,
+        }
+    }
+}
+
 /// `is_test_runner`: whether the site loads `bun:test`. `is_module_object`: whether the name stands for the object of a module: whoever asks looks at such a spy itself.
 pub(crate) fn find_spies_on_unknown_objects<'s>(
     hir: &File<'s>,
@@ -212,7 +265,7 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
             ImportSiteKind::ImportCall(_)
             | ImportSiteKind::Require(_)
             | ImportSiteKind::ImportMetaRequire(_)
-                if takes_names_alone(hir, bound, builtins, site.kind, &|it| !leads_to_spy(it)) => {}
+                if takes_names_alone(hir, bound, builtins, site.kind, &|_| true) => {}
             ImportSiteKind::MockModule(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaResolve(_) => {}
@@ -236,7 +289,6 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
     }
     let mut names = Vec::new();
     let mut takes_names_from_outside = false;
-    let mut has_name_that_is_no_constant = false;
     let mut module_objects_behind_other_names = Vec::new();
     for mention in (0..hir.exprs.len() as u32).map(ExprId) {
         let Some(builtin) = builtins
@@ -253,6 +305,9 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
             && hir.type_assertion_operand(parent) == Some(outermost)
         {
             outermost = parent;
+        }
+        if is_only_tested(hir, bound, outermost) {
+            continue;
         }
         let Parent::Expr(user) = bound.parent_of_expr(outermost) else {
             return under_any_name;
@@ -287,7 +342,6 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
             FoldedValue::Constant(Constant::String(name)) => Some(name),
             _ => None,
         };
-        has_name_that_is_no_constant |= constant.is_none();
         let objects = builtins.objects_spelled_for(name);
         if !objects.is_empty()
             && (objects.iter()).all(|it| it.is_builtin || is_module_object(it.object))
@@ -311,7 +365,6 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
         names,
         is_any_name: false,
         takes_names_from_outside,
-        has_name_that_is_no_constant,
         module_objects_behind_other_names,
     }
 }
@@ -339,6 +392,7 @@ fn mocks_modules_out_of_sight<'s>(
         return true;
     }
     let mut loads_test_runner = false;
+    let mut may_only_test_what_mocks = false;
     for (index, site) in analysis.import_sites.iter().enumerate() {
         if !is_test_runner(index) {
             continue;
@@ -352,6 +406,13 @@ fn mocks_modules_out_of_sight<'s>(
                 if takes_names_alone(hir, bound, builtins, site.kind, &|it| {
                     member_that_mocks_modules(it).is_none()
                 }) => {}
+            // A name that mocks modules comes out of a require(), as in a CommonJS file that got the names of the test runner: a call of
+            // it makes no site, so all that the file may do with it is to test it.
+            ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_)
+                if takes_names_alone(hir, bound, builtins, site.kind, &|_| true) =>
+            {
+                may_only_test_what_mocks = true;
+            }
             ImportSiteKind::MockModule(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaResolve(_) => {}
@@ -397,6 +458,12 @@ fn mocks_modules_out_of_sight<'s>(
             return false;
         }
         let holder = outermost_of(mention);
+        if is_only_tested(hir, bound, holder) {
+            return false;
+        }
+        if may_only_test_what_mocks {
+            return true;
+        }
         let Parent::Expr(user) = bound.parent_of_expr(holder) else {
             return true;
         };
@@ -451,7 +518,7 @@ pub(super) fn find_replaced_modules<'s>(
 /// A package of test helpers: `exports.mockModule = (path, factory) => mock.module(path, factory)`. The look through the test files follows what they name beside them
 /// and reads no installed package, so the build that holds the package finds it out. Few packages take anything from the test runner, and only those are looked at.
 pub(crate) fn packages_mock_modules_that_they_do_not_spell(files: &Files<'_>) -> bool {
-    find_what_packages_do_with_test_runner(files).mocks_any_module
+    find_what_packages_do_with_test_runner(files, false).mocks_any_module
 }
 
 /// What the installed packages of a program do with what they take from the test runner, where they do not spell on what.
@@ -465,7 +532,10 @@ pub(crate) struct TestRunnerInPackages {
     pub names_spied_on_unknown_objects: Vec<Vec<u8>>,
 }
 
-pub(crate) fn find_what_packages_do_with_test_runner(files: &Files<'_>) -> TestRunnerInPackages {
+pub(crate) fn find_what_packages_do_with_test_runner(
+    files: &Files<'_>,
+    logs: bool,
+) -> TestRunnerInPackages {
     let atoms = &files.atoms;
     let module_of = |specifier: ImportSpecifier| match specifier {
         ImportSpecifier::Constant(text) => match atoms.bytes(text) {
@@ -489,6 +559,14 @@ pub(crate) fn find_what_packages_do_with_test_runner(files: &Files<'_>) -> TestR
         let found =
             find_replaced_modules(hir, bound, analysis, &source.builtins, &module_of, atoms);
         let spies = found.spies_on_unknown_objects;
+        if logs && (found.any || spies.is_any_name || spies.takes_names_from_outside) {
+            bun_core::print_errorln!(
+                "AOT test run | a package takes from the test runner: {} | mocks a module that it does not spell {} | spies under a name that it does not spell {}",
+                bstr::BStr::new(files.module(file).file_name()),
+                found.any,
+                spies.is_any_name || spies.takes_names_from_outside,
+            );
+        }
         all.mocks_any_module |= found.any;
         all.spies_on_unknown_objects |= spies.is_any_name || spies.takes_names_from_outside;
         let names = spies.names.iter().map(|&name| atoms.bytes(name).to_vec());
@@ -666,7 +744,7 @@ impl Look<'_, '_> {
                 FileOfKey::Unknown => self.found.evicts_any = true,
             }
         }
-        self.found.changed_on_disk = find_paths_changed_on_disk(analysis);
+        self.found.changed_on_disk = find_paths_changed_on_disk(self.atoms, analysis);
         let names =
             find_names_that_unspelled_keys_may_be(hir, bound, analysis, self.atoms, self.builtins);
         let names = names.into_iter().map(|name| self.atoms.intern(name));
@@ -684,6 +762,18 @@ impl Look<'_, '_> {
     }
 
     fn find_how_files_are_loaded(&mut self) {
+        for site in self.analysis.import_sites {
+            // Those that hand the loader the type: `resolve_file_loaded_another_way`.
+            let written = match site.kind {
+                ImportSiteKind::Import(_) | ImportSiteKind::ImportCall(_) => site.attributes.some(),
+                _ => None,
+            };
+            let written = written.and_then(|it| self.hir.import_attribute(it, known::r#type));
+            if written.is_some_and(|it| shares_place_in_loader(self.atoms.bytes(it))) {
+                let files = self.specifiers_of(&site.specifier).unwrap_or_default();
+                self.found.imported_with_types.extend(files);
+            }
+        }
         for site in self.analysis.import_sites {
             let loaded = match site.kind {
                 ImportSiteKind::Import(_)

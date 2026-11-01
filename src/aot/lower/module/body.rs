@@ -161,6 +161,10 @@ impl FileLowering<'_, '_, '_, '_> {
         if embeds_function_text && self.source.function_role() == FunctionRole::Source {
             positions.text_of_body = self.find_text_of_body();
         }
+        if embeds_function_text {
+            positions.starts_of_statements_in_long_lines =
+                self.find_starts_of_statements_in_long_lines();
+        }
         let mut where_this_is_made = core::mem::take(&mut self.where_this_is_made);
         where_this_is_made.sort_unstable();
         let words = where_this_is_made.into_iter();

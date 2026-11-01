@@ -87,6 +87,10 @@ unsafe extern "C" {
         code: crate::ErrCode,
         path: &bun_core::String,
     ) -> JSValue;
+    safe fn Bun__AOT__letsTestRunLoadAddon(
+        global: &JSGlobalObject,
+        path: &bun_core::String,
+    ) -> bool;
 }
 
 #[cfg(bun_locked_environment)]
@@ -136,10 +140,10 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     }
 }
 
-/// BunCompiledModules.cpp. Zero: there is no such file.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__AOT__stampOfFile(path: &bun_core::String) -> u64 {
-    let Ok(stat) = bun_sys::stat(&bun_core::ZBox::from_bytes(path.to_utf8().slice())) else {
+pub unsafe extern "C" fn Bun__AOT__stampOfFile(path: *const u8, length: usize) -> u64 {
+    // SAFETY: see above.
+    let Ok(stat) = bun_sys::stat(unsafe { bun_core::ZStr::from_raw(path, length) }) else {
         return 0;
     };
     let stat = bun_sys::PosixStat::init(&stat);
@@ -420,6 +424,10 @@ pub fn error_if_code_outside_image_is_refused(
     compiled_program()?;
     let error = Bun__AOT__errorIfCodeOutsideImageIsRefused(global, code, path);
     (!error.is_empty()).then_some(error)
+}
+
+pub fn lets_test_run_load_addon(global: &JSGlobalObject, path: &bun_core::String) -> bool {
+    compiled_program().is_some() && Bun__AOT__letsTestRunLoadAddon(global, path)
 }
 
 pub(crate) fn refuses_code_at(global: &JSGlobalObject, path: &[u8]) -> bool {
@@ -878,8 +886,7 @@ pub extern "C" fn Bun__AOT__isLoadedSynchronously(
     path: &bun_core::String,
 ) -> bool {
     let vm = global.bun_vm();
-    vm.main() == Some(path.to_utf8().slice())
-        || global.has_plugins()
+    vm.is_test_entry_point(path)
         || !vm.transpiler_store.enabled
         || crate::node_compile_cache::is_enabled()
 }

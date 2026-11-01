@@ -1027,7 +1027,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
     ),
     parse_param!(
-        "--aot-memory-limit <STR>         With --aot --parallel: the memory that the run may take, e.g. 5GB. What doesn't fit as one program is compiled as several. Defaults to the container's limit, or the memory that is free. When given, a test file starts only where there is room for what --timings says it took."
+        "--aot-memory-limit <STR>         With --aot --parallel: the memory that the build may take, e.g. 5GB. What wouldn't fit as one program is compiled as several. Doesn't limit the tests that run. Defaults to the container's limit, or the memory that is free."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(

@@ -509,6 +509,7 @@ export default b.declarations(
   ["SlowBuffer", "isAscii", "isUtf8", "resolveObjectURL", "transcode"].flatMap(name =>
     b.static(`node:buffer.${name}`, undeclaredFunction),
   ),
-  // Its `prototype` is Buffer.prototype.
   b.extend("node:buffer.SlowBuffer", { hasUndeclaredMembers: true }),
+  b.same("node:buffer.SlowBuffer.prototype", "Buffer.prototype"),
+  b.constructionOfFunction("node:buffer.SlowBuffer", undeclaredFunction),
 );

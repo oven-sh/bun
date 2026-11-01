@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 
 if (isASAN)

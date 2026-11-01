@@ -454,26 +454,24 @@ function f2 name="brief" module=m0 position=253 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v5: undefined|null|boolean|number|object = AssumeType v4 provenType=undefined|null|boolean|number|object
 # CHECK-NEXT: v6: string = CallDirect v5 function=f2 accessSite=5
 # CHECK-NEXT: v7: 1 = Integer integer=1
-# CHECK-NEXT: v8: 1 = Upcast v7 castType=anything
-# CHECK-NEXT: v9: 1 = AssumeType v8 provenType=undefined|null|boolean|number|object
-# CHECK-NEXT: v10: string = CallDirect v9 function=f2 accessSite=7
-# CHECK-NEXT: v11: undefined = CallBuiltin -, v6, v10 overload=ConsoleLog/0 accessSite=8
-# CHECK-NEXT: v12: absent = Absent
-# CHECK-NEXT: PutModuleVariable v12 variable=g0
-# CHECK-NEXT: v14: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=11
-# CHECK-NEXT: v15: undefined|null|boolean|number|object = AssumeType v14 provenType=undefined|null|boolean|number|object
-# CHECK-NEXT: v16: string = CallDirect v15 function=f2 accessSite=12
-# CHECK-NEXT: v17: 2 = Integer integer=2
-# CHECK-NEXT: v18: 2 = Upcast v17 castType=anything
-# CHECK-NEXT: v19: 2 = AssumeType v18 provenType=undefined|null|boolean|number|object
-# CHECK-NEXT: v20: string = CallDirect v19 function=f2 accessSite=14
-# CHECK-NEXT: v21: undefined = CallBuiltin -, v16, v20 overload=ConsoleLog/0 accessSite=15
-# CHECK-NEXT: v22: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=18
-# CHECK-NEXT: v23: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=19
-# CHECK-NEXT: v24: boolean = StrictEq v22, v23
-# CHECK-NEXT: v25: undefined = CallBuiltin -, v24 overload=ConsoleLog/0 accessSite=20
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: Return v26
+# CHECK-NEXT: v8: 1 = Upcast v7 castType=undefined|null|boolean|number|object
+# CHECK-NEXT: v9: string = CallDirect v8 function=f2 accessSite=7
+# CHECK-NEXT: v10: undefined = CallBuiltin -, v6, v9 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v11: absent = Absent
+# CHECK-NEXT: PutModuleVariable v11 variable=g0
+# CHECK-NEXT: v13: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=11
+# CHECK-NEXT: v14: undefined|null|boolean|number|object = AssumeType v13 provenType=undefined|null|boolean|number|object
+# CHECK-NEXT: v15: string = CallDirect v14 function=f2 accessSite=12
+# CHECK-NEXT: v16: 2 = Integer integer=2
+# CHECK-NEXT: v17: 2 = Upcast v16 castType=undefined|null|boolean|number|object
+# CHECK-NEXT: v18: string = CallDirect v17 function=f2 accessSite=14
+# CHECK-NEXT: v19: undefined = CallBuiltin -, v15, v18 overload=ConsoleLog/0 accessSite=15
+# CHECK-NEXT: v20: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=18
+# CHECK-NEXT: v21: anything ~ undefined|null|boolean|number|object = CallDirect v3 function=f1 accessSite=19
+# CHECK-NEXT: v22: boolean = StrictEq v20, v21
+# CHECK-NEXT: v23: undefined = CallBuiltin -, v22 overload=ConsoleLog/0 accessSite=20
+# CHECK-NEXT: v24: undefined = Undefined
+# CHECK-NEXT: Return v24
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pick"
 # CHECK: module=m0 position=163 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1 flags=[IsExpected]}] results=[{type=undefined|null|boolean|number|object flags=[IsExpected]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f4 fallback=f5} {

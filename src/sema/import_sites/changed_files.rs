@@ -1,12 +1,12 @@
 //! Which files a call changes on disk: `writeFileSync(path, text)`, `fs.promises.rm(path)`, `Bun.write(path, text)`. `bun test` reads a file when something
 //! first loads it, so a build for a test run has to know which files of the program the run itself writes, moves or removes.
 
-use super::ScanInputs;
 use super::call_sites::is_free_name;
 use super::made_requires::follow_settled_bindings;
+use super::{ChangedPath, ImportSpecifier, ScanInputs};
 use crate::atom::Atom;
 use crate::fold::{Constant, FoldedValue, find_members_below_module};
-use crate::hir::{ExprId, ExprKind, IdList, MemberKey};
+use crate::hir::{ExprId, ExprKind, IdList, MemberKey, PropKey, PropKind};
 use smallvec::SmallVec;
 use std::cell::Cell;
 
@@ -17,15 +17,24 @@ enum Holder {
     Bun,
 }
 
+#[derive(Copy, Clone)]
+enum Reach {
+    File,
+    Below,
+    BelowIfRecursive(usize),
+}
+
 // The places of the operands that name what is another file behind the call, or none.
-fn operands_changed_by_function_of_fs(name: &[u8]) -> &'static [usize] {
+fn operands_changed_by_function_of_fs(name: &[u8]) -> &'static [(usize, Reach)] {
     match name {
         b"writeFile" | b"writeFileSync" | b"appendFile" | b"appendFileSync" | b"truncate"
-        | b"truncateSync" | b"unlink" | b"unlinkSync" | b"rm" | b"rmSync"
-        | b"createWriteStream" => &[0],
-        b"copyFile" | b"copyFileSync" | b"cp" | b"cpSync" | b"link" | b"linkSync" | b"symlink"
-        | b"symlinkSync" => &[1],
-        b"rename" | b"renameSync" => &[0, 1],
+        | b"truncateSync" | b"unlink" | b"unlinkSync" | b"createWriteStream" => &[(0, Reach::File)],
+        b"rm" | b"rmSync" => &[(0, Reach::BelowIfRecursive(1))],
+        b"copyFile" | b"copyFileSync" | b"link" | b"linkSync" | b"symlink" | b"symlinkSync" => {
+            &[(1, Reach::File)]
+        }
+        b"cp" | b"cpSync" => &[(1, Reach::BelowIfRecursive(2))],
+        b"rename" | b"renameSync" => &[(0, Reach::Below), (1, Reach::Below)],
         _ => &[],
     }
 }
@@ -98,12 +107,33 @@ fn opens_for_writing(inputs: &ScanInputs<'_, '_>, flags: Option<ExprId>) -> bool
         if bun_core::strings::index_of_any(inputs.atoms.bytes(flags), b"wa+").is_some())
 }
 
-/// The operands of the call that name files which it writes, moves or removes.
+fn may_say_recursive(inputs: &ScanInputs<'_, '_>, options: ExprId) -> bool {
+    let &ScanInputs { hir, atoms, .. } = inputs;
+    let options = hir.skip_type_assertions(options);
+    let properties = match hir[options].kind {
+        ExprKind::Object(properties) => properties,
+        ExprKind::Fn(_) => return false,
+        _ => return find_constant(inputs, options) != Some(Constant::Undefined),
+    };
+    let mut says_so = false;
+    for property in properties.iter().map(|property| &hir[property]) {
+        match property.key {
+            PropKey::Name(name) if atoms.bytes(name) != b"recursive" => {}
+            PropKey::Name(_) if property.kind == PropKind::Init => {
+                let value = find_constant(inputs, property.value);
+                says_so = !matches!(value, Some(Constant::Boolean(false) | Constant::Undefined));
+            }
+            _ => return true,
+        }
+    }
+    says_so
+}
+
 pub(super) fn find_operands_that_name_changed_files(
     inputs: &ScanInputs<'_, '_>,
     callee: ExprId,
     args: IdList<ExprId>,
-) -> SmallVec<[ExprId; 2]> {
+) -> SmallVec<[ChangedPath; 2]> {
     let &ScanInputs { hir, atoms, .. } = inputs;
     let callee = hir.skip_type_assertions(callee);
     let mut found = SmallVec::new();
@@ -123,33 +153,46 @@ pub(super) fn find_operands_that_name_changed_files(
     {
         return found;
     }
-    let operand = |place: usize| {
-        let mut up_to_it = hir.ids(args).take(place + 1);
-        match up_to_it.any(|operand| matches!(hir[operand].kind, ExprKind::Spread(_))) {
-            true => None,
-            false => hir.ids(args).nth(place),
-        }
+    let is_spread = |operand: ExprId| matches!(hir[operand].kind, ExprKind::Spread(_));
+    let operand = |place: usize| match hir.ids(args).take(place + 1).any(is_spread) {
+        true => None,
+        false => hir.ids(args).nth(place),
     };
+    let reaches_below = |reach: Reach| match reach {
+        Reach::File => false,
+        Reach::Below => true,
+        Reach::BelowIfRecursive(options) => match operand(options) {
+            Some(options) => may_say_recursive(inputs, options),
+            None => hir.ids(args).any(is_spread),
+        },
+    };
+    let changed = |operand: ExprId, reach: Reach| ChangedPath {
+        operand,
+        path: ImportSpecifier::Unknown,
+        reaches_below: reaches_below(reach),
+    };
+    let file = |operand: ExprId| changed(operand, Reach::File);
     match find_function(inputs, callee) {
         Some((Holder::Fs | Holder::FsPromises, name)) => {
             let name = atoms.bytes(name);
             let places = operands_changed_by_function_of_fs(name).iter();
-            found.extend(places.filter_map(|&place| operand(place)));
+            found
+                .extend(places.filter_map(|&(place, reach)| Some(changed(operand(place)?, reach))));
             if matches!(name, b"open" | b"openSync") && opens_for_writing(inputs, operand(1)) {
-                found.extend(operand(0));
+                found.extend(operand(0).map(file));
             }
         }
         Some((Holder::Bun, name)) if atoms.bytes(name) == b"write" => {
             let target = operand(0);
             let path = target.and_then(|target| find_path_of_file_object(inputs, target));
-            found.extend(path.or(target));
+            found.extend(path.or(target).map(file));
         }
         Some((Holder::Bun, _)) => {}
         None => {
-            if let Some((file, MemberKey::Name(name))) = hir.member_key(callee)
+            if let Some((object, MemberKey::Name(name))) = hir.member_key(callee)
                 && is_method_of_file_that_changes_it(atoms.bytes(name))
             {
-                found.extend(find_path_of_file_object(inputs, file));
+                found.extend(find_path_of_file_object(inputs, object).map(file));
             }
         }
     }

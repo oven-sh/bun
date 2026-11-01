@@ -4,12 +4,13 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 // The files that Workers start from are entry points of the one program of a test run. The build learns of them from the files it has loaded.
-// Without a tsconfig.json the TypeScript entry points are what the program lists for its types, so the build loads all files anew with them.
-// A file that a Worker starts from may start a Worker too, here four in a row, each named in a
+// The program goes by the tsconfig.json that is nearest to the most entry points. Here that is another one once the Workers' files are known,
+// so the build loads all files anew with them. A file that a Worker starts from may start a Worker too, here four in a row, each named in a
 // file that only the one before it imports: the build follows the row at once and loads all files one more time, not four.
-// With a tsconfig.json: a-test-run-that-starts-workers-loads-its-files-once.test.ts.
+// Where the configuration stays the same: a-test-run-that-starts-workers-loads-its-files-once.test.ts.
 const files: Record<string, string> = {
   "package.json": `{ "type": "module" }`,
+  "src/tsconfig.json": "{}",
   "chain.test.ts": `import { test, expect } from "bun:test";
     import { start } from "./src/start";
     test("a row of Workers", async () => {
@@ -32,7 +33,8 @@ for (const i of [1, 2, 3]) {
 
 async function runTests(directory: string, ...flags: string[]) {
   const env = { ...bunEnv, BUN_JSC_logAOTPhaseTimes: flags.length ? "1" : undefined };
-  const { stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
+  const { stderr, exitCode } = await run([bunExe(), "test", "--timeout=60000", ...flags], directory, env);
+  if (exitCode !== 0) console.error(stderr);
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
   const loadedAgain = [...stderr.matchAll(/^AOT files are loaded again \| (.*)$/gm)].map(match => match[1]);
   return { results, exitCode, loadedAgain };

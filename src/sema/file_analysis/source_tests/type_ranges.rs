@@ -100,6 +100,14 @@ const EXACT_PAIRS: &[Row] = &[
         r#"({ 1n: a }); class A { 1n() {} 2n = 0; }"#,
     ),
     (r#"with (a as T) b!;"#, r#"with (a) b;"#),
+    (
+        r#"const f = () => <T>{}; const g = () => <T>{ a: 1 }.a; <T>function () {}(); <T>class {}.name; const h = <T>{};"#,
+        r#"const f = () => ({}); const g = () => ({ a: 1 }).a; (function () {})(); (class {}).name; const h = ({});"#,
+    ),
+    (
+        r#"function f(a) { return<T>a; } typeof<T>b; void<T>c; d = <T>e; f(<T>g); h = <U><T>{};"#,
+        r#"function f(a) { return a; } typeof b; void c; d = e; f(g); h = ({});"#,
+    ),
 ];
 
 const TYPED_TEXTS: &[&str] = &[
@@ -130,6 +138,11 @@ const TYPED_TEXTS: &[&str] = &[
 ];
 
 const KEPT_TEXT_ROWS: &[(&str, &str, &str)] = &[
+    (
+        "a.ts",
+        "const f = () => <Foo>{}; function g(a: unknown) { return<number>a; } const h = <T>i;",
+        "const f = () => ({}); function g(a) { return a; } const h = i;",
+    ),
     (
         "a.ts",
         "enum E { A = 1 as number } namespace N { export const v: T = 1; export interface I {} }",

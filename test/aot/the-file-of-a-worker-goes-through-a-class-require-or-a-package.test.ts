@@ -189,7 +189,11 @@ const asWritten = ways.map(([name], index) => `SEEN ${name} | w${index + 1} 42`)
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-behind-a-class-require-or-a-package", { ...files, ...testFiles });
-  const ran = await run([bunExe(), "test", ...flags, "--isolate"], String(dir), { ...bunEnv, ...env });
+  // One test starts all the Workers, one after the other: on a busy machine, or under a sanitizer, they take more than the five seconds that a test has.
+  const ran = await run([bunExe(), "test", ...flags, "--isolate", "--timeout=60000"], String(dir), {
+    ...bunEnv,
+    ...env,
+  });
   return {
     seen: ran.stdout.split("\n").filter(line => line.startsWith("SEEN ")),
     taken: [
@@ -198,6 +202,7 @@ async function see(flags: string[], env: Record<string, string>) {
       ),
     ].map(match => Number(match[1])),
     exitCode: ran.exitCode,
+    stderr: ran.exitCode ? ran.stderr : "",
   };
 }
 
@@ -205,7 +210,7 @@ async function see(flags: string[], env: Record<string, string>) {
 for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1", "TestRunLayers:3,TestRunPartFiles:1"]) {
   test(`each Worker answers as under plain bun test, and runs compiled (${words})`, async () => {
     const plain = await see([], {});
-    expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0 });
+    expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0, stderr: "" });
     expect(await see(["--aot"], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
     const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
     expect(await see(["--aot"], env)).toEqual({ ...plain, taken: [count] });

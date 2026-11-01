@@ -354,7 +354,8 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
-    lockFoldedMembers(vm, globalObject, release, "process.release"_s, { "name"_s });
+    if (!Bun::compiledModulesRunInPlaceOfFiles())
+        lockFoldedMembers(vm, globalObject, release, "process.release"_s, { "name"_s });
     return release;
 }
 
@@ -3794,8 +3795,11 @@ static EncodedJSValue writeWithoutSink(JSC::JSGlobalObject* globalObject, CallFr
     }
     JSValue write = isOver ? JSValue() : thisValue.get(globalObject, Identifier::fromString(vm, "_write"_s));
     RETURN_IF_EXCEPTION(scope, {});
-    if (write && !write.isCallable())
-        return throwVMTypeError(globalObject, scope, makeString("this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is "_s, write.isObject() ? "an instance of "_s : ""_s, JSC::errorDescriptionForValue(globalObject, write), ')'));
+    if (write && !write.isCallable()) {
+        String description = JSC::errorDescriptionForValue(globalObject, write);
+        RETURN_IF_EXCEPTION(scope, {});
+        return throwVMTypeError(globalObject, scope, makeString("this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is "_s, write.isObject() ? "an instance of "_s : ""_s, description, ')'));
+    }
     // From here plain Bun needs Writable.prototype.write.
     RELEASE_AND_RETURN(scope, Process_functionNeedsWholeOutputStream(globalObject, callFrame));
 }

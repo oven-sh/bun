@@ -1,12 +1,14 @@
 use super::aliases::declared_names;
+use super::builtins_of_files::WayOutOfLoadedFile;
 use super::spelled_values::SpelledValues;
 use super::unnamed_holders::UnnamedHolders;
 use super::{
-    BuiltinPath, CommonJsBuiltins, EvaluatedText, KeyOfModuleCache, ModuleObjectMention,
-    ObjectSpelled, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect, WriteOnImport,
+    BuiltinExported, BuiltinPath, CommonJsBuiltins, EvaluatedText, KeyOfModuleCache,
+    ModuleObjectMention, ObjectSpelled, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
+    WriteOnImport,
 };
 use crate::builtins::runtime_uses::{
-    MentionedUses, Mentions, RuntimeUses, reaches_module_cache, reaches_unknown_module_loader,
+    MentionedUses, Mentions, RuntimeUses, reaches_unknown_module_loader,
 };
 use crate::builtins::table::{
     self, BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
@@ -17,7 +19,7 @@ use bun_sema::fold::Decision;
 use bun_sema::hir::{self, BinOp, ExprId, ExprKind, Flags, MemberKey, PatKind, StmtKind, VarKind};
 use bun_sema::import_sites::find_module_printed_as_require;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
-use core::cell::{OnceCell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::ops::Range;
 use smallvec::SmallVec;
 
@@ -281,7 +283,9 @@ pub(super) struct ResolverOutput {
     pub(super) replaced_members: Vec<BuiltinId>,
     pub(super) names_added: Vec<(BuiltinId, Atom)>,
     pub(super) holders_named_from_outside: Vec<BuiltinId>,
+    pub(super) writes_on_parameters_under_any_name: bool,
     pub(super) builtins_handed_out: Vec<BuiltinId>,
+    pub(super) builtins_exported: Vec<BuiltinExported>,
     pub(super) writes_on_imports: Vec<WriteOnImport>,
     pub(super) keys_spelled_on_other_objects: Vec<(ExprId, Atom)>,
     pub(super) objects_spelled_for_calls: Vec<ObjectSpelled>,
@@ -290,6 +294,8 @@ pub(super) struct ResolverOutput {
     pub(super) keys_stored_in_module_cache: Vec<KeyOfModuleCache>,
     pub(super) hands_module_cache_on: bool,
     pub(super) loses_sight_of_module_cache: bool,
+    pub(super) gets_at_entries_of_module_cache: bool,
+    pub(super) reads_entries_of_module_cache: bool,
 }
 
 pub(super) struct Resolver<'a, 's> {
@@ -303,6 +309,8 @@ pub(super) struct Resolver<'a, 's> {
     // The one built-in that is stored into a binding all of whose reads are in this file. `None`: several are.
     pub(super) held: FxHashMap<SymbolId, Option<ResolvedValue>>,
     pub(super) exported_symbols: FxHashSet<SymbolId>,
+    pub(super) ways_out_of_loaded_files:
+        RefCell<FxHashMap<SymbolId, Option<WayOutOfLoadedFile<'a>>>>,
     pub(super) commonjs: CommonJsBuiltins,
     pub(super) exposes_own_module_object: bool,
     pub(super) stores_to_exports: Vec<ExprId>,
@@ -317,6 +325,9 @@ pub(super) struct Resolver<'a, 's> {
     pub(super) calls_by_name: OnceCell<FxHashMap<SymbolId, Vec<hir::CallId>>>,
     pub(super) spelled_values: RefCell<SpelledValues>,
     pub(super) unnamed_holders: RefCell<UnnamedHolders>,
+    /// `find_builtins_guessed_widely`: what it has looked at, and whether it is looking.
+    pub(super) widely_guessed_holders: RefCell<UnnamedHolders>,
+    pub(super) guesses_widely: Cell<bool>,
     // The ids of the expressions that count as evaluated lie in this range, which is short for a part of a file.
     evaluated: Range<u32>,
     // The evaluated expressions whose state `resolve` computes, and the evaluated calls with and without `new`. Both in order.
@@ -414,12 +425,15 @@ impl<'a, 's> Resolver<'a, 's> {
             calls_by_name: OnceCell::new(),
             spelled_values: RefCell::default(),
             unnamed_holders: RefCell::default(),
+            widely_guessed_holders: RefCell::default(),
+            guesses_widely: Cell::new(false),
             states: vec![ExprState::Unvisited; evaluated.len()],
             first_state: evaluated.start,
             evaluated,
             aliases: FxHashMap::default(),
             held: FxHashMap::default(),
             exported_symbols: FxHashSet::default(),
+            ways_out_of_loaded_files: RefCell::default(),
             commonjs: CommonJsBuiltins::default(),
             exposes_own_module_object: false,
             stores_to_exports: Vec::new(),
@@ -665,6 +679,9 @@ impl<'a, 's> Resolver<'a, 's> {
 
     #[rustfmt::skip]
     fn compute_state(&mut self, expr: ExprId) -> ExprState {
+        if let Some(value) = self.find_builtin_out_of_loaded_file(expr) {
+            return ExprState::Builtin(value);
+        }
         match self.input.hir[expr].kind {
             ExprKind::Ident(name) => match self.input.bound.binding(expr) {
                 Binding::Free => self.compute_free_name_state(expr, name),
@@ -770,8 +787,10 @@ impl<'a, 's> Resolver<'a, 's> {
             ),
             SourceDialect::Runtime => false,
         };
-        let reaches_module_cache = input.dialect == SourceDialect::Program
-            && reaches_module_cache(&mentioned, &exposed, input.platform);
+        let reaches_module_cache =
+            input.dialect == SourceDialect::Program && output.gets_at_entries_of_module_cache;
+        let reads_entries_of_module_cache =
+            input.dialect == SourceDialect::Program && output.reads_entries_of_module_cache;
         let mut ids = mentioned.iter();
         let names_plugin = ids.any(|&id| table::canonical_id(id) == BuiltinId::BunPlugin);
         let mut exprs = Vec::new();
@@ -816,7 +835,9 @@ impl<'a, 's> Resolver<'a, 's> {
             replaced_members: sorted_unique(output.replaced_members),
             names_added: output.names_added.into_boxed_slice(),
             holders_named_from_outside: output.holders_named_from_outside.into_boxed_slice(),
+            writes_on_parameters_under_any_name: output.writes_on_parameters_under_any_name,
             builtins_handed_out: output.builtins_handed_out.into_boxed_slice(),
+            builtins_exported: output.builtins_exported.into_boxed_slice(),
             writes_on_imports: output.writes_on_imports.into_boxed_slice(),
             mentioned,
             #[cfg(test)]
@@ -834,6 +855,7 @@ impl<'a, 's> Resolver<'a, 's> {
             hands_module_cache_on: output.hands_module_cache_on,
             loses_sight_of_module_cache: output.loses_sight_of_module_cache || names_plugin,
             reaches_module_cache,
+            reads_entries_of_module_cache,
         }
     }
 }

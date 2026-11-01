@@ -210,7 +210,7 @@ function f2 name="passThroughRecord" module=m0 position=353 flags=[IsChecked, Ha
     v6 = Convert v5 declared={type=anything site=w9} illTypedCause=FromLooseType @469
     Return v6 @469
 }
-function f3 name="listEntries" module=m0 position=640 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<never> site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w5}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="listEntries" module=m0 position=640 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<never> site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w5}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<never>, v1: number):
     Jump -> next b1() @640
   b1():
@@ -346,7 +346,7 @@ function f3 name="listEntries" module=m0 position=640 flags=[IsChecked, HasExpli
     v100 = Undefined @1755
     Return v100 @1755
 }
-function f4 name="isAlways" module=m0 position=850 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=w19}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 name="isAlways" module=m0 position=850 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=w19}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @850
   b1():
@@ -450,7 +450,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="listEntries"
-# CHECK: module=m0 position=640 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<never, proven, pristine[Storage, Names, Dense]> site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=0 site=w5}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=640 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=Array<never, proven, pristine[Storage, Names, Dense]> site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=0 site=w5}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="wrapFirst"
 # CHECK: module=m0 position=1163 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w23 flags=[IsExpected, OmitsUndefined]}] results=[{type=L2 site=w24 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f10 fallback=f12}
 # CHECK-LABEL: function {{*}}name="wrapSecond"
@@ -480,7 +480,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="wrapSecond"
 # CHECK: module=m0 position=1371 kind=Arrow role=ResultWorker flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w26}] results=[{type=true}, {type=undefined|null|string}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11 parameterMap=[{original=0}]} creator=ResultWorker{origin=f11}
 # CHECK-LABEL: function {{*}}name="listEntries"
-# CHECK: module=m0 position=640 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} inlineFrames=[{}, {callee=f6 callPosition=1447 module=m0}, {callee=f5 callPosition=1239 module=m0}, {callee=f4 callPosition=1031 module=m0}, {callee=f10 callPosition=1163 parent=2 isTailCall=true module=m0}, {callee=f11 callPosition=1371 parent=1 isTailCall=true module=m0}, {callee=f15 callPosition=1371 parent=5 module=m0}, {callee=f14 callPosition=1163 parent=4 module=m0}] {
+# CHECK: module=m0 position=640 flags=[IsChecked] length=2 thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} inlineFrames=[{}, {callee=f6 callPosition=1447 module=m0}, {callee=f5 callPosition=1239 module=m0}, {callee=f4 callPosition=1031 module=m0}, {callee=f10 callPosition=1163 parent=2 isTailCall=true module=m0}, {callee=f11 callPosition=1371 parent=1 isTailCall=true module=m0}, {callee=f15 callPosition=1371 parent=5 module=m0}, {callee=f14 callPosition=1163 parent=4 module=m0}] {
 # CHECK-NEXT: b0() handler=b13():
 # CHECK-NEXT: v2: anything ~ undefined|null|object = GetModuleVariable variable=g2
 # CHECK-NEXT: v3: 1 = Integer integer=1
@@ -513,56 +513,55 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b5(v24: L2) handler=b13():
 # CHECK-NEXT: v25: anything ~ undefined|null|string = GetSlot v24 key="value" receivers=[L2] level=Proven accessSite=17
 # CHECK-NEXT: v26: undefined|@@asyncDispose ~ undefined = AssumeType v25 provenType=undefined|@@asyncDispose
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectEntries
-# CHECK-NEXT: v28: "key" = String string="key"
-# CHECK-NEXT: v29: Array = NewArray v28, v26 contents=anything
-# CHECK-NEXT: v30: Array<Array> = NewArray v29 contents=Array storage=Frame
-# CHECK-NEXT: v31: guard = AllGuards v30
+# CHECK-NEXT: v27: "key" = String string="key"
+# CHECK-NEXT: v28: Array = NewArray v27, v26 contents=anything
+# CHECK-NEXT: v29: Array<Array> = NewArray v28 contents=Array storage=Frame
+# CHECK-NEXT: v30: guard = AllGuards v29
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6() handler=b13():
-# CHECK-NEXT: v32: Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v33: 0 = Integer
-# CHECK-NEXT: Jump -> next b7(v31)
-# CHECK-NEXT: b7(v34: guard):
-# CHECK-NEXT: v35: boolean = IsInBounds v32, v33
-# CHECK-NEXT: Branch v35 -> taken b8(| 0), notTaken b10()
-# CHECK-NEXT: b8(v36: guard):
-# CHECK-NEXT: v37: guard = AllGuards v34, v36
-# CHECK-NEXT: v38: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v32, v33, v37 arrayStorage=Contiguous level=Expected accessSite=20 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v39: 1 = Integer integer=1
-# CHECK-NEXT: v40: boolean = IsInBounds v38, v39
-# CHECK-NEXT: Branch v40 -> taken b9(| 0), notTaken b11(v38)
-# CHECK-NEXT: b9(v41: guard):
-# CHECK-NEXT: v42: undefined|string|@@asyncDispose = GetArrayElement v38, v39, v41 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b12(v42)
+# CHECK-NEXT: v31: Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v32: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v30)
+# CHECK-NEXT: b7(v33: guard):
+# CHECK-NEXT: v34: boolean = IsInBounds v31, v32
+# CHECK-NEXT: Branch v34 -> taken b8(| 0), notTaken b10()
+# CHECK-NEXT: b8(v35: guard):
+# CHECK-NEXT: v36: guard = AllGuards v33, v35
+# CHECK-NEXT: v37: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v31, v32, v36 arrayStorage=Contiguous level=Expected accessSite=20 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: boolean = IsInBounds v37, v38
+# CHECK-NEXT: Branch v39 -> taken b9(| 0), notTaken b11(v37)
+# CHECK-NEXT: b9(v40: guard):
+# CHECK-NEXT: v41: undefined|string|@@asyncDispose = GetArrayElement v37, v38, v40 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b12(v41)
 # CHECK-NEXT: b10() frequency=Rare handler=b13():
-# CHECK-NEXT: v43: undefined|Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = ElemGet v32, v33 accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: v44: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v43
-# CHECK-NEXT: Jump -> next b11(v44)
-# CHECK-NEXT: b11(v45: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v46: 1 = Integer integer=1
-# CHECK-NEXT: v47: undefined|string|@@asyncDispose = GetArrayElement v45, v46 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b12(v47)
-# CHECK-NEXT: b12(v48: undefined|string|@@asyncDispose) handler=b13():
-# CHECK-NEXT: v49: undefined = CallDirect v48 function=f1 accessSite=22
+# CHECK-NEXT: v42: undefined|Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = ElemGet v31, v32 accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: v43: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v42
+# CHECK-NEXT: Jump -> next b11(v43)
+# CHECK-NEXT: b11(v44: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v45: 1 = Integer integer=1
+# CHECK-NEXT: v46: undefined|string|@@asyncDispose = GetArrayElement v44, v45 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b12(v46)
+# CHECK-NEXT: b12(v47: undefined|string|@@asyncDispose) handler=b13():
+# CHECK-NEXT: v48: undefined = CallDirect v47 function=f1 accessSite=22
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b13() role=CatchHandler:
-# CHECK-NEXT: v50: anything = CatchValue
-# CHECK-NEXT: v51: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v50 castType=anything
-# CHECK-NEXT: v52: boolean = TypeTest v51 testedType=undefined|null
-# CHECK-NEXT: Branch v52 -> taken b14(), notTaken b15(| 0)
+# CHECK-NEXT: v49: anything = CatchValue
+# CHECK-NEXT: v50: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v49 castType=anything
+# CHECK-NEXT: v51: boolean = TypeTest v50 testedType=undefined|null
+# CHECK-NEXT: Branch v51 -> taken b14(), notTaken b15(| 0)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v53: undefined = Undefined
-# CHECK-NEXT: Jump -> next b16(v53)
-# CHECK-NEXT: b15(v54: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
-# CHECK-NEXT: v55: anything = PropGet v54 key="name" accessSite=29
-# CHECK-NEXT: Jump -> next b16(v55)
-# CHECK-NEXT: b16(v56: anything):
-# CHECK-NEXT: v57: undefined = CallDirect v56 function=f1 accessSite=30
+# CHECK-NEXT: v52: undefined = Undefined
+# CHECK-NEXT: Jump -> next b16(v52)
+# CHECK-NEXT: b15(v53: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
+# CHECK-NEXT: v54: anything = PropGet v53 key="name" accessSite=29
+# CHECK-NEXT: Jump -> next b16(v54)
+# CHECK-NEXT: b16(v55: anything):
+# CHECK-NEXT: v56: undefined = CallDirect v55 function=f1 accessSite=30
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v58: "0 0.25   0" = String string="0 0.25   0"
-# CHECK-NEXT: v59: undefined = CallDirect v58 function=f1 accessSite=36
-# CHECK-NEXT: v60: undefined = Undefined
-# CHECK-NEXT: Return v60
+# CHECK-NEXT: v57: "0 0.25   0" = String string="0 0.25   0"
+# CHECK-NEXT: v58: undefined = CallDirect v57 function=f1 accessSite=36
+# CHECK-NEXT: v59: undefined = Undefined
+# CHECK-NEXT: Return v59
 # CHECK-NEXT: }

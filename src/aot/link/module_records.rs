@@ -447,11 +447,20 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.lists_files_in_cache() && graph.is_code_of_program(module) {
             flags |= ModuleFlags::IS_LISTED_IN_CACHE;
         }
+        if graph.lists_files_in_cache()
+            && graph.reads_entries_of_cache()
+            && graph.is_code_of_program(module)
+        {
+            flags |= ModuleFlags::IS_SHOWN_BY_ENTRY_OF_CACHE;
+        }
         if graph.may_be_evicted(module) && graph.is_code_of_program(module) {
             flags |= ModuleFlags::MAY_BE_EVICTED;
         }
         if graph.is_changed_on_disk_by_run(module) && graph.is_code_of_program(module) {
             flags |= ModuleFlags::IS_CHANGED_ON_DISK_BY_RUN;
+        }
+        if graph.loads_compiled_files_alone(module) {
+            flags |= ModuleFlags::LOADS_COMPILED_FILES_ALONE;
         }
         if matches!(module, ModuleRef::File(file) if graph.runs_again(file)) {
             flags |= ModuleFlags::RUNS_AGAIN;

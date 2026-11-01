@@ -271,7 +271,10 @@ const moduleChildrenFunctions = [
   ),
 ];
 
-const requireCacheFunctions = [...functionsIn("builtins/CommonJS", "createRequireCache"), ...moduleChildrenFunctions];
+const requireCacheFunctions = [
+  ...functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
+  ...moduleChildrenFunctions,
+];
 
 const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverseArray");
 
@@ -1033,4 +1036,5 @@ export default b.declarations(
     ),
   }),
   b.excluded("builtins/Bake", "renderRoutesForProdStatic"),
+  b.excluded("builtins/CommonJS", "createRequireCache"),
 );

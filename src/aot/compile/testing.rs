@@ -379,6 +379,7 @@ fn with_loaded_bind_input<R>(
             entry_points_run_again: false,
             typescript_drops_absent_exports: false,
             loads_code_from_disk: false,
+            only_tests_load_code_from_disk: false,
             host_runs_files_from_disk: false,
             stand_in_for_files_from_disk: None,
             application: None,

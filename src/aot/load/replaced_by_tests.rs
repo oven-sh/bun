@@ -9,13 +9,16 @@ use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::{ThreadCaches, drop_thread_caches, for_each_parallel_in_runs};
 use bun_sys::{Fd, File};
 use bun_threading::Guarded;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use crate::builtins::table::{self, Mutability};
-use crate::builtins::{BuiltinId, find_member_written_behind};
+use crate::builtins::{
+    BuiltinId, RuntimeModule, find_member_written_behind, members_written_under_any_name,
+};
 use crate::load::is_in_node_modules;
 use crate::load::replaced_builtins::{
-    FoundInFile, is_relative, look_at_files, look_at_files_of_run,
+    BuiltinsOfModule, FoundInFile, is_relative, look_at_files, look_at_files_of_run,
 };
 use crate::load::runtime_modules::find_module_named;
 use crate::options::OpenedName;
@@ -52,9 +55,11 @@ pub(crate) struct FoundInTests {
     pub text_spies_under_any_name: bool,
     pub evicted: Vec<WrittenModule>,
     pub evicts_any: bool,
-    /// `writeFileSync(path, text)`: the whole paths that the files spell to calls which write, move or remove what is there.
+    /// `writeFileSync(path, text)`: the whole paths that the files spell to calls which write, move or remove what is there. A path that such a call follows below a
+    /// folder is here once more with `/` at its end.
     pub paths_changed_on_disk: Vec<Vec<u8>>,
     pub required_where_throws_are_caught: Vec<WrittenModule>,
+    pub imported_with_types: Vec<WrittenModule>,
     pub names_file_with_query: bool,
     pub imported_by_statements: Vec<WrittenModule>,
     pub imported_by_calls: Vec<WrittenModule>,
@@ -69,29 +74,46 @@ pub(crate) struct FoundInTests {
     writes_on_imports: Vec<(Vec<u8>, Vec<Vec<u8>>, Vec<u8>)>,
     /// A file in the same spelling, and a text that another file passes to what it imports from it.
     texts_passed: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The files with `FoundInFile::writes_on_parameters_under_any_name`, each as the scan was told to read it.
+    write_on_parameters_under_any_name: Vec<Vec<u8>>,
+    /// A file in the same spelling, and a built-in object that another file passes to what it imports from it.
+    builtins_passed: Vec<(Vec<u8>, u32)>,
     library_modules_named: Vec<Vec<u8>>,
     /// By the path of the file.
     exported_again: FxHashMap<Vec<u8>, ExportedAgain>,
 }
 
 /// `FoundInFile::names_exported_again` and `modules_exported_again`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ExportedAgain {
     names: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
     modules: Vec<Vec<u8>>,
 }
 
-fn read_file_named(path: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+enum FileNamed {
+    Read {
+        path: Vec<u8>,
+        text: Vec<u8>,
+    },
+    /// Under another spelling.
+    LookedAtBefore,
+}
+
+/// `is_looked_at`: whether the file at a path needs no second look. It is there, so the name leads to it as it would to its text.
+fn read_file_named(path: &[u8], is_looked_at: &dyn Fn(&[u8]) -> bool) -> Option<FileNamed> {
     const EXTENSIONS: [&[u8]; 8] = [
         b".ts", b".tsx", b".js", b".jsx", b".mts", b".mjs", b".cts", b".cjs",
     ];
     // `new URL("../scripts/run.sh", import.meta.url)` names a file that holds no code of ours.
     let read = |path: Vec<u8>| {
+        if is_looked_at(&path) {
+            return Some(FileNamed::LookedAtBefore);
+        }
         let holds_code = EXTENSIONS.iter().any(|extension| path.ends_with(extension));
         let text = File::read_from(Fd::cwd(), &path)
             .ok()
             .filter(|_| holds_code)?;
-        Some((path, text))
+        Some(FileNamed::Read { path, text })
     };
     let query = bun_core::strings::index_of_char_usize(path, b'?');
     let path = query.map_or(path, |start| &path[..start]);
@@ -122,11 +144,201 @@ fn find_files_in_folder(path: &[u8]) -> Vec<Vec<u8>> {
     files
 }
 
-/// One of Bun's own modules: what it writes on built-in objects, and the modules of Bun that it names.
+/// One of Bun's own modules: what it writes on built-in objects, the modules of Bun that it names, and the built-ins that it exports: `export default console`.
 struct LibraryModule {
     id: u32,
     writes: Vec<u32>,
     names: Vec<u32>,
+    builtins_exported: Vec<(Vec<Vec<u8>>, u32)>,
+}
+
+/// A file that exports built-ins, or exports again what another file may export.
+struct ExportingFile {
+    path: Vec<u8>,
+    builtins: BuiltinsOfModule,
+    again: ExportedAgain,
+}
+
+/// A file that loads others, as the scan was told to read it, and how many built-ins it was told of when it was read.
+struct LoadingFile {
+    asked_for: Vec<u8>,
+    path: Vec<u8>,
+    names_loaded: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    told_of: usize,
+}
+
+/// The built-ins that go from file to file under a binding: `export const { getPrototypeOf } = Object` in one, `getPrototypeOf(Uint8Array).prototype.fill = f` in another.
+#[derive(Default)]
+struct BuiltinsBetweenFiles {
+    library: &'static [LibraryModule],
+    /// By `key_of_file`.
+    exporting: FxHashMap<Vec<u8>, ExportingFile>,
+    /// By `key_of_file`: what whoever loads the file gets, its own exports and those that it exports again. Only of files that let a built-in through.
+    visible: FxHashMap<Vec<u8>, BuiltinsOfModule>,
+    /// "@/test/tools" as a file of this folder writes it: the path.
+    under_other_names: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
+}
+
+// One file writes `./tools.js` for what another writes `./tools` and the disk holds as tools.ts, or as tools/index.ts.
+fn key_of_file(path: &[u8]) -> &[u8] {
+    let stem = without_extension(path);
+    match stem.strip_suffix(b"index") {
+        Some([folder @ .., b'/']) => folder,
+        Some([folder @ .., b'\\']) if cfg!(windows) => folder,
+        _ => stem,
+    }
+}
+
+impl BuiltinsBetweenFiles {
+    fn key_of_module(&self, importer: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        let folder = dirname::<platform::Auto>(importer);
+        if !is_relative(specifier) {
+            let path = (self.under_other_names).get(&(folder.to_vec(), specifier.to_vec()))?;
+            return Some(key_of_file(path).to_vec());
+        }
+        let mut buffer = path_buffer_pool::get();
+        let joined =
+            join_abs_string_buf_checked::<platform::Auto>(folder, &mut buffer[..], &[specifier])?;
+        Some(key_of_file(joined).to_vec())
+    }
+
+    fn find_in_library(&self, module: RuntimeModule) -> Option<BuiltinsOfModule> {
+        let manifest = Archive::embedded().manifest();
+        let id = manifest.module_by_specifier(table::specifier_of(module))?;
+        let at = self.library.binary_search_by_key(&id, |module| module.id);
+        let exported = &self.library[at.ok()?].builtins_exported;
+        (!exported.is_empty()).then(|| BuiltinsOfModule {
+            exported: exported.clone(),
+            object_is_default: true,
+        })
+    }
+
+    /// What `importer` gets from the module that it writes as `specifier`.
+    fn find(&self, importer: &[u8], specifier: &[u8]) -> Option<BuiltinsOfModule> {
+        match find_module_named(specifier) {
+            Some(module) => self.find_in_library(module),
+            None => (self.visible)
+                .get(&self.key_of_module(importer, specifier)?)
+                .cloned(),
+        }
+    }
+
+    /// Works out `visible`: each exporting file is walked once, however many files load it and however many ways lead to it.
+    fn settle(&mut self) {
+        let mut visible = FxHashMap::default();
+        for key in self.exporting.keys() {
+            self.settle_file(key, &mut visible, &mut Vec::new());
+        }
+        visible.retain(|_, module: &mut BuiltinsOfModule| !module.exported.is_empty());
+        self.visible = visible;
+    }
+
+    fn settle_file(
+        &self,
+        key: &[u8],
+        visible: &mut FxHashMap<Vec<u8>, BuiltinsOfModule>,
+        visiting: &mut Vec<Vec<u8>>,
+    ) -> Option<BuiltinsOfModule> {
+        if let Some(known) = visible.get(key) {
+            return Some(known.clone());
+        }
+        let file = self.exporting.get(key)?;
+        // `export * from` in a circle
+        if visiting.iter().any(|visited| visited == key) {
+            return None;
+        }
+        visiting.push(key.to_vec());
+        let mut found = file.builtins.clone();
+        // What a name of the other module leads to: the name itself, or a property of what a CommonJS file or a module of Bun exports.
+        let below = |module: &BuiltinsOfModule, names: &[Vec<u8>], name: &[u8]| {
+            let rest = match names {
+                [first, rest @ ..] if first == name => Some(rest),
+                [first, second, rest @ ..]
+                    if module.object_is_default && first == b"default" && second == name =>
+                {
+                    Some(rest)
+                }
+                _ => None,
+            };
+            rest.map(<[Vec<u8>]>::to_vec)
+        };
+        // `export { getPrototypeOf, defineProperty } from "./tools"` asks for the module once.
+        let mut modules: FxHashMap<&[u8], Option<BuiltinsOfModule>> = FxHashMap::default();
+        let specifiers = file.again.names.iter().map(|again| &again.1);
+        for specifier in specifiers.chain(&file.again.modules) {
+            if modules.contains_key(&specifier[..]) {
+                continue;
+            }
+            let module = match find_module_named(specifier) {
+                Some(module) => self.find_in_library(module),
+                None => (self.key_of_module(&file.path, specifier))
+                    .and_then(|key| self.settle_file(&key, visible, visiting)),
+            };
+            modules.insert(specifier, module);
+        }
+        for (exported, module, name) in &file.again.names {
+            let Some(Some(module)) = modules.get(&module[..]) else {
+                continue;
+            };
+            for (names, builtin) in &module.exported {
+                if let Some(rest) = below(module, names, name) {
+                    let names = core::iter::once(exported.clone()).chain(rest).collect();
+                    found.exported.push((names, *builtin));
+                }
+            }
+        }
+        for module in &file.again.modules {
+            let Some(Some(module)) = modules.get(&module[..]) else {
+                continue;
+            };
+            for (names, builtin) in &module.exported {
+                match &names[..] {
+                    [first, rest @ ..] if first != b"default" || module.object_is_default => {
+                        let names = match first == b"default" {
+                            true => rest.to_vec(),
+                            false => names.clone(),
+                        };
+                        if !names.is_empty() {
+                            found.exported.push((names, *builtin));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        visiting.pop();
+        visible.insert(key.to_vec(), found.clone());
+        Some(found)
+    }
+
+    /// How many of the built-ins that the modules export the file takes, by the names that it takes from them.
+    fn count_for(&self, path: &[u8], names_loaded: &[(Vec<u8>, Option<Vec<u8>>)]) -> usize {
+        let mut count = 0;
+        let mut modules: FxHashMap<&[u8], Option<BuiltinsOfModule>> = FxHashMap::default();
+        for (specifier, name) in names_loaded {
+            let module = modules
+                .entry(&specifier[..])
+                .or_insert_with(|| self.find(path, specifier));
+            let Some(module) = module else {
+                continue;
+            };
+            count += (module.exported.iter())
+                .filter(|(names, _)| match name {
+                    None => true,
+                    Some(name) => {
+                        names.first() == Some(name)
+                            || (module.object_is_default && names.get(1) == Some(name))
+                    }
+                })
+                .count();
+        }
+        count
+    }
+}
+
+fn is_constant_unless_written(member: u32) -> bool {
+    BuiltinId::from_wire(member)
+        .is_some_and(|member| table::entry(member).mutability == Mutability::ConstantUnlessWritten)
 }
 
 fn look_at_library(caches: &ThreadCaches, threads: usize) -> &'static [LibraryModule] {
@@ -149,14 +361,11 @@ fn look_at_library(caches: &ThreadCaches, threads: usize) -> &'static [LibraryMo
                     };
                     let mut file = look_at(path, &text);
                     // Their uses test a byte anyway, so an open one costs a lock at the start and no code.
-                    file.members.retain(|&member| {
-                        BuiltinId::from_wire(member).is_some_and(|member| {
-                            table::entry(member).mutability == Mutability::ConstantUnlessWritten
-                        })
-                    });
+                    (file.members).retain(|&member| is_constant_unless_written(member));
                     let names = file.files_named.iter().chain(&file.other_modules_named);
                     found.lock().push(LibraryModule {
                         id,
+                        builtins_exported: file.builtins_exported.exported,
                         writes: file.members,
                         names: names
                             .filter_map(|name| manifest.resolve(name, path))
@@ -193,6 +402,24 @@ fn find_what_library_writes(library: &[LibraryModule], named: &[Vec<u8>]) -> Vec
     writes
 }
 
+/// Code that the build has not seen may start a Worker, and node:worker_threads then runs from its text.
+pub(crate) fn find_what_starting_worker_writes() -> Vec<u32> {
+    let manifest = Archive::embedded().manifest();
+    let id = find_module_named(b"node:worker_threads")
+        .and_then(|module| manifest.module_by_specifier(table::specifier_of(module)));
+    let mut modules = manifest.modules().iter();
+    let path = modules
+        .find(|module| Some(module.id) == id)
+        .and_then(|module| module.path.as_deref());
+    let Some((path, text)) = path.and_then(|path| Some((path, Archive::read(path)?))) else {
+        return Vec::new();
+    };
+    let mut writes = Vec::new();
+    look_at_files(&mut |look_at| writes = look_at(path, &text).members);
+    writes.retain(|&member| is_constant_unless_written(member));
+    writes
+}
+
 pub(crate) fn without_extension(path: &[u8]) -> &[u8] {
     const EXTENSIONS: [&[u8]; 8] = [
         b".ts", b".tsx", b".js", b".jsx", b".mts", b".mjs", b".cts", b".cjs",
@@ -211,7 +438,6 @@ pub(crate) fn scan_files_of_tests(
 ) -> FoundInTests {
     const STEPS_FROM_TEST_FILES: usize = 2;
     let started = std::time::Instant::now();
-    const FILES_LOOKED_AT_TOGETHER: usize = 16;
     let caches = ThreadCaches::default();
     let mut found: Guarded<FoundInTests> = Guarded::new(FoundInTests::default());
     let working_directory = match bun_core::getcwd(&mut path_buffer_pool::get()) {
@@ -266,13 +492,37 @@ pub(crate) fn scan_files_of_tests(
         Guarded::new(Vec::new());
     let mut writes_under_other_names: Guarded<Vec<(WrittenModule, Vec<Vec<u8>>, Vec<u8>)>> =
         Guarded::new(Vec::new());
+    let mut builtins_passed_under_other_names: Guarded<Vec<(WrittenModule, u32)>> =
+        Guarded::new(Vec::new());
     let mut known_by_folder_alone: FxHashSet<Vec<u8>> = FxHashSet::default();
-    for step in 0..=STEPS_FROM_TEST_FILES {
+    let mut between_files = BuiltinsBetweenFiles::default();
+    // A build that sees the files follows them into the library by itself.
+    if reads_library == ReadsLibrary::Yes {
+        between_files.library = look_at_library(&caches, threads);
+    }
+    let mut loading: Vec<LoadingFile> = Vec::new();
+    // `seen` holds names as they are spelled: "./a" and "./a.js" in the files that import a.ts. Where a build hands over every file above
+    // it, each is named by the others, and would be parsed and analyzed once more under each spelling. What is kept under the
+    // spelling that a file was asked for by is looked up without the extension, so a second look under a spelling that differs in
+    // nothing else adds only doubles. "./d" for d/index.ts is another matter. The files that the rounds before this one have looked
+    // at, each with the spelling: `key_of_look`.
+    let mut looked_at: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let key_of_look =
+        |path: &[u8], asked_for: &[u8]| [path, b"\0", without_extension(asked_for)].concat();
+    let (looks, names_passed_over) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let mut reads_again = false;
+    let mut step = 0;
+    loop {
+        let mut newly_looked_at: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+        let mut exporting_found: Guarded<Vec<ExportingFile>> = Guarded::new(Vec::new());
+        let mut loading_found: Guarded<Vec<LoadingFile>> = Guarded::new(Vec::new());
         let mut named: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
         let mut named_otherwise: Guarded<Vec<WrittenModule>> = Guarded::new(Vec::new());
         let mut lying_in_named_folders: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
         let look_at_one = |asked_for: &[u8], look_at: &dyn Fn(&[u8], &[u8]) -> FoundInFile| {
-            let Some((path, text)) = read_file_named(asked_for) else {
+            let is_looked_at =
+                |path: &[u8]| !reads_again && looked_at.contains(&key_of_look(path, asked_for));
+            let Some(file_named) = read_file_named(asked_for, &is_looked_at) else {
                 if step < STEPS_FROM_TEST_FILES {
                     let files = find_files_in_folder(asked_for).into_iter();
                     // `new URL("./", import.meta.url)` is the folder of the test file itself, and no test file loads another.
@@ -281,14 +531,24 @@ pub(crate) fn scan_files_of_tests(
                 }
                 return;
             };
+            let FileNamed::Read { path, text } = file_named else {
+                names_passed_over.fetch_add(1, Ordering::Relaxed);
+                return;
+            };
+            looks.fetch_add(1, Ordering::Relaxed);
             let mut file = look_at(&path, &text);
+            let is_known_by_folder_alone = known_by_folder_alone.contains(asked_for);
+            if !is_known_by_folder_alone {
+                newly_looked_at.lock().push(key_of_look(&path, asked_for));
+            }
             // Whether the run loads it nobody knows. What it spells counts; what it leaves open does not open the run.
-            if known_by_folder_alone.contains(asked_for) {
+            if is_known_by_folder_alone {
                 file.any_module = false;
                 file.hands_on_any = false;
                 file.spies_on_unknown_objects = false;
                 file.text_spies_under_any_name = false;
                 file.spies_under_names_from_outside = false;
+                file.writes_on_parameters_under_any_name = false;
                 file.holders_named_from_outside = Vec::new();
                 file.evicts_any = false;
             }
@@ -301,6 +561,27 @@ pub(crate) fn scan_files_of_tests(
                 .chain(&file.modules_exported_again)
                 .cloned()
                 .collect();
+            if !file.builtins_exported.exported.is_empty() || !exported_again.is_empty() {
+                exporting_found.lock().push(ExportingFile {
+                    path: path.clone(),
+                    builtins: core::mem::take(&mut file.builtins_exported),
+                    again: ExportedAgain {
+                        names: file.names_exported_again.clone(),
+                        modules: file.modules_exported_again.clone(),
+                    },
+                });
+            }
+            // What a module of Bun exports is known from the start.
+            let mut names_loaded = core::mem::take(&mut file.names_loaded);
+            names_loaded.retain(|loaded| find_module_named(&loaded.0).is_none());
+            if !names_loaded.is_empty() {
+                loading_found.lock().push(LoadingFile {
+                    asked_for: asked_for.to_vec(),
+                    told_of: between_files.count_for(&path, &names_loaded),
+                    path: path.clone(),
+                    names_loaded,
+                });
+            }
             {
                 let mut found = found.lock();
                 found.members.extend(file.members);
@@ -334,27 +615,37 @@ pub(crate) fn scan_files_of_tests(
                 (found.names_spied_on_unknown_objects).extend(file.names_spied_on_unknown_objects);
                 found.names_spied_in_text.extend(file.names_spied_in_text);
                 (found.modules_replaced_in_text).extend(file.modules_replaced_in_text);
+                if file.text_spies_under_any_name && logs_stages() {
+                    bun_core::print_errorln!(
+                        "AOT test run | {} holds code in a string that spies under a name that nobody reads",
+                        bstr::BStr::new(&path),
+                    );
+                }
                 found.text_spies_under_any_name |= file.text_spies_under_any_name;
                 found.evicted.extend(file.evicted.into_iter().map(written));
-                for (changed, starts_at_own_directory) in file.changed_on_disk {
-                    let folder = match starts_at_own_directory {
+                for changed in file.changed_on_disk {
+                    let folder = match changed.starts_at_own_directory {
                         true => dirname::<platform::Auto>(&path),
                         false => &working_directory[..],
                     };
                     let mut buffer = path_buffer_pool::get();
                     let whole = Some(folder).filter(|folder| is_absolute(folder));
                     let whole = whole.and_then(|folder| {
-                        let parts = &[&changed[..]];
+                        let parts = &[&changed.path[..]];
                         join_abs_string_buf_checked::<platform::Auto>(
                             folder,
                             &mut buffer[..],
                             parts,
                         )
                     });
+                    let below = whole.filter(|_| changed.reaches_below);
+                    (found.paths_changed_on_disk).extend(below.map(|it| [it, b"/"].concat()));
                     (found.paths_changed_on_disk).extend(whole.map(<[u8]>::to_vec));
                 }
                 let throwers = file.required_where_throws_are_caught.into_iter();
                 (found.required_where_throws_are_caught).extend(throwers.map(written));
+                let typed = file.imported_with_types.into_iter();
+                found.imported_with_types.extend(typed.map(written));
                 if (file.evicts_any || file.names_file_with_query) && logs_stages() {
                     bun_core::print_errorln!(
                         "AOT test run | {} {}",
@@ -396,6 +687,9 @@ pub(crate) fn scan_files_of_tests(
                 if file.spies_under_names_from_outside {
                     found.spy_under_names_from_outside.push(asked_for.to_vec());
                 }
+                if file.writes_on_parameters_under_any_name {
+                    (found.write_on_parameters_under_any_name).push(asked_for.to_vec());
+                }
                 if !file.holders_named_from_outside.is_empty() {
                     let holders = (asked_for.to_vec(), file.holders_named_from_outside);
                     found.holders_named_from_outside.push(holders);
@@ -432,6 +726,16 @@ pub(crate) fn scan_files_of_tests(
                     None => {}
                 }
             }
+            for (name, holder) in file.builtins_passed {
+                match join(&name) {
+                    Some(joined) => found.lock().builtins_passed.push((joined, holder)),
+                    None if !is_relative(&name) && is_beside_test_files(&path) => {
+                        let passed = (written(name), holder);
+                        builtins_passed_under_other_names.lock().push(passed);
+                    }
+                    None => {}
+                }
+            }
             for (name, text) in file.texts_passed {
                 if !is_relative(&name) {
                     if is_beside_test_files(&path) {
@@ -461,18 +765,25 @@ pub(crate) fn scan_files_of_tests(
                 named.lock().extend(joined.map(<[u8]>::to_vec));
             }
         };
-        let runs = paths.len().div_ceil(FILES_LOOKED_AT_TOGETHER);
+        // The table of the names of built-ins is made once for the files that are looked at together, and takes as long as several
+        // of them. Few files still spread over the threads. Of many a thread gets eight lots or more, so that none waits long for the
+        // last, and what a lot has parsed is freed with it.
+        let files_looked_at_together = (paths.len() / (threads.max(1) * 8)).clamp(16, 64);
+        let runs = paths.len().div_ceil(files_looked_at_together);
         for_each_parallel_in_runs(&caches, threads, runs, 1, &|run| {
-            look_at_files_of_run(&is_beside_test_files, &mut |look_at| {
+            let find_builtins =
+                |importer: &[u8], specifier: &[u8]| between_files.find(importer, specifier);
+            look_at_files_of_run(&is_beside_test_files, &find_builtins, &mut |look_at| {
                 for written in paths
                     .iter()
-                    .skip(run * FILES_LOOKED_AT_TOGETHER)
-                    .take(FILES_LOOKED_AT_TOGETHER)
+                    .skip(run * files_looked_at_together)
+                    .take(files_looked_at_together)
                 {
                     look_at_one(written, look_at);
                 }
             });
         });
+        looked_at.extend(core::mem::take(newly_looked_at.get_mut()));
         paths = core::mem::take(named.get_mut());
         let others = core::mem::take(named_otherwise.get_mut()).into_iter();
         paths.extend(others.filter_map(&mut find_file_under_other_name));
@@ -481,6 +792,62 @@ pub(crate) fn scan_files_of_tests(
         lying_in_named_folders.retain(|path| seen.insert(path.clone()));
         known_by_folder_alone.extend(lying_in_named_folders.iter().cloned());
         paths.extend(lying_in_named_folders);
+        for file in core::mem::take(exporting_found.get_mut()) {
+            (between_files.exporting).insert(key_of_file(&file.path).to_vec(), file);
+        }
+        loading.append(loading_found.get_mut());
+        between_files.settle();
+        if step < STEPS_FROM_TEST_FILES {
+            step += 1;
+            continue;
+        }
+        // A file is read before the files that it loads. Now that those are read it is read once more where they export built-ins under the names that it takes,
+        // and again where that makes it export one to a file that was read before.
+        if between_files.visible.is_empty() {
+            break;
+        }
+        // "@/test/tools": what a file loads, and what a barrel exports again.
+        let loaded = loading.iter().flat_map(|file| {
+            let modules = file.names_loaded.iter().map(|loaded| &loaded.0);
+            modules.map(|module| (&file.path, module))
+        });
+        let exported_again = between_files.exporting.values().flat_map(|file| {
+            let modules = file.again.names.iter().map(|again| &again.1);
+            let modules = modules.chain(&file.again.modules);
+            modules.map(|module| (&file.path, module))
+        });
+        let mut under_other_names = Vec::new();
+        for (path, specifier) in loaded.chain(exported_again) {
+            if is_relative(specifier)
+                || find_module_named(specifier).is_some()
+                || !is_beside_test_files(path)
+            {
+                continue;
+            }
+            let name = (dirname::<platform::Auto>(path).to_vec(), specifier.clone());
+            if between_files.under_other_names.contains_key(&name) {
+                continue;
+            }
+            let module = WrittenModule {
+                importer: path.clone(),
+                specifier: specifier.clone(),
+            };
+            under_other_names.extend(find_file_under_other_name(module).map(|path| (name, path)));
+        }
+        if !under_other_names.is_empty() {
+            between_files.under_other_names.extend(under_other_names);
+            between_files.settle();
+        }
+        let (read_again, read): (Vec<LoadingFile>, Vec<LoadingFile>) = (loading.into_iter())
+            .partition(|file| {
+                between_files.count_for(&file.path, &file.names_loaded) > file.told_of
+            });
+        loading = read;
+        if read_again.is_empty() {
+            break;
+        }
+        paths = read_again.into_iter().map(|file| file.asked_for).collect();
+        reads_again = true;
     }
     let mut found = core::mem::take(found.get_mut());
     if !found.spy_under_names_from_outside.is_empty()
@@ -491,16 +858,21 @@ pub(crate) fn scan_files_of_tests(
             found.texts_passed.extend(file.map(|file| (file, text)));
         }
     }
+    if !found.write_on_parameters_under_any_name.is_empty() {
+        for (module, holder) in core::mem::take(builtins_passed_under_other_names.get_mut()) {
+            let file = find_file_under_other_name(module);
+            (found.builtins_passed).extend(file.map(|file| (file, holder)));
+        }
+    }
     if !found.builtins_handed_out.is_empty() {
         for (module, path, key) in core::mem::take(writes_under_other_names.get_mut()) {
             let file = find_file_under_other_name(module);
             (found.writes_on_imports).extend(file.map(|file| (file, path, key)));
         }
     }
-    // A build that sees the files follows them into the library by itself.
     if reads_library == ReadsLibrary::Yes {
-        let library = look_at_library(&caches, threads);
-        let writes = find_what_library_writes(library, &found.library_modules_named);
+        let named = &found.library_modules_named;
+        let writes = find_what_library_writes(between_files.library, named);
         found.members.extend(writes);
     }
     found.library_modules_named = Vec::new();
@@ -549,6 +921,17 @@ pub(crate) fn scan_files_of_tests(
             found.names_added.extend(added);
         }
     }
+    // `export function silence(target, names) { for (const name of names) target[name] = noop; }` in one file, `silence(console, levels())` in another.
+    let passed = core::mem::take(&mut found.builtins_passed);
+    for file in core::mem::take(&mut found.write_on_parameters_under_any_name) {
+        let holders = (passed.iter())
+            .filter(|passed| without_extension(&passed.0) == without_extension(&file))
+            .filter_map(|passed| BuiltinId::from_wire(passed.1));
+        for holder in holders {
+            let members = members_written_under_any_name(holder);
+            found.members.extend(members.map(|member| member as u32));
+        }
+    }
     // `export function watch(object, name) { return spyOn(object, name); }` in one file, `watch(holder, "read")` in another.
     for file in core::mem::take(&mut found.spy_under_names_from_outside) {
         // One file writes `./watch.js` for what another writes `./watch` and the disk holds as watch.ts.
@@ -583,6 +966,12 @@ pub(crate) fn scan_files_of_tests(
             found.hands_on_any,
             found.spies_on_unknown_objects,
         );
+        bun_core::print_errorln!(
+            "AOT test run | the scan looked at {} texts | {} names led to a file that it had looked at under another",
+            looks.load(Ordering::Relaxed),
+            names_passed_over.load(Ordering::Relaxed),
+        );
+        bun_core::Output::flush();
     }
     found
 }
@@ -646,6 +1035,11 @@ pub(crate) fn find_what_tests_replace(
             .collect();
     files_required_where_throws_are_caught.shared_sort_unstable();
     files_required_where_throws_are_caught.dedup();
+    let mut data_files_imported_with_types: Vec<Vec<u8>> = (found.imported_with_types.into_iter())
+        .filter_map(|module| resolve_for(module, false))
+        .collect();
+    data_files_imported_with_types.shared_sort_unstable();
+    data_files_imported_with_types.dedup();
     // How a file is loaded matters only beside an entry of the tests' own under the name of a module of the library.
     let stores_entry_of_library = evicted_modules.iter().any(|it| it.starts_with(b"node:"));
     let mut files_among = |modules: Vec<WrittenModule>, is_for_require: bool| -> Vec<Vec<u8>> {
@@ -692,6 +1086,7 @@ pub(crate) fn find_what_tests_replace(
         evicted_modules,
         evicts_any_module: found.evicts_any,
         files_required_where_throws_are_caught,
+        data_files_imported_with_types,
         files_imported_by_statements,
         files_imported_by_calls,
         files_required,
@@ -750,6 +1145,66 @@ pub(crate) fn find_what_tests_replace(
 mod tests {
     use super::*;
     use crate::builtins::BuiltinId;
+
+    #[test]
+    fn puts_together_what_one_file_passes_and_another_writes_on_under_any_name() {
+        bun_sema_driver::run_regions_inline_on_this_thread();
+        let folder = std::env::temp_dir().join(format!("bun-aot-passed-{}", std::process::id()));
+        let root = folder.clone().into_os_string().into_encoded_bytes();
+        let files = [
+            (
+                "test/one.test.ts",
+                r#"import { silence, spyAll } from "./helpers/write";
+                import { defineUnder } from "@/test/helpers/named";
+                import { list } from "./helpers/read.js";
+                silence(Math, levels());
+                spyAll(JSON, (name: string) => name.startsWith("p"));
+                defineUnder(Atomics, pick(), 1);
+                list(Reflect, levels());"#,
+            ),
+            (
+                "test/helpers/write.ts",
+                r#"import { spyOn } from "bun:test";
+                export function silence(target: any, names: string[]) { for (const name of names) target[name] = () => {}; }
+                export const spyAll = (target: any, wanted: any) => Object.getOwnPropertyNames(target).filter(wanted).map(name => spyOn(target, name));"#,
+            ),
+            (
+                "test/helpers/named.ts",
+                r#"export function defineUnder(target: any, key: string, value: unknown) { Object.defineProperty(target, key, { value }); }"#,
+            ),
+            (
+                "test/helpers/read.ts",
+                r#"export const list = (target: any, names: string[]) => names.map(name => target[name]);"#,
+            ),
+        ];
+        for (name, text) in files {
+            let path = folder.join(name);
+            std::fs::create_dir_all(path.parent().expect("it lies in a folder"))
+                .expect("the folder is made");
+            std::fs::write(&path, text).expect("the file is written");
+        }
+        let file = [&root[..], b"/test/one.test.ts"].concat();
+        let replaced = find_what_tests_replace(&[file], 1, &mut |importer, specifier, _| {
+            let folder = dirname::<platform::Auto>(importer);
+            match specifier.strip_prefix(b"@/") {
+                Some(rest) => Some([&root[..], b"/", rest, b".ts"].concat()),
+                None => Some([folder, b"/", specifier].concat()),
+            }
+        });
+        std::fs::remove_dir_all(&folder).expect("the folder is removed");
+        for member in [
+            BuiltinId::MathMax,
+            BuiltinId::MathMin,
+            BuiltinId::JSONParse,
+            BuiltinId::JSONStringify,
+            BuiltinId::AtomicsLoad,
+        ] {
+            assert!(replaced.builtins.contains(&(member as u32)), "{member:?}");
+        }
+        // A helper that reads opens nothing, and neither does a built-in that nobody passes.
+        assert!(!replaced.builtins.contains(&(BuiltinId::ReflectGet as u32)));
+        assert!(!replaced.builtins.contains(&(BuiltinId::DateNow as u32)));
+    }
 
     #[test]
     fn puts_together_what_one_file_hands_out_and_another_writes_on_it() {
@@ -814,6 +1269,99 @@ mod tests {
             assert!(replaced.builtins.contains(&(member as u32)), "{member:?}");
         }
         assert!(!replaced.builtins.contains(&(BuiltinId::MathMin as u32)));
+    }
+
+    #[test]
+    fn follows_a_builtin_from_file_to_file_by_its_bindings() {
+        bun_sema_driver::run_regions_inline_on_this_thread();
+        let folder =
+            std::env::temp_dir().join(format!("bun-aot-between-files-{}", std::process::id()));
+        let root = folder.clone().into_os_string().into_encoded_bytes();
+        let files = [
+            (
+                "test/one.test.ts",
+                r#"import { spyOn } from "bun:test";
+                import { getPrototypeOf, put } from "./tools";
+                import { above, define, typed } from "./barrel";
+                import { named } from "@/test/named";
+                import whole from "./whole.cjs";
+                import imported from "node:console";
+                import { performance as clock } from "node:perf_hooks";
+                const { holder } = require("./parts.cjs");
+                put(getPrototypeOf(Uint8Array).prototype, "values", () => 1);
+                above(Int8Array).prototype.fill = () => 1;
+                define(above(Int16Array).prototype, "byteLength", {});
+                typed.subarray = () => 1;
+                named.isInteger = () => 1;
+                whole.parse = () => 1;
+                spyOn(holder, "keys");
+                require("./parts.cjs").twice.ownKeys = () => 1;
+                (await import("./tools")).proto.join = () => 1;
+                imported.info = () => 1;
+                spyOn(require("node:console"), "debug");
+                spyOn(clock, "now");"#,
+            ),
+            (
+                "test/tools.ts",
+                r#"export const { defineProperty, getPrototypeOf } = Object;
+                export const proto = Array.prototype;
+                export function put(object, key, value) { object[key] = value; }"#,
+            ),
+            (
+                "test/barrel/index.ts",
+                r#"export { getPrototypeOf as above, defineProperty as define } from "../tools";
+                export * from "./more";"#,
+            ),
+            (
+                "test/barrel/more.ts",
+                r#"import { getPrototypeOf } from "../tools";
+                export const typed = getPrototypeOf(Uint16Array).prototype;"#,
+            ),
+            ("test/named.ts", r#"export const named = Number;"#),
+            ("test/whole.cjs", r#"module.exports = JSON;"#),
+            (
+                "test/parts.cjs",
+                r#"module.exports = { holder: Object };
+                module.exports.twice = Reflect;
+                module.exports.twice = {};"#,
+            ),
+        ];
+        for (name, text) in files {
+            let path = folder.join(name);
+            std::fs::create_dir_all(path.parent().expect("it lies in a folder"))
+                .expect("the folder is made");
+            std::fs::write(&path, text).expect("the file is written");
+        }
+        let file = [&root[..], b"/test/one.test.ts"].concat();
+        let replaced = find_what_tests_replace(&[file], 1, &mut |importer, specifier, _| {
+            let folder = dirname::<platform::Auto>(importer);
+            match specifier.strip_prefix(b"@/") {
+                Some(rest) => Some([&root[..], b"/", rest, b".ts"].concat()),
+                None => Some([folder, b"/", specifier].concat()),
+            }
+        });
+        std::fs::remove_dir_all(&folder).expect("the folder is removed");
+        for member in [
+            BuiltinId::TypedArrayPrototypeValues,
+            BuiltinId::TypedArrayPrototypeFill,
+            BuiltinId::TypedArrayPrototypeByteLength,
+            BuiltinId::TypedArrayPrototypeSubarray,
+            BuiltinId::NumberIsInteger,
+            BuiltinId::JSONParse,
+            BuiltinId::ObjectKeys,
+            BuiltinId::ArrayPrototypeJoin,
+            BuiltinId::ConsoleInfo,
+            BuiltinId::ConsoleDebug,
+            BuiltinId::PerformanceNow,
+        ] {
+            assert!(replaced.builtins.contains(&(member as u32)), "{member:?}");
+        }
+        // A name that is stored to twice stands for nothing.
+        assert!(
+            !replaced
+                .builtins
+                .contains(&(BuiltinId::ReflectOwnKeys as u32))
+        );
     }
 
     #[test]

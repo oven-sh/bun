@@ -1200,7 +1200,7 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
         needs: [],
         lines: drawn.map(
           ([label, text]) =>
-            `try { note(${JSON.stringify(label)}, asText(await (async () => (${text}))())); } catch (error${any}) { note(${JSON.stringify(label)}, "threw", error?.name, String(error?.message).slice(0, 60)); }`,
+            `try { note(${JSON.stringify(label)}, asText(await (async () => (${text}))())); } catch (error${any}) { note(${JSON.stringify(label)}, "threw", error?.name, String(error?.message).replace(/ \\(evaluating .*/s, "").slice(0, 60)); }`,
         ),
       };
     },

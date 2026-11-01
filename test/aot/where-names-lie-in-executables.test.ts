@@ -1,8 +1,9 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { testaot } from "./shell/tools";
@@ -34,10 +35,19 @@ export function functionW9(record: RecordW2) {
 }
 export type UnionW11 = "memberW12" | "otherMemberW13";
 export const exportedW14 = 5;
+// Its objects are cells of Array, which carry the brand of the class: a bit beside a count in the record of the class.
+export class ClassW16 extends Array {
+  #privateW17 = 1;
+  storedW18: number;
+  constructor(given: number) {
+    super();
+    this.storedW18 = this.#privateW17 + given;
+  }
+}
 `,
   "main.ts": `
 import * as library from "./libraryW1";
-import { ClassW5, functionW9 } from "./libraryW1";
+import { ClassW5, ClassW16, functionW9 } from "./libraryW1";
 import type { RecordW2, UnionW11 } from "./libraryW1";
 const nameFromOutside = process.argv[2];
 const record: RecordW2 = nameFromOutside ? { fieldW3: 1, optionalFieldW4: nameFromOutside } : { fieldW3: 1 };
@@ -48,6 +58,12 @@ function isMember(given: UnionW11) {
 }
 console.log(functionW9(record), String(functionW9).length > 0, (library as any)[nameFromOutside], (instance as any)[nameFromOutside], (ClassW5 as any)[nameFromOutside]);
 console.log(instance.methodW8(), ClassW5.staticFieldW6, isMember(nameFromOutside as UnionW11), record, instance);
+let sum = 0;
+for (let i = 0; i < 1000; i++) {
+  const list = new ClassW16(i & 1);
+  if (list instanceof ClassW16) sum += list.storedW18;
+}
+console.log(sum);
 `,
 };
 
@@ -59,6 +75,8 @@ const rowsOfNames: [string, string][] = [
   ["staticFieldW6", "static-field"],
   ["functionW9", "function-name"],
   ["ClassW5", "layout-name"],
+  ["ClassW16", "layout-name"],
+  ["storedW18", "layout-field:instance"],
   ["memberW12", "literal-union-member"],
   ["exportedW14", "export"],
   ["libraryW1", "module-path"],

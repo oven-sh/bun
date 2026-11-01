@@ -595,7 +595,7 @@ runtimefunction id=WrittenListsFilledArray function=f68 visibility=Private
 # -- generated: twoAtOnce
 # CHECK-LABEL: function {{*}}name="twoAtOnce"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 112, patchpoints: 9, rare instructions: 101, polls: 2
+# CHECK-NEXT: instructions: 110, patchpoints: 9, rare instructions: 101, polls: 2
 # CHECK-NEXT: end of function f8
 # CHECK-LABEL: function {{*}}name="twoAtOnce"
 # CHECK: role=GenericEntrypoint

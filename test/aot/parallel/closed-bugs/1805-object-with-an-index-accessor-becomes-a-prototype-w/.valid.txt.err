@@ -1,0 +1,24 @@
+AOT native call: ObjectSetPrototypeOf/0 argument 1: array storage changed indexing mode 10 -> 12, uses Inspects|Retains|BecomesPrototype, needs WritesContents|MovesElements|StoresByKey|DeletesByKey|AssignsFrom|DefinesName|TakesDescriptor|ChangesIntegrity|ChangesPrototype
+AOT validation: NativeCallChangedOperand f0 v29 object Object
+============================================================
+Bun Canary v1.4.4-canary.1 (4eaedc691) Linux x64
+Build ID: 6ffee30afbd9921fd9891c00104e0b77
+Linux Kernel v6.1.170 | glibc v2.34
+CPU: sse42 popcnt avx avx2 avx512
+Args: "./.exe"
+Features: jsc standalone_executable aot 
+
+Elapsed: 458ms | User: 0ms | Sys: 16ms
+RSS: 32.78 MB | Peak: 32.78 MB | Commit: 130.0 MB | Faults: 0 | Machine: 25.77 GB
+
+panic(main thread): abort() called
+oh no: Bun has crashed. This indicates a bug in Bun, not your code.
+
+To send a redacted crash report to Bun's team,
+please file a GitHub issue using the link below:
+
+ https://bun.report/1.4.4/l_24eaedc6kggggQggggC2iojBAa
+Registers: rax=0x0 rbx=address..700 rcx=address..02c rdx=0x6 rsi=0x95d2f rdi=0x95d2f rbp=0x95d2f rsp=stack+0x0 r8=stack+0xd0 r9=0x1d r10=0x8 r11=0x246 r12=0x6 r13=address..540 r14=0x93c9dd0 r15=address..280 rip=address..02c
+Code at rip: 89 c5 f7 dd 3d 00 f0 ff ff b8 00 00 00 00 0f 47
+
+timeout: the monitored command dumped core

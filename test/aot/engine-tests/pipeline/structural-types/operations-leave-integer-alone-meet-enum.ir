@@ -170,5 +170,5 @@ function f8 name="placed" module=m0 position=2160 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Successors: #3
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@10: dereferenceableBytes = 393216
-# CHECK-NEXT: b@108: dereferenceableBytes = 8
+# CHECK-NEXT: b@108: dereferenceableBytes = 16
 # CHECK-NEXT: end of function f4

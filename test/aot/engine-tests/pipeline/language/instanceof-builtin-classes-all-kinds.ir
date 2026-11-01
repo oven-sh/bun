@@ -2320,7 +2320,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f28
 # CHECK-NEXT: v104: undefined = Undefined
 # CHECK-NEXT: v105: 1 = Integer integer=1
 # CHECK-NEXT: v106: "a" = String string="a"
-# CHECK-NEXT: v107: Array<anything, Contiguous> = NewArray v103, v104, v105, v106 contents=anything allocationSite=23 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v107: Array<anything, Contiguous> = NewArray v103, v104, v105, v106 contents=anything allocationSite=23 storage=Frame arrayStorage=Contiguous [contentsAreProven, isMadeForOneUse]
 # CHECK-NEXT: v108: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v107 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v109: int[0, 4294967295] = CallDirect v108 function=f2 accessSite=39
 # CHECK-NEXT: v110: Array<anything, Contiguous> = NewArray contents=anything allocationSite=24 storage=Frame arrayStorage=Contiguous [contentsAreProven]

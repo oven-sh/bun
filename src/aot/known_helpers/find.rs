@@ -4,13 +4,13 @@ use super::quiet::{
     is_in_statement_of_file, plain_member,
 };
 use super::table::{Table, TableEntry, signature_of};
-use super::{Reference, Shape, find_by_key};
+use super::{Helper, Reference, Shape, find_by_key};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, MemberLookup, Mutability, is_locked};
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, BindingKind, BindingStability, Bound, Decl, FnOwner, Parent,
-    StoreKind, SymbolId,
+    Binding, BindingInitializer, BindingKind, BindingStability, Bound, CommonJsVariable, Decl,
+    FnOwner, Parent, StoreKind, SymbolId,
 };
 use bun_sema::fold::{Decision, Decisions};
 use bun_sema::hir::{
@@ -36,6 +36,8 @@ pub enum KnownReference {
         builtin: BuiltinId,
         is_initialized_first: bool,
     },
+    /// The name is an import, or holds what `require` answered. Which function that is, the module graph says: `resolve_loaded_reference`.
+    Loaded { symbol: SymbolId, helper: Helper },
 }
 
 #[derive(Clone, Debug)]
@@ -45,6 +47,8 @@ pub struct KnownFunction {
     pub references: Box<[KnownReference]>,
     /// Whenever the function runs, each helper that it names is that helper and each built-in that it names is that built-in: the bindings are settled before it can run, and start-up locks the built-ins.
     pub relies_on_facts: bool,
+    /// Asked of a helper that replaces itself. Outside of the function, its name is written only to call it, so nobody sees which function the name holds.
+    pub is_named_only_to_be_called: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -296,6 +300,9 @@ impl<'a, 's> Finder<'a, 's> {
             return None;
         };
         match reference {
+            Reference::Helper(helper) if self.is_loaded_from_another_file(symbol) => {
+                Some(KnownReference::Loaded { symbol, helper })
+            }
             Reference::Helper(helper) => {
                 let values = self.values_of(symbol);
                 let mut held = values.functions.iter();
@@ -317,6 +324,27 @@ impl<'a, 's> Finder<'a, 's> {
                     })
             }
         }
+    }
+
+    // `import name from K`, `var name = require(K)`, `var name = require(K)["default"]`
+    fn is_loaded_from_another_file(&self, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        if bound.binding_kind(symbol) == BindingKind::Import {
+            return true;
+        }
+        let BindingInitializer::Expression(value) = bound.binding_initializer(hir, symbol) else {
+            return false;
+        };
+        let mut value = hir.skip_type_assertions(value);
+        if let Some((object, MemberKey::Name(known::default))) = hir.member_key(value) {
+            value = hir.skip_type_assertions(object);
+        }
+        let ExprKind::Call(site) = hir[value].kind else {
+            return false;
+        };
+        let callee = hir.skip_type_assertions(hir[site].callee);
+        bound.is_stable_binding(symbol)
+            && bound.binding(callee) == Binding::CommonJs(CommonJsVariable::Require)
     }
 
     // `var __defProp = Object.defineProperty;`: what the path held when the variable was initialized.
@@ -758,6 +786,7 @@ impl<'a, 's> Finder<'a, 's> {
                 builtin,
                 is_initialized_first,
             } => is_locked(builtin) && (is_initialized_first || self.is_defined_in_head(symbol)),
+            KnownReference::Loaded { .. } => false,
         }
     }
 
@@ -779,8 +808,37 @@ impl<'a, 's> Finder<'a, 's> {
         answer
     }
 
+    fn is_named_only_to_be_called(&self, function: FnId) -> bool {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let Some(owner) = self.find_owner(function) else {
+            return false;
+        };
+        if bound.is_visible_to_eval(owner) || self.exports_function_declaration() {
+            return false;
+        }
+        (0..hir.exprs.len() as u32).map(ExprId).all(|name| {
+            let names_owner = matches!(hir[name].kind, ExprKind::Ident(_))
+                && bound.binding(name) == Binding::Symbol(owner);
+            if !names_owner || self.is_written_in(function, name) {
+                return true;
+            }
+            matches!(
+                bound.parent_of_expr(name),
+                Parent::Expr(call) if matches!(hir[call].kind, ExprKind::Call(site) if hir[site].callee == name)
+            )
+        })
+    }
+
     fn finish(self) -> FileHelpers {
         let head_allows_reads_of_open_globals = !self.may_start_early();
+        let replace_themselves = self.matched.iter().filter(|(_, matched)| {
+            matched.verdict == Verdict::Accepted
+                && matched.entry.shape == Shape::TypeofAnswersSymbolForSymbols
+        });
+        let only_called: SmallVec<[FnId; 1]> = replace_themselves
+            .map(|(&function, _)| function)
+            .filter(|&function| self.is_named_only_to_be_called(function))
+            .collect();
         let accepted = self.matched.into_iter().filter_map(|(function, matched)| {
             (matched.verdict == Verdict::Accepted).then(|| {
                 let known = KnownFunction {
@@ -788,6 +846,7 @@ impl<'a, 's> Finder<'a, 's> {
                     functions: matched.canonical.inner_functions.into_boxed_slice(),
                     references: matched.references.into_boxed_slice(),
                     relies_on_facts: matched.relies_on_facts.unwrap_or(false),
+                    is_named_only_to_be_called: only_called.contains(&function),
                 };
                 (function, known)
             })

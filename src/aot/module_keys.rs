@@ -42,9 +42,16 @@ pub fn loader_by_name(path: &[u8]) -> Loader {
     loader_by_path_or(DEFAULT_LOADERS, path, Loader::File)
 }
 
-/// `bun run` reads `./a.ts?raw` as text unless a `type` attribute says otherwise. No other query names a loader.
+/// `bun run` goes by Vite's suffixes unless a `type` attribute says otherwise: `raw` among the parameters is the text of the file, `url` its path.
 pub fn loader_by_query(query: &[u8]) -> Option<Loader> {
-    (query == b"?raw").then_some(Loader::Text)
+    let parameters = query.strip_prefix(b"?")?;
+    let has = |name: &[u8]| bun_core::strings::split(parameters, b"&").any(|it| it == name);
+    let is_worker = has(b"worker") || has(b"sharedworker");
+    match (is_worker, has(b"raw"), has(b"url")) {
+        (true, _, true) | (false, false, true) => Some(Loader::File),
+        (false, true, _) => Some(Loader::Text),
+        _ => None,
+    }
 }
 
 /// `unnamed`: the loader of a file whose extension names none.
@@ -141,7 +148,9 @@ pub struct PlacesOfForm {
 
 /// `None`: the loader of the run time makes the module, as it does in an executable that is not compiled ahead of time. With a type that makes code of the text it runs the text once more, and with one that answers where the file is it reads nothing.
 pub fn places_of_form(path: &[u8], type_attribute: &[u8]) -> Option<PlacesOfForm> {
-    let loader = Loader::from_string(type_attribute).filter(|&it| parses_text_as_data(it))?;
+    // A database is no data of the text, and it is one object for all who import the file.
+    let has_form = |&it: &Loader| parses_text_as_data(it) || it == Loader::Sqlite;
+    let loader = Loader::from_string(type_attribute).filter(has_form)?;
     Some(PlacesOfForm {
         path_of_form: path_of_form(path, loader),
         is_form_without_attributes: !is_url_with_text(path) && loader == loader_by_name(path),
@@ -230,8 +239,17 @@ mod tests {
 
     #[test]
     fn a_type_that_makes_no_data_of_the_text_is_left_to_the_loader() {
-        for type_attribute in [&b"file"[..], b"js", b"ts", b"wasm", b"sqlite", b"no loader"] {
+        for type_attribute in [&b"file"[..], b"js", b"ts", b"wasm", b"no loader"] {
             assert_eq!(places(b"/$bunfs/root/a.js", type_attribute), None);
         }
+    }
+
+    #[test]
+    fn a_database_stands_under_its_type() {
+        let as_database = b"/$bunfs/root/a.sqlite?sqlite".to_vec();
+        assert_eq!(
+            places(b"/$bunfs/root/a.sqlite", b"sqlite"),
+            Some((as_database, true))
+        );
     }
 }

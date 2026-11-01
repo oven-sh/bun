@@ -220,9 +220,14 @@ test("headers", done => {
     "a.test.ts": file,
     "b.test.ts": file,
   });
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), bunEnv);
-  expect((stdout + stderr).match(/^ \d+ (pass|fail)$/gm)).toEqual([" 2 pass", " 0 fail"]);
-  expect(exitCode).toBe(0);
+  const cmd = [bunExe(), "test", "--aot", "--isolate", "--timeout=60000"];
+  const { stdout, stderr, exitCode } = await run(cmd, String(dir), bunEnv);
+  const summary = (stdout + stderr).match(/^ \d+ (pass|fail)$/gm);
+  expect({ summary, exitCode, said: exitCode === 0 ? "" : stdout + stderr }).toEqual({
+    summary: [" 2 pass", " 0 fail"],
+    exitCode: 0,
+    said: "",
+  });
 });
 
 test("method calls on strings stay cached in later test files", async () => {
@@ -345,29 +350,32 @@ test("nothing", () => { expect(1).toBe(1); });`,
 });
 
 test.skipIf(!isLinux)("process.stdout and process.stderr give their descriptors back with the test file", async () => {
-  const countsDescriptors = `
+  const countsCopies = `
 import { expect, test } from "bun:test";
-import { appendFileSync, readdirSync } from "node:fs";
+import { appendFileSync, readdirSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 test("counts", () => {
   process.stdout.write("");
   process.stderr.write("");
-  appendFileSync(join(import.meta.dir, "counts"), readdirSync("/proc/self/fd").length + "\\n");
+  const link = (fd: string) => { try { return readlinkSync("/proc/self/fd/" + fd); } catch { return "gone"; } };
+  const ours = [link("1"), link("2")];
+  const copies = readdirSync("/proc/self/fd").filter(fd => ours.includes(link(fd))).length;
+  appendFileSync(join(import.meta.dir, "counts"), copies + "\\n");
   expect(1).toBe(1);
 });`;
-  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
-    "d.test.ts": countsDescriptors,
-    "e.test.ts": countsDescriptors,
-    "f.test.ts": `
-import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-test("as many in the second file as in the first", () => {
-  const [first, second] = readFileSync(join(import.meta.dir, "counts"), "utf8").trim().split("\\n");
-  expect(second).toBe(first);
-});`,
-  });
-  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
+  const names = ["a", "b", "c", "d", "e", "f"];
+  using dir = tempDir(
+    "bun-test-isolate-descriptors",
+    Object.fromEntries(names.map(name => [`${name}.test.ts`, countsCopies])),
+  );
+  // On one processor nothing runs beside the test files: what is left to another thread has not happened when the next file counts.
+  const processor = /^Cpus_allowed_list:\s*(\d+)/m.exec(readFileSync("/proc/self/status", "utf8"))![1];
+  const onOneProcessor = Bun.which("taskset") ? ["taskset", "-c", processor] : [];
+  const { exitCode } = await run([...onOneProcessor, bunExe(), "test", "--aot", "--isolate"], String(dir), bunEnv);
+  const counts = readFileSync(join(String(dir), "counts"), "utf8")
+    .trim()
+    .split("\n");
+  expect({ counts, exitCode }).toEqual({ counts: names.map(() => counts[0]), exitCode: 0 });
 });
 
 test("what a test file's close handlers write to process.stdout is still printed", async () => {

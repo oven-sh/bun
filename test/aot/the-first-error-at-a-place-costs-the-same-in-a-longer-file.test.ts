@@ -11,19 +11,25 @@
 //   one statement    the places are cases of one `switch` at the top level, behind many other cases
 //   one function     the same `switch` in a function
 //
-// and the long file comes as it is usually written and with carriage returns. In one line, as a minifier leaves it, each statement
-// touches the next: there the statements of their own are measured.
+// and the long file comes as it is usually written, with carriage returns, and in one line, as a minifier leaves it. There each
+// statement touches the next, and the `switch` and the function are as long as their line: what failed is looked for among the
+// statements around the place, not in all of the line.
 //
 // Places all over the long file throw too, and every message is held against what `bun run` says: a search that goes straight to
 // a part of the text has to land in the right one, behind types that were cut out and characters that take several bytes. That is
 // also asked of the file in one line, as a minifier leaves it, where only the column tells the places apart.
 //
+// A compiled test run keeps no text. It reads the file, and finds the place in it by following the line up to the column. A line
+// as long as the file is followed once, not once for each place, and a name that is read is looked for behind the place alone.
+// There the long file in one line is held against the same file in many lines.
+//
 // The program measures itself with process.cpuUsage(), around the forty throws alone, so the test needs no counters and runs on
 // every platform.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { describe, test } from "./supported";
 
 const measuredPlaces = 40;
@@ -102,10 +108,15 @@ const programs = {
 type Program = keyof typeof programs;
 const keyOf = { "statements": "statement", "one statement": "inStatement", "one function": "inFunction" } as const;
 
-const dir = tempDir(
-  "aot-first-error-at-a-place",
-  Object.fromEntries(Object.entries(programs).map(([name, text]) => [`${name}.ts`, text])),
-);
+const dir = tempDir("aot-first-error-at-a-place", {
+  ...Object.fromEntries(Object.entries(programs).map(([name, text]) => [`${name}.ts`, text])),
+  ...Object.fromEntries(
+    Object.keys(programs).map(name => [
+      `${name}.test.ts`,
+      `import { test } from "bun:test";\ntest("runs", async () => {\n  await import("./${name}.ts");\n});\n`,
+    ]),
+  ),
+});
 afterAll(() => dir[Symbol.dispose]());
 const folder = String(dir);
 const pathOf = (name: Program) => join(folder, isWindows ? `${name}.exe` : name);
@@ -134,11 +145,45 @@ const measure = (name: Program) =>
     return least!;
   })());
 
+const whenMeasuredInTestRun: Partial<Record<Program, Promise<Measured>>> = {};
+const measureInTestRun = (name: Program) =>
+  (whenMeasuredInTestRun[name] ??= (async () => {
+    const ran = await spawned([bunExe(), "test", "--aot", `./${name}.test.ts`], folder, bunEnv, 400_000);
+    const printed = ran.stdout.split("\n").find(line => line.startsWith(`{"messages"`));
+    expect({ printed: printed !== undefined, stderr: printed ? "" : ran.stderr, exitCode: ran.exitCode }).toEqual({
+      printed: true,
+      stderr: "",
+      exitCode: 0,
+    });
+    return JSON.parse(printed!) as Measured;
+  })());
+
+describe.concurrent("in a compiled test run too", () => {
+  test("long-in-one-line: every message is what bun run says", async () => {
+    const plain = await spawned([bunExe(), "./long-in-one-line.ts"], folder, bunEnv, 200_000);
+    expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const expected: Measured = JSON.parse(plain.stdout);
+    const { messages, last } = await measureInTestRun("long-in-one-line");
+    expect({ messages, last }).toEqual({ messages: expected.messages, last: expected.last });
+  }, 480_000);
+
+  for (const surrounding of surroundings) {
+    test(`long-in-one-line: ${surrounding}`, async () => {
+      const [inLines, inOneLine] = await Promise.all([measureInTestRun("long"), measureInTestRun("long-in-one-line")]);
+      const [lines, oneLine] = [inLines, inOneLine].map(measured => measured.milliseconds[keyOf[surrounding]]);
+      console.error(
+        `FIRST ERRORS IN A TEST RUN, ${surrounding}: ${lines.toFixed(2)} ms for ${measuredPlaces} places in long | ${oneLine.toFixed(2)} ms in long-in-one-line`,
+      );
+      expect(oneLine).toBeLessThan(3 * lines + 25);
+    }, 480_000);
+  }
+});
+
 describe.concurrent("the first error at a place costs in a long file what it costs in a short one", () => {
   for (const [grown, small, measured] of [
     ["long", "short", surroundings],
     ["long-with-carriage-returns", "short", surroundings],
-    ["long-in-one-line", "short-in-one-line", ["statements"]],
+    ["long-in-one-line", "short-in-one-line", surroundings],
   ] as const) {
     test(`${grown}: every message is what bun run says`, async () => {
       const plain = await spawned([bunExe(), `./${grown}.ts`], folder, bunEnv, 200_000);

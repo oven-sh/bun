@@ -23,6 +23,11 @@ const MODULE_OF_VITEST: &[u8] = b"vitest";
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
 const OWN_GLOBAL_PREFIX: &[u8] = b"%global:";
 
+/// `jest` for the name that stands in its place in a file that got the import, as a message quotes it. Any other name unchanged.
+pub(crate) fn written_name_of_local(name: &[u8]) -> &[u8] {
+    name.strip_prefix(LOCAL_NAME_PREFIX).unwrap_or(name)
+}
+
 fn imports(
     request: &TransformRequest<'_, '_>,
     atoms: &Interner<'_>,

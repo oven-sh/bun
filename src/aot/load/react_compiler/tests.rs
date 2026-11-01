@@ -358,6 +358,7 @@ impl<'s> Workbench<'s> {
                 package_specifier: self.atoms.intern(&jsx.import_source),
                 is_development: jsx.is_development,
             }),
+            own_name: b"",
         };
         let bind_options = BindOptions {
             runtime: Some(RuntimeBindOptions::default()),

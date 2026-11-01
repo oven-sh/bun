@@ -3,6 +3,7 @@
 
 use super::resolver::Resolver;
 use crate::builtins::table::{self, BuiltinId, MemberLookup};
+use bun_core::StackCheck;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Decl, FnOwner, Parent, PatParent, SymbolId};
 use bun_sema::hir::{
@@ -29,6 +30,36 @@ pub(super) struct Walk {
     seen: FxHashSet<ExprId>,
     /// The first of `SpelledValues::waiting` that it came round to.
     comes_round_to: usize,
+}
+
+struct Handed<T>(T);
+
+// SAFETY: whoever hands it over waits until the other thread has ended: one of the two runs at a time.
+unsafe impl<T> Send for Handed<T> {}
+
+impl<T> Handed<T> {
+    fn take(self) -> T {
+        self.0
+    }
+}
+
+/// The way from name to name is as long as the program makes it: ten thousand functions that each hand a parameter to the next. Where the stack of this thread
+/// runs low, the walk goes on on the stack of another thread, and this one waits for it.
+fn on_a_stack_with_room<Found>(walk: impl FnOnce() -> Found) -> Found {
+    StackCheck::configure_thread();
+    if StackCheck::init().is_safe_to_recurse() {
+        return walk();
+    }
+    let walk = Handed(walk);
+    let thread = std::thread::Builder::new().stack_size(16 << 20);
+    let found = std::thread::scope(|scope| {
+        (thread.spawn_scoped(scope, move || Handed(walk.take()())))
+            .expect("a thread for the rest of the walk")
+            .join()
+    });
+    found
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        .take()
 }
 
 fn without_repeats(values: Vec<ExprId>) -> Vec<ExprId> {
@@ -77,13 +108,13 @@ impl Resolver<'_, '_> {
             seen: FxHashSet::default(),
             comes_round_to: place,
         };
-        match declaration {
+        on_a_stack_with_room(|| match declaration {
             Decl::Var(pattern) => self.push_values_of_variable(pattern, &mut from_name, &mut found),
             Decl::Param(pattern) => {
                 self.push_values_of_parameter(pattern, &mut from_name, &mut found);
             }
             _ => {}
-        }
+        });
         let mut spelled = self.spelled_values.borrow_mut();
         if from_name.comes_round_to < place {
             walk.comes_round_to = walk.comes_round_to.min(from_name.comes_round_to);

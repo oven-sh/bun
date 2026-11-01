@@ -42,7 +42,7 @@ const named = name => globalThis[["", name].join("")];
 test("the build does not see whose members these are, and nobody hears of the refusals", () => {
   try { named("String").prototype[Symbol.iterator] = () => 0; } catch {}
   try { Reflect.defineProperty(named("Array").prototype, Symbol.iterator, { value: 1 }); } catch {}
-  try { delete named("Map").prototype[Symbol.iterator]; } catch {}
+  try { delete named("RegExp").prototype[Symbol.split]; } catch {}
   try { Object.setPrototypeOf(named("Request").prototype, null); } catch {}
   expect(1).toBe(1);
 });
@@ -102,7 +102,7 @@ test.skipIf(!!unsupported).each([
       "  Cannot change the prototype of Request.prototype, at d-unseen.test.js:7, while d-unseen.test.js ran",
       "  Cannot define Array.prototype[Symbol(Symbol.iterator)], at d-unseen.test.js:5, while d-unseen.test.js ran",
       "  Cannot delete Array.prototype[Symbol(Symbol.iterator)], at a-patches.test.js:15, while a-patches.test.js ran",
-      "  Cannot delete Map.prototype[Symbol(Symbol.iterator)], at d-unseen.test.js:6, while d-unseen.test.js ran",
+      "  Cannot delete RegExp.prototype[Symbol(Symbol.split)], at d-unseen.test.js:6, while d-unseen.test.js ran",
     ]);
     expect(output).toContain(" 5 pass");
     expect(exitCode).toBe(0);

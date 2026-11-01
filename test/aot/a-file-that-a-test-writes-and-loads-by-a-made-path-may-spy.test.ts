@@ -7,7 +7,7 @@ import { test } from "./supported";
 raiseDefaultTimeout(120_000);
 
 // The path of the file comes from the environment or holds the pid, so no build sees the file. Its text stands in the test.
-const ways: Record<string, { imports?: string; text: string; call: string }> = {
+const ways: Record<string, { imports?: string; text: string; isTemplate?: boolean; call: string }> = {
   "it imports the module and spies on an export": {
     text: `import { spyOn } from "bun:test"; import * as lib from "../lib.js"; export const spy = () => spyOn(lib, "total");`,
     call: `loaded.spy()`,
@@ -25,6 +25,17 @@ const ways: Record<string, { imports?: string; text: string; call: string }> = {
     text: `import { spyOn } from "bun:test"; import * as lib from "../lib.js"; export const spy = name => spyOn(lib, name);`,
     call: `loaded.spy("total")`,
   },
+  // What the run puts into the text is no value and not nothing, so the build cannot parse the text, whatever it puts there.
+  "its text is a template with a name left open": {
+    text: `import { spyOn } from "bun:test"; import * as lib from "../lib.js"; export const spy = () => spyOn(lib, "total"); export const seen = lib.\${method}(1);`,
+    isTemplate: true,
+    call: `loaded.spy()`,
+  },
+  "its text is a template with the name of a function left open": {
+    text: `import { spyOn } from "bun:test"; import * as lib from "../lib.js"; export const spy = () => spyOn(lib, "total"); export function \${method}() {}`,
+    isTemplate: true,
+    call: `loaded.spy()`,
+  },
 };
 
 for (const [name, way] of Object.entries(ways)) {
@@ -41,7 +52,8 @@ ${way.imports ?? ""}
 test("a spy", async () => {
   mkdirSync(import.meta.dir + "/made", { recursive: true });
   const path = import.meta.dir + "/made/spy" + process.pid + ".js";
-  writeFileSync(path, ${JSON.stringify(way.text)});
+  const method = process.env.METHOD ?? "other";
+  writeFileSync(path, ${way.isTemplate ? "`" + way.text + "`" : JSON.stringify(way.text)});
   const before = read();
   const loaded = await import(process.env.WHERE ?? path);
   const made = ${way.call};

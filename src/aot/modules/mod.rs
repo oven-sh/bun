@@ -41,7 +41,7 @@ pub use graph::ModuleGraph;
 pub use interop::{ImportPhase, Interop, ModuleKind, RequireResult, SyntheticExportRule};
 pub(crate) use known_members::{KnownMemberValues, KnownObjects, Validity, is_enum};
 pub use plan::{Member, ModuleRef, Shape, Site, View};
-pub use referents::{Library, LinkedProject};
+pub use referents::{Library, LinkedProject, find_name_stored_as_module_exports};
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 pub(crate) use written_descriptor::{DescribedPart, WrittenDescriptor};
 
@@ -51,11 +51,12 @@ use crate::ir::parallel::map_each;
 use crate::known_helpers::KnownHelpers;
 use crate::link::{Beside, run_beside};
 use crate::load::replaced_by_tests::without_extension;
+use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind, Sources};
 use crate::options::{
     FilesThatTestsLoad, LoadsBelowFilesLeftToLoader, ReplacedExport, ReplacedModule,
 };
-use crate::statistics::{Counters, StatisticId};
+use crate::statistics::{Counters, Stage, StatisticId, StepClock, logs_stages};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::StmtId;
 use bun_sema::import_sites::ImportSiteKind;
@@ -79,7 +80,7 @@ use requests::{
     leave_imports_of_test_files_to_loader, scan_files,
 };
 use side_effects::is_declared_free_of_side_effects;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use synthetic_exports::{ReplacedNames, number_synthetic_exports};
 use unloadable::{drop_errors_of_unloadable_modules, find_unloadable_modules};
 
@@ -138,6 +139,8 @@ pub struct BindInput<'a, 's> {
     pub typescript_drops_absent_exports: bool,
     /// `AotOptions::loads_code_from_disk`
     pub loads_code_from_disk: bool,
+    /// `AotOptions::only_tests_load_code_from_disk`
+    pub only_tests_load_code_from_disk: bool,
     /// `AotOptions::host_runs_files_from_disk`
     pub host_runs_files_from_disk: bool,
     /// `LoadOptions::stand_in_for_files_from_disk`
@@ -176,10 +179,15 @@ pub struct BoundModules {
 
 pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let file_count = input.files.modules.len();
+    let mut steps = StepClock::new(Stage::BindModules, "bind_modules");
     let mut scans = scan_files(input);
+    steps.end("scan_files");
     let unloadable = find_unloadable_modules(input, &mut scans);
+    steps.end("find_unloadable_modules");
     let mut modules = collect_modules(input, &scans);
+    steps.end("collect_modules");
     let mut evicted = find_evicted_modules(input, &scans, &modules);
+    steps.end("find_evicted_modules");
     let may_load_again = |file: FileId| {
         let kind = modules.interop(ModuleRef::File(file)).kind;
         evicted.contains(ModuleRef::File(file))
@@ -196,11 +204,13 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         modules = collect_modules(input, &scans);
         evicted = find_evicted_modules(input, &scans, &modules);
     }
+    steps.end("leave_imports_of_test_files_to_loader");
     let ((order, mut sites), entries) = run_beside(
         input.beside,
         || compute_order(input, &scans, &modules),
         || collect_export_entries(input, &scans, &modules),
     );
+    steps.end("compute_order beside collect_export_entries");
     let mut entries = Some(entries);
     let inner_commonjs_modules = collect_inner_commonjs_modules(&modules, file_count);
     let commonjs_input = CommonJsInput {
@@ -213,18 +223,23 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         is_prefix_root: &|file: FileId| order.is_prefix_root(file),
     };
     let mut texts = scan_commonjs_modules(&commonjs_input);
+    steps.end("scan_commonjs_modules");
     let stored_in_cache = find_library_modules_stored_in_cache(input, &scans, &modules);
     let mut stored_markers = FxHashSet::default();
     let mut newly_stored_markers = find_markers_stored_in_application(input, &modules);
     // What the build knows of the `__esModule` of a module counts until a store in another file is found.
+    steps.end("modules stored in the cache, markers stored");
     let (tables, imports) = loop {
         texts.forget_markers(&newly_stored_markers);
         stored_markers.extend(newly_stored_markers);
         let entries = entries
             .take()
             .unwrap_or_else(|| collect_export_entries(input, &scans, &modules));
+        steps.end("export entries of this round");
         let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
+        steps.end("resolve_exports");
         sites.settle(input.files, &modules, &tables);
+        steps.end("sites.settle");
         let find_marker = |module: ModuleRef| match modules.interop(module).kind {
             _ if stored_markers.contains(&module) => None,
             // From the first `require` on.
@@ -243,6 +258,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             &evicted,
             &stored_in_cache,
         );
+        steps.end("bind_imports");
         let stored = imports.iter().flat_map(|file| &file.stored_markers);
         newly_stored_markers = stored.copied().collect();
         if newly_stored_markers.is_empty() {
@@ -347,25 +363,21 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let mut names_spied_on: FxHashSet<Atom> =
         told.map(|name| input.files.atoms.intern(name)).collect();
     names_spied_on.extend(spies.clone().flat_map(|it| &it.names));
-    // Whether somebody passes a helper its names is for the scan of the test files to say, which reads them all. Flow reads the callers in this program
-    // alone: below other programs it takes such a helper for a spy under any name, and what it finds that is not open starts the build over.
-    let is_seen_to_spy = spies
-        .clone()
-        .any(|it| it.is_any_name || !it.names.is_empty());
+    // Whether somebody passes a helper its names is for the scan of the test files to say, which reads them all, also for a program that lies below them: it tells
+    // the names, and the modules whose objects go into a call. Flow opens nothing for an object and a name that it does not know.
     let loads_by_unknown_path = imports.iter().any(|file| file.loads_by_unknown_path);
-    // Where a file loads under a path that nobody reads, every namespace object has escaped for flow, and a spy in sight whose object and name it loses on
-    // the way is a spy on every export of them all: it finds that behind a whole front end. A name that is a constant where the spy is called it does not lose.
-    let meets_all_that_escaped = spies
-        .clone()
-        .any(|it| it.is_any_name || it.has_name_that_is_no_constant)
-        && loads_by_unknown_path
-        && !input.every_export_is_asked_for
-        && !input.host_runs_files_from_disk;
-    let is_any_name_spied_on = input.spies_on_unknown_objects
-        || meets_all_that_escaped
-        || spies.clone().any(|it| {
-            it.is_any_name || (it.takes_names_from_outside && input.every_export_is_asked_for)
-        });
+    let is_any_name_spied_on =
+        input.spies_on_unknown_objects || spies.clone().any(|it| it.is_any_name);
+    if input.runs_tests && logs_stages() {
+        for (&file, of_file) in modules.compiled_files.iter().zip(&imports) {
+            if of_file.spies_on_unknown_objects.is_any_name {
+                bun_core::print_errorln!(
+                    "AOT test run | {} lets spyOn go where nobody sees what it is called with",
+                    bstr::BStr::new(input.files.module(file).file_name()),
+                );
+            }
+        }
+    }
     if input.runs_tests && (is_any_name_spied_on || !names_spied_on.is_empty()) {
         let handed_out = imports.iter().flat_map(|file| &file.namespaces_handed_out);
         let mut handed_out: FxHashSet<ModuleRef> = handed_out.copied().collect();
@@ -383,8 +395,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         // Such a spy may be handed the object of any module. The engine says so behind a whole run of flow. Where the test files are not in the build it finds few: they reach the entry points alone.
         if !input.host_runs_files_from_disk
             && (input.hands_on_any_module
-                || ((is_seen_to_spy || !input.names_spied_in_text.is_empty())
-                    && loads_by_unknown_path))
+                || (!input.names_spied_in_text.is_empty() && loads_by_unknown_path))
         {
             spy_may_reach_any_module = true;
             let files = modules.compiled_files.iter();
@@ -463,18 +474,31 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         }
     }
     let mocks_any_module = imports.iter().any(|file| file.mocks_any_module);
+    if input.runs_tests && logs_stages() {
+        bun_core::print_errorln!(
+            "AOT test run | variables that tests may replace {} in {} files | modules that may be mocked {} | a spy under any name {} | names that spies on objects from somewhere spell {} | such a spy may reach any module {}",
+            replaced_variables.len(),
+            modules.compiled_files.len(),
+            mocked_modules.len(),
+            is_any_name_spied_on,
+            names_spied_on.len(),
+            spy_may_reach_any_module,
+        );
+    }
     let replaced = ReplacedNames {
         names: &replaced_names,
         modules: &mocked_modules,
         is_every_module: mocks_any_module || spy_may_reach_any_module,
     };
+    steps.end("what tests replace, mock and spy on");
     let synthetic = number_synthetic_exports(input, &modules, &tables, &imports, &texts, replaced);
+    steps.end("number_synthetic_exports");
     let ((mut pending, requests, is_library), mut commonjs_exports) = run_beside(
         input.beside,
         || {
             (
                 collect_pending_failures(&scans, &modules, &tables, &imports),
-                finish_requests(&scans, &modules, &tables, &order, &sites),
+                finish_requests(&scans, &modules, &tables, &order, &sites, &mocked_modules),
                 find_library_files(input),
             )
         },
@@ -497,6 +521,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             commonjs_exports.call_through_namespace(module, name);
         }
     }
+    steps.end("requests beside CommonJS exports");
     drop_errors_of_unloadable_modules(&mut pending, &unloadable);
     let failures = number_failures(file_count, pending);
     let mut load_failures = Vec::with_capacity(unloadable.len());
@@ -516,6 +541,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         .collect();
     debug_assert!(compiled_files.next().is_none());
     let files_left_to_loader = modules.files_left_to_loader();
+    steps.end("failures, drafts");
     let rows = map_each(drafts, input.in_parallel, &|(file, requests, imports)| {
         let (files, sources) = (input.files, input.sources);
         let interop = modules.interop(ModuleRef::File(file));
@@ -608,6 +634,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             names_searched_behind_stars: imports.names_searched_behind_stars,
         }
     });
+    steps.end("rows");
     let mut counters = Counters::default();
     let module_count = modules.record_files.len() + modules.other_modules.len();
     counters.count(StatisticId::ModulesBound, module_count as u64);
@@ -634,6 +661,13 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     if input.runs_tests {
         plan.set_runs_tests();
     }
+    if input.only_tests_load_code_from_disk {
+        for &file in input.files.compiled_files() {
+            if parsed_source(input.files, file).is_some_and(|source| !source.is_of_tests) {
+                plan.set_loads_compiled_files_alone(ModuleRef::File(file));
+            }
+        }
+    }
     // `require.main` is what the cache holds under the path in `Bun.main`.
     if input.runs_tests || input.stores_path_of_main_module {
         plan.set_lists_files_in_cache();
@@ -655,6 +689,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     }
     if evicted.is_table_reached() {
         plan.set_reaches_entries_of_cache();
+    }
+    if evicted.are_entries_read() {
+        plan.set_reads_entries_of_cache();
     }
     for module in evicted.asked_for_any_export() {
         plan.set_every_export_is_asked_for(module);
@@ -686,8 +723,11 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         wrapped: modules.wrapped,
         commonjs_exports,
         plan,
+        member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
     };
+    steps.end("the plan, the graph");
     let graph = graph.finish(input.in_parallel);
+    steps.end("graph.finish");
     BoundModules { graph, counters }
 }
 

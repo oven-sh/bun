@@ -224,7 +224,7 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     }
     size_t query = resolved.find('?');
     StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
-    if (!path.endsWith(".node"_s))
+    if (!path.endsWith(".node"_s) || Bun::letsTestRunLoadAddon(globalObject, resolved))
         return;
     if (JSValue error = Bun::errorIfCodeOutsideImageIsRefused(globalObject, Bun::ErrorCode::MODULE_NOT_FOUND, resolved))
         JSC::throwException(globalObject, scope, error);

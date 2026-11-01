@@ -1000,6 +1000,12 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         );
     }
     check_runtime_conflicts(&ctx, compiles);
+    if cmd == Tag::TestCommand {
+        run_compiled::note_words_that_name_test_files(
+            args.positionals(),
+            args.options(b"--files-from"),
+        );
+    }
     let test_words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS
         .get_not_empty()
         .filter(|_| compiles && cmd == Tag::TestCommand);
@@ -1064,6 +1070,10 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         // A test writes a module at run time and imports it, as under plain `bun test`.
         loads_code_from_disk: loads_code_from_disk
             || (cmd == Tag::TestCommand && compiles && !cfg!(bun_hardened)),
+        only_tests_load_code_from_disk: !loads_code_from_disk
+            && cmd == Tag::TestCommand
+            && compiles,
+        is_part_of_test_run: is_part_of_run,
         ..Default::default()
     }));
 }

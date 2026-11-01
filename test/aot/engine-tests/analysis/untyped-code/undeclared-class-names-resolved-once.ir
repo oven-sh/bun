@@ -351,8 +351,8 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="run"
-# CHECK: module=m0 position=505 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0|L2|L3} results=[{type=string}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L2|L3):
+# CHECK: module=m0 position=505 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0} results=[{type=string}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: v1: "ran undefined" = String string="ran undefined"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
@@ -380,11 +380,7 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="submit"
-# CHECK: module=m0 position=672 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L2|L3} results=[{type=undefined}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L2|L3):
-# CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: }
+# CHECK: module=m0 position=672 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L2} results=[{type=undefined}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="isThenable"
 # CHECK: module=m0 position=764 kind=Arrow length=1 thisType={type=anything} parameters=[{type=L0|L2|L3}] results=[{type=boolean}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0|L2|L3):
@@ -440,14 +436,8 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="Job"
 # CHECK: module=m0 position=637 kind=DerivedConstructor role=AllocatedThisVersion flags=[HasRestParameter, HasThis, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=L2|L3} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=undefined}] functionTypes=[f31] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f8} constructedClass=L2
 # CHECK-LABEL: function {{*}}name="submit"
-# CHECK: module=m0 position=672 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f9}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers} inlineFrames=[{}, {callee=f9 callPosition=672 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: f9, v1: anything):
-# CHECK-NEXT: v2: undefined = Undefined
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="submit"
-# CHECK: module=m0 position=672 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9 parameter=2147483648 node=6} creator=Entrypoint{target=f9 arguments=Registers} inlineFrames=[{}, {callee=f9 callPosition=672 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: object):
-# CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: Return v1
+# CHECK: module=m0 position=672 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f9}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f9, v1: anything) frequency=Rare:
+# CHECK-NEXT: v2: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v2
 # CHECK-NEXT: }

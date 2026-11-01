@@ -89,6 +89,13 @@ pub enum ImportSpecifier {
     Unknown,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ChangedPath {
+    pub operand: ExprId,
+    pub path: ImportSpecifier,
+    pub reaches_below: bool,
+}
+
 /// What a resolver answers for a name: `require.resolve` a path, `import.meta.resolve` a URL.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum ResolvedForm {
@@ -124,13 +131,21 @@ pub(crate) struct ScanInputs<'a, 's> {
     pub atoms: &'a Interner<'s>,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ResolvedFrom {
+    File(Atom),
+    PathFromOwnFolder(Atom),
+}
+
 pub(crate) struct ImportScan<'s> {
     pub sites: &'s [ImportSite],
     pub alternatives: &'s [ImportSpecifier],
     pub paths_from_own_directory: &'s [ExprId],
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
-    pub paths_of_changed_files: &'s [(ExprId, ImportSpecifier)],
+    pub paths_of_changed_files: &'s [ChangedPath],
+    pub asked_of_data_files: &'s [(Atom, Atom)],
+    pub names_out_of_data_files: &'s [Atom],
     pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],
@@ -139,7 +154,7 @@ pub(crate) struct ImportScan<'s> {
     pub imports_used_only_in_dead_code: &'s [SymbolId],
     pub imports_used_without_a_read: &'s [SymbolId],
     pub module_require_objects: &'s [ExprId],
-    pub requires_of_other_files: &'s [(u32, Atom)],
+    pub requires_of_other_files: &'s [(u32, ResolvedFrom)],
     pub pending_macro_calls: &'s [ExprId],
     pub first_runtime_import: Option<ImportId>,
     pub has_import_equals_require: bool,

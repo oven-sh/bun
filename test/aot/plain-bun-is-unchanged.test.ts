@@ -1,6 +1,7 @@
 // What Bun without --aot must not get from the compiler. Every test here passes on a Bun that has no compiler at all.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./harness/default-timeout";
 
 // The collector reads every word of a live stack frame. A word that only a compiled or validated program writes keeps what an
 // earlier call left in it, and the frames of the event loop lie at the same addresses in every turn.

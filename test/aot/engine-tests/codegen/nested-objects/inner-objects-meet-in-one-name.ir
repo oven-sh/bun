@@ -382,7 +382,7 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Void b@1 = Patchpoint(resultConstraints = WarmAny, ExitsSideways|Reads:Top, v6:RequireObjectCoercible)
 # CHECK-NEXT: Void b@33 = Oops(Terminal, v6:RequireObjectCoercible)
 # CHECK-NEXT: Known properties:
-# CHECK-NEXT: b@18: dereferenceableBytes = 8
+# CHECK-NEXT: b@18: dereferenceableBytes = 16
 # CHECK-NEXT: b@21: range = [1,2147483648]
 # CHECK-NEXT: b@142: range = [1,2147483648]
 # CHECK-NEXT: b@143: range = [1,2147483648]

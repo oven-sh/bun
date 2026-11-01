@@ -276,11 +276,149 @@ fn value_of_function_that_may_return_otherwise() {
         "const g = (function () { function f() {} })(); g;",
         "const g = (function* () { function f() {} return f; })(); g;",
         "const g = (async function () { function f() {} return f; })(); g;",
-        "function make() { function f() {} return f; } const g = make(); g;",
+        "function make() { function f() {} if (f.x) return 1; return f; } const g = make(); g;",
+        "function make() { function f() {} } const g = make(); g;",
+        "function f() {} function h() {} function pick(it) { return x ? it : h; } const g = pick(f); g;",
     ];
     for &text in NOT_A_REFERENCE {
         assert_unknown("a.mjs", text, UnknownReferent::NotAReference);
     }
+}
+
+#[test]
+fn value_of_named_function_with_one_return() {
+    const FOUND: &[&str] = &[
+        "function make() { function f() {} return f; } const g = make(); g;",
+        "function f() {} function pass(it) { return x ? it : { held: it }.held; } const g = pass(f); g;",
+        "function f() {} function inner(it) { return (0, it); } function outer(it) { return inner(it); } const g = outer(f); g;",
+        "function f() {} function h() {} function second(a, b) { return (a, b); } const g = second(h, f); g;",
+    ];
+    for &text in FOUND {
+        with_program(&[("a.mjs", text)], |program| {
+            let found = program.resolve();
+            assert_eq!(
+                (found.referent, found.certainty),
+                (program.function(0, "f"), Expected),
+                "{text}"
+            );
+        });
+    }
+    assert_unknown(
+        "a.mjs",
+        "function f() {} function again(it) { return x ? again(it) : again(it); } const g = again(f); g;",
+        UnknownReferent::NotAReference,
+    );
+}
+
+#[test]
+fn variable_without_a_value_that_is_stored_once() {
+    const FOUND: &[&str] = &[
+        "var g; g = function f() {}; g;",
+        "var g; (function () { g = function f() {}; })(); g;",
+        "let g; function fill() { g = function f() {}; } g;",
+    ];
+    for &text in FOUND {
+        with_program(&[("a.cjs", text)], |program| {
+            let found = program.resolve();
+            assert_eq!(
+                (found.referent, found.certainty),
+                (program.function(0, "f"), Expected),
+                "{text}"
+            );
+        });
+    }
+    const UNKNOWN: &[&str] = &[
+        "var g; g = function f() {}; g = 1; g;",
+        "var g; g ||= function f() {}; g;",
+        "var g; [g] = [function f() {}]; g;",
+        r#"var g; g = function f() {}; eval(""); g;"#,
+    ];
+    for &text in UNKNOWN {
+        with_program(&[("a.cjs", text)], |program| {
+            let found = program.resolve().referent;
+            assert!(matches!(found, StaticReferent::Unknown(_)), "{text}");
+        });
+    }
+}
+
+const STORES_BY_CALLS: &str = "(function (factory) { \
+    var root = typeof global === 'object' ? global : {}; \
+    if (typeof define === 'function' && define.amd) define(['exports'], function (exports) { factory(make(root, make(exports))); }); \
+    else if (typeof module === 'object') factory(make(root, make(module.exports))); \
+    else factory(make(root)); \
+    function make(exports, previous) { return function (id, v) { return exports[id] = previous ? previous(id, v) : v; }; } \
+})";
+
+#[test]
+fn exports_stored_by_calls_of_a_function_that_stores_its_second_argument_under_its_first() {
+    let exporters = [
+        format!(
+            "var f; {STORES_BY_CALLS}(function (put) {{ f = function f() {{}}; put('f', f); put('h', function h() {{}}); }});"
+        ),
+        format!("{STORES_BY_CALLS}(function (put) {{ put('f', function f() {{}}); }});"),
+        "function put(id, v) { return exports[id] = v; } put('f', function f() {});".to_string(),
+        "var put = function (id, v) { return module.exports[id] = v; }; put('f', function f() {});"
+            .to_string(),
+    ];
+    for exporter in exporters {
+        let exporter: &'static str = exporter.leak();
+        let importer = r#"const b = require("./b.cjs"); b.f;"#;
+        with_program(&[("a.cjs", importer), ("b.cjs", exporter)], |program| {
+            let expected = Resolved {
+                referent: program.function(1, "f"),
+                certainty: Expected,
+            };
+            assert_eq!(program.resolve(), expected, "{exporter}");
+        });
+    }
+    const MISSING: &[&str] = &[
+        "function put(id, v) { return exports[id] = v; } put('f', function f() {}); put('f', function h() {});",
+        "function put(id, v) { return exports[v] = id; } put('f', function f() {});",
+        "function put(id, v) { return exports[id] = 1; } put('f', function f() {});",
+        "var other = {}; function put(id, v) { return other[id] = v; } put('f', function f() {});",
+        "function put(id, v) { id = 'g'; return exports[id] = v; } put('f', function f() {});",
+        "function make(o, next) { return function (id, v) { return o[id] = next ? next(id, v) : v; }; } \
+         var a = make({}, function (id, v) { return b(id, v); }); var b = make({}, a); b('f', function f() {});",
+    ];
+    for &exporter in MISSING {
+        assert_required_unknown(
+            r#"const b = require("./b.cjs"); b.f;"#,
+            exporter,
+            UnknownReferent::MissingMember,
+        );
+    }
+}
+
+#[test]
+fn calls_that_ask_for_themselves_end() {
+    const ENDS: &[&str] = &[
+        "const bound = {}; bound.write = bound.write.bind({}); bound.write;",
+        "const bound = {}; bound.write = bound.write.bind({});",
+        "function reversed(text) { return text.length === 0 ? text : reversed(text.slice(1)).concat(text[0]); } reversed('ab');",
+        "function reversed(text) { return text.length === 0 ? text : reversed(text.slice(1)).concat(text[0]); } reversed('ab').concat;",
+        "function same(it) { return it; } const held = {}; held.x = same(held.x); held.x;",
+        "function a(it) { return x ? b(it).m(it) : it; } function b(it) { return x ? a(it).m(it) : it; } a(1);",
+    ];
+    for &text in ENDS {
+        with_program(&[("a.cjs", text)], |program| {
+            let found = program.resolve().referent;
+            assert!(matches!(found, StaticReferent::Unknown(_)), "{text}");
+        });
+    }
+}
+
+#[test]
+fn last_part_of_a_comma_and_arms_that_name_one_thing() {
+    for text in ["class A {} (0, A);", "class A {} (x ? A : A);"] {
+        with_program(&[("a.mjs", text)], |program| {
+            assert_eq!(program.resolve().referent, program.class(0, "A"), "{text}");
+        });
+    }
+    assert_unknown(
+        "a.mjs",
+        "class A {} class B {} (x ? A : B);",
+        UnknownReferent::NotAReference,
+    );
 }
 
 #[test]
@@ -954,8 +1092,6 @@ fn unknown_referents() {
     assert_unknown("a.mjs", "missing;", FreeName);
     assert_unknown("a.mjs", "1;", NotAReference);
     assert_unknown("a.mjs", "f();", NotAReference);
-    assert_unknown("a.mjs", "class A {} (0, A);", NotAReference);
-    assert_unknown("a.mjs", "class A {} (x ? A : A);", NotAReference);
     assert_unknown("a.mjs", "class A {} let b = A; (b += A);", NotAReference);
     assert_unknown("a.mjs", "class A {} A?.b;", NotAReference);
     assert_unknown("a.mjs", "class A {} A[k];", NotAReference);

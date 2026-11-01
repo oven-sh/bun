@@ -17,8 +17,8 @@ pub(crate) enum Kind {
     /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
     TestDone,
     /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
-    /// files, shuffled, unhandled; u64 elapsed_ns; 4 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
-    /// the worker's peak RSS so far, and what it holds of its own now that the file has ended
+    /// files, shuffled, unhandled; u64 elapsed_ns; 3 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
+    /// and the worker's peak RSS so far
     /// then u32: 0, or one more than the `process.exitCode` that the file has left other than it found it
     /// then str: `runner::first_loads`
     FileDone,

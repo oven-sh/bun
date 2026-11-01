@@ -505,7 +505,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f30 visibility=Private
 # -- generated: map
 # CHECK-LABEL: function {{*}}name="map"
 # CHECK: role=Library
-# CHECK-NEXT: instructions: 97, patchpoints: 9, rare instructions: 78, polls: 2
+# CHECK-NEXT: instructions: 94, patchpoints: 9, rare instructions: 78, polls: 2
 # CHECK-NEXT: end of function f19
 # CHECK-LABEL: function {{*}}name="map"
 # CHECK: role=GenericEntrypoint

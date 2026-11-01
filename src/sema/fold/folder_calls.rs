@@ -16,7 +16,10 @@ impl<'s> Folder<'_, 's> {
         if let Some(folded) = self.fold_short_circuit(e, call.callee, call.chain) {
             return folded;
         }
-        if call.chain == Chain::No && self.is_feature_callee(call.callee) {
+        if call.chain == Chain::No
+            && self.is_feature_callee(call.callee)
+            && !self.inputs.features_are_unknown()
+        {
             return self.fold_feature_call(e);
         }
         if let Some(given) = call_site_arguments(self.hir, self.bound, e) {

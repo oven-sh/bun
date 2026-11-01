@@ -71,15 +71,26 @@ fn is_import_meta_require(hir: &File<'_>, e: ExprId) -> bool {
 pub(super) struct StepsLeft {
     parameters: usize,
     requests: usize,
+    bindings: usize,
     pub(super) passes_get_builtin_module: bool,
+    passes_choices: bool,
 }
 
 impl StepsLeft {
     pub(super) const ALL: StepsLeft = StepsLeft {
         parameters: LONGEST_CHAIN_OF_PARAMETERS,
         requests: LONGEST_CHAIN_OF_REQUESTS,
+        bindings: LONGEST_CHAIN_OF_BINDINGS,
         passes_get_builtin_module: true,
+        passes_choices: true,
     };
+
+    pub(super) fn without_choices(self) -> StepsLeft {
+        StepsLeft {
+            passes_choices: false,
+            ..self
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -355,22 +366,82 @@ fn is_written_as_own_file(
         && names_own_file_behind(text, hir.id_at(call.args, 0), conversions_left, left)
 }
 
-fn is_made_for_own_file(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> bool {
-    let hir = text.hir;
-    let Some(ExprKind::Call(call)) = expr_kind(hir, hir.skip_type_assertions(e)) else {
+const PATH_MODULES: [Atom; 2] = [known::path, known::node_path];
+
+fn names_own_folder(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> bool {
+    let Text { hir, bound, .. } = text;
+    if is_free_common_js(hir, bound, e, CommonJsVariable::Dirname) {
+        return !may_be_modified(hir, bound, CommonJsVariable::Dirname);
+    }
+    if let Some(ExprKind::Call(call)) = expr_kind(hir, e) {
+        let call = hir[call];
+        let export = text.find_export_read_off_module(call.callee, left, PATH_MODULES);
+        let file = hir.ids(call.args).next();
+        return call.args.len() == 1
+            && export == Some(known::meta_dirname)
+            && file.is_some_and(|file| {
+                names_own_file_behind(text, file, LONGEST_CHAIN_OF_BINDINGS, left)
+            });
+    }
+    matches!(expr_kind(hir, e), Some(ExprKind::Dot { obj, name, chain: Chain::No, .. })
+        if (name == known::meta_dir || name == known::meta_dirname)
+            && matches!(expr_kind(hir, hir.skip_type_assertions(obj)), Some(ExprKind::ImportMeta)))
+        && !bound.import_meta_may_be_modified()
+}
+
+fn starts_at_own_folder(
+    text: Text<'_, '_, '_, '_>,
+    e: ExprId,
+    parts_left: usize,
+    left: StepsLeft,
+) -> bool {
+    let Text { hir, bound, .. } = text;
+    let Some(parts_left) = parts_left.checked_sub(1) else {
         return false;
     };
-    let mut arguments = hir.ids(hir[call].args);
-    arguments
-        .next()
-        .is_some_and(|base| names_own_file_behind(text, base, LONGEST_CHAIN_OF_BINDINGS, left))
-        && text.is_create_require(hir[call].callee, left)
+    settled_chain(hir, bound, e).any(|e| {
+        let first = match expr_kind(hir, e) {
+            Some(ExprKind::Binary {
+                op: BinOp::Add,
+                left: first,
+                ..
+            }) => Some(first),
+            Some(ExprKind::Template { exprs }) => hir.ids(exprs).next(),
+            Some(ExprKind::Call(call)) => {
+                let callee = hir[call].callee;
+                let export = text.find_export_read_off_module(callee, left, PATH_MODULES);
+                let joins = export == Some(known::join) || export == Some(known::resolve);
+                hir.ids(hir[call].args).next().filter(|_| joins)
+            }
+            _ => None,
+        };
+        names_own_folder(text, e, left)
+            || first.is_some_and(|first| starts_at_own_folder(text, first, parts_left, left))
+    })
+}
+
+fn find_made_require(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> Option<OwnRequire> {
+    let hir = text.hir;
+    let Some(ExprKind::Call(call)) = expr_kind(hir, hir.skip_type_assertions(e)) else {
+        return None;
+    };
+    let base = hir.ids(hir[call].args).next()?;
+    let made = if names_own_file_behind(text, base, LONGEST_CHAIN_OF_BINDINGS, left) {
+        OwnRequire::Made
+    } else if starts_at_own_folder(text, base, LONGEST_CHAIN_OF_BINDINGS, left) {
+        OwnRequire::MadeForPath(base)
+    } else {
+        return None;
+    };
+    text.is_create_require(hir[call].callee, left)
+        .then_some(made)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum OwnRequire {
     OfFile,
     Made,
+    MadeForPath(ExprId),
     // Imported from the file at this path, which exports its own `require`.
     OfOtherFile(Atom),
 }
@@ -550,7 +621,7 @@ pub(super) fn follow_to_own_require(
         })
     };
     let mut e = hir.skip_type_assertions(e);
-    for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
+    for bindings in (0..left.bindings).rev() {
         if is_free_common_js(hir, bound, e, CommonJsVariable::Require)
             || find_module_printed_as_require(hir, bound, e).is_some()
         {
@@ -572,6 +643,29 @@ pub(super) fn follow_to_own_require(
             e = hir.skip_type_assertions(right);
             continue;
         }
+        if left.passes_choices {
+            let sides = match expr_kind(hir, e) {
+                Some(ExprKind::Cond { branches, .. }) => {
+                    let Branches { yes, no } = hir.branches(branches);
+                    Some([yes, no])
+                }
+                Some(ExprKind::Binary {
+                    op: BinOp::Or | BinOp::Nullish,
+                    left: first,
+                    right: second,
+                }) => Some([first, second]),
+                _ => None,
+            };
+            if let Some(sides) = sides {
+                let left = StepsLeft {
+                    bindings: bindings + 1,
+                    ..left
+                };
+                let is_own =
+                    |side| follow_to_own_require(text, side, left) == Some(OwnRequire::OfFile);
+                return sides.into_iter().any(is_own).then_some(OwnRequire::OfFile);
+            }
+        }
         // `const load = module.require; load.call(module, "a")`
         if let Some((object, MemberKey::Name(known::require))) = hir.member_key(e)
             && is_free_common_js(
@@ -585,8 +679,8 @@ pub(super) fn follow_to_own_require(
             return Some(OwnRequire::OfFile);
         }
         let Some(source) = settled_initializer(hir, bound, e) else {
-            if is_made_for_own_file(text, e, left) {
-                return Some(OwnRequire::Made);
+            if let Some(made) = find_made_require(text, e, left) {
+                return Some(made);
             }
             if let Some(path) = find_imported_require(hir, bound, e) {
                 return Some(OwnRequire::OfOtherFile(path));
@@ -653,6 +747,7 @@ fn find_require_written_as(
             (!may_be_modified(hir, bound, CommonJsVariable::Require)).then_some(None)
         }
         OwnRequire::Made => Some(None),
+        OwnRequire::MadeForPath(_) => None,
         OwnRequire::OfOtherFile(path) => Some(Some(path)),
     }
 }

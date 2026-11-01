@@ -707,6 +707,7 @@ impl FileBinder<'_, '_> {
                 })
             }
             KnownReference::Global { .. } => true,
+            KnownReference::Loaded { .. } => false,
         })
     }
 

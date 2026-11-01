@@ -447,44 +447,20 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9
 # -- generated: f0 putIntoFull putIntoRoomy putIntoWritten textOf look f6
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 563, patchpoints: 75, rare instructions: 750, polls: 8
+# CHECK-NEXT: instructions: 36, patchpoints: 11, rare instructions: 1525
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="putIntoFull"
-# CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 15, patchpoints: 2
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 10, patchpoints: 0, rare instructions: 8
 # CHECK-NEXT: end of function f1
-# CHECK-LABEL: function {{*}}name="putIntoFull"
-# CHECK: role=Source
-# CHECK-NEXT: instructions: 12, patchpoints: 2, rare instructions: 14
-# CHECK-NEXT: end of function f12
-# CHECK-LABEL: function {{*}}name="putIntoFull"
-# CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 15, patchpoints: 3, rare instructions: 14
-# CHECK-NEXT: end of function f16
 # CHECK-LABEL: function {{*}}name="putIntoRoomy"
-# CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 15, patchpoints: 2
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 10, patchpoints: 0, rare instructions: 8
 # CHECK-NEXT: end of function f2
-# CHECK-LABEL: function {{*}}name="putIntoRoomy"
-# CHECK: role=Source
-# CHECK-NEXT: instructions: 12, patchpoints: 2, rare instructions: 14
-# CHECK-NEXT: end of function f13
-# CHECK-LABEL: function {{*}}name="putIntoRoomy"
-# CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 15, patchpoints: 3, rare instructions: 14
-# CHECK-NEXT: end of function f17
 # CHECK-LABEL: function {{*}}name="putIntoWritten"
-# CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 15, patchpoints: 2
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 10, patchpoints: 0, rare instructions: 8
 # CHECK-NEXT: end of function f3
-# CHECK-LABEL: function {{*}}name="putIntoWritten"
-# CHECK: role=Source
-# CHECK-NEXT: instructions: 12, patchpoints: 2, rare instructions: 14
-# CHECK-NEXT: end of function f14
-# CHECK-LABEL: function {{*}}name="putIntoWritten"
-# CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 15, patchpoints: 3, rare instructions: 14
-# CHECK-NEXT: end of function f18
 # CHECK-LABEL: function {{*}}name="textOf"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 15, patchpoints: 2, rare instructions: 11

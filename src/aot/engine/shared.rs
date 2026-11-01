@@ -67,9 +67,36 @@ pub fn relocate_image(image: &mut [u8], address: u64) {
     unsafe { Bun__AOT__relocateImage(image.as_mut_ptr(), image.len(), address) }
 }
 
+/// When the engine loads `image` above `first_image` it copies the string headers of `image` behind those of `first_image`: to which
+/// offset there, and from where.
+pub fn place_of_string_headers_behind(
+    first_image: &[u8],
+    image: &[u8],
+) -> Option<(usize, core::ops::Range<usize>)> {
+    let mut place = [0usize; 3];
+    // SAFETY: the engine reads the bytes of the two borrows and writes three words.
+    let is_found = unsafe {
+        Bun__AOT__placeOfStringHeadersBehind(
+            first_image.as_ptr(),
+            first_image.len(),
+            image.as_ptr(),
+            image.len(),
+            place.as_mut_ptr(),
+        )
+    };
+    is_found.then(|| (place[0], place[1]..place[1] + place[2]))
+}
+
 unsafe extern "C" {
     safe fn Bun__AOT__imageAlignment() -> usize;
     fn Bun__AOT__relocateImage(image: *mut u8, size: usize, address: u64);
+    fn Bun__AOT__placeOfStringHeadersBehind(
+        first_image: *const u8,
+        size_of_first_image: usize,
+        image: *const u8,
+        size: usize,
+        place: *mut usize,
+    ) -> bool;
     safe fn Bun__AOT__hasCompiler() -> bool;
     fn Bun__AOT__describeDifferenceOfRuntime(
         description: *const u8,

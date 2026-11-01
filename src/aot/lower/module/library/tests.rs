@@ -64,6 +64,7 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         is_library: true,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     let names = BuiltinNames::new(&atoms);
@@ -137,6 +138,7 @@ fn lower_library_file_for(
         minifies_identifiers: false,
         obfuscates: false,
         counts_executions: false,
+        imports_are_untyped: false,
     };
     let mut lowered = lower_program(&files, options);
     assert_eq!(lowered.len(), 2, "the entry point and the library file");

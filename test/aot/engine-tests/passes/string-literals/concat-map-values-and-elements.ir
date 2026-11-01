@@ -845,5 +845,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f95 visibility=Private
 # -- generated: carried
 # CHECK-LABEL: function {{*}}name="carried"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 169, patchpoints: 9, rare instructions: 213, polls: 2
+# CHECK-NEXT: instructions: 155, patchpoints: 8, rare instructions: 14, polls: 2
 # CHECK-NEXT: end of function f11

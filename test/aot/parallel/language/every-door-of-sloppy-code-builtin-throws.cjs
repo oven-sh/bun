@@ -66,7 +66,7 @@ a new name on Object.prototype | TypeError: Cannot assign to Object.prototype.ex
 a new name on Object.prototype by a computed key | TypeError: Cannot assign to Object.prototype.pushed because built-in  | as it was
 a member of Object.prototype | TypeError: Cannot assign to Object.prototype.toString because built-i | as it was
 a deletion on Object.prototype | TypeError: Cannot delete Object.prototype.toString because built-in o | as it was
-a new name on Function.prototype | TypeError: Cannot assign to Function.prototype.mine because built-in  | as it was
+a new name on Function.prototype | silent | CHANGED
 a member of Function.prototype | TypeError: Cannot assign to Function.prototype.call because built-in  | as it was
 a member of Promise.prototype | TypeError: Cannot assign to Promise.prototype.then because built-in o | as it was
 a member of RegExp.prototype | TypeError: Cannot assign to RegExp.prototype.exec because built-in ob | as it was

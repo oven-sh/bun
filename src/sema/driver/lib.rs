@@ -411,8 +411,12 @@ fn is_pool_thread() -> bool {
 /// whose modules are loaded on that pool. `name`: the prefix of the thread names, before their number.
 pub fn use_dedicated_pool(name: &'static str) {
     DEDICATED_POOL.get_or_init(|| {
+        let max_threads = match cfg!(test) {
+            true => 0x3FFF,
+            false => u32::from(bun_core::get_thread_count()),
+        };
         let pool = bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
-            max_threads: u32::from(bun_core::get_thread_count()),
+            max_threads,
             stack_size: WORKER_STACK_SIZE,
             ..Default::default()
         })
@@ -1332,6 +1336,7 @@ pub struct Incomplete {
     pub is_nested_too_deeply: bool,
     /// `hir::File::deepest_nesting`, where the tree is whole.
     pub deepest_nesting: u32,
+    pub nested_too_deeply_at: Option<(u32, u32)>,
 }
 
 impl Incomplete {
@@ -4776,6 +4781,14 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     true => 0,
                     false => hir.deepest_nesting(),
                 },
+                nested_too_deeply_at: (hir.text.get(..hir.error_pos as usize))
+                    .filter(|before| hir.ran_out_of_stack && !before.is_empty())
+                    .map(|before| {
+                        let lines = strings::count_char(before, b'\n');
+                        let line_start =
+                            strings::last_index_of_char(before, b'\n').map_or(0, |at| at + 1);
+                        (lines as u32 + 1, (before.len() - line_start) as u32 + 1)
+                    }),
             });
         }
         unfinished.lock().extend(outcome.checked);
@@ -4830,6 +4843,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
     // The files of the discarded tasks.
     let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
+    let note_cycles_entered = file_work
+        .filter(|work| !(work.is_last_pass)())
+        .and_then(|work| work.note_cycles_entered);
     // Which files are final, and the length of the final prefix in program order. The task that checks the next file
     // enters a cycle where `tsc --singleThreaded` does. See `Checker::set_first_in_order`.
     let final_files = Guarded::new((vec![false; to_check.len()], 0usize));
@@ -4867,8 +4883,12 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         .map(|(index, &file)| (file, index)))
     .collect();
     let imports_of = |importer: usize| {
-        let module = program.files.module(to_check[importer]);
-        let imported = module.edges.iter().chain(module.code_edges);
+        let (edges, code_edges) = {
+            let _reading = bun_sema::program::ReadingNoTrees::begin();
+            let module = program.files.module(to_check[importer]);
+            (module.edges, module.code_edges)
+        };
+        let imported = edges.iter().chain(code_edges);
         imported.filter_map(|file| index_of_file.get(file).copied())
     };
     // Whether the files in the import cycle of `to_check[index]` that come before it are final. `final_files`: what the lock holds.
@@ -4907,8 +4927,11 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         let (tasks_of_round, visits_thrown_away) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let most_logged_between_idle_moments = AtomicUsize::new(0);
         let (busy, first_idle) = (AtomicU64::new(0), AtomicU64::new(u64::MAX));
-        // How long it took, when it began, and the bytes of its first file.
-        let longest_task = Guarded::new((0u64, 0u64, 0usize));
+        let longest_task = Guarded::new((0u64, 0u64, 0usize, 0usize));
+        let count_packed_away = || {
+            let is_gone = |&&file: &&usize| program.files.is_tree_gone(to_check[file]);
+            files.iter().filter(is_gone).count()
+        };
         let cost: usize = files.iter().map(|&file| size_of(file)).sum();
         // A checker is replaced after this much cost, because its private tables grow with every file.
         let task_cost = match request.plan_options.task_size {
@@ -5188,6 +5211,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 if let Some(work) = file_work {
                     checker.set_requested((work.requested)(file));
                 }
+                checker.record_cycles_entered(note_cycles_entered.is_some());
                 let passes_over_depth_limit = file_work.is_some() && is_last_round;
                 checker.leave_depth_limit_unreported(passes_over_depth_limit);
                 checker.allow_refused_instantiations_of_next_file();
@@ -5283,6 +5307,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     }
                 }
                 let done = files_done.fetch_add(1, Ordering::Release) + 1;
+                if let Some(note) = note_cycles_entered {
+                    note(file, checker.take_cycles_entered());
+                }
                 if let Some(work) = file_work
                     && !is_last_round
                 {
@@ -5321,14 +5348,16 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             // The checker borrows the files' HIR, so it must be gone before their trees are freed.
             spares.lock().push((thread, checker.into_spare()));
             free_trees(trees_to_free);
+            let is_longest = logs_round && since_round_began() - task_began > longest_task.lock().0;
+            let packed_away = if is_longest { count_packed_away() } else { 0 };
             drop(reading);
             if logs_round {
                 let took = since_round_began() - task_began;
                 busy.fetch_add(took, Ordering::Relaxed);
                 tasks_of_round.fetch_add(1, Ordering::Relaxed);
                 let mut longest = longest_task.lock();
-                if took > longest.0 {
-                    *longest = (took, task_began, bytes_of_first);
+                if is_longest && took > longest.0 {
+                    *longest = (took, task_began, bytes_of_first, packed_away);
                 }
             }
             upcoming
@@ -5482,9 +5511,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         }
         if logs_round {
             let wall = since_round_began().max(1);
-            let (took, began, bytes) = *longest_task.lock();
+            let (took, began, bytes, packed_away_before_longest_task_ended) = *longest_task.lock();
             bun_core::print_errorln!(
-                "AOT round of the checker | {} | {} files, {} of them heavy, {} that those import go first | {} tasks | {} visits thrown away | wall {} ms | {}.{} of {} threads busy | the first thread found nothing to take at {} ms | the longest task {} ms, begun at {} ms with a file of {} KB | at most {} results stored between two idle moments of a task | {} long files, a second thread beside {} of them | the trees of {} files packed away",
+                "AOT round of the checker | {} | {} files, {} of them heavy, {} that those import go first | {} tasks | {} visits thrown away | wall {} ms | {}.{} of {} threads busy | the first thread found nothing to take at {} ms | the longest task {} ms, begun at {} ms with a file of {} KB | at most {} results stored between two idle moments of a task | {} long files, a second thread beside {} of them | the trees of {} files packed away, {} before the longest task ended",
                 match is_last_round {
                     true => "one thread, in order",
                     false => "all threads",
@@ -5505,10 +5534,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 most_logged_between_idle_moments.load(Ordering::Relaxed),
                 long_files.len(),
                 *long_files_with_second_thread.lock(),
-                files
-                    .iter()
-                    .filter(|&&file| program.files.is_tree_gone(to_check[file]))
-                    .count(),
+                count_packed_away(),
+                packed_away_before_longest_task_ended,
             );
         }
         #[cfg(test)]
@@ -5554,6 +5581,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             for &index in tasks[at] {
                 let file = to_check[index];
                 checker.set_requested((work.requested)(file));
+                checker.record_cycles_entered(note_cycles_entered.is_some());
                 // No ordinary visit at the end: it would store results cut off at the limit, for the next file to find.
                 checker.leave_depth_limit_unreported(true);
                 checker.allow_refused_instantiations_of_next_file();
@@ -5565,6 +5593,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     }
                 }
                 checker.leave_depth_limit_unreported(false);
+                if let Some(note) = note_cycles_entered {
+                    note(file, checker.take_cycles_entered());
+                }
                 (work.after_commit)(file);
                 checker.take_ran_out_of_stack();
             }
@@ -5589,7 +5620,41 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 .collect(),
         );
     };
+    let enter_cycles_of_earlier_passes = || {
+        let Some(work) = file_work else {
+            return;
+        };
+        let mut cycles = (work.cycles_entered_before)();
+        let noted = cycles.len();
+        cycles.retain_within_reach_of(program.files, &to_check);
+        if cycles.is_empty() {
+            return;
+        }
+        const ROUND: u32 = (1 << 30) + (1 << 29);
+        let began = Instant::now();
+        host.parallel(1, &|_| {
+            let reading = bun_sema::program::ReadingTask::begin();
+            let mut checker = new_checker(Requested::Types, None);
+            checker.begin_task(first_round + ROUND, 0);
+            checker.see_commits(true);
+            checker.set_first_in_order(true, true);
+            checker.enter_cycles_again(&cycles);
+            checker.commit_after_file(true);
+            checker.end_task_after_commits();
+            drop(checker);
+            drop(reading);
+        });
+        if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+            bun_core::print_errorln!(
+                "AOT round of the checker | the cycles of the passes before | {} entered of {} | wall {} ms",
+                cycles.len(),
+                noted,
+                began.elapsed().as_millis(),
+            );
+        }
+    };
     let run_all_rounds = |expected: Requested| {
+        enter_cycles_of_earlier_passes();
         let all: Vec<usize> = (0..to_check.len()).collect();
         run_tasks(0, &all, expected, false);
         let mut again = std::mem::take(&mut *lost.lock());

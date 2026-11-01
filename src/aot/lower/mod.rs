@@ -44,7 +44,7 @@ mod yield_star;
 use bun_sema::check::Checker;
 use bun_sema::check::aot::{FunctionRef, Queries, QueryStatistics};
 use bun_sema::hir::{FnId, FnKind};
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, ReadingTask};
 
 use crate::diagnostics::DiagnosticBuffer;
 use crate::ir::generated::MethodKind;
@@ -102,6 +102,8 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
         if lowering.queries.is_discarded() {
             return None;
         }
+        // SAFETY: between two functions, `lowering`, its queries and the checker borrow from no module but `file`, whose commit follows.
+        unsafe { ReadingTask::repin() };
         lowering.lower_function(function);
     }
     lowering.queries.note_idle();

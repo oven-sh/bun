@@ -18,6 +18,7 @@ use bun_sema::resolve::{
 };
 use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::cell::UnsafeCell;
 use std::sync::atomic::AtomicBool;
@@ -133,10 +134,28 @@ fn load<'u: 's, 's>(
         )
     };
     let listed_files = with_declarations(std::mem::take(&mut project.files));
+    let finds_entry_points = matches!(request.entry_points, EntryPoints::WrittenAndFound(..));
+    let config_path = project.config_path.clone();
+    let found_entry_paths: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+    let list_with_found = || {
+        let found = found_entry_paths.lock();
+        if !config_path.is_empty() || !found.iter().any(|path| is_typescript_file_name(path)) {
+            return None;
+        }
+        let all = [&entry_paths[..], &found[..]].concat();
+        Some(with_declarations(
+            default_project(host, request.code, &all).files,
+        ))
+    };
     let root_files = match unlisted_files {
         Some(_) => {
             options.own_roots = Some(usize::MAX);
             RootFileNames::Unlisted(&list_files)
+        }
+        None if finds_entry_points => {
+            options.own_roots = Some(usize::MAX);
+            options.files.clone_from(&listed_files);
+            RootFileNames::ListedAndFound(&listed_files, &list_with_found)
         }
         None => {
             options.own_roots = Some(listed_files.len());
@@ -145,7 +164,6 @@ fn load<'u: 's, 's>(
         }
     };
     options.emits_declarations = false;
-    let config_path = project.config_path.clone();
     let find_entry_points = |code: &dyn CodeView<'_>| match request.entry_points {
         EntryPoints::WrittenAndFound(_, _, find) if !types_stop_at_entry_points => {
             let mut found = find(code);
@@ -153,11 +171,11 @@ fn load<'u: 's, 's>(
             if !is_project_the_same_with(host, code, &config_path, &entry_paths, &found) {
                 found.clear();
             }
+            found_entry_paths.lock().extend_from_slice(&found);
             found
         }
         _ => Vec::new(),
     };
-    let finds_entry_points = matches!(request.entry_points, EntryPoints::WrittenAndFound(..));
     let files = Files::load_for_compile_with_parsed_files(
         session,
         parsed,
@@ -209,6 +227,8 @@ fn load<'u: 's, 's>(
         checker_session,
         node_counts,
         is_checker_freed: AtomicBool::new(false),
+        cycles_entered: Default::default(),
+        has_checked_for_roles: AtomicBool::new(false),
         origins,
         project_origin: request.project_origin,
         diagnostics,
@@ -402,7 +422,6 @@ fn resolve_entry_points(
     })
 }
 
-/// Whether `find_project` and `add_files_of_other_projects` answer for `entry_paths` and `further` together what they have answered for `entry_paths`: the project at `config_path`.
 fn is_project_the_same_with(
     host: &dyn CodeHost,
     code: &CodeOptions,
@@ -412,10 +431,6 @@ fn is_project_the_same_with(
 ) -> bool {
     if code.tsconfig_override.is_some() {
         return true;
-    }
-    // Without a configuration the program lists the entry points that are TypeScript.
-    if config_path.is_empty() {
-        return !further.iter().any(|path| is_typescript_file_name(path));
     }
     let all = [entry_paths, further].concat();
     first_entry_point_of_largest_project(host, code, &all)
@@ -478,6 +493,9 @@ fn find_project(
     let Some(config_path) = config_path else {
         return Ok(default_project(host, code, entry_paths));
     };
+    if code.tsconfig_override.is_some() && !code.builds_executable && !host.is_file(&config_path) {
+        return Ok(default_project(host, code, entry_paths));
+    }
     let project = config::load_for_build_with_unlisted_files(host, &Session::new(), &config_path);
     let project = project.map(|project| match code.tsconfig_override {
         Some(_) => project,

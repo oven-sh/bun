@@ -16,7 +16,7 @@ use crate::modules::{
     self, BindInput, BoundModules, DeferredData, DeferredExports, ModuleGraph, Shape,
 };
 use crate::options::{ReplacedExport, ReplacedModule};
-use crate::statistics::{Stage, StatisticId};
+use crate::statistics::{Stage, StatisticId, StepClock};
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema_driver::host::to_native;
 
@@ -126,9 +126,17 @@ impl Build<'_> {
             ProjectId::Application => &self.options.load.externals.packages,
             ProjectId::Runtime => &[],
         };
+        let mut steps = StepClock::new(
+            Stage::BindModules,
+            match project {
+                ProjectId::Application => "application",
+                ProjectId::Runtime => "runtime",
+            },
+        );
         // A call of a helper that a compiler or a bundler wrote says what a module exports, and where a module begins.
         let mut known_helpers = KnownHelpers::compute(view.files(), &in_parallel);
         known_helpers.keep_private_states_in_collections(&self.options.load.replaced_builtins);
+        steps.end("known helpers");
         let application = match project {
             ProjectId::Application => loaded.application,
             ProjectId::Runtime => None,
@@ -200,7 +208,9 @@ impl Build<'_> {
                 && self.options.aot.entry_points_run_again,
             typescript_drops_absent_exports: project == ProjectId::Application
                 && self.options.aot.typescript_drops_absent_exports,
-            loads_code_from_disk: self.options.aot.loads_code_from_disk,
+            loads_code_from_disk: self.options.aot.loads_code_from_disk
+                && !self.stays_in_compiled_files,
+            only_tests_load_code_from_disk: self.options.aot.only_tests_load_code_from_disk,
             host_runs_files_from_disk: self.options.aot.host_runs_files_from_disk,
             stand_in_for_files_from_disk,
             application: application.map(|application| &application.graph),
@@ -208,6 +218,7 @@ impl Build<'_> {
             in_parallel: &in_parallel,
             beside: &beside,
         });
+        steps.end("bind_modules, all of it");
         self.diagnostics.add_module_failures(view, &graph);
         self.statistics.add_counters(view, counters);
         if project == ProjectId::Application {
@@ -240,6 +251,7 @@ impl Build<'_> {
                 view.files().compiled_files().len(),
             );
         }
+        steps.end("failures, counters, log lines");
         let left_out = match (project, application) {
             (_, Some(application)) => {
                 let left_out = application.left_out;
@@ -276,6 +288,7 @@ impl Build<'_> {
                     ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
                     any_file_is_named_at_run_time: code_on_disk_names_files
                         || (!self.options.aot.host_runs_files_from_disk
+                            && !self.stays_in_compiled_files
                             && (self.options.aot.loads_code_from_disk
                                 || self.options.load.runs_tests)),
                     code_on_disk_names_files,
@@ -290,7 +303,9 @@ impl Build<'_> {
                         collect_program_file_paths(view.files(), view.sources);
                 }
                 let nobody_reads = self.options.load.ways_named_that_nobody_reads;
+                steps.end("before find_left_out_code");
                 let (left_out, reached) = find_left_out_code(&input, nobody_reads, &in_parallel);
+                steps.end("find_left_out_code");
                 finish_modules(&mut graph, &reached);
                 let asks_loader_functions = self.options.load.runs_tests
                     && (reached.stores_loader_functions
@@ -302,14 +317,19 @@ impl Build<'_> {
                 graph.set_asks_loader_functions(asks_loader_functions);
                 self.replaced_builtins.stores_loader_functions |= asks_loader_functions;
                 self.replaced_builtins.evicts_any_module |= graph.may_evict_every_module();
+                steps.end("finish_modules, loader functions");
                 if self.options.load.runs_tests {
-                    let in_packages = find_what_packages_do_with_test_runner(view.files());
+                    let in_packages = find_what_packages_do_with_test_runner(
+                        view.files(),
+                        crate::statistics::logs_stages(),
+                    );
                     let told_above = &mut self.replaced_builtins;
                     told_above.any_module |= in_packages.mocks_any_module;
                     told_above.spies_on_unknown_objects |= in_packages.spies_on_unknown_objects;
                     (told_above.names_spied_on_unknown_objects)
                         .extend(in_packages.names_spied_on_unknown_objects);
                 }
+                steps.end("what packages do with the test runner");
                 if !reached.found_by_name.is_empty() {
                     self.started_workers.root_folders_spelled = find_root_folders_spelled(
                         view.files(),
@@ -325,7 +345,9 @@ impl Build<'_> {
             }
             (ProjectId::Application | ProjectId::Runtime, None) => LeftOutCode::default(),
         };
+        steps.end("leave_out_files, limit_exports");
         graph.finish_plan(&in_parallel);
+        steps.end("finish_plan");
         if self.options.aot.imports_are_in_other_images {
             graph.join_externals_that_spell_paths(&view.files().atoms);
         }
@@ -334,6 +356,7 @@ impl Build<'_> {
             ProjectId::Application => self.bundle_pages(loaded, &graph),
             ProjectId::Runtime => DeferredData::default(),
         };
+        steps.end("join externals, bundle_pages");
         move |builtin_types| BoundProject {
             graph,
             left_out,

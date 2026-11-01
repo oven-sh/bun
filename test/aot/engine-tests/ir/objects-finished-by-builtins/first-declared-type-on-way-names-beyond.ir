@@ -228,8 +228,8 @@ function f3 name="first" module=m0 position=378 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v9: number = Add v1, v8
 # CHECK-NEXT: v10: int|whole = AssumeType v9 provenType=int|whole
 # CHECK-NEXT: v11: anything = PropGet v0 key="c" accessSite=25 receivers=[L1]
-# CHECK-NEXT: v12: anything ~ undefined = Upcast v11 castType=anything
-# CHECK-NEXT: v13: undefined|int ~ undefined = AssumeType v12 provenType=undefined|int
+# CHECK-NEXT: v12: undefined|int = AssumeType v11 provenType=undefined|int
+# CHECK-NEXT: v13: undefined|int ~ undefined = Upcast v12 castType=undefined|int
 # CHECK-NEXT: v14: boolean ~ true = TypeTest v13 testedType=undefined|null
 # CHECK-NEXT: Branch v14 -> taken b3(v10), notTaken b4(| 0)
 # CHECK-NEXT: b3(v15: int|whole):

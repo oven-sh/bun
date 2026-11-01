@@ -416,8 +416,8 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="grows"
-# CHECK: module=m0 position=551 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Array<int, proven, pristine[Storage, Names]>}, {type=int|whole}, {type=int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<int, proven, pristine[Storage, Names]>, v1: int|whole, v2: int):
+# CHECK: module=m0 position=551 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Array<int, proven, pristine[Storage, Names]>}, {type=int|whole}, {type=int[0, 2]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<int, proven, pristine[Storage, Names]>, v1: int|whole, v2: int[0, 2]):
 # CHECK-NEXT: v3: f2 = GetModuleVariable variable=g1 [isValidatedWhereLookedAt]
 # CHECK-NEXT: Jump -> next b1(v1)
 # CHECK-NEXT: b1(v4: int|whole):

@@ -2159,9 +2159,10 @@ class Sizes {
             `delete require.cache[module.id];`,
           ]),
         );
+      // The parent of a file that an ES module imports is `null` in some runs of `bun run` and `undefined` in others, so no question tells the two apart.
       if (this.chance(30))
         lines.push(
-          `exports.asked = String(${this.pick(["!module.parent", "typeof module.parent", "module.children.length", "require.main === module", "module.loaded", "module.children.map(each => each.loaded).join()", "module.parent === require.main"])});`,
+          `exports.asked = String(${this.pick(["!module.parent", "typeof (module.parent ?? undefined)", "module.children.length", "require.main === module", "module.loaded", "module.children.map(each => each.loaded).join()", "(module.parent ?? undefined) === require.main"])});`,
         );
       if (at === size - 1 && this.chance(40)) {
         this.files.push([

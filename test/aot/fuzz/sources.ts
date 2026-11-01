@@ -798,6 +798,9 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "integers-compared-where-ranges-decide",
     "iterators-stepped-by-hand",
     "counters-stepped-by-one",
+    "pairs-taken-apart-where-ways-meet",
+    "numbers-carried-across-yields-and-awaits",
+    "compiled-patterns-on-wide-subjects",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(

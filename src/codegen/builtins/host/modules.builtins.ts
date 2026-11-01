@@ -24,9 +24,8 @@ const compilesText = {
   capability: "js",
   throws: true,
   readsStateBeforeConversions: true,
-  // It puts require on the module, and the text gets the module.
   this: b.any,
-  uses: { this: [b.everything], text: [b.evaluatedAsText] },
+  uses: { this: [b.everything], text: [b.evaluatedAsText, b.loadedAsModule] },
   implementation: b.generic,
 } satisfies b.FunctionField;
 

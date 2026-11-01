@@ -92,6 +92,13 @@ impl Resolver<'_, '_> {
         }
     }
 
+    // By a way on which `note_use_of_module_cache` follows nothing.
+    pub(super) fn mention(&mut self, id: BuiltinId) {
+        self.output.gets_at_entries_of_module_cache |= is_module_cache(id);
+        self.output.reads_entries_of_module_cache |= is_module_cache(id);
+        self.output.mentioned.push(id);
+    }
+
     pub(super) fn expose(&mut self, id: BuiltinId) {
         self.output.called.push(id);
         // Whoever has it makes a `require` that nobody follows.
@@ -116,7 +123,7 @@ impl Resolver<'_, '_> {
                 state => state,
             };
             if let ExprState::DynamicGlobal(path) = state {
-                self.output.mentioned.push(path.id);
+                self.mention(path.id);
                 self.expose(path.id);
                 continue;
             }
@@ -256,7 +263,7 @@ impl Resolver<'_, '_> {
     fn mention_member(&mut self, object: ExprId, name: Atom) {
         let holder = self.value_of(object).or_else(|| self.held_value_of(object));
         if let Some(member) = holder.and_then(|holder| self.find_named_member(holder, name)) {
-            self.output.mentioned.push(member.id);
+            self.mention(member.id);
         }
     }
 
@@ -322,7 +329,7 @@ impl Resolver<'_, '_> {
                 let Some(member) = self.find_named_member(holder, name) else {
                     continue;
                 };
-                self.output.mentioned.push(member.id);
+                self.mention(member.id);
                 match input.hir[prop.value].kind {
                     PatKind::Ident(_) if self.is_local_alias(prop.value) => {}
                     PatKind::Ident(_) => self.expose(member.id),

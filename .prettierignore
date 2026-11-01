@@ -54,6 +54,7 @@ test/aot/parallel/errors/quoted-where-a-line-reads-one-name-of-two-objects*
 
 # how the blanks, the commas and the line breaks of each list are written is what is tested
 test/aot/parallel/errors/list-patterns-are-quoted-as-printed-*
+test/aot/parallel/errors/text-as-a-minifier-leaves-it-is-quoted-as-printed.js
 
 # over which lines each chain is written is what is tested
 test/aot/parallel/errors/quoted-from-expressions-written-over-several-lines.js

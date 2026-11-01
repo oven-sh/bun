@@ -1,10 +1,11 @@
 // `bun build --minify-identifiers` renames functions, classes, variables, parameters and imports. An executable built with --aot has no text to rename, and it shows such a name in `name`, in a stack trace and in a message:
 // under the flag it shows a short one, and the executable does not hold what was written. Keys, strings, names of globals and what a direct eval can ask for stay. --keep-names keeps everything.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { beforeAll, describe, test } from "./supported";
@@ -65,6 +66,11 @@ console.log("eval", holdsEvalB15(1), holdsEvalB15.name);
 const variableB11 = { keptKeyB17: 1 };
 console.log("key", Object.keys(arrowB10()).join());
 console.log("twins", FirstB19.name === SecondB20.name);
+function makesClosuresB21(capturedB22: object) {
+  let assignedB23: object = [];
+  return [() => capturedB22, () => (assignedB23 = {}), () => assignedB23];
+}
+console.log("closures", [...makesClosuresB21({}), ...makesClosuresB21([])].map(closure => typeof closure()).join());
 `,
 };
 
@@ -82,6 +88,9 @@ const shortened = [
   "TwinB18",
   "FirstB19",
   "SecondB20",
+  "makesClosuresB21",
+  "capturedB22",
+  "assignedB23",
 ];
 const neverShown = ["importedFunctionB8", "expressionB12", "FirstB19", "SecondB20"];
 const kept = [
@@ -143,6 +152,7 @@ describe.each([
     "eval": "2 holdsEvalB15",
     "key": "keptKeyB17",
     "twins": String(!shortens),
+    "closures": "object,object,object,object,object,object",
   };
 
   test("the program shows the names", () => {

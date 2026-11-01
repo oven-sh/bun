@@ -206,6 +206,13 @@ bitflags::bitflags! {
     }
 }
 
+fn first_bytes_of(name: &[u8]) -> u64 {
+    let mut first = [0; 8];
+    let count = name.len().min(8);
+    first[..count].copy_from_slice(&name[..count]);
+    u64::from_be_bytes(first)
+}
+
 fn required_if(is_required: bool) -> Facts {
     match is_required {
         true => Facts::REQUIRED,
@@ -225,6 +232,34 @@ impl Member {
     }
 }
 
+struct MembersBeforeMerge {
+    count: usize,
+    positions: Option<FxHashMap<Atom, usize>>,
+}
+
+impl MembersBeforeMerge {
+    const FEW: usize = 8;
+
+    fn of(own: &[Member], other: &[Member]) -> MembersBeforeMerge {
+        let are_long = own.len() > Self::FEW && other.len() > Self::FEW;
+        let names = own.iter().enumerate();
+        MembersBeforeMerge {
+            count: own.len(),
+            positions: are_long.then(|| names.map(|(at, member)| (member.name, at)).collect()),
+        }
+    }
+
+    #[inline]
+    fn position(&self, own: &[Member], name: Atom) -> Option<usize> {
+        match &self.positions {
+            Some(positions) => positions.get(&name).copied(),
+            None => own[..self.count]
+                .iter()
+                .position(|member| member.name == name),
+        }
+    }
+}
+
 /// A merge into a part that says nothing yet shares the other tree's part, so a part may belong to many trees: it is copied when one of them changes it.
 #[derive(Default, Clone, PartialEq, Eq)]
 pub(super) struct Usage {
@@ -237,14 +272,19 @@ pub(super) struct Usage {
 impl Usage {
     fn member_mut(&mut self, name: Atom) -> &mut Usage {
         let found = self.members.iter().position(|member| member.name == name);
-        let index = found.unwrap_or_else(|| {
-            self.members.push(Member {
-                name,
-                usage: Rc::default(),
-            });
-            self.members.len() - 1
+        match found {
+            Some(index) => Rc::make_mut(&mut self.members[index].usage),
+            None => self.add_member(name),
+        }
+    }
+
+    fn add_member(&mut self, name: Atom) -> &mut Usage {
+        self.members.push(Member {
+            name,
+            usage: Rc::default(),
         });
-        Rc::make_mut(&mut self.members[index].usage)
+        let added = self.members.len() - 1;
+        Rc::make_mut(&mut self.members[added].usage)
     }
 
     fn elements_mut(&mut self) -> &mut Usage {
@@ -252,7 +292,15 @@ impl Usage {
     }
 
     /// `None`: more than `most`.
+    #[inline]
     fn count_nodes(&self, most: u64) -> Option<u64> {
+        match self.members.is_empty() && self.elements.is_none() {
+            true => (most != 0).then_some(1),
+            false => self.count_nodes_of_parts(most),
+        }
+    }
+
+    fn count_nodes_of_parts(&self, most: u64) -> Option<u64> {
         let mut count = 1;
         let parts = self.members.iter().map(|member| &member.usage);
         for part in parts.chain(&self.elements) {
@@ -279,13 +327,13 @@ impl Usage {
         if walk.is_out_of_budget() {
             return;
         }
+        let before = MembersBeforeMerge::of(&self.members, &other.members);
         for member in &other.members {
-            let own = self.members.iter().position(|own| own.name == member.name);
-            match own {
+            match before.position(&self.members, member.name) {
                 Some(own) => merge_part(&mut self.members[own].usage, walk, &member.usage),
                 None if walk.enter_all_nodes_of(&member.usage) => self.members.push(member.clone()),
                 None if walk.enter_node() => {
-                    self.member_mut(member.name).merge(walk, &member.usage)
+                    self.add_member(member.name).merge(walk, &member.usage)
                 }
                 None => {}
             }
@@ -340,9 +388,9 @@ fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
     if walk.is_out_of_budget() {
         return;
     }
+    let before = MembersBeforeMerge::of(&own.members, &other.members);
     for member in &other.members {
-        let found = own.members.iter().position(|own| own.name == member.name);
-        match found {
+        match before.position(&own.members, member.name) {
             Some(found) => {
                 let mut part = Rc::clone(&own.members[found].usage);
                 merge_part(&mut part, walk, &member.usage);
@@ -354,7 +402,7 @@ fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
                 Rc::make_mut(own).members.push(member.clone());
             }
             None if walk.enter_node() => {
-                let part = Rc::make_mut(own).member_mut(member.name);
+                let part = Rc::make_mut(own).add_member(member.name);
                 part.merge(walk, &member.usage);
             }
             None => {}
@@ -1723,21 +1771,25 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !self.c.is_any(declared) {
             return declared;
         }
-        let used_as = self.compute_type_from_uses(Subject::Binding(symbol));
-        if self.c.is_any(used_as) {
-            return self.compute_type_from_arguments(name);
-        }
         let mut walk = Walk::new(self.inputs.max_inference_nodes);
         let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol)) else {
-            return used_as;
+            return self.compute_type_from_arguments(name);
         };
         if usage.members.is_empty() && !usage.is_incomplete() {
-            return used_as;
+            let used_as = self.type_of_usage(&usage);
+            return match self.c.is_any(used_as) {
+                true => self.compute_type_from_arguments(name),
+                false => used_as,
+            };
         }
         // Uses only guess what a member holds: `a.codes[i]` reads as an array whatever `a.codes` is. What every caller
         // passes knows, so it wins when it has each member the uses name.
         let given = self.compute_type_from_arguments(name);
-        match !self.c.is_any(given) && self.has_every_member(given, &usage.members) {
+        if !self.c.is_any(given) && self.has_every_member(given, &usage.members) {
+            return given;
+        }
+        let used_as = self.type_of_usage(&usage);
+        match self.c.is_any(used_as) {
             true => given,
             false => used_as,
         }
@@ -3025,8 +3077,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn has_every_member(&mut self, receiver: TypeId, members: &[Member]) -> bool {
+        let holder = self.c.property_holder_for_every_name(receiver);
         members.iter().all(|member| {
-            let found = self.c.get_property_of_type(receiver, member.name);
+            let found = match holder {
+                Some(holder) => self.c.property_of_holder(holder, member.name, false),
+                None => self.c.get_property_of_type(receiver, member.name),
+            };
             found.is_some_and(|(property, _)| {
                 property.flags.contains(PropFlags::METHOD) == member.is_called()
             })
@@ -3052,7 +3108,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             });
         }
         let atoms = self.c.atoms();
-        props.sort_unstable_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
+        let mut props: Vec<(u64, Prop)> = (props.into_iter())
+            .map(|prop| (first_bytes_of(atoms.bytes(prop.name)), prop))
+            .collect();
+        props.sort_unstable_by(|a, b| {
+            let whole_names = || atoms.bytes(a.1.name).cmp(atoms.bytes(b.1.name));
+            a.0.cmp(&b.0).then_with(whole_names)
+        });
+        let props = props.into_iter().map(|(_, prop)| prop);
         let arena = self.c.arena;
         self.c.synth(Shape {
             props: vec_from_iter_in(props, arena),
@@ -3135,6 +3198,51 @@ mod tests {
             Facts::NUMBER | Facts::REQUIRED
         );
         assert_eq!(usage.elements_mut().arms[..], [TypeId::STRING]);
+    }
+
+    #[test]
+    fn long_lists_merge_as_short_ones_do() {
+        let (mut usage, mut other) = (Usage::default(), Usage::default());
+        for index in 0..40 {
+            usage.member_mut(Atom(index)).facts |= Facts::NUMBER;
+            other.member_mut(Atom(60 - index)).facts |= Facts::REQUIRED;
+        }
+        let (mut holder, mut other_holder) = (Usage::default(), Usage::default());
+        *holder.member_mut(known::length) = usage.clone();
+        *other_holder.member_mut(known::length) = other.clone();
+        usage.merge(&mut Walk::new(1000), &other);
+        let expected: Vec<Atom> = (0..40).chain((40..=60).rev()).map(Atom).collect();
+        assert_eq!(names(&usage), expected);
+        for member in &usage.members {
+            let expected = match member.name.0 {
+                0..=20 => Facts::NUMBER,
+                21..=39 => Facts::NUMBER | Facts::REQUIRED,
+                _ => Facts::REQUIRED,
+            };
+            assert_eq!(member.usage.facts, expected, "{:?}", member.name);
+        }
+        holder.merge(&mut Walk::new(1000), &other_holder);
+        assert!(*holder.members[0].usage == usage);
+    }
+
+    #[test]
+    fn first_bytes_are_in_the_order_of_the_names() {
+        let names: [&[u8]; 10] = [
+            b"",
+            b"\0",
+            b"a",
+            b"a\0",
+            b"a\0b",
+            b"ab",
+            b"abcdefgh",
+            b"abcdefgh\0",
+            b"abcdefghi",
+            b"b",
+        ];
+        assert!(names.is_sorted());
+        assert!(names.is_sorted_by_key(|name| first_bytes_of(name)));
+        assert!(first_bytes_of(b"a") < first_bytes_of(b"ab"));
+        assert!(first_bytes_of(b"f10") < first_bytes_of(b"f2"));
     }
 
     #[test]

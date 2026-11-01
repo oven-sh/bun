@@ -200,10 +200,14 @@ fn write_product(
             is_base_url: alias.is_base_url,
         })
         .collect();
-    let root_below_working_directory = match options.loads_code_from_disk && !options.runs_in_place
-    {
-        true => find_root_below_working_directory(&build.root_directory),
-        false => None,
+    let names_no_folder = |way: &Vec<u8>| {
+        let mut parts = way.split(|&byte| bun_paths::is_sep_native(byte));
+        parts.all(|name| name.is_empty() || name == b"..")
+    };
+    let root_below_working_directory = match options.runs_in_place {
+        true => None,
+        false => find_root_below_working_directory(&build.root_directory)
+            .filter(|way| options.loads_code_from_disk || names_no_folder(way)),
     };
     let root_from_executable = match &request.product {
         CompileProduct::Executable { outfile }
@@ -245,7 +249,9 @@ fn write_product(
         }),
     };
     let Some(outfile) = product.outfile else {
-        outcome.graph_bytes = Some(to_graph_bytes(&graph).map_err(CompileFailure::Graph)?);
+        let place = crate::cli::run_compiled::place_of_program_being_built();
+        outcome.graph_bytes =
+            Some(to_graph_bytes(&graph, place.as_ref()).map_err(CompileFailure::Graph)?);
         if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
             let bytes = outcome.graph_bytes.as_ref().map_or(0, |bytes| bytes.len());
             bun_core::print_errorln!("AOT test build | program bytes {}", bytes);

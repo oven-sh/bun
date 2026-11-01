@@ -129,6 +129,9 @@ pub struct AotOptions {
     pub admits_inspector: bool,
     /// `--aot-allow-code-from-disk`: a path that is known only at run time may name a file with code that the build has not seen. Bun interprets it.
     pub loads_code_from_disk: bool,
+    pub only_tests_load_code_from_disk: bool,
+    pub is_part_of_test_run: bool,
+    pub preloads_of_test_run: Vec<Vec<u8>>,
     /// The host runs files with code that the build has not seen, though no load of the program names one: the test files of a run that compiles only what they import.
     /// The last entry point stands in for them.
     pub host_runs_files_from_disk: bool,
@@ -136,6 +139,7 @@ pub struct AotOptions {
     pub main_modules_beside_entry_points: Vec<Vec<u8>>,
     /// A layer of a test run: the entry points that the files above it, which the build does not see, name behind `import` and nowhere behind `require`.
     pub entry_points_only_imported_from_above: Vec<Vec<u8>>,
+    pub entry_points_required_from_above: Vec<Vec<u8>>,
     /// The program holds every module of Bun's own code that the run can load, so none of them runs from its text.
     pub library_runs_compiled_alone: bool,
     /// The program is Bun's own code and nothing else, built before any of the test runs that it serves is known. It rests on nothing that a run can change.
@@ -146,6 +150,7 @@ pub struct AotOptions {
     pub writes_no_executable: bool,
     pub build_report: Option<BuildReportRequest>,
     pub runs_in_place: bool,
+    pub missing_tsconfig_override: Option<Box<[u8]>>,
     pub checks_only: bool,
     /// `bun test --aot`: `@jest/globals` and `vitest` are `bun:test`, as in `bun test`.
     pub runs_tests: bool,
@@ -251,6 +256,7 @@ pub struct ReplacedByTests {
     /// `try { require("./a") } catch {}`: a CommonJS file whose body throws is out of the table too, and the next `require()` runs it again.
     /// Which kind of file a path names shows in the build that holds the file.
     pub files_required_where_throws_are_caught: Vec<Vec<u8>>,
+    pub data_files_imported_with_types: Vec<Vec<u8>>,
     /// Beside `require.cache["fs"] = { exports: fake }`, else empty: the files that a statement of theirs imports, those that an `import()` loads, and those that they require.
     /// `bun run` reads `require("fs")` as `require("node:fs")` in a CommonJS file that an import loads.
     pub files_imported_by_statements: Vec<Vec<u8>>,
@@ -308,6 +314,7 @@ impl ReplacedByTests {
             &self.files_imported_by_calls,
             &self.files_required,
             &self.files_required_where_throws_are_caught,
+            &self.data_files_imported_with_types,
         ] {
             push_number(&mut bytes, texts.len());
             for text in texts {
@@ -373,6 +380,7 @@ impl ReplacedByTests {
             files_imported_by_calls: take_list(&mut bytes, take_text)?,
             files_required: take_list(&mut bytes, take_text)?,
             files_required_where_throws_are_caught: take_list(&mut bytes, take_text)?,
+            data_files_imported_with_types: take_list(&mut bytes, take_text)?,
             parameters_that_start_workers: take_list(&mut bytes, |bytes| {
                 let (module, export) = (take_text(bytes)?, take_text(bytes)?);
                 let index = take_number(bytes)?;
@@ -421,9 +429,13 @@ impl Default for AotOptions {
             omits_foreign_calls: false,
             admits_inspector: false,
             loads_code_from_disk: false,
+            only_tests_load_code_from_disk: false,
+            is_part_of_test_run: false,
+            preloads_of_test_run: Vec::new(),
             host_runs_files_from_disk: false,
             main_modules_beside_entry_points: Vec::new(),
             entry_points_only_imported_from_above: Vec::new(),
+            entry_points_required_from_above: Vec::new(),
             library_runs_compiled_alone: false,
             holds_library_alone: false,
             reference_library_image: None,
@@ -431,6 +443,7 @@ impl Default for AotOptions {
             writes_no_executable: false,
             build_report: None,
             runs_in_place: false,
+            missing_tsconfig_override: None,
             checks_only: false,
             runs_tests: false,
             has_globals_of_vitest: false,
@@ -508,6 +521,7 @@ mod tests {
             files_imported_by_calls: vec![b"/project/f.cjs".to_vec(), b"/project/g.cjs".to_vec()],
             files_required: vec![b"/project/g.cjs".to_vec()],
             files_required_where_throws_are_caught: vec![b"/project/h.cjs".to_vec()],
+            data_files_imported_with_types: vec![b"/project/i.json".to_vec()],
             handed_on_modules: vec![b"/project/d.ts".to_vec()],
             hands_on_any_module: true,
             names_spied_on_unknown_objects: vec![b"read".to_vec(), b"write".to_vec()],
@@ -568,9 +582,13 @@ mod tests {
             omits_foreign_calls,
             admits_inspector,
             loads_code_from_disk,
+            only_tests_load_code_from_disk,
+            is_part_of_test_run,
+            preloads_of_test_run,
             host_runs_files_from_disk,
             main_modules_beside_entry_points,
             entry_points_only_imported_from_above,
+            entry_points_required_from_above,
             library_runs_compiled_alone,
             holds_library_alone,
             reference_library_image,
@@ -578,6 +596,7 @@ mod tests {
             writes_no_executable,
             build_report,
             runs_in_place,
+            missing_tsconfig_override,
             checks_only,
             runs_tests,
             has_globals_of_vitest,
@@ -621,9 +640,13 @@ mod tests {
         assert!(!omits_foreign_calls);
         assert!(!admits_inspector);
         assert!(!loads_code_from_disk);
+        assert!(!only_tests_load_code_from_disk);
+        assert!(!is_part_of_test_run);
+        assert!(preloads_of_test_run.is_empty());
         assert!(!host_runs_files_from_disk);
         assert!(main_modules_beside_entry_points.is_empty());
         assert!(entry_points_only_imported_from_above.is_empty());
+        assert!(entry_points_required_from_above.is_empty());
         assert!(!library_runs_compiled_alone);
         assert!(!holds_library_alone);
         assert!(reference_library_image.is_none());
@@ -631,6 +654,7 @@ mod tests {
         assert!(!writes_no_executable);
         assert!(build_report.is_none());
         assert!(!runs_in_place);
+        assert!(missing_tsconfig_override.is_none());
         assert!(!checks_only);
         assert!(!runs_tests);
         assert!(!has_globals_of_vitest);

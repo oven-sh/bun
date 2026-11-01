@@ -370,7 +370,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16
 # -- generated: f0 addedFromBothEnds
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 507, patchpoints: 80, rare instructions: 752, polls: 3
+# CHECK-NEXT: instructions: 508, patchpoints: 80, rare instructions: 710, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="addedFromBothEnds"
 # CHECK: role=Source

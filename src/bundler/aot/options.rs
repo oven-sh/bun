@@ -62,6 +62,11 @@ pub(crate) fn options_from_bundler<'r>(
     if input.aot.host_runs_files_from_disk {
         load.stand_in_for_files_from_disk = entry_points.last().cloned();
     }
+    if !input.aot.main_modules_beside_entry_points.is_empty() {
+        let test_files = input.aot.main_modules_beside_entry_points.iter();
+        let listed = test_files.chain(&input.aot.preloads_of_test_run);
+        load.files_of_tests = listed.chain(entry_points.last()).cloned().collect();
+    }
     Some(Options {
         aot: input.aot,
         executable_identity: input.executable_identity,
@@ -226,7 +231,12 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
         (input.aot.entry_points_only_imported_from_above.iter())
             .map(|path| from_native(path))
             .collect();
-    code.tsconfig_override = (options.tsconfig_override.as_ref())
+    code.entry_points_required_from_above = (input.aot.entry_points_required_from_above.iter())
+        .map(|path| from_native(path))
+        .collect();
+    let tsconfig_override = options.tsconfig_override.as_ref();
+    code.tsconfig_override = tsconfig_override
+        .or(input.aot.missing_tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 
     let orders = &options.extension_order;
@@ -359,6 +369,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         left_to_loader: Vec::new(),
         loads_below_files_left_to_loader: Vec::new(),
         stand_in_for_files_from_disk: None,
+        files_of_tests: Vec::new(),
     }
 }
 

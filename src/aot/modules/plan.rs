@@ -157,10 +157,13 @@ pub(super) struct Plan {
     lists_files_in_cache: bool,
     /// `EvictedModules::is_table_reached`
     reaches_entries_of_cache: bool,
+    /// `EvictedModules::are_entries_read`
+    reads_entries_of_cache: bool,
     /// `delete require.cache[path]` loads the file anew: `EvictedModules`.
     may_be_evicted: Vec<bool>,
     /// `EvictedModules::changed_on_disk`
     is_changed_on_disk_by_run: Vec<bool>,
+    loads_compiled_files_alone: Vec<bool>,
     library_modules_stored_in_cache: LibraryModulesStoredInCache,
     may_evict_every_module: bool,
     /// The host loads the entry point several times in one realm: `AotOptions::entry_points_run_again`.
@@ -206,8 +209,10 @@ impl Plan {
             runs_tests: false,
             lists_files_in_cache: false,
             reaches_entries_of_cache: false,
+            reads_entries_of_cache: false,
             may_be_evicted: vec![false; order.numbers.len()],
             is_changed_on_disk_by_run: vec![false; order.numbers.len()],
+            loads_compiled_files_alone: vec![false; order.numbers.len()],
             library_modules_stored_in_cache: LibraryModulesStoredInCache::default(),
             may_evict_every_module: false,
             runs_again: vec![false; order.numbers.len()],
@@ -264,12 +269,20 @@ impl Plan {
         self.reaches_entries_of_cache = true;
     }
 
+    pub(super) fn set_reads_entries_of_cache(&mut self) {
+        self.reads_entries_of_cache = true;
+    }
+
     pub(super) fn set_may_be_evicted(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.may_be_evicted, module);
     }
 
     pub(super) fn set_is_changed_on_disk_by_run(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.is_changed_on_disk_by_run, module);
+    }
+
+    pub(super) fn set_loads_compiled_files_alone(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.loads_compiled_files_alone, module);
     }
 
     pub(super) fn set_library_modules_stored_in_cache(
@@ -660,6 +673,11 @@ impl ModuleGraph {
         self.plan.reaches_entries_of_cache
     }
 
+    /// A test run in which a file of the program may read what the entry of a file in `require.cache` exports.
+    pub fn reads_entries_of_cache(&self) -> bool {
+        self.plan.reads_entries_of_cache
+    }
+
     /// `delete require.cache[path]` under a key that nobody spells: whichever file the path names, in this program or in one that is built above it.
     pub fn may_evict_every_module(&self) -> bool {
         self.plan.may_evict_every_module
@@ -672,6 +690,11 @@ impl ModuleGraph {
     /// `writeFileSync(path, text)` with the path of the file: what the run loads from there is a text that the build has not read.
     pub fn is_changed_on_disk_by_run(&self, module: ModuleRef) -> bool {
         (self.plan).has(&self.plan.is_changed_on_disk_by_run, module)
+    }
+
+    /// A file of a test run that an executable would hold too: its `require(name)` finds what it finds there.
+    pub fn loads_compiled_files_alone(&self, module: ModuleRef) -> bool {
+        (self.plan).has(&self.plan.loads_compiled_files_alone, module)
     }
 
     /// `require.cache["fs"] = { exports: fake }`: an entry of the program may stand under the name, which is one that `require` looks for there.

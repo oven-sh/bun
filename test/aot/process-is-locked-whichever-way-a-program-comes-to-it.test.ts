@@ -9,9 +9,9 @@ import { test } from "./supported";
 // supported.ts sets the limit for the first file of a process alone.
 raiseDefaultTimeout(240_000);
 
-// The compiler folds reads of process.versions, process.release and process.isBun, so a compiled program may not store to them: the build warns and the store throws. The object is
-// the same whichever way a program comes to it, so the answer has to be the same too. The global object adds its `process` at the first read of that name, and a program that
-// imports "node:process" need never read it.
+// The compiler folds reads of process.versions, process.release and process.isBun in an executable, so an executable may not store to them: the build warns and the store throws. The
+// object is the same whichever way a program comes to it, so the answer has to be the same too. The global object adds its `process` at the first read of that name, and a program that
+// imports "node:process" need never read it. A test poses as another runtime, as under plain `bun test`: a test run folds none of the three, and every way stores.
 const ways: [string, string, string][] = [
   ["the global name", ``, `process`],
   ["the default import", `import held from "node:process";`, `held`],
@@ -70,17 +70,18 @@ const refused = {
   release: ["release TypeError object"],
   isBun: ["isBun TypeError boolean"],
 };
+const stored = {
+  versions: ["versions stored number"],
+  release: ["release stored number"],
+  isBun: ["isBun stored number"],
+};
 
 test.concurrent("in plain Bun every way stores", async () => {
   using directory = tempDir("process-by-every-way-plain", files);
   const found = await answers(
     async file => (await run([bunExe(), "run", `./${file}.mjs`], String(directory), bunEnv)).stdout,
   );
-  expect(found).toEqual({
-    versions: ["versions stored number"],
-    release: ["release stored number"],
-    isBun: ["isBun stored number"],
-  });
+  expect(found).toEqual(stored);
 });
 
 test.concurrent("in an executable every way is refused", async () => {
@@ -99,11 +100,14 @@ for (const [form, words] of [
   ["as one program", "TestRunLayers:0"],
   ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
 ])
-  test.concurrent(`in a test run ${form} every way is refused`, async () => {
+  test.concurrent(`in a test run ${form} every way stores`, async () => {
     using directory = tempDir("process-by-every-way-test-run", files);
     const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
-    const found = await answers(
-      async file => (await run([bunExe(), "test", "--aot", `./${file}.test.mjs`], String(directory), env)).stdout,
-    );
-    expect(found).toEqual(refused);
+    const found = await answers(async file => {
+      const command = [bunExe(), "test", "--timeout=60000", "--aot", `./${file}.test.mjs`];
+      const ran = await run(command, String(directory), env);
+      if (ran.exitCode !== 0) console.error(ran.stderr);
+      return ran.stdout;
+    });
+    expect(found).toEqual(stored);
   });

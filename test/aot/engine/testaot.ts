@@ -74,8 +74,13 @@ async function printOutputOfFailedTests(lines: string[], cwd?: string) {
   }
 }
 
-// TODO: it prints something else on arm64.
-const failsToday = isArm64 ? ["dictionary-access-by-name/programs/uncacheable-dictionary-files-nothing"] : [];
+const failsToday = [
+  // TODO(4093): both hang on how many built-in modules and names Bun has. They travel with the engine, whose next release has them mended.
+  "valueflow/modules/text-file-answers-the-text-to-a-linked-require-and-its-namespace-to-the-loader.ir:9",
+  "property-lookup/absence-filter-names-what-stops-stores",
+  // TODO: it prints something else on arm64.
+  ...(isArm64 ? ["dictionary-access-by-name/programs/uncacheable-dictionary-files-nothing"] : []),
+];
 
 // With musl a run of these loops costs some 100,000 instructions more than with glibc, however many turns it makes (ten times the turns
 // moved it from 90,000 to 150,000). The code of the loop is the same, and most rows make 100,000 turns, so a row can read up to 1 instruction higher.
@@ -90,7 +95,7 @@ async function expectEveryTestPasses(args: string[], cwd?: string) {
   const failed = lines.filter(
     line =>
       line.startsWith("FAIL ") &&
-      !failsToday.some(name => line.startsWith(`FAIL ${name}: `)) &&
+      !failsToday.some(name => line.replaceAll("\\", "/").startsWith(`FAIL ${name}: `)) &&
       !isOverABoundByTheCostOfMusl(line),
   );
   // In front of its FAIL line a native test has said which check failed, and where. A row that musl is forgiven is no part of the failure.

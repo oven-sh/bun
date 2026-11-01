@@ -368,6 +368,7 @@ fn scan_file(
         is_library: false,
         host_values: &[],
         jsx,
+        own_name: b"",
     };
     let bound = bind(&hir, options, &atoms, arena);
     let decisions = fold_file(&hir, &bound, &fold, &file_inputs, &atoms, arena).decisions;

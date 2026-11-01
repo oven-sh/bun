@@ -1,14 +1,15 @@
-use super::effects::requested_diagnostics;
+use super::effects::requested_diagnostics_of_file;
 use super::queue::{LOWERING_ROUNDS, run_queue};
 use super::{CheckedProgram, CompileRequest, FileWork, LoadedProgram, RoleDecision};
 use crate::{Diagnostic, equal_diagnostics};
+use bun_sema::check::commit::CyclesEntered;
 use bun_sema::check::{Checker, Requested};
 use bun_sema::hir::FileKind;
 use bun_sema::program::{FileId, FileRole, Files};
 use bun_sema::resolve::Host;
 use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub fn check_and_lower<'s, T: Send>(
     loaded: &LoadedProgram<'s>,
@@ -64,9 +65,14 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
 ) -> CheckedProgram<T> {
     let files = loaded.files();
     let is_left_out = |file: FileId| is_left_out(request, file);
+    let is_checker_renewed = AtomicBool::new(false);
+    let is_checked_again = loaded.has_checked_for_roles();
     let requested = |file: FileId| match roles.is_checked(file) || is_left_out(file) {
+        true if is_checked_again && !is_left_out(file) => {
+            requested_diagnostics_of_file(files, file, loaded.origin(file), files.role(file))
+        }
         true => Requested::Types,
-        false => requested_diagnostics(loaded.origin(file), roles.role(file)),
+        false => requested_diagnostics_of_file(files, file, loaded.origin(file), roles.role(file)),
     };
     let slots = slots_by_file(files, roles, files_to_lower);
     let products: Vec<Guarded<Option<T>>> =
@@ -107,6 +113,13 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         beside_file: prepare.map(|_| &prepare_lowered_file as &(dyn Fn(FileId) + Sync)),
         frees_tree: &|_| !loaded.is_read_again,
         is_last_pass: &|| passes_left.load(Ordering::Relaxed) == 0,
+        note_cycles_entered: Some(&|file, cycles| {
+            loaded.note_cycles_entered(LOWERING_ROUNDS, file, cycles);
+        }),
+        cycles_entered_before: &|| match is_checker_renewed.load(Ordering::Relaxed) {
+            true => loaded.cycles_entered(),
+            false => CyclesEntered::default(),
+        },
         first_round: LOWERING_ROUNDS,
         left_out_bodies: request.left_out_bodies,
     };
@@ -124,12 +137,17 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     let logs = parts.len() > 1 && bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true);
     let mut report: Option<crate::Report> = None;
     passes_left.store(parts.len(), Ordering::Relaxed);
+    if is_checked_again {
+        // SAFETY: the tasks that decided the roles have ended, and the decision holds nothing of the checker's.
+        unsafe { loaded.renew_checker(&|count, each| host.parallel(count, each)) };
+    }
     for part in parts {
         let began = std::time::Instant::now();
         passes_left.fetch_sub(1, Ordering::Relaxed);
         if report.is_some() {
             // SAFETY: the tasks of the pass before have ended, and what they lowered holds nothing of the checker's.
             unsafe { loaded.renew_checker(&|count, each| host.parallel(count, each)) };
+            is_checker_renewed.store(true, Ordering::Relaxed);
             (passes.before_next)();
         }
         let renewed = began.elapsed();

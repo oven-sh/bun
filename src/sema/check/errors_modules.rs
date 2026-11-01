@@ -654,6 +654,7 @@ impl Checker<'_, '_> {
         }
         self.alias_targets_in_progress.push(sym);
         let from = self.reported.len();
+        let outside = self.place_does_not_decide_at.replace(self.stack.len());
         self.get_target_of_alias_declaration(file, sym, decl, statement);
         // `resolveIndirectionAlias`
         if let Some(target) = files.alias_links(sym).immediate_target
@@ -661,6 +662,7 @@ impl Checker<'_, '_> {
         {
             self.check_target_of_alias_symbol(target);
         }
+        self.place_does_not_decide_at = outside;
         self.alias_targets_in_progress.pop();
         for diagnostic in self.reported.iter_mut().skip(from) {
             diagnostic.by_another_node = true;

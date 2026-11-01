@@ -1,4 +1,4 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
@@ -6,6 +6,7 @@ import { countsInstructions } from "../analysis-scaling/measure-check";
 import { readElfFile } from "../elf-file";
 import { slot } from "../harness/commands";
 import { run } from "../harness/counted-run";
+import { afterAll } from "../harness/default-timeout";
 import { compileCommand } from "../harness/flags";
 import { wanted } from "../harness/shares";
 import { describe, test } from "../supported";
@@ -162,6 +163,42 @@ const programs: Program[] = [
           `let sum = 0;`,
           `for (let turn = 0; turn < 1000; turn++) sum += require("./data.json").value;`,
           `if (process.argv.length > 9) console.log(used, await import("./data.json"));`,
+          `console.log(sum);`,
+          ``,
+        ].join("\n"),
+      );
+      writeFileSync(join(folder, "tsconfig.json"), tsconfig);
+    },
+  },
+  {
+    // Each call counts the levels that its graph has left to load: it looks at every request below the root, and most of them lead to a module that is loaded.
+    name: "a-hundred-graphs-imported-in-turn-above-200-loaded-modules",
+    entry: "main.ts",
+    until: { prints: "3999900\n" },
+    write(folder) {
+      const shared = Array.from({ length: 200 }, (_, index) => index);
+      for (const index of shared) writeFileSync(join(folder, `s${index}.ts`), `export const s${index} = ${index};\n`);
+      const graphs = Array.from({ length: 100 }, (_, index) => index);
+      for (const graph of graphs) {
+        for (let depth = 0; depth < 10; depth++) {
+          const used = Array.from({ length: 40 }, (_, index) => (graph * 7 + depth * 13 + index * 5) % 200);
+          const below = depth < 9 ? [`g${graph}_${depth + 1}`] : [];
+          writeFileSync(
+            join(folder, `g${graph}_${depth}.ts`),
+            [
+              ...[...used.map(index => `s${index}`), ...below].map(name => `import { ${name} } from "./${name}.ts";`),
+              `export const g${graph}_${depth} = ${[...used.map(index => `s${index}`), ...below].join(" + ")};`,
+              ``,
+            ].join("\n"),
+          );
+        }
+      }
+      writeFileSync(
+        join(folder, "main.ts"),
+        [
+          ...shared.map(index => `import { s${index} } from "./s${index}.ts";`),
+          `let sum = ${shared.map(index => `s${index}`).join(" + ")};`,
+          ...graphs.map(graph => `sum += (await import("./g${graph}_0.ts")).g${graph}_0;`),
           `console.log(sum);`,
           ``,
         ].join("\n"),

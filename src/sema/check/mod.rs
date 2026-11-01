@@ -278,6 +278,9 @@ pub struct Program<'s> {
     exporting_modules: std::sync::OnceLock<errors_declaration_emit::ExportingModules>,
     /// What `exporting_modules` returns to a task that was discarded.
     no_exporting_modules: errors_declaration_emit::ExportingModules,
+    exporting_modules_stopped_at: std::sync::atomic::AtomicU32,
+    #[cfg(any(test, feature = "test_support"))]
+    modules_searched_for_exports: std::sync::atomic::AtomicUsize,
     aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
     aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
     aot_prototype_links: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::PrototypeLinks<'s>>]>,
@@ -666,6 +669,9 @@ impl<'s> Program<'s> {
             package_names_of_linked_files: Default::default(),
             exporting_modules: Default::default(),
             no_exporting_modules: Default::default(),
+            exporting_modules_stopped_at: std::sync::atomic::AtomicU32::new(u32::MAX),
+            #[cfg(any(test, feature = "test_support"))]
+            modules_searched_for_exports: Default::default(),
             aot_symbols: Default::default(),
             aot_store_indexes: Default::default(),
             aot_prototype_links: Default::default(),
@@ -881,6 +887,9 @@ impl<'s> Program<'s> {
             mapped_constraints_in_progress: Vec::new(),
             mapped_props_reentered_through_members: Vec::new(),
             serialization_level: 0,
+            message_site: None,
+            place_does_not_decide_at: None,
+            places_nobody_reads: Default::default(),
             flow_type_cache: Default::default(),
             flow_type_cache_depth: usize::MAX,
             flow_invocation_count: 0,
@@ -950,6 +959,8 @@ impl<'s> Program<'s> {
             comparisons_of_deeply_nested_types: 0,
             relations_of_this_task: Default::default(),
             relations_of_query: Default::default(),
+            spare_relations_of_query: Vec::new(),
+            question_in_progress: None,
             stores_relations_per_task: false,
             constraints_of_this_task: Default::default(),
             constraint_cuts: Default::default(),
@@ -959,6 +970,8 @@ impl<'s> Program<'s> {
             leaves_depth_limit_unreported: false,
             refused_instantiations_tried: Default::default(),
             instantiations_spent_on_refused: 0,
+            cycles_entered: Default::default(),
+            records_cycles_entered: Default::default(),
             keys_of_properties_in_progress: Vec::new(),
             instantiations_up_to_a_limit: Default::default(),
             relations_cut_short: Default::default(),
@@ -1039,6 +1052,8 @@ impl<'s> Program<'s> {
             provisional_shapes: Default::default(),
             provisional: Default::default(),
             taint_events: Vec::new(),
+            queries_seen_to_allow_caching: Default::default(),
+            query_that_forbids_caching: std::cell::Cell::new((usize::MAX, 0)),
             cycle_at: 0,
             limit_at: 0,
             rejected_at: 0,
@@ -1317,6 +1332,15 @@ fn is_guarded(q: Query) -> bool {
 impl Query {
     /// Returns the file whose syntax the key refers to, or `None` if the key is a type or a signature.
     #[inline]
+    fn file_that_names_it(self) -> Option<FileId> {
+        match self {
+            Query::AliasTarget(alias) => Some(alias.file),
+            Query::WriteType(file, _) => Some(file),
+            Query::Cond(..) => None,
+            _ => self.syntax(),
+        }
+    }
+
     fn syntax(self) -> Option<FileId> {
         match self {
             Query::Expr(file, _)
@@ -1671,6 +1695,8 @@ pub struct Checker<'p, 's> {
     relations_of_this_task: FxHashMap<relate::Key, u8>,
     /// What the comparison that answers a question of `aot::Queries` has settled: see `Relater::is_for_query`. Empty otherwise.
     relations_of_query: FxHashMap<relate::Key, u8>,
+    spare_relations_of_query: Vec<FxHashMap<relate::Key, u8>>,
+    question_in_progress: Option<relate::Question>,
     /// The same for base constraints that were cut short, or that follow from one that was. Where
     /// the cut happens depends on how deep the computation was when it reached the type. See
     /// `known_constraint`.
@@ -2087,6 +2113,8 @@ pub struct Checker<'p, 's> {
     refused_instantiations_tried: crate::util::FxHashSet<(TypeId, MapperId)>,
     /// `compute_refused_instantiations`
     instantiations_spent_on_refused: u64,
+    cycles_entered: std::cell::RefCell<Vec<Query>>,
+    records_cycles_entered: std::cell::Cell<bool>,
     keys_of_properties_in_progress: Vec<TypeId>,
     #[expect(
         clippy::vec_box,
@@ -2150,6 +2178,8 @@ pub struct Checker<'p, 's> {
     /// An event is dropped when a later one has a lower or equal `from`, so `from` increases and
     /// the length is bounded by the depth of `stack`. See `lowest_taint_since`.
     taint_events: Vec<(u64, u32)>,
+    queries_seen_to_allow_caching: std::cell::Cell<u64>,
+    query_that_forbids_caching: std::cell::Cell<(usize, u64)>,
     /// `flowAnalysisDisabled`: the files for which it's set, in the order it was set. There's more than
     /// one if a query from a file that's too long reaches another file that's too long. Only
     /// `checkBlock` restores it, so after a reference outside any function or module block it stays set
@@ -2267,6 +2297,9 @@ pub struct Checker<'p, 's> {
     /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
     /// resolutions are made eagerly.
     serialization_level: u32,
+    message_site: Option<(FileId, u32, usize)>,
+    place_does_not_decide_at: Option<usize>,
+    places_nobody_reads: errors::PlacesNobodyReads,
     instantiation_depth: u32,
     /// `instantiationCount`: the instantiations computed since the last statement, type node or expression check began.
     instantiation_count: u32,
@@ -2868,6 +2901,26 @@ impl<'p, 's> Checker<'p, 's> {
             &self.frames,
             from,
         );
+        if self.records_cycles_entered.get() && !self.task.was_discarded() {
+            self.note_cycle_entered(from);
+        }
+    }
+
+    #[cold]
+    fn note_cycle_entered(&self, from: usize) {
+        let (below, members) = self.stack.split_at(from);
+        let entry = below
+            .iter()
+            .position(|q| members.contains(q))
+            .unwrap_or(from);
+        let named = self.stack[..=entry].iter().rev();
+        let Some(&entry) = named.into_iter().find(|q| q.file_that_names_it().is_some()) else {
+            return;
+        };
+        let mut entered = self.cycles_entered.borrow_mut();
+        if entered.last() != Some(&entry) {
+            entered.push(entry);
+        }
     }
 
     /// True if only files that import the current file can run any query in `stack[from..]`.

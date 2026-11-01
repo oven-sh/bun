@@ -1,0 +1,1 @@
+BUILD STOPS 1: error: internal compiler error (Optimize): GuardNotAvailable: something between the guard and the use may write what the guard depends on; function 'taker' (f1619), block b13, value v38 (IsElementPresent) in function 'taker' at /dev/shm/fl4

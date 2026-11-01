@@ -330,8 +330,8 @@
     "jit": 52.2
   },
   "function/arguments-length-in-function": {
-    "typed": 5,
-    "untyped": 5,
+    "typed": 0.5,
+    "untyped": 0.5,
     "jit": 6.9
   },
   "function/arguments-summed": {
@@ -608,8 +608,8 @@
     }
   },
   "built-in/path-basename": {
-    "typed": 140.9,
-    "untyped": 140.8,
+    "typed": 136.9,
+    "untyped": 136.9,
     "jit": 236,
     "best": {
       "typed": 132.7,
@@ -617,8 +617,8 @@
     }
   },
   "built-in/path-dirname": {
-    "typed": 144.9,
-    "untyped": 144.9,
+    "typed": 137.9,
+    "untyped": 137.9,
     "jit": 219.1,
     "best": {
       "typed": 129.7,
@@ -626,13 +626,9 @@
     }
   },
   "built-in/path-extname": {
-    "typed": 159.9,
-    "untyped": 159.9,
-    "jit": 234,
-    "best": {
-      "typed": 142.6,
-      "untyped": 142.8
-    }
+    "typed": 136.8,
+    "untyped": 137,
+    "jit": 234
   },
   "built-in/path-is-absolute": {
     "typed": 145,
@@ -1065,8 +1061,8 @@
     "jit": 93.2
   },
   "literal/dispose-method-in-function": {
-    "typed": 8.1,
-    "untyped": 8,
+    "typed": 4,
+    "untyped": 4,
     "jit": 905.9
   },
   "literal/member-nobody-reads-fed-by-a-loop": {
@@ -1079,8 +1075,8 @@
     }
   },
   "rest/read-past-both-ends-in-function": {
-    "typed": 5,
-    "untyped": 5,
+    "typed": 0.5,
+    "untyped": 0.5,
     "jit": 797.2
   },
   "spread/object-of-unknown-layout-and-two-members": {
@@ -1093,8 +1089,8 @@
     }
   },
   "text/joined-for-a-member-nobody-reads": {
-    "typed": 5,
-    "untyped": 5,
+    "typed": 4,
+    "untyped": 4,
     "jit": 521.6
   },
   "array/read-of-a-constant-table": {
@@ -1281,8 +1277,8 @@
     "jit": 7
   },
   "guess/read-of-one-receiver-wrong": {
-    "typed": 5,
-    "untyped": 4,
+    "typed": 0.5,
+    "untyped": 0.5,
     "jit": 7.2
   },
   "guess/reads-of-each-element-right": {
@@ -1306,8 +1302,8 @@
     "jit": 6.2
   },
   "guess/reads-of-two-receivers-wrong": {
-    "typed": 6,
-    "untyped": 4,
+    "typed": 0.5,
+    "untyped": 0.5,
     "jit": 5.9
   },
   "guess/store-to-one-receiver-right": {

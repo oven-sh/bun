@@ -1050,30 +1050,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f132
 runtimefunction id=ArrayTraversalTraverseArray function=f140 visibility=Private
 # -- generated: runOne run
 # CHECK-LABEL: function {{*}}name="runOne"
-# CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 3, patchpoints: 2
-# CHECK-NEXT: end of function f1
-# CHECK-LABEL: function {{*}}name="runOne"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 149, patchpoints: 38
-# CHECK-NEXT: end of function f142
-# CHECK-LABEL: function {{*}}name="runOne"
-# CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 270, patchpoints: 74, rare instructions: 54
-# CHECK-NEXT: end of function f144
+# CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 5, patchpoints: 2
+# CHECK-NEXT: instructions: 3, patchpoints: 2
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 13, patchpoints: 0
-# CHECK-NEXT: end of function f143
+# CHECK-NEXT: end of function f142
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: role=GenericVersion
 # CHECK-NEXT: instructions: 29, patchpoints: 2
-# CHECK-NEXT: end of function f145
+# CHECK-NEXT: end of function f143
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f150
+# CHECK-NEXT: end of function f148

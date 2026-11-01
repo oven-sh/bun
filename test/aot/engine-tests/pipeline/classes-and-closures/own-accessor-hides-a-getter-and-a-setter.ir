@@ -652,7 +652,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f32 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="size"
-# CHECK: module=m0 position=315 kind=Setter role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w11} parameters=[{type=number site=w10 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f34 fallback=f36} {
+# CHECK: module=m0 position=315 kind=Setter role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w11} parameters=[{type=number site=w10 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f34 fallback=f35} {
 # CHECK-NEXT: b0(v0: L0, v1: anything ~ number):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
@@ -660,7 +660,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f32 visibility=Private
 # CHECK-NEXT: v4: undefined = CallDirect v0, v3 function=f34
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: undefined = CallDirect v0, v1 function=f36
+# CHECK-NEXT: v5: undefined = CallDirect v0, v1 function=f35
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f10 module=
@@ -756,7 +756,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f32 visibility=Private
 # CHECK-NEXT: PropSet v0, v7 key="stores" accessSite=40 receivers=[L0]
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v13: undefined = CallDirect v0, v1 function=f36 [isNeverInlined]
+# CHECK-NEXT: v13: undefined = CallDirect v0, v1 function=f35 [isNeverInlined]
 # CHECK-NEXT: ReturnCall v13 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="size"
@@ -795,7 +795,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f32 visibility=Private
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="size"
-# CHECK: module=m0 position=315 kind=Setter role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} inlineFrames=[{}, {callee=f4 callPosition=315 isTailCall=true module=m0}, {callee=f36 callPosition=315 parent=1 isTailCall=true module=m0}, {callee=f34 callPosition=315 parent=1 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=315 kind=Setter role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} inlineFrames=[{}, {callee=f4 callPosition=315 isTailCall=true module=m0}, {callee=f35 callPosition=315 parent=1 isTailCall=true module=m0}, {callee=f34 callPosition=315 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything):
 # CHECK-NEXT: v3: L0 = AssumeType v1 provenType=L0
 # CHECK-NEXT: v4: anything ~ number = Upcast v2 castType=anything @315 tail
@@ -807,7 +807,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f32 visibility=Private
 # CHECK-NEXT: v9: boolean = HasBirthFieldsFilled v3
 # CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b6()
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v10: fact = Entered function=f36 @315:1 tail
+# CHECK-NEXT: v10: fact = Entered function=f35 @315:1 tail
 # CHECK-NEXT: v11: undefined|int ~ int = AssumeType v4, v10 provenType=undefined|int
 # CHECK-NEXT: PropSet v3, v11 key="held" accessSite=38
 # CHECK-NEXT: v13: anything ~ int[-2147483643, 2147483647] = PropGet v3 key="stores" accessSite=39 receivers=[L0]
@@ -846,17 +846,15 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f32 visibility=Private
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="anonymous"
 # CHECK: module=m1 position=1 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f25}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f25} creator=Entrypoint{target=f25 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f25, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L0 = AssumeType v2 provenType=L0
-# CHECK-NEXT: v4: undefined = CallDirect v3 function=f25
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: b0(v0: f25, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="anonymous"
 # CHECK: module=m2 position=1 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f27}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f27} creator=Entrypoint{target=f27 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f27, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L0 = AssumeType v2 provenType=L0
-# CHECK-NEXT: v4: undefined = CallDirect v3 function=f27
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: b0(v0: f27, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m2 position=85 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f28}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f28} creator=Entrypoint{target=f28 arguments=Registers} inlineFrames=[{}, {callee=f28 callPosition=85 isTailCall=true module=m2}] {

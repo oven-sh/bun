@@ -1,9 +1,10 @@
 // ./let-values-be-something-else.ts writes no program without an end: where something else comes in the place of a value, the program still ends.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
+import { test } from "../harness/default-timeout";
 import { list, read, write } from "./let-values-be-something-else";
 
 const program = `const seen = [];

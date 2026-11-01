@@ -66,7 +66,7 @@ pub use type_shape::{
 pub use written_type::declares_type_alone;
 
 pub(in crate::check) use class_stores::StoreIndex;
-pub(in crate::check) use dead_code::DeadCodeRanges;
+pub(in crate::check) use dead_code::{DeadCodeRanges, is_in_outermost};
 pub(in crate::check) use left_out_bodies::LeftOutOfCheck;
 pub(in crate::check) use program_symbols::ProgramSymbols;
 pub(in crate::check) use prototype_links::PrototypeLinks;

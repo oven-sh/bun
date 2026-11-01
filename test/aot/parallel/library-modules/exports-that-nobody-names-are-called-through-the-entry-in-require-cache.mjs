@@ -1,0 +1,12 @@
+import { fetch } from "undici";
+import { WebSocket } from "ws";
+const undici = require.cache.undici.exports;
+console.log(Object.keys(undici).sort().join());
+console.log(typeof undici.Agent, typeof undici.request, typeof undici.Headers, undici.fetch === fetch);
+const agent = new undici.Agent();
+console.log(typeof agent, agent.constructor === undici.Agent);
+const ws = require.cache[["w", "s"].join("")].exports;
+console.log(Object.keys(ws).sort().join());
+console.log(typeof ws.WebSocketServer, typeof ws.createWebSocketStream, ws.WebSocket === WebSocket);
+new ws.WebSocketServer({ noServer: true });
+console.log("made");

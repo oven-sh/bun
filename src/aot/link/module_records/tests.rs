@@ -353,21 +353,35 @@ fn default_import_of_bun_module_reads_no_namespace() {
 
 #[test]
 fn import_call_of_replaced_namespace_resolves_the_object() {
-    let print = |specifier: &str| {
-        let main = format!("const name = 'bun';\nexport const loaded = import({specifier});\n");
+    let print = |head: &str, specifier: &str| {
+        let main = format!("{head}export const loaded = import({specifier});\n");
         let program = link_program(&[("main.js", main.as_str())]);
         print_functions_of(&program, module_named(&program, "main.js"))
     };
-    let replaced = print("'bun'");
-    assert!(!replaced.contains(" = ImportModule "));
-    assert!(replaced.contains(" = Builtin builtin=PromiseResolve"));
-    for loaded in ["'node:buffer'", "name"] {
+    // `bun run` writes `Bun` where its transpiler reads the name: also in a constant that stands in front of every other statement.
+    for (head, specifier) in [
+        ("", "'bun'"),
+        ("", "'b' + 'un'"),
+        ("const name = 'bun';\n", "name"),
+    ] {
+        let replaced = print(head, specifier);
+        assert!(!replaced.contains(" = ImportModule "), "{head}{specifier}");
         assert!(
-            !print(loaded).contains(" = Builtin builtin=PromiseResolve"),
-            "{loaded}"
+            replaced.contains(" = Builtin builtin=PromiseResolve"),
+            "{head}{specifier}"
         );
     }
-    assert!(print("'node:buffer'").contains(" = ImportModule "));
+    for (head, specifier) in [
+        ("", "'node:buffer'"),
+        ("console.log(1);\nconst name = 'bun';\n", "name"),
+        ("let name = 'bun';\n", "name"),
+    ] {
+        assert!(
+            !print(head, specifier).contains(" = Builtin builtin=PromiseResolve"),
+            "{head}{specifier}"
+        );
+    }
+    assert!(print("", "'node:buffer'").contains(" = ImportModule "));
 }
 
 #[test]

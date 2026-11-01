@@ -78,6 +78,10 @@ fn find_files_that_require_may_load(
         }
         let index = state.index_of[&context.canonical_key(entry_point.key)];
         may_be_required[index as usize] = true;
+        if context.is_required_from_above(entry_point.key) && is_module(index) {
+            runs_inside_require[index as usize] = true;
+            to_visit.push(index);
+        }
     }
     for file in files {
         visit_loaded_files(file, &mut |target, kind| {

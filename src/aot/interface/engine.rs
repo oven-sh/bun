@@ -3,7 +3,8 @@ pub mod shared;
 
 pub use self::shared::{
     EngineModuleId, ExecutableIdentity, RejectedOptionWord, TargetImageForm,
-    describe_difference_of_runtime, image_alignment, relocate_image,
+    describe_difference_of_runtime, image_alignment, place_of_string_headers_behind,
+    relocate_image,
 };
 use crate::Opaque;
 use crate::linked;

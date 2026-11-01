@@ -77,6 +77,20 @@ pub(super) fn can_lose_trust(origin: FileOrigin, role: FileRole) -> bool {
         .any(|class| effect_of(origin, class, Category::Error) == Effect::WithdrawsTrust)
 }
 
+pub(super) fn requested_diagnostics_of_file(
+    files: &Files<'_>,
+    file: FileId,
+    origin: FileOrigin,
+    role: FileRole,
+) -> Requested {
+    match requested_diagnostics(origin, role) {
+        Requested::All if files.hir(file).syntax_errors().next().is_some() => {
+            Requested::EarlyErrors
+        }
+        requested => requested,
+    }
+}
+
 pub(super) fn requested_diagnostics(origin: FileOrigin, role: FileRole) -> Requested {
     match (origin, role) {
         (FileOrigin::Runtime, FileRole::Inferred | FileRole::TypesOnly) => return Requested::Types,

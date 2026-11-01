@@ -156,7 +156,7 @@ impl Resolver<'_, '_> {
         }
         self.aliases.insert(symbol, AliasSource::Known(value));
         match value.kind {
-            HolderKind::ModuleNamespace => self.output.mentioned.push(value.path.id),
+            HolderKind::ModuleNamespace => self.mention(value.path.id),
             // `finish` mentions the path of every symbol it publishes.
             HolderKind::Object => {}
         }
@@ -201,7 +201,20 @@ impl Resolver<'_, '_> {
         let input = self.input;
         let promise = input.hir.skip_type_assertions(promise);
         let module = (input.targets).module_at(ImportSiteKind::ImportCall(promise));
+        // `bun run` writes `Bun` in place of `import("bun")` where its transpiler reads the name, and loads the module everywhere else.
+        let is_name_read = || match input.hir[promise].kind {
+            ExprKind::ImportCall { args } => input.hir.ids(args).next().is_some_and(|name| {
+                let name = input.hir.skip_type_assertions(name);
+                input.decisions.is_constant_in_bun_run(input.hir, name)
+            }),
+            _ => false,
+        };
         match module.filter(|&module| !has_source(module)) {
+            Some(module)
+                if table::object_replacing_namespace(module).is_some() && !is_name_read() =>
+            {
+                ExprState::Unresolved
+            }
             Some(module) => ExprState::Builtin(imported_namespace_value(module)),
             None => ExprState::Unresolved,
         }
@@ -238,7 +251,7 @@ impl Resolver<'_, '_> {
         let input = self.input;
         for (site, module) in input.targets.iter() {
             let namespace = table::namespace_of(module);
-            self.output.mentioned.push(namespace);
+            self.mention(namespace);
             self.output.loaded.push(namespace);
             if has_source(module) {
                 continue;
@@ -254,7 +267,7 @@ impl Resolver<'_, '_> {
                             continue;
                         }
                         if let Some(path) = self.find_named_export(namespace, item.local) {
-                            self.output.mentioned.push(path.id);
+                            self.mention(path.id);
                             self.expose(path.id);
                         }
                     }

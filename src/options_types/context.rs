@@ -514,7 +514,6 @@ pub struct TestOptions {
     pub globals: Option<TestGlobals>,
     /// `--react-compiler` or `[test] reactCompiler`.
     pub react_compiler: Option<ReactCompilerScope>,
-    /// `bun test --aot --aot-memory-limit=<size>`, in bytes.
     pub aot_memory_limit: Option<u64>,
 
     pub reporters: Reporters,

@@ -236,6 +236,7 @@ fn run_rounds(setup: Setup, text: &str) -> Outcome {
             is_library: false,
             host_values: arena.alloc_slice_copy(&results),
             jsx: JsxMode::Classic,
+            own_name: b"",
         };
         let (bound, mut analysis) =
             analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);

@@ -1,14 +1,3 @@
-//! Letting the trees of a module go while a build lowers the other files.
-//!
-//! A build would hold the HIR and the binder's tables of every file until the last file is lowered. Their long lists are
-//! plain data that nothing writes after the load. So once a file is lowered, a packed copy is kept in place of the lists,
-//! and whoever reads the module again unpacks it for as long as it reads. What is unpacked at a time is what the tasks
-//! that run read.
-//!
-//! Every reference into a module comes from `ModuleCell::deref`, and none outlives the task that took it. Nobody counts
-//! the readers of a module that is still waited for. Once it is not, it is watched: a task leaves its bit in the cell
-//! before it reads, until it ends. The trees go when the tasks that ran at that moment have ended and no bit is set.
-
 use super::{FileId, Files, Module};
 use crate::hir::{ListBlock, LongList};
 use crate::session::ArenaBox;
@@ -31,6 +20,8 @@ const GONE: u8 = 2;
 /// Here for good.
 const KEPT: u8 = 3;
 
+const OWN_COMMIT: u32 = 1 << 31;
+
 /// Entry in the list of all modules. A `Module` is thousands of bytes, so it's boxed in the arena of the thread that
 /// loaded it and never moved. The `UnsafeCell` lets `Files::free_tree` and this file mutate it through `&Files`.
 pub struct ModuleCell<'s> {
@@ -40,14 +31,16 @@ pub struct ModuleCell<'s> {
     /// The tasks that ran when the watch began have ended.
     is_ripe: AtomicBool,
     state: AtomicU8,
-    /// The commits to wait for: its own, or, if it has none, that of each file that refers to it.
     awaited: AtomicU32,
     /// `let_trees_go_behind` has listed it.
     is_committed: AtomicBool,
+    has_come_back: AtomicBool,
     /// The tasks that have read the module since it is watched and still run.
     readers: [AtomicU64; WORDS],
     /// Held by whoever lets the trees go or brings them back.
     set_aside: Guarded<Option<&'s SetAside>>,
+    #[cfg(any(test, feature = "test_support"))]
+    times_brought_back: AtomicU32,
 }
 
 // SAFETY: a module is only mutated through `&mut Files`, by `Files::free_tree`, or here while nothing reads it.
@@ -72,6 +65,22 @@ const IN_SECOND_BLOCK: u32 = 1 << 31;
 #[thread_local]
 static TASK: Cell<Bit> = Cell::new(OUTSIDER);
 
+#[thread_local]
+static PIN: Cell<Pin> = Cell::new(Pin::NONE);
+
+#[derive(Copy, Clone)]
+struct Pin {
+    began: u64,
+    repins_at: u64,
+}
+
+impl Pin {
+    const NONE: Pin = Pin {
+        began: u64::MAX,
+        repins_at: u64::MAX,
+    };
+}
+
 thread_local! {
     static COMPRESSION: RefCell<Option<bun_zstd::Contexts>> = const { RefCell::new(None) };
     /// The cells that hold the bit of the task.
@@ -92,12 +101,23 @@ struct Tasks {
 // SAFETY: `watch_no_more` takes the cells of a program out before the program ends.
 unsafe impl Send for Tasks {}
 
+impl Tasks {
+    fn pin(&self) -> Pin {
+        Pin {
+            began: self.time,
+            repins_at: TASKS_ENDED.load(Relaxed) + self.running.len() as u64,
+        }
+    }
+}
+
 static TASKS: Guarded<Tasks> = Guarded::new(Tasks {
     time: 0,
     running: Vec::new(),
     taken: [0; WORDS],
     unripe: Vec::new(),
 });
+
+static TASKS_ENDED: AtomicU64 = AtomicU64::new(0);
 
 /// The files that `let_trees_go_behind` has listed and that are not committed yet, of all programs. At zero nothing is left to lower,
 /// and the trees are about to be freed: packing one then costs time and saves nothing.
@@ -139,8 +159,11 @@ impl<'s> ModuleCell<'s> {
             state: AtomicU8::new(HERE),
             awaited: AtomicU32::new(0),
             is_committed: AtomicBool::new(false),
+            has_come_back: AtomicBool::new(false),
             readers: [const { AtomicU64::new(0) }; WORDS],
             set_aside: Guarded::new(None),
+            #[cfg(any(test, feature = "test_support"))]
+            times_brought_back: AtomicU32::new(0),
         }
     }
 
@@ -148,11 +171,20 @@ impl<'s> ModuleCell<'s> {
         std::ptr::from_ref(self).cast()
     }
 
-    /// Before `awaited` goes down: a listed file awaits its own commit and no other.
-    fn await_own_commit_no_more(&self) {
-        if self.is_committed.load(Relaxed) && self.awaited.load(Relaxed) != 0 {
+    fn await_own_commit_no_more(&self) -> bool {
+        let did = self.awaited.fetch_and(!OWN_COMMIT, SeqCst) & OWN_COMMIT != 0;
+        if did {
             AWAITED_COMMITS.fetch_sub(1, SeqCst);
         }
+        did
+    }
+
+    fn begin_watch(&self) {
+        self.unwatched.store(std::ptr::null_mut(), SeqCst);
+        let mut tasks = TASKS.lock();
+        let time = tasks.time;
+        tasks.time += 1;
+        tasks.unripe.push((time, self.erased()));
     }
 
     fn end_watch(&self) {
@@ -200,6 +232,9 @@ impl<'s> ModuleCell<'s> {
             return;
         }
         let set_aside = set_aside.expect("the trees went there");
+        self.has_come_back.store(true, SeqCst);
+        #[cfg(any(test, feature = "test_support"))]
+        self.times_brought_back.fetch_add(1, Relaxed);
         // SAFETY: everybody who wants to read the module waits for the lock.
         let module = unsafe { &mut **self.module.get() };
         let arena = module.hir.lazy.session.arena();
@@ -229,6 +264,9 @@ impl<'s> ModuleCell<'s> {
     fn let_go(&self) {
         let mut set_aside = self.set_aside.lock();
         if self.state.load(Relaxed) != HERE {
+            return;
+        }
+        if self.has_come_back.load(SeqCst) && self.awaited.load(SeqCst) != 0 {
             return;
         }
         self.state.store(LEAVING, SeqCst);
@@ -413,12 +451,12 @@ impl<'s> Module<'s> {
 }
 
 impl Files<'_> {
-    fn for_each_awaiting(&self, file: FileId, each: &mut dyn FnMut(&ModuleCell<'_>)) {
+    fn for_each_file_referred_to(&self, file: FileId, each: &mut dyn FnMut(&ModuleCell<'_>)) {
+        let _reading = ReadingNoTrees::begin();
         let module = &self.modules[file.idx()];
-        each(module);
         for &read in module.edges.iter().chain(module.code_edges) {
             let read = &self.modules[read.idx()];
-            if !read.is_committed.load(Relaxed) {
+            if !std::ptr::eq(read, module) {
                 each(read);
             }
         }
@@ -428,31 +466,49 @@ impl Files<'_> {
     /// file once the files that refer to it are. No task runs.
     pub fn let_trees_go_behind(&self, files: &[FileId]) {
         for &file in files {
-            self.modules[file.idx()].is_committed.store(true, Relaxed);
+            let module = &self.modules[file.idx()];
+            module.is_committed.store(true, Relaxed);
+            module.awaited.fetch_or(OWN_COMMIT, Relaxed);
         }
         AWAITED_COMMITS.fetch_add(files.len(), SeqCst);
         for &file in files {
-            self.for_each_awaiting(file, &mut |module| {
-                module.awaited.fetch_add(1, Relaxed);
+            self.for_each_file_referred_to(file, &mut |read| {
+                read.awaited.fetch_add(1, Relaxed);
             });
         }
     }
 
     pub fn note_commit(&self, file: FileId) {
-        self.modules[file.idx()].await_own_commit_no_more();
-        self.for_each_awaiting(file, &mut |module| {
-            if module.awaited.load(Relaxed) != 0 && module.awaited.fetch_sub(1, SeqCst) == 1 {
-                module.unwatched.store(std::ptr::null_mut(), SeqCst);
-                let mut tasks = TASKS.lock();
-                let time = tasks.time;
-                tasks.time += 1;
-                tasks.unripe.push((time, module.erased()));
+        let module = &self.modules[file.idx()];
+        if module.await_own_commit_no_more() {
+            module.begin_watch();
+        }
+        let is_more_to_lower = AWAITED_COMMITS.load(SeqCst) != 0;
+        self.for_each_file_referred_to(file, &mut |read| {
+            let is_awaited = read.awaited.load(Relaxed) & !OWN_COMMIT != 0;
+            if !is_awaited || read.awaited.fetch_sub(1, SeqCst) != 1 {
+                return;
+            }
+            if !read.is_committed.load(Relaxed) {
+                read.begin_watch();
+            } else if is_more_to_lower && read.is_ripe.load(SeqCst) {
+                read.let_go();
             }
         });
     }
 
     pub fn is_tree_gone(&self, file: FileId) -> bool {
         self.modules[file.idx()].state.load(SeqCst) == GONE
+    }
+
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn times_tree_came_back(&self, file: FileId) -> u32 {
+        self.modules[file.idx()].times_brought_back.load(Relaxed)
+    }
+
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn is_tree_kept(&self, file: FileId) -> bool {
+        self.modules[file.idx()].state.load(SeqCst) == KEPT
     }
 
     /// No tree goes from now on, not even one that a thread is about to let go. It waits for no such thread, and tasks of
@@ -483,6 +539,7 @@ impl Files<'_> {
             cell.await_own_commit_no_more();
             cell.awaited.store(0, Relaxed);
             cell.is_committed.store(false, Relaxed);
+            cell.has_come_back.store(false, Relaxed);
             let _lock = cell.set_aside.lock();
             if cell.state.load(SeqCst) == HERE {
                 cell.state.store(KEPT, SeqCst);
@@ -522,8 +579,8 @@ impl Drop for ReadingNoTrees {
 pub struct ReadingTask {
     /// `OUTSIDER`: all bits are taken, so it reads like a thread without a task.
     bit: Bit,
-    began: u64,
     outer: Bit,
+    outer_pin: Pin,
     read_by_outer: Vec<*const ModuleCell<'static>>,
 }
 
@@ -540,10 +597,26 @@ impl ReadingTask {
         tasks.running.push(began);
         ReadingTask {
             bit,
-            began,
             outer: TASK.replace(bit),
+            outer_pin: PIN.replace(tasks.pin()),
             read_by_outer: READ.take(),
         }
+    }
+
+    #[inline]
+    pub unsafe fn repin() {
+        if TASKS_ENDED.load(Relaxed) >= PIN.get().repins_at {
+            Self::repin_now();
+        }
+    }
+
+    #[cold]
+    fn repin_now() {
+        let mut tasks = TASKS.lock();
+        let began = PIN.get().began;
+        let at = tasks.running.iter().position(|&it| it == began);
+        tasks.running[at.expect("it began")] = tasks.time;
+        PIN.set(tasks.pin());
     }
 }
 
@@ -565,8 +638,10 @@ impl Drop for ReadingTask {
         let ripe: Vec<(u64, *const ModuleCell<'static>)> = {
             let mut tasks = TASKS.lock();
             tasks.taken[word] &= !bit;
-            let at = tasks.running.iter().position(|&began| began == self.began);
+            let began = PIN.replace(self.outer_pin).began;
+            let at = tasks.running.iter().position(|&it| it == began);
             tasks.running.swap_remove(at.expect("it began"));
+            TASKS_ENDED.fetch_add(1, Relaxed);
             let first = tasks.running.iter().copied().min().unwrap_or(u64::MAX);
             tasks
                 .unripe

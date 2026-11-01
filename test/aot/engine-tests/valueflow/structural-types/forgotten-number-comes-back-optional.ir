@@ -174,7 +174,7 @@ function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[Ha
 runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # -- generated: f0 f2
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=414 module=m0}, {callee=f10 callPosition=237 parent=1 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=414 module=m0}, {callee=f1 callPosition=414 module=m0}, {callee=f10 callPosition=237 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 5 = Integer integer=5
 # CHECK-NEXT: v1: "a number: " = String string="a number: "
@@ -182,23 +182,14 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: v3: undefined|string = CallBuiltin -, v0, v2 overload=JSONStringify/0 accessSite=5
 # CHECK-NEXT: v4: string = Add v1, v3
 # CHECK-NEXT: v5: undefined = CallBuiltin -, v4 overload=ConsoleLog/0 accessSite=6
-# CHECK-NEXT: v6: L0 = CallDirect function=f2 accessSite=0
+# CHECK-NEXT: v6: f3 = NewClosure function=f3 allocationSite=6
 # CHECK-NEXT: v7: "a function: " = String string="a function: "
-# CHECK-NEXT: v8: undefined|5|f3 = GetSlotOrUndefined v6 key="setup" receivers=[L0] level=Proven accessSite=4
-# CHECK-NEXT: v9: 5|f3 = AssumeType v8 provenType=int|f3
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: v11: undefined|string = CallBuiltin -, v9, v10 overload=JSONStringify/0 accessSite=5
-# CHECK-NEXT: v12: string = Add v7, v11
-# CHECK-NEXT: v13: undefined = CallBuiltin -, v12 overload=ConsoleLog/0 accessSite=6
-# CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: v9: undefined|string = CallBuiltin -, v6, v8 overload=JSONStringify/0 accessSite=5
+# CHECK-NEXT: v10: string = Add v7, v9
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v10 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function f2 module=
-# CHECK: m0 position=293 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w2 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "wrong result" = String string="wrong result"
-# CHECK-NEXT: v1: f3 = NewClosure function=f3 allocationSite=6
-# CHECK-NEXT: v2: L0 = NewObject -, v0, v1 layout=L0 fields=[0, 1] allocationSite=7 allocationClass=0
-# CHECK-NEXT: v3: L0 = FinishObject v2
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: }
+# CHECK: m0 position=293 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w2 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

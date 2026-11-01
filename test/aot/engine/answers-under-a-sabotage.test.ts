@@ -2,10 +2,11 @@
 // the shell of the engine. Built with the fault one of them fails: it answers something else, it ends by itself, or the build stops. Built without, each passes:
 // ./ir-1.test.ts to ./ir-6.test.ts run them all as they are, and here the ones that are built with more option words run once more with those alone.
 //   testaot run <file> --option=sabotage=<name> --show-output
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { slot } from "../harness/commands";
+import { test } from "../harness/default-timeout";
 import { noticedInTheShell } from "./programs-that-notice-a-sabotage";
 import { engineTests, run, whyNoNativeTests } from "./testaot";
 

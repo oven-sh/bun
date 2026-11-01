@@ -287,10 +287,12 @@ pub(super) fn load_with_tsconfig_override<R>(
     files: &[(&str, &str)],
     entry_point: &str,
     tsconfig_override: &str,
+    builds_executable: bool,
     then: impl FnOnce(Result<&TestProgram<'_, '_>, LoadFailure>) -> R,
 ) -> R {
     let code = CodeOptions {
         tsconfig_override: Some(inside(PROJECT, tsconfig_override.as_bytes())),
+        builds_executable,
         ..CodeOptions::bun_run(PROJECT)
     };
     let entry_points = [entry_point];

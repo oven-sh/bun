@@ -575,6 +575,7 @@ void updateOnEachMicrotaskTick(JSC::VM&);
 }
 
 static thread_local bool newNextTickQueueWaitsForMicrotaskToEnd;
+static thread_local bool didDrainFirstNextTickQueueOfThread;
 
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
@@ -585,8 +586,10 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
         globalObject->resetOnEachMicrotaskTick();
     if (!drainsNextTickQueue)
         return;
-    if (auto queue = globalObject->m_nextTickQueue.get())
+    if (auto queue = globalObject->m_nextTickQueue.get()) {
+        didDrainFirstNextTickQueueOfThread = true;
         queue->drain(vm, globalObject);
+    }
 }
 
 void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)
@@ -639,6 +642,8 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
 {
+    if (didDrainFirstNextTickQueueOfThread)
+        return;
     newNextTickQueueWaitsForMicrotaskToEnd = true;
     vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 }
@@ -1153,14 +1158,10 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-// Without an argument: whether the cache lists modules of the compiled program at all.
-// With a third: whether a require() has put the built-in module there. No entry is made.
 JSC_DEFINE_HOST_FUNCTION(functionRequireCacheCompiledEntry, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    if (!callFrame->argumentCount())
-        return JSValue::encode(jsBoolean(Bun::hasCompiledModules()));
-    JSValue keyValue = callFrame->uncheckedArgument(0);
+    JSValue keyValue = callFrame->argument(0);
     if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
         return JSValue::encode(jsUndefined());
     WTF::String key = asString(keyValue)->value(globalObject);
@@ -1177,7 +1178,7 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     if (!Bun::hasCompiledModules()) [[likely]]
         return JSValue::encode(jsBoolean(false));
     // A file can come back from the disk there: the cache shows it, as plain's does.
-    if (Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject)))
+    if (Bun::requireCacheListsCompiledFiles())
         return JSValue::encode(jsBoolean(false));
     if (!callFrame->argumentCount())
         return JSValue::encode(jsBoolean(true));
@@ -1187,7 +1188,8 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(Bun::isHiddenFromRequireCache(key)));
+    std::optional<bool> isHidden = Bun::isHiddenFromRequireCache(key);
+    return JSValue::encode(isHidden ? jsBoolean(*isHidden) : jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -4405,11 +4407,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
         JSC::AOT::AskerOfModule asker(globalObject, referrer);
         JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
-        if (scope.exception()) [[unlikely]] {
-            JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
-            rejected->markAsHandled();
-            return rejected->rejectWithCaughtException(vm, scope);
-        }
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)
             return compiled;
     }

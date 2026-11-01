@@ -725,7 +725,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f49 visibility=Private
 # CHECK-NEXT: Void b@66 = Upsilon(b@48, ^21, WritesLocalState)
 # CHECK-NEXT: Void b@67 = Jump(Terminal)
 # CHECK-NEXT: Successors: #6
-# CHECK-NEXT: BB#6: ; frequency = 0.999902
+# CHECK-NEXT: BB#6: ; frequency = 0.999903
 # CHECK-NEXT: Predecessors: #12, #5
 # CHECK-NEXT: Int64 b@19 = Phi(ReadsLocalState, v17:Parameter)
 # CHECK-NEXT: Int32 b@20 = Phi(ReadsLocalState, v18:Parameter)
@@ -744,7 +744,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f49 visibility=Private
 # CHECK-NEXT: Void b@76 = Upsilon(b@20, ^31, WritesLocalState)
 # CHECK-NEXT: Void b@77 = Jump(Terminal)
 # CHECK-NEXT: Successors: #16
-# CHECK-NEXT: BB#16: ; frequency = 0.000244
+# CHECK-NEXT: BB#16: ; frequency = 0.000390
 # CHECK-NEXT: Predecessors: #15, #8
 # CHECK-NEXT: Int64 b@30 = Phi(ReadsLocalState, v50:Parameter)
 # CHECK-NEXT: Int32 b@31 = Phi(ReadsLocalState, v51:Parameter)
@@ -763,56 +763,56 @@ runtimefunction id=ArrayTraversalTraverseArray function=f49 visibility=Private
 # CHECK-NEXT: Int32 b@91 = Below(b@82, $3(b@88), v33:Less)
 # CHECK-NEXT: Void b@92 = Branch(b@91, Terminal, v33:Less)
 # CHECK-NEXT: Successors: Then:#37, Else:#24
-# CHECK-NEXT: BB#37: ; frequency = 0.500193
+# CHECK-NEXT: BB#37: ; frequency = 0.800309
 # CHECK-NEXT: Predecessors: #10
 # CHECK-NEXT: Void b@9 = Branch(b@83, Terminal, v35:TypeTest)
 # CHECK-NEXT: Successors: Then:#38, Else:Rare:#31
-# CHECK-NEXT: BB#38: ; frequency = 0.499705
+# CHECK-NEXT: BB#38: ; frequency = 0.799527
 # CHECK-NEXT: Predecessors: #37
 # CHECK-NEXT: Void b@192 = Upsilon(b@22, ^165, WritesLocalState, v29:Parameter)
 # CHECK-NEXT: Void b@193 = Upsilon(b@82, ^190, WritesLocalState, v29:Parameter)
 # CHECK-NEXT: Void b@172 = Jump(Terminal, v29:Parameter)
 # CHECK-NEXT: Successors: #39
-# CHECK-NEXT: BB#39: ; frequency = 4.997047
+# CHECK-NEXT: BB#39: ; frequency = 7.995274
 # CHECK-NEXT: Predecessors: #38, #46
 # CHECK-NEXT: Int64 b@165 = Phi(ReadsLocalState, v29:Parameter)
 # CHECK-NEXT: Int32 b@190 = Phi(ReadsLocalState, v30:Parameter)
 # CHECK-NEXT: Int32 b@141 = Equal(b@83, b@165, v43:StrictEq)
 # CHECK-NEXT: Void b@142 = Branch(b@141, Terminal, v43:StrictEq)
 # CHECK-NEXT: Successors: Then:#41, Else:#42
-# CHECK-NEXT: BB#41: ; frequency = 2.498523
+# CHECK-NEXT: BB#41: ; frequency = 3.997637
 # CHECK-NEXT: Predecessors: #39
 # CHECK-NEXT: Int64 b@143 = Load(b@10, offset = -1113968, ControlDependent|Reads:ModuleVariables.16, v44:GetModuleVariable)
 # CHECK-NEXT: Void b@146 = Branch(b@143, Terminal, v45:TypeTest)
 # CHECK-NEXT: Successors: Then:#43, Else:Rare:#33
-# CHECK-NEXT: BB#43: ; frequency = 2.498279
+# CHECK-NEXT: BB#43: ; frequency = 3.997247
 # CHECK-NEXT: Predecessors: #41
 # CHECK-NEXT: Void b@159 = Upsilon(b@143, ^167, WritesLocalState)
 # CHECK-NEXT: Void b@153 = Jump(Terminal)
 # CHECK-NEXT: Successors: #44
-# CHECK-NEXT: BB#44: ; frequency = 4.996803
+# CHECK-NEXT: BB#44: ; frequency = 7.994884
 # CHECK-NEXT: Predecessors: #42, #43
 # CHECK-NEXT: Int64 b@167 = Phi(ReadsLocalState, v54:Parameter)
 # CHECK-NEXT: Int32 b@158 = Add(b@190, $1(b@81), v55:Increment)
 # CHECK-NEXT: Int32 b@163 = Below(b@158, $3(b@88), v33:Less)
 # CHECK-NEXT: Void b@164 = Branch(b@163, Terminal, v33:Less)
 # CHECK-NEXT: Successors: Then:#46, Else:#24
-# CHECK-NEXT: BB#46: ; frequency = 4.497803
+# CHECK-NEXT: BB#46: ; frequency = 7.195395
 # CHECK-NEXT: Predecessors: #44
 # CHECK-NEXT: Void b@194 = Upsilon(b@167, ^165, WritesLocalState, v35:TypeTest)
 # CHECK-NEXT: Void b@195 = Upsilon(b@158, ^190, WritesLocalState, v35:TypeTest)
 # CHECK-NEXT: Void b@171 = Jump(Terminal, v35:TypeTest)
 # CHECK-NEXT: Successors: #39
-# CHECK-NEXT: BB#24: ; frequency = 0.999193
+# CHECK-NEXT: BB#24: ; frequency = 0.999566
 # CHECK-NEXT: Predecessors: #10, #44
 # CHECK-NEXT: Int64 b@127 = Load(b@10, offset = -8, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v56:String)
 # CHECK-NEXT: Void b@128 = Return(b@127, Terminal)
-# CHECK-NEXT: BB#33: ; frequency = 0.000244
+# CHECK-NEXT: BB#33: ; frequency = 0.000390
 # CHECK-NEXT: Predecessors: #41
 # CHECK-NEXT: Void b@107 = Upsilon(b@190, ^29, WritesLocalState)
 # CHECK-NEXT: Void b@108 = Jump(Terminal)
 # CHECK-NEXT: Successors: #15
-# CHECK-NEXT: BB#15: ; frequency = 0.000244
+# CHECK-NEXT: BB#15: ; frequency = 0.000390
 # CHECK-NEXT: Predecessors: #33, #27
 # CHECK-NEXT: Int32 b@29 = Phi(ReadsLocalState, v46:Parameter)
 # CHECK-NEXT: Void b@111 = Patchpoint(resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ModuleVariables.4, ModuleVariables.16, ModuleVariables.42, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{frameSlots, AllocatorState}, v47:CallDirect)
@@ -821,18 +821,18 @@ runtimefunction id=ArrayTraversalTraverseArray function=f49 visibility=Private
 # CHECK-NEXT: Void b@114 = Upsilon(b@29, ^31, WritesLocalState)
 # CHECK-NEXT: Void b@115 = Jump(Terminal)
 # CHECK-NEXT: Successors: #16
-# CHECK-NEXT: BB#42: ; frequency = 2.498523
+# CHECK-NEXT: BB#42: ; frequency = 3.997637
 # CHECK-NEXT: Predecessors: #39
 # CHECK-NEXT: Void b@156 = Upsilon(b@83, ^167, WritesLocalState)
 # CHECK-NEXT: Void b@149 = Jump(Terminal)
 # CHECK-NEXT: Successors: #44
-# CHECK-NEXT: BB#31: ; frequency = 0.000488
+# CHECK-NEXT: BB#31: ; frequency = 0.000782
 # CHECK-NEXT: Predecessors: #37
 # CHECK-NEXT: Void b@93 = Upsilon(b@82, ^27, WritesLocalState)
 # CHECK-NEXT: Void b@94 = Upsilon(b@22, ^28, WritesLocalState)
 # CHECK-NEXT: Void b@95 = Jump(Terminal)
 # CHECK-NEXT: Successors: #12
-# CHECK-NEXT: BB#12: ; frequency = 0.000488
+# CHECK-NEXT: BB#12: ; frequency = 0.000782
 # CHECK-NEXT: Predecessors: #26, #31
 # CHECK-NEXT: Int32 b@27 = Phi(ReadsLocalState, v36:Parameter)
 # CHECK-NEXT: Int64 b@28 = Phi(ReadsLocalState, v37:Parameter)

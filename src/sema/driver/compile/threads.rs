@@ -107,6 +107,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_region_gets_a_thread_while_as_many_as_there_are_processors_are_held() {
+        set_up_output();
+        crate::use_dedicated_pool("Bun Compile");
+        let caches = ThreadCaches::default();
+        let runners = usize::from(bun_core::get_thread_count()) + 1;
+        let arrived = AtomicUsize::new(0);
+        for_each_parallel_in_runs(&caches, runners, runners, 1, &|_| {
+            arrived.fetch_add(1, Ordering::SeqCst);
+            let begun = std::time::Instant::now();
+            while arrived.load(Ordering::SeqCst) < runners {
+                assert!(
+                    begun.elapsed() < std::time::Duration::from_secs(20),
+                    "a run waits for a thread that the others hold"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+    }
+
     /// Starts regions of two runs on a pool thread until another thread takes one of the runs, where it calls
     /// `on_other_thread`. The tests of this program share the pool, so at times it has no idle thread.
     fn start_regions_until_a_thread_joins(on_other_thread: &(dyn Fn() + Sync)) {

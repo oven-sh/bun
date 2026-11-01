@@ -42,6 +42,8 @@ declare function $isPromisePending(promise: Promise<any>): boolean;
 declare const IS_BUN_DEVELOPMENT: boolean;
 /** False in an executable that was compiled ahead of time without `--compile-inspector` and without `--external`. */
 declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
+/** Or it is a test run, which loads a native addon wherever the call stands. */
+declare const CAN_LOAD_ADDONS_AT_RUN_TIME: boolean;
 /** False in an executable that was compiled ahead of time from a program that never names `node:cluster`. */
 declare const CAN_BE_CLUSTER_WORKER: boolean;
 /** False in what was compiled ahead of time, but for a test run one of whose tests replaces a built-in function. Where it is false no program can tell which built-in functions Bun's own code calls. */
@@ -288,11 +290,11 @@ declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): 
 declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
 declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
 declare function $esmRegistryHasEvaluated(key: string, requirer?: JSCommonJSModule): boolean;
-declare function $requireCacheCompiledEntry(key?: string, requirer?: JSCommonJSModule, onlyAsks?: boolean): any;
+declare function $requireCacheCompiledEntry(key: string, requirer?: JSCommonJSModule, onlyAsks?: boolean): any;
 declare function $requireCacheDidDelete(key: string, requirer?: JSCommonJSModule): void;
 declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JSCommonJSModule): void;
 /** Without a key: does this process hide any file from require.cache? */
-declare function $isHiddenFromRequireCache(key?: string | symbol): boolean;
+declare function $isHiddenFromRequireCache(key?: string | symbol): boolean | undefined;
 declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;

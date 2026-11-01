@@ -93,12 +93,12 @@ impl Resolver<'_, '_> {
         let Some(mut current) = self.find_global(first) else {
             return ExprState::Unresolved;
         };
-        self.output.mentioned.push(current.id);
+        self.mention(current.id);
         for &name in rest {
             let Some(found) = self.find_named_member(ResolvedValue::object(current), name) else {
                 return ExprState::Unresolved;
             };
-            self.output.mentioned.push(found.id);
+            self.mention(found.id);
             current = found;
         }
         ExprState::of_path(Some(current))

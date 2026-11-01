@@ -19,7 +19,7 @@ pub use self::quiet::Quiet;
 pub use self::resolve::{
     KnownCallee, PrivateFieldAccess, PrivateFieldCall, PrivateMemberKind, PrivateStateKind,
     PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, resolve_callee,
-    resolve_private_field_call, resolve_reference,
+    resolve_loaded_reference, resolve_private_field_call, resolve_reference,
 };
 
 use crate::ir::{InParallel, for_each_mut};

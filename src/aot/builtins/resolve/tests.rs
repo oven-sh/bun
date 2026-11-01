@@ -34,6 +34,7 @@ mod evaluated_text;
 mod exposure;
 mod folding;
 mod imports;
+mod module_cache;
 mod module_objects;
 mod module_values;
 mod parts_of_a_file;
@@ -212,6 +213,7 @@ fn with_parts<R>(
         is_library: false,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     assert!(

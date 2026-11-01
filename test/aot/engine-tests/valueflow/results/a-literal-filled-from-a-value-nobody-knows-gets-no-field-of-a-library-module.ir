@@ -1,0 +1,46 @@
+# const path = require("node:path"); const options = { encodingName: true }; for (const key in maybe ? give(path) : path) options[key] = ..
+# The object of the library module has escaped, so the value nobody knows stands for it. It stays listed beside that value so that reads of its members are found, not because it is likelier there than any other object that has escaped: the literal gets no field for its names.
+# RUN: valueflow-apply
+# CHECK: layout L1 fields=[{key="encodingName"
+# CHECK-NOT: IsAddedLate
+
+layout L0 fields=[{key="sep" declared={type=anything} flags=[IsRequired]}, {key="delimiter" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 fields=[{key="encodingName" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f1
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="give" [isFreeName]
+    v2 = RequireModule module=m1 referrer=m0 specifier="node:path"
+    v3 = Call v1, -, v2
+    v4 = Boolean
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v2)
+  b3(v7: anything):
+    v8 = ForInOpen v7
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v10 = ForInStep v8, v7
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Branch v11 -> taken b6(), notTaken b5()
+  b5():
+    v13 = ElemGet v7, v12
+    ElemSet v6, v12, v13
+    Jump -> next b4()
+  b6():
+    Return v6
+}
+function f1 name="path" module=m1 kind=Module results=[{type=anything}] {
+    v0 = String string="/"
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    Return v2
+}

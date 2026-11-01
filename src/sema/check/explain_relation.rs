@@ -7,6 +7,8 @@
 //! reporting on. That second run produces the error's code, node and text (`relation_diagnostic`).
 //! If it succeeds, no error is reported. None of its results are written to the relation cache.
 
+use super::errors_js::PLAIN_JS_ERRORS;
+use super::errors_statements::is_kept_in_unchecked_range;
 use super::explain::Line;
 use super::explain::NOWHERE;
 use super::relate::{REC_BOTH, Relater, Relation, STATE_NONE, Ternary};
@@ -306,8 +308,17 @@ impl<'p, 's> Checker<'p, 's> {
                 (false, Some(self.new_diagnostic(at, code, &args)))
             }
             (Ok(false), Some(at)) => {
+                let is_reported_here = at.0 != NOWHERE.0
+                    && self.place_does_not_decide_at != Some(self.stack.len())
+                    && head_message.is_none_or(|code| {
+                        PLAIN_JS_ERRORS.binary_search(&code).is_err()
+                            && !is_kept_in_unchecked_range(code)
+                    });
+                let site = is_reported_here.then_some((at.0, at.1, self.stack.len()));
+                let outer = std::mem::replace(&mut self.message_site, site);
                 let (is_related, diagnostic) =
                     self.relation_diagnostic(source, target, relation, at, head_message);
+                self.message_site = outer;
                 (
                     is_related,
                     diagnostic.and_then(RelationDiagnostic::into_reported),

@@ -123,9 +123,10 @@ fn parts_outside(range: (u32, u32), mut holes: Vec<(u32, u32)>) -> Vec<(u32, u32
     parts
 }
 
-/// The diagnostics of binder.go. The binder visits every node, whether or not the checker does. 1184 isn't included:
-/// the binder only reports it for `export as namespace`, and wherever it's reported here it comes from the checker
-/// (`reportObviousModifierErrors`).
+pub(super) fn is_kept_in_unchecked_range(code: u32) -> bool {
+    matches!(code, 1039 | 1136 | 1141 | 1254 | 1174 | 2499 | 2500) || is_binder_diagnostic(code)
+}
+
 pub(super) fn is_binder_diagnostic(code: u32) -> bool {
     matches!(
         code,
@@ -911,9 +912,11 @@ impl Checker<'_, '_> {
         // `context_free_level` says otherwise.
         let level = self.inference_contexts.len();
         let outer = std::mem::replace(&mut self.context_free_level, level);
+        let outside = self.place_does_not_decide_at.replace(self.stack.len());
         self.check_expression_uncached(file, checked_again, CheckMode::TYPE_ONLY);
         self.context_free_level = outer;
         self.check_expression(file, checked_again);
+        self.place_does_not_decide_at = outside;
         // `remove_diagnostics_in_unchecked_ranges` removes what the walk reports there, but not these.
         for diagnostic in self.reported.iter_mut().skip(reported) {
             diagnostic.by_another_node = true;

@@ -96,7 +96,9 @@ impl Checker<'_, '_> {
             };
             let (site, location) = (SpecifierSite::default(), (file, hir[first].pos, end));
             let since = self.reported.len();
+            let outside = self.place_does_not_decide_at.replace(self.stack.len());
             self.resolve_external_module_at(file, specifier, site, location, Some(2875));
+            self.place_does_not_decide_at = outside;
             for diagnostic in &mut self.reported[since..] {
                 diagnostic.by_another_node = true;
             }
@@ -832,9 +834,11 @@ impl Checker<'_, '_> {
             );
             let output = Some(&mut diags);
             let name_type = self.string_literal(name, false);
+            let outside = self.place_does_not_decide_at.replace(self.stack.len());
             reported |= self.elaborate_element(
                 source, target, at, prop.value, false, name_type, None, output,
             );
+            self.place_does_not_decide_at = outside;
             // `elaborateDidYouMeanToCallOrConstruct` runs on the braces around the value before it runs on the value.
             // So its diagnostic, the only one at the start of the value, is reported at the start of the braces.
             let value = prop.value.some().map(|value| self.start_of(file, value));

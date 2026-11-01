@@ -191,8 +191,8 @@ Map.prototype[Symbol.hasInstance] = f;: throws TypeError
 Function.prototype.prototype = f;: throws TypeError
 Object.prototype.zzz = f;: throws TypeError
 Object.defineProperty(Object.prototype, "zzz", d);: throws TypeError
-Function.prototype.zzz = f;: throws TypeError
-Promise.prototype.zzz = f;: throws TypeError
+Function.prototype.zzz = f;: ran +zzz
+Promise.prototype.zzz = f;: ran +zzz
 Array.prototype.push = f;: throws TypeError
 delete Array.prototype.push;: throws TypeError
 Object.defineProperty(Array.prototype, "push", d);: throws TypeError

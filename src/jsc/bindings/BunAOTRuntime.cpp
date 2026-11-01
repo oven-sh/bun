@@ -251,9 +251,34 @@ extern "C" bool Bun__AOT__takesImagesAboveOthers()
     return JSC::AOT::takesImagesAboveOthers();
 }
 
+static bool listsRefusedChanges;
+
 extern "C" void Bun__AOT__listRefusedChanges()
 {
+    listsRefusedChanges = true;
     JSC::AOT::setRefusedChangeListener(recordRefusedChange);
+}
+
+extern "C" void Bun__AOT__openNameWithoutImage(uint32_t holder, const uint8_t* name, size_t length)
+{
+    JSC::AOT::openNameWithoutImage(holder, std::span { name, length });
+}
+
+namespace Bun {
+
+void recordRefusedLoad(JSC::JSGlobalObject* globalObject, const String& path)
+{
+    if (listsRefusedChanges)
+        recordRefusedChange(globalObject, makeString("Cannot load '"_s, path, '\''));
+}
+
+bool recordAddonLoadedFromDisk(JSC::JSGlobalObject* globalObject, const String& path)
+{
+    if (listsRefusedChanges)
+        recordRefusedChange(globalObject, makeString("Loaded '"_s, path, '\''));
+    return listsRefusedChanges;
+}
+
 }
 
 extern "C" void Bun__AOT__setVerbose(bool isVerbose)
@@ -318,6 +343,7 @@ extern "C" void Bun__AOT__setMismatchLog(intptr_t, bool) {}
 extern "C" void Bun__AOT__setMismatchLogFormat(bool) {}
 extern "C" bool Bun__AOT__takesImagesAboveOthers() { return false; }
 extern "C" void Bun__AOT__listRefusedChanges() {}
+extern "C" void Bun__AOT__openNameWithoutImage(uint32_t, const uint8_t*, size_t) {}
 extern "C" void Bun__AOT__setVerbose(bool) {}
 extern "C" int64_t Bun__AOT__offsetInCode(const void*) { return -1; }
 extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void*) { return -1; }

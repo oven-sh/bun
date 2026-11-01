@@ -45,6 +45,7 @@ use crate::ir::generated::FunctionRole;
 use crate::ir::types::release_spare_capacity;
 use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
 use crate::known_helpers::KnownHelpers;
+use crate::load::test_runner_names::written_name_of_local;
 use crate::load::{self, Sources};
 use crate::modules::{CommonJsExports, DeferredData, ModuleGraph, ModuleRef};
 use crate::options::RemovableOptions;
@@ -100,6 +101,8 @@ pub struct LoweringOptions {
     pub obfuscates: bool,
     /// `bun test --aot --coverage`: the files of the project count how often their parts run.
     pub counts_executions: bool,
+    /// The checker did not load the files that this program imports, so every import is `any`.
+    pub imports_are_untyped: bool,
 }
 
 pub struct LoweringInputs<'a> {
@@ -582,7 +585,13 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(crate) fn intern_binding_name(&mut self, binding: Binding, written: Atom) -> StringId {
         match self.short_binding_name(binding) {
             Some(name) => name,
-            None => self.intern_atom(written),
+            None => {
+                let name = self.queries.atom_bytes(written);
+                match written_name_of_local(name) {
+                    same if same.len() == name.len() => self.intern_atom(written),
+                    of_test_runner => self.intern_bytes(of_test_runner),
+                }
+            }
         }
     }
 

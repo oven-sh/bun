@@ -21,6 +21,7 @@ const FILE_INPUTS: FileInputs<'static> = FileInputs {
     is_library: false,
     host_values: &[],
     jsx: JsxMode::Classic,
+    own_name: b"",
 };
 
 struct Workspace<'s> {

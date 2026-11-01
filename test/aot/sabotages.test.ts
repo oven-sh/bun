@@ -10,7 +10,7 @@
 //
 //   bun test test/aot/sabotages                          all
 //   AOT_SABOTAGE=<text> bun test test/aot/sabotages      the names that contain the text
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readdirSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join, resolve } from "path";
@@ -25,6 +25,7 @@ import {
   withoutCrashReport,
   withoutDebugInformation,
 } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { registry } from "./harness/registry";
 import { describe, test } from "./supported";
 
@@ -109,6 +110,10 @@ const noticedByTheEngineTestsAlone: Record<string, string> = {
   StridedIndexesStayInRange: "a-strided-index-said-to-stay-in-range-is-reported",
   VectorTurnsMeetNoOtherAccess: "a-load-moved-across-the-store-of-another-view-is-reported",
 };
+/** What costs a build words alone, and the test that holds it to that. */
+const heldByATestOfItsOwn: Record<string, string> = {
+  ListsOfPiecesEndInAPiece: "a-faulty-list-of-printed-text-costs-one-file-its-quotes",
+};
 /** The names that a test under ./engine-tests/pipeline/sabotages is built with. */
 const pairs = join(import.meta.dir, "engine-tests", "pipeline", "sabotages");
 const shownByAPairOfEngineTests = new Set(
@@ -125,6 +130,7 @@ const stopTheBuild = [
   "CodeGenerationFailsAssertion",
   "ImageBuildingFailsAssertion",
   "LoweringPanics",
+  "LoweringOverflowsStack",
 ];
 
 const listed = unsupported ? undefined : registry().sabotages;
@@ -190,6 +196,7 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
           !noticedBy[name] &&
           !noticedInTheShell[name] &&
           !noticedByTheEngineTestsAlone[name] &&
+          !heldByATestOfItsOwn[name] &&
           !stopTheBuild.includes(name) &&
           !shownByAPairOfEngineTests.has(name),
       ),
@@ -199,6 +206,7 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
         ...Object.keys(noticedBy),
         ...Object.keys(noticedInTheShell),
         ...Object.keys(noticedByTheEngineTestsAlone),
+        ...Object.keys(heldByATestOfItsOwn),
         ...stopTheBuild,
         ...shownByAPairOfEngineTests,
       ].filter(name => !listed!.includes(name)),

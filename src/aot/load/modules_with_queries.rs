@@ -106,20 +106,30 @@ mod tests {
     }
 
     #[test]
-    fn only_raw_alone_asks_for_text() {
+    fn raw_and_url_among_the_parameters_name_loaders() {
         let modules = ModulesWithQueries::default();
         let loader = |query: &[u8]| modules.loader_by_query(&modules.add(b"/p/a.ts", query));
-        assert_eq!(loader(b"?raw"), Some(Loader::Text));
+        for query in [&b"?raw"[..], b"?raw&x", b"?x&raw", b"?url&raw"] {
+            assert_eq!(loader(query), Some(Loader::Text));
+        }
+        for query in [
+            &b"?url"[..],
+            b"?x&url",
+            b"?worker&url",
+            b"?raw&url&sharedworker",
+        ] {
+            assert_eq!(loader(query), Some(Loader::File));
+        }
         for query in [
             &b"?"[..],
             b"?RAW",
             b"?raw=1",
-            b"?raw&x",
-            b"?x&raw",
             b"?raw#x",
             b"?raw?raw",
             b"?text",
-            b"?url",
+            b"?url=1",
+            b"?worker",
+            b"?worker&raw",
         ] {
             assert_eq!(loader(query), None);
         }

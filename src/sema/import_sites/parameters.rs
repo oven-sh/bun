@@ -4,7 +4,8 @@ use crate::bind::{
 };
 use crate::fold::Decisions;
 use crate::hir::{
-    ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, ImportEqualsId, NodeData, PatKind,
+    ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, IdList, ImportEqualsId, NodeData,
+    PatKind, PropKey,
 };
 use smallvec::SmallVec;
 
@@ -89,6 +90,28 @@ fn find_only_name_of(
     is_only_name.then_some(name)
 }
 
+fn find_arguments_where_written(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+    find_written: FindWritten<'_>,
+) -> Option<IdList<ExprId>> {
+    let (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(expression)) =
+        (hir[function].kind, bound.fns[function.idx()].owner)
+    else {
+        return None;
+    };
+    let Parent::Expr(above) = bound.parent_of_expr(expression) else {
+        return None;
+    };
+    let ExprKind::Call(call) = hir[above].kind else {
+        return None;
+    };
+    let is_only_call =
+        hir[call].callee == expression && !finds_itself(hir, bound, function, find_written);
+    is_only_call.then(|| hir[call].args)
+}
+
 // `function load(name) { return require(name); }`, where every mention of `load` calls it: what the calls pass for `name`.
 pub fn find_values_of_parameter(
     hir: &File<'_>,
@@ -111,15 +134,42 @@ pub fn find_values_passed_for(
     mention: ExprId,
     find_written: FindWritten<'_>,
 ) -> Option<SmallVec<[ExprId; 4]>> {
+    let (values, path) =
+        find_values_passed_for_pattern(hir, bound, decisions, mention, find_written)?;
+    path.is_empty().then_some(values)
+}
+
+pub(super) fn find_values_passed_for_pattern(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    mention: ExprId,
+    find_written: FindWritten<'_>,
+) -> Option<(SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>)> {
     let Binding::Symbol(parameter) = bound.binding(mention) else {
         return None;
     };
-    let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
+    let &[Decl::Param(mut pattern)] = bound.symbol(parameter).decls else {
         return None;
     };
-    let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
-        return None;
+    let mut path: SmallVec<[Atom; 2]> = SmallVec::new();
+    let id = loop {
+        match bound.pat_parent[pattern.idx()] {
+            PatParent::Param(id) => break id,
+            PatParent::Prop(parent, property) => {
+                let PropKey::Name(key) = hir.runtime_binding_key(property) else {
+                    return None;
+                };
+                if hir[property].is_rest || hir[property].default.is_some() {
+                    return None;
+                }
+                path.push(key);
+                pattern = parent;
+            }
+            PatParent::Elem(..) | PatParent::Var(_) | PatParent::None => return None,
+        }
     };
+    path.reverse();
     let function = bound.param_fn[id.idx()];
     let index = hir[function].params.iter().position(|it| it == id)?;
     let is_settled = matches!(
@@ -131,12 +181,24 @@ pub fn find_values_passed_for(
             .dynamic_lookup_scope(NodeData::Expr(mention))
             .is_none()
         && !hir[id].flags.contains(Flags::REST);
-    let name = find_only_name_of(hir, bound, function, find_written).filter(|_| is_settled)?;
-    let text = bound.symbol(name).name;
+    if !is_settled {
+        return None;
+    }
+    let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
     let mut values: SmallVec<[ExprId; 4]> = SmallVec::new();
     if hir[id].default.is_some() {
         values.push(hir[id].default);
     }
+    let Some(name) = find_only_name_of(hir, bound, function, find_written) else {
+        let arguments = find_arguments_where_written(hir, bound, function, find_written)?;
+        let mut passed = hir.ids(arguments).take(index + 1);
+        if passed.clone().any(is_spread) {
+            return None;
+        }
+        values.extend(passed.nth(index));
+        return Some((values, path));
+    };
+    let text = bound.symbol(name).name;
     for callee in find_written(text) {
         let is_mention = bound.is_evaluated_ident(callee)
             && !decisions.is_dead_expr(callee)
@@ -151,11 +213,10 @@ pub fn find_values_passed_for(
             return None;
         };
         let mut passed = hir.ids(hir[call].args).take(index + 1);
-        let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
         if hir[call].callee != callee || passed.clone().any(is_spread) {
             return None;
         }
         values.extend(passed.nth(index));
     }
-    Some(values)
+    Some((values, path))
 }

@@ -279,6 +279,7 @@ impl<'s> Workspace<'s> {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
+            own_name: b"",
         };
         let options = bind_options(Some(source.runtime));
         analyze_file(hir, options, &fold, file, &self.atoms, self.arena)

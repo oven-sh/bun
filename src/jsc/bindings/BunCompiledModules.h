@@ -34,7 +34,7 @@ inline bool hasCompiledModules() { return !!JSC::AOT::Image::current(); }
 std::optional<JSC::AOT::ModuleID> compiledModuleForPath(const WTF::String& path);
 std::optional<JSC::AOT::ModuleID> moduleThatMockReplaces(const WTF::String& path);
 inline bool isCompiledModule(const WTF::String& path) { return compiledModuleForPath(path).has_value(); }
-bool isHiddenFromRequireCache(const WTF::String& key);
+std::optional<bool> isHiddenFromRequireCache(const WTF::String& key);
 
 // The attributes say as what the file is asked for, and the executable may hold it as that. Null: the import has none.
 JSC::JSPromise* importCompiledModule(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes, int64_t referrerAsyncOrder);
@@ -59,6 +59,7 @@ JSC::JSValue createNotInExecutableError(JSC::JSGlobalObject*, ErrorCode, const W
 // The compiled program asks the loader why a module fails to load, and runs nothing of it.
 bool isAskingWhyFileFailsToLoad();
 JSC::JSValue errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
+bool letsTestRunLoadAddon(JSC::JSGlobalObject*, const WTF::String& path);
 // The same for a file that loads as a database or a page, under a name the compiler could not follow.
 JSC::JSValue errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
 // What process.mainModule and require.main answer in an ahead-of-time executable: the module object of the file at `Bun.main`.
@@ -86,7 +87,7 @@ bool isDebuggerAdmitted();
 JSC::JSValue errorIfDebuggerIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);
 
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
-bool requireCacheListsCompiledFiles(Zig::GlobalObject*);
+bool requireCacheListsCompiledFiles();
 bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const WTF::String& key);
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::String& key);
 JSC::JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);

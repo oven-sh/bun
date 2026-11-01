@@ -78,6 +78,57 @@ fn the_export_helper_of_swc_is_known() {
     );
 }
 
+const BABEL_7_24_6_CLASS_HELPERS: &str = r#"
+function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
+function _classCallCheck(a, n) { if (!(a instanceof n)) throw new TypeError("Cannot call a class as a function"); }
+function _defineProperties(e, r) { for (var t = 0; t < r.length; t++) { var o = r[t]; o.enumerable = o.enumerable || !1, o.configurable = !0, "value" in o && (o.writable = !0), Object.defineProperty(e, _toPropertyKey(o.key), o); } }
+function _createClass(e, r, t) { return r && _defineProperties(e.prototype, r), t && _defineProperties(e, t), Object.defineProperty(e, "prototype", { writable: !1 }), e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
+"#;
+
+const BABEL_7_20_6_CLASS_HELPERS: &str = r#"
+function _typeof(obj) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (obj) { return typeof obj; } : function (obj) { return obj && "function" == typeof Symbol && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }, _typeof(obj); }
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
+function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return _typeof(key) === "symbol" ? key : String(key); }
+function _toPrimitive(input, hint) { if (_typeof(input) !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (_typeof(res) !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); }
+"#;
+
+#[test]
+fn the_class_helpers_of_babel_that_convert_keys_are_known() {
+    for source in [BABEL_7_24_6_CLASS_HELPERS, BABEL_7_20_6_CLASS_HELPERS] {
+        let mut shapes = shapes_in("/a.js", source);
+        shapes.sort_by_key(|&shape| shape as u8);
+        assert_eq!(
+            shapes,
+            [
+                Shape::DefinePropertiesOfDescriptorsUnderConvertedKeys,
+                Shape::CreateClassDefinesBothSidesAndLocksPrototype,
+                Shape::ToPropertyKeyAnswersSymbolOrText,
+                Shape::ToPrimitiveAsksMethodOfObject,
+                Shape::TypeofAnswersSymbolForSymbols,
+            ]
+        );
+        let found = find_in("/a.js", source);
+        // `_toPrimitive` names TypeError, which a program may replace.
+        let mut facts = found.functions().filter(|(_, known)| known.relies_on_facts);
+        assert_eq!(
+            facts.next().map(|(_, known)| known.shape),
+            Some(Shape::TypeofAnswersSymbolForSymbols)
+        );
+        assert!(facts.next().is_none());
+        assert!(
+            found
+                .bindings()
+                .all(|(_, values)| values.holds_from_the_start)
+        );
+        let stored = format!("{source}\n_typeof = function () {{ return 'symbol'; }};");
+        assert!(certainties_in("/a.js", &stored).contains(&Certainty::MayHoldOtherValues));
+    }
+}
+
 fn with_file<R>(path: &str, source: &str, then: impl FnOnce(&FindInput<'_, '_>) -> R) -> R {
     analyze(path, source, |input| {
         assert!(

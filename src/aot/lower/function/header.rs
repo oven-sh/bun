@@ -153,7 +153,7 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         SourceRange {
             start: self.type_ranges.map_offset(self.hir[function].text_start),
-            end: self.type_ranges.map_offset(end),
+            end: self.type_ranges.map_end(end),
         }
     }
 }

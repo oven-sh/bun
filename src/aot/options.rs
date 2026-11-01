@@ -134,6 +134,8 @@ pub struct LoadOptions {
     /// `AotOptions::host_runs_files_from_disk`: the entry point that says what those files do with the program. Nothing loads it.
     /// Each import statement in it stands for a load by one of those files, so a module that cannot load fails none of the others.
     pub stand_in_for_files_from_disk: Option<Vec<u8>>,
+    /// A layer of a test run: the test files above it, the preloads, and the entry point that does what the test files may do.
+    pub files_of_tests: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -282,6 +284,7 @@ impl LoadOptions {
             left_to_loader: Vec::new(),
             loads_below_files_left_to_loader: Vec::new(),
             stand_in_for_files_from_disk: None,
+            files_of_tests: Vec::new(),
         }
     }
 }

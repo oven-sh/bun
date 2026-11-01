@@ -343,9 +343,28 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let in_every_construction = stores.iter().filter(|store| store.is_in_every_construction);
         let in_every_construction: FxHashSet<Atom> =
             in_every_construction.map(|store| store.name).collect();
+        let hir = self.c.hir(file);
         for candidate in &stores {
             let name = self.member_name(candidate.name);
             let is_static = candidate.place == StorePlace::Class;
+            if candidate.place == StorePlace::Instance && candidate.kind == ObjectMemberKind::Field
+            {
+                let only_declared = members.iter_mut().find(|member| {
+                    let is_only_declared = match member.source {
+                        ClassMemberSource::Member(id) => hir[id].flags.contains(Flags::AMBIENT),
+                        _ => false,
+                    };
+                    is_only_declared
+                        && member.name == name
+                        && !member.is_static
+                        && member.kind == ObjectMemberKind::Field
+                });
+                if let Some(member) = only_declared {
+                    member.source = candidate.source();
+                    member.is_optional = !in_every_construction.contains(&candidate.name);
+                    continue;
+                }
+            }
             let is_new = if is_getter_or_setter(candidate.kind) {
                 !declared.contains(&(name, is_static))
                     && added_accessors.insert((name, candidate.kind))

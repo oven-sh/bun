@@ -31,7 +31,7 @@
 module m0 path="function-returns-new-object-called.js" displayPath="function-returns-new-object-called.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 entry module=m0
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|function|absent|f2 flags=[IsExpected]} flags=[IsImmutable]}] ownFieldCount=1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|function|absent|f2 flags=[IsExpected]} flags=[IsImmutable] variableName="pair"}] ownFieldCount=1
 layout L1 module=m0 position=660
 layout L2 module=m0 position=291 fields=[{key="high" declared={type=anything}}, {key="low" declared={type=anything}}] declaredOrder=[1, 0] ownFieldCount=2
 data d0 root=Object{layout=L1} module=m0

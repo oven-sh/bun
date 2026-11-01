@@ -1,0 +1,183 @@
+# What a turn of each loop of the program takes: calls into the run time, and instructions by the counter of the hardware, where that can be read.
+# The shell hands in the name of the loop and the names. It reads the counts where the program reads `turns`, in front of the loop, and where it reports, behind it.
+# -- source: new-objects-filled-under-keys.js
+# // `out[name] = value` into a new object each turn, under four names that the build cannot read: every store adds a name.
+# function fill(make, names, value, rounds) {
+#   let out;
+#   for (let round = 0; round < rounds; round++) {
+#     out = make();
+#     for (let i = 0; i < names.length; i++) out[names[i]] = value;
+#   }
+#   return Object.keys(out).join();
+# }
+# const literal = () => ({});
+# const bare = () => Object.create(null);
+# const value = { a: 1 };
+# report(fill(literal, names, value, 5000), fill(bare, names, value, 5000));
+# const rounds = Number(turns);
+# if (loop === "an empty literal") report(fill(literal, names, value, rounds));
+# if (loop === "an object without a prototype") report(fill(bare, names, value, rounds));
+# -- end of source
+# FORM: AsRead
+# REPEAT: run = L0 L1; loop = an_empty_literal an_object_without_a_prototype; most = 259.9 255.9
+# RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.names = ["al-pha", "bra-vo", "char-lie", "del-ta"].map(text => text.split("-").join("")); Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows faulting-loop-polls
+# END REPEAT
+# an empty literal
+# L0: alpha,bravo,charlie,delta alpha,bravo,charlie,delta
+# L0-NEXT: alpha,bravo,charlie,delta
+# L0-NEXT: a turn: 0 calls into the run time, at most 259.9 instructions
+# L0-NEXT: exited with 0
+# an object without a prototype
+# L1: alpha,bravo,charlie,delta alpha,bravo,charlie,delta
+# L1-NEXT: alpha,bravo,charlie,delta
+# L1-NEXT: a turn: 0 calls into the run time, at most 255.9 instructions
+# L1-NEXT: exited with 0
+
+module m0 path="new-objects-filled-under-keys.js" displayPath="new-objects-filled-under-keys.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=432 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=373
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L1} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @366
+    v3 = Convert v2 declared={type=undefined|null|function|f2 flags=[IsExpected]} @366
+    v4 = NewClosure function=f3 @391
+    v5 = Convert v4 declared={type=undefined|null|function|f3 flags=[IsExpected]} @391
+    v6 = Data data=d0 @432
+    v7 = Convert v6 declared={type=undefined|null|L0 flags=[IsExpected]} @432
+    v8 = Builtin builtin=GlobalThis @442
+    v9 = PropGet v8 key="report" [isFreeName] @442
+    v10 = Builtin builtin=GlobalThis @463
+    v11 = PropGet v10 key="names" [isFreeName] @463
+    v12 = Integer integer=5000 @477
+    v13 = Call v1, -, v3, v11, v7, v12 calleeName="fill" @449
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]} @449
+    v15 = Builtin builtin=GlobalThis @495
+    v16 = PropGet v15 key="names" [isFreeName] @495
+    v17 = Integer integer=5000 @509
+    v18 = Call v1, -, v5, v16, v7, v17 calleeName="fill" @484
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @484
+    v20 = Call v9, -, v14, v19 calleeName="report" @442
+    v21 = Builtin builtin=Number @532
+    v22 = Builtin builtin=GlobalThis @544
+    v23 = PropGet v22 key="turns" [isFreeName] @544
+    v24 = Call v21, -, v23 calleeName="Number" @532
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @532
+    v26 = Builtin builtin=GlobalThis @551
+    v27 = PropGet v26 key="loop" [isFreeName] @551
+    v28 = String string="an empty literal" @560
+    v29 = StrictEq v27, v28 @551
+    Branch v29 -> taken b2(), notTaken b3() @551
+  b2():
+    v30 = Builtin builtin=GlobalThis @580
+    v31 = PropGet v30 key="report" [isFreeName] @580
+    v32 = Builtin builtin=GlobalThis @601
+    v33 = PropGet v32 key="names" [isFreeName] @601
+    v34 = Call v1, -, v3, v33, v7, v25 calleeName="fill" @587
+    v35 = Convert v34 declared={type=undefined|null|string flags=[IsExpected]} @587
+    v36 = Call v31, -, v35 calleeName="report" @580
+    Jump -> next b3() @580
+  b3():
+    v37 = Builtin builtin=GlobalThis @629
+    v38 = PropGet v37 key="loop" [isFreeName] @629
+    v39 = String string="an object without a prototype" @638
+    v40 = StrictEq v38, v39 @629
+    Branch v40 -> taken b4(), notTaken b5() @629
+  b4():
+    v41 = Builtin builtin=GlobalThis @671
+    v42 = PropGet v41 key="report" [isFreeName] @671
+    v43 = Builtin builtin=GlobalThis @689
+    v44 = PropGet v43 key="names" [isFreeName] @689
+    v45 = Call v1, -, v5, v44, v7, v25 calleeName="fill" @678
+    v46 = Convert v45 declared={type=undefined|null|string flags=[IsExpected]} @678
+    v47 = Call v42, -, v46 calleeName="report" @671
+    Jump -> next b5() @671
+  b5():
+    v48 = Undefined @671
+    Return v48 @671
+}
+function f1 name="fill" module=m0 position=122 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: undefined|null|string|Array, v2: undefined|null|L0, v3: anything):
+    Jump -> next b1() @122
+  b1():
+    v4 = Undefined @168
+    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @168
+    v6 = Integer @196
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @196
+    Jump -> next b2(v5, v7) @188
+  b2(v8, v9):
+    LoopHint @188
+    v11 = Convert v3 declared={type=number flags=[IsExpected]} @207
+    v12 = Less v9, v11 @199
+    Branch v12 -> taken b3(| 0, 1), notTaken b12(| 0, 1) @199
+  b3(v13, v14):
+    Jump -> next b4() @199
+  b4():
+    v15 = Call v0 calleeName="make" @236
+    v16 = Convert v15 declared={type=undefined|null|object flags=[IsExpected]} @230
+    v17 = Integer @261
+    v18 = Convert v17 declared={type=i32 flags=[IsExpected]} @261
+    Jump -> next b5(v18) @257
+  b5(v19):
+    LoopHint @257
+    v21 = PropGet v1 key="length" @268
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @268
+    v23 = Less v19, v22 @264
+    Branch v23 -> taken b6(| 0), notTaken b9(| 0) @264
+  b6(v24):
+    Jump -> next b7() @264
+  b7():
+    v25 = ElemGet v1, v24 @291
+    ElemSet v16, v25, v2 @287
+    Jump -> next b8() @287
+  b8():
+    v27 = Increment v24 @287
+    v28 = Convert v27 declared={type=i32 flags=[IsExpected]} @282
+    Jump -> next b5(v28) @282
+  b9(v29):
+    Jump -> next b10() @264
+  b10():
+    Jump -> next b11() @282
+  b11():
+    v30 = Increment v13 @264
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @215
+    Jump -> next b2(v16, v31) @215
+  b12(v32, v33):
+    Jump -> next b13() @199
+  b13():
+    v34 = Builtin builtin=Object @323
+    v35 = Builtin builtin=ObjectKeys @323
+    v36 = Call v35, v34, v8 calleeName="Object.keys" @330
+    v37 = Convert v36 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @323
+    v38 = PropGet v37 key="join" @338
+    v39 = Convert v38 declared={type=undefined|null|function flags=[IsExpected]} @323
+    v40 = Call v39, v37 calleeKey="join" calleeName="join" @340
+    ReturnCall v40 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @340
+}
+function f2 name="literal" module=m0 position=366 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @366
+  b1():
+    v0 = Data data=d1 @373
+    Return v0 @373
+}
+function f3 name="bare" module=m0 position=391 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @391
+  b1():
+    v0 = Builtin builtin=Object @397
+    v1 = Builtin builtin=ObjectCreate @397
+    v2 = Null @411
+    v3 = Call v1, v0, v2 calleeName="Object.create" @404
+    ReturnCall v3 @404
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

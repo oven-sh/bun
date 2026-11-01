@@ -768,6 +768,41 @@ const projects: Record<string, Record<string, string>> = {
       });`,
     "wants-absent.mjs": `import { z } from "./local/hands-on-a-package.cjs"; console.log(z);`,
   },
+  // The loader holds a file once an import() of it has settled. Until then require() answers with the parsed value, and the first answer stays.
+  "a require() of a data file between the call of an import() of it and its end": {
+    "at-the-top.json": `{ "n": 1 }`,
+    "in-a-test.json": `{ "n": 2 }`,
+    "own.json": `{ "n": 3 }`,
+    "awaited.json": `{ "n": 4 }`,
+    "required-first.json": `{ "n": 5 }`,
+    "req.cjs": `
+      exports.atTheTop = () => require("./at-the-top.json");
+      exports.inATest = () => require("./in-a-test.json");
+      exports.awaited = () => require("./awaited.json");
+      exports.requiredFirst = () => require("./required-first.json");`,
+    "between.test.ts": `${head}
+      const req = require("./req.cjs");
+      const tag = (value: unknown) => Object.prototype.toString.call(value);
+      const pending = import("./at-the-top.json");
+      console.log("at the top, import() not awaited, then require:", tag(req.atTheTop()));
+      await pending;
+      console.log("  and again after it settled:", tag(req.atTheTop()));
+      test("in a test", async () => {
+        const pending = import("./in-a-test.json");
+        console.log("in a test, import() not awaited, then require:", tag(req.inATest()));
+        await pending;
+        console.log("  and again after it settled:", tag(req.inATest()));
+        const own = import("./own.json");
+        console.log("the require() of the test file itself:", tag(require("./own.json")));
+        await own;
+        console.log("  and again after it settled:", tag(require("./own.json")));
+        const names = await import("./awaited.json");
+        console.log("awaited, then require:", tag(req.awaited()), req.awaited() === names);
+        console.log("require first:", tag(req.requiredFirst()));
+        await import("./required-first.json");
+        console.log("  and again after an import:", tag(req.requiredFirst()));
+      });`,
+  },
   "a module below a graph that failed runs for the next graph that imports it": {
     "first.mjs": `
       import { next } from "./shared.mjs";
@@ -803,6 +838,36 @@ const projects: Record<string, Record<string, string>> = {
         );
         await import("./third.mjs");
         await import("./fourth.mjs");
+      });`,
+  },
+  // unmarked.cjs names none of module, exports and require. Behind import() it goes by the "type" of the package and runs in its turn, behind the CommonJS files,
+  // which run while the graph is loaded. While an ES module is being required it goes by its extension and runs where it stands.
+  "a file whose text does not say what it is goes by who loads the module that imports it": {
+    "imported-root.mjs": `
+      import "./imported-first.cjs";
+      import "./imported-unmarked.cjs";
+      import "./imported-last.cjs";`,
+    "imported-first.cjs": `(globalThis.imported ??= []).push("first"); exports.x = 1;`,
+    "imported-unmarked.cjs": `(globalThis.imported ??= []).push("unmarked");`,
+    "imported-last.cjs": `(globalThis.imported ??= []).push("last"); exports.x = 1;`,
+    "required-root.mjs": `
+      import "./required-first.cjs";
+      import "./required-unmarked.cjs";
+      import "./required-last.cjs";`,
+    "required-first.cjs": `(globalThis.required ??= []).push("first"); exports.x = 1;`,
+    "required-unmarked.cjs": `(globalThis.required ??= []).push("unmarked");`,
+    "required-last.cjs": `(globalThis.required ??= []).push("last"); exports.x = 1;`,
+    "imported.test.ts": `${head}
+      test("import()", async () => {
+        await import("./imported-root.mjs");
+        const ran = (globalThis as any).imported;
+        console.log("behind import() it runs behind the file that follows it:", ran.indexOf("unmarked") > ran.indexOf("last"));
+      });`,
+    "required.test.ts": `${head}
+      test("require()", () => {
+        require("./required-root.mjs");
+        const ran = (globalThis as any).required;
+        console.log("behind require() it runs behind the file that follows it:", ran.indexOf("unmarked") > ran.indexOf("last"));
       });`,
   },
   "a require() that has answered before answers anew behind an eviction and a mock": {

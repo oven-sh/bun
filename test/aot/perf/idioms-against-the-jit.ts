@@ -1,7 +1,7 @@
 // Every idiom of ./idioms and ./everyday, compiled ahead of time as TypeScript and as JavaScript, against the same JavaScript under the same binary's JIT.
 //
 //   bun test/aot/perf/idioms-against-the-jit.ts [--bun <path>] [--only <regular expression>] [--jobs 16] [--rows 60]
-//       [--out rows.tsv] [--against rows.tsv] [--write-behind] [--keep <folder>] [--build-flag <flag>].. [--in-a-very-large-program]
+//       [--out rows.tsv] [--against rows.tsv] [--write-behind] [--keep <folder>] [--build-flag <flag>].. [--in-a-very-large-program | --in-a-cold-function-of-a-very-large-program]
 //
 // It prints how many idioms are ahead | level (within 5%) | behind, then every idiom that takes more instructions than the JIT, worst first, then those
 // that collect or hold much more than the JIT does, or hold more the longer they run. Every form must print the same.
@@ -16,6 +16,8 @@
 // --keep leaves the programs' sources in the folder. Each --build-flag goes to every `bun build --compile --aot`: with --against, what an option of the compiler is worth.
 // --in-a-very-large-program compiles every idiom as its text would be compiled inside a very large program, where little counts as code that runs often, and lets the loop
 // of an idiom of ./everyday find turn() at run time, under the JIT too. --write-behind then rewrites ./behind-the-jit-in-a-very-large-program.<os>-<arch>.json alone.
+// --in-a-cold-function-of-a-very-large-program is that, and turn() stays a function of its own in typed text too, where the other form lets the compiler copy it into the loop.
+// It has no file of its own yet, so --write-behind is refused with it.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
@@ -48,15 +50,20 @@ const { values: options } = parseArgs({
     keep: { type: "string" },
     "build-flag": { type: "string", multiple: true, default: [] },
     "in-a-very-large-program": { type: "boolean", default: false },
+    "in-a-cold-function-of-a-very-large-program": { type: "boolean", default: false },
   },
 });
-const inVeryLargeProgram = options["in-a-very-large-program"];
+const inColdFunction = options["in-a-cold-function-of-a-very-large-program"];
+const inVeryLargeProgram = options["in-a-very-large-program"] || inColdFunction;
+if (inColdFunction && options["write-behind"])
+  throw new Error("--write-behind has no file for --in-a-cold-function-of-a-very-large-program");
 const behindPath = inVeryLargeProgram ? behindInVeryLargeProgramPath : behindByDefaultPath;
 const folder = options.keep ? resolve(options.keep) : mkdtempSync(join(tmpdir(), "idioms-against-the-jit-"));
 mkdirSync(folder, { recursive: true });
 const { names: all, measure } = idiomsAgainstTheJit(resolve(options.bun), folder, {
   buildFlags: options["build-flag"],
   inVeryLargeProgram,
+  inColdFunction,
 });
 const names = all.filter(name => new RegExp(options.only).test(name));
 

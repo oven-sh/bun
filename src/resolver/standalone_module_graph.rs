@@ -203,6 +203,11 @@ pub trait StandaloneModuleGraph: Send + Sync {
                 if !program.knows_root_on_disk() {
                     return None;
                 }
+                let is_written_by_program =
+                    is_bun_standalone_file_path(source_dir) && bun_paths::is_absolute(specifier);
+                if !program.allows_code_from_disk && !is_written_by_program {
+                    return None;
+                }
                 resolve_below(program.root_on_disk(crate::fs::FileSystem::get().top_level_dir())?)
             })
         })
@@ -230,12 +235,14 @@ pub trait StandaloneModuleGraph: Send + Sync {
         let executable = bun_core::self_exe_path().ok()?;
         program.root_beside_executable(executable.as_bytes())
     }
-    /// The root directory on disk: below the folder of the executable, else below the working directory of the process.
     fn root_on_disk(&self) -> Option<Vec<u8>> {
+        let program = self.compiled_program()?;
+        if !program.allows_code_from_disk {
+            return None;
+        }
         if let Some(root) = self.root_beside_executable() {
             return Some(root);
         }
-        let program = self.compiled_program()?;
         if !program.knows_root_on_disk() {
             return None;
         }
@@ -292,6 +299,46 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// The entry point whose file in the graph, or whose module, is named `name`.
     fn compiled_entry_point(&self, _name: &[u8]) -> Option<&CompiledEntryPoint> {
         None
+    }
+}
+
+pub fn lies_in_root_of_executable(folder: &[u8], root: &[u8]) -> bool {
+    let is_separator = |byte: u8| matches!(byte, b'/' | b'\\');
+    folder.len() >= root.len()
+        && (folder.iter().zip(root))
+            .all(|(&here, &there)| here == there || (is_separator(here) && is_separator(there)))
+}
+
+#[cfg(test)]
+mod tests_of_every_system {
+    use super::lies_in_root_of_executable;
+
+    #[test]
+    fn a_folder_of_an_executable_lies_in_its_root_however_it_is_spelled() {
+        let windows: &[u8] = b"B:/~BUN/root/";
+        for folder in [
+            &b"B:/~BUN/root/"[..],
+            b"B:\\~BUN\\root\\",
+            b"B:\\~BUN\\root\\lib\\",
+            b"B:\\~BUN/root\\_.._/lib/",
+        ] {
+            assert!(lies_in_root_of_executable(folder, windows), "{folder:?}");
+        }
+        for folder in [
+            &b"C:\\project\\src\\"[..],
+            b"C:/project/src/",
+            b"B:\\~BUN\\rootless\\",
+            b"B:\\~BUN\\root",
+            b"B:\\~BUN\\",
+            b"",
+        ] {
+            assert!(!lies_in_root_of_executable(folder, windows), "{folder:?}");
+        }
+        let posix: &[u8] = b"/$bunfs/root/";
+        assert!(lies_in_root_of_executable(b"/$bunfs/root/", posix));
+        assert!(lies_in_root_of_executable(b"/$bunfs/root/lib/", posix));
+        assert!(!lies_in_root_of_executable(b"/project/src/", posix));
+        assert!(!lies_in_root_of_executable(b"/$bunfs/", posix));
     }
 }
 

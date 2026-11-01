@@ -249,7 +249,7 @@ runtimefunction id=SetIteratorPrototypeNext function=f7 visibility=Private
 # CHECK-NEXT: v2: "b" = String string="b"
 # CHECK-NEXT: v3: 2 = Integer integer=2
 # CHECK-NEXT: v4: Map<string, int[1, 2]> = NewMapFromData data=d5
-# CHECK-NEXT: v5: Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v5: Map<"a"|"b", int, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Map<"a"|"b", int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v6: 0 = Integer
 # CHECK-NEXT: v7: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v6, v7)
@@ -370,23 +370,23 @@ runtimefunction id=SetIteratorPrototypeNext function=f7 visibility=Private
 # CHECK-LABEL: function {{*}}name="names"
 # CHECK: module=m0 position=409 role=ParameterWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f9}
 # CHECK-LABEL: function {{*}}name="names"
-# CHECK: module=m0 position=409 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f1}, {type=Array<int[5, 7], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>}] results=[{type=int[0, 4294967295]}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2 parameterMap=[{}, {}]}
+# CHECK: module=m0 position=409 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f1}, {type=Array<int[5, 7], proven, pristine[Storage, Names, Dense]>|Map<"a"|"b", int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>}] results=[{type=int[0, 4294967295]}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2 parameterMap=[{}, {}]}
 # CHECK-LABEL: function {{*}}name="arrayFrom"
 # CHECK: module=m0 position=229 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers}
 # CHECK-LABEL: function {{*}}name="names"
-# CHECK: module=m0 position=409 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[5, 7], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>}] results=[{type=int[0, 4294967295]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}]} inlineFrames=[{}, {callee=f1 callPosition=438 module=m0}] {
-# CHECK-NEXT: b0(v1: Array<int[5, 7], proven, pristine[Storage, Names, Dense]>|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>):
+# CHECK: module=m0 position=409 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[5, 7], proven, pristine[Storage, Names, Dense]>|Map<"a"|"b", int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>}] results=[{type=int[0, 4294967295]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}]} inlineFrames=[{}, {callee=f1 callPosition=438 module=m0}] {
+# CHECK-NEXT: b0(v1: Array<int[5, 7], proven, pristine[Storage, Names, Dense]>|Map<"a"|"b", int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>):
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=Array
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
 # CHECK-NEXT: b1(v3: Array<int[5, 7], proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: v5: unspecified|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = Unspecified valueType=Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v5: unspecified|Map<"a"|"b", int, proven, pristine[Storage, Names]> = Unspecified valueType=Map<"a"|"b", int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v6: unspecified|Set<int, proven, pristine[Storage, Names]> = Unspecified valueType=Set<int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: Jump -> next b5(v4, v3, v5, v6)
-# CHECK-NEXT: b2(v7: Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: b2(v7: Map<"a"|"b", int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>):
 # CHECK-NEXT: v8: boolean = TypeTest v7 testedType=Map
 # CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b3(v9: Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: b3(v9: Map<"a"|"b", int, proven, pristine[Storage, Names]>):
 # CHECK-NEXT: v10: 1 = Integer integer=1
 # CHECK-NEXT: v11: unspecified|Array<int[5, 7], proven, pristine[Storage, Names, Dense]> = Unspecified valueType=Array<int[5, 7], proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v12: unspecified|Set<int, proven, pristine[Storage, Names]> = Unspecified valueType=Set<int, proven, pristine[Storage, Names]>
@@ -394,9 +394,9 @@ runtimefunction id=SetIteratorPrototypeNext function=f7 visibility=Private
 # CHECK-NEXT: b4(v13: Set<int, proven, pristine[Storage, Names]>):
 # CHECK-NEXT: v14: 2 = Integer integer=2
 # CHECK-NEXT: v15: unspecified|Array<int[5, 7], proven, pristine[Storage, Names, Dense]> = Unspecified valueType=Array<int[5, 7], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v16: unspecified|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = Unspecified valueType=Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v16: unspecified|Map<"a"|"b", int, proven, pristine[Storage, Names]> = Unspecified valueType=Map<"a"|"b", int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: Jump -> next b5(v14, v15, v16, v13)
-# CHECK-NEXT: b5(v17: int[0, 2], v18: unspecified|Array<int[5, 7], proven, pristine[Storage, Names, Dense]>, v19: unspecified|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>, v20: unspecified|Set<int, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: b5(v17: int[0, 2], v18: unspecified|Array<int[5, 7], proven, pristine[Storage, Names, Dense]>, v19: unspecified|Map<"a"|"b", int, proven, pristine[Storage, Names]>, v20: unspecified|Set<int, proven, pristine[Storage, Names]>):
 # CHECK-NEXT: v21: Array<object, Contiguous> = NewArray contents=object allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v22: Array<object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<object, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Switch v17 cases=[0, 1] -> case b6(), case b16(), otherwise b19()
@@ -445,7 +445,7 @@ runtimefunction id=SetIteratorPrototypeNext function=f7 visibility=Private
 # CHECK-NEXT: Jump -> next b7(v49)
 # CHECK-NEXT: b16():
 # CHECK-NEXT: v52: fact = Specified
-# CHECK-NEXT: v53: Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v19, v52 provenType=Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v53: Map<"a"|"b", int, proven, pristine[Storage, Names]> = AssumeType v19, v52 provenType=Map<"a"|"b", int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v54: anything = CollectionTable v53
 # CHECK-NEXT: v55: 0 = Integer
 # CHECK-NEXT: Jump -> next b17(v54, v55)
@@ -454,8 +454,8 @@ runtimefunction id=SetIteratorPrototypeNext function=f7 visibility=Private
 # CHECK-NEXT: v59: undefined = MapNext v53, v56, v57
 # CHECK-NEXT: v60: boolean = ResultAt v59
 # CHECK-NEXT: v61: int[0, 2147483647] = ResultAt v59 index=1
-# CHECK-NEXT: v62: undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]> = ResultAt v59 index=2
-# CHECK-NEXT: v63: undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]> = ResultAt v59 index=3
+# CHECK-NEXT: v62: undefined|"a"|"b" = ResultAt v59 index=2
+# CHECK-NEXT: v63: undefined|int = ResultAt v59 index=3
 # CHECK-NEXT: Branch v60 -> taken b18(), notTaken b22()
 # CHECK-NEXT: b18():
 # CHECK-NEXT: v64: anything = CollectionTable v53

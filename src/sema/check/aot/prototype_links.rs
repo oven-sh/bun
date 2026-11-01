@@ -2,7 +2,9 @@ use super::answers::{ClassDeclaration, ClassParent, ClassRef, FunctionRef};
 use super::constructor_function_parents::LinkedFunctions;
 use super::queries::Queries;
 use crate::atom::{Atom, known};
-use crate::bind::{Binding, BindingKind, Bound, Decl, Parent, PatParent, SymbolId};
+use crate::bind::{
+    Binding, BindingInitializer, BindingKind, Bound, Decl, Parent, PatParent, SymbolId,
+};
 use crate::check::Program;
 use crate::hir::{
     self, BinOp, Branches, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, IdList, MemberKey,
@@ -80,6 +82,8 @@ pub(in crate::check) struct PrototypeLinks<'s> {
     functions_sharing_prototype_objects: &'s [FnId],
     pub(super) linked_functions: OnceLock<LinkedFunctions<'s>>,
     pub(super) declarations_used_like_constructors: OnceLock<&'s [SymbolId]>,
+    pub(super) parameters_seen_to_be_constructors: OnceLock<&'s [(FnId, u32)]>,
+    pub(super) parameters_used_like_constructors: OnceLock<&'s [(FnId, u32)]>,
     pub(super) functions_handing_this_on: OnceLock<&'s [FnId]>,
 }
 
@@ -104,6 +108,10 @@ impl<'s> PrototypeLinks<'s> {
 
     pub(super) fn calls_passing_parameters_of(&self, function: FnId) -> &'s [(FnId, FunctionCall)] {
         entries_of(self.calls_passing_parameters, function)
+    }
+
+    pub(super) fn all_calls_passing_parameters(&self) -> &'s [(FnId, FunctionCall)] {
+        self.calls_passing_parameters
     }
 
     pub(super) fn calls_passing_this_of(&self, function: FnId) -> &'s [(FnId, FunctionCall)] {
@@ -148,7 +156,7 @@ pub(super) struct EndFinder<'c, 'p, 's> {
 }
 
 impl EndFinder<'_, '_, '_> {
-    fn find_parameter(&self, reference: ExprId) -> Option<LinkEnd> {
+    pub(super) fn find_parameter(&self, reference: ExprId) -> Option<LinkEnd> {
         let Binding::Symbol(symbol) = self.bound.binding(reference) else {
             return None;
         };
@@ -173,7 +181,7 @@ impl EndFinder<'_, '_, '_> {
         Some(LinkEnd::Parameter { function, index })
     }
 
-    fn find_referenced_parameter(&self, expression: ExprId) -> Option<LinkEnd> {
+    pub(super) fn find_referenced_parameter(&self, expression: ExprId) -> Option<LinkEnd> {
         let expression = self.hir.skip_type_assertions(expression);
         match self.hir[expression].kind {
             ExprKind::Ident(_) => self.find_parameter(expression),
@@ -205,10 +213,17 @@ impl EndFinder<'_, '_, '_> {
     }
 
     fn find_owner_of_prototype_object(&self, expression: ExprId) -> Option<LinkEnd> {
-        match self
-            .hir
-            .member_key(self.hir.skip_type_assertions(expression))?
+        let expression = self.hir.skip_type_assertions(expression);
+        if let ExprKind::Binary {
+            op: BinOp::And,
+            left,
+            right,
+        } = self.hir[expression].kind
         {
+            let owner = self.find_owner_of_prototype_object(right)?;
+            return (self.find_end(left) == Some(owner)).then_some(owner);
+        }
+        match self.hir.member_key(expression)? {
             (owner, MemberKey::Name(name)) if name == known::prototype => self.find_end(owner),
             (_, MemberKey::Name(_) | MemberKey::PrivateName(_) | MemberKey::Computed(_)) => None,
         }
@@ -220,6 +235,14 @@ impl EndFinder<'_, '_, '_> {
             _ => IdList::EMPTY,
         };
         self.hir.ids(arguments)
+    }
+
+    pub(super) fn arguments_in_front_of_spread(
+        &self,
+        call: ExprId,
+    ) -> impl Iterator<Item = ExprId> + '_ {
+        self.arguments(call)
+            .take_while(|&argument| !self.is_spread(argument))
     }
 
     fn is_spread(&self, argument: ExprId) -> bool {
@@ -242,7 +265,16 @@ impl EndFinder<'_, '_, '_> {
         self.find_owner_of_prototype_object(self.find_argument(call, index)?)
     }
 
-    fn find_callee(&self, call: ExprId) -> Option<NamedValue> {
+    pub(super) fn find_position_of_argument(&self, call: ExprId, argument: ExprId) -> Option<u32> {
+        let before = self.arguments(call).take_while(|&other| other != argument);
+        if before.clone().any(|other| self.is_spread(other)) || self.is_spread(argument) {
+            return None;
+        }
+        let position = before.count();
+        (position < self.arguments(call).count()).then_some(position as u32)
+    }
+
+    pub(super) fn find_callee(&self, call: ExprId) -> Option<NamedValue> {
         let ExprKind::Call(site) = self.hir[call].kind else {
             return None;
         };
@@ -282,9 +314,35 @@ impl EndFinder<'_, '_, '_> {
         self.find_end(compared).map(|_| arm)
     }
 
+    fn find_initializer_of_variable(&self, reference: ExprId) -> Option<ExprId> {
+        let Binding::Symbol(symbol) = self.bound.binding(reference) else {
+            return None;
+        };
+        if self.bound.binding_kind(symbol) == BindingKind::Parameter
+            || !self.bound.is_stable_binding(symbol)
+        {
+            return None;
+        }
+        match self.bound.binding_initializer(self.hir, symbol) {
+            BindingInitializer::Expression(value) => Some(value),
+            _ => None,
+        }
+    }
+
     fn find_parent_of_created_object(&self, value: ExprId) -> Option<LinkEnd> {
         let value = self.hir.skip_type_assertions(value);
         match self.hir[value].kind {
+            ExprKind::Ident(_) => {
+                let initializer = self.find_initializer_of_variable(value)?;
+                let is_name = matches!(
+                    self.hir[self.hir.skip_type_assertions(initializer)].kind,
+                    ExprKind::Ident(_)
+                );
+                return match is_name {
+                    true => None,
+                    false => self.find_parent_of_created_object(initializer),
+                };
+            }
             ExprKind::New(site) => return self.find_end(self.hir[site].callee),
             ExprKind::Object(properties) => return self.find_parent_in_literal(properties),
             ExprKind::Binary {
@@ -631,6 +689,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             ),
             linked_functions: OnceLock::new(),
             declarations_used_like_constructors: OnceLock::new(),
+            parameters_seen_to_be_constructors: OnceLock::new(),
+            parameters_used_like_constructors: OnceLock::new(),
             functions_handing_this_on: OnceLock::new(),
         }
     }

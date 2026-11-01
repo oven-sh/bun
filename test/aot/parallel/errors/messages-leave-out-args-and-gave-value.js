@@ -45,7 +45,7 @@ a call with a constant as its argument: TypeError: empty is not a function. (In 
 a call with two arguments: TypeError: object.absent is not a function. (In 'object.absent(1, size)', 'object.absent' is undefined)
 a call of a number: TypeError: 1 is not a function
 a call of what a call returned: TypeError: 5 is not a function
-a name outside ASCII: TypeError: object.中 is not a function. (In 'object.中()', 'object.中' is undefined)
+a name outside ASCII: TypeError: object.\u{4e2d} is not a function. (In 'object.\u{4e2d}()', 'object.\u{4e2d}' is undefined)
 a read two members deep: TypeError: undefined is not an object (evaluating 'object.absent.deeper')
 a read of a variable that holds nothing: TypeError: undefined is not an object (evaluating 'missing.member')
 a read under a symbol: TypeError: null is not an object (evaluating 'empty[Symbol.iterator]')

@@ -1294,24 +1294,23 @@ function f12 name="traverseArray" module=m2 position=2337 kind=Method role=Libra
 # LOOP-NEXT: Int32 b@[[isNumber]] = Equal(b@[[doubled]], b@[[doubled]], {{*}}:TryPutByValDirect)
 # LOOP-NEXT: Branch(b@[[isNumber]], Terminal, {{*}}:TryPutByValDirect)
 # LOOP-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# The storage and the length of the new list are loaded each turn and the index is compared with the length. Then the result is stored unboxed.
-# LOOP: Int64 b@[[storage]] = Load(b@{{*}}, offset = 8, ControlDependent|Reads:JSArray_butterfly, {{*}}:TryPutByValDirect)
-# LOOP-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:TryPutByValDirect)
-# LOOP: Branch(b@{{*}}, Terminal, {{*}}:TryPutByValDirect)
-# LOOP-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# LOOP: Store(b@[[doubled]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:TryPutByValDirect)
+# LOOP-NEXT: BB#
+# LOOP-NEXT: Predecessors:
+# LOOP-NEXT: Int64 b@[[place]] = Add(b@{{*}}, b@{{*}}, {{*}}:TryPutByValDirect)
+# LOOP-NEXT: Store(b@[[doubled]], b@[[place]], ControlDependent|Writes:indexedDoubleProperties, {{*}}:TryPutByValDirect)
 # LOOP: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # LOOP-LABEL: end of loop
-# Nothing is called or boxed in the loop, the list that is read is not looked at again, no hole is looked for in it, and the loop does not poll.
 # NONE-LABEL: loop #
 # NONE-NOT: Patchpoint(
 # NONE-NOT: :HasArrayElement
 # NONE-NOT: Reads:JSCell_indexingTypeAndMisc
+# NONE-NOT: Reads:JSArray_butterfly
+# NONE-NOT: Reads:Butterfly_publicLength
 # NONE-NOT: Writes:indexedContiguousProperties
 # NONE-LABEL: end of loop
 # No function object is made for the arrow.
 # WHOLE-LABEL: name="doubled" role=Source
 # WHOLE-NOT: :NewClosure
 # WHOLE-LABEL: end of function
-# X64: loop #{{*}}, instructions: 9, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: 9, patchpoints: 0
+# X64: loop #{{*}}, instructions: 18, patchpoints: 0, {{*}} steps by 4
+# ARM64: loop #{{*}}, instructions: 21, patchpoints: 0, {{*}} steps by 4

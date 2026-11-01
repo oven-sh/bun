@@ -3344,6 +3344,98 @@ test("pipeTo from a stream that errors natively includes async stack frames", as
   expect(caught.stack).toContain("at async level1");
 });
 
+test("a read that rejects with a structuredClone()d error keeps the stack of the clone", async () => {
+  // The clone holds its stack as a string and no frames.
+  const original = new Error("original");
+  const clone = structuredClone(original);
+  let controller;
+  const stream = new ReadableStream({
+    start(c) {
+      controller = c;
+    },
+  });
+  async function consumer() {
+    try {
+      await stream.getReader().read();
+    } catch (error) {
+      return error;
+    }
+  }
+  const pending = consumer();
+  controller.error(clone);
+  const caught = await pending;
+  expect(caught).toBe(clone);
+  expect(caught.stack).toBe(original.stack);
+});
+
+test("a fetch() aborted with a structuredClone()d error rejects with the stack of the clone", async () => {
+  await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+  const original = new Error("original");
+  const clone = structuredClone(original);
+  const controller = new AbortController();
+  async function request() {
+    try {
+      await fetch(server.url, { signal: controller.signal });
+    } catch (error) {
+      return error;
+    }
+  }
+  const pending = request();
+  controller.abort(clone);
+  const caught = await pending;
+  expect(caught).toBe(clone);
+  expect(caught.stack).toBe(original.stack);
+});
+
+test.concurrent("a read that rejects with an error whose frames a collection formatted keeps that stack", async () => {
+  const src = `
+    // Each pair is made at one place, by one call of a function that is garbage once it returns. An error holds
+    // the functions of its frames weakly, so a collection formats the frames of both errors into a string.
+    const pairs = Array.from({ length: 8 }, () =>
+      new Function(
+        '"use strict"; function thrower() { const pair = []; for (const message of ["forwarded", "twin"]) pair.push(new Error(message)); return pair; } try { return thrower(); } finally {}',
+      )(),
+    );
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+
+    async function forward(error) {
+      let controller;
+      const stream = new ReadableStream({ start(c) { controller = c; } });
+      async function consumer() {
+        try {
+          await stream.getReader().read();
+        } catch (caught) {
+          return caught;
+        }
+      }
+      const pending = consumer();
+      controller.error(error);
+      return await pending;
+    }
+    // The stack of the twin, if the collection formatted it: Error.prepareStackTrace is not asked for such a stack.
+    function formattedStack(twin) {
+      let asked = false;
+      Error.prepareStackTrace = () => ((asked = true), "");
+      const stack = twin.stack;
+      Error.prepareStackTrace = undefined;
+      return asked ? undefined : stack;
+    }
+
+    const kept = new Set();
+    for (const [error, twin] of pairs) {
+      const caught = await forward(error);
+      const stack = formattedStack(twin);
+      if (stack !== undefined) kept.add(caught.stack === stack.replace("Error: twin", "Error: forwarded"));
+    }
+    console.log(JSON.stringify([...kept]));`;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("[true]");
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/6860
 describe("Bun.readableStreamTo* on an already used stream", () => {
   const consumers = [

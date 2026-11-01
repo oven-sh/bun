@@ -16,8 +16,6 @@ pub const VERSION: u32 = 2;
 pub const NO_MODULE: u32 = u32::MAX;
 /// Hash column value of an entry whose name is a sentinel (never looked up by name); sorts last.
 const SENTINEL_HASH: u32 = u32::MAX;
-/// Request indices are packed into 16 bits of each entry.
-const MAX_REQUESTS_PER_MODULE: usize = u16::MAX as usize;
 
 const STAR_NAMESPACE: u32 = StringID::STAR_NAMESPACE.0;
 
@@ -85,7 +83,7 @@ struct Request {
 struct Import {
     local: u32,
     import_name: u32,
-    request: u32,
+    request: u16,
     kind: ImportKind,
     resolution: Resolution,
 }
@@ -94,7 +92,7 @@ struct Export {
     kind: ExportKind,
     /// Local: local name; Indirect: import name (`STAR_NAMESPACE` for `export * as ns` seen through an import).
     local_or_import: u32,
-    request: u32,
+    request: u16,
     resolution: Resolution,
 }
 struct Module {
@@ -104,7 +102,7 @@ struct Module {
     imports: Vec<Import>,
     exports: Vec<Export>,
     /// Request indices, source order.
-    star_exports: Vec<u32>,
+    star_exports: Vec<u16>,
     export_by_name: bun_collections::HashMap<u32, u32>,
 }
 
@@ -153,11 +151,7 @@ pub(crate) fn build(
     for input in modules {
         let key = strings.intern(input.path, slot_for);
         note_hash(&mut hashes, key, input.path);
-        let module = parse_module(input, key, &path_to_module, &mut hashes);
-        if module.requests.len() > MAX_REQUESTS_PER_MODULE {
-            return None;
-        }
-        graph.push(module);
+        graph.push(parse_module(input, key, &path_to_module, &mut hashes)?);
     }
 
     // Resolve every import and re-export against the other modules' export tables.
@@ -173,7 +167,7 @@ pub(crate) fn build(
             .imports
             .iter()
             .map(|import| {
-                let target = module.requests[import.request as usize].module;
+                let target = module.requests[usize::from(import.request)].module;
                 if target == NO_MODULE {
                     return Resolution::Unresolved;
                 }
@@ -196,7 +190,7 @@ pub(crate) fn build(
                     local: export.local_or_import,
                 },
                 ExportKind::Indirect | ExportKind::Namespace => {
-                    let target = module.requests[export.request as usize].module;
+                    let target = module.requests[usize::from(export.request)].module;
                     if target == NO_MODULE {
                         Resolution::Unresolved
                     } else if export.kind == ExportKind::Namespace
@@ -260,7 +254,7 @@ fn parse_module(
     key: u32,
     path_to_module: &bun_collections::HashMap<Vec<u8>, u32>,
     hashes: &mut Vec<Option<u32>>,
-) -> Module {
+) -> Option<Module> {
     let info = input.info.as_deserialized();
     let (strings_buf, strings_lens) = input.info.strings();
     let mut string_offsets: Vec<usize> = Vec::with_capacity(strings_lens.len());
@@ -294,16 +288,19 @@ fn parse_module(
         flags |= module_flags::HAS_TLA;
     }
 
+    // `PrelinkedModuleGraph::tryCreate` refuses a module with more than `u16::MAX` requests.
+    let request_count = u16::try_from(info.requested_modules_keys.len()).ok()?;
     // Requested modules, in the record's order. An entry references its request by (specifier, type), as
     // hostResolveImportedModule would look it up.
     let mut requests: Vec<Request> = Vec::with_capacity(info.requested_modules_keys.len());
-    let mut request_index: bun_collections::HashMap<(u32, u8), u32> = Default::default();
+    let mut request_index: bun_collections::HashMap<(u32, u8), u16> = Default::default();
     let mut all_in_graph = true;
-    for ((&specifier, &value), &phase) in info
+    for (((&specifier, &value), &phase), index) in info
         .requested_modules_keys
         .iter()
         .zip(info.requested_modules_values)
         .zip(info.requested_modules_phases)
+        .zip(0..request_count)
     {
         // Only a plain JavaScript request loads the target chunk's ES module record; `with { type: ... }` of the same
         // path is some other (synthetic / host-defined) module the runtime resolves itself.
@@ -324,7 +321,6 @@ fn parse_module(
             FetchParameters::Json => (3, 0),
             host => (4, shared(StringID(host.0))),
         };
-        let index = requests.len() as u32;
         request_index
             .entry((specifier.0, value.to_script_fetch_parameters_type()))
             .or_insert_with(|| index);
@@ -343,7 +339,7 @@ fn parse_module(
     if all_in_graph {
         flags |= module_flags::ALL_REQUESTS_IN_GRAPH;
     }
-    let request_for = |module_name: StringID, fetch: FetchParameters| -> u32 {
+    let request_for = |module_name: StringID, fetch: FetchParameters| -> u16 {
         *request_index
             .get(&(module_name.0, fetch.to_script_fetch_parameters_type()))
             .expect("module_info lists every module its entries reference")
@@ -351,7 +347,7 @@ fn parse_module(
 
     let mut imports: Vec<Import> = Vec::new();
     let mut exports: Vec<Export> = Vec::new();
-    let mut star_exports: Vec<u32> = Vec::new();
+    let mut star_exports: Vec<u16> = Vec::new();
     let mut at = 0usize;
     for &kind in info.record_kinds {
         let data = &info.buffer[at..at + kind.len()];
@@ -428,7 +424,7 @@ fn parse_module(
             .or_insert_with(|| index as u32);
     }
 
-    Module {
+    Some(Module {
         key,
         flags,
         requests,
@@ -436,7 +432,7 @@ fn parse_module(
         exports,
         star_exports,
         export_by_name,
-    }
+    })
 }
 
 /// ResolveExport over the not-yet-resolved graph. Anything the specification would decide by looking outside the
@@ -485,7 +481,7 @@ impl Resolver<'_> {
                     false,
                 ),
                 ExportKind::Indirect | ExportKind::Namespace => {
-                    let target = m.requests[export.request as usize].module;
+                    let target = m.requests[usize::from(export.request)].module;
                     if target == NO_MODULE {
                         (Resolution::Unresolved, false)
                     } else if export.kind == ExportKind::Namespace
@@ -511,7 +507,7 @@ impl Resolver<'_> {
         let mut found: Option<Resolution> = None;
         let mut tainted = false;
         for &request in &m.star_exports {
-            let target = m.requests[request as usize].module;
+            let target = m.requests[usize::from(request)].module;
             if target == NO_MODULE {
                 return (Resolution::Unresolved, tainted);
             }
@@ -551,9 +547,8 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
     let mut put = |v: u32| out.extend_from_slice(&v.to_le_bytes());
     let to_u32 = |v: usize| u32::try_from(v).expect("prelinked module graph exceeds u32");
     // kind | resolution << 8 | request << 16 (`PrelinkedModuleGraph::KindBits`).
-    let bits = |kind: u32, resolution: u32, request: u32| -> u32 {
-        debug_assert!(request <= u16::MAX as u32);
-        kind | resolution << 8 | request << 16
+    let bits = |kind: u32, resolution: u32, request: u16| -> u32 {
+        kind | resolution << 8 | u32::from(request) << 16
     };
 
     for v in [
@@ -638,7 +633,7 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
     }
     for m in graph {
         for &s in &m.star_exports {
-            put(s);
+            put(u32::from(s));
         }
     }
     debug_assert_eq!(out.len(), total);

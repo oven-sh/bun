@@ -1003,6 +1003,52 @@ test(
   timeout,
 );
 
+// A worker torn down while it watches more fds than its VM's poll pool has slots (128): here, the
+// pipes of 70 live children. Teardown releases them, so every poll goes on the list that the worker's
+// loop empties when it turns, and the loop does not turn again. Past the pool's slots a poll is a heap
+// allocation that only the list names: the pool was freed with the VM and the list was not, 40 bytes
+// a poll for each such worker. LeakSanitizer reports that on the ASAN lane. The children are made in
+// a callback because leaksan.supp hides what module evaluation allocates.
+test.skipIf(!isASAN || isWindows)(
+  "worker terminate with live piped children that hold more polls than its poll pool has slots",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`
+          setImmediate(() => {
+            // Each child lives until its stdin reaches EOF, so all of them are alive when the worker is torn down.
+            globalThis.keep = [];
+            for (let i = 0; i < 70; i++) {
+              globalThis.keep.push(Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "pipe", stderr: "pipe" }));
+            }
+            require("node:worker_threads").parentPort.postMessage("spawned");
+          });
+        \`, { eval: true });
+        w.on("error", (e) => { console.error(e); process.exit(1); });
+        w.once("message", async () => {
+          await w.terminate();
+          console.log("terminated");
+        });
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "terminated\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
 // A worker exiting with fetches that have both a streaming request body (whose sink cell holds the
 // FetchTasklet) and a JS-touched response.body (a ByteStream source owned by another cell): the VM's
 // last sweep destroys cells in no particular order, and the tasklet's teardown unhooked itself as the

@@ -11,15 +11,15 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlink
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { locations, pins } from "./ci-images/spec.ts";
-import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { buildsIcu } from "./deps/icu.ts";
+import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { icuSourceDir } from "./icu-source.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch, toolchainOverride } from "./tools.ts";
-import { webkitSourceDir } from "./webkit-source.ts";
 import { cyan, dim, green } from "./tty.ts";
+import { webkitSourceDir } from "./webkit-source.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";

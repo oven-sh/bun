@@ -54,14 +54,14 @@ impl ImportWatcher {
             .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
     }
 
-    /// Whether `file_path` is in the watch list. Takes the watcher's mutex.
+    /// Whether `file_path` is in the watch list.
     pub fn is_watching(&self, file_path: &[u8]) -> bool {
-        let w = match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w,
-            ImportWatcher::None => return false,
-        };
-        let _guard = w.mutex.lock_guard();
-        w.index_of(Watcher::get_hash(file_path)).is_some()
+        match self {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
+                w.is_watching(Watcher::get_hash(file_path))
+            }
+            ImportWatcher::None => false,
+        }
     }
 
     #[inline]

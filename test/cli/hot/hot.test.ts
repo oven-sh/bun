@@ -4,6 +4,7 @@ import { afterAll, beforeEach, expect, it } from "bun:test";
 import {
   copyFileSync,
   cpSync,
+  linkSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -1468,6 +1469,13 @@ itServed("--hot reloads for a save that lands while a plugin's onLoad runs", asy
   expect(await runner.exited).toBe(0);
 });
 
+// A run that removes or writes a file that a plugin served is a save of that file. A program that does it in each run
+// does not come to rest. Seen on Linux with a debug build: 120 runs in 4 s for a program that writes a file in
+// os.tmpdir(), imports it and removes it, and 41 runs in 4 s after one save of a program that writes a file and then
+// imports it. On main the file is not watched, and both run once.
+it.todo("--hot runs once when a program removes a file that it imported through a plugin");
+it.todo("--hot comes to rest when a program writes a file and then imports it through a plugin");
+
 itServed("--hot keeps watching a file that a plugin serves after a save replaces the file", async () => {
   using dir = tempDir("hot-plugin-replace", {
     "plugin.js": pluginThatServesFiles,
@@ -1500,6 +1508,96 @@ it.todo("--hot keeps watching a file that a plugin serves after a save that keep
   writeFileSync(file, "two");
   expect(await stdout("value=two")).toBe(true);
   writeFileSync(file, "three");
+  expect(await stdout("value=three")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// Seen on Linux, and under --watch too: nothing is printed after "value=one". The second link keeps the old file alive,
+// so its own watch gets no event when a new file takes the name.
+it.todo("--hot reloads for a save that renames a new file over a served file that has a second link", async () => {
+  using dir = tempDir("hot-plugin-hard-link", {
+    "plugin.js": pluginThatServesFiles,
+    "main.js": mainThatLoads(`import value from "./data.contents";`),
+    "data.contents": "one",
+  });
+  const file = join(String(dir), "data.contents");
+  await using runner = spawnWithPlugin("--hot", String(dir));
+  const stdout = follow(runner.stdout);
+  expect(await stdout("value=one")).toBe(true);
+  linkSync(file, file + "~");
+  writeHotFileAtomicSync(file, "two");
+  expect(await stdout("value=two")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// Seen on Linux: "after=two" is printed, and the save after it prints nothing. The watch of the old name stays in the
+// list, on the inode that the new name has too, and the save that replaces the file removes the old name's item only.
+it.todo("--hot keeps watching a file that a plugin serves after the file is renamed and then replaced", async () => {
+  using dir = tempDir("hot-plugin-renamed", {
+    "plugin.js": pluginThatServesFiles,
+    "main.js": `import value from "./before.contents";\nconsole.log("before=" + value);\n`,
+    "before.contents": "one",
+  });
+  const root = String(dir);
+  const after = join(root, "after.contents");
+  await using runner = spawnWithPlugin("--hot", root, "pipe");
+  const stdout = follow(runner.stdout);
+  expect(await stdout("before=one")).toBe(true);
+  renameSync(join(root, "before.contents"), after);
+  expect(await follow(runner.stderr)("before.contents")).toBe(true);
+  writeFileSync(
+    join(root, "main.js"),
+    `import value from "./after.contents";\nconsole.log("after=" + value);\nif (value === "three") process.exit(0);\n`,
+  );
+  expect(await stdout("after=one")).toBe(true);
+  writeHotFileAtomicSync(after, "two");
+  expect(await stdout("after=two")).toBe(true);
+  writeFileSync(after, "three");
+  expect(await stdout("after=three")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// Linux keeps the watch on a file that is renamed away, and the rename back is an event of that watch. A repair of the
+// todo tests above has to keep this.
+it.concurrent.skipIf(!isLinux)("--hot reloads when a file that a plugin serves is renamed away and back", async () => {
+  using dir = tempDir("hot-plugin-away-and-back", {
+    "plugin.js": pluginThatServesFiles,
+    "main.js": `
+      import value from "./data.contents";
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      console.log("run " + globalThis.runs + ": value=" + value);
+      if (value === "two") process.exit(0);
+    `,
+    "data.contents": "one",
+  });
+  const file = join(String(dir), "data.contents");
+  await using runner = spawnWithPlugin("--hot", String(dir), "pipe");
+  const stdout = follow(runner.stdout);
+  expect(await stdout("run 1: value=one")).toBe(true);
+  renameSync(file, file + ".away");
+  expect(await follow(runner.stderr)("data.contents")).toBe(true);
+  renameSync(file + ".away", file);
+  expect(await stdout("run 2: value=one")).toBe(true);
+  writeFileSync(file, "two");
+  expect(await stdout("value=two")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// The served file is outside the working directory, as a package of a monorepo is. Its folder is not watched there, so
+// only the file's own watch sees a save. Windows watches nothing outside the working directory (#9547).
+it.concurrent.skipIf(isWindows)("--hot reloads when a served file outside the working directory is saved", async () => {
+  using dir = tempDir("hot-plugin-outside", {
+    "app/plugin.js": pluginThatServesFiles,
+    "app/main.js": mainThatLoads(`import value from "../shared/data.contents";`, "three"),
+    "shared/data.contents": "one",
+  });
+  const file = join(String(dir), "shared", "data.contents");
+  await using runner = spawnWithPlugin("--hot", join(String(dir), "app"));
+  const stdout = follow(runner.stdout);
+  expect(await stdout("value=one")).toBe(true);
+  writeFileSync(file, "two");
+  expect(await stdout("value=two")).toBe(true);
+  writeHotFileAtomicSync(file, "three");
   expect(await stdout("value=three")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
@@ -1573,6 +1671,58 @@ itServed("--hot reloads a file next to a key of a plugin that is not on disk", a
   expect(await runner.exited).toBe(0);
 });
 
+// onLoad gets a plugin's answer as the plugin spelled it when the resolver's own lookup misses. Here it misses a file
+// that is on disk: the resolver listed gen/ before the file was there, and a module with no path of its own asks, so
+// the lookup is not tried again. Watched under that spelling, the file got a second watch item once a reload found it,
+// and on Linux no save after the one that replaced the file reloaded.
+itServed("--hot keeps watching a file that a plugin names with '..' after a save replaces the file", async () => {
+  using dir = tempDir("hot-plugin-dot-dot-on-disk", {
+    "plugin.js": `
+      const { existsSync, readFileSync, writeFileSync } = require("node:fs");
+      const generated = __dirname + "/gen/data.generated";
+      Bun.plugin({
+        name: "generates on disk",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:entry$/ }, () => ({ path: "entry", namespace: "virtual" }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+            Bun.resolveSync("./on-disk.js", __dirname + "/gen");
+            if (!existsSync(generated)) writeFileSync(generated, "one");
+            return { contents: 'export { default, spelled } from "data.generated";', loader: "js" };
+          });
+          build.onResolve({ filter: /\\.generated$/ }, ({ path }) => ({ path: __dirname + "/gen/../gen/" + path }));
+          build.onLoad({ filter: /\\.generated$/ }, ({ path }) => ({
+            contents:
+              "export default " + JSON.stringify(readFileSync(path, "utf8")) + ";" +
+              "export const spelled = " + JSON.stringify(path.includes("..") ? "by the plugin" : "by the resolver") + ";",
+            loader: "js",
+          }));
+        },
+      });
+    `,
+    "main.js": `
+      import value, { spelled } from "virtual:entry";
+      const { saved } = await import("./gen/on-disk.js");
+      console.log("saved=" + saved + " value=" + value + ", key spelled " + spelled);
+      if (value === "three") process.exit(0);
+    `,
+    "gen/on-disk.js": `export const saved = "no";\n`,
+  });
+  const root = String(dir);
+  const generated = join(root, "gen", "data.generated");
+  await using runner = spawnWithPlugin("--hot", root);
+  const stdout = follow(runner.stdout);
+  expect(await stdout("saved=no value=one, key spelled by the plugin")).toBe(true);
+
+  // On Linux the folder's event makes the resolver list gen/ again, so this reload is the first to find the file.
+  writeFileSync(join(root, "gen", "on-disk.js"), `export const saved = "yes";\n`);
+  expect(await stdout("saved=yes value=one")).toBe(true);
+  writeHotFileAtomicSync(generated, "two");
+  expect(await stdout("value=two")).toBe(true);
+  writeFileSync(generated, "three");
+  expect(await stdout("value=three")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
 /** Linux only. The `paths` that the process has an inotify watch on. A relative path is in `root`. */
 function inotifyWatched(pid: number, root: string, paths: string[]) {
   const inodes = readdirSync(`/proc/${pid}/fdinfo`).flatMap(fd => {
@@ -1587,8 +1737,8 @@ function inotifyWatched(pid: number, root: string, paths: string[]) {
   return paths.filter(path => inodes.includes(statSync(resolve(root, path)).ino.toString(16)));
 }
 
-// Only the file namespace names files on disk. A key that is relative, in node_modules, a directory, or the root
-// directory before a query, is not a file to watch. build.module() reads no file.
+// Only the file namespace names files on disk. A key that is relative, in node_modules, a directory, a socket, or the
+// root directory before a query, is not a file to watch. build.module() reads no file.
 it.skipIf(!isLinux)("--hot watches only the project's files that an onLoad in the file namespace serves", async () => {
   using dir = tempDir("hot-plugin-watch-set", {
     "plugin.js": `
@@ -1603,6 +1753,7 @@ it.skipIf(!isLinux)("--hot watches only the project's files that an onLoad in th
           build.onResolve({ filter: /^relative\\.key$/ }, () => ({ path: "relative.served" }));
           build.onResolve({ filter: /^folder\\.key$/ }, () => ({ path: resolve("folder.served") }));
           build.onResolve({ filter: /^root\\.key$/ }, () => ({ path: "/?root.served" }));
+          build.onResolve({ filter: /^socket\\.key$/ }, () => ({ path: resolve("socket.served") }));
           build.module(resolve("module.served"), () => ({ exports: { default: 1 }, loader: "object" }));
         },
       });
@@ -1614,6 +1765,7 @@ it.skipIf(!isLinux)("--hot watches only the project's files that an onLoad in th
       import "relative.key";
       import "folder.key";
       import "root.key";
+      import "socket.key";
       await import(require("node:path").resolve("module.served"));
       console.log("loaded");
     `,
@@ -1625,6 +1777,7 @@ it.skipIf(!isLinux)("--hot watches only the project's files that an onLoad in th
     "node_modules/dependency/dependency.served": "",
   });
   const root = String(dir);
+  using listener = Bun.listen({ unix: join(root, "socket.served"), socket: { data() {} } });
   await using runner = spawnWithPlugin("--hot", root);
   expect(await follow(runner.stdout)("loaded")).toBe(true);
   const paths = [
@@ -1634,6 +1787,7 @@ it.skipIf(!isLinux)("--hot watches only the project's files that an onLoad in th
     "relative.served",
     "folder.served",
     "/",
+    "socket.served",
     "module.served",
     "node_modules/dependency/dependency.served",
   ];

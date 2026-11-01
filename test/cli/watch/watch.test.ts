@@ -862,3 +862,108 @@ it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
     expect({ before, after }).toEqual({ before: expected, after: expected });
   },
 );
+
+// `bun test --watch` has no entry point to fall back on, so only the watch of the file that onLoad is called for sees a
+// save of a test file that a plugin serves. onLoad throws for the first contents.
+it("test --watch reruns when a save fixes a test file for which a preloaded plugin's onLoad threw", async () => {
+  using dir = tempDir("watch-plugin-test-file", {
+    "plugin.js": `
+      const { readFileSync } = require("node:fs");
+      Bun.plugin({
+        name: "serves test files",
+        setup(build) {
+          build.onLoad({ filter: /\\.test\\.js$/ }, ({ path }) => {
+            const contents = readFileSync(path, "utf8");
+            if (contents === "throw") {
+              console.log("onLoad throws");
+              throw new Error("onLoad threw");
+            }
+            return { contents, loader: "js" };
+          });
+        },
+      });
+    `,
+    "main.test.js": "throw",
+  });
+  watchee = spawn({
+    cwd: String(dir),
+    cmd: [bunExe(), "test", "--watch", "--preload", "./plugin.js", "main.test.js"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const { waitFor, release } = stdoutWaiter(watchee);
+  await waitFor("onLoad throws");
+  await Bun.write(
+    join(String(dir), "main.test.js"),
+    `import { test } from "bun:test";\ntest("prints", () => console.log("value=two"));\n`,
+  );
+  await waitFor("value=two");
+  release();
+});
+
+// The watcher opens a folder before it asks inotify for a watch. When inotify refuses (the shim here, the user's watch
+// limit in practice), the file is asked for again at each load, so the descriptor of the folder must not stay open.
+// The program counts its own descriptors after the import, when no load is at work.
+it.skipIf(!isLinux || !cc)(
+  "--hot reload does not leak a descriptor for the folder of a served file that inotify refuses",
+  async () => {
+    const main = `
+      import value from "./unwatchable/data.served";
+      import { readdirSync, readlinkSync } from "node:fs";
+      const folder = import.meta.dir + "/unwatchable";
+      const held = readdirSync("/proc/self/fd").filter(fd => {
+        try {
+          return readlinkSync("/proc/self/fd/" + fd) === folder;
+        } catch {
+          return false;
+        }
+      });
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      console.log("run " + globalThis.runs + " has " + held.length + " of the folder, value=" + value + ", end of run " + globalThis.runs);
+    `;
+    using dir = tempDir("watch-plugin-no-leak", {
+      "shim.c": /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdint.h>
+#include <string.h>
+static int (*real_inotify_add_watch)(int, const char *, uint32_t);
+int inotify_add_watch(int fd, const char *path, uint32_t mask) {
+  if (strstr(path, "/unwatchable")) {
+    errno = ENOSPC;
+    return -1;
+  }
+  if (!real_inotify_add_watch) real_inotify_add_watch = dlsym(RTLD_NEXT, "inotify_add_watch");
+  return real_inotify_add_watch(fd, path, mask);
+}
+`,
+      "plugin.js": pluginThatServesFiles,
+      "main.js": main,
+      "unwatchable/data.served": "one",
+    });
+    const cwd = realpathSync(String(dir));
+    const shimPath = await compileShim(cwd);
+    const existing = bunEnv.LD_PRELOAD;
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "--preload", "./plugin.js", "main.js"],
+      env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor, release, output } = stdoutWaiter(watchee);
+    await waitFor("end of run 1");
+    for (const run of [2, 3]) {
+      await Bun.write(join(cwd, "main.js"), main + `// saved for run ${run}\n`);
+      await waitFor(`end of run ${run}`);
+    }
+    release();
+
+    const held = [...output().matchAll(/run \d+ has (\d+) of the folder/g)].map(match => Number(match[1]));
+    expect(held.slice(0, 3)).toEqual([0, 0, 0]);
+  },
+);

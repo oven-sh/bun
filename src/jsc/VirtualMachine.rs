@@ -4931,40 +4931,38 @@ impl VirtualMachine {
         }
     }
 
-    /// Adds the file that a plugin's `onLoad` in the `file` namespace is asked to load to the file
-    /// watcher when watch mode is enabled. `key` is the module's key.
+    /// Watches the file that a plugin's `onLoad` in the `file` namespace is asked to load. `key` is the module's key.
     pub fn add_plugin_served_file_to_watcher(&self, key: &[u8]) {
         let watcher = self.bun_watcher_ptr();
         if watcher.is_null() {
             return;
         }
         // As for a file Bun loads itself, `?query` is not part of the file's path.
-        let path = match bun_core::strings::index_of_char_usize(key, b'?') {
+        let key = match bun_core::strings::index_of_char_usize(key, b'?') {
             Some(query) => &key[..query],
             None => key,
         };
-        if !bun_paths::is_absolute(path) || bun_core::strings::contains(path, b"node_modules") {
+        if !bun_paths::is_absolute(key) || bun_core::strings::contains(key, b"node_modules") {
             return;
         }
         // SAFETY: as in `add_to_watcher_if_needed`. `is_watching` takes `Watcher.mutex`.
-        if unsafe { (*watcher).is_watching(path) } {
+        if unsafe { (*watcher).is_watching(key) } {
             return;
         }
-        // A plugin can serve a key that names a directory, or nothing on disk.
+        // The resolver passes on a key that it did not find as the plugin spelled it, and two spellings are two files to the watcher.
         let mut buf = bun_paths::path_buffer_pool::get();
-        if path.len() >= buf.len() || bun_core::strings::contains_char(path, 0) {
+        let Some(path) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+            bun_paths::resolve_path::platform::Auto,
+        >(self.top_level_dir(), &mut buf[..], &[key]) else {
+            return;
+        };
+        // Not a directory, and not a FIFO: kqueue opens what it watches, and that `open` can block.
+        if !bun_sys::stat(path)
+            .is_ok_and(|stat| bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode))
+        {
             return;
         }
-        buf[..path.len()].copy_from_slice(path);
-        buf[path.len()] = 0;
-        let path_z = bun_core::ZStr::from_buf(&buf[..], path.len());
-        if !matches!(
-            bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z),
-            Ok(bun_sys::ExistsAtType::File)
-        ) {
-            return;
-        }
-        self.add_to_watcher_if_needed(path);
+        self.add_to_watcher_if_needed(path.as_bytes());
     }
 
     /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is

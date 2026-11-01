@@ -663,9 +663,15 @@ impl Watcher {
                 ZStr::from_buf(&buf[..], trailing_slash.len())
             };
 
-            self.platform
-                .watch_dir(path)
-                .map_err(|e| e.with_path(file_path))?
+            match self.platform.watch_dir(path) {
+                Ok(index) => index,
+                Err(err) => {
+                    if !stored_fd.is_valid() {
+                        let _ = bun_sys::close(fd);
+                    }
+                    return Err(err.with_path(file_path));
+                }
+            }
         };
 
         self.watchlist.append_assume_capacity(WatchItem {
@@ -826,16 +832,8 @@ impl Watcher {
             return false;
         }
         let hash = Self::get_hash(file_path);
-
-        // Check if already watched (with lock to avoid race with removal)
-        {
-            self.mutex.lock();
-            let already_watched = self.index_of(hash).is_some();
-            self.mutex.unlock();
-
-            if already_watched {
-                return true;
-            }
+        if self.is_watching(hash) {
+            return true;
         }
 
         // Only open fd if we might need it
@@ -915,6 +913,12 @@ impl Watcher {
         );
         self.mutex.unlock();
         r
+    }
+
+    /// Whether a file with this path hash is in the watch list. It locks, because the watcher thread removes items.
+    pub fn is_watching(&self, hash: HashType) -> bool {
+        let _guard = self.mutex.lock_guard();
+        self.index_of(hash).is_some()
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {

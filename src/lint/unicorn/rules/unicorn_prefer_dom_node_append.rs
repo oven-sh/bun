@@ -7,8 +7,8 @@ use bun_lint::utils::visible::is_visibly_dom_node;
 /// Enforces the use of, for example, `document.body.append(div);` over `document.body.appendChild(div);` for DOM nodes.
 pub struct PreferDomNodeAppend;
 
-const PREFER_DOM_NODE_APPEND: Message =
-    Message::new("", "Prefer `Node#append()` over `Node#appendChild()` for DOM nodes.");
+const PREFER_DOM_NODE_APPEND: &Message =
+    &Message::new("", "Prefer `Node#append()` over `Node#appendChild()` for DOM nodes.");
 
 impl Rule for PreferDomNodeAppend {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-dom-node-append", Kind::Suggestion).fixable(Fixable::Code);

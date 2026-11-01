@@ -6,7 +6,7 @@ use bun_lint_oxlint::module_record::{ModuleRecord, in_hash_order};
 /// Prevents using exports if a file has one or more tests in it.
 pub struct NoExport<const RUNNER: u8 = { jest::JEST }>;
 
-const NO_EXPORT: Message = Message::new("", "Do not export from a test file.");
+const NO_EXPORT: &Message = &Message::new("", "Do not export from a test file.");
 
 impl<const RUNNER: u8> Rule for NoExport<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "no-export", Kind::Problem);

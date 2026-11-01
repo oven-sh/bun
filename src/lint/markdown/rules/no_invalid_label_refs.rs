@@ -3,7 +3,7 @@ use crate::prelude::*;
 /// Disallow invalid label references
 pub struct NoInvalidLabelRefs;
 
-const INVALID_LABEL_REF: Message = Message::new(
+const INVALID_LABEL_REF: &Message = &Message::new(
     "invalidLabelRef",
     "Label reference '{{label}}' is invalid due to white space between [ and ].",
 );

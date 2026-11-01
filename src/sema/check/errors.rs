@@ -179,6 +179,7 @@ impl Checker<'_, '_> {
         self.rechecked_members.retain(|key, _| is_kept(key.0));
         self.late_bound_members.retain(|key, _| is_kept(key.0.file));
         self.thisless_members.retain(|key, _| is_kept(key.file));
+        self.flow_type_skips.retain(|key, _| is_kept(key.0));
         self.permanently_early_bound
             .retain(|key| is_kept(key.0.file));
         self.context_checked_here.retain(|key| is_kept(key.0));
@@ -201,6 +202,7 @@ impl Checker<'_, '_> {
             + self.rechecked_members.len()
             + self.late_bound_members.len()
             + self.thisless_members.len()
+            + self.flow_type_skips.len()
             + self.permanently_early_bound.len()
             + self.context_checked_here.len()
             + self.prepared.len()
@@ -1234,29 +1236,48 @@ impl Checker<'_, '_> {
 
     /// `getControlFlowContainer` for a direct child of `parent`.
     pub(super) fn get_control_flow_container(&self, file: FileId, mut parent: Parent) -> Container {
+        // As in `enclosing_scope_of_expr`.
+        const UNCACHED_STEPS: usize = 32;
         let bound = self.bound(file);
-        loop {
+        let mut steps = 0;
+        let mut passed = Vec::new();
+        let container = loop {
             let func = match parent {
                 Parent::FnBody(f) => f,
                 Parent::ParamDefault(p) => bound.param_fn[p.idx()],
                 Parent::MemberInit(m)
                     if matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)) =>
                 {
-                    return Container::Member(m);
+                    break Container::Member(m);
                 }
-                Parent::Module(m) => return Container::Module(m),
-                Parent::File => return Container::File,
-                Parent::None => return Container::Other,
+                Parent::Module(m) => break Container::Module(m),
+                Parent::File => break Container::File,
+                Parent::None => break Container::Other,
                 _ => {
+                    if steps >= UNCACHED_STEPS
+                        && let Parent::Expr(at) = parent
+                    {
+                        if let Some(&known) = self.containers_inside_exprs.borrow().get(&(file, at))
+                        {
+                            break known;
+                        }
+                        passed.push(at);
+                    }
+                    steps += 1;
                     parent = self.parent_of_node(file, parent);
                     continue;
                 }
             };
             match self.immediately_invoked_container(file, func) {
                 Some(it) => parent = it,
-                None => return Container::Fn(func),
+                None => break Container::Fn(func),
             }
+        };
+        if !passed.is_empty() {
+            let mut known = self.containers_inside_exprs.borrow_mut();
+            known.extend(passed.into_iter().map(|it| ((file, it), container)));
         }
+        container
     }
 
     /// `node.Parent` of the node that `parent` represents, as far as `Parent` can express it. Patterns are skipped.

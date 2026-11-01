@@ -1287,6 +1287,7 @@ mod draft {
                     Output::flush();
 
                     bun_removable_features::removable_body!(HotReload, Abort, {
+                        IS_RELOADING_PROCESS.store(true, Ordering::Relaxed);
                         bun_core::reload_process(false, true);
                     });
                 }
@@ -1731,6 +1732,14 @@ mod draft {
     #[unsafe(no_mangle)]
     extern "C" fn CrashHandler__isCrashSignal(signal: c_int) -> bool {
         bun_core::CRASH_HANDLER_SIGNALS.contains(&signal)
+    }
+
+    static IS_RELOADING_PROCESS: AtomicBool = AtomicBool::new(false);
+
+    /// On Linux, `execve` must not wait for a lock that the crashed thread may hold.
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__isReloadingProcess() -> bool {
+        IS_RELOADING_PROCESS.load(Ordering::Relaxed)
     }
 
     #[cfg(unix)]

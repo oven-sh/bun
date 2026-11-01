@@ -6,7 +6,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Disallows the use of `this` in exported functions.
 pub struct NoThisInExportedFunction;
 
-const NO_THIS_IN_EXPORTED_FUNCTION: Message = Message::new("", "`this` should not be used in exported functions");
+const NO_THIS_IN_EXPORTED_FUNCTION: &Message = &Message::new("", "`this` should not be used in exported functions");
 
 #[derive(Default)]
 pub struct State<'a> {

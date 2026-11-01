@@ -1,0 +1,5 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`inline counts together with file snapshots 1`] = `"file 1"`;
+
+exports[`inline counts together with file snapshots 3`] = `"file 2"`;

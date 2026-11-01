@@ -25,7 +25,8 @@ HEATS = {"hot": "everything-is-hot", "cold": "everything-is-cold", "neither": "n
 
 
 def verdicts(arguments, work, heat):
-    env = {**os.environ, "WORK": work, "WORDS": "heat=" + heat}
+    # What a program says about a count holds at the heat that it is written for: neither run counts, unless it is told to.
+    env = {**os.environ, "WORK": work, "WORDS": "heat=" + heat, "KNOWS_SHELL_FUNCTIONS": os.environ.get("KNOWS_SHELL_FUNCTIONS", "0")}
     output = subprocess.run([sys.executable, HERE + "/quick.py", *arguments], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.decode(errors="replace")
     return dict(line.split(": ", 1) for line in output.split("\n") if ": " in line)
 

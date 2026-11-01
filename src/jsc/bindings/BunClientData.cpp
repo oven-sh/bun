@@ -32,6 +32,7 @@
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
 #include "JSDOMException.h"
+#include "IsolatedModuleCache.h"
 
 namespace WebCore {
 using namespace JSC;

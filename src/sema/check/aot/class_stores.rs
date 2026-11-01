@@ -9,9 +9,10 @@ use crate::hir::{
 };
 use crate::program::FileId;
 use crate::session::Arena;
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, SharedSort};
 use std::sync::OnceLock;
 
+#[derive(Copy, Clone)]
 pub(in crate::check) struct StoreIndex<'s> {
     this_stores: &'s [ThisStore],
     binding_stores: &'s [BindingStore],
@@ -106,17 +107,26 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         ))
     }
 
-    pub(super) fn store_index(&mut self, file: FileId) -> &'s StoreIndex<'s> {
+    /// An index that asked the checker about a key stays with this checker. Asking runs queries, and a task that skips
+    /// them because another task has the answer enters resolution cycles elsewhere, so the program would get other types.
+    pub(super) fn store_index(&mut self, file: FileId) -> StoreIndex<'c> {
         let of_file = self.c.p.aot_store_index(file);
-        of_file.get_or_init(|| self.compute_store_index(file))
+        if let Some(&index) = of_file.get() {
+            return index;
+        }
+        if let Some(&index) = self.kept.store_indexes.get(&file) {
+            return index;
+        }
+        self.compute_store_index(file)
     }
 
-    fn compute_store_index(&mut self, file: FileId) -> StoreIndex<'s> {
+    fn compute_store_index(&mut self, file: FileId) -> StoreIndex<'c> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let assigns = self.c.exprs_by_kind(file);
         let mut this_stores = Vec::new();
         let mut binding_stores = Vec::new();
         let mut first_exits = FxHashMap::default();
+        let mut has_asked_checker = false;
         for &assign in assigns.of(ExprTag::Assign) {
             let ExprKind::Assign { op, target, value } = hir[assign].kind else {
                 continue;
@@ -131,6 +141,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Some((object, MemberKey::Computed(key)))
                     if matches!(hir[hir.skip_type_assertions(object)].kind, ExprKind::This) =>
                 {
+                    has_asked_checker = true;
                     match self.symbol_member_name(file, key) {
                         Some(name) => (object, name),
                         None => continue,
@@ -185,14 +196,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 });
             }
         }
-        this_stores
-            .sort_unstable_by_key(|store| (store.owner, hir[store.assign].pos, store.assign));
-        binding_stores
-            .sort_unstable_by_key(|store| (store.symbol, hir[store.source].pos, store.source));
-        StoreIndex {
+        this_stores.shared_sort_unstable_by_key(|store| {
+            (store.owner, hir[store.assign].pos, store.assign)
+        });
+        binding_stores.shared_sort_unstable_by_key(|store| {
+            (store.symbol, hir[store.source].pos, store.source)
+        });
+        if has_asked_checker {
+            let index = StoreIndex {
+                this_stores: list_in(self.arena, &this_stores),
+                binding_stores: list_in(self.arena, &binding_stores),
+            };
+            self.kept.store_indexes.insert(file, index);
+            return index;
+        }
+        *self.c.p.aot_store_index(file).get_or_init(|| StoreIndex {
             this_stores: list_in(self.c.arena, &this_stores),
             binding_stores: list_in(self.c.arena, &binding_stores),
-        }
+        })
     }
 
     fn this_owner(&self, file: FileId, this: ExprId) -> Option<ThisOwner> {

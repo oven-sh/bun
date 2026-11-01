@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// and similar methods.
 pub struct NoArrayMethodThisArgument;
 
-const NO_ARRAY_METHOD_THIS_ARGUMENT: Message = Message::new("", "Avoid using 'thisArg' with array iteration methods");
+const NO_ARRAY_METHOD_THIS_ARGUMENT: &Message = &Message::new("", "Avoid using 'thisArg' with array iteration methods");
 
 const METHODS: [&str; 10] =
     ["every", "filter", "find", "findLast", "findIndex", "findLastIndex", "flatMap", "forEach", "map", "some"];

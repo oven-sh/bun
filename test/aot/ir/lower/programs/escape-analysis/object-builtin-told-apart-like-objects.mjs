@@ -1245,7 +1245,7 @@ function attempt(run) { try { return run(); } catch (e) { return "threw " + (e i
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|[[f_2]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_3]] flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|[[f_2]] flags=[IsExpected] variableName="mk"}] thisType={type=anything} results=[{type=undefined|null|[[L_3]] flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -1262,7 +1262,7 @@ function attempt(run) { try { return run(); } catch (e) { return "threw " + (e i
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|[[f_6]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|[[f_6]] flags=[IsExpected] variableName="mk"}] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_6]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -1279,7 +1279,7 @@ function attempt(run) { try { return run(); } catch (e) { return "threw " + (e i
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|[[f_9]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|[[f_9]] flags=[IsExpected] variableName="mk"}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_9]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

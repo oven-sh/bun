@@ -118,6 +118,9 @@ impl Diagnostics {
                 | ModuleFailureKind::UnresolvedAtLoad { specifier, reason } => {
                     Diagnostic::new(code_of_failure(reason), span, &[atoms.bytes(specifier)])
                 }
+                ModuleFailureKind::NotAProgram {
+                    is_silent: true, ..
+                } => continue,
                 ModuleFailureKind::NotAProgram { .. } => {
                     let source = parsed_source(view.files(), failure.importer);
                     let reason = source.and_then(|source| source.parse_failure.as_deref());
@@ -140,7 +143,18 @@ impl Diagnostics {
                 FailureEffect::StopsBuild => Severity::Error,
                 FailureEffect::ThrowsAtSite => Severity::Warning,
             };
+            let code = diagnostic.code;
             self.add_with_locator(Some(&mut locator), diagnostic);
+            if let ModuleFailureKind::UnresolvedAtLoad { specifier, .. } = failure.kind
+                && let Some((_, template)) = messages::message(2307)
+                && let Some(added) = self.entries.last()
+                && added.key.4 == code.number()
+            {
+                let mut text = b"TS2307: ".to_vec();
+                messages::format(&mut text, template, &[atoms.bytes(specifier)]);
+                let file = added.key.1.clone();
+                self.missing_at_load.insert((file, text));
+            }
         }
     }
 
@@ -162,19 +176,18 @@ impl Diagnostics {
         }
     }
 
-    /// `deepest_compiled`: `LimitId::MaxNestingDepth`. Whatever walks a tree that is deeper may run out of stack.
-    pub(crate) fn add_incomplete_files(
-        &mut self,
-        incomplete: &[Incomplete],
-        deepest_compiled: u64,
-    ) {
+    pub(crate) fn add_incomplete_files(&mut self, incomplete: &[Incomplete]) {
+        // Whatever walks a tree that is deeper may run out of stack: that is the program's doing, and no fault of the compiler.
+        const DEEPEST_THAT_MUST_BE_WALKED: u32 = 2000;
         for file in incomplete {
             let path = to_native(&file.path);
-            if file.is_nested_too_deeply || u64::from(file.deepest_nesting) > deepest_compiled {
+            if file.is_nested_too_deeply || file.deepest_nesting > DEEPEST_THAT_MUST_BE_WALKED {
                 let diagnostic = Diagnostic::new(Code::FileNestedTooDeeply, None, &[path]);
                 self.add(None, diagnostic);
+                self.files_nested_too_deeply.push(path.to_vec());
             } else {
-                self.report_internal_error(Stage::Check, file.message(path));
+                let message = file.message(path);
+                self.report_internal_error_in_file(Stage::Check, message, path.to_vec());
             }
         }
     }
@@ -204,6 +217,10 @@ impl Diagnostics {
         }
     }
 
+    pub(crate) fn add_fault_of_emitted_program(&mut self, message: Vec<u8>) {
+        self.report_internal_error(Stage::LinkAndEmit, message);
+    }
+
     pub(crate) fn add_emit_error(&mut self, error: EmitError) {
         match error {
             EmitError::ProgramTooLarge { bytes } => {
@@ -230,9 +247,13 @@ pub(crate) fn code_of_failure(failure: CodeFailure) -> Code {
     }
 }
 
-fn syntax_errors_of<'a>(hir: &'a File<'_>) -> impl Iterator<Item = &'a hir::Diagnostic> {
-    (hir.diagnostics.iter())
-        .filter(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)
+/// What keeps a file from being compiled. `/** @import Foo#bar */`: a mistake in a comment of a JavaScript file does not.
+pub(crate) fn syntax_errors_of<'a>(hir: &'a File<'_>) -> impl Iterator<Item = &'a hir::Diagnostic> {
+    hir.diagnostics.iter().filter(|it| {
+        it.kind == DiagnosticKind::Parse
+            && it.class == DiagnosticClass::EarlyError
+            && !hir.is_in_jsdoc(it.start)
+    })
 }
 
 pub(super) fn fold_error_diagnostic(

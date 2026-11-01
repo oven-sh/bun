@@ -1,4 +1,4 @@
-// `bun test` hands every file `test`, `expect`, `describe` and the other names of the runner, unless the file loads "bun:test", "@jest/globals"
+// `bun test` hands every file `test`, `expect`, `describe` and the other names of the runner, also a file that loads "bun:test", "@jest/globals"
 // or "vitest" itself. `bun test --aot` reports what `bun test` reports, file by file.
 import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
@@ -22,6 +22,17 @@ describe("a group", () => {
   xtest("and a second", () => { throw new Error("it ran"); });
 });
 xdescribe("a group that is skipped", () => { it("has a test", () => { throw new Error("it ran"); }); });
+`,
+  "names-of-one-runner.test.js": `
+console.log("row:", [typeof onTestFinished, typeof aroundEach, typeof aroundAll, typeof jest, typeof xit].join());
+console.log("row:", [typeof suite, typeof vitest, typeof onTestFailed, typeof assertType].join());
+test("a name is called", () => { onTestFinished(() => console.log("row: finished")); });
+`,
+  "names-of-vitest.test.js": `
+import { test } from "vitest";
+console.log("row:", [typeof onTestFinished, typeof aroundEach, typeof aroundAll, typeof jest, typeof xit].join());
+console.log("row:", [typeof suite, typeof vitest, typeof onTestFailed, typeof assertType].join());
+suite("a group", () => { test("has a test", () => { onTestFailed(() => {}); }); });
 `,
   "commonjs.test.cjs": `
 const path = require("node:path");
@@ -61,19 +72,29 @@ test("a file that is no test file has the names too", () => { check(1); });
 `,
   "imports-another-runner.test.js": `
 import { expect, test } from "vitest";
-test("a file that imports a runner gets nothing more", () => { expect(typeof describe).toBe("undefined"); });
+test("a file that imports a runner has the other names too", () => { expect(typeof describe).toBe("function"); });
+`,
+  "defines-expect.js": `
+globalThis.expect = value => ({ to: { equal(other) { console.log("row:", value === other ? "equal" : "not equal"); } } });
+`,
+  "has-a-global-of-a-preload.test.js": `
+import { test } from "bun:test";
+test("a file that imports a runner has the global that a preload defined", () => { expect(1).to.equal(1); console.log("row:", typeof describe); });
+`,
+  "has-no-global-of-a-preload.test.js": `
+test("a file that imports no runner has the runner's", () => { expect(typeof expect(1).to).toBe("undefined"); });
 `,
   "imports-jest.test.js": `
 import { expect, test } from "@jest/globals";
-test("a file that imports a runner gets nothing more", () => { expect(typeof beforeAll).toBe("undefined"); });
+test("a file that imports a runner has the other names too", () => { expect(typeof beforeAll).toBe("function"); });
 `,
   "requires-the-runner.test.cjs": `
 const { expect, test } = require("bun:test");
-test("a file that requires the runner gets nothing more", () => { expect(typeof describe).toBe("undefined"); });
+test("a file that requires the runner has the other names too", () => { expect(typeof describe).toBe("function"); });
 `,
   "imports-the-runner-by-a-call.test.js": `
 const runner = await import("bun:test");
-runner.test("a file that imports the runner by a call gets nothing more", () => { runner.expect(typeof describe).toBe("undefined"); });
+runner.test("a file that imports the runner by a call has the other names too", () => { runner.expect(typeof describe).toBe("function"); });
 `,
 };
 
@@ -86,17 +107,24 @@ async function report(mode: string[], directory: string, file: string) {
 }
 
 describe("the names of the test runner without an import", () => {
-  for (const file of Object.keys(files).filter(name => name.includes(".test."))) {
+  const testFiles = Object.keys(files).filter(name => name.includes(".test."));
+  const withPreload = testFiles.filter(name => name.includes("-of-a-preload."));
+  const rows = [
+    ...testFiles.filter(file => !withPreload.includes(file)).map(file => [file, []] as const),
+    ["names-of-one-runner.test.js", ["--globals=vitest"]] as const,
+    ...withPreload.map(file => [file, ["--preload=./defines-expect.js"]] as const),
+  ];
+  for (const [file, flags] of rows) {
     test(
-      file,
+      [file, ...flags].join(" "),
       async () => {
         using dir = tempDir("aot-test-runner-names", files);
-        const plain = await report([], String(dir), file);
+        const plain = await report([...flags], String(dir), file);
         expect(plain.lines.join("\n")).toContain("(pass)");
         expect(plain.lines.join("\n")).not.toContain("(fail)");
         expect(plain.exitCode).toBe(0);
-        expect(await report(["--aot"], String(dir), file)).toEqual(plain);
-        expect(await report(["--debug-aot"], String(dir), file)).toEqual(plain);
+        expect(await report([...flags, "--aot"], String(dir), file)).toEqual(plain);
+        expect(await report([...flags, "--debug-aot"], String(dir), file)).toEqual(plain);
       },
       120_000,
     );

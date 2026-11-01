@@ -1,11 +1,8 @@
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { crateOf, debugFlag, shJoin, typesOnlyFlag, type Ctx } from "./codegen.ts";
-import type { CodegenFields, Config } from "./config.ts";
+import type { CodegenFields } from "./config.ts";
 import { assert } from "./error.ts";
-import type { Ninja } from "./ninja.ts";
-import { quote } from "./shell.ts";
-import { streamPath } from "./stream.ts";
 
 export interface EngineSources {
   /** `Source/JavaScriptCore` of the checkout this graph compiles. Undefined when it links a prebuilt WebKit. */
@@ -20,7 +17,6 @@ export interface EngineSources {
   /** Where the C++ half goes. Undefined when the graph links a prebuilt WebKit, which was compiled with its own. */
   schemaGeneratedDirectory: string | undefined;
   schemaOutputs: string[];
-  schemaUsers: string[];
   builtinsGeneratedDirectory: string;
   builtinTableInputs: string[];
   builtinTableOutputs: string[];
@@ -45,9 +41,6 @@ export function builtinTableTarget(cfg: Pick<CodegenFields, "os" | "abi">): Buil
 }
 
 type CodegenDirectory = Pick<CodegenFields, "codegenDir">;
-
-/** `ci` is no field of a `mode: "codegen"` graph, which has no engine either. */
-const isCI = (cfg: CodegenFields): boolean => (cfg as Partial<Config>).ci === true;
 
 export function removableFeaturesJson(cfg: CodegenDirectory): string {
   return resolve(cfg.codegenDir, "removable-features.json");
@@ -76,24 +69,12 @@ export function schemaHashHeader(cfg: CodegenDirectory): string {
   return resolve(cfg.codegenDir, "AOTSchemaHash.h");
 }
 
-export function schemaUseCheckStamp(cfg: CodegenDirectory): string {
-  return resolve(cfg.codegenDir, "aot-schema-names-are-used.stamp");
-}
-
 export function trimDirectory(cfg: Pick<CodegenFields, "cwd">): string {
   return resolve(cfg.cwd, "scripts", "build", "trim");
 }
 
 export function trimScript(cfg: Pick<CodegenFields, "cwd">, name: string): string {
   return resolve(trimDirectory(cfg), name);
-}
-
-export function registerAotRules(n: Ninja, cfg: Config): void {
-  const q = (path: string) => quote(path, cfg.host.os === "windows");
-  n.rule("aot_check", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --stamp=$out --cwd=$cwd ${q(cfg.bun)} $args`,
-    description: "check $desc",
-  });
 }
 
 function builtinsTableScript(cfg: Pick<CodegenFields, "cwd">, name: string): string {
@@ -189,41 +170,6 @@ export function emitAotSchema({ n, cfg, o, dirStamp, engine }: Ctx): void {
   o.cppHeaders.push(header);
 }
 
-export function emitAotSchemaUseCheck({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
-  assert(engine !== undefined, "emitAotSchemaUseCheck needs an engine");
-  if (engine.javaScriptCore === undefined || !isCI(cfg)) return;
-  const stamp = schemaUseCheckStamp(cfg);
-  const usersOutsideAot = [
-    resolve(engine.javaScriptCore, "b3", "B3Limits.h"),
-    resolve(engine.javaScriptCore, "ffi", "JSFFICallback.cpp"),
-    resolve(engine.javaScriptCore, "runtime", "AbstractModuleRecord.cpp"),
-    resolve(cfg.cwd, "src", "bundler", "aot", "data_values.rs"),
-    resolve(cfg.cwd, "src", "runtime", "cli", "compile_command", "reports.rs"),
-  ];
-  n.build({
-    outputs: [stamp],
-    rule: "aot_check",
-    inputs: [...engine.schemaInputs, ...engine.schemaUsers, ...usersOutsideAot, ...sources.aotRust],
-    orderOnlyInputs: [dirStamp, ...engine.schemaOutputs],
-    vars: {
-      cwd: cfg.cwd,
-      desc: "uses of AOTSchema.def",
-      args: shJoin(cfg, [
-        "run",
-        engine.schemaGenerator,
-        "--schema",
-        engine.schema,
-        "--check-uses",
-        resolve(engine.javaScriptCore, "aot"),
-        "--check-uses",
-        resolve(cfg.cwd, "src", "aot"),
-        ...usersOutsideAot.flatMap(path => ["--check-uses", path]),
-      ]),
-    },
-  });
-  o.all.push(stamp);
-}
-
 export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
   assert(engine !== undefined, "emitBuiltinsTable needs an engine");
   const script = resolve(cfg.cwd, "src", "codegen", "builtins", "index.ts");
@@ -276,7 +222,6 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
     ],
     implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
-    validations: engine.javaScriptCore === undefined || !isCI(cfg) ? [] : [schemaUseCheckStamp(cfg)],
     vars: {
       cwd: cfg.cwd,
       desc: "the table of built-ins",
@@ -363,7 +308,6 @@ export function emitAotCodegen(ctx: Ctx): void {
   emitRemovableFeatures(ctx);
   if (ctx.engine === undefined) return;
   emitAotSchema(ctx);
-  emitAotSchemaUseCheck(ctx);
   emitBuiltinsTable(ctx);
   emitBuiltinSources(ctx);
 }

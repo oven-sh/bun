@@ -337,8 +337,8 @@ function f58 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f59 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f37]
 function f60 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f37]
 function f61 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f37]
-function f62 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=69 function=f62
+function f62 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=ArrayIteratorPrototypeNext function=f62
 # -- generated: f0 setLength setPrototypeField f22 f32 f36 look
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f21 callPosition=4294967295 module=m0}] {
@@ -360,24 +360,25 @@ runtimefunction id=69 function=f62
 # CHECK-NEXT: v14: f8 = GetModuleVariable variable=g7
 # CHECK-NEXT: v15: null = Null
 # CHECK-NEXT: v16: function = CallBuiltin v14, v15 overload=FunctionPrototypeBind/0 accessSite=3
-# CHECK-NEXT: v17: undefined = CallDirect v16 function=f79 accessSite=4
-# CHECK-NEXT: v18: f19 = NewClosure function=f19 allocationSite=6
-# CHECK-NEXT: v19: undefined = CallDirect v18 function=f79 accessSite=6
-# CHECK-NEXT: v20: undefined|null|L1 = Call v0 calleeName="honest" accessSite=7 callees=[f10]
-# CHECK-NEXT: v21: undefined = CallDirect v5 function=f79 accessSite=8
-# CHECK-NEXT: v22: 1 = Integer integer=1
-# CHECK-NEXT: v23: 2 = Integer integer=2
-# CHECK-NEXT: v24: 3 = Integer integer=3
+# CHECK-NEXT: v17: function|f8 = Upcast v16 castType=function|f8
+# CHECK-NEXT: v18: undefined = CallDirect v17 function=f79 accessSite=4
+# CHECK-NEXT: v19: f19 = NewClosure function=f19 allocationSite=6
+# CHECK-NEXT: v20: undefined = CallDirect v19 function=f79 accessSite=6
+# CHECK-NEXT: v21: undefined|null|L1 = Call v0 calleeName="honest" accessSite=7 callees=[f10]
+# CHECK-NEXT: v22: undefined = CallDirect v5 function=f79 accessSite=8
+# CHECK-NEXT: v23: 1 = Integer integer=1
+# CHECK-NEXT: v24: 2 = Integer integer=2
 # CHECK-NEXT: v25: 3 = Integer integer=3
-# CHECK-NEXT: v26: Array<undefined|int> = NewArray v22, v23, v24 contents=undefined|int
-# CHECK-NEXT: v27: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v28: Arguments = CreateUnmappedArguments v25, v27 allocationSite=21
-# CHECK-NEXT: v29: undefined = CallDirect v28 function=f79 accessSite=10
-# CHECK-NEXT: v30: undefined|null|L1 = Call v0 calleeName="honest" accessSite=11 callees=[f10]
-# CHECK-NEXT: v31: f22 = NewClosure function=f22 allocationSite=10 storage=Frame
-# CHECK-NEXT: v32: string = CallDirect v31 function=f66 accessSite=12
-# CHECK-NEXT: v33: undefined = Undefined
-# CHECK-NEXT: Return v33
+# CHECK-NEXT: v26: 3 = Integer integer=3
+# CHECK-NEXT: v27: Array<undefined|int> = NewArray v23, v24, v25 contents=undefined|int
+# CHECK-NEXT: v28: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v29: Arguments = CreateUnmappedArguments v26, v28 allocationSite=21
+# CHECK-NEXT: v30: undefined = CallDirect v29 function=f79 accessSite=10
+# CHECK-NEXT: v31: undefined|null|L1 = Call v0 calleeName="honest" accessSite=11 callees=[f10]
+# CHECK-NEXT: v32: f22 = NewClosure function=f22 allocationSite=10 storage=Frame
+# CHECK-NEXT: v33: string = CallDirect v32 function=f66 accessSite=12
+# CHECK-NEXT: v34: undefined = Undefined
+# CHECK-NEXT: Return v34
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="setLength"
 # CHECK: module=m0 position=906 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=int[-1, 1] site=w5}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -404,7 +405,7 @@ runtimefunction id=69 function=f62
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="look"
-# CHECK: module=m0 position=1296 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w20 flags=[OmitsNull, OmitsUndefined]}, {type=function|f11|f19|Arguments|RegExp<"a"[Global], pristine[Storage]>}, {type=undefined|f18|f20 site=w21 flags=[OmitsNull]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1296 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="arguments"|"bound function"|"class"|"method"|"regular expression" site=w20 flags=[OmitsNull, OmitsUndefined]}, {type=function|f11|f19|Arguments|RegExp<"a"[Global], pristine[Storage]>}, {type=undefined|f18|f20 site=w21 flags=[OmitsNull]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f22 module=
 # CHECK: m0 position=3072 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
@@ -456,10 +457,10 @@ runtimefunction id=69 function=f62
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="look"
-# CHECK: module=m0 position=1296 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=function|f11|f19|Arguments|RegExp<"a"[Global], pristine[Storage]>}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f9 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f36 callPosition=4294967295 parent=1 module=m0}, {callee=f32 callPosition=4294967295 parent=2 module=m0}, {callee=f7 callPosition=4294967295 parent=3 isTailCall=true module=m0}, {callee=f3 callPosition=4294967295 parent=4 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=1296 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=function|f11|f19|Arguments|RegExp<"a"[Global], pristine[Storage]>}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f9 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f32 callPosition=4294967295 parent=2 module=m0}, {callee=f36 callPosition=4294967295 parent=1 module=m0}, {callee=f7 callPosition=4294967295 parent=4 isTailCall=true module=m0}, {callee=f3 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v1: function|f11|f19|Arguments|RegExp<"a"[Global], pristine[Storage]>):
 # CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: fact = Entered function=f3 @0:4 tail
+# CHECK-NEXT: v4: fact = Entered function=f3 @0:3 tail
 # CHECK-NEXT: v5: function|f11|f19|Arguments|Array<int, proven, pristine[Storage, Names]>|RegExp<"a"[Global], pristine[Storage]> = AssumeType v1, v4 provenType=function|f11|f19|Arguments|Array<int, proven, pristine[Storage, Names]>|RegExp<"a"[Global], pristine[Storage]>
 # CHECK-NEXT: v6: boolean = TypeTest v5 testedType=Array
 # CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)

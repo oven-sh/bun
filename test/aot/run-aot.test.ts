@@ -1,13 +1,14 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
 // `bun run --debug-aot` and `bun test --debug-aot` compile the program as `bun compile` does and then run it. They write no executable.
 // `--aot` on the two commands only checks the program and then runs it from its source: aot-flag-runs-from-source.test.ts.
 const flags = ["--debug-aot"];
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const compilerOptions = {
   strict: true,
@@ -88,17 +89,17 @@ describe("before the program starts", () => {
     [
       "--watch",
       ["--watch", ...flags, "main.ts"],
-      "--aot does not support --watch: the program is compiled once, before it starts",
+      "--aot does not support --watch: the program is compiled once, before it starts. Watch without --aot, or run the command again after a change",
     ],
     [
       "--hot",
       ["--hot", ...flags, "main.ts"],
-      "--aot does not support --hot: the program is compiled once, before it starts",
+      "--aot does not support --hot: the program is compiled once, before it starts. Use --hot without --aot, or run the command again after a change",
     ],
     [
       "--inspect",
       ["--inspect", ...flags, "main.ts"],
-      "--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled",
+      "--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled. Debug it without --aot",
     ],
     [
       "-e",
@@ -184,7 +185,7 @@ describe("at run time", () => {
       "warn: TS100064: this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time",
     );
     expect(stdout).toMatch(
-      /^ERR_MODULE_NOT_FOUND: Cannot load '[^']*late\.ts': it isn't in this executable, which only runs code that was compiled into it\. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk\.\n$/,
+      /^ERR_MODULE_NOT_FOUND: Cannot load '[^']*late\.ts': it wasn't compiled with the program, and --aot only runs code that was\. Import the file by a constant path, or add --aot-allow-code-from-disk\.$/m,
     );
     expect(exitCode).toBe(0);
   });
@@ -411,7 +412,7 @@ describe("at run time", () => {
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "3\n3\n", exitCode: 0 });
   });
-  test("a property of undefined or null: the words of the executable", async () => {
+  test("a property of undefined or null is quoted as it is written", async () => {
     const { stdout } = await ran(
       {
         "main.js": `
@@ -426,11 +427,11 @@ describe("at run time", () => {
       ["run", ...flags, "main.js"],
     );
     expect(stdout.split("\n")).toEqual([
-      "TypeError: null is not an object (evaluating 'null.c')",
-      "TypeError: undefined is not an object (evaluating 'undefined.length')",
-      "TypeError: undefined is not an object (evaluating 'undefined.method')",
-      "TypeError: null is not an object (evaluating 'null.c')",
-      "TypeError: undefined is not an object (evaluating 'undefined.c')",
+      "TypeError: null is not an object (evaluating 'o.a.c')",
+      "TypeError: undefined is not an object (evaluating 'o.b.length')",
+      "TypeError: undefined is not an object (evaluating 'o.b.method')",
+      "TypeError: null is not an object (evaluating 'o.a.c = 1')",
+      "TypeError: undefined is not an object (evaluating 'o.b.c = 1')",
       "",
     ]);
   });
@@ -491,11 +492,11 @@ describe("bun test", () => {
   const price = {
     "price.ts": `export function price(id: string): number { return id.length; }\nexport const rate = { of(id: string): number { return id.length * 2; } };`,
   };
-  test("mock.module throws for a module that was compiled", async () => {
+  test("mock.module replaces the exports of a compiled module", async () => {
     const { stderr, exitCode } = await ranWithBunTypes(
       {
         ...price,
-        "one.test.ts": `import { expect, mock, test } from "bun:test";\nimport { price } from "./price.ts";\ntest("not replaced", () => { expect(() => mock.module("./price.ts", () => ({ price: () => 42 }))).toThrow("cannot replace a module that was compiled ahead of time"); expect(price("abc")).toBe(3); });`,
+        "one.test.ts": `import { expect, mock, test } from "bun:test";\nimport { price } from "./price.ts";\ntest("replaced", () => { expect(price("abc")).toBe(3); mock.module("./price.ts", () => ({ price: () => 42 })); expect(price("abc")).toBe(42); });`,
       },
       ["test", ...flags, "one.test.ts"],
     );
@@ -523,23 +524,23 @@ describe("bun test", () => {
     expect(stderr).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
-  test("spyOn throws for a method of a built-in prototype", async () => {
+  test("spyOn throws for a method of a built-in prototype where the file tells neither the object nor the name", async () => {
     const { stderr, exitCode } = await ranWithBunTypes(
       {
-        "main.test.ts": `import { expect, spyOn, test } from "bun:test";\ntest("not replaced", () => { expect(() => spyOn(String.prototype, "normalize")).toThrow("Cannot spy on 'normalize' because this property of a built-in object is read-only in a compiled executable"); expect("e".normalize()).toBe("e"); });`,
+        "main.test.ts": `import { expect, spyOn, test } from "bun:test";\nconst name: any = process.argv.length > 1000 ? "at" : ["norm", "alize"].join("");\nconst holder: any = Object.getPrototypeOf(process.argv.length > 1000 ? 1 : "");\ntest("not replaced", () => { expect(() => spyOn(holder, name)).toThrow("Cannot spy on String.prototype.normalize because built-in objects are read-only in compiled code"); expect("e".normalize()).toBe("e"); });`,
       },
       ["test", ...flags, "./main.test.ts"],
     );
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });
-  test("a type error in a test file ends the run", async () => {
+  test("a type error in a test file is a warning", async () => {
     const { stderr, exitCode } = await ranWithBunTypes(
-      { "four.test.ts": `import { test } from "bun:test";\nconst n: number = "x";\ntest("never", () => {});` },
+      { "four.test.ts": `import { test } from "bun:test";\nconst n: number = "x";\ntest("runs", () => {});` },
       ["test", ...flags, "four.test.ts"],
     );
-    expect(stderr).toContain("TS2322");
-    expect(stderr).not.toContain("1 pass");
-    expect(exitCode).toBe(1);
+    expect(stderr).toContain("warn: TS2322");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
   });
 });

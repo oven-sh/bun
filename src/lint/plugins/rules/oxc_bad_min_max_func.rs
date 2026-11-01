@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// in the wrong order.
 pub struct BadMinMaxFunc;
 
-const BAD_MIN_MAX_FUNC: Message = Message::new("", "Math.min and Math.max combination leads to constant result");
+const BAD_MIN_MAX_FUNC: &Message = &Message::new("", "Math.min and Math.max combination leads to constant result");
 
 impl Rule for BadMinMaxFunc {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-min-max-func", Kind::Problem);

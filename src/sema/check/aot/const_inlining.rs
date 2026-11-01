@@ -9,6 +9,7 @@ use crate::hir::{
 };
 use crate::program::FileId;
 use crate::types::EnumValue;
+use crate::util::FxHashMap;
 use smallvec::SmallVec;
 
 type StatementLists = SmallVec<[IdList<StmtId>; 1]>;
@@ -50,6 +51,36 @@ impl Checker<'_, '_> {
             ExprKind::Template { exprs } => exprs.is_empty() || self.atoms().bytes(text).is_ascii(),
             _ => false,
         }
+    }
+}
+
+#[derive(Default)]
+pub struct ConstLocalPrefixes {
+    statements: FxHashMap<StmtId, bool>,
+}
+
+impl ConstLocalPrefixes {
+    pub fn contains(&mut self, hir: &File<'_>, bound: &Bound<'_>, statement: StmtId) -> bool {
+        if let Some(&is_in_prefix) = self.statements.get(&statement) {
+            return is_in_prefix;
+        }
+        let is_at_file_level = bound.parent_of_stmt(statement) == Parent::File;
+        let mut is_in_prefix = !(is_at_file_level && has_export_from(hir));
+        let lists = scope_statement_lists(hir, bound, statement);
+        for visited in lists.iter().flat_map(|&list| hir.ids(list)) {
+            is_in_prefix = is_in_prefix && !ends_const_local_prefix(hir, bound, visited);
+            self.statements.insert(visited, is_in_prefix);
+        }
+        *self.statements.entry(statement).or_insert(false)
+    }
+
+    pub fn statements_in_scope_of<'a>(
+        hir: &'a File<'_>,
+        bound: &Bound<'_>,
+        statement: StmtId,
+    ) -> impl Iterator<Item = StmtId> + 'a {
+        let lists = scope_statement_lists(hir, bound, statement);
+        lists.into_iter().flat_map(move |list| hir.ids(list))
     }
 }
 
@@ -210,7 +241,7 @@ fn ends_const_local_prefix(hir: &File<'_>, bound: &Bound<'_>, statement: StmtId)
     }
 }
 
-fn has_export_from(hir: &File<'_>) -> bool {
+pub(crate) fn has_export_from(hir: &File<'_>) -> bool {
     hir.ids(hir.body).any(|statement| {
         matches!(hir[statement].kind, StmtKind::ExportNamed(export)
             if hir[export].has_module_specifier && !hir.is_type_only_export(export))

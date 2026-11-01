@@ -7,20 +7,22 @@ use bun_aot::engine::{
 use bun_ast::Loader;
 use bun_bundler::aot::{AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint};
 use bun_bundler::options::{self, OutputFile};
-use bun_core::ZBox;
+use bun_core::{CodeGenerationFromStrings, ZBox};
 use bun_exe_format::identity::{
-    HostDescription, RuntimeDescription, find_file_identity, find_process_identity,
+    HostDescription, LeftOutOfBuild, RuntimeDescription, find_file_identity, find_process_identity,
     read_stamp_of_builtin_modules,
 };
 use bun_options_types::Format;
+use bun_options_types::aot_options::AotOptions;
 use bun_paths::resolve_path::{self, platform};
 use bun_sema::util::FxHashSet;
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileResult, ExecutableRequest, GraphRequest, target_base_public_path, to_graph_bytes,
+    CompileResult, ExecutableRequest, Flags, GraphRequest, target_base_public_path, to_graph_bytes,
     write_executable,
 };
 use bun_standalone_graph::{
-    CompiledEntryPointInput, CompiledPackageNameInput, CompiledProgramInput, with_executable_image,
+    CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput,
+    CompiledProgramInput, with_executable_image,
 };
 use bun_sys::Fd;
 use bun_trim::{TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
@@ -53,6 +55,11 @@ pub(crate) fn compile_to_executable(
     }
     let bundler = request.bundler.take().expect("one call per request");
     let target = check_request(request)?;
+    // Code from disk finds what it imports as under `bun run`: by the package.json and tsconfig.json files that lie there.
+    if request.options.loads_code_from_disk {
+        let disabled = Flags::DISABLE_AUTOLOAD_PACKAGE_JSON | Flags::DISABLE_AUTOLOAD_TSCONFIG;
+        request.executable.flags.remove(disabled);
+    }
     let _reports_where_it_stops =
         bun_crash_handler::report_stopped_builds(bun_crash_handler::BuildDescribers {
             where_this_thread_stopped: Bun__AOT__describeWhereThisThreadStopped,
@@ -83,7 +90,9 @@ pub(crate) fn compile_to_executable(
     for program in &build.further_programs {
         add_used_features(&mut used, used_features(program));
     }
-    used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code;
+    // With =strict a Worker runs nothing but compiled code.
+    used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code
+        && options.code_generation_from_strings != CodeGenerationFromStrings::Strict;
     let trimming = trimming::decide_trimming(request, &used)?;
     let untrimmed_outfile = bun_core::env_var::BUN_DEBUG_TEST_UNTRIMMED_OUTFILE
         .get_not_empty()
@@ -96,6 +105,7 @@ pub(crate) fn compile_to_executable(
 
     let outfile = match request.product {
         CompileProduct::ReportsOnly => None,
+        CompileProduct::Executable { .. } if options.writes_no_executable => None,
         CompileProduct::GraphBytes => Some(None),
         CompileProduct::Executable { outfile } => Some(Some(outfile)),
     };
@@ -131,10 +141,13 @@ fn write_product(
         &build.root_directory,
         &mut build.output_files,
     )?;
-    // A program behind the first begins at one entry point. The first holds all the others.
-    let first_module_id = |program: &EngineResult| program.entry_module_ids().first().copied();
+    // The entry points of the first program come first, then those of each further one.
+    let further_ids = build
+        .further_programs
+        .iter()
+        .map(EngineResult::entry_module_ids);
     let count_of_first = (build.entry_points.len())
-        .checked_sub(build.further_programs.len())
+        .checked_sub(further_ids.clone().map(<[EngineModuleId]>::len).sum())
         .ok_or_else(corrupted_program)?;
     let ids_of_first = build.engine.entry_module_ids();
     let ids_of_first = match build.further_programs.len() {
@@ -142,12 +155,14 @@ fn write_product(
         _ => ids_of_first.get(..count_of_first),
     };
     let mut module_ids: Vec<EngineModuleId> = ids_of_first.ok_or_else(corrupted_program)?.to_vec();
-    for program in &build.further_programs {
-        module_ids.push(first_module_id(program).ok_or_else(corrupted_program)?);
+    let mut image_indexes = vec![0; module_ids.len()];
+    for (index, ids) in (1..).zip(further_ids) {
+        module_ids.extend_from_slice(ids);
+        image_indexes.resize(module_ids.len(), index);
     }
     let mut entry_points =
         pair_entry_points(&build.entry_points, &module_ids, options.runs_in_place)?;
-    for (index, entry_point) in (1..).zip(entry_points.iter_mut().skip(count_of_first)) {
+    for (entry_point, index) in entry_points.iter_mut().zip(image_indexes) {
         entry_point.image_index = index;
     }
     // In place a file that is embedded keeps the path of its source, which names the entry point already.
@@ -171,8 +186,33 @@ fn write_product(
             required: name.required,
             imported: name.imported,
             hides_other_paths: name.hides_other_paths,
+            is_hidden_from_require: name.is_hidden_from_require,
+            is_hidden_from_import: name.is_hidden_from_import,
         })
         .collect();
+    let path_aliases: Vec<CompiledPathAliasInput<'_>> = build
+        .path_aliases
+        .iter()
+        .map(|alias| CompiledPathAliasInput {
+            folder: &alias.folder,
+            key: &alias.key,
+            target: &alias.target,
+            is_base_url: alias.is_base_url,
+        })
+        .collect();
+    let root_below_working_directory = match options.loads_code_from_disk && !options.runs_in_place
+    {
+        true => find_root_below_working_directory(&build.root_directory),
+        false => None,
+    };
+    let root_from_executable = match &request.product {
+        CompileProduct::Executable { outfile }
+            if options.loads_code_from_disk && !options.runs_in_place =>
+        {
+            find_root_from_executable(&build.root_directory, outfile)
+        }
+        _ => None,
+    };
     let settings = &mut request.executable;
     let graph = GraphRequest {
         target: settings.target,
@@ -188,12 +228,28 @@ fn write_product(
             image_alignment: image_alignment(),
             entry_points: &entry_points,
             package_names: &package_names,
+            path_aliases: &path_aliases,
+            root_below_working_directory: root_below_working_directory.as_deref(),
+            root_from_executable: root_from_executable.as_deref(),
+            // The program holds `__dirname` or the like, so it tells the folder itself, and asks for its own modules by paths below it.
+            root_on_build_machine: (build.holds_source_paths && !options.runs_in_place)
+                .then(|| trim_trailing_separators(&build.root_directory)),
+            further_package_names: &build.further_package_names,
+            root_folders_spelled: match options.runs_in_place {
+                true => b"",
+                false => &build.root_folders_spelled,
+            },
+            allows_code_from_disk: options.loads_code_from_disk,
             preserves_source_paths: options.runs_in_place,
             symbols: build.engine.symbols(),
         }),
     };
     let Some(outfile) = product.outfile else {
         outcome.graph_bytes = Some(to_graph_bytes(&graph).map_err(CompileFailure::Graph)?);
+        if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+            let bytes = outcome.graph_bytes.as_ref().map_or(0, |bytes| bytes.len());
+            bun_core::print_errorln!("AOT test build | program bytes {}", bytes);
+        }
         outcome.executable_time = started.elapsed();
         return Ok(());
     };
@@ -265,6 +321,7 @@ pub(super) fn corrupted_program() -> CompileFailure {
 struct Target {
     identity: ExecutableIdentity,
     image_form: Option<TargetImageForm>,
+    left_out: LeftOutOfBuild,
 }
 
 fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFailure> {
@@ -283,6 +340,7 @@ fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFail
         .map(|identity| Target {
             identity: ExecutableIdentity(identity),
             image_form: None,
+            left_out: LeftOutOfBuild(Bun__AOT__whatThisBuildLeavesOut()),
         })
         .map_err(CompileFailure::NoIdentity)
 }
@@ -303,6 +361,7 @@ struct BuiltinModulesHeader {
 unsafe extern "C" {
     /// The header of the section with the modules, which nothing writes.
     safe static bun_internal_modules_header: BuiltinModulesHeader;
+    safe fn Bun__AOT__whatThisBuildLeavesOut() -> u32;
 }
 
 const OFFSET_OF_IMAGE_FORM_IN_DESCRIPTION: usize = 26;
@@ -314,6 +373,11 @@ fn image_form_of(template: &Template) -> Option<TargetImageForm> {
         1 => Some(TargetImageForm::PositionIndependent),
         _ => None,
     }
+}
+
+fn left_out_of(template: &Template) -> LeftOutOfBuild {
+    let record = template.description.record(RuntimeDescription::LEFT_OUT);
+    record.and_then(LeftOutOfBuild::read).unwrap_or_default()
 }
 
 fn check_template(path: &[u8]) -> Result<Target, CompileFailure> {
@@ -341,6 +405,7 @@ fn check_template(path: &[u8]) -> Result<Target, CompileFailure> {
         None => Ok(Target {
             identity: ExecutableIdentity(template.identity),
             image_form: image_form_of(&template),
+            left_out: left_out_of(&template),
         }),
     }
 }
@@ -384,11 +449,19 @@ fn build_program(
     target: Target,
     module_prefix: &[u8],
 ) -> Result<AotBuild, Box<AotBuildFailure>> {
+    let options = AotOptions {
+        omits_foreign_calls: !target.left_out.has_foreign_calls(),
+        code_generation_from_strings: match target.left_out.has_code_from_strings() {
+            true => request.options.code_generation_from_strings,
+            false => CodeGenerationFromStrings::Strict,
+        },
+        ..request.options.clone()
+    };
     let built = bun_bundler::aot::build(AotBuildRequest {
         transpiler: bundler.transpiler,
         entry_points: request.entry_points,
         assets: request.executable.assets,
-        options: request.options,
+        options: &options,
         executable_identity: target.identity,
         image_form: target.image_form,
         module_prefix,
@@ -401,7 +474,8 @@ fn build_program(
         typescript_libs: bun_sema_driver::Libs::Bundled(crate::cli::typescript_libs::BUNDLED),
     });
     built.map_err(|failure| {
-        if !request.log.has_errors() {
+        // Whoever is told which entry points to leave out builds again without them, and may have nothing to say about it.
+        if !request.log.has_errors() && failure.refused_entry_points.is_none() {
             request
                 .log
                 .add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
@@ -651,6 +725,37 @@ pub(super) fn asset_output_file(dest: Vec<u8>, bytes: Vec<u8>) -> OutputFile {
         side: Some(options::Side::Client),
         ..OutputFile::zero_value()
     }
+}
+
+/// Where the root directory of the build lies, seen from the working directory: below it, the same folder, or above it.
+/// An executable that is shipped tells nobody the folders of the machine that built it, so a root that lies elsewhere is not written down.
+fn find_root_below_working_directory(root_directory: &[u8]) -> Option<Vec<u8>> {
+    let working_directory = bun_sys::getcwd_alloc().ok()?;
+    let root = resolve_path::relative(
+        working_directory.as_bytes(),
+        trim_trailing_separators(root_directory),
+    );
+    let mut names = root.split(|&byte| bun_paths::is_sep_native(byte));
+    let goes_up = names.next() == Some(b"..");
+    (!goes_up || names.all(|name| name == b"..")).then(|| root.to_vec())
+}
+
+/// Where the root directory lies, seen from the folder of the executable: the folders of an installed program keep their places. Nothing is recorded
+/// where the two have no folder in common but the root of the disk, or where the way there names more than two folders: that tells where the program was built.
+fn find_root_from_executable(root_directory: &[u8], outfile: &[u8]) -> Option<Vec<u8>> {
+    let working_directory = bun_sys::getcwd_alloc().ok()?;
+    let outfile =
+        resolve_path::join_abs_string::<platform::Auto>(working_directory.as_bytes(), &[outfile]);
+    let folder = resolve_path::dirname::<platform::Auto>(outfile);
+    let root = resolve_path::relative(folder, trim_trailing_separators(root_directory));
+    if bun_paths::is_absolute(root) {
+        return None;
+    }
+    let is_sep = |&byte: &u8| bun_paths::is_sep_native(byte);
+    let ups = root.split(is_sep).take_while(|name| *name == b"..").count();
+    let names = root.split(is_sep).filter(|name| !name.is_empty()).count() - ups;
+    let depth = folder.split(is_sep).filter(|name| !name.is_empty()).count();
+    (ups < depth && names <= 2).then(|| root.to_vec())
 }
 
 pub(super) fn pair_entry_points<'b>(

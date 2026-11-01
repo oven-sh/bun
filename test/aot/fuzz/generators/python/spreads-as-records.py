@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""spreads-as-records.py <seed>: random strict TypeScript programs about object literals with spreads that are held as record types:
-records, narrower and wider records, dictionaries made in many ways, odd sources (null, arrays, strings, accessors, symbols, frozen, dictionary mode, many keys, index keys,
-__proto__), nested merges, and what is done to the result and to the sources afterwards. Everything is printed by typed readers and by a reader that knows nothing."""
+"""spreads-as-records.py <seed>: Random strict TypeScript programs about object literals with spreads that are typed as
+records: records, narrower and wider records, dictionaries created in many ways, unusual sources (null, arrays,
+strings ..).
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

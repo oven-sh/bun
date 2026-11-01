@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 /// Disallow using the unsafe built-in Function type.
 pub struct NoUnsafeFunctionType;
 
-const BANNED_FUNCTION_TYPE: Message = Message::new(
+const BANNED_FUNCTION_TYPE: &Message = &Message::new(
     "bannedFunctionType",
     "The `Function` type accepts any function-like value.\nPrefer explicitly defining any function parameters and return type.",
 );

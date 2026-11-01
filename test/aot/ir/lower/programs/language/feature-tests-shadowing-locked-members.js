@@ -116,7 +116,7 @@ attempt("reading them before the delete", () => [Number.prototype.clz, Promise.a
 // CHECK-NEXT: Return v27
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsNamedByComputedKey] captures=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsNamedByComputedKey] captures=[{type=undefined|null|[[L_2]] flags=[IsExpected] variableName="made"}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -2260,7 +2260,16 @@ impl Destination<'_> {
 /// All task-local records: atoms, lists of index components, mappers, signatures, types. A field of
 /// `Task`. No other task sees it. A record that the task publishes is created in the shared store
 /// instead, and these are dropped with the task.
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub struct OwnStore<'s> {
+    types: Own<'s, TypeRecord<'s>>,
+    /// The files that the task has visited and that nothing imports, indexed by `FileId`. No other
+    /// task can reference a node or a symbol of such a file. If it's empty, nothing is bound.
+    unimported_files: Bits,
+    /// Files the task has visited, indexed by `FileId`.
+    visited_files: Bits,
     /// Arena of the thread that runs the task. Records and their lists are allocated from it, and
     /// the lists may be published.
     arena: &'s Arena,
@@ -2268,26 +2277,20 @@ pub struct OwnStore<'s> {
     components: Own<'s, List<'s, IndexComponent>>,
     mappers: Own<'s, MapperRecord<'s>>,
     sigs: Own<'s, SigData<'s>>,
-    types: Own<'s, TypeRecord<'s>>,
-    /// The files that the task has visited and that nothing imports, indexed by `FileId`. No other
-    /// task can reference a node or a symbol of such a file. If it's empty, nothing is bound.
-    unimported_files: Bits,
+    summaries: TaskRecords<'s, Summary>,
+    /// Ids the task has reserved but not used yet, by pool (`ID_POOLS`). Only used with
+    /// `Sharing::Publishes`.
+    ids: [Cell<Placeholders<'s>>; ID_POOLS],
+    /// By kind, the records this task published that reference a node or symbol in one of `visited_files`, directly or
+    /// through another record. Indexed by id.
+    of_visited_files: [RefCell<Bits>; 5],
+    /// Number of ids the task has used for published records, by kind.
+    published: [Cell<u32>; 5],
+    sharing: Sharing,
     /// See `Types::is_unresolved_name`.
     has_unresolved_names: Cell<bool>,
     /// See `Types::as_first_request`.
     first_request: Cell<FirstRequest>,
-    sharing: Sharing,
-    /// Ids the task has reserved but not used yet, by pool (`ID_POOLS`). Only used with
-    /// `Sharing::Publishes`.
-    ids: [Cell<Placeholders<'s>>; ID_POOLS],
-    /// Number of ids the task has used for published records, by kind.
-    published: [Cell<u32>; 5],
-    /// Files the task has visited, indexed by `FileId`.
-    visited_files: Bits,
-    /// By kind, the records this task published that reference a node or symbol in one of `visited_files`, directly or
-    /// through another record. Indexed by id.
-    of_visited_files: [RefCell<Bits>; 5],
-    summaries: TaskRecords<'s, Summary>,
 }
 
 impl<'s> OwnStore<'s> {

@@ -3543,6 +3543,7 @@ private:
 
     JSValue readKeyObject()
     {
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         VM& vm = m_globalObject->vm();
         auto* globalObject = defaultGlobalObject(m_globalObject);
 

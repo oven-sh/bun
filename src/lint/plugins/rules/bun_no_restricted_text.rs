@@ -30,8 +30,8 @@ const TEXT_KINDS: [(&str, TextKind); 5] = [
     ("regularExpressions", TextKind::RegularExpressions),
 ];
 
-const RESTRICTED: Message = Message::new("restricted", "`{{text}}` matches the restricted pattern `{{pattern}}`.");
-const RESTRICTED_WITH_MESSAGE: Message = Message::new("restrictedWithMessage", "{{message}}");
+const RESTRICTED: &Message = &Message::new("restricted", "`{{text}}` matches the restricted pattern `{{pattern}}`.");
+const RESTRICTED_WITH_MESSAGE: &Message = &Message::new("restrictedWithMessage", "{{message}}");
 
 /// Compiles the regular expression of one `patterns` element.
 fn regex_of(pattern: &Object) -> Result<Regex, Vec<u8>> {

@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Disallow useless fallback when spreading in object literals.
 pub struct NoUselessFallbackInSpread;
 
-const NO_USELESS_FALLBACK: Message = Message::new("", "Empty fallbacks in spreads are unnecessary");
+const NO_USELESS_FALLBACK: &Message = &Message::new("", "Empty fallbacks in spreads are unnecessary");
 
 fn can_fix(left: Expr) -> bool {
     let mut at = left;

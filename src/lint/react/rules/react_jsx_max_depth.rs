@@ -12,11 +12,11 @@ pub struct JsxMaxDepth {
     max: u32,
 }
 
-const WRONG_DEPTH: Message = Message::new(
+const WRONG_DEPTH: &Message = &Message::new(
     "wrongDepth",
     "Expected the depth of nested jsx elements to be <= {{needed}}, but found {{found}}.",
 );
-const JSX_MAX_DEPTH: Message = Message::new(
+const JSX_MAX_DEPTH: &Message = &Message::new(
     "",
     "JSX nesting depth of {{depth}} exceeds the configured maximum of {{max}}",
 );

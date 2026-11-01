@@ -6,7 +6,7 @@ use bun_lint_oxlint::ast_util::static_string;
 /// Disallow loading a native addon while the module is evaluated.
 pub struct NoEagerNativeAddon;
 
-const EAGER_ADDON: Message = Message::new(
+const EAGER_ADDON: &Message = &Message::new(
     "eagerAddon",
     "The native addon `{{specifier}}` loads as soon as the module is imported. Load it inside the function that needs it.",
 );

@@ -343,7 +343,7 @@ function f6 name="masked" module=m0 position=1296 flags=[IsChecked, HasExplicitN
 function f7 module=m0 position=1378 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number site=w52}] results=[{type=number site=w53}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
 function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f9]
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f10 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f10 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -354,7 +354,7 @@ function f10 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v7 = CreateIteratorResult v4, v6
     Return v7
 }
-function f11 name="from" module=m2 position=1395 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=49 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f11 name="from" module=m2 position=1395 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=TypedArrayConstructorFrom thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|function, v1: anything, v2: anything, v3: anything):
     v4 = Undefined
     v5 = IsConstructor v0
@@ -486,31 +486,31 @@ function f11 name="from" module=m2 position=1395 kind=Method role=Library flags=
     v114 = CatchException
     Rethrow v114
 }
-function f12 module=m2 position=2867 role=Library flags=[IsChecked] enclosingRuntimeFunction=49 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=49 function=f11
-runtimefunction id=69 function=f10
+function f12 module=m2 position=2867 role=Library flags=[IsChecked] enclosingRuntimeFunction=TypedArrayConstructorFrom captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=TypedArrayConstructorFrom function=f11
+runtimefunction id=ArrayIteratorPrototypeNext function=f10
 # -- generated: f0 two three bytes singles masked
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 50, patchpoints: 41
+# CHECK-NEXT: instructions: 44, patchpoints: 40
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="two"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 105
-# CHECK-NEXT: end of function f14
+# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 94
+# CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="three"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 136, patchpoints: 58, rare instructions: 133
-# CHECK-NEXT: end of function f15
+# CHECK-NEXT: instructions: 134, patchpoints: 58, rare instructions: 119
+# CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="bytes"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 105
-# CHECK-NEXT: end of function f16
+# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 94
+# CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="singles"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 113, patchpoints: 24, rare instructions: 221
-# CHECK-NEXT: end of function f17
+# CHECK-NEXT: instructions: 114, patchpoints: 24, rare instructions: 219
+# CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="masked"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 152, patchpoints: 41, rare instructions: 104
-# CHECK-NEXT: end of function f18
+# CHECK-NEXT: instructions: 152, patchpoints: 40, rare instructions: 103
+# CHECK-NEXT: end of function f6

@@ -6,7 +6,7 @@ pub struct NoLossOfPrecision {
     ignore_decimals: bool,
 }
 
-const NO_LOSS_OF_PRECISION: Message = Message::new(
+const NO_LOSS_OF_PRECISION: &Message = &Message::new(
     "noLossOfPrecision",
     "This number literal will lose precision at runtime.",
 );

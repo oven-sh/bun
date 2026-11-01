@@ -9,11 +9,11 @@ use smallvec::{SmallVec, smallvec};
 /// Disallows mutating a variable immediately after initialization.
 pub struct NoImmediateMutation;
 
-const ARRAY_MUTATION: Message = Message::new("", "Do not call `{{method}}()` immediately after initializing an array.");
-const OBJECT_ASSIGN: Message = Message::new("", "Do not call `Object.assign()` immediately after initializing an object.");
-const OBJECT_PROPERTY: Message = Message::new("", "Do not assign a property immediately after initializing an object literal.");
-const SET_ADD: Message = Message::new("", "Do not call `.add()` immediately after initializing a Set.");
-const MAP_SET: Message = Message::new("", "Do not call `.set()` immediately after initializing a Map.");
+const ARRAY_MUTATION: &Message = &Message::new("", "Do not call `{{method}}()` immediately after initializing an array.");
+const OBJECT_ASSIGN: &Message = &Message::new("", "Do not call `Object.assign()` immediately after initializing an object.");
+const OBJECT_PROPERTY: &Message = &Message::new("", "Do not assign a property immediately after initializing an object literal.");
+const SET_ADD: &Message = &Message::new("", "Do not call `.add()` immediately after initializing a Set.");
+const MAP_SET: &Message = &Message::new("", "Do not call `.set()` immediately after initializing a Map.");
 
 const METHODS: [&str; 5] = ["assign", "push", "unshift", "add", "set"];
 
@@ -69,7 +69,7 @@ impl Rule for NoImmediateMutation {
 }
 
 struct Mutation<'a> {
-    message: Message,
+    message: &'static Message,
     method: Option<Name<'a>>,
 }
 

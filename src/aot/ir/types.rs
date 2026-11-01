@@ -268,6 +268,11 @@ impl TypeTable {
     pub const ANYTHING_OR_ABSENT: TypeId = TypeId::from_word(16);
     pub const WELL_KNOWN_COUNT: usize = 17;
 
+    /// For a table that waits with many others: nothing is added to it or looked up in it anymore.
+    pub fn forget_ids(&mut self) {
+        self.type_ids = Default::default();
+    }
+
     /// For a table that waits with many others: a type that reads the same in several of them is held once.
     pub fn share_types(&mut self) {
         let TypeList::Own(types) = &mut self.types else {

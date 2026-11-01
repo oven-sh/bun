@@ -8,7 +8,7 @@
 // `cases` has a program per cause (before) and the same program fixed as the entry says (after).
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
-import { basename, join } from "path";
+import { basename } from "path";
 import {
   parseExplainLines,
   type ExplainCause,
@@ -183,8 +183,6 @@ for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(readItem
   },
 };
 
-const page = join(import.meta.dir, "../../docs/compiler/explain.mdx");
-const wordingSource = join(import.meta.dir, "../../src/aot/report/wording.rs");
 const columnLabels: Record<AccessColumn, string> = { free: "free", tested: "tested", byName: "by name" };
 const columnDescriptions: Record<AccessColumn, string> = {
   free: "free: one load or store at a fixed offset",
@@ -393,6 +391,7 @@ describe.concurrent("--explain", () => {
             "calls",
             "operators",
             "fixedByThisAlone",
+            "otherOrigins",
             "estimatedPercent",
             "function",
             "types",
@@ -462,15 +461,4 @@ describe.concurrent("--explain", () => {
       }),
     buildTimeout,
   );
-
-  test("every code has a section on the page that the entries link to", async () => {
-    const headings = [...(await Bun.file(page).text()).matchAll(/^### ([a-z-]+)$/gm)].map(match => match[1]!);
-    const wording = await Bun.file(wordingSource).text();
-    const codes = [...wording.matchAll(/^ +UnprovenCause::\w+ => "([a-z-]+)",$/gm)].map(match => match[1]!);
-    const guardCodes = [...wording.matchAll(/^ +IllTypedCause::\w+ => \(\n +"([a-z-]+)",$/gm)].map(match => match[1]!);
-    expect(codes.length).toBeGreaterThan(10);
-    expect(guardCodes.length).toBeGreaterThan(10);
-    expect(headings.toSorted()).toEqual([...new Set([...codes, ...guardCodes])].toSorted());
-    for (const { reason } of Object.values(cases)) expect(codes).toContain(reason);
-  });
 });

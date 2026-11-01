@@ -6,11 +6,11 @@ use bun_lint::utils::ts_utils::{is_start_of_expression_statement, needs_precedin
 /// Disallow using the `delete` operator on array values.
 pub struct NoArrayDelete;
 
-const NO_ARRAY_DELETE: Message = Message::new(
+const NO_ARRAY_DELETE: &Message = &Message::new(
     "noArrayDelete",
     "Using the `delete` operator with an array expression is unsafe.",
 );
-const USE_SPLICE: Message = Message::new("useSplice", "Use `array.splice()` instead.");
+const USE_SPLICE: &Message = &Message::new("useSplice", "Use `array.splice()` instead.");
 
 fn is_underlying_type_array(ty: Type) -> bool {
     let predicate = |t: Type| t.is_array_type() || t.is_tuple_type();

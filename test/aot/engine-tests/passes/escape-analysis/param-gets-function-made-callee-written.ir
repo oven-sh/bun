@@ -621,42 +621,69 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
-# CHECK-NEXT: Int64 b@17 = ArgumentReg(%r13)
-# CHECK-NEXT: Void b@26 = Branch(b@18, Terminal, v3:TypeTest)
+# CHECK-NEXT: Int64 b@39 = Const64(2147483647, v10:TypeTest)
+# CHECK-NEXT: Void b@30 = Branch(b@18, Terminal, v3:TypeTest)
 # CHECK-NEXT: Successors: Then:#5, Else:Unlikely:#2
 # CHECK-NEXT: BB#5: ; frequency = 0.941176
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Double b@29 = Load(b@18, offset = 8, ControlDependent|Reads:EnvironmentFields.11, v7:GetEnvironmentField)
-# CHECK-NEXT: Double b@23 = Load(b@17, offset = -56, ReadsImmutable, v10:Add)
-# CHECK-NEXT: Double b@31 = Add(b@29, b@23, v10:Add)
-# CHECK-NEXT: Void b@32 = Store(b@31, b@18, offset = 8, ControlDependent|Writes:EnvironmentFields.11, v11:PutEnvironmentField)
-# CHECK-NEXT: Void b@33 = Jump(Terminal)
+# CHECK-NEXT: Int64 b@33 = Load(b@18, offset = 8, ControlDependent|Reads:EnvironmentFields.11, v7:GetEnvironmentField)
+# CHECK-NEXT: Int32 b@40 = LessEqual(b@33, $2147483647(b@39), v10:TypeTest)
+# CHECK-NEXT: Int64 b@34 = Const64(1, v9:Integer)
+# CHECK-NEXT: Void b@41 = Branch(b@40, Terminal, v10:TypeTest)
+# CHECK-NEXT: Successors: Then:#6, Else:Rare:#7
+# CHECK-NEXT: BB#6: ; frequency = 0.940257
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Int64 b@42 = Add(b@33, $1(b@34), v34:Add)
+# CHECK-NEXT: Void b@43 = Store(b@42, b@18, offset = 8, ControlDependent|Writes:EnvironmentFields.11, v35:PutEnvironmentField)
+# CHECK-NEXT: Void b@44 = Jump(Terminal)
 # CHECK-NEXT: Successors: #2
 # CHECK-NEXT: BB#2: ; frequency = 1.000000
-# CHECK-NEXT: Predecessors: #0, #5
-# CHECK-NEXT: Double b@22 = ConstDouble(0.000000e+00(0), v2:Integer)
+# CHECK-NEXT: Predecessors: #0, #7, #6
+# CHECK-NEXT: Double b@76 = ConstDouble(0.000000e+00(0), v31:Add)
 # CHECK-NEXT: Double b@19 = ArgumentReg(%xmm0)
-# CHECK-NEXT: Int32 b@36 = GreaterThan(b@19, $0.000000(b@22), v13:Greater)
-# CHECK-NEXT: Void b@37 = Branch(b@36, Terminal, v13:Greater)
+# CHECK-NEXT: Int32 b@52 = GreaterThan(b@19, $0.000000(b@76), v12:Greater)
+# CHECK-NEXT: Void b@53 = Branch(b@52, Terminal, v12:Greater)
 # CHECK-NEXT: Successors: Then:#3, Else:#4
-# CHECK-NEXT: BB#3: ; frequency = 0.500000
+# CHECK-NEXT: BB#3: ; frequency = 0.800000
 # CHECK-NEXT: Predecessors: #2
-# CHECK-NEXT: Double b@27 = Load(b@17, offset = -56, ReadsImmutable, v15:Sub)
-# CHECK-NEXT: Double b@38 = Sub(b@19, b@27, v15:Sub)
-# CHECK-NEXT: Int64 b@39 = SlotBase(stack0, v16:NewObject)
-# CHECK-NEXT: Int64 b@20 = Const64(0, v2:Integer)
-# CHECK-NEXT: Void b@41 = Store($0(b@20), b@39, offset = 8, ControlDependent|Writes:EnvironmentFields.11, v16:NewObject)
-# CHECK-NEXT: Double b@42 = Patchpoint(b@38:Register(%xmm0), b@39:Register(%rdi), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:{collectorState, EnvironmentFields.11, AOTClosure_captures, AOTSlimClosure_captures, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:Top, v20:CallDirect)
-# CHECK-NEXT: Double b@43 = Load(b@39, offset = 8, ControlDependent|Reads:EnvironmentFields.11, v22:GetEnvironmentField)
-# CHECK-NEXT: Int64 b@11 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v23:Integer)
-# CHECK-NEXT: Double b@2 = Load(b@11, ControlDependent|Reads:Top, v23:Integer)
-# CHECK-NEXT: Double b@45 = Mul(b@43, b@2, v24:Mul)
-# CHECK-NEXT: Double b@46 = Add(b@45, $0.000000(b@22), v25:Add)
-# CHECK-NEXT: Double b@47 = Add(b@42, b@46, v26:Add)
-# CHECK-NEXT: Void b@48 = Return(b@47, Terminal)
-# CHECK-NEXT: BB#4: ; frequency = 0.500000
+# CHECK-NEXT: Int64 b@17 = ArgumentReg(%r13)
+# CHECK-NEXT: Double b@31 = Load(b@17, offset = -56, ReadsImmutable, v14:Sub)
+# CHECK-NEXT: Double b@55 = Sub(b@19, b@31, v14:Sub)
+# CHECK-NEXT: Int64 b@56 = SlotBase(stack0, v15:NewObject)
+# CHECK-NEXT: Int64 b@2 = Const64(0)
+# CHECK-NEXT: Void b@58 = Store($0(b@2), b@56, offset = 8, ControlDependent|Writes:EnvironmentFields.11, v15:NewObject)
+# CHECK-NEXT: Double b@59 = Patchpoint(b@55:Register(%xmm0), b@56:Register(%rdi), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, EnvironmentFields.11, AOTClosure_captures, AOTSlimClosure_captures, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:Top, v19:CallDirect)
+# CHECK-NEXT: Int64 b@60 = Load(b@56, offset = 8, ControlDependent|Reads:EnvironmentFields.11, v21:GetEnvironmentField)
+# CHECK-NEXT: Int32 b@65 = LessEqual(b@60, $2147483647(b@39), v22:TypeTest)
+# CHECK-NEXT: Void b@66 = Branch(b@65, Terminal, v22:TypeTest)
+# CHECK-NEXT: Successors: Then:#8, Else:Rare:#9
+# CHECK-NEXT: BB#8: ; frequency = 0.799219
+# CHECK-NEXT: Predecessors: #3
+# CHECK-NEXT: Int64 b@67 = Const64(10, v24:Integer)
+# CHECK-NEXT: Int64 b@68 = Mul(b@60, $10(b@67), v25:Mul)
+# CHECK-NEXT: Double b@70 = IToD(b@68, v27:Add)
+# CHECK-NEXT: Double b@71 = Add(b@59, b@70, v27:Add)
+# CHECK-NEXT: Void b@72 = Return(b@71, Terminal)
+# CHECK-NEXT: BB#9: ; frequency = 0.000781
+# CHECK-NEXT: Predecessors: #3
+# CHECK-NEXT: Double b@73 = IToD(b@60, v30:Mul)
+# CHECK-NEXT: Int64 b@29 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v24:Integer)
+# CHECK-NEXT: Double b@23 = Load(b@29, ControlDependent|Reads:Top, v24:Integer)
+# CHECK-NEXT: Double b@75 = Mul(b@73, b@23, v30:Mul)
+# CHECK-NEXT: Double b@77 = Add(b@75, $0.000000(b@76), v31:Add)
+# CHECK-NEXT: Double b@78 = Add(b@59, b@77, v32:Add)
+# CHECK-NEXT: Void b@79 = Return(b@78, Terminal)
+# CHECK-NEXT: BB#4: ; frequency = 0.200000
 # CHECK-NEXT: Predecessors: #2
-# CHECK-NEXT: Void b@49 = Return($0.000000(b@22), Terminal)
+# CHECK-NEXT: Void b@80 = Return($0.000000(b@76), Terminal)
+# CHECK-NEXT: BB#7: ; frequency = 0.000919
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Int64 b@45 = Add(b@33, $1(b@34), v37:Add)
+# CHECK-NEXT: Double b@46 = IToD(b@45, v37:Add)
+# CHECK-NEXT: Int64 b@47 = Patchpoint(b@46:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v39:PutEnvironmentField)
+# CHECK-NEXT: Void b@48 = Store(b@47, b@18, offset = 8, ControlDependent|Writes:EnvironmentFields.11, v39:PutEnvironmentField)
+# CHECK-NEXT: Void b@49 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
 # CHECK-NEXT: Stack slots:
 # CHECK-NEXT: stack0: byteSize = 16, offsetFromFP = 0, kind = Locked, dead at suspensions
 # CHECK-NEXT: end of function f9

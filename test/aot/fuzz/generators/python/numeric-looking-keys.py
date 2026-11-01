@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""numeric-looking-keys.py <seed> [<functions>]: THE KEY IS A NUMBER, A STRING THAT LOOKS LIKE ONE, OR EITHER, and the receiver is an array, a string, a typed array, a dictionary (Record<string, V>, Record<number, V>), a record with names like numbers, an arguments-like object, a Map (where 1 and "1" differ, and -0 is 0). What must hold: a[1] is a["1"] and is not a["01"] | a["1.0"] | a[" 1"] | a["1e0"]; a[-0] is a["0"] and not a["-0"]; a[1e21] is a["1e+21"]; a[0.1 + 0.2] is a["0.30000000000000004"]; 4294967294 is an index and 4294967295 a name. Read, store, `in`, hasOwn, delete, by sites that see one kind of key while warm and another afterwards. Everything seen is written down. Every line as plain Bun's."""
+"""numeric-looking-keys.py <seed> [<functions>]: The key is a number, a numeric-looking string, or either, and the
+receiver is an array, a string, a typed array, a dictionary (Record<string, V>, Record<number, V>), or a record with
+named members.
+"""
 import random, sys
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 50
 R = random.Random(seed)

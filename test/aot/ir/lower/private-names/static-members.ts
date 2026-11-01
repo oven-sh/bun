@@ -5,6 +5,12 @@
 // CHECK: [[admitted]]():
 // CHECK-NEXT: = GetModuleVariable
 // CHECK: [[rejected]]() frequency=Unlikely:
+// CHECK-NEXT: [[isNullish]] = TypeTest [[object]] testedType=undefined|null
+// CHECK-NEXT: Branch [[isNullish]] -> taken [[nullish]](| 0), notTaken [[other]](| 0)
+// CHECK-NEXT: [[nullish]]([[nothing]]):
+// CHECK-NEXT: = PropGet [[nothing]] key="#x"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: [[other]]({{*}}):
 // CHECK-NEXT: = NewRuntimeError runtimeError=InvalidPrivateRead
 
 // RUN(METHOD): lower

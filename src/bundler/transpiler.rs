@@ -159,7 +159,7 @@ impl<'a> Transpiler<'a> {
     }
 
     /// Reborrow the `DotEnv::Loader`. Returned lifetime is decoupled from
-    /// `&self` so call sites in `configure_defines` / `run_env_loader` can
+    /// `&self` so call sites in `configure_defines` / `load_env` can
     /// hold it across disjoint `&mut self.options` / `&mut self.resolver`
     /// borrows.
     #[inline]
@@ -625,6 +625,14 @@ impl<'a> Transpiler<'a> {
     /// Load `.env` files into the env loader according to
     /// `options.env.behavior`.
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> crate::Result<()> {
+        let loaded = self.load_env(skip_default_env);
+        // `load_env` also returns early with the process env loaded: an error, or a cwd that it cannot list.
+        let node_path = self.env().get(b"NODE_PATH").unwrap_or(b"");
+        self.resolver.set_node_path(node_path);
+        loaded
+    }
+
+    fn load_env(&mut self, skip_default_env: bool) -> crate::Result<()> {
         use bun_options_types::schema::api::DotEnvBehavior;
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call.
@@ -1162,6 +1170,8 @@ impl<'a> Transpiler<'a> {
                 }
             },
         };
+        let env_loader_nn = core::ptr::NonNull::new(env_loader)
+            .expect("Transpiler::init_in_place: env loader is non-null");
 
         if dot_env::instance().is_none() {
             dot_env::set_instance(env_loader);
@@ -1217,6 +1227,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!((*p).resolver).write(Resolver::init1(
                 log_nn,
                 fs,
+                env_loader_nn,
                 resolver_opts,
             ));
             core::ptr::addr_of_mut!((*p).output_files).write(Vec::new());

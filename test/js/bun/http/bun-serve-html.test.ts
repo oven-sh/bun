@@ -740,9 +740,13 @@ test("serve html whose file is deleted before its first bundle", async () => {
 });
 
 /** Runs the `serve.ts` of a fixture directory to completion. */
-async function runServeFixture(dir: { toString(): string }, env: Record<string, string> = {}) {
+async function runServeFixture(
+  dir: { toString(): string },
+  env: Record<string, string | undefined> = {},
+  args: string[] = [],
+) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "serve.ts"],
+    cmd: [bunExe(), ...args, "serve.ts"],
     env: { ...bunEnv, ...env },
     cwd: String(dir),
     stdout: "pipe",
@@ -1412,6 +1416,102 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
   expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
   expect(stdout, stderr).toBe(JSON.stringify({ status: 500 }));
   expect(exitCode).toBe(0);
+});
+
+// The dev server bundles with its own transpilers. Their resolvers read NODE_PATH, as the production bundle does.
+// A `require` in a `try` block that does not resolve is left to throw at run time: it is bundled when it resolves.
+describe("NODE_PATH", () => {
+  const page = `<!DOCTYPE html><html><head></head><body><script type="module" src="./app.ts"></script></body></html>`;
+  // Fetches the page and the script that the page names.
+  const fetchScript = /*ts*/ `
+    const page = await fetch(server.url);
+    const scriptSrc = (await page.text()).match(/<script[^>]*\\ssrc="([^"]+)"/)?.[1];
+    const script = scriptSrc ? await (await fetch(new URL(scriptSrc, server.url))).text() : "";
+  `;
+
+  test.concurrent.each([
+    { development: true, from: "the process" },
+    { development: true, from: ".env" },
+    { development: false, from: "the process" },
+    { development: false, from: ".env" },
+  ])("resolves packages from the NODE_PATH of $from with development: $development", async ({ development, from }) => {
+    using dir = tempDir("bun-serve-html-node-path", {
+      "vendor/dep/index.ts": `export const dep = "import from NODE_PATH";\n`,
+      "vendor/optional-dep/index.ts": `export const optional = "handled require from NODE_PATH";\n`,
+      "vendor/macro-dep/index.ts": `export function value() {\n  return "macro from NODE_PATH";\n}\n`,
+      "index.html": page,
+      "app.ts": `
+        import { dep } from "dep";
+        import { value } from "macro-dep" with { type: "macro" };
+        let optional;
+        try {
+          optional = require("optional-dep").optional;
+        } catch {}
+        console.log(dep, optional, value());
+      `,
+      "serve.ts": /*ts*/ `
+        import html from "./index.html";
+
+        using server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
+        ${fetchScript}
+        console.log(
+          JSON.stringify({
+            status: page.status,
+            import: script.includes("import from NODE_PATH"),
+            handledRequire: script.includes("handled require from NODE_PATH"),
+            macro: script.includes("macro from NODE_PATH"),
+          }),
+        );
+      `,
+    });
+    const nodePath = join(String(dir), "vendor");
+    if (from === ".env") await Bun.write(join(String(dir), ".env"), `NODE_PATH=${nodePath}\n`);
+    const { stdout, stderr, exitCode } = await runServeFixture(dir, {
+      NODE_PATH: from === ".env" ? undefined : nodePath,
+    });
+    // A debug build also prints a line for the macro call.
+    expect({ stdout: stdout.split(/\r?\n/).at(-1), exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ status: 200, import: true, handledRequire: true, macro: true }),
+      exitCode: 0,
+    });
+  });
+
+  // A resolver has the NODE_PATH that its own transpiler loaded. `[serve.static] env` makes the transpiler of the
+  // client bundle load `.env`, into the loader that it shares with the VM. The VM skipped `.env`.
+  test.concurrent("the .env that [serve.static] env loads gives NODE_PATH to the client bundle only", async () => {
+    using dir = tempDir("bun-serve-html-node-path-env", {
+      "vendor/node-path-only-dep/index.ts": `export const dep = "import from NODE_PATH";\n`,
+      "bunfig.toml": `[serve.static]\nenv = "PUBLIC_*"\n`,
+      "index.html": page,
+      "app.ts": `import { dep } from "node-path-only-dep";\nconsole.log(dep);\n`,
+      "serve.ts": /*ts*/ `
+        import html from "./index.html";
+
+        const resolves = () => {
+          try {
+            require.resolve("node-path-only-dep");
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        const before = resolves();
+        using server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        ${fetchScript}
+        const client = script.includes("import from NODE_PATH");
+        console.log(JSON.stringify({ before, status: page.status, client, after: resolves() }));
+      `,
+    });
+    await Bun.write(join(String(dir), ".env"), `NODE_PATH=${join(String(dir), "vendor")}\n`);
+    const { stdout, stderr, exitCode } = await runServeFixture(dir, { NODE_PATH: undefined }, [
+      "--no-install",
+      "--no-env-file",
+    ]);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ before: false, status: 200, client: true, after: false }),
+      exitCode: 0,
+    });
+  });
 });
 
 // A file is marked stale as soon as one of its imports fails to resolve, before the rebuild ends.

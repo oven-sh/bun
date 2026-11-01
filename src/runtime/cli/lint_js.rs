@@ -237,7 +237,6 @@ fn start_vm() -> Result<(), Vec<u8>> {
     let vm = VirtualMachine::get().as_mut();
     // Transpile on this thread. It would only wait for the result anyway.
     vm.transpiler_store.enabled = false;
-    vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
     vm.transpiler.options.env.behavior =
         bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
     // Same as for config files: see `run_script` in `lint_command.rs`.

@@ -111,7 +111,6 @@ impl ReplCommand {
             .unwrap_or(OfflineMode::Online);
         b.resolver.opts.install_preference = offline;
         b.options.install_preference = offline;
-        b.resolver.env_loader = NonNull::new(b.env);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code
 

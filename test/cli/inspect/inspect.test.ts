@@ -731,7 +731,7 @@ test("LifecycleReporter.error has a position for each frame it lists", async () 
 
 // The console of an inspector makes the stack of a logged error into text before bun prints
 // the error. The debug adapter of the VS Code extension sends Console.enable.
-test.each([[[]], [["Console.enable"]]])(
+test.concurrent.each([[[]], [["Console.enable"]]])(
   "console.error prints every frame of an error after an inspector sent %j",
   async methods => {
     using dir = tempDir("inspect-console-error", {
@@ -775,7 +775,11 @@ test.each([[[]], [["Console.enable"]]])(
     const webSocket = new WebSocket(url);
     try {
       webSocket.addEventListener("open", () => opened.resolve());
-      webSocket.addEventListener("close", () => opened.reject(new Error("the inspector closed the socket")));
+      webSocket.addEventListener("close", () => {
+        // With no inspector the program waits and its stderr does not end.
+        child.kill();
+        opened.reject(new Error("the inspector closed the socket"));
+      });
       webSocket.addEventListener("error", () => opened.reject(new Error("the inspector socket failed")));
       await opened.promise;
 
@@ -794,7 +798,7 @@ test.each([[[]], [["Console.enable"]]])(
         .map(line => line.trim());
       expect(frames).toEqual([
         // The column is of `new` when the frames are JSC's, and of `Error` when they are read from the stack.
-        expect.stringMatching(/^at inner \(logs\.mjs:2:(17|21)\)$/),
+        `at inner (logs.mjs:2:${methods.length ? 21 : 17})`,
         "at outer (logs.mjs:5:3)",
         "at logs.mjs:10:1",
       ]);

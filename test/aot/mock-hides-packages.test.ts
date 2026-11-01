@@ -11,6 +11,14 @@ import "./main.mjs";
 vi.mock("./${lib}", () => ({ v: "mock v" }));
 test("t", () => {});
 `;
+const inTest = (mocked: string, body: string, exports = `{ v: "mock v" }`) => `import { mock, test } from "bun:test";
+test("t", async () => {
+  mock.module("./${mocked}", () => (${exports}));
+  ${body}
+});
+`;
+const list = (name: string) =>
+  `const ns = await import("${name}");\n  console.log("SEEN main mock v", Object.keys(ns).join(), ns.v, ns.d, ns.extra);`;
 const lib = `import d from "driver";\nconsole.log("SEEN lib runs");\nexport let v = "real v" + d.d;\n`;
 const driver = (body: string, type = "commonjs") => ({
   "node_modules/driver/package.json": `{ "name": "driver", "main": "./index.js", "type": "${type}" }`,
@@ -65,6 +73,65 @@ test("t", async () => {
     "b.test.mjs": `import { test } from "bun:test";\nimport { v } from "./lib.mjs";\ntest("t", () => console.log("SEEN b", v));\n`,
     ...driver(`exports.d = 1;`),
   },
+  // The mock has ended, and the module runs for an importer that ran while it stood. Nothing has loaded the package by then.
+  "the next test file imports only a user of the module": {
+    "main.mjs": `import { v } from "./lib.mjs";\nexport const read = () => v;\n`,
+    "a.test.mjs": inTest("lib.mjs", `console.log("SEEN main", (await import("./main.mjs")).read());`),
+    "b.test.mjs": `import { test } from "bun:test";\nimport { read } from "./main.mjs";\ntest("t", () => console.log("SEEN b", read()));\n`,
+    ...driver(`exports.d = 1;`),
+  },
+  "what a first mock kept from running stands below a second mock": {
+    "root.mjs": `import { v } from "./lib.mjs";\nconsole.log("SEEN root", v);\n`,
+    "lib.mjs": `import { x } from "./x.mjs";\nexport let v = "lib " + x;\n`,
+    "x.mjs": `console.log("SEEN x runs");\nexport let x = "real x";\n`,
+    "a.test.mjs": inTest("x.mjs", `console.log("SEEN main mock v", (await import("./lib.mjs")).v);`, `{ x: "mock x" }`),
+    "b.test.mjs": inTest("lib.mjs", `await import("./root.mjs");`),
+  },
+  // Such a mock has no `export *`.
+  ...Object.fromEntries(
+    Object.entries({
+      "is imported": { "a.test.mjs": inTest("lib.mjs", list("./lib.mjs")) },
+      "is passed on by another star": {
+        "index.mjs": `export * from "./lib.mjs";\nexport let own = 1;\n`,
+        "a.test.mjs": inTest("lib.mjs", list("./index.mjs")),
+      },
+      "stars a file of the project": {
+        "lib.mjs": `export * from "./driver.cjs";\nconsole.log("SEEN lib runs");\nexport let v = "real v";\n`,
+        "driver.cjs": `console.log("SEEN driver runs");\nexports.d = 1;\n`,
+        "index.mjs": `export * from "./lib.mjs";\n`,
+        "a.test.mjs": inTest("lib.mjs", list("./index.mjs")),
+      },
+      "gets a name from the mock that the package has too": {
+        "a.test.mjs": inTest("lib.mjs", list("./lib.mjs"), `{ v: "mock v", extra: 7, d: "mock d" }`),
+      },
+      "stands beside a star that is followed": {
+        "index.mjs": `export * from "./lib.mjs";\nexport * from "second";\n`,
+        "node_modules/second/package.json": `{ "name": "second", "main": "./index.js" }`,
+        "node_modules/second/index.js": `console.log("SEEN second runs");\nexports.s = 3;\n`,
+        "a.test.mjs": inTest("lib.mjs", list("./index.mjs")),
+      },
+      "has its stars again in the next test file": {
+        "a.test.mjs": inTest("lib.mjs", list("./lib.mjs")),
+        "b.test.mjs": `import { test } from "bun:test";\nimport * as ns from "./lib.mjs";\ntest("t", () => console.log("SEEN b", Object.keys(ns).join(), ns.v, ns.d));\n`,
+      },
+      "was loaded before the mock": {
+        "a.test.mjs": `import { mock, test } from "bun:test";
+import * as ns from "./lib.mjs";
+test("t", () => {
+  mock.module("./lib.mjs", () => ({ v: "mock v" }));
+  console.log("SEEN main mock v", Object.keys(ns).join(), ns.v, ns.d);
+});
+`,
+      },
+    }).map(([what, files]) => [
+      `a mocked module with a star over a package ${what}`,
+      {
+        "lib.mjs": `export * from "driver";\nconsole.log("SEEN lib runs");\nexport let v = "real v";\n`,
+        ...driver(`exports.d = 1;`),
+        ...files,
+      },
+    ]),
+  ),
 };
 
 async function runTests(directory: string, words: string | undefined, flags: string[]) {
@@ -85,13 +152,20 @@ for (const [name, files] of Object.entries(projects)) {
       });
       const plain = await runTests(String(dir), undefined, []);
       expect(plain.exitCode).toBe(0);
-      expect(plain.stdout[0]).toStartWith(name.startsWith("another file") ? "SEEN driver runs" : "SEEN main mock v");
+      const first = /^another file|was loaded before/.test(name)
+        ? "driver runs"
+        : name.endsWith("that is followed")
+          ? "second runs"
+          : "main mock v";
+      expect(plain.stdout[0]).toStartWith("SEEN " + first);
       for (const words of ["TestRunLayers:0", "TestRunLayers:1", "TestRunLayers:2"])
         expect({ words, ...(await runTests(String(dir), words, ["--aot"])) }).toEqual({ words, ...plain });
+      // Two workers print their files as they end.
+      const sorted = ({ stdout, exitCode }: typeof plain) => ({ stdout: stdout.toSorted(), exitCode });
       const parallel = await runTests(String(dir), undefined, ["--parallel=2"]);
-      expect(await runTests(String(dir), undefined, ["--aot", "--parallel=2", "--aot-memory-limit=1KB"])).toEqual(
-        parallel,
-      );
+      expect(
+        sorted(await runTests(String(dir), undefined, ["--aot", "--parallel=2", "--aot-memory-limit=1KB"])),
+      ).toEqual(sorted(parallel));
     },
     300_000,
   );

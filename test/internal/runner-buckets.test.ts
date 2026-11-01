@@ -26,8 +26,11 @@ case "$1" in
     case "$*" in *--parallel=*) exit 0 ;; esac
     for last; do :; done
     fails=
-    case "$last" in *"\${FAILS_ONCE:-no file}"*) fails=once ;; esac
-    if [ -n "$fails" ] && [ -e "$COMMANDS.failed" ]; then fails=; echo "begins again" >> "$COMMANDS.events"
+    case "$last" in
+      *"\${FAILS_ONCE:-no file}"*) fails=once ;;
+      *"\${FAILS_EACH_TIME:-no file}"*) fails=each-time ;;
+    esac
+    if [ "$fails" = once ] && [ -e "$COMMANDS.failed" ]; then fails=; echo "begins again" >> "$COMMANDS.events"
     else echo "begins" >> "$COMMANDS.events"; fi
     # Runs until as many files run at once as the test expects, until another file has seen that, or for two seconds. It
     # looks when all that started with it are under way, so more files at once than the test expects are counted too.
@@ -42,7 +45,7 @@ case "$1" in
     echo "ends" >> "$COMMANDS.events"
     if [ -n "$fails" ]; then
       : > "$COMMANDS.failed"
-      echo "\${FAILS_SAYING:-(fail) made to fail once}"
+      echo "\${FAILS_SAYING:-(fail) made to fail}"
       exit 1
     fi ;;
 esac
@@ -56,11 +59,12 @@ import os from "node:os";
 os.availableParallelism = () => ${processors};
 os.totalmem = () => 64 * 1024 ** 3;
 syncBuiltinESMExports();
-// A time limit of the runner is a timer of a minute or more. Each is written down, so no test waits for one.
+// A time limit of the runner is a timer of a minute or more. Each is written down, so no test waits for one. Before a
+// further try of a file the runner waits for more than five seconds and less than fifteen: here it does not.
 const { setTimeout: setTimer } = globalThis;
 globalThis.setTimeout = (callback, milliseconds, ...rest) => {
   if (milliseconds >= 60_000) appendFileSync(process.env.COMMANDS + ".limits", milliseconds + "\\n");
-  return setTimer(callback, milliseconds, ...rest);
+  return setTimer(callback, milliseconds > 5_000 && milliseconds < 15_000 ? 0 : milliseconds, ...rest);
 };
 `;
 const minutes = 60_000;
@@ -240,7 +244,7 @@ describe.skipIf(isWindows || !node)("scripts/runner.node.ts", () => {
         besideTheFileTriedAgain: 0,
         // Of each file beside others, and of the file alone.
         timeLimits: [...building.map(() => 18 * minutes), 6 * minutes],
-        said: [expect.stringContaining(`test/${failing} - code 1: made to fail once beside other files`)],
+        said: [expect.stringContaining(`test/${failing} - code 1: made to fail beside other files`)],
         stderr: "",
         exitCode: 0,
       });
@@ -268,6 +272,54 @@ describe.skipIf(isWindows || !node)("scripts/runner.node.ts", () => {
     });
   });
 
+  test.concurrent("with a sanitizer a file that fails alone too is tried again while the job has time", async () => {
+    const failing = building[3]!;
+    const { commands, stdout, stderr, exitCode } = await run(
+      "bun-asan",
+      [...building, ...others],
+      ["--quiet", "--retries=2"],
+      { FAILS_EACH_TIME: failing },
+    );
+    expect({
+      order: commands.map(command => (isBucket(command) ? "a bucket" : command.flags)),
+      noTime: stdout.split("\n").filter(line => line.includes("the job has no time")),
+      stderr,
+      exitCode,
+    }).toEqual({
+      order: [...building.map(() => besideOthers), alone, alone, alone, "a bucket"],
+      noTime: [],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent(
+    "with a sanitizer a file that fails alone too is not tried again where the job has no time",
+    async () => {
+      const failing = building[3]!;
+      // Of a job of five minutes nothing is left five minutes before its end.
+      const { commands, stdout, stderr, exitCode } = await run(
+        "bun-asan",
+        [...building, ...others],
+        ["--quiet", "--retries=2"],
+        { FAILS_EACH_TIME: failing, BUILDKITE_TIMEOUT: "5" },
+      );
+      expect({
+        order: commands.map(command => (isBucket(command) ? "a bucket" : command.flags)),
+        noTime: stdout.split("\n").filter(line => line.includes("the job has no time")),
+        stderr,
+        exitCode,
+      }).toEqual({
+        order: [...building.map(() => besideOthers), alone, "a bucket"],
+        noTime: [
+          expect.stringContaining(`test/${failing} - code 1: made to fail, and the job has no time for another try`),
+        ],
+        stderr: "",
+        exitCode: 1,
+      });
+    },
+  );
+
   test.concurrent("with a sanitizer what a sanitizer reports beside others is final", async () => {
     const failing = building[3]!;
     const { commands, stdout, stderr, exitCode } = await run("bun-asan", [...building, ...others], ["--quiet"], {
@@ -288,14 +340,17 @@ describe.skipIf(isWindows || !node)("scripts/runner.node.ts", () => {
   });
 
   test.concurrent("without a sanitizer a file of its own process keeps its tries and all the processors", async () => {
-    // Outside CI the runner tries a file once, so the one that fails is not tried again in its place.
-    const { commands, stderr, exitCode } = await run("bun-profile", buildingAndLong, ["--quiet"], {
+    // The one that fails is tried again in its place, beside the others, and nothing asks what time the job has left.
+    const { commands, stderr, exitCode } = await run("bun-profile", buildingAndLong, ["--quiet", "--retries=1"], {
       FAILS_ONCE: buildingAndLong[1]!,
+      BUILDKITE_TIMEOUT: "5",
     });
     expect({ commands: commands.map(ofOneFile).sort(), stderr, exitCode }).toEqual({
-      commands: buildingAndLong.map(file => `${file} --timeout=270000 --reporter=dots --max-concurrency=${processors}`),
+      commands: [...buildingAndLong, buildingAndLong[1]!]
+        .sort()
+        .map(file => `${file} --timeout=270000 --reporter=dots --max-concurrency=${processors}`),
       stderr: "",
-      exitCode: 1,
+      exitCode: 0,
     });
   });
 

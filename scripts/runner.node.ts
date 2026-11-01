@@ -1264,6 +1264,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   /**
    * @param concurrent this call may overlap with other runTest calls
    * @param saysDuration of a concurrent call: the title is logged when it has passed, with the seconds it took, as for a file of a bucket, and what a failure printed is logged too
+   * @param hasTimeFor asked where a try has failed and tries are left, with the milliseconds that it took: whether one more is made
    */
   const runTest = async (
     title: string,
@@ -1271,6 +1272,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
     concurrent = parallelism > 1,
     maxAttempts = 1 + (parseInt(options.retries) || 0),
     saysDuration = false,
+    hasTimeFor: (milliseconds: number) => boolean = () => true,
   ): Promise<TestResult | undefined> => {
     const index = ++i;
 
@@ -1284,6 +1286,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       let grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
       if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
 
+      const triedAt = Date.now();
       if (concurrent && saysDuration) {
         // Where a further try begins. The title of the first alone would be taken for a file that took no time.
         if (attempt > 1) console.log(grouptitle);
@@ -1309,8 +1312,10 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
         break;
       }
 
-      const color = attempt >= maxAttempts ? "red" : "yellow";
-      const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
+      const hasNoTime = attempt < maxAttempts && !isAlwaysFailure(error) && !hasTimeFor(Date.now() - triedAt);
+      const color = attempt >= maxAttempts || hasNoTime ? "red" : "yellow";
+      const noTime = hasNoTime ? ", and the job has no time for another try" : "";
+      const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${noTime}${getAnsi("reset")}`;
       if (concurrent) {
         // Don't open a group mid-phase: it would re-anchor the log viewer's
         // folding for every concurrent title printed after it.
@@ -1326,7 +1331,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
+      if (attempt >= maxAttempts || hasNoTime || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
         failedResultsTitles.push(title);
@@ -1426,7 +1431,12 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   if (!failedResults.length) {
     await Promise.all(beforeFirstTest);
 
-    const runOneTest = async (testPath: string, concurrent: boolean, saysDuration = false) => {
+    const runOneTest = async (
+      testPath: string,
+      concurrent: boolean,
+      saysDuration = false,
+      hasTimeFor?: (milliseconds: number) => boolean,
+    ) => {
       await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
@@ -1560,6 +1570,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
           concurrent,
           undefined,
           saysDuration,
+          hasTimeFor,
         );
       }
     };
@@ -1893,8 +1904,11 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
           }
         };
         await Promise.all(buildingTests.map(t => buildingFilesLimit(() => tryBesideOthers(t))));
+        // The five minutes before the end of the job are left to the rest of the shard, as a bucket leaves them. A file that
+        // has failed alone too is tried once more only if that try ends before them, taking as long as the one before it.
+        const hasTimeFor = (milliseconds: number) => jobBudgetMs() - 5 * 60_000 >= milliseconds;
         for (const { testPath, failure } of failedBesideOthers) {
-          const alone = await runOneTest(testPath, false);
+          const alone = await runOneTest(testPath, false, false, hasTimeFor);
           if (!alone?.ok || !isBuildkite) continue;
           const title = join("test", testPath).replaceAll("\\", "/");
           const unlisted = !isKnownFlakyTest(title);

@@ -21,7 +21,8 @@
 //     next begins (neither is a path, and neither opens a group). With a sanitizer a try that
 //     fails is `<path> - <error> beside other files`, and the file starts again as a serial
 //     test when the others are through. What a crash or a sanitizer reports is final there:
-//     `[N/M] <path> - <error>`, and the file does not start again
+//     `[N/M] <path> - <error>`, and the file does not start again. The serial test has no
+//     further try where the job has no time for it, and its last error says so
 //   - other startGroup phases: `--- napi prebuild: ...`, `--- Disk and memory pressure`, `--- End`
 // A parser that only recognises the first shape folds the entire following
 // phase into whichever serial test happened to precede it.

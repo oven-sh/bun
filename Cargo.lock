@@ -276,6 +276,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_async"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_threading",
+]
+
+[[package]]
 name = "bun_base64"
 version = "0.0.0"
 dependencies = [
@@ -1027,6 +1035,7 @@ dependencies = [
  "bun_analytics",
  "bun_aot_interface",
  "bun_ast",
+ "bun_async",
  "bun_base64",
  "bun_boringssl",
  "bun_bundler",
@@ -1603,6 +1612,7 @@ dependencies = [
  "bun_archive",
  "bun_ast",
  "bun_ast_jsc",
+ "bun_async",
  "bun_base64",
  "bun_boringssl",
  "bun_boringssl_sys",

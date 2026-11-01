@@ -708,6 +708,7 @@ export const getCounters = $bindgen("Counters.bind.ts", "createCountersObject");
 export const linearFifoOrderedRemoveProbe = $bindgen("linear_fifo_testing.bind.ts", "orderedRemoveProbe") as (
   scenario: number,
 ) => number[];
+export const futures = $bindgen("future_testing.bind.ts", "futures");
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
 const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $bindgen(

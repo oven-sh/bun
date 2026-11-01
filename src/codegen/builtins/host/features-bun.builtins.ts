@@ -177,7 +177,6 @@ export default b.declarations(
     "%AroundHook%",
     "%TestFixtures%",
     "%ActiveFixture%",
-    "%ViWait%",
   ),
 
   extendAll(["WebView", "ChildProcess", "X509", ...tlsSocketFeatures], "Bun.WebView"),

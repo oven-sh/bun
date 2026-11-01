@@ -5,6 +5,8 @@
 // Implemented in src/runtime/api/NativePromiseContext.rs. Switches on
 // tag to release the ref on the right native type.
 extern "C" void Bun__NativePromiseContext__destroy(void* ctx, uint8_t tag);
+// Implemented in src/runtime/future.rs.
+extern "C" void Bun__Future__promiseCollected(void* reaction);
 
 namespace Bun {
 
@@ -43,7 +45,10 @@ DEFINE_VISIT_CHILDREN(NativePromiseContext);
 NativePromiseContext::~NativePromiseContext()
 {
     if (void* ctx = pointer()) {
-        Bun__NativePromiseContext__destroy(ctx, static_cast<uint8_t>(tag()));
+        if (tag() == Tag::Future)
+            Bun__Future__promiseCollected(ctx);
+        else
+            Bun__NativePromiseContext__destroy(ctx, static_cast<uint8_t>(tag()));
     }
 }
 

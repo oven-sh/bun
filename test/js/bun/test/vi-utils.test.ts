@@ -1336,6 +1336,18 @@ describe("vi.waitFor", () => {
     expect(value).toBe(3);
   });
 
+  test("calls the `then` of a Promise subclass", async () => {
+    let calls = 0;
+    class Lazy<T> extends Promise<T> {
+      then<A, B>(onFulfilled?: (value: T) => A, onRejected?: (reason: unknown) => B) {
+        calls++;
+        return super.then(onFulfilled, onRejected);
+      }
+    }
+    expect(await vi.waitFor(() => Lazy.resolve("lazy"))).toBe("lazy");
+    expect(calls).toBe(1);
+  });
+
   test("a `then` that throws is a failed attempt", async () => {
     let calls = 0;
     const value = await vi.waitFor<unknown>(
@@ -1488,7 +1500,8 @@ describe("vi.waitFor", () => {
     );
     expect(settled.filter(({ status }) => status === "fulfilled")).toHaveLength(60);
     Bun.gc(true);
-    expect(heapStats().objectTypeCounts.ViWait).toBeLessThan(10);
+    // A wait roots the timeout error that it was created with.
+    expect(heapStats().protectedObjectTypeCounts.Error ?? 0).toBeLessThan(10);
   });
 
   describe("with fake timers", () => {
@@ -1704,7 +1717,7 @@ describe.concurrent("a wait that is still pending", () => {
         await vi.waitFor(() => expect(++polls).toBe(40), { interval: 1 });
         expect(globalThis.calls).toBe(before);
         Bun.gc(true);
-        expect(heapStats().objectTypeCounts.ViWait).toBeLessThan(10);
+        expect(heapStats().protectedObjectTypeCounts.Error ?? 0).toBeLessThan(10);
       });
     `,
   };

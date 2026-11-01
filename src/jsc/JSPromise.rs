@@ -47,6 +47,7 @@ unsafe extern "C" {
     ) -> JSValue;
 
     safe fn JSC__JSPromise__status(this: &JSPromise) -> u32;
+    safe fn JSC__JSPromise__isThenFastAndNonObservable(this: &JSPromise) -> bool;
     safe fn JSC__JSPromise__result(this: &mut JSPromise, vm: &VM) -> JSValue;
     safe fn JSC__JSPromise__setHandled(this: &mut JSPromise);
     // The resolve/reject/rejectAsHandled shims are `void` on the C side
@@ -217,6 +218,12 @@ impl JSPromise {
         }
 
         Self::resolved_promise_value(global, value)
+    }
+
+    /// Whether reacting to it directly is indistinguishable from calling its `then`.
+    #[inline]
+    pub fn is_then_fast_and_non_observable(&self) -> bool {
+        JSC__JSPromise__isThenFastAndNonObservable(self)
     }
 
     pub fn status(&self) -> Status {

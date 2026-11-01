@@ -23,6 +23,7 @@ bun_aot = { package = "bun_aot_interface", path = "../aot/interface" }
 bun_base64.workspace = true
 bun_boringssl.workspace = true
 bun_alloc.workspace = true
+bun_async.workspace = true
 bun_errno.workspace = true
 bun_core.workspace = true
 bun_bundler.workspace = true

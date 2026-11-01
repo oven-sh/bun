@@ -1,0 +1,19 @@
+[package]
+name = "bun_async"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[[bench]]
+name = "glue_overhead"
+path = "benches/glue_overhead.rs"
+harness = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+bun_threading.workspace = true

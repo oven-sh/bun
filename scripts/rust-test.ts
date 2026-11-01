@@ -32,6 +32,7 @@ const repo = resolve(import.meta.dirname, "..");
 // To add a crate it must have at least one `#[test]` and link by itself.
 const crates = [
   "bun_aot",
+  "bun_async",
   "bun_base64",
   "bun_builtin_sources",
   "bun_bundler",

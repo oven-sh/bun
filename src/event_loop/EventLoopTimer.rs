@@ -218,10 +218,11 @@ pub enum Tag {
     GcRepeating,
     QuicEndpoint,
     FakeTimersTick,
-    ViWait,
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
     UvTimer,
     WorkerWaitsForRoom,
+    /// `bun_runtime::future::Sleep`: whatever `async fn` is awaiting one.
+    Future,
 }
 
 impl Tag {
@@ -265,9 +266,9 @@ impl Tag {
             | Tag::CronJob
             | Tag::QuicEndpoint
             | Tag::FakeTimersTick
-            | Tag::ViWait
             | Tag::UvTimer
-            | Tag::WorkerWaitsForRoom => false,
+            | Tag::WorkerWaitsForRoom
+            | Tag::Future => false,
         }
     }
 }

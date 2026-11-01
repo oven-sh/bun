@@ -38,6 +38,7 @@ bun_boringssl_sys.workspace = true
 bun_brotli.workspace = true
 bun_lsquic_sys.workspace = true
 bun_alloc.workspace = true
+bun_async.workspace = true
 bun_platform.workspace = true
 bun_errno.workspace = true
 bun_core.workspace = true

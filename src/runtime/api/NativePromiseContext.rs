@@ -70,10 +70,12 @@ pub(crate) enum Tag {
     S3UploadStream,
     /// A `Bun.cron()` job whose tick returned a promise.
     CronJob,
+    /// A Rust future that awaits a promise (`crate::future::settled`).
+    Future,
 }
 
 impl Tag {
-    pub(crate) const COUNT: usize = 12;
+    pub(crate) const COUNT: usize = 13;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -90,6 +92,7 @@ impl Tag {
             9 => Tag::HTMLRewriterPipeFree,
             10 => Tag::S3UploadStream,
             11 => Tag::CronJob,
+            12 => Tag::Future,
             _ => unreachable!(),
         }
     }
@@ -226,7 +229,10 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
                 (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
             }
             Tag::CronJob => (*ctx.cast::<crate::api::cron::CronJob>()).tick_cell_collected(),
-            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree | Tag::S3UploadStream => {}
+            Tag::HTMLRewriterSuspension
+            | Tag::HTMLRewriterPipeFree
+            | Tag::S3UploadStream
+            | Tag::Future => {}
         }
     }
 }
@@ -362,6 +368,7 @@ impl DeferredDerefTask {
                         ctx.cast::<crate::api::cron::CronJob>(),
                     ));
                 }
+                Tag::Future => unreachable!("Bun__Future__promiseCollected"),
             }
         }
     }

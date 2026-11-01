@@ -84,6 +84,7 @@ pub mod task_tag {
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
         FSWatchTask,
+        Future,                   // bun_jsc::future (a woken `async` task, one erased tag)
         GetAddrInfoLibuvComplete,
         GraphContextStopAgain,
         GraphContextStopAndFree,

@@ -56,6 +56,8 @@ pub(crate) mod api;
 pub(crate) mod checker_queries_testing;
 pub(crate) mod code_resolver_testing;
 pub(crate) mod dispatch;
+pub(crate) mod future;
+pub(crate) mod future_testing;
 pub(crate) mod hw_exports;
 #[cfg(debug_assertions)]
 pub(crate) mod imported_class_test;

@@ -4547,6 +4547,11 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     }
 }
 
+extern "C" bool JSC__JSPromise__isThenFastAndNonObservable(JSC::JSPromise* promise)
+{
+    return promise->isThenFastAndNonObservable();
+}
+
 [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSPromise__status(const JSC::JSPromise* arg0)
 {
     switch (arg0->status()) {

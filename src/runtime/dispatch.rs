@@ -232,6 +232,10 @@ pub(crate) fn run_task(
             // its `Completion`; the erased entry runs `then` and frees it.
             unsafe { bun_jsc::job::complete_erased(task.ptr, global) }?;
         }
+        task_tag::Future => {
+            // SAFETY: §Dispatch — queued by the task's own `Waker`.
+            unsafe { bun_jsc::future::run_queued(task.ptr) }?;
+        }
         task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
             // the task owns a ref for its duration; `run_deferred` releases it.
@@ -884,7 +888,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1556,18 +1560,11 @@ pub(crate) unsafe fn __bun_fire_timer(
                 Ok(())
             }
         ),
-        EventLoopTimerTag::ViWait => in_features!(
-            [Test],
-            (
-                c: *mut crate::test_runner::vi_wait::ViWait =
-                    owner!(crate::test_runner::vi_wait::ViWait, timer),
-                now: *const ElTimespec = now,
-                vm: *mut VirtualMachine = vm,
-            ) -> JsResult<()> {
-                // SAFETY: an armed wait roots its JS wrapper, which owns `c`; `now` and `vm` per fn contract.
-                unsafe { (*c).on_timer_fire(&*now, &*vm) }
-            }
-        ),
+        EventLoopTimerTag::Future => {
+            timer_arm!(crate::future::Sleep, timer, |c, _now, _vm| {
+                crate::future::Sleep::on_timer_fire(c)
+            })
+        }
         EventLoopTimerTag::UvTimer => {
             #[cfg(unix)]
             {
@@ -1683,6 +1680,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr) }
+        }
+        task_tag::Future => {
+            // SAFETY: as `release!`.
+            unsafe { bun_jsc::future::release_queued(task.ptr) }
         }
         task_tag::AsyncModule => release_in!([Install], bun_jsc::async_module::AsyncModule),
         task_tag::BakeHotReloadEvent => release_in!([Bundler], BakeHotReloadEvent),

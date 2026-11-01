@@ -1,20 +1,20 @@
-use core::cell::Cell;
+use core::pin::pin;
 
-use bun_core::{String as BunString, Timespec, TimespecMockMode};
-use bun_io::KeepAlive;
+use bun_async::{Either, race};
+use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::future::{self, JsTask, LoopRef};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    AbortHandle, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell, JsClass as _,
-    JsError, JsResult, JsThread, Strong,
+    JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, JsThread,
+    Strong,
 };
 
 use super::expect_core::expect_deferred::RunningEntry;
 use super::jest::Jest;
 use super::timers::fake_timers::{self, Stop};
+use crate::future::{Settled, settled, sleep_until};
 use crate::generated_bindgen::vi_wait as generated;
-use crate::jsc_hooks::timer_all_mut as timer_all;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Kind {
@@ -34,28 +34,25 @@ impl Kind {
     }
 }
 
+/// A `vi.waitFor()`, `vi.waitUntil()` or `expect.poll()` that hasn't settled.
 pub(crate) struct ViWait {
     kind: Kind,
     interval_ms: u32,
-    deadline: Cell<Timespec>,
-    callback_pending: Cell<bool>,
+    timeout_ms: u32,
+    callback: Strong,
+    /// Made by the call that started the wait, for its stack.
+    timeout_error: Strong,
+    last_error: Option<Strong>,
+    /// What the callback returned, until it settles. The callback is not called again before that.
+    returned: Option<Settled>,
     /// The wait is dropped once the test file that started it ends.
     test_file: Option<u32>,
     /// For `Kind::Poll`, the wait is also dropped once this test ends.
     test: Option<RunningEntry>,
-    pub(crate) timer: JsCell<EventLoopTimer>,
-    abort_handle: AbortHandle,
-    keep_alive: JsCell<KeepAlive>,
-    /// Roots the wrapper until the wait settles or is cancelled.
-    root: JsCell<Option<Strong>>,
 }
 
-bun_jsc::impl_abort_handle_owner!(ViWait, abort_handle, |this, _cause| {
-    // SAFETY: trait contract: `this` is live.
-    unsafe { (*this).finish() }
-});
-
-pub(crate) use crate::generated_bindgen::vi_wait::js_ViWait as js;
+/// How the wait's promise settles.
+type Outcome = Result<JSValue, JSValue>;
 
 unsafe extern "C" {
     safe fn ExpectDeferred__setCauseIfNone(global: &JSGlobalObject, error: JSValue, cause: JSValue);
@@ -180,258 +177,132 @@ impl ViWait {
         test: Option<RunningEntry>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let promise = JSPromise::create(global).to_js();
-        let this_value = ViWait {
+        let mut promise = JSPromiseStrong::init(global);
+        let promise_value = promise.value();
+        let wait = ViWait {
             kind,
             interval_ms,
-            deadline: Cell::new(Timespec::EPOCH),
-            callback_pending: Cell::new(false),
+            timeout_ms,
+            callback: Strong::create(callback.with_async_context_if_needed(global), global),
+            timeout_error: Strong::create(
+                global.create_error_instance(format_args!("{}", kind.timeout_message())),
+                global,
+            ),
+            last_error: None,
+            returned: None,
             test_file: running_test_file(cx.vm()),
             test,
-            timer: JsCell::new(EventLoopTimer::init_paused(EventLoopTimerTag::ViWait)),
-            abort_handle: AbortHandle::for_owner::<ViWait>(),
-            keep_alive: JsCell::new(KeepAlive::default()),
-            root: JsCell::new(None),
+        };
+        future::spawn(cx, |js| async move {
+            match wait.run(js).await? {
+                Some(Ok(value)) => promise.resolve(js.global(), value),
+                Some(Err(error)) => promise.reject(js.global(), Ok(error)),
+                None => Ok(()),
+            }
+        })?;
+        Ok(promise_value)
+    }
+
+    /// `None`: what started the wait has ended, so nobody is told how it went.
+    async fn run(mut self, js: JsTask) -> JsResult<Option<Outcome>> {
+        let _keeps_loop_alive = LoopRef::new();
+        let global = js.global();
+
+        match self.attempt(global, true) {
+            Ok(None) => {}
+            Ok(Some(outcome)) => return Ok(Some(outcome)),
+            Err(err) => return Ok(Some(Err(thrown_value(global, err)?))),
         }
-        .to_js(global);
-        js::callback_set_cached(
-            this_value,
-            global,
-            callback.with_async_context_if_needed(global),
-        );
-        js::promise_set_cached(this_value, global, promise);
-        js::timeout_error_set_cached(
-            this_value,
-            global,
-            global.create_error_instance(format_args!("{}", kind.timeout_message())),
-        );
 
-        let this_ptr = ViWait::from_js(this_value).expect("to_js returns the wrapper");
-        // SAFETY: the wrapper owns the payload, and `this_value` is kept alive to the end of this function.
-        let this = unsafe { &*this_ptr };
-        this.root.set(Some(Strong::create(this_value, global)));
-        this.keep_alive
-            .with_mut(|keep_alive| keep_alive.ref_(bun_io::js_vm_ctx()));
-        // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
-        unsafe { AbortHandle::arm_owner(this_ptr, cx.context()) };
-
-        if let Err(err) = this.poll(global, this_value, true) {
-            match thrown_value(global, err) {
-                Ok(error) => this.settle(global, this_value, Err(error))?,
-                Err(err) => {
-                    this.finish();
-                    return Err(err);
+        let deadline =
+            Timespec::now(TimespecMockMode::ForceRealTime).add_ms(i64::from(self.timeout_ms));
+        loop {
+            let next_attempt = Timespec::now(TimespecMockMode::ForceRealTime)
+                .add_ms(i64::from(self.interval_ms.max(1)));
+            let is_last = !next_attempt.order(&deadline).is_lt();
+            let mut tick = pin!(sleep_until(if is_last { deadline } else { next_attempt }));
+            loop {
+                let Some(returned) = &mut self.returned else {
+                    tick.as_mut().await;
+                    break;
+                };
+                let Either::Left(settled_with) = race(returned, tick.as_mut()).await else {
+                    break;
+                };
+                self.returned = None;
+                if let Some(outcome) = self.judge(global, settled_with) {
+                    return Ok(Some(outcome));
                 }
             }
-        }
-        if this.is_pending() {
-            let now = Timespec::now(TimespecMockMode::ForceRealTime);
-            this.deadline.set(now.add_ms(i64::from(timeout_ms)));
-            this.arm(&now);
-        }
-        this_value.ensure_still_alive();
-        Ok(promise)
-    }
 
-    fn is_pending(&self) -> bool {
-        self.root.get().is_some()
-    }
-
-    fn arm(&self, now: &Timespec) {
-        let next_poll = now.add_ms(i64::from(self.interval_ms.max(1)));
-        let deadline = self.deadline.get();
-        let next = if next_poll.order(&deadline).is_lt() {
-            next_poll
-        } else {
-            deadline
-        };
-        timer_all().update(self.timer.as_ptr(), &next);
-    }
-
-    /// Idempotent. The wrapper may be collected afterwards.
-    fn finish(&self) {
-        if self.timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.timer.as_ptr());
-        }
-        self.abort_handle.leave();
-        self.keep_alive
-            .with_mut(|keep_alive| keep_alive.unref(bun_io::js_vm_ctx()));
-        self.root.set(None);
-    }
-
-    #[optimize(size)]
-    fn settle(
-        &self,
-        global: &JSGlobalObject,
-        this_value: JSValue,
-        outcome: Result<JSValue, JSValue>,
-    ) -> JsResult<()> {
-        if !self.is_pending() {
-            return Ok(());
-        }
-        self.finish();
-        let Some(promise) = js::promise_get_cached(this_value).and_then(JSValue::as_promise) else {
-            return Ok(());
-        };
-        let promise = JSPromise::opaque_mut(promise);
-        match outcome {
-            Ok(value) => promise.resolve(global, value),
-            Err(error) => promise.reject(global, Ok(error)),
-        }
-    }
-
-    #[optimize(size)]
-    fn on_value(
-        &self,
-        global: &JSGlobalObject,
-        this_value: JSValue,
-        value: JSValue,
-    ) -> JsResult<()> {
-        if self.kind == Kind::Until && !value.to_boolean() {
-            return Ok(());
-        }
-        self.settle(global, this_value, Ok(value))
-    }
-
-    fn on_error(
-        &self,
-        global: &JSGlobalObject,
-        this_value: JSValue,
-        error: JSValue,
-    ) -> JsResult<()> {
-        match self.kind {
-            Kind::For | Kind::Poll => {
-                js::last_error_set_cached(this_value, global, error);
-                Ok(())
+            if self.test_file != running_test_file(js.vm())
+                || self.test.as_ref().is_some_and(|test| !test.is_running())
+            {
+                return Ok(None);
             }
-            Kind::Until => self.settle(global, this_value, Err(error)),
+            if is_last {
+                return self.time_out(global).map(Some);
+            }
+            match self.attempt(global, false) {
+                Ok(None) => {}
+                Ok(Some(outcome)) => return Ok(Some(outcome)),
+                // What a fake timer threw is nobody's in particular, and the wait goes on.
+                Err(err) => crate::dispatch::fold(Err(err)),
+            }
         }
     }
 
-    fn run_callback(
-        &self,
-        global: &JSGlobalObject,
-        this_value: JSValue,
-    ) -> JsResult<Option<JSValue>> {
-        let Some(callback) = js::callback_get_cached(this_value) else {
-            return Ok(None);
-        };
-        let result = callback.call(global, JSValue::UNDEFINED, &[])?;
-        if !result.is_object() || result.is_callable() {
-            return Ok(Some(result));
+    /// Whether what the callback gave ends the wait.
+    fn judge(&mut self, global: &JSGlobalObject, gave: Outcome) -> Option<Outcome> {
+        match (gave, self.kind) {
+            (Ok(value), Kind::Until) if !value.to_boolean() => None,
+            (Ok(value), _) => Some(Ok(value)),
+            (Err(error), Kind::Until) => Some(Err(error)),
+            (Err(error), Kind::For | Kind::Poll) => {
+                self.last_error = Some(Strong::create(error, global));
+                None
+            }
         }
-        let Some(then) = result
-            .get(global, "then")?
-            .filter(|then| then.is_callable())
-        else {
-            return Ok(Some(result));
-        };
-        let bind = |host_fn: JSHostFn| {
-            JSFunction::create(global, "", host_fn, 1, Default::default()).bind(
-                global,
-                this_value,
-                &BunString::EMPTY,
-                1.0,
-                &[],
-            )
-        };
-        let reactions = [
-            bind(generated::Bun__ViWait__onFulfilled)?,
-            bind(generated::Bun__ViWait__onRejected)?,
-        ];
-        self.callback_pending.set(true);
-        if let Err(err) = then.call(global, result, &reactions) {
-            self.callback_pending.set(false);
-            return Err(err);
-        }
-        Ok(None)
     }
 
     #[optimize(size)]
-    fn poll(&self, global: &JSGlobalObject, this_value: JSValue, is_first: bool) -> JsResult<()> {
+    fn attempt(&mut self, global: &JSGlobalObject, is_first: bool) -> JsResult<Option<Outcome>> {
         // As in Vitest, `waitFor` and `waitUntil` advance a fake clock on every tick of theirs, and `expect.poll` between two attempts.
-        if self.kind != Kind::Poll || !(is_first || self.callback_pending.get()) {
+        if self.kind != Kind::Poll || !(is_first || self.returned.is_some()) {
             match fake_timers::advance_by_ms(global, f64::from(self.interval_ms)) {
                 Ok(thrown) if thrown.is_empty() => {}
                 Ok(thrown) => return Err(global.throw_value(thrown)),
                 Err(Stop::Vm(err)) => return Err(err),
                 // Polling again wouldn't help, since at the loop limit the next advance stops on the same queued ticks.
-                Err(Stop::Ticks(thrown)) => return self.settle(global, this_value, Err(thrown)),
+                Err(Stop::Ticks(thrown)) => return Ok(Some(Err(thrown))),
             }
         }
-        if self.callback_pending.get() || !self.is_pending() {
-            return Ok(());
+        if self.returned.is_some() {
+            return Ok(None);
         }
-        match self.run_callback(global, this_value) {
-            Ok(Some(value)) => self.on_value(global, this_value, value),
-            Ok(None) => Ok(()),
-            Err(err) => self.on_error(global, this_value, thrown_value(global, err)?),
-        }
-    }
-
-    fn callback_settled(
-        global: &JSGlobalObject,
-        this_value: JSValue,
-        settled_with: JSValue,
-        report: fn(&ViWait, &JSGlobalObject, JSValue, JSValue) -> JsResult<()>,
-    ) -> JsResult<()> {
-        let Some(this) = ViWait::from_js(this_value) else {
-            return Ok(());
+        let gave = match self.callback.get().call(global, JSValue::UNDEFINED, &[]) {
+            Ok(value) if value.is_object() && !value.is_callable() => {
+                self.returned = Some(settled(global, value)?);
+                return Ok(None);
+            }
+            Ok(value) => Ok(value),
+            Err(err) => Err(thrown_value(global, err)?),
         };
-        // SAFETY: the wrapper owns the payload and is this call's `this`.
-        let this = unsafe { &*this };
-        if this.callback_pending.replace(false) {
-            report(this, global, this_value, settled_with)?;
-        }
-        Ok(())
+        Ok(self.judge(global, gave))
     }
 
-    fn time_out(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
-        let timeout_error = js::timeout_error_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
-        let Some(error) = js::last_error_get_cached(this_value).filter(|error| error.to_boolean())
+    fn time_out(&self, global: &JSGlobalObject) -> JsResult<Outcome> {
+        let timeout_error = self.timeout_error.get();
+        let Some(error) = (self.last_error.as_ref().map(Strong::get)).filter(|e| e.to_boolean())
         else {
-            return self.settle(global, this_value, Err(timeout_error));
+            return Ok(Err(timeout_error));
         };
-        if self.kind == Kind::Poll
-            && let Err(terminated) = bun_jsc::call_check_slow(global, || {
+        if self.kind == Kind::Poll {
+            bun_jsc::call_check_slow(global, || {
                 ExpectDeferred__setCauseIfNone(global, error, timeout_error)
-            })
-        {
-            self.finish();
-            return Err(terminated);
+            })?;
         }
-        self.settle(global, this_value, Err(error))
-    }
-
-    pub(crate) fn on_timer_fire(&self, now: &Timespec, vm: &VirtualMachine) -> JsResult<()> {
-        self.timer
-            .with_mut(|timer| timer.state = EventLoopTimerState::FIRED);
-        let Some(this_value) = self.root.get().as_ref().map(Strong::get) else {
-            return Ok(());
-        };
-        if self.test_file != running_test_file(vm)
-            || self.test.as_ref().is_some_and(|test| !test.is_running())
-        {
-            self.finish();
-            return Ok(());
-        }
-
-        let global = vm.global();
-        let _event_loop = vm.enter_event_loop_scope();
-        let _context = self
-            .abort_handle
-            .context_id()
-            .map(|context| vm.enter_context(context));
-        let result = if self.timer.get().next.order(&self.deadline.get()).is_lt() {
-            self.poll(global, this_value, false)
-        } else {
-            self.time_out(global, this_value)
-        };
-        if self.is_pending() {
-            self.arm(now);
-        }
-        this_value.ensure_still_alive();
-        result
+        Ok(Err(error))
     }
 }
 
@@ -449,34 +320,6 @@ pub(crate) fn wait_until(
     options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
     ViWait::start(cx, callback, options, Kind::Until)
-}
-
-#[optimize(size)]
-pub(crate) fn on_fulfilled(
-    cx: &mut JsScope<'_>,
-    this_value: JsLocal<'_>,
-    value: JsLocal<'_>,
-) -> JsResult<()> {
-    ViWait::callback_settled(
-        cx.global(),
-        this_value.to_js(),
-        value.to_js(),
-        ViWait::on_value,
-    )
-}
-
-#[optimize(size)]
-pub(crate) fn on_rejected(
-    cx: &mut JsScope<'_>,
-    this_value: JsLocal<'_>,
-    reason: JsLocal<'_>,
-) -> JsResult<()> {
-    ViWait::callback_settled(
-        cx.global(),
-        this_value.to_js(),
-        reason.to_js(),
-        ViWait::on_error,
-    )
 }
 
 const FNS: &[(&str, u32, JSHostFn)] = &[

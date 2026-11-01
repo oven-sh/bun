@@ -15,38 +15,37 @@ use super::cron_parser;
 use super::cron_parser::{CronExpression, CronTz};
 
 use core::ffi::CStr;
+use core::future::Future;
 use std::cell::Cell;
 
 use bun_core::EncodedSlice;
 #[cfg(not(windows))]
 use bun_core::env_var;
-use bun_io::BufferedReader as OutputReader;
-use bun_io::{KeepAlive, Loop as AsyncLoop};
+use bun_io::KeepAlive;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
+use bun_jsc::future::{self, AwaitSafe, LoopRef, Rejection};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
-    self as jsc, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject,
-    JSObject, JSValue, JsCell, JsRef, JsResult,
+    self as jsc, EncodedSliceJsc as _, GlobalRef, JSFunction, JSGlobalObject, JSObject, JSValue,
+    JsCell, JsRef, JsResult,
 };
 use bun_paths as path;
 use bun_ptr::{BackRef, RefPtr, ThisPtr};
+#[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
 
-#[cfg(not(windows))]
-use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{
-    self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
-};
+use crate::api::bun::process::{self as spawn, Status};
+use crate::future::{Command, CommandError as Failure, Exit, command_error as failure};
 use crate::generated_bindgen::cron::{
     Bun__Cron__cron, Bun__Cron__parse, Bun__Cron__remove, Bun__CronJob__onPromiseReject,
     Bun__CronJob__onPromiseResolve, CronOptions, js_CronJob as js,
 };
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
+#[cfg(not(windows))]
 use bun_core::strings;
-use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
 // Owned NUL-terminated string — `bun_str` exposes the
@@ -54,190 +53,129 @@ use bun_sys::FdDirExt as _;
 use bun_core::ZBox as ZString;
 use bun_sys::{self as sys, Fd, File};
 
-// ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
-
-/// Recover `&mut VirtualMachine` from the per-thread singleton.
-///
-/// Safe: delegates to [`VirtualMachine::as_mut`], which already encapsulates
-/// the single-JS-thread thread-local deref (provenance from `get_mut_ptr()`).
-#[inline]
-fn vm_mut<'a>() -> &'a mut VirtualMachine {
-    VirtualMachine::get_mut()
-}
-
 use crate::jsc_hooks::timer_all_mut as timer_all;
 
 // ============================================================================
-// CronJobBase — shared base for CronRegisterJob and CronRemoveJob
+// OS-level jobs — Bun.cron(path, schedule, title) and Bun.cron.remove(title)
 // ============================================================================
 
-/// Shared base for [`CronRegisterJob`] and [`CronRemoveJob`].
-// Note: `finish()` releases the job's single owning ref (freeing `this`), so
-// every method on the path to it takes a `ThisPtr<Self>` receiver (never
-// `&mut self`, whose Stacked Borrows FnEntry protector would make the
-// in-flight dealloc UB) and touches nothing after the call that may free
-// `this`. Mutable state lives in `Cell`/`JsCell` fields so every access is a
-// short shared borrow.
-trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
-    /// The single owning ref; released by `finish`.
-    fn owner(&self) -> &Cell<Option<RefPtr<Self>>>;
-    fn promise(&self) -> &JsCell<jsc::JSPromiseStrong>;
-    fn global(&self) -> GlobalRef;
-    fn poll(&self) -> &JsCell<KeepAlive>;
-    fn remaining_fds(&self) -> &Cell<i8>;
-    fn err_msg(&self) -> &JsCell<Option<Vec<u8>>>;
-    fn has_called_process_exit(&self) -> &Cell<bool>;
-    fn exit_status(&self) -> &JsCell<Option<Status>>;
+/// The promise of an OS-level job, which keeps the process alive until it settles.
+fn promise_of(
+    cx: &mut JsScope<'_>,
+    job: impl Future<Output = Result<(), Failure>> + AwaitSafe + 'static,
+) -> JsResult<JSValue> {
+    future::promise(&cx.js_thread(), |js| async move {
+        let _keeps_loop_alive = LoopRef::new();
+        match job.await {
+            Ok(()) => Ok(JSValue::UNDEFINED),
+            Err(message) => Err(Rejection::Value(
+                EncodedSlice::utf8(&message).to_error_instance(js.global()),
+            )),
+        }
+    })
+}
 
-    type State: Copy;
+/// The ends of a command, other than exit code 0, that are not a failure.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tolerate {
+    Nothing,
+    /// `crontab -l` when the user has no crontab.
     #[cfg(all(not(target_os = "macos"), not(windows)))]
-    const READING_CRONTAB: Self::State;
+    ExitCode1,
+    /// `schtasks /delete` of a task that does not exist.
+    #[cfg(windows)]
+    AnyExitCode,
+    /// `launchctl bootout` of a service that may not be loaded.
     #[cfg(target_os = "macos")]
-    const BOOTING_OUT: Self::State;
-    #[cfg(not(windows))]
-    fn set_state(&self, state: Self::State);
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn stdout_reader_slot(&self) -> &JsCell<OutputReader>;
+    AnyExitCodeOrSignal,
+}
+
+/// Run `argv` to its end.
+async fn run(argv: &[&CStr], stdout: spawn::Stdio, tolerate: Tolerate) -> Result<Exit, Failure> {
+    let exit = Command::spawn(argv, spawn::Stdio::Ignore, stdout)?.await?;
+    match &exit.status {
+        Status::Exited(exited) if exited.code != 0 => {
+            let is_tolerated = match tolerate {
+                Tolerate::Nothing => false,
+                #[cfg(all(not(target_os = "macos"), not(windows)))]
+                Tolerate::ExitCode1 => exited.code == 1,
+                #[cfg(windows)]
+                Tolerate::AnyExitCode => true,
+                #[cfg(target_os = "macos")]
+                Tolerate::AnyExitCodeOrSignal => true,
+            };
+            if !is_tolerated {
+                #[cfg(windows)]
+                {
+                    let stderr = bun_core::strings::trim(&exit.stderr, &ASCII_WHITESPACE);
+                    if !stderr.is_empty() {
+                        return Err(stderr.to_vec());
+                    }
+                }
+                return Err(failure!("Process exited with code {}", exited.code));
+            }
+        }
+        Status::Signaled(signal) => {
+            #[cfg(target_os = "macos")]
+            let is_tolerated = tolerate == Tolerate::AnyExitCodeOrSignal;
+            #[cfg(not(target_os = "macos"))]
+            let is_tolerated = false;
+            if !is_tolerated {
+                return Err(failure!("Process killed by signal {}", *signal as i32));
+            }
+        }
+        Status::Err(err) => {
+            return Err(failure!("Process error: {}", bstr::BStr::new(err.name())));
+        }
+        Status::Exited(_) | Status::Running => {}
+    }
+    Ok(exit)
+}
+
+/// A file that is unlinked when this is dropped, however the job ends.
+struct TempFile(Option<ZString>);
+
+impl TempFile {
+    fn create(
+        path: ZString,
+        flags: i32,
+        mode: sys::Mode,
+        contents: &[u8],
+        [cannot_create, cannot_write]: [&str; 2],
+    ) -> Result<Self, Failure> {
+        let this = Self(Some(path));
+        let file = File::openat(
+            Fd::cwd(),
+            this.path(),
+            sys::O::WRONLY | sys::O::CREAT | flags,
+            mode,
+        )
+        .map_err(|_| failure!("{cannot_create}"))?;
+        let written = file.write_all(contents);
+        let _ = file.close(); // close error is non-actionable
+        written.map_err(|_| failure!("{cannot_write}"))?;
+        Ok(this)
+    }
+
+    fn path(&self) -> &ZString {
+        self.0.as_ref().expect("not kept")
+    }
+
     #[cfg(target_os = "macos")]
-    fn title_bytes(&self) -> &[u8];
-
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn prepare_list_crontab(&self, this_ptr: *mut core::ffi::c_void) -> Option<ZString>
-    where
-        Self: BufferedReaderParent,
-    {
-        self.set_state(Self::READING_CRONTAB);
-        self.stdout_reader_slot().with_mut(|r| {
-            *r = OutputReader::init::<Self>();
-            r.set_parent(this_ptr);
-        });
-        let crontab_path = find_crontab();
-        if crontab_path.is_none() {
-            self.set_err(format_args!("crontab not found in PATH"));
-        }
-        crontab_path
-    }
-
-    #[cfg(target_os = "macos")]
-    fn prepare_bootout(&self) -> Result<ZString, ()> {
-        self.set_state(Self::BOOTING_OUT);
-        alloc_print_z(format_args!(
-            "gui/{}/bun.cron.{}",
-            get_uid(),
-            bstr::BStr::new(self.title_bytes())
-        ))
-        .map_err(|_| self.set_err(format_args!("Out of memory")))
-    }
-
-    fn check_finished(&self) -> JobAction;
-    /// May free `this`.
-    fn advance_state(this: ThisPtr<Self>);
-
-    /// Settles the promise and releases the owning ref, freeing `this`; the
-    /// job's `Drop` (process detach, reader teardown) runs inside the
-    /// enter/exit scope. Callers return without touching `this` again.
-    fn finish(this: ThisPtr<Self>) {
-        let owner = this.owner().take().expect("cron job finished twice");
-        this.poll().with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        let global = this.global();
-        let ev = VirtualMachine::get().event_loop_mut();
-        ev.enter();
-        if let Some(msg) = this.err_msg().replace(None) {
-            let err = EncodedSlice::utf8(&msg).to_error_instance(&global);
-            let _ = this
-                .promise()
-                .with_mut(|p| p.reject_with_async_stack(&global, Ok(err)));
-        } else {
-            let _ = this
-                .promise()
-                .with_mut(|p| p.resolve(&global, JSValue::UNDEFINED));
-        }
-        drop(owner);
-        ev.exit();
-    }
-
-    fn set_err(&self, args: core::fmt::Arguments<'_>) {
-        if self.err_msg().get().is_none() {
-            let mut msg = Vec::new();
-            let _ = msg.write_fmt(args);
-            self.err_msg().set(Some(msg));
-        }
-    }
-
-    /// May free `this`.
-    fn maybe_finished(this: ThisPtr<Self>) {
-        match this.check_finished() {
-            JobAction::Pending => {}
-            JobAction::Finish => Self::finish(this),
-            JobAction::Advance => Self::advance_state(this),
-        }
-    }
-
-    fn loop_(&self) -> *mut AsyncLoop {
-        // `VirtualMachine::uv_loop` already returns the native loop on both
-        // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
-        // `bun_uws::Loop::get()` named the same per-thread singleton.
-        vm_mut().uv_loop()
-    }
-
-    fn note_reader_done(&self) {
-        debug_assert!(self.remaining_fds().get() > 0);
-        self.remaining_fds().set(self.remaining_fds().get() - 1);
-    }
-
-    fn note_reader_error(&self, err: sys::Error) {
-        self.note_reader_done();
-        if self.err_msg().get().is_none() {
-            let mut msg = Vec::new();
-            let _ = write!(
-                &mut msg,
-                "Failed to read process output: {}",
-                bstr::BStr::new(err.name())
-            );
-            self.err_msg().set(Some(msg));
-        }
-    }
-
-    /// May free `this` via `maybe_finished`.
-    fn on_reader_done(this: ThisPtr<Self>) {
-        this.note_reader_done();
-        Self::maybe_finished(this);
-    }
-
-    /// May free `this` via `maybe_finished`.
-    fn on_reader_error(this: ThisPtr<Self>, err: sys::Error) {
-        this.note_reader_error(err);
-        Self::maybe_finished(this);
-    }
-
-    /// May free `this` via `maybe_finished`.
-    fn on_process_exit(this: ThisPtr<Self>, _proc: &Process, status: Status, _rusage: &Rusage) {
-        this.has_called_process_exit().set(true);
-        this.exit_status().set(Some(status));
-        Self::maybe_finished(this);
+    fn keep(mut self) -> ZString {
+        self.0.take().expect("not kept")
     }
 }
 
-enum JobAction {
-    Pending,
-    Finish,
-    Advance,
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = sys::unlink(path);
+        }
+    }
 }
 
-// ============================================================================
-// CronRegisterJob
-// ============================================================================
-
-#[derive(bun_ptr::CellRefCounted)]
-struct CronRegisterJob {
-    ref_count: Cell<u32>,
-    /// The single owning ref; released by `finish`.
-    owner: Cell<Option<RefPtr<CronRegisterJob>>>,
-    promise: JsCell<jsc::JSPromiseStrong>,
-    // LIFETIMES.tsv: JSC_BORROW → GlobalRef
-    global: GlobalRef,
-    poll: JsCell<KeepAlive>,
-
+struct Registration {
     bun_exe: &'static ZStr,
     abs_path: ZString,
     /// normalized numeric form for crontab/launchd
@@ -245,374 +183,143 @@ struct CronRegisterJob {
     title: ZString,
     #[cfg(windows)]
     parsed_cron: CronExpression,
-
-    state: Cell<RegisterState>,
-    process: JsCell<Option<ProcessHandle>>,
-    stdout_reader: JsCell<OutputReader>,
-    #[cfg(windows)]
-    stderr_reader: JsCell<OutputReader>,
-    remaining_fds: Cell<i8>,
-    has_called_process_exit: Cell<bool>,
-    exit_status: JsCell<Option<Status>>,
-    err_msg: JsCell<Option<Vec<u8>>>,
-    tmp_path: JsCell<Option<ZString>>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
-    /// wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RegisterState {
-    ReadingCrontab,
-    #[cfg(not(target_os = "macos"))]
-    InstallingCrontab,
-    #[cfg(target_os = "macos")]
-    WritingPlist,
-    BootingOut,
-    #[cfg(target_os = "macos")]
-    Bootstrapping,
+// -- Linux --
+
+/// The user's crontab without the entry for `title`.
+#[cfg(all(not(target_os = "macos"), not(windows)))]
+async fn crontab_without(
+    crontab: &ZString,
+    title: &[u8],
+    out_of_memory: &str,
+) -> Result<Vec<u8>, Failure> {
+    let listed = run(
+        &[crontab.as_cstr(), c"-l"],
+        spawn::Stdio::Buffer,
+        Tolerate::ExitCode1,
+    )
+    .await?;
+    let mut table = Vec::new();
+    filter_crontab(&listed.stdout, title, &mut table).map_err(|_| failure!("{out_of_memory}"))?;
+    Ok(table)
 }
 
-// `maybe_finished` (via `CronJobBase`) may free `this`.
-bun_io::impl_buffered_reader_parent! {
-    CronRegister for CronRegisterJob;
-    feature = Cron;
-    has_on_read_chunk = false;
-    // SAFETY: `this` is the live heap job registered via `set_parent`.
-    on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
-    // SAFETY: `this` is the live heap job registered via `set_parent`.
-    on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| <Self as CronJobBase>::loop_(&*this).cast();
-    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
+#[cfg(all(not(target_os = "macos"), not(windows)))]
+async fn install_crontab(
+    crontab: &ZString,
+    table: &[u8],
+    prefix: &'static str,
+) -> Result<(), Failure> {
+    let path = make_temp_path(prefix).map_err(|_| failure!("Out of memory"))?;
+    let messages = ["Failed to create temp file", "Failed to write temp file"];
+    let file = TempFile::create(path, sys::O::EXCL, 0o600, table, messages)?;
+    run(
+        &[crontab.as_cstr(), file.path().as_cstr()],
+        spawn::Stdio::Ignore,
+        Tolerate::Nothing,
+    )
+    .await?;
+    Ok(())
 }
 
-impl CronJobBase for CronRegisterJob {
-    type State = RegisterState;
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    const READING_CRONTAB: RegisterState = RegisterState::ReadingCrontab;
-    #[cfg(target_os = "macos")]
-    const BOOTING_OUT: RegisterState = RegisterState::BootingOut;
-    #[cfg(not(windows))]
-    fn set_state(&self, state: RegisterState) {
-        self.state.set(state);
-    }
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn stdout_reader_slot(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
-    }
-    #[cfg(target_os = "macos")]
-    fn title_bytes(&self) -> &[u8] {
-        self.title.as_bytes()
-    }
-    fn owner(&self) -> &Cell<Option<RefPtr<Self>>> {
-        &self.owner
-    }
-    fn promise(&self) -> &JsCell<jsc::JSPromiseStrong> {
-        &self.promise
-    }
-    fn global(&self) -> GlobalRef {
-        self.global
-    }
-    fn poll(&self) -> &JsCell<KeepAlive> {
-        &self.poll
-    }
-    fn remaining_fds(&self) -> &Cell<i8> {
-        &self.remaining_fds
-    }
-    fn err_msg(&self) -> &JsCell<Option<Vec<u8>>> {
-        &self.err_msg
-    }
-    fn has_called_process_exit(&self) -> &Cell<bool> {
-        &self.has_called_process_exit
-    }
-    fn exit_status(&self) -> &JsCell<Option<Status>> {
-        &self.exit_status
-    }
-
-    fn check_finished(&self) -> JobAction {
-        if !self.has_called_process_exit.get() || self.remaining_fds.get() != 0 {
-            return JobAction::Pending;
-        }
-        self.process.set(None);
-        if self.err_msg.get().is_some() {
-            return JobAction::Finish;
-        }
-        let Some(status) = self.exit_status.replace(None) else {
-            return JobAction::Pending;
-        };
-        let state = self.state.get();
-        match status {
-            Status::Exited(exited) => {
-                if exited.code != 0
-                    && !(state == RegisterState::ReadingCrontab && exited.code == 1)
-                    && state != RegisterState::BootingOut
-                {
-                    // Materialize the trimmed stderr into an owned buffer so
-                    // no borrow of the reader outlives this statement
-                    // (Windows only; POSIX ignores stderr here).
-                    #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
-                        bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE)
-                            .to_vec()
-                    });
-                    #[cfg(windows)]
-                    let stderr_output: &[u8] = stderr_owned.as_slice();
-                    #[cfg(not(windows))]
-                    let stderr_output: &[u8] = b"";
-                    // On Windows, detect the SID resolution error and provide
-                    // a clear message instead of the raw schtasks output.
-                    #[cfg(windows)]
-                    {
-                        if state == RegisterState::InstallingCrontab
-                            && bun_core::index_of(
-                                stderr_output,
-                                b"No mapping between account names",
-                            )
-                            .is_some()
-                        {
-                            self.set_err(format_args!(
-                                "Failed to register cron job: your Windows account's Security Identifier (SID) could not be resolved. \
-                                 This typically happens on headless servers or CI where the process runs under a service account. \
-                                 To fix this, either run Bun as a regular user account, or create the scheduled task manually with: \
-                                 schtasks /create /xml <file> /tn <name> /ru SYSTEM /f"
-                            ));
-                            return JobAction::Finish;
-                        }
-                    }
-                    if !stderr_output.is_empty() {
-                        self.set_err(format_args!("{}", bstr::BStr::new(stderr_output)));
-                    } else {
-                        self.set_err(format_args!("Process exited with code {}", exited.code));
-                    }
-                    return JobAction::Finish;
-                }
-            }
-            Status::Signaled(sig) => {
-                if state != RegisterState::BootingOut {
-                    self.set_err(format_args!("Process killed by signal {}", sig as i32));
-                    return JobAction::Finish;
-                }
-            }
-            Status::Err(err) => {
-                self.set_err(format_args!(
-                    "Process error: {}",
-                    bstr::BStr::new(err.name())
-                ));
-                return JobAction::Finish;
-            }
-            Status::Running => return JobAction::Pending,
-        }
-        JobAction::Advance
-    }
-
-    /// May free `this`; see [`CronJobBase`] note.
-    fn advance_state(this: ThisPtr<Self>) {
-        let state = this.state.get();
-        #[cfg(target_os = "macos")]
-        {
-            match state {
-                RegisterState::WritingPlist => Self::spawn_bootout(this),
-                RegisterState::BootingOut => Self::spawn_bootstrap(this),
-                RegisterState::Bootstrapping => Self::finish(this),
-                _ => {
-                    this.set_err(format_args!("Unexpected state"));
-                    Self::finish(this);
-                }
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            match state {
-                RegisterState::ReadingCrontab => Self::process_crontab_and_install(this),
-                RegisterState::InstallingCrontab => Self::finish(this),
-                _ => {
-                    this.set_err(format_args!("Unexpected state"));
-                    Self::finish(this);
-                }
-            }
-        }
-    }
-}
-
-impl CronRegisterJob {
-    /// May free `this` (via spawn → synchronous exit → finish, or error path).
-    fn spawn_cmd(
-        this: ThisPtr<Self>,
-        argv: &[&CStr],
-        stdin_opt: spawn::Stdio,
-        stdout_opt: spawn::Stdio,
-    ) {
-        spawn_cmd_generic(this, argv, stdin_opt, stdout_opt);
-    }
-
-    // -- Linux --
-
-    /// May free `this`; see [`CronJobBase`] note.
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn start_linux(this: ThisPtr<Self>) {
-        let Some(crontab_path) = this.prepare_list_crontab(this.as_ptr().cast()) else {
-            return Self::finish(this);
-        };
-        let argv = [crontab_path.as_cstr(), c"-l"];
-        Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer);
-    }
-
-    /// May free `this`; see [`CronJobBase`] note.
-    #[cfg(not(target_os = "macos"))]
-    fn process_crontab_and_install(this: ThisPtr<Self>) {
-        let Ok((crontab_path, tmp_path)) = this.prepare_install_crontab() else {
-            return Self::finish(this);
-        };
-        let argv = [crontab_path.as_cstr(), tmp_path.as_cstr()];
-        Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn prepare_install_crontab(&self) -> Result<(ZString, ZString), ()> {
-        let mut result: Vec<u8> = Vec::new();
-        let filtered = self.stdout_reader.with_mut(|r| {
-            filter_crontab(
-                r.final_buffer().as_slice(),
-                self.title.as_bytes(),
-                &mut result,
-            )
-        });
-
-        if filtered.is_err() {
-            self.set_err(format_args!("Out of memory building crontab"));
-            return Err(());
-        }
-
-        // Build new entry with single-quoted paths to prevent shell injection
-        let mut new_entry = Vec::new();
-        if write!(
-            &mut new_entry,
+#[cfg(all(not(target_os = "macos"), not(windows)))]
+impl Registration {
+    async fn register(self) -> Result<(), Failure> {
+        let crontab = find_crontab().ok_or_else(|| failure!("crontab not found in PATH"))?;
+        let title = self.title.as_bytes();
+        let mut table = crontab_without(&crontab, title, "Out of memory building crontab").await?;
+        // Single-quoted paths prevent shell injection
+        let _ = write!(
+            &mut table,
             "# bun-cron: {title}\n{sched} '{exe}' run --cron-title={title} --cron-period='{sched}' '{path}'\n",
             title = bstr::BStr::new(self.title.as_bytes()),
             sched = bstr::BStr::new(self.schedule.as_bytes()),
             exe = bstr::BStr::new(self.bun_exe.as_bytes()),
             path = bstr::BStr::new(self.abs_path.as_bytes()),
-        )
-        .is_err()
-        {
-            self.set_err(format_args!("Out of memory"));
-            return Err(());
-        }
-        result.extend_from_slice(&new_entry);
-
-        let tmp_path = match make_temp_path("bun-cron-") {
-            Ok(p) => p,
-            Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Err(());
-            }
-        };
-        self.tmp_path
-            .set(Some(ZString::from_bytes(tmp_path.as_bytes())));
-
-        let file = match File::openat(
-            Fd::cwd(),
-            self.tmp_path.get().as_ref().unwrap(),
-            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
-            0o600,
-        ) {
-            Ok(f) => f,
-            Err(_) => {
-                self.set_err(format_args!("Failed to create temp file"));
-                return Err(());
-            }
-        };
-        if file.write_all(&result).is_err() {
-            let _ = file.close(); // close error is non-actionable
-            self.set_err(format_args!("Failed to write temp file"));
-            return Err(());
-        }
-        let _ = file.close(); // close error is non-actionable
-
-        self.state.set(RegisterState::InstallingCrontab);
-        self.stdout_reader
-            .set(OutputReader::init::<CronRegisterJob>());
-        let Some(crontab_path) = find_crontab() else {
-            self.set_err(format_args!("crontab not found in PATH"));
-            return Err(());
-        };
-        Ok((crontab_path, tmp_path))
-    }
-
-    // -- macOS --
-
-    /// May free `this`; see [`CronJobBase`] note.
-    #[cfg(target_os = "macos")]
-    fn start_mac(this: ThisPtr<Self>) {
-        if this.prepare_plist().is_err() {
-            return Self::finish(this);
-        }
-        Self::spawn_bootout(this);
-    }
-
-    #[cfg(target_os = "macos")]
-    fn prepare_plist(&self) -> Result<(), ()> {
-        self.state.set(RegisterState::WritingPlist);
-
-        let calendar_xml = match cron_to_calendar_interval(self.schedule.as_bytes()) {
-            Ok(x) => x,
-            Err(_) => {
-                self.set_err(format_args!("Invalid cron expression"));
-                return Err(());
-            }
-        };
-
-        let Some(home) = env_var::HOME.get() else {
-            self.set_err(format_args!("HOME environment variable not set"));
-            return Err(());
-        };
-
-        let mut launch_agents_dir = Vec::new();
-        let _ = write!(
-            &mut launch_agents_dir,
-            "{}/Library/LaunchAgents",
-            bstr::BStr::new(home)
         );
-        if Fd::cwd().make_path(&launch_agents_dir).is_err() {
-            self.set_err(format_args!(
-                "Failed to create ~/Library/LaunchAgents directory"
-            ));
-            return Err(());
-        }
+        install_crontab(&crontab, &table, "bun-cron-").await
+    }
+}
 
-        let plist_path = match alloc_print_z(format_args!(
+#[cfg(all(not(target_os = "macos"), not(windows)))]
+async fn unregister(title: ZString) -> Result<(), Failure> {
+    let crontab = find_crontab().ok_or_else(|| failure!("crontab not found in PATH"))?;
+    let table = crontab_without(&crontab, title.as_bytes(), "Out of memory").await?;
+    install_crontab(&crontab, &table, "bun-cron-rm-").await
+}
+
+// -- macOS --
+
+#[cfg(target_os = "macos")]
+async fn bootout(title: &[u8]) -> Result<(), Failure> {
+    let service = alloc_print_z(format_args!(
+        "gui/{}/bun.cron.{}",
+        get_uid(),
+        bstr::BStr::new(title)
+    ))
+    .map_err(|_| failure!("Out of memory"))?;
+    run(
+        &[c"/bin/launchctl", c"bootout", service.as_cstr()],
+        spawn::Stdio::Ignore,
+        Tolerate::AnyExitCodeOrSignal,
+    )
+    .await?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+impl Registration {
+    async fn register(self) -> Result<(), Failure> {
+        let plist = self.write_plist()?;
+        bootout(self.title.as_bytes()).await?;
+        let plist_path = plist.keep();
+        let domain = alloc_print_z(format_args!("gui/{}", get_uid()))
+            .map_err(|_| failure!("Out of memory"))?;
+        run(
+            &[
+                c"/bin/launchctl",
+                c"bootstrap",
+                domain.as_cstr(),
+                plist_path.as_cstr(),
+            ],
+            spawn::Stdio::Ignore,
+            Tolerate::Nothing,
+        )
+        .await?;
+        Ok(())
+    }
+
+    fn write_plist(&self) -> Result<TempFile, Failure> {
+        let calendar_xml = cron_to_calendar_interval(self.schedule.as_bytes())
+            .map_err(|_| failure!("Invalid cron expression"))?;
+
+        let home = env_var::HOME
+            .get()
+            .ok_or_else(|| failure!("HOME environment variable not set"))?;
+
+        let mut launch_agents_dir = home.to_vec();
+        launch_agents_dir.extend_from_slice(b"/Library/LaunchAgents");
+        Fd::cwd()
+            .make_path(&launch_agents_dir)
+            .map_err(|_| failure!("Failed to create ~/Library/LaunchAgents directory"))?;
+
+        let plist_path = alloc_print_z(format_args!(
             "{}/Library/LaunchAgents/bun.cron.{}.plist",
             bstr::BStr::new(home),
             bstr::BStr::new(self.title.as_bytes())
-        )) {
-            Ok(p) => p,
-            Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Err(());
-            }
-        };
-        self.tmp_path.set(Some(plist_path));
+        ))
+        .map_err(|_| failure!("Out of memory"))?;
 
         // XML-escape all dynamic values
-        macro_rules! try_escape {
-            ($e:expr) => {
-                match xml_escape($e) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        self.set_err(format_args!("Out of memory"));
-                        return Err(());
-                    }
-                }
-            };
-        }
-        let xml_title = try_escape!(self.title.as_bytes());
-        let xml_bun = try_escape!(self.bun_exe.as_bytes());
-        let xml_path = try_escape!(self.abs_path.as_bytes());
-        let xml_sched = try_escape!(self.schedule.as_bytes());
+        let escape = |value: &[u8]| xml_escape(value).map_err(|_| failure!("Out of memory"));
+        let xml_title = escape(self.title.as_bytes())?;
+        let xml_bun = escape(self.bun_exe.as_bytes())?;
+        let xml_path = escape(self.abs_path.as_bytes())?;
+        let xml_sched = escape(self.schedule.as_bytes())?;
 
         let mut plist = Vec::new();
-        if write!(
+        let _ = write!(
             &mut plist,
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
@@ -641,75 +348,104 @@ impl CronRegisterJob {
             bstr::BStr::new(&xml_path),
             bstr::BStr::new(&xml_sched),
             bstr::BStr::new(&calendar_xml),
-        )
-        .is_err()
-        {
-            self.set_err(format_args!("Out of memory"));
-            return Err(());
-        }
+        );
 
-        let file = match File::openat(
-            Fd::cwd(),
-            self.tmp_path.get().as_ref().unwrap(),
-            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-            0o644,
-        ) {
-            Ok(f) => f,
-            Err(_) => {
-                self.set_err(format_args!("Failed to create plist file"));
-                return Err(());
+        let messages = ["Failed to create plist file", "Failed to write plist"];
+        TempFile::create(plist_path, sys::O::TRUNC, 0o644, &plist, messages)
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn unregister(title: ZString) -> Result<(), Failure> {
+    bootout(title.as_bytes()).await?;
+    let home = env_var::HOME
+        .get()
+        .ok_or_else(|| failure!("HOME not set"))?;
+    let plist_path = alloc_print_z(format_args!(
+        "{}/Library/LaunchAgents/bun.cron.{}.plist",
+        bstr::BStr::new(home),
+        bstr::BStr::new(title.as_bytes())
+    ))
+    .map_err(|_| failure!("Out of memory"))?;
+    let _ = sys::unlink(&plist_path);
+    Ok(())
+}
+
+// -- Windows --
+
+#[cfg(windows)]
+const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
+
+#[cfg(windows)]
+fn task_name(title: &[u8]) -> Result<ZString, Failure> {
+    alloc_print_z(format_args!("bun-cron-{}", bstr::BStr::new(title)))
+        .map_err(|_| failure!("Out of memory"))
+}
+
+#[cfg(windows)]
+impl Registration {
+    async fn register(self) -> Result<(), Failure> {
+        let task_name = task_name(self.title.as_bytes())?;
+        let xml = cron_to_task_xml(
+            &self.parsed_cron,
+            self.bun_exe.as_bytes(),
+            self.title.as_bytes(),
+            self.schedule.as_bytes(),
+            self.abs_path.as_bytes(),
+        )
+        .map_err(|e| match e {
+            TaskXmlError::TooManyTriggers => failure!(
+                "This cron expression requires too many triggers for Windows Task Scheduler (max 48). Simplify the expression or use fewer restricted fields."
+            ),
+            _ => failure!("Failed to build task XML"),
+        })?;
+        let xml_path = make_temp_path("bun-cron-xml-").map_err(|_| failure!("Out of memory"))?;
+        let messages = [
+            "Failed to create temp XML file",
+            "Failed to write temp XML file",
+        ];
+        let xml_file = TempFile::create(xml_path, sys::O::EXCL, 0o600, &xml, messages)?;
+        run(
+            &[
+                c"schtasks",
+                c"/create",
+                c"/xml",
+                xml_file.path().as_cstr(),
+                c"/tn",
+                task_name.as_cstr(),
+                c"/np",
+                c"/f",
+            ],
+            spawn::Stdio::Ignore,
+            Tolerate::Nothing,
+        )
+        .await
+        .map_err(|stderr| {
+            // A clear message in place of the raw schtasks output.
+            if bun_core::index_of(&stderr, b"No mapping between account names").is_some() {
+                return failure!(
+                    "Failed to register cron job: your Windows account's Security Identifier (SID) could not be resolved. \
+                     This typically happens on headless servers or CI where the process runs under a service account. \
+                     To fix this, either run Bun as a regular user account, or create the scheduled task manually with: \
+                     schtasks /create /xml <file> /tn <name> /ru SYSTEM /f"
+                );
             }
-        };
-        if file.write_all(&plist).is_err() {
-            let _ = file.close(); // close error is non-actionable
-            self.set_err(format_args!("Failed to write plist"));
-            return Err(());
-        }
-        let _ = file.close(); // close error is non-actionable
+            stderr
+        })?;
         Ok(())
     }
+}
 
-    /// May free `this`; see [`CronJobBase`] note.
-    #[cfg(target_os = "macos")]
-    fn spawn_bootout(this: ThisPtr<Self>) {
-        let Ok(uid_str) = this.prepare_bootout() else {
-            return Self::finish(this);
-        };
-        let argv = [c"/bin/launchctl", c"bootout", uid_str.as_cstr()];
-        Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
-    }
-
-    /// May free `this`; see [`CronJobBase`] note.
-    #[cfg(target_os = "macos")]
-    fn spawn_bootstrap(this: ThisPtr<Self>) {
-        let Ok((uid_str, plist_path)) = this.prepare_bootstrap() else {
-            return Self::finish(this);
-        };
-        let argv = [
-            c"/bin/launchctl",
-            c"bootstrap",
-            uid_str.as_cstr(),
-            plist_path.as_cstr(),
-        ];
-        Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
-    }
-
-    #[cfg(target_os = "macos")]
-    fn prepare_bootstrap(&self) -> Result<(ZString, ZString), ()> {
-        self.state.set(RegisterState::Bootstrapping);
-        let Some(plist_path) = self.tmp_path.replace(None) else {
-            self.set_err(format_args!("No plist path"));
-            return Err(());
-        };
-        let uid_str = match alloc_print_z(format_args!("gui/{}", get_uid())) {
-            Ok(v) => v,
-            Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Err(());
-            }
-        };
-        Ok((uid_str, plist_path))
-    }
+#[cfg(windows)]
+async fn unregister(title: ZString) -> Result<(), Failure> {
+    let task_name = task_name(title.as_bytes())?;
+    run(
+        &[c"schtasks", c"/delete", c"/tn", task_name.as_cstr(), c"/f"],
+        spawn::Stdio::Ignore,
+        Tolerate::AnyExitCode,
+    )
+    .await?;
+    Ok(())
 }
 
 /// Resolve the `{ tz?: string }` option to a `CronTz`.
@@ -730,7 +466,7 @@ fn resolve_cron_tz(global: &JSGlobalObject, options: Option<&CronOptions<'_>>) -
     )))
 }
 
-// -- JS entry point --
+// -- JS entry points --
 
 pub(crate) fn register_os_job(
     cx: &mut JsScope<'_>,
@@ -799,509 +535,24 @@ pub(crate) fn register_os_job(
                 bstr::BStr::new(bun_exe.as_bytes())
             )));
     }
-    let job = RefPtr::new(CronRegisterJob {
-        ref_count: Cell::new(1),
-        owner: Cell::new(None),
-        promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
-        global: GlobalRef::from(global),
-        poll: JsCell::new(KeepAlive::default()),
+    let registration = Registration {
         bun_exe,
         abs_path,
         schedule: ZString::from_bytes(normalized_schedule),
         title: ZString::from_bytes(title),
         #[cfg(windows)]
         parsed_cron: parsed,
-        state: Cell::new(RegisterState::ReadingCrontab),
-        process: JsCell::new(None),
-        stdout_reader: JsCell::new(OutputReader::init::<CronRegisterJob>()),
-        #[cfg(windows)]
-        stderr_reader: JsCell::new(OutputReader::init::<CronRegisterJob>()),
-        remaining_fds: Cell::new(0),
-        has_called_process_exit: Cell::new(false),
-        exit_status: JsCell::new(None),
-        err_msg: JsCell::new(None),
-        tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
-    });
-    job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-    let promise_value = job.promise.get().value();
-    let this = job.this_ptr();
-    this.owner.set(Some(job));
-    let job = this;
-
-    #[cfg(target_os = "macos")]
-    CronRegisterJob::start_mac(job);
-    #[cfg(windows)]
-    CronRegisterJob::start_windows(job);
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    CronRegisterJob::start_linux(job);
-
-    Ok(promise_value)
-}
-
-#[cfg(windows)]
-impl CronRegisterJob {
-    // -- Windows --
-
-    /// May free `this`; see [`CronJobBase`] note.
-    fn start_windows(this: ThisPtr<Self>) {
-        let Ok((task_name, xml_path)) = this.prepare_schtasks_create() else {
-            return Self::finish(this);
-        };
-        let argv = [
-            c"schtasks",
-            c"/create",
-            c"/xml",
-            xml_path.as_cstr(),
-            c"/tn",
-            task_name.as_cstr(),
-            c"/np",
-            c"/f",
-        ];
-        Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
-    }
-
-    fn prepare_schtasks_create(&self) -> Result<(ZString, ZString), ()> {
-        self.state.set(RegisterState::InstallingCrontab);
-
-        let task_name = match alloc_print_z(format_args!(
-            "bun-cron-{}",
-            bstr::BStr::new(self.title.as_bytes())
-        )) {
-            Ok(v) => v,
-            Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Err(());
-            }
-        };
-
-        let xml = match cron_to_task_xml(
-            &self.parsed_cron,
-            self.bun_exe.as_bytes(),
-            self.title.as_bytes(),
-            self.schedule.as_bytes(),
-            self.abs_path.as_bytes(),
-        ) {
-            Ok(x) => x,
-            Err(e) => {
-                if e == TaskXmlError::TooManyTriggers {
-                    self.set_err(format_args!(
-                        "This cron expression requires too many triggers for Windows Task Scheduler (max 48). Simplify the expression or use fewer restricted fields."
-                    ));
-                } else {
-                    self.set_err(format_args!("Failed to build task XML"));
-                }
-                return Err(());
-            }
-        };
-
-        let xml_path = match make_temp_path("bun-cron-xml-") {
-            Ok(p) => p,
-            Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Err(());
-            }
-        };
-        self.tmp_path
-            .set(Some(ZString::from_bytes(xml_path.as_bytes())));
-
-        let file = match File::openat(
-            Fd::cwd(),
-            self.tmp_path.get().as_ref().unwrap(),
-            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
-            0o600,
-        ) {
-            Ok(f) => f,
-            Err(_) => {
-                self.set_err(format_args!("Failed to create temp XML file"));
-                return Err(());
-            }
-        };
-        if file.write_all(&xml).is_err() {
-            let _ = file.close(); // close error is non-actionable
-            self.set_err(format_args!("Failed to write temp XML file"));
-            return Err(());
-        }
-        let _ = file.close(); // close error is non-actionable
-
-        Ok((task_name, xml_path))
-    }
-}
-
-impl Drop for CronRegisterJob {
-    fn drop(&mut self) {
-        if let Some(p) = self.tmp_path.replace(None) {
-            let _ = sys::unlink(&p);
-        }
-    }
-}
-
-#[cfg(windows)]
-const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
-
-// ============================================================================
-// CronRemoveJob
-// ============================================================================
-
-#[derive(bun_ptr::CellRefCounted)]
-struct CronRemoveJob {
-    ref_count: Cell<u32>,
-    /// The single owning ref; released by `finish`.
-    owner: Cell<Option<RefPtr<CronRemoveJob>>>,
-    promise: JsCell<jsc::JSPromiseStrong>,
-    // LIFETIMES.tsv: JSC_BORROW → GlobalRef
-    global: GlobalRef,
-    poll: JsCell<KeepAlive>,
-    title: ZString,
-
-    state: Cell<RemoveState>,
-    process: JsCell<Option<ProcessHandle>>,
-    stdout_reader: JsCell<OutputReader>,
-    #[cfg(windows)]
-    stderr_reader: JsCell<OutputReader>,
-    remaining_fds: Cell<i8>,
-    has_called_process_exit: Cell<bool>,
-    exit_status: JsCell<Option<Status>>,
-    err_msg: JsCell<Option<Vec<u8>>>,
-    tmp_path: JsCell<Option<ZString>>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
-    /// wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RemoveState {
-    ReadingCrontab,
-    InstallingCrontab,
-    BootingOut,
-}
-
-// `maybe_finished` (via `CronJobBase`) may free `this`.
-bun_io::impl_buffered_reader_parent! {
-    CronRemove for CronRemoveJob;
-    feature = Cron;
-    has_on_read_chunk = false;
-    // SAFETY: `this` is the live heap job registered via `set_parent`.
-    on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
-    // SAFETY: `this` is the live heap job registered via `set_parent`.
-    on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| <Self as CronJobBase>::loop_(&*this).cast();
-    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
-}
-
-impl CronJobBase for CronRemoveJob {
-    type State = RemoveState;
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    const READING_CRONTAB: RemoveState = RemoveState::ReadingCrontab;
-    #[cfg(target_os = "macos")]
-    const BOOTING_OUT: RemoveState = RemoveState::BootingOut;
-    #[cfg(not(windows))]
-    fn set_state(&self, state: RemoveState) {
-        self.state.set(state);
-    }
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn stdout_reader_slot(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
-    }
-    #[cfg(target_os = "macos")]
-    fn title_bytes(&self) -> &[u8] {
-        self.title.as_bytes()
-    }
-    fn owner(&self) -> &Cell<Option<RefPtr<Self>>> {
-        &self.owner
-    }
-    fn promise(&self) -> &JsCell<jsc::JSPromiseStrong> {
-        &self.promise
-    }
-    fn global(&self) -> GlobalRef {
-        self.global
-    }
-    fn poll(&self) -> &JsCell<KeepAlive> {
-        &self.poll
-    }
-    fn remaining_fds(&self) -> &Cell<i8> {
-        &self.remaining_fds
-    }
-    fn err_msg(&self) -> &JsCell<Option<Vec<u8>>> {
-        &self.err_msg
-    }
-    fn has_called_process_exit(&self) -> &Cell<bool> {
-        &self.has_called_process_exit
-    }
-    fn exit_status(&self) -> &JsCell<Option<Status>> {
-        &self.exit_status
-    }
-
-    fn check_finished(&self) -> JobAction {
-        if !self.has_called_process_exit.get() || self.remaining_fds.get() != 0 {
-            return JobAction::Pending;
-        }
-        self.process.set(None);
-        if self.err_msg.get().is_some() {
-            return JobAction::Finish;
-        }
-        let Some(status) = self.exit_status.replace(None) else {
-            return JobAction::Pending;
-        };
-        let state = self.state.get();
-        match status {
-            Status::Exited(exited) => {
-                let is_acceptable_nonzero = (state == RemoveState::ReadingCrontab
-                    && exited.code == 1)
-                    || state == RemoveState::BootingOut
-                    // On Windows, schtasks /delete exits non-zero when the task doesn't exist;
-                    // removal of a non-existent job should resolve without error.
-                    || (cfg!(windows) && state == RemoveState::InstallingCrontab);
-                if exited.code != 0 && !is_acceptable_nonzero {
-                    #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
-                        bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE)
-                            .to_vec()
-                    });
-                    #[cfg(windows)]
-                    let stderr_output: &[u8] = stderr_owned.as_slice();
-                    #[cfg(not(windows))]
-                    let stderr_output: &[u8] = b"";
-                    if !stderr_output.is_empty() {
-                        self.set_err(format_args!("{}", bstr::BStr::new(stderr_output)));
-                    } else {
-                        self.set_err(format_args!("Process exited with code {}", exited.code));
-                    }
-                    return JobAction::Finish;
-                }
-            }
-            Status::Signaled(sig) => {
-                if state != RemoveState::BootingOut {
-                    self.set_err(format_args!("Process killed by signal {}", sig as i32));
-                    return JobAction::Finish;
-                }
-            }
-            Status::Err(err) => {
-                self.set_err(format_args!(
-                    "Process error: {}",
-                    bstr::BStr::new(err.name())
-                ));
-                return JobAction::Finish;
-            }
-            Status::Running => return JobAction::Pending,
-        }
-        JobAction::Advance
-    }
-
-    /// May free `this`; see [`CronJobBase`] note.
-    fn advance_state(this: ThisPtr<Self>) {
-        let state = this.state.get();
-        #[cfg(target_os = "macos")]
-        {
-            match state {
-                RemoveState::BootingOut => {
-                    this.unlink_plist();
-                    Self::finish(this);
-                }
-                _ => {
-                    this.set_err(format_args!("Unexpected state"));
-                    Self::finish(this);
-                }
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            match state {
-                RemoveState::ReadingCrontab => Self::remove_crontab_entry(this),
-                RemoveState::InstallingCrontab => Self::finish(this),
-                _ => {
-                    this.set_err(format_args!("Unexpected state"));
-                    Self::finish(this);
-                }
-            }
-        }
-    }
-}
-
-impl CronRemoveJob {
-    #[cfg(target_os = "macos")]
-    fn unlink_plist(&self) {
-        let Some(home) = env_var::HOME.get() else {
-            self.set_err(format_args!("HOME not set"));
-            return;
-        };
-        if let Ok(plist_path) = alloc_print_z(format_args!(
-            "{}/Library/LaunchAgents/bun.cron.{}.plist",
-            bstr::BStr::new(home),
-            bstr::BStr::new(self.title.as_bytes())
-        )) {
-            let _ = sys::unlink(&plist_path);
-        } else {
-            self.set_err(format_args!("Out of memory"));
-        }
-    }
-
-    /// May free `this` (via spawn → synchronous exit → finish, or error path).
-    fn spawn_cmd(
-        this: ThisPtr<Self>,
-        argv: &[&CStr],
-        stdin_opt: spawn::Stdio,
-        stdout_opt: spawn::Stdio,
-    ) {
-        spawn_cmd_generic(this, argv, stdin_opt, stdout_opt);
-    }
-
-    /// May free `this`; see [`CronJobBase`] note.
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn start_linux(this: ThisPtr<Self>) {
-        let Some(crontab_path) = this.prepare_list_crontab(this.as_ptr().cast()) else {
-            return Self::finish(this);
-        };
-        let argv = [crontab_path.as_cstr(), c"-l"];
-        Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer);
-    }
-
-    /// May free `this`; see [`CronJobBase`] note.
-    #[cfg(not(target_os = "macos"))]
-    fn remove_crontab_entry(this: ThisPtr<Self>) {
-        let Ok((crontab_path, tmp_path)) = this.prepare_filtered_crontab() else {
-            return Self::finish(this);
-        };
-        let argv = [crontab_path.as_cstr(), tmp_path.as_cstr()];
-        Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn prepare_filtered_crontab(&self) -> Result<(ZString, ZString), ()> {
-        let mut result: Vec<u8> = Vec::new();
-        let filtered = self.stdout_reader.with_mut(|r| {
-            filter_crontab(
-                r.final_buffer().as_slice(),
-                self.title.as_bytes(),
-                &mut result,
-            )
-        });
-
-        if filtered.is_err() {
-            self.set_err(format_args!("Out of memory"));
-            return Err(());
-        }
-
-        let tmp_path = match make_temp_path("bun-cron-rm-") {
-            Ok(p) => p,
-            Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Err(());
-            }
-        };
-        self.tmp_path
-            .set(Some(ZString::from_bytes(tmp_path.as_bytes())));
-
-        let file = match File::openat(
-            Fd::cwd(),
-            self.tmp_path.get().as_ref().unwrap(),
-            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
-            0o600,
-        ) {
-            Ok(f) => f,
-            Err(_) => {
-                self.set_err(format_args!("Failed to create temp file"));
-                return Err(());
-            }
-        };
-        if file.write_all(&result).is_err() {
-            let _ = file.close(); // close error is non-actionable
-            self.set_err(format_args!("Failed to write temp file"));
-            return Err(());
-        }
-        let _ = file.close(); // close error is non-actionable
-
-        self.state.set(RemoveState::InstallingCrontab);
-        self.stdout_reader
-            .set(OutputReader::init::<CronRemoveJob>());
-        let Some(crontab_path) = find_crontab() else {
-            self.set_err(format_args!("crontab not found in PATH"));
-            return Err(());
-        };
-        Ok((crontab_path, tmp_path))
-    }
-
-    /// May free `this`; see [`CronJobBase`] note.
-    #[cfg(target_os = "macos")]
-    fn start_mac(this: ThisPtr<Self>) {
-        let Ok(uid_str) = this.prepare_bootout() else {
-            return Self::finish(this);
-        };
-        let argv = [c"/bin/launchctl", c"bootout", uid_str.as_cstr()];
-        Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
-    }
+    };
+    promise_of(cx, registration.register())
 }
 
 pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
-    let global = cx.global();
-
     if !validate_title(title) {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(cx.global().throw_invalid_arguments(format_args!(
             "Cron title must contain only alphanumeric characters, hyphens, and underscores"
         )));
     }
-
-    let job = RefPtr::new(CronRemoveJob {
-        ref_count: Cell::new(1),
-        owner: Cell::new(None),
-        promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
-        global: GlobalRef::from(global),
-        poll: JsCell::new(KeepAlive::default()),
-        title: ZString::from_bytes(title),
-        state: Cell::new(RemoveState::ReadingCrontab),
-        process: JsCell::new(None),
-        stdout_reader: JsCell::new(OutputReader::init::<CronRemoveJob>()),
-        #[cfg(windows)]
-        stderr_reader: JsCell::new(OutputReader::init::<CronRemoveJob>()),
-        remaining_fds: Cell::new(0),
-        has_called_process_exit: Cell::new(false),
-        exit_status: JsCell::new(None),
-        err_msg: JsCell::new(None),
-        tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
-    });
-    job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-    let promise_value = job.promise.get().value();
-    let this = job.this_ptr();
-    this.owner.set(Some(job));
-    let job = this;
-    #[cfg(target_os = "macos")]
-    CronRemoveJob::start_mac(job);
-    #[cfg(windows)]
-    CronRemoveJob::start_windows(job);
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    CronRemoveJob::start_linux(job);
-    Ok(promise_value)
-}
-
-#[cfg(windows)]
-impl CronRemoveJob {
-    /// May free `this`; see [`CronJobBase`] note.
-    fn start_windows(this: ThisPtr<Self>) {
-        let Ok(task_name) = this.prepare_schtasks_delete() else {
-            return Self::finish(this);
-        };
-        let argv = [c"schtasks", c"/delete", c"/tn", task_name.as_cstr(), c"/f"];
-        Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
-    }
-
-    fn prepare_schtasks_delete(&self) -> Result<ZString, ()> {
-        self.state.set(RemoveState::InstallingCrontab);
-        alloc_print_z(format_args!(
-            "bun-cron-{}",
-            bstr::BStr::new(self.title.as_bytes())
-        ))
-        .map_err(|_| self.set_err(format_args!("Out of memory")))
-    }
-}
-
-impl Drop for CronRemoveJob {
-    fn drop(&mut self) {
-        if let Some(p) = self.tmp_path.replace(None) {
-            let _ = sys::unlink(&p);
-        }
-    }
+    promise_of(cx, unregister(ZString::from_bytes(title)))
 }
 
 // ============================================================================
@@ -1894,303 +1145,13 @@ pub(crate) fn parse(
 // Shared helpers
 // ============================================================================
 
-/// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
-trait SpawnCmdTarget: CronJobBase + BufferedReaderParent + bun_spawn::ProcessExitOwner {
-    fn process_slot(&self) -> &JsCell<Option<ProcessHandle>>;
-    #[cfg(unix)]
-    fn stdout_reader(&self) -> &JsCell<OutputReader>;
-    #[cfg(windows)]
-    fn stderr_reader(&self) -> &JsCell<OutputReader>;
-}
-
-bun_spawn::link_impl_ProcessExit! {
-    CronRegister for CronRegisterJob => |this| {
-        // SAFETY: `this` is the live heap job installed via `set_exit_handler`;
-        // `on_process_exit` → `maybe_finished` may free it.
-        on_process_exit(process, status, rusage) =>
-            <CronRegisterJob as CronJobBase>::on_process_exit(ThisPtr::new(this), &*process, status, rusage),
-    }
-}
-bun_spawn::link_impl_ProcessExit! {
-    CronRemove for CronRemoveJob => |this| {
-        // SAFETY: `this` is the live heap job installed via `set_exit_handler`.
-        on_process_exit(process, status, rusage) =>
-            <CronRemoveJob as CronJobBase>::on_process_exit(ThisPtr::new(this), &*process, status, rusage),
-    }
-}
-
-impl SpawnCmdTarget for CronRegisterJob {
-    fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {
-        &self.process
-    }
-    #[cfg(unix)]
-    fn stdout_reader(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
-    }
-    #[cfg(windows)]
-    fn stderr_reader(&self) -> &JsCell<OutputReader> {
-        &self.stderr_reader
-    }
-}
-impl SpawnCmdTarget for CronRemoveJob {
-    fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {
-        &self.process
-    }
-    #[cfg(unix)]
-    fn stdout_reader(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
-    }
-    #[cfg(windows)]
-    fn stderr_reader(&self) -> &JsCell<OutputReader> {
-        &self.stderr_reader
-    }
-}
-
-/// Generic spawn used by both CronRegisterJob and CronRemoveJob.
-///
-/// May free `this` (synchronously, via either an early `T::finish` on setup
-/// error or `watch_or_reap` → exit handler → `maybe_finished` → `finish`);
-/// see [`CronJobBase`] note. Callers must not touch `this` after this returns.
-fn spawn_cmd_generic<T: SpawnCmdTarget>(
-    this: ThisPtr<T>,
-    argv: &[&CStr],
-    stdin_opt: spawn::Stdio,
-    stdout_opt: spawn::Stdio,
-) {
-    let Ok(process) = spawn_cmd_prepare(this, argv, stdin_opt, stdout_opt) else {
-        return T::finish(this);
-    };
-    process.set_exit_handler(this);
-    // The exit handler (`on_process_exit` → `maybe_finished`) may free `this`;
-    // it only runs synchronously on the `Ok(true)` and `on_exit` paths, after
-    // which neither `this` nor the slot is touched and the handle is dropped.
-    match process.watch_or_reap() {
-        Ok(false) => this.process_slot().set(Some(process)),
-        Ok(true) => {}
-        Err(err) => {
-            if !process.has_exited() {
-                let rusage = bun_core::ffi::zeroed::<Rusage>();
-                process.on_exit(Status::Err(err), &rusage);
-            }
-        }
-    }
-}
-
-/// Spawns the command and wires the output readers. `Err` records the error
-/// via `set_err` (for the caller to `finish`). `this.as_ptr()` is stored as
-/// the readers' parent pointer.
-/// The `stdout_reader().start(..)` failure path synchronously re-enters this
-/// job (`on_reader_error` -> `note_reader_error` writes the `remaining_fds`/
-/// `err_msg` cells through the parent backref); it never touches the reader
-/// cell itself, so the reader's `with_mut` borrow is the only one live.
-fn spawn_cmd_prepare<T: SpawnCmdTarget>(
-    this: ThisPtr<T>,
-    argv: &[&CStr],
-    stdin_opt: spawn::Stdio,
-    stdout_opt: spawn::Stdio,
-) -> Result<ProcessHandle, ()> {
-    let this_ptr: *mut core::ffi::c_void = this.as_ptr().cast();
-    this.has_called_process_exit().set(false);
-    this.exit_status().set(None);
-    this.remaining_fds().set(0);
-
-    #[cfg(not(windows))]
-    let resolved_argv0: Option<*const core::ffi::c_char> = None;
-    #[cfg(windows)]
-    let resolved_argv0: Option<*const core::ffi::c_char>;
-    // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
-    // Windows and must outlive the spawn below.
-    #[cfg(windows)]
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    #[cfg(windows)]
-    {
-        // Resolve the executable via bun.which, matching Bun.spawn's behavior.
-        let path_env = vm_mut().transpiler.env().map.get(b"PATH").unwrap_or(b"");
-        let argv0 = argv[0].to_bytes();
-        match bun_which::which(&mut path_buf, path_env, b"", argv0) {
-            Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
-            None => {
-                this.set_err(format_args!(
-                    "Could not find '{}' in PATH",
-                    bstr::BStr::new(argv0)
-                ));
-                return Err(());
-            }
-        }
-    }
-    #[cfg(unix)]
-    let env = spawn::SpawnEnv::Inherit;
-    #[cfg(windows)]
-    let envp_owned;
-    #[cfg(windows)]
-    let env_strings: Vec<&CStr>;
-    #[cfg(windows)]
-    let env = {
-        match vm_mut()
-            .transpiler
-            .env_mut()
-            .map
-            .create_null_delimited_env_map()
-        {
-            Ok(v) => {
-                envp_owned = v;
-                env_strings = envp_owned.iter().collect();
-                spawn::SpawnEnv::Strings(&env_strings)
-            }
-            Err(_) => {
-                this.set_err(format_args!("Failed to create environment block"));
-                return Err(());
-            }
-        }
-    };
-
-    // Ownership note: BOTH
-    // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
-    // and `spawn_process_windows` `heap::take`s the raw `Stdio::Buffer`
-    // pointer into `WindowsStdioResult::Buffer` on success. Pre-stashing the
-    // Box in `stderr_reader.source` here (the original transliteration) would
-    // create TWO `Box<uv::Pipe>` over one allocation — UB under Stacked
-    // Borrows even with a `mem::forget` of the duplicate, because moving the
-    // first Box into `Source::Pipe` reasserts its `Unique` tag and kills the
-    // raw pointer's provenance before `spawn_process_windows` ever
-    // dereferences it. Instead hand the raw heap pointer to `Stdio::Buffer`
-    // alone (sole owner), let `spawn_process_windows` round-trip it through
-    // `heap::take`, and stash the returned Box in `stderr_reader.source`
-    // AFTER spawn — see the `#[cfg(windows)]` block below and
-    // `lifecycle_script_runner.rs` / `filter_run.rs` for the canonical
-    // pattern. On spawn error, `WindowsStdio` has no `Drop`; reclaim
-    // explicitly via `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe =
-        bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-            bun_sys::windows::libuv::Pipe,
-        >()));
-    let cwd = FileSystem::get().top_level_dir();
-    let spawn_options = SpawnOptions {
-        stdin: stdin_opt,
-        stdout: stdout_opt,
-        #[cfg(windows)]
-        stderr: spawn::Stdio::Buffer(stderr_pipe_ptr),
-        #[cfg(not(windows))]
-        stderr: spawn::Stdio::Ignore,
-        cwd: cwd.into(),
-        argv0: resolved_argv0,
-        #[cfg(windows)]
-        windows: spawn::WindowsOptions {
-            loop_: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
-            ..Default::default()
-        },
-        ..SpawnOptions::default()
-    };
-    // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let mut spawn_options = spawn_options;
-
-    let spawned = match spawn::spawn_process_cstr(&spawn_options, argv, env) {
-        Ok(Ok(sp)) => sp,
-        Ok(Err(err)) => {
-            // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-            // raw `*mut uv::Pipe` on the SUCCESS path; on every error return
-            // ownership stays with the caller and `WindowsStdio` has no
-            // `Drop`. Reclaim it (uv_close + free if init'd) here.
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
-            this.set_err(format_args!(
-                "Failed to spawn process: {}",
-                bstr::BStr::new(err.name())
-            ));
-            return Err(());
-        }
-        Err(e) => {
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
-            this.set_err(format_args!("Failed to spawn process: {}", e.name()));
-            return Err(());
-        }
-    };
-    #[cfg(windows)]
-    let mut spawned = spawned;
-
-    #[cfg(unix)]
-    {
-        if let Some(stdout) = spawned.stdout {
-            if !spawned.memfds[1] {
-                this.stdout_reader().with_mut(|r| r.set_parent(this_ptr));
-                let _ = sys::set_nonblocking(stdout);
-                this.remaining_fds().set(this.remaining_fds().get() + 1);
-                let started = this.stdout_reader().with_mut(|r| {
-                    use bun_io::pipe_reader::PosixFlags;
-                    r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
-                    r.flags.remove(
-                        PosixFlags::MEMFD
-                            | PosixFlags::RECEIVED_EOF
-                            | PosixFlags::CLOSED_WITHOUT_REPORTING,
-                    );
-                    r.start(stdout, true)
-                });
-                if started.is_err() {
-                    this.set_err(format_args!("Failed to start reading stdout"));
-                    return Err(());
-                }
-                this.stdout_reader().with_mut(|r| {
-                    if let Some(p) = r.handle.get_poll() {
-                        p.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                });
-            } else {
-                this.stdout_reader().with_mut(|r| {
-                    r.set_parent(this_ptr);
-                    r.start_memfd(stdout);
-                });
-            }
-        }
-    }
-    #[cfg(windows)]
-    {
-        // `spawn_process_windows` has `heap::take`n `stderr_pipe_ptr` out of
-        // `Stdio::Buffer` into `spawned.stderr` as
-        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box out
-        // *here* (sole owner — single `into_raw` → `from_raw` round-trip, no
-        // aliasing Box) and stash it in `stderr_reader.source` BEFORE
-        // `start_with_current_pipe` (which reads `source.?.pipe`) and BEFORE
-        // `spawned` drops — otherwise `WindowsSpawnResult::Drop` would
-        // `uv_close`+free the live, libuv-registered handle (UAF in the read
-        // callback + double-free on reader close).
-        if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-            debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            this.stderr_reader().with_mut(|r| {
-                r.set_source(bun_io::Source::Pipe(pipe));
-                r.set_parent(this_ptr);
-            });
-            this.remaining_fds().set(this.remaining_fds().get() + 1);
-            let started = this
-                .stderr_reader()
-                .with_mut(|r| r.start_with_current_pipe());
-            if started.is_err() {
-                this.set_err(format_args!("Failed to start reading stderr"));
-                return Err(());
-            }
-        }
-    }
-
-    let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
-    Ok(spawned.to_process_handle(ev_handle))
-}
-
 /// Find crontab binary using bun.which (searches PATH).
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(windows)))]
 fn find_crontab() -> Option<ZString> {
-    #[cfg(windows)]
-    {
-        return None;
-    }
-    #[cfg(not(windows))]
-    {
-        let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let found = bun_which::which(&mut buf, path_env, b"", b"crontab")?;
-        Some(ZString::from_bytes(found.as_bytes()))
-    }
+    let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let found = bun_which::which(&mut buf, path_env, b"", b"crontab")?;
+    Some(ZString::from_bytes(found.as_bytes()))
 }
 
 fn resolve_path(global: &JSGlobalObject, path_: &[u8]) -> crate::Result<ZString> {
@@ -2262,7 +1223,7 @@ pub(crate) fn validate_title(title: &[u8]) -> bool {
 }
 
 /// Filter crontab content, removing any entry with matching title marker.
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(windows)))]
 pub(crate) fn filter_crontab(
     content: &[u8],
     title: &[u8],

@@ -4,9 +4,10 @@ use std::io::Write as _;
 
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::JSPromise;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_jsc::{JSPromise, JSPromiseStrong};
+use bun_jsc::future::{self, Rejection};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::generated_bindgen::password_object::{PasswordHashAlgorithm, PasswordHashOptions};
 
@@ -396,49 +397,6 @@ impl Drop for Sensitive {
     }
 }
 
-pub(crate) trait PasswordOp: Send + 'static {
-    /// Success payload (`Box<[u8]>` for hash, `bool` for verify).
-    type Value: Send;
-    /// "hashing" | "verification" — slotted into the JS Error message.
-    const ERR_VERB: &'static str;
-    /// Off-thread compute. `self` borrows the op so its inputs stay owned by
-    /// the job.
-    fn compute(&self, password: &[u8]) -> Result<Self::Value, HashError>;
-    /// Convert the success payload to a `JSValue` on the JS thread.
-    fn to_js(value: Self::Value, g: &JSGlobalObject) -> JSValue;
-}
-
-pub(crate) struct HashOp {
-    algorithm: AlgorithmValue,
-}
-impl PasswordOp for HashOp {
-    type Value = Box<[u8]>;
-    const ERR_VERB: &'static str = "hashing";
-    fn compute(&self, password: &[u8]) -> Result<Box<[u8]>, HashError> {
-        PasswordObject::hash(password, self.algorithm)
-    }
-    fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
-        // PHC / bcrypt output is ASCII.
-        EncodedSlice::latin1(&value).to_js(g)
-        // `value` drops here.
-    }
-}
-
-pub(crate) struct VerifyOp {
-    prev_hash: Sensitive,
-    algorithm: Option<Algorithm>,
-}
-impl PasswordOp for VerifyOp {
-    type Value = bool;
-    const ERR_VERB: &'static str = "verification";
-    fn compute(&self, password: &[u8]) -> Result<bool, HashError> {
-        PasswordObject::verify(password, &self.prev_hash, self.algorithm)
-    }
-    fn to_js(value: bool, _g: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(value)
-    }
-}
-
 /// Build the JS `Error` instance for a failed hash/verify, with `code` set
 /// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>`.
 fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
@@ -468,61 +426,11 @@ fn password_error<'a>(heap: &JsHeap<'a>, err: &HashError, verb: &str) -> bindgen
     ))
 }
 
-/// `Bun.password.hash/verify` off the JS thread: the op and the password are
-/// owned copies; the promise is the JS side.
-struct PasswordJob<Op: PasswordOp> {
-    op: Op,
-    password: Sensitive,
-    value: Option<Result<Op::Value, HashError>>,
-}
-
-impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
-    type OffThread = Self;
-    type Js = JSPromiseStrong;
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        this.value = Some(this.op.compute(&this.password));
-        Some(done)
-    }
-    fn then(
-        mut this: Self,
-        mut promise: JSPromiseStrong,
-        cx: &bun_jsc::JsThread<'_>,
-    ) -> JsResult<()> {
-        let global = cx.global();
-        match this.value.take().expect("computed") {
-            Err(err) => {
-                let error_instance = password_error_instance(&err, Op::ERR_VERB, global);
-                promise.reject_with_async_stack(global, Ok(error_instance))?;
-            }
-            Ok(v) => {
-                let js = Op::to_js(v, global);
-                promise.resolve(global, js)?;
-            }
-        }
-        Ok(())
-    }
-}
-
 // ─── hash / verify entry points ───────────────────────────────────────────
 
-/// Boxes a `PasswordJob<Op>`, refs the loop, and schedules it.
-fn schedule<Op: PasswordOp>(cx: &bun_jsc::JsThread<'_>, password: Sensitive, op: Op) -> JSValue {
-    debug_assert!(!password.is_empty()); // caller must check
-
-    let promise = JSPromiseStrong::init(cx.global());
-    let promise_value = promise.value();
-    bun_jsc::Job::<PasswordJob<Op>>::schedule(
-        cx,
-        PasswordJob {
-            op,
-            password,
-            value: None,
-        },
-        promise,
-    );
-    promise_value
-}
-
+/// Slotted into the JS `Error` message.
+const HASHING: &str = "hashing";
+const VERIFICATION: &str = "verification";
 const EMPTY_PASSWORD: &str = "password must not be empty";
 
 pub(crate) fn hash<'a>(
@@ -536,7 +444,20 @@ pub(crate) fn hash<'a>(
         return Err(cx.heap.invalid_arguments(format_args!("{EMPTY_PASSWORD}")));
     }
 
-    Ok(schedule(&cx.js_thread(), password, HashOp { algorithm }))
+    Ok(future::promise(&cx.js_thread(), |js| async move {
+        match js
+            .blocking(move || PasswordObject::hash(&password, algorithm))
+            .await
+        {
+            // PHC / bcrypt output is ASCII.
+            Ok(hash) => Ok(EncodedSlice::latin1(&hash).to_js(js.global())),
+            Err(err) => Err(Rejection::Value(password_error_instance(
+                &err,
+                HASHING,
+                js.global(),
+            ))),
+        }
+    })?)
 }
 
 pub(crate) fn hash_sync<'a>(
@@ -548,8 +469,7 @@ pub(crate) fn hash_sync<'a>(
     if password.is_empty() {
         return Err(heap.invalid_arguments(format_args!("{EMPTY_PASSWORD}")));
     }
-    PasswordObject::hash(password, algorithm)
-        .map_err(|err| password_error(heap, &err, HashOp::ERR_VERB))
+    PasswordObject::hash(password, algorithm).map_err(|err| password_error(heap, &err, HASHING))
 }
 
 fn verify_algorithm<'a>(
@@ -577,14 +497,19 @@ pub(crate) fn verify<'a>(
         ));
     }
 
-    Ok(schedule(
-        &cx.js_thread(),
-        password,
-        VerifyOp {
-            prev_hash,
-            algorithm,
-        },
-    ))
+    Ok(future::promise(&cx.js_thread(), |js| async move {
+        match js
+            .blocking(move || PasswordObject::verify(&password, &prev_hash, algorithm))
+            .await
+        {
+            Ok(matches) => Ok(JSValue::js_boolean(matches)),
+            Err(err) => Err(Rejection::Value(password_error_instance(
+                &err,
+                VERIFICATION,
+                js.global(),
+            ))),
+        }
+    })?)
 }
 
 pub(crate) fn verify_sync<'a>(
@@ -598,7 +523,7 @@ pub(crate) fn verify_sync<'a>(
         return Ok(false);
     }
     PasswordObject::verify(password, hash, algorithm)
-        .map_err(|err| password_error(heap, &err, VerifyOp::ERR_VERB))
+        .map_err(|err| password_error(heap, &err, VERIFICATION))
 }
 
 const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";

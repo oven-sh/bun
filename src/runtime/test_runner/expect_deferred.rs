@@ -69,6 +69,9 @@ pub(crate) struct RunningEntry {
     unclaimed: Option<usize>,
 }
 
+// SAFETY: it points weakly at the `BunTest`, which roots what it holds whoever points at it.
+unsafe impl bun_jsc::future::AwaitSafe for RunningEntry {}
+
 /// A test file's deferred matcher calls.
 #[derive(Default)]
 pub(crate) struct Unclaimed {

@@ -23,6 +23,8 @@
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
 #![feature(thread_local)]
+// `future::AwaitSafe`: what an `async fn` may not hold across an `.await`.
+#![feature(auto_traits, negative_impls)]
 
 extern crate alloc;
 // Allow `::bun_jsc::…` paths emitted by the proc-macros to resolve when used
@@ -1185,6 +1187,7 @@ pub use self::js_property_iterator::{
 #[path = "event_loop.rs"]
 pub mod event_loop;
 pub use self::event_loop as EventLoop;
+pub mod future;
 pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,

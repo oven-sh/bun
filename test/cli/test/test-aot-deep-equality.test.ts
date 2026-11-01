@@ -56,11 +56,15 @@ const emptinessFiles = {
   "no-exports.ts": "export {};\n",
   "emptiness.test.ts": `
 import { expect, test } from "bun:test";
+import { stripVTControlCharacters } from "node:util";
 import * as noExports from "./no-exports";
 class Plain {}
 class WithField { a = 1; }
 class Tagged { get [Symbol.toStringTag]() { return "Tagged"; } }
-const ok = (f: () => void) => { try { f(); return "T"; } catch { return "f"; } };
+// T: it passes. f: it fails as empty or as not empty. E: any other error.
+const outcome = (f: () => void) => {
+  try { f(); return "T"; } catch (e) { return /\\nExpected value (not )?to be empty\\n/.test(stripVTControlCharacters(String(e))) ? "f" : "E"; }
+};
 test("toBeEmpty() and its negation", () => {
   const rows: [string, unknown][] = [
     ["an object literal", {}],
@@ -71,7 +75,7 @@ test("toBeEmpty() and its negation", () => {
     ["a module namespace with no exports", noExports],
     ["a Date", new Date(0)],
   ];
-  for (const [name, value] of rows) console.log("ROW", name + ":", ok(() => expect(value).toBeEmpty()) + ok(() => expect(value).not.toBeEmpty()));
+  for (const [name, value] of rows) console.log("ROW", name + ":", outcome(() => expect(value).toBeEmpty()) + outcome(() => expect(value).not.toBeEmpty()));
 });
 `,
 };

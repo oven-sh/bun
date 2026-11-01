@@ -34,6 +34,17 @@ if($env:VSINSTALLDIR -eq $null) {
     }
   }
 
+  # Enter-VsDevShell parses cmd.exe `set` output line by line, so a multi-line
+  # value (e.g. BUILDKITE_MESSAGE) leaks each `KEY=VALUE`-shaped body line as a
+  # real env var. Stash multi-line vars around the loader to keep them intact.
+  $multilineEnv = @{}
+  foreach ($item in (Get-ChildItem env:)) {
+    if ($item.Value -match "[\r\n]") {
+      $multilineEnv[$item.Name] = $item.Value
+      Remove-Item -LiteralPath "env:$($item.Name)"
+    }
+  }
+
   Push-Location $vsDir
   try {
     $vsShell = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
@@ -60,6 +71,9 @@ if($env:VSINSTALLDIR -eq $null) {
     }
   } finally {
     Pop-Location
+    foreach ($name in $multilineEnv.Keys) {
+      Set-Item -LiteralPath "env:$name" -Value $multilineEnv[$name]
+    }
   }
 
   # Launch-VsDevShell.ps1 only prints a message when it fails.

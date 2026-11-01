@@ -27,8 +27,8 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 use self::bake_types as bake;
 pub use bv2_impl::{
-    BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
-    OnDependenciesAnalyze, singleton,
+    BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerReads,
+    DependenciesScannerResult, OnDependenciesAnalyze, singleton,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -4226,6 +4226,16 @@ pub mod bv2_impl {
         pub entry_points: Box<[Box<[u8]>]>,
         pub(crate) on_fetch:
             fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
+        pub(crate) reads: DependenciesScannerReads,
+    }
+
+    /// What the callback of a [`DependenciesScanner`] reads.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum DependenciesScannerReads {
+        /// The import records of the files that the entry points reach. Nothing is linked.
+        ImportRecords,
+        /// The resolved exports of the entry point too. The bundle is linked first.
+        LinkedExports,
     }
 
     pub struct DependenciesScannerResult<'r, 'a> {
@@ -4238,6 +4248,8 @@ pub mod bv2_impl {
     /// `Analyzer` struct implements this; [`DependenciesScanner::new`] erases the
     /// concrete type behind a monomorphized trampoline.
     pub trait OnDependenciesAnalyze {
+        const READS: DependenciesScannerReads;
+
         fn on_analyze(
             &mut self,
             result: &mut DependenciesScannerResult<'_, '_>,
@@ -4266,16 +4278,18 @@ pub mod bv2_impl {
                 ctx: core::ptr::from_mut(analyzer).cast::<()>(),
                 entry_points,
                 on_fetch: trampoline::<A>,
+                reads: A::READS,
             }
         }
     }
 
     impl<'a> BundleV2<'a> {
+        /// Hands the packages that `reachable_files` import to the scanner. A scan has no output files.
         pub(crate) fn get_all_dependencies(
             &mut self,
             reachable_files: &[Index],
             fetcher: &DependenciesScanner,
-        ) -> Result<(), Error> {
+        ) -> Result<BuildResult, Error> {
             // Find all external dependencies from reachable files
             let mut external_deps = bun_collections::StringSet::new();
 
@@ -4332,7 +4346,12 @@ pub mod bv2_impl {
                 bundle_v2: self,
                 reachable_files,
             };
-            (fetcher.on_fetch)(fetcher.ctx, &mut result)
+            (fetcher.on_fetch)(fetcher.ctx, &mut result)?;
+            Ok(BuildResult {
+                output_files: Vec::new(),
+                metafile: None,
+                metafile_markdown: None,
+            })
         }
 
         pub fn generate_from_cli(
@@ -4391,6 +4410,12 @@ pub mod bv2_impl {
                 let reachable_files = this.find_reachable_files()?;
                 *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
 
+                if let Some(fetch) = fetcher
+                    && fetch.reads == DependenciesScannerReads::ImportRecords
+                {
+                    return this.get_all_dependencies(&reachable_files, fetch);
+                }
+
                 this.process_files_to_copy(&reachable_files)?;
 
                 this.add_server_component_boundaries_as_extra_entry_points()?;
@@ -4423,12 +4448,7 @@ pub mod bv2_impl {
 
                 // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
                 if let Some(fetch) = fetcher {
-                    this.get_all_dependencies(&reachable_files, fetch)?;
-                    return Ok(BuildResult {
-                        output_files: Vec::new(),
-                        metafile: None,
-                        metafile_markdown: None,
-                    });
+                    return this.get_all_dependencies(&reachable_files, fetch);
                 }
 
                 let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(

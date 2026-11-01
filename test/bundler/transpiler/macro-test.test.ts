@@ -1984,12 +1984,9 @@ describe("a macro import that is used outside of a call", () => {
         console.log(JSON.stringify(refused.logs.map(log => [log.message, log.position?.line, log.position?.column])));
       `,
     });
-    // The parser leaks the list of names of a dotted type in decorator metadata, with or without a macro import. This
-    // process has such types, so it runs without the leak check of an ASAN build.
-    const env = { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") };
     await using proc = Bun.spawn({
       cmd: [bunExe(), "check.ts"],
-      env,
+      env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

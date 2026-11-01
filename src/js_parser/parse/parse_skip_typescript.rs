@@ -916,7 +916,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match r {
                             Metadata::MIdentifier(id_ref) => {
                                 let id_ref = *id_ref;
-                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
+                                let mut dot = bun_alloc::AstAlloc::vec_with_capacity(2);
                                 dot.push(id_ref);
                                 dot.push(self.find_metadata_type_symbol(ident)?);
                                 *r = Metadata::MDot(dot);

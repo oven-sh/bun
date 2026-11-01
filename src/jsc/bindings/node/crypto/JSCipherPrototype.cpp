@@ -38,14 +38,6 @@ void JSCipherPrototype::finishCreation(JSC::VM& vm)
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
-// The sizes BoringSSL gives up front are upper bounds. The result's ArrayBuffer is as long as what was written, like node's.
-static RefPtr<ArrayBuffer> trimToWritten(RefPtr<ArrayBuffer>&& buffer, size_t written)
-{
-    if (written == buffer->byteLength())
-        return WTF::move(buffer);
-    return ArrayBuffer::tryCreate(buffer->span().first(written));
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -89,36 +81,21 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         ASSERT_UNUSED(passed, passed);
     }
 
-    const int32_t blockSize = cipher->m_ctx.getBlockSize();
-    if (data.size() + blockSize > INT_MAX) {
+    if (data.size() + cipher->m_ctx.getBlockSize() > INT_MAX) {
         throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
         return {};
     }
 
-    ncrypto::Buffer<const uint8_t> buf {
-        .data = data.data(),
-        .len = data.size(),
-    };
-
-    size_t maxOutLen = cipher->m_ctx.maxUpdateSize(data.size());
-    if (cipher->m_kind == CipherKind::Cipher && cipher->m_ctx.isWrapMode()) {
-        int32_t wrappedLen = 0;
-        if (!cipher->m_ctx.update(buf, nullptr, &wrappedLen)) {
-            throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Trying to add data in unsupported state");
-            return {};
-        }
-        maxOutLen = wrappedLen;
-    }
-
-    RefPtr<ArrayBuffer> outBuf = JSC::ArrayBuffer::tryCreateUninitialized(cipher->heldBackBlock().size() + maxOutLen, 1);
+    RefPtr<ArrayBuffer> outBuf = JSC::ArrayBuffer::tryCreateUninitialized(cipher->heldBackBlock().size() + EVP_CIPHER_CTX_max_next_update(cipher->m_ctx, data.size()), 1);
     if (!outBuf) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
     }
     size_t outLen = cipher->takeHeldBackBlock(outBuf->mutableSpan());
 
+    auto out = outBuf->mutableSpan().subspan(outLen);
     size_t written = 0;
-    bool res = cipher->m_ctx.update(buf, outBuf->mutableSpan().subspan(outLen), &written);
+    bool res = EVP_CipherUpdate_ex(cipher->m_ctx, out.data(), &written, out.size(), data.data(), data.size()) == 1;
     ensureStillAliveHere(dataView);
     outLen += written;
 
@@ -132,20 +109,21 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return {};
     }
 
-    outBuf = trimToWritten(WTF::move(outBuf), outLen);
+    // EVP_CIPHER_CTX_max_next_update() is an upper bound. The result's ArrayBuffer is as long as what was written, like Node's.
+    if (outLen != outBuf->byteLength())
+        outBuf = ArrayBuffer::tryCreate(outBuf->span().first(outLen));
     if (!outBuf) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(outBuf), 0, outLen)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(createBuffer(lexicalGlobalObject, outBuf.releaseNonNull())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     ClearErrorOnReturn clearErrorOnReturn;
 
@@ -167,12 +145,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
         throwCryptoError(globalObject, scope, ERR_peek_error(), isAuthMode ? "Unsupported state or unable to authenticate data" : "Unsupported state");
     };
 
-    RefPtr<ArrayBuffer> outBuf = ArrayBuffer::tryCreateUninitialized(cipher->heldBackBlock().size() + cipher->m_ctx.maxFinalSize(), 1);
-    if (!outBuf) {
-        throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return {};
-    }
-    size_t outLen = cipher->takeHeldBackBlock(outBuf->mutableSpan());
+    // Room for the held-back block and the last one.
+    uint8_t out[2 * EVP_MAX_BLOCK_LENGTH];
+    size_t outLen = cipher->takeHeldBackBlock(out);
 
     if (cipher->m_kind == CipherKind::Decipher && Cipher::FromCtx(cipher->m_ctx).isSupportedAuthenticatedMode()) {
         cipher->maybePassAuthTagToOpenSSL();
@@ -188,7 +163,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
         ok = !cipher->m_pendingAuthFailed;
     } else {
         size_t written = 0;
-        ok = cipher->m_ctx.finalize(outBuf->mutableSpan().subspan(outLen), &written);
+        ok = EVP_CipherFinal_ex2(cipher->m_ctx, out + outLen, &written, sizeof(out) - outLen) == 1;
         outLen += written;
 
         if (ok && cipher->m_kind == CipherKind::Cipher && cipher->isAuthenticatedMode()) {
@@ -205,13 +180,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
         return {};
     }
 
-    outBuf = trimToWritten(WTF::move(outBuf), outLen);
-    if (!outBuf) {
-        throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return {};
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(outBuf), 0, outLen)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(createBuffer(lexicalGlobalObject, std::span { out }.first(outLen))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherSetAutoPadding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

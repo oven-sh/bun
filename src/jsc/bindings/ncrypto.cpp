@@ -2888,30 +2888,6 @@ bool CipherCtxPointer::update(const Buffer<const unsigned char>& in,
     return EVP_CipherFinal_ex(ctx_.get(), out, out_len) == 1;
 }
 
-size_t CipherCtxPointer::maxUpdateSize(size_t in_len) const
-{
-    if (!ctx_) return 0;
-    return EVP_CIPHER_CTX_max_next_update(ctx_.get(), in_len);
-}
-
-size_t CipherCtxPointer::maxFinalSize() const
-{
-    if (!ctx_) return 0;
-    return EVP_CIPHER_CTX_max_final(ctx_.get());
-}
-
-bool CipherCtxPointer::update(const Buffer<const unsigned char>& in, std::span<unsigned char> out, size_t* out_len)
-{
-    if (!ctx_) return false;
-    return EVP_CipherUpdate_ex(ctx_.get(), out.data(), out_len, out.size(), in.data, in.len) == 1;
-}
-
-bool CipherCtxPointer::finalize(std::span<unsigned char> out, size_t* out_len)
-{
-    if (!ctx_) return false;
-    return EVP_CipherFinal_ex2(ctx_.get(), out.data(), out_len, out.size()) == 1;
-}
-
 bool CipherCtxPointer::getAeadTag(size_t len, unsigned char* out)
 {
     if (!ctx_) return false;

@@ -743,12 +743,12 @@ const realpathSync: RealpathSync =
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
-        if (p instanceof URL) {
+        if (typeof p !== "string" && require("internal/url").isURL(p)) {
           const pathname = p.pathname;
           if (pathname.indexOf("%00") != -1) {
             throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
           }
-          p = Bun.fileURLToPath(p as URL);
+          p = require("internal/url").toPathIfFileURL(p);
         } else {
           if (typeof p !== "string") {
             p += "";
@@ -859,12 +859,12 @@ const realpath: Realpath =
             ($bindgen("node_util_binding.bind.ts", "assertEncodingValid") as (encoding: unknown) => void)(encoding);
           }
         }
-        if (p instanceof URL) {
+        if (typeof p !== "string" && require("internal/url").isURL(p)) {
           const pathname = p.pathname;
           if (pathname.indexOf("%00") != -1) {
             throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
           }
-          p = Bun.fileURLToPath(p as URL);
+          p = require("internal/url").toPathIfFileURL(p);
         } else {
           if (typeof p !== "string") {
             p += "";

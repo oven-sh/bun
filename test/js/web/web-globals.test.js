@@ -200,7 +200,7 @@ it("crypto.getRandomValues", () => {
   expect(!!crypto.getRandomValues(new Uint8Array(8192)).find(a => a > 0)).toBe(true);
 
   {
-    // any additional input into getRandomValues() makes it unbuffered
+    // additional arguments are ignored
     var array = crypto.getRandomValues(foo, "unbuffered");
     expect(array).toBe(foo);
     expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(true);

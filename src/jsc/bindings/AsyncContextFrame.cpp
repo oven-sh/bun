@@ -92,27 +92,6 @@ AsyncContextScope::~AsyncContextScope()
         setCurrentAsyncContext(m_globalObject, m_previous);
 }
 
-// VirtualMachine::entered_context: makes `context` the one native code entered, and returns the one to put back.
-extern "C" uint32_t Bun__VirtualMachine__replaceEnteredContext(void* bunVM, uint32_t context);
-
-// The test runner starts its next step from inside a report, where the callback that failed is still current: that step runs as the realm, in no async context.
-extern "C" uint32_t AsyncContextFrame__leaveForTestStep(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue* saved)
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    saved[0] = JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(0));
-    saved[1] = JSValue::encode(Bun::moduleGraphAsyncContextAtEventLoop(globalObject));
-    setCurrentAsyncContext(globalObject, jsUndefined());
-    return Bun__VirtualMachine__replaceEnteredContext(globalObject->bunVM(), globalObject->scriptExecutionContext()->identifier());
-}
-
-extern "C" void AsyncContextFrame__returnFromTestStep(JSGlobalObject* lexicalGlobalObject, const JSC::EncodedJSValue* saved, uint32_t enteredContext)
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    Bun__VirtualMachine__replaceEnteredContext(globalObject->bunVM(), enteredContext);
-    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, JSValue::decode(saved[0]));
-    Bun::noteEnteredFromEventLoop(globalObject, JSValue::decode(saved[1]));
-}
-
 template<typename Visitor>
 void AsyncContextFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

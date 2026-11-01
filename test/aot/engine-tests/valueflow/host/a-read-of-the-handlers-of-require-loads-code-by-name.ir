@@ -1,0 +1,21 @@
+# require.extensions[".js"](input, input)
+# The handlers load the file that they are handed, and the table has no entry for them: the read of the object that holds them counts as a load under a name that the build does not see
+# An engine that runs only the code of the image answers as under exclude=CodeOutsideImage: a-read-of-the-handlers-of-require-loads-nothing-where-code-from-disk-is-refused.ir
+# RUN: valueflow-solve unseen
+# REQUIRES: code-outside-image
+# CHECK: unseen LoadsCodeByName ModuleRequireExtensions
+# CHECK: unseen-code yes
+# CHECK-NEXT: modules-by-name yes
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v1 = PropGet v0 key="extensions"
+    v2 = PropGet v1 key=".js"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="input" [isFreeName]
+    v5 = Call v2, v1, v4, v4
+    Return
+}

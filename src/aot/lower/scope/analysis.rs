@@ -4,6 +4,7 @@ use bun_sema::bind::{CodeUnit, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{FnId, MemberId, StmtId};
 use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
 
 use super::ScopeSlot;
 use crate::ir::generated::FunctionFlags;
@@ -60,6 +61,8 @@ pub(in crate::lower) enum ArgumentsObject {
 pub(super) struct ArgumentsObjects {
     pub(super) file: ArgumentsObject,
     pub(super) functions: Vec<ArgumentsObject>,
+    /// Sorted. Fields whose values the constructor evaluates, so `arguments` in a direct eval there is the constructor's.
+    pub(super) fields: Vec<MemberId>,
 }
 
 impl ArgumentsObjects {
@@ -70,7 +73,10 @@ impl ArgumentsObjects {
                 let object = self.functions.get(function.idx());
                 object.copied().unwrap_or(ArgumentsObject::None)
             }
-            CodeUnit::FieldInitializer(_) => ArgumentsObject::None,
+            CodeUnit::FieldInitializer(member) => match self.fields.binary_search(&member) {
+                Ok(_) => ArgumentsObject::Unmapped,
+                Err(_) => ArgumentsObject::None,
+            },
         }
     }
 }
@@ -157,6 +163,12 @@ pub(super) fn find_by_key<K: Copy + Ord, V: Copy>(list: &[(K, V)], key: K) -> Op
 
 pub(super) fn sort_unique<T: Ord>(list: &mut Vec<T>) {
     list.sort_unstable();
+    list.dedup();
+}
+
+/// [`sort_unique`] off the hot path: see [`SharedSort`].
+pub(super) fn shared_sort_unique<T: Ord>(list: &mut Vec<T>) {
+    list.shared_sort_unstable();
     list.dedup();
 }
 

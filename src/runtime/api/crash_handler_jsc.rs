@@ -54,6 +54,16 @@ pub(crate) fn segfault() {
     }
 }
 
+/// Segfaults on a thread that holds WTF's thread-suspend lock, like the sampling profiler's thread
+/// while it reads the stack of the JS thread.
+pub(crate) fn segfault_holding_thread_suspend_lock() {
+    unsafe extern "C" {
+        safe fn Bun__lockThreadSuspensionForTesting();
+    }
+    Bun__lockThreadSuspensionForTesting();
+    segfault();
+}
+
 /// Triggers a segfault with the fault PC inside a system DLL rather than
 /// inside bun.exe. Exercises the Windows fault-context unwinder: the walk
 /// must recover the bun frames that called into the DLL.

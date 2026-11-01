@@ -68,7 +68,7 @@ function lateOf(late) {
 // CHECK-NEXT: Return v22
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="define"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

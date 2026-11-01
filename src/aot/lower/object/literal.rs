@@ -13,7 +13,7 @@ use smallvec::{SmallVec, smallvec};
 use super::{ObjectBuilder, builder};
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
-use crate::ir::generated::TypeSiteKind;
+use crate::ir::generated::{LimitId, TypeSiteKind};
 use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::positions::SiteOrigin;
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, captures, convert};
@@ -33,6 +33,13 @@ struct Dictionary {
 
 impl FileLowering<'_, '_, '_, '_> {
     // The types are asked in the order in which a literal finds its layout: the type it is written under, then its own.
+    fn is_keyed_by_symbols_alone(&mut self, dictionary: CheckerTypeId) -> bool {
+        matches!(
+            self.queries.index_signatures(dictionary),
+            Ok(signatures) if signatures.iter().all(|signature| matches!(signature.key, IndexKey::Symbol))
+        )
+    }
+
     fn find_dictionary(&mut self, literal: ExprId) -> Option<Dictionary> {
         if let ExprKind::Object(properties) = self.hir[literal].kind
             && properties.iter().next().is_none()
@@ -76,6 +83,24 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // `{ ...source, a }` where no type says which names the object will have.
+    pub(in crate::lower) fn has_names_known_only_at_run_time(&mut self, source: ExprId) -> bool {
+        let names_are_unknown = self
+            .queries
+            .expression_type(source)
+            .and_then(|ty| self.queries.type_shape(ty))
+            .is_ok_and(|shape| {
+                matches!(
+                    shape.kind,
+                    ShapeKind::TypeVariable { .. } | ShapeKind::Anything(_) | ShapeKind::AnyObject
+                )
+            });
+        if names_are_unknown {
+            return true;
+        }
+        // `{ ...counts, [name]: n }`: the names of a dictionary are known only when it runs, and a copy takes them all at once.
+        matches!(self.queries.expression_type(source), Ok(ty) if self.is_dictionary_type(ty))
+    }
+
     fn begins_as_copy(&mut self, literal: ExprId) -> bool {
         let hir = self.hir;
         let ExprKind::Object(properties) = hir[literal].kind else {
@@ -87,17 +112,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if first.kind != PropKind::Spread {
             return false;
         }
-        let names_of_source_are_unknown = self
-            .queries
-            .expression_type(first.value)
-            .and_then(|ty| self.queries.type_shape(ty))
-            .is_ok_and(|shape| {
-                matches!(
-                    shape.kind,
-                    ShapeKind::TypeVariable { .. } | ShapeKind::Anything(_) | ShapeKind::AnyObject
-                )
-            });
-        if names_of_source_are_unknown {
+        if self.has_names_known_only_at_run_time(first.value) {
             return true;
         }
         // `{ ...defaults, ...options }`: an object of its own kind, which holds the names of every source.
@@ -155,7 +170,9 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
-    pub(crate) fn holds_dictionary_literal(&mut self, root: ExprId) -> bool {
+    /// Whether code builds a literal of constants, and no data record: it holds a dictionary, or literals lie in one another more
+    /// deeply than data may. Of those, code builds the outer ones, and the rest is a record.
+    pub(crate) fn is_built_by_code(&mut self, root: ExprId) -> bool {
         debug_assert!(
             self.decisions().is_data_literal(root),
             "a data literal was expected"
@@ -164,23 +181,71 @@ impl FileLowering<'_, '_, '_, '_> {
             return true;
         }
         let hir = self.hir;
-        let mut pending: SmallVec<[ExprId; 8]> = smallvec![root];
-        while let Some(expression) = pending.pop() {
+        let deepest = self.inputs.limits.get(LimitId::MaxDataNestingDepth);
+        let known = &self.levels_of_literals_inside_built_ones;
+        if let Some(&levels) = known.get(&hir.skip_type_assertions(root)) {
+            return levels > deepest;
+        }
+        let mut pending: SmallVec<[(ExprId, u64); 8]> = smallvec![(root, 1)];
+        while let Some((expression, depth)) = pending.pop() {
             let literal = hir.skip_type_assertions(expression);
+            if !matches!(hir[literal].kind, ExprKind::Array(_) | ExprKind::Object(_)) {
+                continue;
+            }
+            if depth > deepest {
+                self.count_levels_of_literals_inside(root);
+                return true;
+            }
+            let inner = |part: ExprId| is_literal(hir, part).then_some((part, depth + 1));
             if let ExprKind::Array(items) = hir[literal].kind {
-                pending.extend(hir.ids(items).filter(|&item| is_literal(hir, item)));
+                pending.extend(hir.ids(items).filter_map(inner));
                 continue;
             }
             let ExprKind::Object(properties) = hir[literal].kind else {
                 continue;
             };
             if self.find_dictionary(literal).is_some() {
+                self.count_levels_of_literals_inside(root);
                 return true;
             }
             let values = properties.iter().map(|property| hir[property].value);
-            pending.extend(values.filter(|&value| is_literal(hir, value)));
+            pending.extend(values.filter_map(inner));
         }
         false
+    }
+
+    // Each literal inside one that code builds is asked in its turn. A dictionary counts as more levels than data may have.
+    fn count_levels_of_literals_inside(&mut self, root: ExprId) {
+        let hir = self.hir;
+        let mut found: Vec<(ExprId, usize, u64)> = vec![(hir.skip_type_assertions(root), 0, 1)];
+        let mut index = 0;
+        while let Some(&(literal, ..)) = found.get(index) {
+            let inner = |part: ExprId| {
+                is_literal(hir, part).then(|| (hir.skip_type_assertions(part), index, 1))
+            };
+            match hir[literal].kind {
+                ExprKind::Array(items) => found.extend(hir.ids(items).filter_map(inner)),
+                ExprKind::Object(_) if self.find_dictionary(literal).is_some() => {
+                    found[index].2 = u64::MAX;
+                }
+                ExprKind::Object(properties) => {
+                    let values = properties.iter().map(|property| hir[property].value);
+                    found.extend(values.filter_map(inner));
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        for index in (0..found.len()).rev() {
+            let (literal, outer, levels) = found[index];
+            if index > 0 {
+                found[outer].2 = found[outer].2.max(levels.saturating_add(1));
+            }
+            if levels > 1 {
+                self.levels_of_literals_inside_built_ones
+                    .insert(literal, levels);
+            }
+        }
     }
 
     fn find_types_under_name(
@@ -238,6 +303,18 @@ impl FileLowering<'_, '_, '_, '_> {
             self.record_type_flow(copied, held, position);
         }
     }
+}
+
+// `{ [key]: value }`: flow may know the key, and it makes a dictionary of the objects where other names come.
+fn has_only_computed_values(hir: &File<'_>, literal: ExprId) -> bool {
+    let ExprKind::Object(properties) = hir[literal].kind else {
+        return false;
+    };
+    properties.iter().all(|property| {
+        let prop = hir[property];
+        matches!(prop.kind, PropKind::Init)
+            && !matches!(hir.runtime_property_key(property), PropKey::Name(_))
+    })
 }
 
 fn has_only_named_values(hir: &File<'_>, literal: ExprId, allows_methods: bool) -> bool {
@@ -526,7 +603,7 @@ pub(crate) fn lower_object_literal(
         return lowering.emit_builtin_call(BuiltinId::ObjectCreate, &[null]);
     }
     if lowering.file.decisions().is_data_literal(literal)
-        && !lowering.file.holds_dictionary_literal(literal)
+        && !lowering.file.is_built_by_code(literal)
     {
         return lowering.lower_decided_data(literal);
     }
@@ -550,6 +627,14 @@ pub(crate) fn lower_object_literal(
             let mut object = lowering.begin_object(layout);
             lowering.open_head(&mut object);
             object
+        }
+        // `{ [symbol]: value }`: few objects hold many symbols, and flow may know which one this is.
+        Some(found)
+            if lowering.file.is_keyed_by_symbols_alone(found.ty)
+                || has_only_computed_values(hir, literal) =>
+        {
+            let layout = lowering.file.literal_layout(literal);
+            lowering.begin_object(layout)
         }
         Some(_) => lowering.begin_dictionary(),
         None if is_prototype_object => lowering.begin_dictionary(),

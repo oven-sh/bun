@@ -75,6 +75,8 @@ public:
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
     // This is the normal state.
     JSC::Weak<JSCommonJSModule> m_parent {};
+    // `module.parent = 7`: from then on nobody asks the compiled program who required the file first.
+    bool m_isParentStored { false };
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
@@ -169,6 +171,9 @@ JSC::Structure* createCommonJSModuleStructure(
 // A `require.cache` object over `requireMap`: the global one, or a Bun.ModuleGraph's
 // together with one of the graph's modules (whose loader's ES modules it also lists).
 JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
+
+// Returns `graph`'s `require.cache` object, created on first use, or the global object's if `graph` is null.
+JSC::JSValue requireCacheOf(Zig::GlobalObject*, JSModuleGraph* graph, JSCommonJSModule* owner);
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.

@@ -8,8 +8,8 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65561 function=f2
-runtimefunction id=65568 function=f1
+runtimefunction id=IpcParseHandle function=f2
+runtimefunction id=JSBufferPrototypeParent function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
@@ -23,12 +23,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = ElemGet v6, v7
     Return
 }
-function f1 name="parent" role=Library flags=[HasThis] enclosingRuntimeFunction=65568 results=[{type=anything}] {
+function f1 name="parent" role=Library flags=[HasThis] enclosingRuntimeFunction=JSBufferPrototypeParent results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="buffer"
     Return v1
 }
-function f2 name="parseHandle" role=Library enclosingRuntimeFunction=65561 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f2 name="parseHandle" role=Library enclosingRuntimeFunction=IpcParseHandle parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     Return v0
 }

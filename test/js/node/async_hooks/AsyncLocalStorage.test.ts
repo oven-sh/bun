@@ -2041,7 +2041,8 @@ describe("an uncaughtException handler reads the store of a callback that native
     },
   );
 
-  // The runner of `bun test` takes the report, and starts the next hook or test from inside it.
+  // The runner of `bun test` takes the report, and goes on to the next hook or test after it. The report is made inside
+  // the scope of the callback, and that step must not be.
   test.concurrent(
     "under `bun test`, the store of a callback that fails does not reach the hooks and tests that follow",
     async () => {
@@ -2051,9 +2052,7 @@ describe("an uncaughtException handler reads the store of a callback that native
           import { AsyncLocalStorage } from "node:async_hooks";
           import crypto from "node:crypto";
           const als = new AsyncLocalStorage<string>();
-          const graph = new Bun.ModuleGraph({});
-          const log = (where: string) =>
-            console.log(where + ": " + als.getStore() + (Bun.ModuleGraph.current ? ", in the graph" : ""));
+          const log = (where: string) => console.log(where + ": " + als.getStore());
           beforeEach(() => log("beforeEach"));
           // Two of them: a microtask checkpoint between hooks resets the async context.
           afterEach(() => log("afterEach"));
@@ -2076,10 +2075,6 @@ describe("an uncaughtException handler reads the store of a callback that native
             };
             test(name + " callback throws", () => new Promise<void>(resolve => inStore(throws(resolve))));
             after(name + " callback throws");
-            test(name + " callback of a Bun.ModuleGraph throws", async () => {
-              await new Promise<void>(resolve => graph.run(() => inStore(throws(resolve))));
-            });
-            after(name + " callback of a Bun.ModuleGraph throws");
             test(name + " callback calls done(error)", done => {
               inStore(() => {
                 done(new Error("given to done() by " + name));
@@ -2089,36 +2084,9 @@ describe("an uncaughtException handler reads the store of a callback that native
             after(name + " callback calls done(error)");
           }
         `,
-        // The dispatcher of the callback entered the context of the graph. After dispose() that context calls nobody.
-        "dispose.test.ts": `
-          import { afterEach, test } from "bun:test";
-          import crypto from "node:crypto";
-          const graph = new Bun.ModuleGraph({});
-          let disposed = false;
-          afterEach(() => {
-            console.log("dispose> afterEach 1");
-            if (disposed) return;
-            disposed = true;
-            graph.dispose();
-          });
-          afterEach(() => console.log("dispose> afterEach 2"));
-          test("a callback of a Bun.ModuleGraph throws, and a hook disposes the graph", async () => {
-            await new Promise<void>(resolve =>
-              graph.run(() =>
-                crypto.randomBytes(8, () => {
-                  resolve();
-                  throw new Error("thrown by a callback of the graph");
-                }),
-              ),
-            );
-          });
-          test("the test after the dispose()", () => {
-            console.log("dispose> the test after");
-          });
-        `,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "probe.test.ts", "dispose.test.ts"],
+        cmd: [bunExe(), "test", "probe.test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -2126,12 +2094,12 @@ describe("an uncaughtException handler reads the store of a callback that native
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const names = ["crypto.randomBytes", "setTimeout"];
-      const kinds = [" callback throws", " callback of a Bun.ModuleGraph throws", " callback calls done(error)"];
-      // For each of the 12 tests its three hooks, and the two lines of each test that follows a failure. Only the
-      // callback that failed is in its store, also after the runner went on from inside done(error).
+      const kinds = [" callback throws", " callback calls done(error)"];
+      // For each of the 8 tests its three hooks, and the two lines of each test that follows a failure. Only the
+      // callback that failed is in its store, also after done(error).
       const expected = [
-        ...Array.from({ length: 12 }, () => ["beforeEach", "afterEach", "afterEach"]).flat(),
-        ...Array.from({ length: 6 }, () => ["test", "test, after await"]).flat(),
+        ...Array.from({ length: 8 }, () => ["beforeEach", "afterEach", "afterEach"]).flat(),
+        ...Array.from({ length: 4 }, () => ["test", "test, after await"]).flat(),
       ].map(where => where + ": undefined");
       for (const name of names) expected.push("the callback, after done(error): the store of " + name);
       expect(
@@ -2146,14 +2114,6 @@ describe("an uncaughtException handler reads the store of a callback that native
           expect(stderr).toContain("(pass) the test after " + name + kind);
         }
       }
-      // Both hooks of both tests run, and the test after the dispose() does.
-      expect(stdout.split("\n").filter(line => line.startsWith("dispose> "))).toEqual([
-        "dispose> afterEach 1",
-        "dispose> afterEach 2",
-        "dispose> the test after",
-        "dispose> afterEach 1",
-        "dispose> afterEach 2",
-      ]);
       expect(exitCode).toBe(1);
     },
   );

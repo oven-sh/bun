@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""host-deep-equality.py <seed>: DEEP EQUALITY BY THE HOST, OF TYPED OBJECTS AGAINST TYPED AND PLAIN ONES. Each row: a base of one to four properties; one side changed (an undefined property put in first | in the middle | last; a property left out; another value; another order; made non-enumerable; an enumerable | non-enumerable name on the prototype; what one side owns the other inherits; a symbol key; an extra property stored later; frozen; null against undefined; -0 against 0; NaN); each side typed (a literal under a written type | an object of a class) | plain (the same copied by untyped code) | typed with extras; bare | in an array | in a field | in a Map | in a Set | two levels down; asked of Bun.deepEquals loose and strict, util.isDeepStrictEqual, assert.deepEqual | deepStrictEqual | notDeepStrictEqual, BOTH WAYS ROUND."""
+"""host-deep-equality.py <seed>: Deep equality as implemented by the host, of typed objects against typed and plain
+ones. Each row has a base of one to four properties and changes one side (an undefined property added, a property
+removed, another order, another prototype ..).
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

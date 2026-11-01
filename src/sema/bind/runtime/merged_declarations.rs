@@ -24,11 +24,16 @@ struct NameDeclarations {
     name: Atom,
     binding: Option<SymbolId>,
     first_by_kind: SmallVec<[Declaration; 4]>,
+    taker: Option<Declaration>,
 }
 
 impl NameDeclarations {
     fn add(&mut self, binding: SymbolId, declaration: Declaration) {
         self.binding.get_or_insert(binding);
+        self.note_kind(declaration);
+    }
+
+    fn note_kind(&mut self, declaration: Declaration) {
         if !self
             .first_by_kind
             .iter()
@@ -68,6 +73,7 @@ impl Declarations<'_, '_> {
             name,
             binding: None,
             first_by_kind: SmallVec::new(),
+            taker: None,
         };
         if let Some(&(appended, first)) = self.scopes.appended_bindings.get(&(scope, name)) {
             names.add(appended, first);
@@ -90,6 +96,47 @@ impl Declarations<'_, '_> {
         for &index in rejected {
             self.merge_rejected(&mut names, index);
         }
+        if let Some(taker) = names.taker {
+            self.give_name_of_imports(scope, symbol, taker);
+        }
+    }
+
+    // Bun's transpiler drops an import of a TypeScript file whose name is declared again further down. It declares `* as a` ahead of the default of the same statement.
+    fn takes_name_of_imports(&self, names: &NameDeclarations, later: Declaration) -> bool {
+        let holder = names.taker.or_else(|| names.first_by_kind.first().copied());
+        let is_behind_its_default = matches!(
+            (holder.map(|holder| holder.decl), later.decl),
+            (Some(Decl::ImportDefault(default)), Decl::ImportNamespace(star)) if default == star
+        );
+        let is_import = |first: &Declaration| first.kind == DeclarationKind::Import;
+        !self.hir.is_js
+            && matches!(
+                later.kind,
+                DeclarationKind::Import | DeclarationKind::ImportEquals
+            )
+            && names.first_by_kind.iter().all(is_import)
+            && !is_behind_its_default
+    }
+
+    fn give_name_of_imports(&mut self, scope: ScopeId, holder: SymbolId, taker: Declaration) {
+        let name = self.bound.symbols[holder.idx()].name;
+        for index in 0..self.bound.symbols[holder.idx()].decls.len() {
+            let dropped = self.bound.symbols[holder.idx()].decls[index];
+            self.set_import_symbol(dropped, SymbolId::NONE);
+        }
+        insert_bit(&mut self.scopes.hidden_symbols, holder.idx());
+        let binding = match declaration_symbol(self.bound, taker.decl).some() {
+            Some(own) => {
+                let key = (scope, name);
+                self.scopes.appended_bindings.insert(key, (own, taker));
+                own
+            }
+            None => self.append_import(scope, name, taker),
+        };
+        let declarations = &mut self.bound.runtime.declarations;
+        declarations
+            .names_taken_from_imports
+            .push((holder, binding));
     }
 
     fn merge_rejected(&mut self, names: &mut NameDeclarations, index: usize) {
@@ -103,6 +150,11 @@ impl Declarations<'_, '_> {
         if self.record_first_conflict(names, declaration) == Conflict::Always {
             let early_errors = &mut self.bound.runtime.early_error_redeclarations;
             early_errors.push(index as u32);
+            return;
+        }
+        if self.takes_name_of_imports(names, declaration) {
+            names.taker = Some(declaration);
+            names.note_kind(declaration);
             return;
         }
         let Some(binding) = names.binding else {
@@ -130,8 +182,13 @@ impl Declarations<'_, '_> {
     fn append_import(&mut self, scope: ScopeId, name: Atom, declaration: Declaration) -> SymbolId {
         let (flags, kind) = (SymFlags::ALIAS, BindingKind::Import);
         let symbol = self.append_binding(scope, name, flags, kind, declaration);
+        self.set_import_symbol(declaration.decl, symbol);
+        symbol
+    }
+
+    fn set_import_symbol(&mut self, import: Decl, symbol: SymbolId) {
         let declarations = &mut self.bound.runtime.declarations;
-        match declaration.decl {
+        match import {
             Decl::ImportDefault(import) => {
                 declarations.import_default_symbols[import.idx()] = symbol
             }
@@ -141,7 +198,6 @@ impl Declarations<'_, '_> {
             Decl::ImportSpec(spec) => declarations.import_spec_symbols[spec.idx()] = symbol,
             _ => {}
         }
-        symbol
     }
 
     fn record_first_conflict(&mut self, names: &NameDeclarations, later: Declaration) -> Conflict {

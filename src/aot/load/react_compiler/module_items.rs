@@ -1,12 +1,12 @@
 use bun_core::fmt::{ItoaBuf, itoa};
-use bun_lint_react_compiler::code_generation::{GeneratedSymbol, SymbolOrigin};
-use bun_react_compiler::JsxImportKind;
+use bun_react_compiler::{JsxImportKind, ObservedSymbol, SymbolOrigin};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
     Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportSpec, ListAt,
     PatId, PatKind, ResolutionMode, StmtId, StmtKind, TextRange, TypeNodeId, VarDecl, VarKind,
 };
 use bun_sema::import_sites::JsxImport;
+use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::JsxSettings;
 use bun_sema::session::Arena;
 use std::borrow::Cow;
@@ -38,11 +38,13 @@ impl ModuleItems {
         &mut self,
         atoms: &Interner<'_>,
         jsx: &JsxSettings,
-        symbol: &GeneratedSymbol,
+        symbol: &ObservedSymbol<'_>,
     ) -> Atom {
         match symbol.origin {
-            SymbolOrigin::Source | SymbolOrigin::Local => atoms.intern(&symbol.name),
-            SymbolOrigin::ImportItem => intern_item_name(atoms, b"import:", &symbol.name),
+            SymbolOrigin::Source | SymbolOrigin::Local | SymbolOrigin::NamespaceMember(_) => {
+                atoms.intern(symbol.name)
+            }
+            SymbolOrigin::ImportItem => intern_item_name(atoms, b"import:", symbol.name),
             SymbolOrigin::JsxImport(kind) => {
                 let import = jsx_import_of(kind);
                 let local = intern_item_name(atoms, import.export_name(), b"");
@@ -69,15 +71,12 @@ impl ModuleItems {
                 self.outlined_count += 1;
                 intern_item_name(atoms, b"outlined:", number)
             }
-            SymbolOrigin::ImportNamespace => intern_item_name(atoms, b"namespace:", &symbol.name),
-            SymbolOrigin::ClassicFactory | SymbolOrigin::ClassicFragment => {
-                intern_item_name(atoms, b"classic:", &symbol.name)
-            }
+            SymbolOrigin::ImportNamespace => intern_item_name(atoms, b"namespace:", symbol.name),
         }
     }
 
-    pub(super) fn name_shadowing_local(atoms: &Interner<'_>, symbol: &GeneratedSymbol) -> Atom {
-        intern_item_name(atoms, b"local:", &symbol.name)
+    pub(super) fn name_shadowing_local(atoms: &Interner<'_>, name: &[u8]) -> Atom {
+        intern_item_name(atoms, b"local:", name)
     }
 
     pub(super) fn add_import(&mut self, path: &[u8], imported: &[u8], local: Atom) {
@@ -92,7 +91,12 @@ impl ModuleItems {
         });
     }
 
-    pub(super) fn write(&mut self, file: &mut FileBuilder, atoms: &Interner<'_>) {
+    pub(super) fn write(
+        &mut self,
+        file: &mut FileBuilder,
+        atoms: &Interner<'_>,
+        format: ModuleFormat,
+    ) {
         // Every function names the `Fragment` import, also one without a fragment.
         self.imports
             .retain(|import| is_referenced(file, import.local));
@@ -104,7 +108,12 @@ impl ModuleItems {
             }
             let from_path = rest.iter().filter(|import| import.path == first.path);
             let names = from_path.map(|import| (atoms.intern(&import.imported), import.local));
-            before.push(write_import(file, atoms, &first.path, names));
+            match format {
+                ModuleFormat::Esm => before.push(write_import(file, atoms, &first.path, names)),
+                ModuleFormat::CommonJs => {
+                    write_require(file, atoms, &first.path, names, &mut before)
+                }
+            }
         }
         if self.needs_memo_cache_sentinel {
             before.push(write_sentinel(file, atoms, MEMO_CACHE_SENTINEL));
@@ -183,6 +192,27 @@ pub(crate) fn write_import(
     file.stmt(StmtKind::Import(import), POSITION)
 }
 
+/// `const module = require(path)`, then `const local = module.imported` for each name: a CommonJS file cannot hold an
+/// import statement. A bundle loads the module at the same place, the head of the file's body.
+fn write_require(
+    file: &mut FileBuilder,
+    atoms: &Interner<'_>,
+    path: &[u8],
+    names: impl Iterator<Item = (Atom, Atom)>,
+    statements: &mut Vec<StmtId>,
+) {
+    let module = intern_item_name(atoms, b"required:", path);
+    let pat = file.pat(PatKind::Ident(module), POSITION, POSITION);
+    let require = file.expr(ExprKind::Ident(known::require), POSITION, POSITION);
+    statements.push(write_constant(file, pat, require, atoms.intern(path)));
+    for (imported, local) in names {
+        let object = file.expr(ExprKind::Ident(module), POSITION, POSITION);
+        let init = add_member(file, object, imported);
+        let pat = file.pat(PatKind::Ident(local), POSITION, POSITION);
+        statements.push(write_declaration(file, pat, init));
+    }
+}
+
 pub(crate) fn write_constant(
     file: &mut FileBuilder,
     pat: PatId,
@@ -200,6 +230,10 @@ pub(crate) fn write_constant(
         is_pure: false,
     });
     let init = file.expr(ExprKind::Call(call), POSITION, POSITION);
+    write_declaration(file, pat, init)
+}
+
+pub(crate) fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId) -> StmtId {
     let declarations = file.add_var_decls(&[VarDecl {
         pat,
         ty: TypeNodeId::NONE,
@@ -241,6 +275,12 @@ pub(crate) fn finish_file<'s>(
 ) -> File<'s> {
     // The parser's filter covers the source text only. An empty filter answers "may mention" for every name.
     file.mentioned.clear();
+    // What stands in a JSDoc comment is no code, and a comment at the head of a file begins where the added statements stand. Nothing that the parser reads out of a comment begins at its first byte.
+    if let Some(first) = file.jsdoc_comments.first_mut()
+        && first.0 == POSITION
+    {
+        first.0 = POSITION + 1;
+    }
     let (mut file, _) = file.into_arena(arena, atoms.session());
     file.finish_nodes();
     file

@@ -1,5 +1,6 @@
 // A thousand calls of an async function that awaits another async function by name, all suspended. The argument is read from an object that came through `any`, so the callee tests it at its head, and the caller takes those tests in: the awaited call behind them makes no promise all the same.
 // The expected text is that of compiled code: an engine that makes a promise for every call holds three thousand.
+// Prints what the compiler saves: promises
 import { heapStats } from "bun:jsc";
 type Pair = { a: number; b: number };
 let waiting: (() => void)[] = [];

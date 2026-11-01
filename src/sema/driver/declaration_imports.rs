@@ -1,5 +1,5 @@
 use bun_core::strings;
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::Interner;
 use bun_sema::check::spans::token_end;
 use bun_sema::hir::ModuleName;
 use bun_sema::resolve::{Dialect, ScriptKind};
@@ -34,20 +34,28 @@ pub fn name_imported_files(
         false,
         true,
     );
-    let imports = (file.specifier_uses.iter()).map(|it| (it.pos as usize, it.spec));
-    let augmented = file.modules.iter().filter_map(|it| match it.name {
-        ModuleName::String(name) => Some((it.name_pos as usize, name)),
-        _ => None,
-    });
-    let mut literals: Vec<(usize, Atom)> = imports.chain(augmented).collect();
-    literals.sort_unstable_by_key(|&(start, _)| start);
-    literals.dedup_by_key(|&mut (start, _)| start);
+    let imports = file.specifier_uses.iter().map(|it| it.pos as usize);
+    let augmented = (file.modules.iter())
+        .filter(|it| matches!(it.name, ModuleName::String(_)))
+        .map(|it| it.name_pos as usize);
+    let mut literals: Vec<usize> = imports.chain(augmented).collect();
+    literals.sort_unstable();
+    literals.dedup();
     let directory = &path[..strings::last_index_of_char(path, b'/').unwrap_or(0)];
     let mut named = Vec::with_capacity(text.len() + literals.len() * 3);
     let mut copied = 0;
-    for (start, value) in literals {
-        let Some((specifier, closing_quote)) = string_literal_at(text, start, atoms.bytes(value))
-        else {
+    for start in literals {
+        // What the parser read at `start`. Only a literal with a backslash asks for it.
+        let value = || {
+            let imported = (file.specifier_uses.iter()).find(|it| it.pos as usize == start);
+            let augmented = (file.modules.iter()).find(|it| it.name_pos as usize == start);
+            match (imported, augmented.map(|it| it.name)) {
+                (Some(it), _) => Some(atoms.bytes(it.spec)),
+                (None, Some(ModuleName::String(name))) => Some(atoms.bytes(name)),
+                _ => None,
+            }
+        };
+        let Some((specifier, closing_quote)) = string_literal_at(text, start, value) else {
             continue;
         };
         let Some(file_name) = file_name_of(directory, specifier, is_written) else {
@@ -61,11 +69,11 @@ pub fn name_imported_files(
     named
 }
 
-/// The value of the closed string literal at `start`, which the parser read as `value`, and where its closing quote is.
+/// The value of the closed string literal at `start` and where its closing quote is. `value` is what the parser read.
 fn string_literal_at<'a>(
     text: &'a [u8],
     start: usize,
-    value: &'a [u8],
+    value: impl FnOnce() -> Option<&'a [u8]>,
 ) -> Option<(&'a [u8], usize)> {
     let quote = *text.get(start).filter(|it| matches!(it, b'"' | b'\''))?;
     let rest = &text[start + 1..];
@@ -79,10 +87,13 @@ fn string_literal_at<'a>(
     let inside = text.get(start + 1..last)?;
     // An odd number of backslashes escapes the quote, and then the literal is not closed.
     let backslashes = inside.iter().rev().take_while(|&&byte| byte == b'\\');
-    let is_closed = text[last] == quote && backslashes.count() % 2 == 0;
+    if text[last] != quote || backslashes.count() % 2 != 0 {
+        return None;
+    }
     // The file name is written between the quotes as it is, so nothing in it may need an escape.
+    let value = value()?;
     let needs_escape = strings::index_of_any(value, &[b'\\', b'\n', b'\r', quote]).is_some();
-    (is_closed && !needs_escape).then_some((value, last))
+    (!needs_escape).then_some((value, last))
 }
 
 fn file_name_of(

@@ -1064,9 +1064,6 @@ pub(crate) struct LinkJob {
     /// See `PackageInstaller::copy_trees`.
     pub(crate) copy: bool,
     pub(crate) skip_delete: bool,
-    /// Generated on the main thread, because `fast_random` returns the same numbers on every
-    /// thread.
-    pub(crate) random: u64,
     pub(crate) resolution_tag: resolution::Tag,
     pub(crate) result: std::sync::OnceLock<InstallResult>,
 }
@@ -1094,7 +1091,11 @@ impl LinkBatch {
         let old = if job.skip_delete {
             None
         } else {
-            move_aside(tree_dir, &job.destination_dir_subpath, job.random)
+            move_aside(
+                tree_dir,
+                &job.destination_dir_subpath,
+                bun_core::fast_random(),
+            )
         };
         let result = PackageFiles {
             cache_dir: job.cache_dir,

@@ -1175,6 +1175,59 @@ body {
     },
   });
 
+  // Another page loads the script first, so the script is live when the walk reaches the two links. Each link is an error.
+  itBundled("html/stylesheet-link-to-script-that-another-page-loads", {
+    outdir: "out/",
+    files: {
+      "/good.html": `<!doctype html><html><head><script type="module" src="./app.js"></script></head><body></body></html>`,
+      "/bad.html": `<!doctype html><html><head><link rel="stylesheet" href="./app.js"></head><body></body></html>`,
+      "/also-bad.html": `<!doctype html><html><head><link rel="stylesheet" href="./app.js"></head><body></body></html>`,
+      "/app.js": `console.log("app");`,
+    },
+    entryPoints: ["/good.html", "/bad.html", "/also-bad.html"],
+    bundleErrors: {
+      "/bad.html": ['Cannot use "app.js" as a stylesheet'],
+      "/also-bad.html": ['Cannot use "app.js" as a stylesheet'],
+    },
+  });
+
+  // A script of Bun's own is a script too: a polyfill of a Node.js module, and a data URL with a script type.
+  itBundled("html/stylesheet-link-to-polyfill-and-script-data-url", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="events">
+    <link rel="stylesheet" href="data:text/javascript,console.log(1)">
+  </head>
+  <body></body>
+</html>`,
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/index.html": [
+        'Cannot use "node:events" as a stylesheet',
+        'Cannot use "dataurl:data:text/javascript,console.log(1)" as a stylesheet',
+      ],
+    },
+  });
+
+  itBundled("html/stylesheet-link-to-css-data-url", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="data:text/css,.from-data-url{color:blue}"></head><body></body></html>`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const href = html.match(/<link rel="stylesheet" crossorigin href="(\.\/index-[a-z0-9]+\.css)">/)?.[1];
+      expect(href).toBeString();
+      expect(api.readFile("out/" + href)).toContain(".from-data-url");
+    },
+  });
+
   itBundled("html/stylesheet-link-to-package-css", {
     outdir: "out/",
     files: {
@@ -1504,8 +1557,12 @@ body {
 describe("a stylesheet link to a script", () => {
   const page = (href: string) =>
     `<!doctype html><html><head><link rel="stylesheet" href="${href}"></head><body></body></html>`;
-  const note = (href: string) =>
-    `The stylesheet link "${href}" resolves to this file, and the "jsx" loader loads it. Link a CSS file, or use <script src> for a script.`;
+  const remedy = `Link a CSS file or remove the link. A script is loaded with <script src>.`;
+  const note = (href: string, file = "theme.js") =>
+    `The stylesheet link "${href}" resolves to "${file}", which the "jsx" loader loads. ${remedy}`;
+  // The HTML scanner replaces a rooted href with an absolute path, and a bare href too when that file exists. The note then quotes no href.
+  const noteWithoutHref = (file: string) =>
+    `A stylesheet link resolves to "${file}", which the "jsx" loader loads. ${remedy}`;
   const files = {
     "index.html": page("./theme.js"),
     "theme.js": `console.log("theme");`,
@@ -1551,15 +1608,16 @@ describe("a stylesheet link to a script", () => {
     commandFails({ args: ["--aot", "./server.ts"], output: "out" }),
   );
 
+  // The path of the file depends on where the build runs.
+  const linkNote = expect.stringMatching(
+    /^The stylesheet link "\.\/theme\.js" resolves to ".*theme\.js", which the "jsx" loader loads\. /,
+  );
   const failed = (build: Bun.BuildOutput) => ({
     success: build.success,
     outputs: build.outputs,
     errors: build.logs.map(log => ({ message: log.message, notes: log.notes.map(note => note.message) })),
   });
 
-  // The note quotes the href when it is the text of the attribute. The HTML scanner replaces a rooted href with an absolute path,
-  // and the note quotes no path. It does the same for a bare href today, so the note then quotes the attribute or nothing.
-  const noteWithoutHref = `A stylesheet link resolves to this file, and the "jsx" loader loads it. Link a CSS file, or use <script src> for a script.`;
   test.concurrent.each([
     {
       href: "./theme.js",
@@ -1567,7 +1625,15 @@ describe("a stylesheet link to a script", () => {
       script: "app/theme.js",
       entry: "./index.html",
       file: "theme.js",
-      notes: [note("./theme.js")],
+      note: note("./theme.js"),
+    },
+    {
+      href: "p",
+      page: "app/index.html",
+      script: "app/node_modules/p/main.js",
+      entry: "./index.html",
+      file: "node_modules/p/main.js",
+      note: note("p", "node_modules/p/main.js"),
     },
     {
       href: "/theme.js",
@@ -1575,7 +1641,7 @@ describe("a stylesheet link to a script", () => {
       script: "app/theme.js",
       entry: "./index.html",
       file: "theme.js",
-      notes: [noteWithoutHref],
+      note: noteWithoutHref("theme.js"),
     },
     {
       href: "theme.js",
@@ -1583,7 +1649,7 @@ describe("a stylesheet link to a script", () => {
       script: "app/src/theme.js",
       entry: "./src/index.html",
       file: "src/theme.js",
-      notes: [noteWithoutHref, note("theme.js")],
+      note: noteWithoutHref("src/theme.js"),
     },
     // The name of the page's directory starts with the name of the working directory.
     {
@@ -1592,11 +1658,12 @@ describe("a stylesheet link to a script", () => {
       script: "app-v2/theme.js",
       entry: "../app-v2/index.html",
       file: "../app-v2/theme.js",
-      notes: [noteWithoutHref, note("theme.js")],
+      note: noteWithoutHref("../app-v2/theme.js"),
     },
-  ])("Bun.build names the link $href of $page", async ({ href, page: pagePath, script, entry, file, notes }) => {
+  ])("Bun.build names the link $href of $page", async ({ href, page: pagePath, script, entry, file, note }) => {
     using dir = tempDir("html-stylesheet-link-href", {
       "app/package.json": `{}`,
+      "app/node_modules/p/package.json": `{"name":"p","main":"./main"}`,
       [pagePath]: page(href),
       [script]: files["theme.js"],
     });
@@ -1615,11 +1682,10 @@ describe("a stylesheet link to a script", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const logs = stdout === "" ? null : JSON.parse(stdout);
     expect({ logs, stderr, exitCode }).toEqual({
-      logs: [{ message: `Cannot use "${file}" as a stylesheet`, notes: [expect.any(String)] }],
+      logs: [{ message: `Cannot use "${file}" as a stylesheet`, notes: [note] }],
       stderr: "",
       exitCode: 0,
     });
-    expect(notes).toContain(logs[0].notes[0]);
   });
 
   test.concurrent("Bun.build with compile and target browser fails", async () => {
@@ -1633,9 +1699,7 @@ describe("a stylesheet link to a script", () => {
     expect(failed(build)).toEqual({
       success: false,
       outputs: [],
-      errors: [
-        { message: expect.stringMatching(/^Cannot use ".*theme\.js" as a stylesheet$/), notes: [note("./theme.js")] },
-      ],
+      errors: [{ message: expect.stringMatching(/^Cannot use ".*theme\.js" as a stylesheet$/), notes: [linkNote] }],
     });
   });
 
@@ -1651,9 +1715,7 @@ describe("a stylesheet link to a script", () => {
     expect(failed(build)).toEqual({
       success: false,
       outputs: [],
-      errors: [
-        { message: expect.stringMatching(/^Cannot use ".*theme\.js" as a stylesheet$/), notes: [note("./theme.js")] },
-      ],
+      errors: [{ message: expect.stringMatching(/^Cannot use ".*theme\.js" as a stylesheet$/), notes: [linkNote] }],
     });
   });
 

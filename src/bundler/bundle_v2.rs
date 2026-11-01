@@ -5080,8 +5080,6 @@ pub mod bv2_impl {
                     }
                 }
                 jsc_api::JSBundler::LoadValue::Err(msg) => {
-                    this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
-                        .insert(crate::Graph::InputFileFlags::PLUGIN_FAILED_TO_LOAD);
                     if let Some(dev) = this.dev_server {
                         let source = &this.graph.input_files.items_source()
                             [load.source_index.get() as usize];
@@ -5904,18 +5902,17 @@ pub mod bv2_impl {
                             // to routes in DevServer. They have a JS chunk too,
                             // derived off of the import record list.
                             if loaders[index] == Loader::Html {
-                                // A script that Bun failed to parse counts: its repair does not bundle the page again.
-                                let flags = input_files.items_flags();
+                                // A file that failed to load or to parse counts, with the loader that it has. The dev server bundles the page again when that file changes.
                                 for record in import_records.as_slice() {
                                     if !record.source_index.is_valid() {
                                         continue;
                                     }
-                                    let Some(script_loader) = LinkerContext::check_html_import(
-                                        sources,
-                                        loaders,
-                                        flags,
+                                    let target = record.source_index.get() as usize;
+                                    let Some(script_loader) = LinkerContext::html_import_mismatch(
+                                        record.kind,
+                                        loaders[target],
+                                        &sources[target].path,
                                         &self.transpiler.options.loaders,
-                                        record,
                                     ) else {
                                         continue;
                                     };
@@ -5928,7 +5925,7 @@ pub mod bv2_impl {
                                         log,
                                         &sources[index],
                                         record,
-                                        sources[record.source_index.get() as usize].path.pretty,
+                                        sources[target].path.pretty,
                                         script_loader,
                                     );
                                 }
@@ -7149,7 +7146,7 @@ pub mod bv2_impl {
                                 import_record.path = self
                                     .path_with_pretty_initialized(path, target)
                                     .expect("oom");
-                                // A cached script has no source index, so `finish_from_bake_dev_server` does not see a tag that uses it.
+                                // A cached script that this bundle does not load has no source index, so `finish_from_bake_dev_server` does not see a tag that uses it.
                                 if entry.kind == bake_types::CacheKind::Js
                                     && LinkerContext::html_import_mismatch(
                                         import_record.kind,
@@ -7158,6 +7155,10 @@ pub mod bv2_impl {
                                         &transpiler.options.loaders,
                                     )
                                     .is_some()
+                                    && self
+                                        .path_to_source_index_map(target)
+                                        .get(path.text)
+                                        .is_none()
                                 {
                                     // The cache keeps no loader. A cached script has the loader of its path, unless a plugin or an import attribute chose another script loader.
                                     let script_loader = path

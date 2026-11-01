@@ -1769,6 +1769,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         if !self.bundled_files.values()[index].is_hmr_root {
                             self.append_client_entry_point(entry_points, index)?;
                         }
+                        // Why a page failed can depend on what a file that it uses is, so a failed page is bundled again with that file.
+                        if !self.dev_bundling_failures().is_empty() {
+                            let mut it = self.edge_lists[index].first_dep;
+                            while let Some(edge_index) = it {
+                                let edge = self.edges[edge_index.get() as usize];
+                                let importer = edge.dependency.get() as usize;
+                                let file = &self.bundled_files.values()[importer];
+                                if file.failed && file.html_route_bundle_index.is_some() {
+                                    self.append_client_entry_point(entry_points, importer)?;
+                                }
+                                it = edge.next_dependency;
+                            }
+                        }
                     }
                 },
                 Side::Server => {

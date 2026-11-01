@@ -3148,8 +3148,7 @@ impl<'a> LinkerContext<'a> {
         source_index: crate::IndexInt,
     ) {
         let input_files = &self.parse_graph().input_files;
-        let sources = input_files.items_source();
-        let (loaders, flags) = (input_files.items_loader(), input_files.items_flags());
+        let (sources, loaders) = (input_files.items_source(), input_files.items_loader());
         let loader_table = self
             .loader_table
             .as_ref()
@@ -3160,14 +3159,18 @@ impl<'a> LinkerContext<'a> {
                 continue;
             }
             let other = record.source_index.get();
-            if let Some(loader) =
-                Self::check_html_import(sources, loaders, flags, loader_table, record)
-            {
+            let target = &sources[other as usize].path;
+            if let Some(loader) = Self::html_import_mismatch(
+                record.kind,
+                loaders[other as usize],
+                target,
+                loader_table,
+            ) {
                 Self::add_html_import_mismatch_error(
                     self.log_disjoint(),
                     &sources[source_index as usize],
                     record,
-                    sources[other as usize].path.pretty,
+                    target.pretty,
                     loader,
                 );
             }
@@ -3382,29 +3385,8 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// What [`Self::html_import_mismatch`] finds for `record` of an HTML file. `sources`, `loaders` and `flags` are the columns of the input files, and the target of `record` is one of those files.
-    #[inline(always)]
-    pub(crate) fn check_html_import(
-        sources: &[Source],
-        loaders: &[Loader],
-        flags: &[crate::Graph::InputFileFlags],
-        loader_table: &bun_ast::LoaderHashTable,
-        record: &ImportRecord,
-    ) -> Option<Loader> {
-        let target = record.source_index.get() as usize;
-        let loader = Self::html_import_mismatch(
-            record.kind,
-            loaders[target],
-            &sources[target].path,
-            loader_table,
-        )?;
-        // A file for which an `onLoad` plugin threw has the loader of its path. What the plugin makes of the file is not known.
-        (!flags[target].contains(crate::Graph::InputFileFlags::PLUGIN_FAILED_TO_LOAD))
-            .then_some(loader)
-    }
-
     /// The loader of the script that a tag of an HTML file would put in the page. `loader` loads the file that the tag resolves to, `path` is the path of that file, and `loader_table` is `options.loaders` of the build.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn html_import_mismatch(
         kind: ImportKind,
         loader: Loader,
@@ -3439,13 +3421,19 @@ impl<'a> LinkerContext<'a> {
         loader.is_javascript_like() || loader == Loader::Html
     }
 
-    /// `path` is a file that this build loads as a script or a page when no plugin chooses the loader. Cold: asked only for a stylesheet link to a file that is loaded as one.
+    /// This build loads `path` as a script or a page when no plugin chooses the loader. Cold: asked only for a stylesheet link to a file that is loaded as one.
     #[cold]
     fn is_script_path(
         path: &bun_paths::fs::Path<'_>,
         loader_table: &bun_ast::LoaderHashTable,
     ) -> bool {
-        path.is_file() && path.loader(loader_table).is_some_and(Self::adds_scripts)
+        // The MIME type of a data URL picks its loader, and `Path::loader` does not read it.
+        if path.is_data_url() {
+            return true;
+        }
+        // `file` and `node` are the namespaces of Bun. A plugin makes the modules of each other namespace.
+        (path.is_file() || path.namespace == b"node")
+            && path.loader(loader_table).is_some_and(Self::adds_scripts)
     }
 
     /// Reports what [`Self::html_import_mismatch`] found for `record` of the HTML file `page`. `target` is the pretty path of the file that the tag resolves to.
@@ -3457,17 +3445,19 @@ impl<'a> LinkerContext<'a> {
         target: &[u8],
         loader: Loader,
     ) {
-        const REMEDY: &str = "Link a CSS file, or use <script src> for a script.";
+        const REMEDY: &str =
+            "Link a CSS file or remove the link. A script is loaded with <script src>.";
         let loader = <&'static str>::from(loader);
+        let file = bun_core::fmt::quote(target);
         let href = record.original_path;
         // The HTML scanner replaces a rooted or a bare href with an absolute path, which is not the text of the attribute.
         let note = if bun_paths::is_absolute(href) {
             bun_ast::alloc_print(format_args!(
-                "A stylesheet link resolves to this file, and the \"{loader}\" loader loads it. {REMEDY}",
+                "A stylesheet link resolves to {file}, which the \"{loader}\" loader loads. {REMEDY}",
             ))
         } else {
             bun_ast::alloc_print(format_args!(
-                "The stylesheet link \"{}\" resolves to this file, and the \"{loader}\" loader loads it. {REMEDY}",
+                "The stylesheet link \"{}\" resolves to {file}, which the \"{loader}\" loader loads. {REMEDY}",
                 bstr::BStr::new(href),
             ))
         };
@@ -3475,10 +3465,7 @@ impl<'a> LinkerContext<'a> {
             Some(page),
             record.range,
             Box::new([bun_ast::range_data(None, Range::NONE, note)]),
-            format_args!(
-                "Cannot use {} as a stylesheet",
-                bun_core::fmt::quote(target),
-            ),
+            format_args!("Cannot use {file} as a stylesheet"),
         );
     }
 

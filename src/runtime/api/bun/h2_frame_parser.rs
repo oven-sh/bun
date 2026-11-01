@@ -1088,6 +1088,7 @@ pub(crate) struct H2FrameParser {
     max_outstanding_pings: Cell<u64>,
     out_standing_pings: Cell<u64>,
     max_send_header_block_length: Cell<u32>,
+    max_deflate_dynamic_table_size: Cell<u32>,
     /// node strictSingleValueFields session option (default true): when false, duplicate
     /// single-value headers and array values for them are encoded as-is instead of rejected.
     strict_single_value_fields: Cell<bool>,
@@ -3531,10 +3532,12 @@ impl H2FrameParser {
     /// Lazily create the rewrite engine once is_server + local settings are known.
     fn ensure_engine(&self) {
         if self.engine.borrow().is_none() {
-            let mut conn = crate::api::h2::connection::Connection::new(
-                self.is_server.get(),
-                self.rewrite_local_settings(),
-            );
+            let mut local = self.rewrite_local_settings();
+            // The decoder starts with the size of the session's first SETTINGS frame.
+            if let Some(first) = self.pending_settings_window_submissions.get().first() {
+                local.header_table_size = first.settings.header_table_size;
+            }
+            let mut conn = crate::api::h2::connection::Connection::new(self.is_server.get(), local);
             // The engine is created lazily on the first inbound read, by which point settings()
             // may already have submitted (still unACKed) values; received header blocks must be
             // checked against the constructor-time limit until the peer ACKs a later submission.
@@ -3762,7 +3765,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn on_remote_header_table_size(&self, value: u32) {
         self.hpack_encoder.with_mut(|encoder| {
             if let Some(encoder) = encoder {
-                encoder.set_max_capacity(value);
+                encoder.set_max_capacity(value.min(self.max_deflate_dynamic_table_size.get()));
             }
         });
     }
@@ -5398,8 +5401,11 @@ impl H2FrameParser {
     pub(crate) fn no_trailers(&self, cx: &mut JsScope<'_>, stream_id: JsLocal<'_>) -> JsResult<()> {
         let stream = self.stream_from_js(cx.global(), stream_id.to_js())?;
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &mut *stream };
+        self.end_without_trailers(unsafe { &mut *stream });
+        Ok(())
+    }
 
+    fn end_without_trailers(&self, stream: &mut Stream) {
         stream.wait_for_trailers = false;
         let _ = self.send_data(
             stream,
@@ -5411,7 +5417,6 @@ impl H2FrameParser {
                 defer_write_callback: false,
             },
         );
-        Ok(())
     }
 
     /// node's strictSingleValueFields option (default true): when disabled, duplicate
@@ -5758,6 +5763,11 @@ impl H2FrameParser {
             }
         }
         let encoded_headers = scopeguard::ScopeGuard::into_inner(encoded_headers);
+        // node (Http2Stream::SubmitTrailers) sends no HEADERS frame without a field.
+        if encoded_headers.is_empty() {
+            self.end_without_trailers(&mut stream);
+            return Ok(());
+        }
         let encoded_data = encoded_headers.as_slice();
         let encoded_size = encoded_data.len();
 
@@ -7386,6 +7396,7 @@ impl H2FrameParser {
             max_outstanding_pings: Cell::new(10),
             out_standing_pings: Cell::new(0),
             max_send_header_block_length: Cell::new(0),
+            max_deflate_dynamic_table_size: Cell::new(u32::MAX),
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
             last_peer_stream_id: Cell::new(0),
@@ -7554,6 +7565,19 @@ impl H2FrameParser {
                         this_ref
                             .max_send_header_block_length
                             .set(max_send_header_block_length.to_int32() as u32);
+                    }
+                }
+                if let Some(max_table_size) =
+                    settings_js.get(global_object, "maxDeflateDynamicTableSize")?
+                {
+                    if max_table_size.is_number() {
+                        let max_table_size = Self::session_option_u32(max_table_size);
+                        this_ref.max_deflate_dynamic_table_size.set(max_table_size);
+                        this_ref.hpack_encoder.with_mut(|encoder| {
+                            if let Some(encoder) = encoder {
+                                encoder.set_max_capacity(max_table_size);
+                            }
+                        });
                     }
                 }
                 if let Some(strict_single_value) =

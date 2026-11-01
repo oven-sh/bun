@@ -284,6 +284,35 @@ describe("WINDOW_UPDATE (checklist §6)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.FRAME_SIZE_ERROR);
     c.destroy();
   });
+
+  // nginx answers the next request on the connection with 502 if one comes.
+  test("none is sent for a stream that has ended", async () => {
+    const srv = http2.createServer();
+    srv.on("stream", stream => stream.on("end", () => stream.end("ok")).resume());
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // More than half the window of 65,535 bytes.
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST")),
+          encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16384)),
+          encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16384)),
+          encodeFrame(FrameType.DATA, 0x1, 1, Buffer.alloc(7232)),
+        ]),
+      );
+      const last = await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(c.frames.slice(c.frames.indexOf(last) + 1).filter(f => f.streamId === 1)).toEqual([]);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
 });
 
 describe("frame structure (checklist §2,§3)", () => {
@@ -411,13 +440,6 @@ describe("CONTINUATION (checklist §3,§7)", () => {
     }
   });
 });
-
-function settingsPayload(id: number, value: number): Buffer {
-  const b = Buffer.alloc(6);
-  b.writeUInt16BE(id, 0);
-  b.writeUInt32BE(value >>> 0, 2);
-  return b;
-}
 
 describe("a stream that the server finishes before respond() (RFC 9113 §8.1)", () => {
   const { NGHTTP2_INTERNAL_ERROR } = http2.constants;
@@ -627,6 +649,13 @@ describe("a response that the server resets after its headers", () => {
     }
   });
 });
+
+function settingsPayload(id: number, value: number): Buffer {
+  const b = Buffer.alloc(6);
+  b.writeUInt16BE(id, 0);
+  b.writeUInt32BE(value >>> 0, 2);
+  return b;
+}
 
 describe("SETTINGS value ranges (checklist §6.5.2)", () => {
   test("ENABLE_PUSH with a value other than 0/1 is a PROTOCOL_ERROR", async () => {
@@ -3093,11 +3122,11 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
       c.sendEmptySettings();
       await closings["the server answered"](c);
       const late = encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x88]));
-      c.send(Buffer.concat([...Array(9_000).fill(late), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
+      c.send(Buffer.concat([...Array(10_000).fill(late), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
       await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
       expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
-      // A second that goes by in between allows for 330 more.
-      c.send(Buffer.concat(Array(9_000).fill(late)));
+      // A second that goes by in between allows for 330 more, and each wait gives up after two.
+      c.send(Buffer.concat(Array(2_000).fill(late)));
       expect(goawayErrorCode(await c.waitForGoaway())).toBe(ErrorCode.ENHANCE_YOUR_CALM);
     } finally {
       c.destroy();
@@ -3198,6 +3227,20 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
     }
   });
 
+  // The response to the client's next request refers to the entry that the dropped block added.
+  async function expectTheLateEntry(raw: RawH2Server, client: http2.ClientHttp2Session) {
+    const next = client.request({ ":path": "/" });
+    const response = once(next, "response");
+    next.resume();
+    await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+    raw.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.from([0x88, 0xbe]));
+    expect((await response)[0]).toMatchObject({ ":status": 200, "x-late": "1" });
+    // The session is not left waiting for a stream that nobody has.
+    await new Promise<void>(resolve => client.close(resolve));
+    await raw.waitFor(f => f.type === FrameType.GOAWAY);
+    expect(resets(raw.frames)).toEqual([]);
+  }
+
   test.each([
     ["trailers", trailers],
     ["a response", Buffer.concat([Buffer.from([0x88]), trailers])],
@@ -3212,20 +3255,82 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
       const closed = once(req, "close");
       await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
       raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
       raw.sendFrame(FrameType.HEADERS, 0x4, 1, Buffer.from([0x88]));
       await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
       await closed;
       raw.sendFrame(FrameType.HEADERS, 0x5, 1, late);
 
-      const next = client.request({ ":path": "/" });
-      const response = once(next, "response");
-      next.resume();
-      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
-      raw.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.from([0x88, 0xbe]));
-      expect((await response)[0]).toMatchObject({ ":status": 200, "x-late": "1" });
-      // The session is not left waiting for a stream that nobody has.
-      await new Promise<void>(resolve => client.close(resolve));
-      await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      await expectTheLateEntry(raw, client);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("that the client canceled between the frames of its trailers are decoded and dropped", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      client.on("error", () => {});
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      const closed = once(req, "close");
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      raw.sendFrame(FrameType.HEADERS, 0x4, 1, Buffer.from([0x88]));
+      // One write, so that 'data' says the first frame of the trailers has been read as well.
+      raw.socket!.write(
+        Buffer.concat([
+          encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x")),
+          encodeFrame(FrameType.HEADERS, 0x1, 1, trailers.subarray(0, 4)),
+        ]),
+      );
+      await once(req, "data");
+      req.close(http2.constants.NGHTTP2_CANCEL);
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      await closed;
+      raw.sendFrame(FrameType.CONTINUATION, 0x4, 1, trailers.subarray(4));
+
+      await expectTheLateEntry(raw, client);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // END_STREAM on the first frame closes a pushed stream before its trailers are complete.
+  test("that end a pushed stream are delivered when their frames come in two reads", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      client.on("error", () => {});
+      const push = once(client, "stream");
+      client
+        .request({ ":path": "/" })
+        .on("error", () => {})
+        .resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      const promise = Buffer.concat([Buffer.from([0, 0, 0, 2, 0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      // One write, so that 'data' says the first frame of the trailers has been read as well.
+      raw.socket!.write(
+        Buffer.concat([
+          encodeFrame(FrameType.PUSH_PROMISE, 0x4, 1, promise),
+          encodeFrame(FrameType.HEADERS, 0x4, 2, Buffer.from([0x88])),
+          encodeFrame(FrameType.DATA, 0, 2, Buffer.from("x")),
+          encodeFrame(FrameType.HEADERS, 0x1, 2, trailers.subarray(0, 4)),
+        ]),
+      );
+      const [pushed] = await push;
+      const received = once(pushed, "trailers");
+      const closed = once(pushed, "close");
+      await once(pushed, "data");
+      raw.sendFrame(FrameType.CONTINUATION, 0x4, 2, trailers.subarray(4));
+      expect((await received)[0]).toMatchObject({ "x-late": "1" });
+      await closed;
+      expect(pushed.rstCode).toBe(0);
       expect(resets(raw.frames)).toEqual([]);
     } finally {
       client.destroy();
@@ -3341,6 +3446,35 @@ describe("HPACK (RFC 7541)", () => {
       const answer = await c.waitFor(headersOrGoaway(7));
       expect(answer.type).toBe(FrameType.GOAWAY);
       expect(goawayErrorCode(answer)).toBe(ErrorCode.COMPRESSION_ERROR);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("sendTrailers() without a field sends no block, so the next one has the table size update", async () => {
+    const srv = http2.createServer();
+    srv.on("stream", stream => {
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => stream.sendTrailers({ "x-none": [] }));
+      stream.on("end", () => stream.end()).resume();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const first = await c.waitFor(isSettingsAck);
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await c.waitFor(headersOrGoaway(1));
+      c.sendFrame(FrameType.SETTINGS, 0, 0, settingsPayload(HEADER_TABLE_SIZE, 0));
+      await c.waitFor(f => isSettingsAck(f) && f !== first);
+      c.sendFrame(FrameType.DATA, 0x1, 1);
+      const last = await c.waitFor(f => f.streamId === 1 && (f.flags & 0x1) !== 0);
+      expect(last.type).toBe(FrameType.DATA);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      expect((await c.waitFor(headersOrGoaway(3))).payload[0]).toBe(0x20);
     } finally {
       c.destroy();
       srv.close();
@@ -3487,7 +3621,7 @@ describe("HPACK (RFC 7541)", () => {
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
       c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
       await c.waitFor(headersOrGoaway(3));
-      c.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.from([0x80]));
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x80]));
       const goaway = await c.waitForGoaway();
       expect(goawayErrorCode(goaway)).toBe(ErrorCode.COMPRESSION_ERROR);
       expect(goaway.payload.readUInt32BE(0)).toBe(3);
@@ -3560,6 +3694,61 @@ describe("HPACK (RFC 7541)", () => {
       srv.close();
     }
   });
+
+  // 60 entries of 100 bytes each way. The peers allow for 65536 bytes, and 4096 is the most that Bun takes.
+  test.each([
+    [0, 0],
+    [1000, 1000],
+    [65536, 4000],
+  ])(
+    "the encoder's table has at most maxDeflateDynamicTableSize: %d bytes",
+    async (maxDeflateDynamicTableSize, size) => {
+      const settings = { headerTableSize: 65536 };
+      const srv = http2.createServer({ maxDeflateDynamicTableSize, settings });
+      const value = Buffer.alloc(64, "v").toString();
+      const headers = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`x-${10 + i}`, value]));
+      srv.on("stream", stream => {
+        stream.respond({ ...headers }, { sendDate: false });
+        stream.end();
+      });
+      srv.listen(0, "127.0.0.1");
+      await once(srv, "listening");
+      const session = once(srv, "session") as Promise<[http2.ServerHttp2Session]>;
+      const { port } = srv.address() as net.AddressInfo;
+      const client = http2.connect(`http://127.0.0.1:${port}`, { maxDeflateDynamicTableSize, settings });
+      client.on("error", () => {});
+      try {
+        await once(client, "remoteSettings");
+        for (let i = 0; i < 2; i++) expect(await get(client, { ":path": "/", ...headers })).toMatchObject(headers);
+        const [server] = await session;
+        expect([client.state.deflateDynamicTableSize, server.state.deflateDynamicTableSize]).toEqual([size, size]);
+      } finally {
+        client.destroy();
+        srv.close();
+      }
+    },
+  );
+
+  test.each([
+    [0, "20"],
+    [1000, "3fc907"],
+  ])(
+    "maxDeflateDynamicTableSize: %d holds before the peer's SETTINGS arrive",
+    async (maxDeflateDynamicTableSize, update) => {
+      const raw = await RawH2Server.listen();
+      const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxDeflateDynamicTableSize });
+      try {
+        client.on("error", () => {});
+        client.request({ ":path": "/" }).on("error", () => {});
+        const { payload } = await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+        expect(payload.toString("hex")).toStartWith(update);
+        expect(client.state.deflateDynamicTableSize).toBeLessThanOrEqual(maxDeflateDynamicTableSize);
+      } finally {
+        client.destroy();
+        raw.close();
+      }
+    },
+  );
 
   // The two entries of a request have 57 and 50 bytes: none fits, each evicts the other, both stay.
   test.each([0, 64, 128])("requests keep working with headerTableSize: %d on the server", async headerTableSize => {
@@ -3676,24 +3865,41 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
-  test("the decoder allows a larger table once the peer acknowledges session.settings()", async () => {
-    const { srv, port } = await listen();
-    srv.once("stream", stream => stream.session!.settings({ headerTableSize: 8192 }));
-    const c = await RawH2.connect(port);
-    try {
-      c.sendPreface();
-      c.sendEmptySettings();
-      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
-      await c.waitFor(f => isSettings(f) && f.payload.includes(settingsPayload(HEADER_TABLE_SIZE, 8192)));
-      for (const _ of c.frames.filter(isSettings)) c.sendSettingsAck();
-      const update = Buffer.from([0x3f, 0xe1, 0x3f]); // to 8192
-      c.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.concat([update, requestHeaderBlock("GET")]));
-      expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
-    } finally {
-      c.destroy();
-      srv.close();
-    }
-  });
+  // 'session' comes before the server has read a byte, 'stream' after.
+  test.each(
+    (["session", "stream"] as const).flatMap(event => [
+      [event, 0, FrameType.GOAWAY],
+      [event, 1, FrameType.GOAWAY],
+      [event, 2, FrameType.HEADERS],
+    ]),
+  )(
+    "the decoder allows a larger table once the peer acknowledges session.settings() from '%s': %d of 2",
+    async (event, acknowledged, expected) => {
+      const { srv, port } = await listen();
+      const larger = { headerTableSize: 8192 };
+      if (event === "session") srv.once("session", session => session.settings(larger));
+      else srv.once("stream", stream => stream.session!.settings(larger));
+      const c = await RawH2.connect(port);
+      const announced = (f: Frame) => isSettings(f) && f.payload.includes(settingsPayload(HEADER_TABLE_SIZE, 8192));
+      try {
+        if (event === "session") await c.waitFor(announced);
+        c.sendPreface();
+        c.sendEmptySettings();
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        await c.waitFor(announced);
+        await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+        for (let i = 0; i < acknowledged; i++) c.sendSettingsAck();
+        const update = Buffer.from([0x3f, 0xe1, 0x3f]); // to 8192
+        c.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.concat([update, requestHeaderBlock("GET")]));
+        const answer = await c.waitFor(headersOrGoaway(3));
+        expect(answer.type).toBe(expected);
+        if (answer.type === FrameType.GOAWAY) expect(goawayErrorCode(answer)).toBe(ErrorCode.COMPRESSION_ERROR);
+      } finally {
+        c.destroy();
+        srv.close();
+      }
+    },
+  );
 
   test("a sensitive header is sent as never indexed even if the table has the same field", async () => {
     const { srv, seen, port } = await listen();

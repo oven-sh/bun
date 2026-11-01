@@ -155,7 +155,7 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
-    /// HEADERS arrived on a stream that is closed and evicted: dropped, as nghttp2 does.
+    /// HEADERS arrived on a stream that is closed and has no entry any more: dropped, as nghttp2 does.
     Ignored,
 }
 
@@ -383,7 +383,7 @@ pub(crate) struct Connection {
     stream_reset_limit: RateLimit,
     /// RST_STREAM this engine sends that cancels a delivered request (cf. nghttp2's glitch_ratelim).
     sent_reset_limit: RateLimit,
-    /// Header blocks that are dropped (nghttp2's glitch_ratelim).
+    /// HEADERS on closed streams (nghttp2's glitch_ratelim).
     ignored_block_limit: RateLimit,
     /// A bucket ran dry mid-frame; receive() tears the session down between frames.
     reset_flood: bool,
@@ -694,7 +694,7 @@ impl Connection {
         let mut buf = std::mem::take(&mut self.replenish_buf);
         buf.clear();
         for (id, s) in self.streams.iter_mut() {
-            if s.state != State::Closed
+            if stream::can_receive_data(s.state)
                 && s.recv_window.needs_update()
                 && sink.is_stream_reading(*id)
             {
@@ -712,8 +712,9 @@ impl Connection {
         // Late DATA and HEADERS for an evicted id are dropped (is_closed_stream).
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
+        let in_flight = self.header_block_in_flight.as_ref().map(|b| b.meta.target);
         for (id, s) in self.streams.iter() {
-            if s.state == State::Closed {
+            if s.state == State::Closed && Some(*id) != in_flight {
                 evict.push(*id);
             }
         }
@@ -1097,17 +1098,18 @@ impl Connection {
             );
             return true;
         }
+        let closed = self.is_closed_stream(sink, hdr.stream_id);
+        if closed && !self.ignored_block_limit.drain() {
+            self.send_go_away(
+                sink,
+                ErrorCode::EnhanceYourCalm,
+                b"too many HEADERS on closed streams",
+            );
+            return true;
+        }
         let mut disposition = if !is_new {
             BlockDisposition::Deliver
-        } else if self.is_closed_stream(sink, hdr.stream_id) {
-            if !self.ignored_block_limit.drain() {
-                self.send_go_away(
-                    sink,
-                    ErrorCode::EnhanceYourCalm,
-                    b"too many HEADERS on closed streams",
-                );
-                return true;
-            }
+        } else if closed {
             BlockDisposition::Ignored
         } else if self.is_server && !sink.can_open_stream() {
             BlockDisposition::Refused
@@ -1240,7 +1242,15 @@ impl Connection {
             self.header_block_in_flight = Some(inflight);
             return false;
         }
-        self.finish_header_block(sink, &inflight.meta)
+        let mut meta = inflight.meta;
+        // The embedder closed the stream between the frames of the block.
+        if meta.disposition == BlockDisposition::Deliver
+            && meta.push_parent.is_none()
+            && !self.streams.contains_key(&meta.target)
+        {
+            meta.disposition = BlockDisposition::Ignored;
+        }
+        self.finish_header_block(sink, &meta)
     }
 
     /// Decode the assembled header block (HPACK) and dispatch each field, then finalize. The whole
@@ -1703,12 +1713,12 @@ impl Connection {
         stream_id <= self.last_stream_id || stream_id <= sink.highest_started_stream_id()
     }
 
-    /// RFC 9113 §5.1 closed state. DATA on such a stream is dropped, and HEADERS once it is evicted, as nghttp2 does.
+    /// RFC 9113 §5.1 closed state. DATA on such a stream is dropped, and HEADERS once it has no entry any more, as nghttp2 does.
     fn is_closed_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
         match self.streams.get(&stream_id) {
             Some(s) => s.state == State::Closed,
             // A stream the embedder opened has no entry here until its first inbound frame.
-            None => !sink.is_local_stream(stream_id) && self.has_existed(sink, stream_id),
+            None => self.has_existed(sink, stream_id) && !sink.is_local_stream(stream_id),
         }
     }
 
@@ -2174,7 +2184,7 @@ impl Connection {
     /// The outbound half does not run through this engine yet, so without this hook a
     /// completed request's entry would linger as HalfClosedRemote forever — the map (and
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
-    /// has the same observable behavior as scan-eviction of a Closed stream.
+    /// has the same observable behavior as scan-eviction of a Closed stream. `handle_continuation` sees to a block in flight.
     pub(crate) fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }
@@ -2184,7 +2194,7 @@ impl Connection {
     /// next inbound batch — which may never come, since the peer is the one waiting.
     pub(crate) fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
         let inc = match self.streams.get_mut(&stream_id) {
-            Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {
+            Some(s) if stream::can_receive_data(s.state) && s.recv_window.needs_update() => {
                 s.recv_window.take_update()
             }
             _ => return,

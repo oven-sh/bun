@@ -280,12 +280,8 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
         }
         // The factory and the fragment of classic JSX, and a class that decorator metadata names: no expression spells the name, so there is none to rewrite.
         let bound = self.request.bound;
-        let is_unwritten = |symbol: SymbolId| {
-            let mut unwritten = bound.runtime.implicit_references().iter();
-            unwritten.any(|it| it.binding == Binding::Symbol(symbol))
-        };
         let mut symbols = names.iter().map(|it| bound.declared_symbol(it.0));
-        if symbols.any(is_unwritten) {
+        if symbols.any(|symbol| bound.runtime.is_named_implicitly(symbol)) {
             return Place::InPlace;
         }
         Place::LoweredImport

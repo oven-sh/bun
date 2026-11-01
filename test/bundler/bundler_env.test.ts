@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -221,10 +222,13 @@ test("bun build --env leaves a comparison of values that are not UTF-8 for run t
     cmd: [bunExe(), "build", "--env", "PUB_*", "--minify-syntax", "entry.mjs", "--outfile", "out.mjs"],
     env: bunEnv,
     cwd: String(dir),
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
-  expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: "", exitCode: 0 });
+  const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  expect({ stderr: buildStderr, exitCode: buildExitCode }).toEqual({ stderr: "", exitCode: 0 });
+  // The run below reads the same `.env`, so a value that was not inlined would compare the same in both lines.
+  expect(await Bun.file(join(String(dir), "out.mjs")).text()).not.toContain("process.env.PUB_");
 
   await using run = Bun.spawn({
     cmd: [bunExe(), "out.mjs"],

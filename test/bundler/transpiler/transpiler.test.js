@@ -299,6 +299,32 @@ describe("Bun.Transpiler", () => {
         exitCode: 0,
       });
     });
+    // A const string is inlined at each use, so a write to a member of it reaches the fold as a literal.
+    it("loads a file that writes to a member of a const string", async () => {
+      const src = `
+        const label = "ready";
+        function neverCalled() { label.length = 0; label.length++; delete label[0]; }
+        function attempt(fn) { try { return fn(); } catch (e) { return e.constructor.name; } }
+        console.log(
+          label,
+          attempt(() => { "use strict"; label.length = 1; }),
+          attempt(() => { "use strict"; return delete label.length; }),
+          attempt(() => { "use strict"; return delete label[0]; }),
+        );
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "ready TypeError TypeError TypeError\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
       const lastLine = out => out.trimEnd().split("\n").at(-1);

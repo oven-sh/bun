@@ -118,6 +118,7 @@ jobs:
         run: bun upload-npm -- "$BUN_VERSION" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "false"
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
@@ -166,6 +167,7 @@ jobs:
         if: ${{ env.BUN_VERSION == 'canary' || env.BUN_LATEST == 'true' }}
         env:
           NPM_TAG: ${{ env.BUN_VERSION == 'canary' && 'canary' || 'latest' }}
+          NPM_CONFIG_PROVENANCE: "false"
         run: |
           VERSION=$(node -p 'require("./package.json").version')
           if [ "$(npm view bun-types@"$VERSION" version 2>/dev/null)" = "$VERSION" ]; then

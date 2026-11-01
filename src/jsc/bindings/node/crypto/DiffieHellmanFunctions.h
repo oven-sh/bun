@@ -71,6 +71,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
         return {};
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::BignumPointer publicKey(span.data(), span.size());
     if (!publicKey) {
         throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid public key"_s);
@@ -232,6 +233,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPublicKeyTemplate(JSC::JSGlobalOb
 
     auto span = keyBuffer->span();
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::BignumPointer key(span.data(), span.size());
     if (!key) {
         throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid public key"_s);
@@ -267,6 +269,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPrivateKeyTemplate(JSC::JSGlobalO
     ASSERT(keyBuffer);
 
     auto span = keyBuffer->span();
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::BignumPointer key(span.data(), span.size());
     if (!key) {
         throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid private key"_s);

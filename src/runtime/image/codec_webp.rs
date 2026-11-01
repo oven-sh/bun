@@ -9,7 +9,13 @@ use crate::encoded_wrap_free;
 
 unsafe extern "C" {
     pub(crate) fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
-    fn WebPDecodeRGBA(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> *mut u8;
+    fn WebPDecodeRGBAInto(
+        data: *const u8,
+        len: usize,
+        output: *mut u8,
+        output_len: usize,
+        output_stride: c_int,
+    ) -> *mut u8;
     fn WebPEncodeRGBA(
         rgba: *const u8,
         w: c_int,
@@ -31,7 +37,7 @@ unsafe extern "C" {
 // ─── libwebpmux / libwebpdemux ──────────────────────────────────────────────
 // WebP carries colour profiles (and EXIF/XMP) in a VP8X RIFF container that
 // wraps the VP8/VP8L bitstream. `WebPEncodeRGBA` only emits the bare
-// bitstream chunk, and `WebPDecodeRGBA` only reads it — neither touches
+// bitstream chunk, and `WebPDecodeRGBAInto` only reads it — neither touches
 // the surrounding chunks. To pull an ICCP chunk out of an input (decode)
 // or to attach one to an output (encode) we go through the separate
 // demux/mux APIs, which operate on the whole RIFF file. Both are
@@ -106,7 +112,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn WebPDemuxReleaseChunkIterator(iter: *mut WebPChunkIterator);
 
-    fn WebPNewInternal(version: c_int) -> *mut WebPMux;
+    safe fn WebPNewInternal(version: c_int) -> *mut WebPMux;
     fn WebPMuxDelete(mux: *mut WebPMux);
     fn WebPMuxSetImage(mux: *mut WebPMux, bitstream: *const WebPData, copy_data: c_int) -> c_int;
     fn WebPMuxSetChunk(
@@ -134,31 +140,28 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     let w: u32 = u32::try_from(cw).expect("int cast");
     let h: u32 = u32::try_from(ch).expect("int cast");
     codecs::guard(w, h, max_pixels)?;
-    // SAFETY: bytes.ptr/len describe a valid readable slice; cw/ch are valid out-params.
-    let ptr = unsafe { WebPDecodeRGBA(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) };
-    if ptr.is_null() {
-        return Err(codecs::Error::DecodeFailed);
-    }
-    let _free_ptr = scopeguard::guard(ptr, |p| {
-        // SAFETY: p was returned by WebPDecodeRGBA above; WebPFree is the matching deallocator.
-        unsafe { WebPFree(p.cast::<c_void>()) }
-    });
     // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
-    // (the pin only blocks detach), so a hostile caller can swap in a smaller
-    // WebP between WebPGetInfo and WebPDecodeRGBA. libwebp re-parses on the
-    // second call and writes the actual decoded dims back into cw/ch — reject
-    // any mismatch instead of trusting the probe and over-reading the
-    // smaller allocation. (Same race the CG shim guards at :298.)
-    if u32::try_from(cw).ok() != Some(w) || u32::try_from(ch).ok() != Some(h) {
+    // (the pin only blocks detach), so the decoder can see a different image
+    // than the probe did. libwebp fails if that image is bigger than `out`.
+    // If it's smaller, the rest of `out` is zero.
+    let stride: usize = (w as usize) * 4;
+    let mut out: Vec<u8> = vec![0; stride * (h as usize)];
+    // SAFETY: `bytes` is a valid readable slice and `out` is a valid writable one.
+    let decoded = unsafe {
+        WebPDecodeRGBAInto(
+            bytes.as_ptr(),
+            bytes.len(),
+            out.as_mut_ptr(),
+            out.len(),
+            c_int::try_from(stride).map_err(|_| codecs::Error::DecodeFailed)?,
+        )
+    };
+    if decoded.is_null() {
         return Err(codecs::Error::DecodeFailed);
     }
-    let len: usize = (w as usize) * (h as usize) * 4;
-    // SAFETY: WebPDecodeRGBA returns a buffer of w*h*4 bytes on success.
-    let out: Vec<u8> = unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
 
     // Extract the ICCP chunk (if any) from the RIFF container. A plain
-    // VP8/VP8L WebP with no VP8X wrapper has no ICCP — `WebPDemux` still
-    // succeeds, `WEBP_FF_FORMAT_FLAGS` returns 0, and we skip the chunk
+    // VP8/VP8L WebP with no VP8X wrapper has no ICCP, and we skip the chunk
     // walk. The chunk iterator hands back a borrowed view into `bytes`;
     // dupe into the global allocator to match JPEG/PNG ownership so the
     // pipeline can free it uniformly. Propagate OutOfMemory on the dupe
@@ -169,6 +172,13 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // `icc_profile = None`; the pixels decoded fine so the image is still
     // usable.
     let icc: Option<Vec<u8>> = 'blk: {
+        // Byte 20 is the flags byte of a leading VP8X chunk.
+        if bytes.len() <= 20 || &bytes[12..16] != b"VP8X" || u32::from(bytes[20]) & ICCP_FLAG == 0 {
+            break 'blk None;
+        }
+        // The demuxer reads each chunk tag more than once and crashes if the
+        // reads disagree, so give it a copy that JS can't write to.
+        let bytes = bytes.to_vec();
         let data = WebPData {
             bytes: bytes.as_ptr(),
             size: bytes.len(),
@@ -193,9 +203,13 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         if unsafe { WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
             break 'blk None;
         }
-        // SAFETY: all-zero is a valid WebPChunkIterator (#[repr(C)] POD, raw ptr + ints).
-        let mut iter: WebPChunkIterator =
-            unsafe { core::mem::MaybeUninit::<WebPChunkIterator>::zeroed().assume_init() };
+        let mut iter = WebPChunkIterator {
+            chunk_num: 0,
+            num_chunks: 0,
+            chunk: WebPData::default(),
+            pad: [0; 6],
+            private_: core::ptr::null_mut(),
+        };
         // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
         if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
             break 'blk None;
@@ -257,24 +271,26 @@ pub(crate) fn encode(
             )
         }
     };
-    if len == 0 || out.is_null() {
+    if len == 0 {
         return Err(codecs::Error::EncodeFailed);
     }
-    // SAFETY: WebPEncode* returns a buffer of `len` bytes on success.
-    let bitstream: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(out, len) };
+    let Some(out) = NonNull::new(out) else {
+        return Err(codecs::Error::EncodeFailed);
+    };
+    let bitstream = NonNull::slice_from_raw_parts(out, len);
 
     // Fast path: no profile to attach, so the bare VP8/VP8L RIFF that
     // `WebPEncodeRGBA` produced is already the final container. Avoids the
     // mux round-trip (and its extra copy) for the common sRGB case.
     let Some(profile) = icc_profile else {
         return Ok(codecs::Encoded {
-            bytes: NonNull::from(bitstream),
+            bytes: bitstream,
             free: encoded_wrap_free!(WebPFree),
         });
     };
     if profile.is_empty() {
         return Ok(codecs::Encoded {
-            bytes: NonNull::from(bitstream),
+            bytes: bitstream,
             free: encoded_wrap_free!(WebPFree),
         });
     }
@@ -286,12 +302,11 @@ pub(crate) fn encode(
     // `copy_data = 0` the mux borrows our buffers until `WebPMuxAssemble`
     // returns, so `bitstream`/`profile` must outlive the assemble call
     // (both do — `bitstream` is freed below, `profile` is caller-owned).
-    let _free_bitstream = scopeguard::guard(bitstream.as_mut_ptr(), |p| {
+    let _free_bitstream = scopeguard::guard(out.as_ptr(), |p| {
         // SAFETY: p is the buffer returned by WebPEncode*RGBA above; WebPFree is the matching deallocator.
         unsafe { WebPFree(p.cast::<c_void>()) }
     });
-    // SAFETY: WebPNewInternal has no preconditions.
-    let mux = unsafe { WebPNewInternal(WEBP_MUX_ABI_VERSION) };
+    let mux = WebPNewInternal(WEBP_MUX_ABI_VERSION);
     if mux.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
@@ -300,8 +315,8 @@ pub(crate) fn encode(
         unsafe { WebPMuxDelete(m) }
     });
     let img = WebPData {
-        bytes: bitstream.as_ptr(),
-        size: bitstream.len(),
+        bytes: out.as_ptr(),
+        size: len,
     };
     // SAFETY: mux is live; img points to valid borrowed data.
     if unsafe { WebPMuxSetImage(mux, &raw const img, 0) } != WEBP_MUX_OK {
@@ -325,14 +340,11 @@ pub(crate) fn encode(
         unsafe { WebPFree(assembled.bytes as *mut c_void) };
         return Err(codecs::Error::EncodeFailed);
     }
-    if assembled.bytes.is_null() {
+    let Some(assembled_ptr) = NonNull::new(assembled.bytes.cast_mut()) else {
         return Err(codecs::Error::EncodeFailed);
-    }
-    let assembled_ptr = assembled.bytes.cast_mut();
-    // SAFETY: WebPMuxAssemble returns a WebPMalloc-owned buffer of assembled.size bytes on WEBP_MUX_OK.
-    let assembled_slice = unsafe { core::slice::from_raw_parts_mut(assembled_ptr, assembled.size) };
+    };
     Ok(codecs::Encoded {
-        bytes: NonNull::from(assembled_slice),
+        bytes: NonNull::slice_from_raw_parts(assembled_ptr, assembled.size),
         free: encoded_wrap_free!(WebPFree),
     })
 }

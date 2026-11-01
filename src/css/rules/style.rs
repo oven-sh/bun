@@ -1,6 +1,6 @@
 use crate as css;
 use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
-use crate::declaration::DeclarationBlock;
+use crate::declaration::{DeclarationBlock, DeclarationList};
 use crate::error::MinifyErr;
 use crate::selectors::selector;
 use crate::{PrintErr, Printer, VendorPrefix};
@@ -36,23 +36,29 @@ impl<R> StyleRule<R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
     pub(crate) fn hash_key(&self) -> u64 {
+        use core::hash::Hash;
         // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // Inlined `DeclarationBlock::hash_property_ids`: hash just the u16
-        // property-id tag bytes.
         for decl in self.declarations.declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            decl.property_id().hash(&mut hasher);
         }
         for decl in self.declarations.important_declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            decl.property_id().hash(&mut hasher);
         }
         hasher.final_()
     }
 
+    /// Not with nested rules: the `:is(list)` that their `&` compiles to forgives the unknown prefix.
+    fn prints_selectors_as_written(&self) -> bool {
+        self.rules.v.is_empty() && selector::is_list_with_vendor_prefix(self.selectors.v.slice())
+    }
+
     pub(crate) fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
+        if self.prints_selectors_as_written() {
+            self.vendor_prefix = VendorPrefix::empty();
+            return;
+        }
         self.vendor_prefix = selector::get_prefix(&self.selectors);
         if self.vendor_prefix.contains(VendorPrefix::NONE)
             && context.targets.should_compile_selectors()
@@ -67,6 +73,22 @@ impl<R> StyleRule<R> {
 
     pub(crate) fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
+    }
+
+    /// How many rules this rule prints as: a selector that a target cannot parse gets its own copy.
+    pub(crate) fn split_rule_count(&self, targets: &css::targets::Targets) -> u32 {
+        let selectors = self.selectors.v.slice();
+        if selectors.len() <= 1
+            || !targets.should_compile_selectors()
+            || self.prints_selectors_as_written()
+        {
+            return 1;
+        }
+        let moved = selectors
+            .iter()
+            .filter(|one| !selector::is_compatible(core::slice::from_ref(*one), targets))
+            .count();
+        (moved + usize::from(moved < selectors.len())) as u32
     }
 }
 
@@ -158,7 +180,6 @@ impl<R> StyleRule<R> {
     }
 
     fn to_css_base(&self, dest: &mut Printer, is_final_prefix_pass: bool) -> Result<(), PrintErr> {
-        use css::error::PrinterErrorKind;
         use css::properties::Property;
 
         // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
@@ -198,40 +219,9 @@ impl<R> StyleRule<R> {
             ];
             for (decls, important) in decls_groups {
                 for decl in decls {
-                    // The CSS modules `composes` property is handled specially, and omitted during printing.
-                    // We need to add the classes it references to the list for the selectors in this rule.
-                    if let Property::Composes(composes) = decl {
-                        if dest.is_nested() && dest.css_module.is_some() {
-                            return dest.new_error(
-                                PrinterErrorKind::invalid_composes_nesting,
-                                Some(composes.cssparser_loc),
-                            );
-                        }
-
-                        if dest.css_module.is_some() {
-                            // `handle_composes` needs `&mut dest` while the
-                            // module also lives in `dest.css_module`. Move the
-                            // module out for the duration of the call, then put
-                            // it back before any `dest.new_error` early return.
-                            let mut cm = dest.css_module.take();
-                            let err = if let Some(css_module) = &mut cm {
-                                css_module
-                                    .handle_composes(
-                                        dest,
-                                        &self.selectors,
-                                        composes,
-                                        self.loc.source_index,
-                                    )
-                                    .err()
-                            } else {
-                                None
-                            };
-                            dest.css_module = cm;
-                            if let Some(error_kind) = err {
-                                return dest.new_error(error_kind, Some(composes.cssparser_loc));
-                            }
-                            continue;
-                        }
+                    // The parser checked it and recorded it in `StyleSheet::composes`.
+                    if matches!(decl, Property::Composes(_)) {
+                        continue;
                     }
 
                     dest.newline()?;
@@ -274,6 +264,7 @@ impl<R> StyleRule<R> {
         if supports_nesting {
             helpers_newline(self, dest, supports_nesting, len)?;
             self.rules.to_css(dest)?;
+            dest.pending_semicolon = false;
             helpers_end(dest, has_declarations)?;
         } else {
             // This rule is serialized once per vendor prefix, and each pass
@@ -314,6 +305,7 @@ impl<R> StyleRule<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
+        split_rule_count: u32,
     ) -> Result<bool, MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -368,7 +360,7 @@ impl<R> StyleRule<R> {
         context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
-            self.minify_nested_rules(context, unused)?;
+            self.minify_nested_rules(context, unused, split_rule_count)?;
             if unused && self.rules.v.len() == 0 {
                 return Ok(true);
             }
@@ -389,21 +381,7 @@ impl<R> StyleRule<R> {
         &self,
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
-        if context.selector_expansion_multiplier > 1 {
-            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
-                context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1)),
-            );
-            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
-                context.err = Some(crate::error::MinifyError {
-                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
-                    loc: self.loc,
-                });
-                return Err(MinifyErr::minify_err);
-            }
-        }
-        Ok(())
+        context.charge_selector_expansion(self.selectors.v.len(), self.loc)
     }
 
     /// Minify this rule's nested rules, bumping the selector-expansion
@@ -413,44 +391,32 @@ impl<R> StyleRule<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
+        split_rule_count: u32,
     ) -> Result<(), MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
     {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
-        // When the targets require compiling nesting away (or splitting this
-        // rule's selectors for compatibility), each of this rule's selectors
-        // multiplies the expansion of every nested rule.
-        //
-        // Mirrors the selector-compatibility branch in `minify_style_arm`
-        // (rules/mod.rs): an incompatible selector list is either collapsed
-        // into a single `:is()` selector (nothing cloned) or partitioned
-        // into one cloned rule per selector (fan-out = selector count).
-        // Only the partition case multiplies on its own — but the `:is()`
-        // wrap keeps one `&` reference per original selector, so when
-        // nesting is compiled away the printed output still fans out per
-        // selector, which is why the nesting branch bumps unconditionally.
+        // Native nesting repeats the nested rules only once per rule this list is split into.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
-        let selectors_incompatible = self.selectors.v.len() > 1
-            && context.targets.should_compile_selectors()
-            && !self.is_compatible(context.targets);
-        let splits_selectors = selectors_incompatible
-            && !(context.targets.is_compatible(css::Feature::IsSelector)
-                && !self.selectors.any_has_pseudo_element()
-                && self.selectors.specifities_all_equal());
-        if context.targets.should_compile_same(css::Feature::Nesting) || splits_selectors {
-            context.selector_expansion_multiplier = context
-                .selector_expansion_multiplier
-                .saturating_mul(self.selectors.v.len().max(1));
-        }
+        let copies = if context.targets.should_compile_same(css::Feature::Nesting) {
+            self.selectors.v.len().max(1)
+        } else {
+            split_rule_count
+        };
+        context.selector_expansion_multiplier =
+            context.selector_expansion_multiplier.saturating_mul(copies);
 
         let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
         core::mem::swap::<PropertyHandlerContext<'_>>(
             &mut context.handler_context,
             &mut handler_context,
         );
-        let result = self.rules.minify(context, parent_is_unused);
+        // After the swap `handler_context` is this rule's own.
+        let result =
+            self.rules
+                .minify_nested(context, parent_is_unused, Some(&mut handler_context));
         core::mem::swap::<PropertyHandlerContext<'_>>(
             &mut context.handler_context,
             &mut handler_context,
@@ -460,42 +426,19 @@ impl<R> StyleRule<R> {
     }
 
     /// Returns whether this rule is a duplicate of another rule.
-    /// This means it has the same selectors and properties.
+    /// This means it has the same selectors, properties, and importance.
     #[inline]
     pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
-        self.declarations.len() == other.declarations.len()
+        let same_property_ids = |a: &DeclarationList<'_>, b: &DeclarationList<'_>| {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b.iter())
+                    .all(|(a, b)| a.property_id() == b.property_id())
+        };
+        let (a, b) = (&self.declarations, &other.declarations);
+        same_property_ids(&a.declarations, &b.declarations)
+            && same_property_ids(&a.important_declarations, &b.important_declarations)
             && self.selectors.eql(&other.selectors)
-            && 'brk: {
-                let mut len = self
-                    .declarations
-                    .declarations
-                    .len()
-                    .min(other.declarations.declarations.len());
-                // len is the min of the two lengths, so truncation is intended.
-                for (a, b) in self.declarations.declarations[..len]
-                    .iter()
-                    .zip(&other.declarations.declarations[..len])
-                {
-                    // `PropertyId`'s `PartialEq` is a tag+prefix compare.
-                    if a.property_id() != b.property_id() {
-                        break 'brk false;
-                    }
-                }
-                len = self
-                    .declarations
-                    .important_declarations
-                    .len()
-                    .min(other.declarations.important_declarations.len());
-                for (a, b) in self.declarations.important_declarations[..len]
-                    .iter()
-                    .zip(&other.declarations.important_declarations[..len])
-                {
-                    if a.property_id() != b.property_id() {
-                        break 'brk false;
-                    }
-                }
-                true
-            }
     }
 }
 

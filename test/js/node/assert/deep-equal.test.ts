@@ -3,6 +3,7 @@
 // cross-checked against Node.js. Cases Bun gets wrong today are marked `test.failing`.
 import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
+import { createPrivateKey, createPublicKey, createSecretKey, generateKeyPairSync } from "node:crypto";
 import util from "node:util";
 
 type Thunk = () => unknown;
@@ -100,11 +101,22 @@ function selfReferencingArray() {
 }
 
 function argumentsObject(...values: unknown[]) {
-  return (function () {
-    // eslint-disable-next-line prefer-rest-params
-    return arguments;
-  })(...values);
+  return (
+    function () {
+      // eslint-disable-next-line prefer-rest-params
+      return arguments;
+    } as (...args: unknown[]) => IArguments
+  )(...values);
 }
+
+const ecKeys = [generateKeyPairSync("ec", { namedCurve: "P-256" }), generateKeyPairSync("ec", { namedCurve: "P-256" })];
+const rsaPublicKey = generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
+const secretCryptoKey = (
+  fill: number,
+  algorithm: any = "AES-GCM",
+  extractable = true,
+  usages: KeyUsage[] = ["encrypt"],
+) => createSecretKey(Buffer.alloc(16, fill)).toCryptoKey(algorithm, extractable, usages);
 
 const cases: Case[] = [
   // Loose mode compares primitives with ==, strict mode with Object.is.
@@ -172,7 +184,7 @@ const cases: Case[] = [
     name: "a boxed string with an out-of-range indexed own property",
     a: () => {
       const boxed = new String("ab");
-      boxed[5] = "x";
+      (boxed as any)[5] = "x";
       return boxed;
     },
     b: () => new String("ab"),
@@ -943,6 +955,146 @@ const cases: Case[] = [
     strict: true,
     loose: true,
   },
+  {
+    name: "secret KeyObjects with the same bytes",
+    a: () => createSecretKey(Buffer.alloc(16, 1)),
+    b: () => createSecretKey(Buffer.alloc(16, 1)),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "secret KeyObjects with different bytes",
+    a: () => createSecretKey(Buffer.alloc(16, 1)),
+    b: () => createSecretKey(Buffer.alloc(16, 2)),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "objects holding different secret KeyObjects",
+    a: () => ({ key: createSecretKey(Buffer.alloc(16, 1)) }),
+    b: () => ({ key: createSecretKey(Buffer.alloc(16, 2)) }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "the public KeyObjects of two key pairs",
+    a: () => ecKeys[0].publicKey,
+    b: () => ecKeys[1].publicKey,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "the private KeyObjects of two key pairs",
+    a: () => ecKeys[0].privateKey,
+    b: () => ecKeys[1].privateKey,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "the public and private KeyObjects of one key pair",
+    a: () => ecKeys[0].publicKey,
+    b: () => ecKeys[0].privateKey,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two public KeyObjects made from one private key",
+    a: () => createPublicKey(ecKeys[0].privateKey),
+    b: () => createPublicKey(ecKeys[0].privateKey),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "public KeyObjects imported twice from the same bytes",
+    a: () => createPublicKey(ecKeys[0].publicKey.export({ type: "spki", format: "pem" })),
+    b: () => createPublicKey(ecKeys[0].publicKey.export({ type: "spki", format: "pem" })),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "private KeyObjects imported twice from the same bytes",
+    a: () => createPrivateKey(ecKeys[0].privateKey.export({ type: "pkcs8", format: "pem" })),
+    b: () => createPrivateKey(ecKeys[0].privateKey.export({ type: "pkcs8", format: "pem" })),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a KeyObject and an empty object",
+    a: () => createSecretKey(Buffer.alloc(16, 1)),
+    b: () => ({}),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys with the same bytes",
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(1),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "CryptoKeys with different bytes",
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(2),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys that differ in extractable",
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(1, "AES-GCM", false),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys that differ in usages",
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(1, "AES-GCM", true, ["encrypt", "decrypt"]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys that differ in algorithm",
+    a: () => secretCryptoKey(1),
+    b: () => secretCryptoKey(1, "AES-CBC"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "HMAC CryptoKeys that differ in hash",
+    a: () => secretCryptoKey(1, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]),
+    b: () => secretCryptoKey(1, { name: "HMAC", hash: "SHA-512" }, true, ["sign"]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "RSA CryptoKeys that differ in hash",
+    a: () => rsaPublicKey.toCryptoKey({ name: "RSA-PSS", hash: "SHA-256" }, true, ["verify"]),
+    b: () => rsaPublicKey.toCryptoKey({ name: "RSA-PSS", hash: "SHA-512" }, true, ["verify"]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "CryptoKeys with the same bytes and different own properties",
+    a: () => Object.assign(secretCryptoKey(1), { own: 1 }),
+    b: () => Object.assign(secretCryptoKey(1), { own: 2 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a CryptoKey and an empty object",
+    a: () => secretCryptoKey(1),
+    b: () => ({}),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a KeyObject and a CryptoKey with the same bytes",
+    a: () => createSecretKey(Buffer.alloc(16, 1)),
+    b: () => secretCryptoKey(1),
+    strict: false,
+    loose: false,
+  },
 ];
 
 function caught(fn: () => void): (Error & { code?: string }) | null {
@@ -1013,11 +1165,13 @@ describe("util.isDeepStrictEqual", () => {
   // The third argument was added in Node v26.
   describe("skipPrototype", () => {
     class Foo {
+      declare value: unknown;
       constructor(value) {
         this.value = value;
       }
     }
     class Bar {
+      declare value: unknown;
       constructor(value) {
         this.value = value;
       }
@@ -1025,11 +1179,11 @@ describe("util.isDeepStrictEqual", () => {
 
     test("ignores differing constructors when set", () => {
       expect(util.isDeepStrictEqual(new Foo(42), new Bar(42))).toBe(false);
-      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), true)).toBe(true);
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), true as any)).toBe(true);
     });
 
     test("still compares values", () => {
-      expect(util.isDeepStrictEqual(new Foo(42), new Bar(99), true)).toBe(false);
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(99), true as any)).toBe(false);
     });
 
     test.each([
@@ -1040,19 +1194,19 @@ describe("util.isDeepStrictEqual", () => {
       ["Error cause", () => new Error("e", { cause: new Foo(1) }), () => new Error("e", { cause: new Bar(1) })],
     ])("propagates through %s", (_name, makeA, makeB) => {
       expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
-      expect(util.isDeepStrictEqual(makeA(), makeB(), true)).toBe(true);
+      expect(util.isDeepStrictEqual(makeA(), makeB(), true as any)).toBe(true);
     });
 
     test("still compares Object.prototype.toString tags", () => {
-      expect(util.isDeepStrictEqual(argumentsObject(1), { 0: 1 }, true)).toBe(false);
-      expect(util.isDeepStrictEqual(argumentsObject(1), argumentsObject(1), true)).toBe(true);
-      expect(util.isDeepStrictEqual(Object.create({ [Symbol.toStringTag]: "X" }), {}, true)).toBe(false);
+      expect(util.isDeepStrictEqual(argumentsObject(1), { 0: 1 }, true as any)).toBe(false);
+      expect(util.isDeepStrictEqual(argumentsObject(1), argumentsObject(1), true as any)).toBe(true);
+      expect(util.isDeepStrictEqual(Object.create({ [Symbol.toStringTag]: "X" }), {}, true as any)).toBe(false);
     });
 
     test("ignores the boxed-primitive subclass distinction", () => {
       class S extends String {}
       expect(util.isDeepStrictEqual(new String("a"), new S("a"))).toBe(false);
-      expect(util.isDeepStrictEqual(new String("a"), new S("a"), true)).toBe(true);
+      expect(util.isDeepStrictEqual(new String("a"), new S("a"), true as any)).toBe(true);
     });
 
     test("does not leak into assert.deepStrictEqual", () => {
@@ -1117,6 +1271,31 @@ describe("detached ArrayBuffer", () => {
     expect(() =>
       assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), crypto.createSecretKey(Buffer.from("secret"))),
     ).not.toThrow();
+  });
+
+  test("assert.partialDeepStrictEqual compares CryptoKeys by what they hold, then by own properties", () => {
+    const partial = (actual: unknown, expected: unknown) => {
+      const error = caught(() => assert.partialDeepStrictEqual(actual, expected));
+      return error ? error.code : "equal";
+    };
+    expect({
+      same: partial(secretCryptoKey(1), secretCryptoKey(1)),
+      otherBytes: partial(secretCryptoKey(1), secretCryptoKey(2)),
+      nestedOtherBytes: partial({ key: secretCryptoKey(1) }, { key: secretCryptoKey(2) }),
+      otherExtractable: partial(secretCryptoKey(1), secretCryptoKey(1, "AES-GCM", false)),
+      // Unlike arrays, usages are not compared as a subset.
+      fewerUsages: partial(secretCryptoKey(1, "AES-GCM", true, ["encrypt", "decrypt"]), secretCryptoKey(1)),
+      extraOwnPropertyOnActual: partial(Object.assign(secretCryptoKey(1), { own: 1 }), secretCryptoKey(1)),
+      extraOwnPropertyOnExpected: partial(secretCryptoKey(1), Object.assign(secretCryptoKey(1), { own: 1 })),
+    }).toEqual({
+      same: "equal",
+      otherBytes: "ERR_ASSERTION",
+      nestedOtherBytes: "ERR_ASSERTION",
+      otherExtractable: "ERR_ASSERTION",
+      fewerUsages: "ERR_ASSERTION",
+      extraOwnPropertyOnActual: "equal",
+      extraOwnPropertyOnExpected: "ERR_ASSERTION",
+    });
   });
 
   test("error matches Node's message", () => {

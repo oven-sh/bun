@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
@@ -613,6 +613,59 @@ test("closeIdleConnections() after close() reaps an idle connection, not one tha
   }
 });
 
+// A connection whose response has ended is idle while its handler is still on
+// the stack. How many reads its request head took makes no difference.
+test.each([
+  ["one read", "GET /sweep HTTP/1.1\r\nHost: x\r\n\r\n", ""],
+  ["two reads", "GET /sweep HTTP/1.1\r\nHo", "st: x\r\n\r\n"],
+])(
+  "closeIdleConnections() from process.nextTick in the handler closes a connection whose request head took %s",
+  async (_name, first, rest) => {
+    const server = createServer((req, res) => {
+      res.end(req.url);
+      if (req.url === "/sweep") process.nextTick(() => server.closeIdleConnections());
+    });
+    server.keepAliveTimeout = 60000;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      socket.on("error", () => {});
+      let response = "";
+      const swept = Promise.withResolvers<void>();
+      const outcome = Promise.withResolvers<string>();
+      socket.on("data", chunk => {
+        response += chunk;
+        if (response.endsWith("/sweep")) swept.resolve();
+        if (response.endsWith("/second")) outcome.resolve("kept");
+      });
+      // Also after an 'error': a request to a connection that the server closed can get a reset.
+      socket.on("close", () => outcome.resolve("closed"));
+
+      socket.write(first);
+      if (rest) {
+        // One round trip on another connection: the server has read the partial head by then.
+        const barrier = connect(port, "127.0.0.1");
+        barrier.resume();
+        barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await once(barrier, "close");
+        socket.write(rest);
+      }
+      await swept.promise;
+      // A connection that is still open answers this.
+      socket.write("GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+      expect(await outcome.promise).toBe("closed");
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  },
+);
+
 // The bytes of the first response still drain when one read brings the next
 // request. That request waits behind the unsent bytes, so the connection is
 // not idle, also when the same read completed the body of the first request.
@@ -782,7 +835,7 @@ test("closeAllConnections() on a listening server destroys the connections and k
     const socket = connect(port, "127.0.0.1");
     socket.on("error", () => {});
     socket.write(head);
-    for (let received = ""; !received.includes(until); ) received += await nextData(socket);
+    for (let received = ""; !received.includes(until);) received += await nextData(socket);
     return socket;
   }
 
@@ -829,7 +882,7 @@ test("closeIdleConnections()/closeAllConnections() after close() leave an upgrad
     releaseResponse = () => res.end("ok");
   });
   server.on("upgrade", (req, socket) => {
-    upgradedServerSocket = socket;
+    upgradedServerSocket = socket as import("node:net").Socket;
     socket.on("error", () => {});
     socket.on("data", chunk => socket.write(chunk));
     socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n");
@@ -957,4 +1010,47 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
     socket.destroy();
     server.closeAllConnections();
   }
+});
+
+// A reload under --hot keeps the native listener of an address, and so its kind.
+test("closeAllConnections() on a server that took the listener of a Bun.serve server under --hot", async () => {
+  using dir = tempDir("hot-bun-serve-to-node-http", {
+    "server.mjs": `
+      import { createServer } from "node:http";
+      import { once } from "node:events";
+      import { connect } from "node:net";
+      import { writeFileSync, readFileSync } from "node:fs";
+
+      globalThis.__reloads ??= 0;
+      if (globalThis.__reloads++ === 0) {
+        Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("Bun.serve") });
+        const self = new URL(import.meta.url);
+        writeFileSync(self, readFileSync(self, "utf8"));
+      } else {
+        let connections = 0;
+        const server = createServer((req, res) => res.end("node:http"));
+        server.on("connection", () => connections++);
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const socket = connect(server.address().port, "127.0.0.1");
+        socket.on("error", () => {});
+        socket.resume();
+        await once(socket, "connect");
+        socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        await once(socket, "close");
+        server.closeAllConnections();
+        console.log(connections);
+        process.exit(0);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "server.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("0\n");
+  expect(exitCode).toBe(0);
 });

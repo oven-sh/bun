@@ -1,0 +1,1 @@
+function make(n, x) { return Array.from({ length: n }, x); } console.log(make(2).length, make("2").length, make(2.5).length, make(-1).length, make(undefined).length, make({ valueOf() { return 2; } }).map(v => typeof v).join()); for (const bad of [null, 1, "f", {}]) { try { make(1, bad); console.log("made"); } catch (e) { console.log(e.name, e.message); } }

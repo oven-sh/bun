@@ -1,0 +1,7 @@
+# The memo of refused plans is one for all threads. A plan that interns a layout set gives it its place among the first uses of its task; whoever finds the refusal in the memo skips
+# that, and interns the set later. So which thread came first decided the numbers of new layout sets and types: one input, two outputs. A build that verifies each pass plans again what
+# the memo knows, and stops where a plan that the memo holds uses a record of the phase. Two functions of this program are refused the same member call, and the plan interns a set
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# OPTIONS: check=VerifyEachPass
+# PROGRAM-OF: stores-into-a-fresh-result.ir

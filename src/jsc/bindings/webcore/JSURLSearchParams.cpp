@@ -131,15 +131,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLSearchParamsDOMCons
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto init = argument0.value().isUndefined() ? emptyString() : convert<IDLUnion<IDLSequence<IDLSequence<IDLUSVString>>, IDLRecord<IDLUSVString, IDLUSVString>, IDLUSVString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto* structure = structureForNewTarget<URLSearchParams>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = URLSearchParams::create(WTF::move(init));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<URLSearchParams>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<URLSearchParams>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<URLSearchParams>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSURLSearchParamsDOMConstructorConstruct, JSURLSearchParamsDOMConstructor::construct);
@@ -194,7 +194,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSURLSearchParams>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
@@ -231,12 +231,13 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
         for (size_t i = 0; i < names.size(); ++i) {
             JSValue v = options->get(lexicalGlobalObject, names[i]);
             RETURN_IF_EXCEPTION(scope, {});
-            opts->putDirect(vm, names[i], v, 0);
+            opts->putDirectMayBeIndex(lexicalGlobalObject, names[i], v);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         if (!depthValue.isUndefinedOrNull())
             childDepth = jsNumber(depth - 1);
     }
-    opts->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
+    Bun::putDirectNamed(vm, opts, "depth"_s, childDepth);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSFunction* utilInspect = globalObject->utilInspectFunction();
@@ -708,6 +709,11 @@ const JSC::ClassInfo URLSearchParamsIterator::s_info = { "URLSearchParams Iterat
 
 template<>
 const JSC::ClassInfo URLSearchParamsIteratorPrototype::s_info = { "URLSearchParams Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(URLSearchParamsIteratorPrototype) };
+
+JSC::JSObject* urlSearchParamsIteratorPrototype(JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<URLSearchParamsIterator>(globalObject.vm(), globalObject);
+}
 
 static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
 {

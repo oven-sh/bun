@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![allow(
     non_snake_case,
     non_camel_case_types,
@@ -206,21 +205,6 @@ impl<T> BackRef<T, Root> {
         // SAFETY: see above.
         unsafe { ThisPtr::new(self.0.as_ptr()) }
     }
-
-    /// Wrap the root pointer of a live heap allocation.
-    ///
-    /// # Safety
-    /// [`BackRef::from_raw`]'s contract, and `p` is what `Box::into_raw` /
-    /// `heap::into_raw` returned for an allocation that stays live while the
-    /// result is held.
-    #[inline]
-    pub const unsafe fn from_root(p: *mut T) -> Self {
-        // SAFETY: caller contract — `p` is non-null.
-        BackRef(
-            unsafe { core::ptr::NonNull::new_unchecked(p) },
-            core::marker::PhantomData,
-        )
-    }
 }
 
 impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
@@ -376,50 +360,6 @@ pub unsafe trait LaunderedSelf: Sized {
 /// slightly different names; both are kept so callers from either land cleanly.
 pub use detach_lifetime_ref as detach_ref;
 
-/// Reinterpret `&[Box<[T]>]` as `&[&[T]]` for read-only fan-out.
-///
-/// `Box<[T]>` and `&[T]` are both `(NonNull<T>, len: usize)` fat pointers with
-/// identical layout (guaranteed by the unsized-pointer ABI), so a column of
-/// owned boxed slices can be viewed as a column of borrows without copying.
-/// Used by the bundler's SoA columns (`items_unique_key_for_additional_file`)
-/// where the printer API wants `&[&[u8]]`.
-///
-/// The returned borrows are valid for the input borrow `'a` only — the boxes
-/// are not moved or dropped while the view is live.
-///
-/// # Safety
-/// Relies on `Box<[T]>` and `&[T]` having identical fat-pointer **field
-/// order** (data-ptr then len). This is de-facto stable on every supported
-/// rustc but is not a language guarantee — the const block below proves only
-/// size/align. `unsafe` + `#[doc(hidden)]` so the layout assumption stays
-/// visible at each call site rather than inviting new callers; do not use
-/// outside the bundler SoA-column read-only fan-out it was written for.
-#[doc(hidden)]
-#[inline(always)]
-pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T], A>]) -> &[&[T]] {
-    const {
-        assert!(core::mem::size_of::<Box<[T], A>>() == core::mem::size_of::<&[T]>());
-        assert!(core::mem::align_of::<Box<[T], A>>() == core::mem::align_of::<&[T]>());
-    }
-    // SAFETY: layout-identical per the const asserts above; every `Box<[T]>`
-    // element is a valid non-null `(ptr, len)` pair, which is exactly the
-    // validity invariant of `&[T]`. Read-only, lifetime tied to `s`.
-    let view: &[&[T]] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) };
-    // Fat-pointer field order (ptr-then-len) is de-facto stable but not
-    // language-guaranteed; spot-check first+last in debug so an ABI flip
-    // would trip here rather than silently misbehaving downstream. (Checking
-    // every element is O(n) per call and the bundler passes thousands of
-    // entries inside per-chunk loops; first/last is sufficient to detect a
-    // field-order swap since it would affect every element uniformly.)
-    #[cfg(debug_assertions)]
-    if let (Some(bf), Some(bl)) = (s.first(), s.last()) {
-        let (vf, vl) = (view[0], view[view.len() - 1]);
-        debug_assert!(bf.as_ptr() == vf.as_ptr() && bf.len() == vf.len());
-        debug_assert!(bl.as_ptr() == vl.as_ptr() && bl.len() == vl.len());
-    }
-    view
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Interned — process-lifetime byte-slice proof type.
 //
@@ -432,7 +372,7 @@ pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T
 //     bare `&'static [u8]` carries no proof, so a refactor can silently feed
 //     it a stack slice.
 //   • Population B (~24) — bytes are owned by a value with a `Drop` that runs
-//     before process exit (UserOptions arena, FetchTasklet, JSC slice, SSL
+//     before process exit (FetchTasklet, JSC slice, SSL
 //     session). The widen is unsound the moment the value escapes the holder.
 //
 // `Interned` is the type-level proof that a `&'static [u8]` came from
@@ -447,7 +387,7 @@ pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T
 // inherited via auto-traits (no `unsafe impl` needed).
 //
 // This does NOT cover `&'static mut [u8]` / `&'static mut T` forges (e.g.
-// `FileReader::pending_view`, `Decompressor::seat` output, `CmdHandle::cmd_mut`)
+// `Decompressor::seat` output)
 // — those are tracked under the sibling `static-widen-mut` pattern and want a
 // raw-pointer field or a future `RawSliceMut<T>`.
 // ─────────────────────────────────────────────────────────────────────────────

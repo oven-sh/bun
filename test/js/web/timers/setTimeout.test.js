@@ -502,7 +502,8 @@ it.skipIf(!isLinux)("epoll_pwait fallback does not busy-spin on sub-ms timers", 
 // process.on(), which wakes the loop via eventfd and masks the bug), and
 // assert a 200 ms setTimeout still fires roughly on time.
 // https://man7.org/linux/man-pages/man7/signal.7.html (epoll_*wait is never
-// restarted by SA_RESTART)
+// restarted by SA_RESTART). The handler has SA_RESTART for LeakSanitizer, which
+// forks at exit and reads the status of a waitpid() it does not check for EINTR.
 describe.skipIf(!isLinux)("epoll EINTR retry accounts for elapsed time", () => {
   const src = `
 #include <signal.h>
@@ -511,7 +512,7 @@ describe.skipIf(!isLinux)("epoll EINTR retry accounts for elapsed time", () => {
 static void noop(int s) { (void) s; }
 __attribute__((constructor)) static void arm(void) {
     struct sigaction sa; memset(&sa, 0, sizeof sa);
-    sa.sa_handler = noop; sigemptyset(&sa.sa_mask); sa.sa_flags = 0;
+    sa.sa_handler = noop; sigemptyset(&sa.sa_mask); sa.sa_flags = SA_RESTART;
     sigaction(SIGALRM, &sa, 0);
     struct itimerval itv;
     itv.it_interval.tv_sec = 0; itv.it_interval.tv_usec = 20000;
@@ -696,6 +697,77 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
   expect(exitCode).toBe(0);
 });
 
+it.concurrent("timer ids past 2^31 and 2^32 are positive and unique", async () => {
+  const src = `
+    import { timerInternals } from "bun:internal-for-testing";
+    const result = {};
+
+    {
+      timerInternals.setNextTimerId(2 ** 31 - 1);
+      const timers = [0, 1, 2].map(() => setTimeout(() => {}, 1e6));
+      const ids = timers.map(Number);
+      clearTimeout(String(ids[0]));
+      clearTimeout(String(ids[1]));
+      clearTimeout(ids[2]);
+      result.pastInt32 = { ids, destroyed: timers.map(t => t._destroyed) };
+    }
+
+    {
+      const first = setInterval(() => {}, 1e6);
+      const id = +first;
+      timerInternals.setNextTimerId(2 ** 32 + id);
+      const second = setInterval(() => {}, 1e6);
+      const idDistance = +second - id;
+      clearInterval(id);
+      result.pastUint32 = { idDistance, destroyed: [first._destroyed, second._destroyed] };
+      clearInterval(second);
+    }
+
+    // A timeout that _repeat turned into an interval is still tracked in the timeout id map.
+    {
+      let other;
+      const id = await (async () => {
+        let fires = 0;
+        const { promise: secondFire, resolve } = Promise.withResolvers();
+        const timer = setTimeout(() => {
+          if (++fires === 2) resolve();
+        }, 1);
+        const id = +timer;
+        timer._repeat = 1;
+        await secondFire;
+        timerInternals.setNextTimerId(2 ** 32 + id);
+        other = setInterval(() => {}, 1e6);
+        +other;
+        clearInterval(timer);
+        return id;
+      })();
+      for (let i = 0; i < 3; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      clearTimeout(id);
+      clearInterval(id);
+      result.promotedTimeout = { otherIsAlive: !other._destroyed };
+      clearInterval(other);
+    }
+
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({
+    pastInt32: { ids: [2147483647, 2147483648, 2147483649], destroyed: [true, true, true] },
+    pastUint32: { idDistance: 2 ** 32, destroyed: [true, false] },
+    promotedTimeout: { otherIsAlive: true },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async () => {
   // Subprocess so no other in-process work has raised the Windows tick
   // resolution; median of 50 so a single scheduler hiccup on a busy CI
@@ -786,4 +858,86 @@ it("timer heap clock is monotonic, not wall-clock", () => {
   expect(t0).toBeGreaterThan(0);
   expect(t1).toBeGreaterThanOrEqual(t0);
   expect(t1).toBeLessThan(wallNow / 2);
+});
+
+describe("a delay of 0", () => {
+  it("does not wait for Node's minimum of 1 ms in bun test", async () => {
+    let fired = false;
+    const timer = setTimeout(() => (fired = true), 350);
+    // With the minimum these take 400 ms or more.
+    for (let i = 0; i < 400; i++) await new Promise(resolve => setTimeout(resolve, 0));
+    clearTimeout(timer);
+    expect(fired).toBe(false);
+  });
+
+  it("still lets what was queued before it run first", async () => {
+    const seen = [];
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = () => seen.push("message");
+    await new Promise(resolve =>
+      setTimeout(() => {
+        port2.postMessage(0);
+        setImmediate(() => seen.push("immediate"));
+        setTimeout(() => {
+          seen.push("timer");
+          resolve();
+        }, 0);
+      }, 0),
+    );
+    port1.close();
+    expect(seen).toEqual(["message", "immediate", "timer"]);
+  });
+
+  it("keeps its place among the timers, as in Node", async () => {
+    const seen = [];
+    setTimeout(() => seen.push("1 ms, set first"), 1);
+    setTimeout(() => seen.push("0 ms"), 0);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    expect(seen).toEqual(["1 ms, set first", "0 ms"]);
+  });
+
+  it("is 1 ms for setInterval", async () => {
+    const start = performance.now();
+    let ticks = 0;
+    await new Promise(resolve => {
+      const interval = setInterval(() => {
+        if (++ticks < 20) return;
+        clearInterval(interval);
+        resolve();
+      }, 0);
+    });
+    expect(performance.now() - start).toBeGreaterThanOrEqual(19);
+  });
+
+  it("waits for the new interval after _repeat turns the timeout into an interval", async () => {
+    const start = performance.now();
+    let ticks = 0;
+    await new Promise(resolve => {
+      const timer = setTimeout(() => {
+        if (++ticks < 4) return;
+        clearInterval(timer);
+        resolve();
+      }, 0);
+      timer._repeat = 10;
+    });
+    expect(performance.now() - start).toBeGreaterThanOrEqual(29);
+  });
+
+  it("is 1 ms outside bun test", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const start = performance.now();
+         for (let i = 0; i < 50; i++) await new Promise(resolve => setTimeout(resolve, 0));
+         console.log(performance.now() - start >= 49);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
 });

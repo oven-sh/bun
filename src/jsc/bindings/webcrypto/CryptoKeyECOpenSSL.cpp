@@ -469,7 +469,17 @@ Vector<uint8_t> CryptoKeyEC::platformExportPkcs8() const
     if (type() != CryptoKeyType::Private)
         return {};
 
-    auto p8inf = PKCS8PrivKeyInfoPtr(EVP_PKEY2PKCS8(platformKey()));
+    // A key that came without its optional public key has a flag that leaves it out again. As in ncrypto's
+    // Ec::ExportPrivatePkcs8, a copy without the flag is what is encoded.
+    auto ecKey = ECKeyPtr(EC_KEY_dup(EVP_PKEY_get0_EC_KEY(platformKey())));
+    if (!ecKey)
+        return {};
+    EC_KEY_set_enc_flags(ecKey.get(), EC_KEY_get_enc_flags(ecKey.get()) & ~EC_PKEY_NO_PUBKEY);
+    auto pkey = EvpPKeyPtr(EVP_PKEY_new());
+    if (!pkey || EVP_PKEY_set1_EC_KEY(pkey.get(), ecKey.get()) != 1)
+        return {};
+
+    auto p8inf = PKCS8PrivKeyInfoPtr(EVP_PKEY2PKCS8(pkey.get()));
     if (!p8inf)
         return {};
 

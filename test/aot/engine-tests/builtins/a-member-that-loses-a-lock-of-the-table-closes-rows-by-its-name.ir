@@ -1,0 +1,13 @@
+# The twin of a-member-that-never-had-a-lock-of-the-table-closes-no-row-by-its-name: a test replaces Array.prototype.join, which the table locks. Array.prototype.toString joins a pristine array by
+# itself, and its row for one leaves the lookup of `join` out: only the general row says what it does now
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# CHECK: v2: anything = CallBuiltin v0 overload=ArrayPrototypeToString/1
+
+module m0 path="main.js" displayPath="main.js"
+replaceablebuiltin member=ArrayPrototypeJoin
+function f0 name="holdsNoObject" parameters=[{type=Array<undefined|number|string, proven, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v1 = Builtin builtin=ArrayPrototypeToString
+    v2 = Call v1, v0
+    Return
+}

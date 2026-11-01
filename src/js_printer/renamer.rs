@@ -86,11 +86,11 @@ pub struct NoOpRenamer<'a> {
     // leak the output source code" — `await import()` re-transpiles each
     // iteration, so the leak compounds to OOM).
     pub(crate) symbols: symbol::Map,
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
 }
 
 impl<'a> NoOpRenamer<'a> {
-    pub(crate) fn init(symbols: symbol::Map, source: &'a bun_ast::Source) -> NoOpRenamer<'a> {
+    pub fn init(symbols: symbol::Map, source: &'a bun_ast::Source<'a>) -> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 
@@ -114,23 +114,21 @@ impl<'a> NoOpRenamer<'a> {
         }
     }
 
-    pub(crate) fn to_renamer(&mut self) -> Renamer<'_, 'a> {
+    pub(crate) fn to_renamer(&self) -> Renamer<'_> {
         Renamer::NoOpRenamer(self)
     }
 }
 
-// Two lifetime params — `'r` is the borrow of the underlying renamer,
-// `'src` is `NoOpRenamer`'s borrow of the `Source`. Erasing both with a
-// single lifetime via `&'a mut NoOpRenamer<'a>` would make
-// `'a` invariant and lock the source borrow to the renamer borrow.
-pub enum Renamer<'r, 'src> {
-    NumberRenamer(&'r mut NumberRenamer),
-    NoOpRenamer(&'r mut NoOpRenamer<'src>),
-    MinifyRenamer(&'r mut MinifyRenamer),
+/// The names are assigned before printing starts, so the printer only reads them.
+#[derive(Clone, Copy)]
+pub enum Renamer<'a> {
+    NumberRenamer(&'a NumberRenamer),
+    NoOpRenamer(&'a NoOpRenamer<'a>),
+    MinifyRenamer(&'a MinifyRenamer),
 }
 
-impl<'r, 'src> Renamer<'r, 'src> {
-    pub(crate) fn symbols(&self) -> &symbol::Map {
+impl<'a> Renamer<'a> {
+    pub(crate) fn symbols(self) -> &'a symbol::Map {
         match self {
             Renamer::NumberRenamer(r) => &r.symbols,
             Renamer::NoOpRenamer(r) => &r.symbols,
@@ -138,7 +136,7 @@ impl<'r, 'src> Renamer<'r, 'src> {
         }
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
+    pub fn name_for_symbol(self, ref_: Ref) -> &'a [u8] {
         match self {
             Renamer::NumberRenamer(r) => r.name_for_symbol(ref_),
             Renamer::NoOpRenamer(r) => r.name_for_symbol(ref_),
@@ -195,10 +193,7 @@ impl InlineString {
         this
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    fn slice(&mut self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         &self.bytes[0..self.len as usize]
     }
 }
@@ -220,10 +215,7 @@ impl TinyString {
         }
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    fn slice(&mut self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         match self {
             TinyString::InlineString(s) => s.slice(),
             // `StoreStr::slice` centralises the arena-backed deref; the payload
@@ -286,7 +278,7 @@ impl MinifyRenamer {
         }))
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
+    pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         let ref_ = self.symbols.follow(ref_);
         let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
 
@@ -1480,12 +1472,11 @@ pub fn compute_reserved_names_for_scope(
         }
     }
 
-    // If there's a direct "eval" somewhere inside the current scope, continue
-    // traversing down the scope tree until we find it to get all reserved names
-    if scope.contains_direct_eval {
+    // Keep traversing down the scope tree toward a direct "eval" or a "with" to get all reserved names
+    if scope.contains_direct_eval || scope.contains_with {
         for child in scope.children.slice() {
             // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
-            if child.contains_direct_eval {
+            if child.contains_direct_eval || child.contains_with {
                 compute_reserved_names_for_scope(child, symbols, names);
             }
         }

@@ -14,6 +14,7 @@
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/Assertions.h"
 #include "wtf/Vector.h"
@@ -23,9 +24,13 @@
 #include "wtf/text/WTFString.h"
 #include "AbortSignal.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 #include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
+#include <atomic>
 #include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
@@ -230,7 +235,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     return JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
-JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
 }
@@ -240,7 +245,7 @@ JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const Str
     return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(vm, defaultGlobalObject(globalObject), code, message);
 }
@@ -263,7 +268,7 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
     return errorCache(globalObject)->createError(vm, globalObject, code, message, options);
 }
 
-JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(globalObject->vm(), globalObject, code, message);
 }
@@ -347,6 +352,140 @@ static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, cha
     }
 }
 
+// For the tests that hold native functions against the compiler's table of built-ins: they look at what a function does apart from describing an argument that it rejects.
+static std::atomic<bool> describesWithoutScriptForTesting { false };
+
+void describeRejectedValuesWithoutScriptForTesting()
+{
+    describesWithoutScriptForTesting.store(true, std::memory_order_relaxed);
+}
+
+static bool describesWithoutScript()
+{
+    return describesWithoutScriptForTesting.load(std::memory_order_relaxed);
+}
+
+// What util.inspect prints from own data properties and class names alone, on one line: an accessor is not called, and an object that is neither plain nor an array (a proxy, a Map, ..) is "[Name]".
+static constexpr unsigned inspectedDepth = 2;
+static constexpr unsigned inspectedArrayLength = 100;
+
+static void appendInspectedObject(JSC::JSGlobalObject*, MessageBuilder&, JSC::JSObject*, unsigned depth);
+static WTF::String constructorNameOf(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject*);
+
+template<typename Name>
+static void appendInspectedProperty(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, const PropertySlot& slot, Name name, unsigned depth)
+{
+    if (slot.isAccessor()) {
+        auto* accessor = slot.getterSetter();
+        builder.append(accessor->isSetterNull() ? "[Getter]"_s : accessor->isGetterNull() ? "[Setter]"_s
+                                                                                          : "[Getter/Setter]"_s);
+        return;
+    }
+    if (!slot.isValue()) {
+        builder.append("[Getter]"_s);
+        return;
+    }
+
+    JSValue value = slot.getValue(globalObject, name);
+    if (auto* object = value.getObject(); object && !object->isCallable()) {
+        appendInspectedObject(globalObject, builder, object, depth);
+        return;
+    }
+    if (!value.isString()) {
+        JSValueToStringSafe(globalObject, builder, value, false);
+        return;
+    }
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto string = asString(value)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    builder.appendQuotedJSONString(string);
+}
+
+static void appendInspectedKey(MessageBuilder& builder, const Identifier& key)
+{
+    StringView name = key.impl();
+    if (key.isSymbol()) {
+        builder.append("[Symbol("_s, name, ")]: "_s);
+        return;
+    }
+    bool isIdentifier = !name.isEmpty() && !isASCIIDigit(name[0]);
+    for (unsigned i = 0; isIdentifier && i < name.length(); ++i)
+        isIdentifier = isASCIIAlphanumeric(name[i]) || name[i] == '_' || name[i] == '$';
+    if (isIdentifier)
+        builder.append(name);
+    else
+        builder.appendQuotedJSONString(key.string());
+    builder.append(": "_s);
+}
+
+static void appendInspectedArray(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSArray* array, unsigned depth)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    unsigned length = array->length();
+    builder.append('[');
+    for (unsigned index = 0; index < std::min(length, inspectedArrayLength); ++index) {
+        builder.append(index ? ", "_s : " "_s);
+        PropertySlot slot(array, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasElement = array->methodTable()->getOwnPropertySlotByIndex(array, globalObject, index, slot);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!hasElement) {
+            builder.append("empty item"_s);
+            continue;
+        }
+        appendInspectedProperty(globalObject, builder, slot, index, depth + 1);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    if (length > inspectedArrayLength)
+        builder.append(", ... "_s, length - inspectedArrayLength, " more items"_s);
+    builder.append(length ? " ]"_s : "]"_s);
+}
+
+static void appendInspectedObject(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSObject* object, unsigned depth)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* array = dynamicDowncast<JSC::JSArray>(object); array && depth <= inspectedDepth)
+        RELEASE_AND_RETURN(scope, appendInspectedArray(globalObject, builder, array, depth));
+
+    auto* prototype = object->getPrototypeDirect().getObject();
+    auto className = prototype ? constructorNameOf(vm, globalObject, prototype) : WTF::String();
+    RETURN_IF_EXCEPTION(scope, );
+    if (className.isEmpty())
+        className = "Object"_s;
+    bool isPlainObject = object->type() == JSC::FinalObjectType || object->type() == JSC::CompiledObjectType;
+    if (!isPlainObject || depth > inspectedDepth) {
+        builder.append('[', className, ']');
+        return;
+    }
+
+    if (!prototype)
+        builder.append("[Object: null prototype] "_s);
+    else if (className != "Object"_s)
+        builder.append(className, ' ');
+    builder.append('{');
+
+    PropertyNameArrayBuilder keys(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+    bool isEmpty = true;
+    for (auto& key : keys) {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasProperty = object->methodTable()->getOwnPropertySlot(object, globalObject, key, slot);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!hasProperty)
+            continue;
+        builder.append(isEmpty ? " "_s : ", "_s);
+        isEmpty = false;
+        appendInspectedKey(builder, key);
+        appendInspectedProperty(globalObject, builder, slot, PropertyName(key), depth + 1);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    builder.append(isEmpty ? "}"_s : " }"_s);
+}
+
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
 {
     ASSERT(!arg.isEmpty());
@@ -389,6 +528,9 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
         return;
     }
     case JSC::JSType::InternalFunctionType:
+    case JSC::JSType::CompiledClosureType:
+    case JSC::JSType::SlimClosureType:
+    case JSC::JSType::SlimClosureWithPropertiesType:
     case JSC::JSType::JSFunctionType: {
         auto& vm = JSC::getVM(globalObject);
         auto name = Zig::functionName(vm, cell->getObject());
@@ -408,8 +550,102 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     }
     }
 
+    if (auto* object = cell->getObject(); object && describesWithoutScript()) {
+        appendInspectedObject(globalObject, builder, object, 0);
+        return;
+    }
+
     // Node renders objects inline in error messages ("Received { abc: 123 }").
     builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
+}
+
+// A proxy whose handler has no "get" hands a read on to its target. Null where script would run.
+static JSC::JSObject* objectThatAnswersReads(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    while (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
+        auto* handler = proxy->handler().getObject();
+        if (!handler || !proxy->target())
+            return nullptr;
+        PropertySlot trapSlot(handler, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasTrap = handler->getNonIndexPropertySlot(globalObject, vm.propertyNames->get, trapSlot);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (trapSlot.isTaintedByOpaqueObject())
+            return nullptr;
+        if (hasTrap && (!trapSlot.isValue() || !trapSlot.getValue(globalObject, vm.propertyNames->get).isUndefinedOrNull()))
+            return nullptr;
+        object = proxy->target();
+    }
+    return object;
+}
+
+// What value.constructor.name is where reading it runs no script: only data properties count, and a prototype whose "constructor" is a native accessor is named by its class.
+static WTF::String constructorNameOf(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    object = objectThatAnswersReads(vm, globalObject, object);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!object)
+        return {};
+
+    PropertySlot constructorSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool hasConstructor = object->getNonIndexPropertySlot(globalObject, vm.propertyNames->constructor, constructorSlot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasConstructor)
+        return {};
+    if (constructorSlot.isCustom())
+        return constructorSlot.slotBase()->classInfo()->className;
+    auto* constructor = constructorSlot.isValue() ? constructorSlot.getValue(globalObject, vm.propertyNames->constructor).getObject() : nullptr;
+    if (!constructor)
+        return {};
+
+    PropertySlot nameSlot(constructor, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool hasName = constructor->getNonIndexPropertySlot(globalObject, vm.propertyNames->name, nameSlot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasName || !nameSlot.isValue())
+        return {};
+    JSValue name = nameSlot.getValue(globalObject, vm.propertyNames->name);
+    if (!name.isString())
+        return {};
+    RELEASE_AND_RETURN(scope, asString(name)->value(globalObject));
+}
+
+static bool hasOwnEnumerableProperty(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+#if ENABLE(AOT)
+    // The compiler counts on it that the keys of such an argument are not listed.
+    if (JSC::AOT::PropertyWalk::isCompiledObject(object))
+        return JSC::AOT::PropertyWalk::hasOwnEnumerableProperty(globalObject, object);
+#endif
+    PropertyNameArrayBuilder keys(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Exclude);
+    return keys.size();
+}
+
+// What util.inspect(object, { depth: -1 }) prints for a plain object. Any other object would need script to say more than "[Object]".
+static ASCIILiteral describeObjectWithoutConstructorName(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    if (object->type() != JSC::FinalObjectType && object->type() != JSC::CompiledObjectType)
+        return "[Object]"_s;
+    bool hasProperties = hasOwnEnumerableProperty(vm, globalObject, object);
+    if (object->getPrototypeDirect().isNull())
+        return hasProperties ? "[Object: null prototype]"_s : "[Object: null prototype] {}"_s;
+    return hasProperties ? "[Object]"_s : "{}"_s;
+}
+
+static void describeObjectWithoutScript(JSC::VM& vm, JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSObject* object)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = constructorNameOf(vm, globalObject, object);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!name.isNull()) {
+        builder.append("an instance of "_s, name);
+        return;
+    }
+    auto description = describeObjectWithoutConstructorName(vm, globalObject, object);
+    RETURN_IF_EXCEPTION(scope, );
+    builder.append(description);
 }
 
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSValue value)
@@ -529,6 +765,11 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
         builder.append(')');
         return;
     }
+    if (auto* object = cell->getObject(); object && describesWithoutScript()) {
+        describeObjectWithoutScript(vm, globalObject, builder, object);
+        RETURN_IF_EXCEPTION(scope, );
+        return;
+    }
     if (cell->isObject()) {
         auto constructor = value.get(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, void());
@@ -598,6 +839,10 @@ static void appendOutOfRangeReceived(JSC::JSGlobalObject* globalObject, MessageB
         double d = input.asNumber();
         if (std::isfinite(d) && std::trunc(d) == d && std::abs(d) > 4294967296.0) {
             builder.append(addNumericalSeparator(input.toWTFString(globalObject)));
+            return;
+        }
+        if (JSC::isNegativeZero(d)) {
+            builder.append("-0"_s);
             return;
         }
     } else if (input.isBigInt()) {
@@ -1833,7 +2078,7 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, co
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
 }
 
-JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)
+NEVER_INLINE JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2304,7 +2549,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_NOT_RUNNING, "Server is not running."_s));
     case ErrorCode::ERR_IPC_CHANNEL_CLOSED:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed."_s));
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed"_s));
     case ErrorCode::ERR_SOCKET_BAD_TYPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
     case ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED:
@@ -2380,6 +2625,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNAVAILABLE_DURING_EXIT, "Cannot call function in process exit handler"_s));
     case ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
+    case ErrorCode::ERR_TLS_REQUIRED_SERVER_NAME:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_REQUIRED_SERVER_NAME, "\"servername\" is required parameter for Server.addContext"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
     case ErrorCode::ERR_TLS_INVALID_STATE:
@@ -2433,7 +2680,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
     case ErrorCode::ERR_HTTP_TRAILER_INVALID:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_TRAILER_INVALID, "Trailers are invalid with this transfer encoding"_s));
     case ErrorCode::ERR_HTTP_SOCKET_ASSIGNED:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "ServerResponse has an already assigned socket"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
     case ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT:

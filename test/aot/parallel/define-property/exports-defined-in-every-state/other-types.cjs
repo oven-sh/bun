@@ -1,0 +1,12 @@
+const pick = process.argv.length > 100;
+Object.defineProperty(exports, "number", { value: pick ? "text" : 1.5, enumerable: true });
+Object.defineProperty(exports, "text", { value: pick ? 1 : "text", enumerable: true });
+Object.defineProperty(exports, "nothing", { value: undefined, enumerable: true });
+Object.defineProperty(exports, "none", { value: null, enumerable: true });
+Object.defineProperty(exports, "big", { value: 2 ** 40, enumerable: true });
+Object.defineProperty(exports, "negativeZero", { value: -0, enumerable: true });
+Object.defineProperty(exports, "notANumber", { value: NaN, enumerable: true });
+Object.defineProperty(exports, "object", { value: { inner: [1, 2] }, enumerable: true });
+Object.defineProperty(exports, "fn", { value: function named() { return 1; }, enumerable: true });
+Object.defineProperty(exports, "symbol", { value: Symbol.for("s"), enumerable: true });
+Object.defineProperty(exports, "bigint", { value: 10n });

@@ -2,7 +2,8 @@
 // This is a port of Node.js's lib/_http_outgoing.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js
 const { Stream } = require("internal/stream");
-const { isUint8Array, validateString } = require("internal/validators");
+const { validateString } = require("internal/validators");
+const { isUint8Array } = require("node:util/types");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
@@ -29,7 +30,8 @@ const MathFloor = Math.floor;
 // "ETag", ...) toLowerCase() allocates a new string on every call, which the
 // property access then has to intern. Map those spellings to a literal that is
 // already interned; anything else still takes toLowerCase(). Same result, no
-// allocation on the common path.
+// allocation on the common path. validatedLowercaseHeaderName takes a key of
+// this table for a valid header name, which is why each one is validated here.
 const commonLowercasedHeaders = { __proto__: null };
 for (const name of [
   "accept",
@@ -69,14 +71,43 @@ for (const name of [
   let titled = "";
   for (const part of name.split("-")) titled += (titled ? "-" : "") + part.charAt(0).toUpperCase() + part.slice(1);
   commonLowercasedHeaders[titled] = name;
+  validateHeaderName(name);
+  validateHeaderName(titled);
 }
 // Spellings that title-casing does not produce.
 commonLowercasedHeaders["ETag"] = "etag";
 commonLowercasedHeaders["etag"] = "etag";
+validateHeaderName("ETag");
 
 function lowercaseHeaderName(name) {
   const known = commonLowercasedHeaders[name];
   return known !== undefined ? known : name.toLowerCase();
+}
+
+// validateHeaderName(name), then the lowercased name. An application sets the same few names on every message, so
+// a spelling that passed is kept with its lowercased name and is not matched against the token grammar again.
+// A name can also come from outside (a proxy setting the headers it received), so the table starts over when it
+// is full instead of staying filled with names nobody sets again.
+const kMaxValidatedHeaderNames = 256;
+const kMaxValidatedHeaderNameLength = 64;
+let validatedHeaderNames = { __proto__: null };
+let validatedHeaderNameCount = 0;
+function validatedLowercaseHeaderName(name) {
+  if (typeof name === "string") {
+    const known = commonLowercasedHeaders[name] ?? validatedHeaderNames[name];
+    if (known !== undefined) return known;
+  }
+  validateHeaderName(name);
+  const lowercased = name.toLowerCase();
+  if (name.length <= kMaxValidatedHeaderNameLength) {
+    if (validatedHeaderNameCount === kMaxValidatedHeaderNames) {
+      validatedHeaderNames = { __proto__: null };
+      validatedHeaderNameCount = 0;
+    }
+    validatedHeaderNameCount++;
+    validatedHeaderNames[name] = lowercased;
+  }
+  return lowercased;
 }
 
 const kCorked = Symbol("corked");
@@ -672,13 +703,13 @@ OutgoingMessage.prototype.setHeader = function setHeader(name, value) {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
-  validateHeaderName(name);
+  const field = validatedLowercaseHeaderName(name);
   validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
   let headers = this[kOutHeaders];
   if (headers === null) this[kOutHeaders] = headers = { __proto__: null };
 
-  headers[lowercaseHeaderName(name)] = [name, value];
+  headers[field] = [name, value];
   return this;
 };
 
@@ -723,10 +754,9 @@ OutgoingMessage.prototype.appendHeader = function appendHeader(name, value) {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("append");
   }
-  validateHeaderName(name);
+  const field = validatedLowercaseHeaderName(name);
   validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
-  const field = lowercaseHeaderName(name);
   const headers = this[kOutHeaders];
   if (headers === null || !headers[field]) {
     return this.setHeader(name, value);

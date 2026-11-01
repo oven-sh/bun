@@ -164,7 +164,7 @@ interface ChildResult {
   stdout: string;
   stderr: string;
   exitCode: number;
-  signalCode: string | null;
+  signalCode: string | number | null;
 }
 
 // Everything the child produced goes into one assertion, so an abort shows its

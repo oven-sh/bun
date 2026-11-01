@@ -6,14 +6,17 @@
  */
 
 import * as numeric from "_util/numeric.ts";
-import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
-import { heapStats } from "bun:jsc";
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
+import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
-import { ChildProcess, execSync, fork } from "child_process";
-import { readdir, rm, writeFile } from "fs/promises";
-import fs, { closeSync, openSync, rmSync } from "node:fs";
+import { execSync } from "child_process";
+import { readdir, writeFile } from "fs/promises";
+import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
-import { dirname, isAbsolute, join } from "path";
+import { dirname, isAbsolute, join, sep } from "path";
+import { locksEnvironment } from "./aot/hardened";
+import { ownTemporaryFolder } from "./aot/harness/temporary-folders";
+import "./aot/harness/without-installing-packages";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -24,6 +27,18 @@ export const isFreeBSD = process.platform === "freebsd";
 export const isAndroid = process.platform === "android";
 export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
+/**
+ * Whether the tests are running as uid 0. Root bypasses file and directory
+ * mode bits, so tests that expect EACCES from a `chmod 000` fixture skip on it,
+ * while tests that need to setuid/setgid a child only run on it. Always false
+ * on Windows, where `process.getuid` does not exist.
+ */
+export const isRoot = process.getuid?.() === 0;
+/**
+ * Size of bun's fixed path buffers (`MAX_PATH_BYTES` in `src/bun_core/util.rs`). A path longer than this does not
+ * fit in one, which code taking a path from the user has to report rather than overflow the buffer.
+ */
+export const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux || isAndroid ? 4096 : 1024;
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
 export const isDebug = Bun.version.includes("debug");
@@ -65,6 +80,9 @@ function detectASAN(): boolean {
 
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
+  // Windows spells PATH `Path`. `{ ...bunEnv, PATH }` would then hold both, and which one a child
+  // process gets depends on the other variables.
+  ...(isWindows && { Path: undefined, PATH: process.env.PATH }),
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,
@@ -79,6 +97,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   // The `bun install` "Slow filesystem detected" warning is timing-dependent
   // and flakes stderr assertions on slow CI filesystems.
   BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
+  // `bun install` waits 250ms, 500ms, ... between the attempts of a failed request:
+  // 7.75s for each request a test lets fail for good.
+  BUN_CONFIG_HTTP_RETRY_BACKOFF: "1",
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
@@ -93,11 +114,35 @@ const ciEnv = { ...bunEnv };
 
 if (isASAN) {
   bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
+  // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas.
+  if (/[\\/]test[\\/]aot[\\/]/.test(Bun.main)) {
+    bunEnv.Malloc = "1";
+    // The slow unwinder aborts in a frame of compiled code and cuts the report off.
+    bunEnv.ASAN_OPTIONS += ":detect_leaks=0:fast_unwind_on_fatal=1";
+  }
 }
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
 }
+
+/**
+ * Spread over `bunEnv` for a child process. On macOS the system allocator then overwrites blocks when they are
+ * allocated and released, puts guard pages around large ones, checks its heap as it goes, aborts on the first error
+ * and prints the reason to stderr even when that is a pipe.
+ */
+export const strictSystemAllocatorEnv: Record<string, string> = isMacOS
+  ? {
+      MallocPreScribble: "1",
+      MallocScribble: "1",
+      MallocGuardEdges: "1",
+      MallocCheckHeapStart: "1",
+      MallocCheckHeapEach: "5000",
+      MallocCheckHeapAbort: "1",
+      MallocErrorAbort: "1",
+      MallocDebugReport: "crash",
+    }
+  : {};
 
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
@@ -110,16 +155,35 @@ for (let key in bunEnv) {
     delete bunEnv[key];
   }
 
+  // An executable that such a Bun compiles ahead of time does not start where the environment sets a variable that it
+  // never reads. A test that wants one of the few that it does read sets it itself.
+  if (
+    locksEnvironment &&
+    /^(BUN_DEBUG|BUN_JSC_|MIMALLOC_|BUN_CRASH_REPORT_URL$|BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING$)/i.test(key)
+  ) {
+    delete bunEnv[key];
+  }
+
   if (key.startsWith("BUILDKITE")) {
     delete bunEnv[key];
     delete process.env[key];
+  }
+
+  // `bun run <script>` exports these to the script, so a test run started through a
+  // package.json script (`bun bd test`) inherits them while CI, which starts `bun test`
+  // directly, does not. Spawned buns honor them: NODE/npm_node_execpath decide whether
+  // the node shim gets created, and most npm_* values (npm_config_user_agent,
+  // npm_package_name, ...) are only set when absent.
+  if (key === "NODE" || key.startsWith("npm_") || key.startsWith("NPM_CONFIG_")) {
+    delete ciEnv[key];
+    delete bunEnv[key];
   }
 }
 
 delete bunEnv.BUN_INSPECT_CONNECT_TO;
 delete bunEnv.NODE_ENV;
 
-if (isDebug) {
+if (isDebug && !locksEnvironment) {
   // This makes debug build memory leak tests more reliable.
   // The code for dumping out the debug build transpiled source code has leaks.
   bunEnv.BUN_DEBUG_NO_DUMP = "1";
@@ -130,8 +194,69 @@ export function bunExe() {
   return process.execPath;
 }
 
+/**
+ * Source for a `bun -e` script: binds `port`, where a dial to 127.0.0.1 sits in
+ * EINPROGRESS for good, and `filler`, to `destroy()` when done. Not on Windows or musl.
+ *
+ * A listener nobody accepts from, with a backlog one filler connection fills, so the
+ * kernel drops every later SYN. Needs listen(2) with the smallest backlog that admits
+ * exactly one connection (macOS treats 0 as unlimited), which Bun's own listeners do
+ * not expose, so the listener is a raw libc socket.
+ *
+ * On macOS the listener is bound to lo0. With SYN cookies on (net.inet.tcp.syncookie),
+ * XNU answers the SYN for a full accept queue and resets the connection when its ACK
+ * arrives, except for a listener bound to a loopback interface, which gets no SYN cookies.
+ */
+export const blackholePortSource = `
+const net = require("node:net");
+const { dlopen, ptr } = require("bun:ffi");
+const darwin = process.platform === "darwin";
+const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
+  socket:         { args: ["int", "int", "int"],               returns: "int" },
+  if_nametoindex: { args: ["ptr"],                             returns: "u32" },
+  setsockopt:     { args: ["int", "int", "int", "ptr", "int"], returns: "int" },
+  bind:           { args: ["int", "ptr", "int"],               returns: "int" },
+  listen:         { args: ["int", "int"],                      returns: "int" },
+  getsockname:    { args: ["int", "ptr", "ptr"],               returns: "int" },
+});
+const AF_INET = 2, SOCK_STREAM = 1, IPPROTO_IP = 0, IP_BOUND_IF = 25;
+const addr = new Uint8Array(16);
+if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
+addr.set([127, 0, 0, 1], 4);
+const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+if (fd < 0) throw new Error("socket failed");
+if (darwin) {
+  const lo0 = new Uint32Array([libc.symbols.if_nametoindex(ptr(Buffer.from("lo0\\0")))]);
+  if (lo0[0] === 0 || libc.symbols.setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, ptr(lo0), 4) !== 0) throw new Error("IP_BOUND_IF failed");
+}
+if (libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+const len = new Uint32Array([16]);
+if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
+const port = (addr[2] << 8) | addr[3];
+// The error listener outlives the await, so a later error on the filler
+// is swallowed rather than thrown.
+const filler = net.connect(port, "127.0.0.1");
+await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
+`;
+
 export function nodeExe(): string | null {
   return which("node") || null;
+}
+
+/**
+ * `nodeExe()`, or null when that Node.js is older than `version` or does not run. For a reference run whose expected
+ * output is that of a later release: the macOS CI hosts can have an older Node.js than the one Bun reports.
+ */
+export function nodeExeAtLeast(version: string): string | null {
+  const node = nodeExe();
+  if (!node) return null;
+  try {
+    const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && Bun.semver.satisfies(probe.stdout.toString().trim(), `>=${version}`) ? node : null;
+  } catch {
+    // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
 }
 
 let abiMatchingNode: Promise<string> | undefined;
@@ -318,6 +443,139 @@ export async function expectMaxObjectTypeCount(
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
+/** Reachability from GC roots, read from the debugging heap snapshot, which has no entry for conservative stack roots.
+ *  So unlike "was it finalized?", it only reports cells that something in the heap really holds.
+ *  Fixtures embed it as `${Heap}` with `generateHeapSnapshotForDebugging` from "bun:jsc" in scope. */
+export class Heap {
+  readonly #className = new Map<number, string>();
+  readonly #label = new Map<number, string>();
+  readonly #idOfAddress = new Map<bigint, number>();
+  /** Reachable cell -> [parent cell, edge] on a shortest path from a root. Roots map to undefined. */
+  readonly #reachedFrom = new Map<number, [number, string] | undefined>();
+  readonly #rootReason = new Map<number, string>();
+
+  /** `followers: false` skips "roots" that are only marked because another cell is (a WeakMap value for a marked key,
+   *  a cell its WeakHandleOwner keeps). The snapshot has no edge from that other cell, which only the stack may hold,
+   *  so also query the cells they depend on. */
+  constructor({ followers = true } = {}) {
+    const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } =
+      generateHeapSnapshotForDebugging() as any;
+    for (let i = 0; i < nodes.length; i += 7) {
+      this.#className.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+      if (labels[nodes[i + 4]]) this.#label.set(nodes[i], labels[nodes[i + 4]]);
+      this.#idOfAddress.set(BigInt(nodes[i + 5]), nodes[i]);
+    }
+    const outgoing = new Map<number, [number, string][]>();
+    for (let i = 0; i < edges.length; i += 4) {
+      const type = edgeTypes[edges[i + 2]];
+      const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
+      let list = outgoing.get(edges[i]);
+      if (!list) outgoing.set(edges[i], (list = []));
+      list.push([edges[i + 1], type + ":" + name]);
+    }
+    const queue: number[] = [];
+    for (let i = 0; i < roots.length; i += 3) {
+      const reason = String(labels[roots[i + 1]] ?? roots[i + 1]);
+      // DOMGCOutput roots (e.g. a marked EventTarget's listeners) duplicate edges their owner already has.
+      if (this.#reachedFrom.has(roots[i]) || reason.includes("DOMGCOutput")) continue;
+      const isOnItsOwn = reason === "WeakSets" && String(labels[roots[i + 2]]).includes("pending activity");
+      if (!followers && (reason === "Output" || reason === "WeakSets") && !isOnItsOwn) continue;
+      this.#rootReason.set(roots[i], reason);
+      this.#reachedFrom.set(roots[i], undefined);
+      queue.push(roots[i]);
+    }
+    for (let i = 0; i < queue.length; i++)
+      for (const [child, edge] of outgoing.get(queue[i]) ?? [])
+        if (!this.#reachedFrom.has(child)) (this.#reachedFrom.set(child, [queue[i], edge]), queue.push(child));
+  }
+
+  /** Shortest path from a root to the cell at `address`, or undefined if no root reaches it. */
+  pathTo(address: bigint): string | undefined {
+    const id = this.#idOfAddress.get(address);
+    if (id === undefined || !this.#reachedFrom.has(id)) return undefined;
+    const describe = (cell: number) =>
+      this.#className.get(cell) + (this.#label.has(cell) ? "(" + this.#label.get(cell) + ")" : "");
+    const path: string[] = [];
+    let at = id;
+    for (let step = this.#reachedFrom.get(at); step; at = step[0], step = this.#reachedFrom.get(at))
+      path.unshift(`-${step[1]}-> ${describe(at)}`);
+    return [`root(${this.#rootReason.get(at)}) ${describe(at)}`, ...path].join(" ");
+  }
+
+  pathsTo(type: string): string[] {
+    const paths: string[] = [];
+    for (const [address, id] of this.#idOfAddress)
+      if (this.#className.get(id) === type && this.#reachedFrom.has(id)) paths.push(this.pathTo(address)!);
+    return paths;
+  }
+
+  counts(types: string[]): Record<string, number> {
+    const counts = Object.fromEntries(types.map(type => [type, 0]));
+    for (const id of this.#reachedFrom.keys()) {
+      const name = this.#className.get(id)!;
+      if (name in counts) counts[name]++;
+    }
+    return counts;
+  }
+}
+
+
+// ASAN's quarantine pins freed blocks and keeps RSS at peak.
+export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
+  return {
+    ...env,
+    ASAN_OPTIONS: [env.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+      .filter(Boolean)
+      .join(":"),
+  };
+}
+
+// Runs the command passed as a JSON array in the last argument and prints one
+// JSON line: the command's output, exit status, and peak RSS in bytes.
+const maxRSSSpawner = /* js */ `
+  const proc = Bun.spawn({ cmd: JSON.parse(process.argv.at(-1)), stdout: "pipe", stderr: "pipe" });
+  process.on("SIGTERM", () => proc.kill());
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { signalCode } = proc;
+  console.log(JSON.stringify({ stdout, stderr, exitCode, signalCode, maxRSS: proc.resourceUsage().maxRSS }));
+`;
+
+/**
+ * Runs `cmd` and returns its output, exit status, and peak RSS in bytes.
+ *
+ * On Linux, `resourceUsage().maxRSS` of a process that the test spawned
+ * itself is not that process's own peak, because `ru_maxrss` survives exec.
+ * The child starts from the high-water mark of its spawner (`exec_mmap` ->
+ * `setmax_mm_hiwater_rss`), so the number is max(test runner peak, child
+ * peak). Here the spawner is a small bun process. The inherited mark is then
+ * a fixed floor (~30 MB release, ~320 MB debug+ASAN), not whatever the test
+ * runner allocated so far.
+ */
+export async function runCommandMaxRSS(options: { cmd: string[]; cwd?: string; env?: NodeJS.Dict<string> }) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", maxRSSSpawner, JSON.stringify(options.cmd)],
+    cwd: options.cwd,
+    env: options.env ?? bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const result: {
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+    signalCode: NodeJS.Signals | null;
+    maxRSS: number;
+  } = JSON.parse(stdout);
+  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
+  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
+  // upper bound on it is vacuous.
+  expect(result.maxRSS).toBeGreaterThan(1024 * 1024);
+  return result;
+}
+
 /**
  * Peak RSS of a bun process that runs `fixture`, whose only stdout line is
  * the JSON `expected` (the transfer's completion result), and the peak RSS of
@@ -325,16 +583,15 @@ export async function expectMaxObjectTypeCount(
  * the assertion is about the payload, not the runtime's fixed footprint.
  */
 export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+    cmd: [bunExe(), "-e", fixture],
+    // With the quarantine on, the delta of a fixture that moves 128 MB is the
+    // size of the quarantine (256 MB), whatever the fixture holds.
+    env: withoutAsanQuarantine(bunEnv),
+  });
   expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(expected);
   expect(exitCode).toBe(0);
-  const maxRSS = proc.resourceUsage()!.maxRSS;
-  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
-  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
-  // bounded-memory assertion below is vacuous.
-  expect(maxRSS).toBeGreaterThan(1024 * 1024);
   return maxRSS;
 }
 
@@ -349,13 +606,7 @@ export async function expectRssDeltaBelow(
 ): Promise<void> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
+    env: withoutAsanQuarantine(bunEnv),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -368,11 +619,10 @@ export async function expectRssDeltaBelow(
 
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {
-  return (emptyBunMaxRSS ??= (async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
-    await proc.exited;
-    return proc.resourceUsage()!.maxRSS;
-  })());
+  return (emptyBunMaxRSS ??= runCommandMaxRSS({
+    cmd: [bunExe(), "-e", ""],
+    env: withoutAsanQuarantine(bunEnv),
+  }).then(({ maxRSS }) => maxRSS));
 }
 
 // we must ensure that finalizers are run
@@ -406,10 +656,7 @@ export function hideFromStackTrace(block: CallableFunction) {
 
 export type DirectoryTree = {
   [name: string]:
-    | string
-    | Buffer
-    | DirectoryTree
-    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
+    string | Buffer | DirectoryTree | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -486,17 +733,36 @@ export function tempDirWithFiles(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
 ): string {
-  const base = fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_"));
+  const base = ownTemporaryFolder(fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_")));
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
 
 class DisposableString extends String {
   [Symbol.dispose]() {
-    fs.rmSync(this + "", { recursive: true, force: true });
+    // On Windows a process that was just killed can hold the folder for a moment: a child that a job
+    // object ends after its parent, for one. `rmSync` does not act on `maxRetries`.
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        fs.rmSync(this + "", { recursive: true, force: true });
+        return;
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        sleepSync(50);
+      }
+    }
   }
-  [Symbol.asyncDispose]() {
-    return fs.promises.rm(this + "", { recursive: true, force: true });
+  async [Symbol.asyncDispose]() {
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        return await fs.promises.rm(this + "", { recursive: true, force: true });
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        await Bun.sleep(50);
+      }
+    }
   }
 }
 
@@ -509,10 +775,89 @@ export function tempDir(
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
+export function tempDirWithBunTypes(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & DisposableString & AsyncDisposable {
+  const dir = tempDir(basename, filesOrAbsolutePathToCopyFolderFrom);
+  fs.mkdirSync(join(String(dir), "node_modules", "@types"), { recursive: true });
+  fs.symlinkSync(join(import.meta.dir, "..", "packages", "bun-types"), join(String(dir), "node_modules", "@types", "bun"), "junction");
+  return dir;
+}
+
+/**
+ * Windows only. Makes `dir` the root of a new drive with `subst`, and removes the drive on dispose.
+ * A test cannot write to the root of a real drive.
+ */
+export function substDrive(dir: string): Disposable & { root: string } {
+  for (const letter of "ZYXWVUTSRQPONMLKJIHGFED") {
+    if (Bun.spawnSync({ cmd: ["subst", `${letter}:`, dir], env: bunEnv }).exitCode === 0) {
+      return {
+        root: `${letter}:\\`,
+        [Symbol.dispose]: () => void Bun.spawnSync({ cmd: ["subst", `${letter}:`, "/d"], env: bunEnv }),
+      };
+    }
+  }
+  throw new Error("no free drive letter for subst");
+}
+
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
+}
+
+/**
+ * `Bun.spawn` options for a child that must be subject to file permission bits,
+ * for tests where e.g. a `chmod 444` file has to be unwritable.
+ *
+ * Root bypasses permission bits, so when the tests run as root the child is
+ * run as uid/gid 65534 ("nobody" on Linux and macOS): `dir` is handed over to
+ * that user, and every ancestor up to TMPDIR it could not traverse (CI points
+ * TMPDIR at a mode 0700 directory) gets `o+x` until the returned value is disposed. When
+ * the tests already run unprivileged, the child runs as the current user and
+ * nothing is changed. POSIX only.
+ *
+ * @example
+ * ```ts
+ * using dir = tempDir("read-only", { "package.json": "{}" });
+ * fs.chmodSync(join(String(dir), "package.json"), 0o444);
+ * using unprivileged = unprivilegedSpawnOptions(String(dir));
+ * await using proc = Bun.spawn({ cmd: [bunExe(), "pm", "pack"], cwd: String(dir), env: bunEnv, ...unprivileged });
+ * ```
+ */
+export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: number } & Disposable {
+  const restoreModes: [path: string, mode: number][] = [];
+  const options: { uid?: number; gid?: number } & Disposable = {
+    [Symbol.dispose]() {
+      for (const [path, mode] of restoreModes) fs.chmodSync(path, mode);
+    },
+  };
+  if (!isRoot) return options;
+
+  const NOBODY = 65534;
+  try {
+    fs.chownSync(dir, NOBODY, NOBODY);
+    for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+      fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
+    }
+    const tmp = fs.realpathSync(os.tmpdir());
+    for (let parent = dirname(fs.realpathSync(dir)); parent !== dirname(parent); parent = dirname(parent)) {
+      const mode = fs.statSync(parent).mode & 0o7777;
+      if (mode & 0o001) continue;
+      if (parent !== tmp && !parent.startsWith(tmp + sep)) {
+        throw new Error(`${parent} is above TMPDIR and uid ${NOBODY} cannot traverse it`);
+      }
+      fs.chmodSync(parent, mode | 0o001);
+      restoreModes.push([parent, mode]);
+    }
+  } catch (e) {
+    options[Symbol.dispose]();
+    throw e;
+  }
+  options.uid = NOBODY;
+  options.gid = NOBODY;
+  return options;
 }
 
 export interface BunRunResult {
@@ -675,6 +1020,10 @@ const binaryTypes = {
 } as const;
 if (expect.extend)
   expect.extend({
+    toMatchNodeModulesAt,
+    toHaveBins,
+    toBeValidBin,
+    toBeWorkspaceLink,
     toHaveTestTimedOutAfter(actual: any, expected: number) {
       if (typeof actual !== "string") {
         return {
@@ -739,7 +1088,7 @@ if (expect.extend)
         }
       }
     },
-    toSpawn(actual: BunRunResult, expectedStdout?: string) {
+    toSpawn(actual: any, expectedStdout?: string) {
       if (actual == null || typeof actual !== "object" || typeof actual.exitCode !== "number") {
         throw new TypeError(
           `expect(received).toSpawn()\n\nExpected a BunRunResult (did you forget to await bunRun()?)`,
@@ -776,19 +1125,19 @@ if (expect.extend)
         message: () => `Expected process to fail but it exited with code 0\nstdout: ${actual.stdout}`,
       };
     },
-    toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    toThrowWithCode(fn: any, cls: CallableFunction, code: string) {
       try {
         fn();
         return {
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -813,19 +1162,19 @@ if (expect.extend)
         };
       }
     },
-    async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+    async toThrowWithCodeAsync(fn: any, cls: CallableFunction, code: string) {
       try {
         await fn();
         return {
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -851,7 +1200,7 @@ if (expect.extend)
       }
     },
     toBeLatin1String(actual: unknown) {
-      if ((actual as string).isLatin1()) {
+      if (require("bun:internal-for-testing").jscInternals.isLatin1String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a Latin1 string`,
@@ -864,7 +1213,7 @@ if (expect.extend)
       };
     },
     toBeUTF16String(actual: unknown) {
-      if ((actual as string).isUTF16()) {
+      if (require("bun:internal-for-testing").jscInternals.isUTF16String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a UTF16 string`,
@@ -1015,10 +1364,12 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
   };
 }
 
-export function toHaveBins(actual: string[], expectedBins: string[]) {
+export function toHaveBins(actual: any, expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
+    // Each bin is a pair of files, `name.exe` and `name.bunx`.
+    if (actual.length !== expectedBins.length * 2) return { pass: false, message };
     for (var i = 0; i < actual.length; i += 2) {
       if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
         return { pass: false, message };
@@ -1027,10 +1378,10 @@ export function toHaveBins(actual: string[], expectedBins: string[]) {
     return { pass: true, message };
   }
 
-  return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
+  return { pass: actual.length === expectedBins.length && actual.every((bin, i) => bin === expectedBins[i]), message };
 }
 
-export function toBeValidBin(actual: string, expectedLinkPath: string) {
+export function toBeValidBin(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1042,7 +1393,7 @@ export function toBeValidBin(actual: string, expectedLinkPath: string) {
   return { pass: fs.readlinkSync(actual) === expectedLinkPath, message };
 }
 
-export function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+export function toBeWorkspaceLink(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1104,17 +1455,6 @@ declare global {
      */
     toUnixString(): string;
   }
-
-  interface String {
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isLatin1(): boolean;
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isUTF16(): boolean;
-  }
 }
 
 Buffer.prototype.toUnixString = function () {
@@ -1149,6 +1489,13 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 }
+
+/** Can `ensure(service)` from test/docker/index.ts provide this service here? Same order as `ensure()`. */
+export function isDockerServiceEnabled(service: string): boolean {
+  // isDockerEnabled() throws on Linux CI without docker, so it comes last.
+  return !!process.env["BUN_TEST_SERVICE_" + service] || !!process.env.BUN_DOCKER_COORDINATOR || isDockerEnabled();
+}
+
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;
@@ -1233,11 +1580,8 @@ export async function describeWithContainer(
     }
   }
 
-  // Skip only when no env override, no coordinator, and docker is unavailable.
-  // isDockerEnabled() may throw when docker is required but absent, so the
-  // env-override and coordinator checks must short-circuit before it.
-  if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
-    describe.todo(label);
+  if (!isDockerServiceEnabled(actualService)) {
+    describe.todo(label, () => {});
     return;
   }
 
@@ -1311,7 +1655,7 @@ function failTestsOnBlockingWriteCall() {
     Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
       ...prop,
       get() {
-        const actual = prop.get.call(this);
+        const actual = prop.get!.call(this);
         if (actual?.write && !actual.__proto__[didAttachSymbol]) {
           actual.__proto__[didAttachSymbol] = true;
           attachWriteMeasurement(actual);
@@ -1454,21 +1798,24 @@ export function joinP(...paths: string[]) {
  * we need to do case-insensitive stuff within our Bun.spawn implementation
  *
  * Windows has case-insensitive environment variables, so sometimes an
- * object like { Path: "...", PATH: "..." } will be passed. Bun lets
- * the first one win, but we really want the LAST one to win.
+ * object like { Path: "...", PATH: "..." } will be passed. Which one a
+ * child gets depends on the other variables, but we really want the LAST
+ * one to win.
  *
  * This is mostly needed if you want to override env vars, such like:
  *   env: {
- *     ...bunEnv,
+ *     ...env,
  *     PATH: "my path override here",
  *   }
  * becomes
  *   env: mergeWindowEnvs([
- *     bunEnv,
+ *     env,
  *     {
  *       PATH: "my path override here",
  *     },
  *   ])
+ *
+ * bunEnv spells PATH that way on every platform and does not need it for that.
  */
 export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   const keys: Record<string, string | undefined> = {};
@@ -1484,7 +1831,7 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
 }
 
 export function tmpdirSync(pattern: string = "bun.test."): string {
-  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
+  return ownTemporaryFolder(fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern)));
 }
 
 export async function runBunInstall(
@@ -1594,6 +1941,14 @@ export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: strin
   return { out, err };
 }
 
+/** Writes `<packageDir>/node_modules/.bin/<name>`: a command that prints `says`. */
+export function writeBinCommand(packageDir: string, name: string, says: string) {
+  const bin = join(packageDir, "node_modules", ".bin");
+  fs.mkdirSync(bin, { recursive: true });
+  if (isWindows) fs.writeFileSync(join(bin, `${name}.cmd`), `@echo ${says}\r\n`);
+  else fs.writeFileSync(join(bin, name), `#!/bin/sh\necho ${says}\n`, { mode: 0o755 });
+}
+
 // If you need to modify, clone it
 export const expiredTls = Object.freeze({
   cert: "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIJAKLdQVPy90jjMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV\nBAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX\naWRnaXRzIFB0eSBMdGQwHhcNMTkwMjAzMTQ0OTM1WhcNMjAwMjAzMTQ0OTM1WjBF\nMQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50\nZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB\nCgKCAQEA7i7IIEdICTiSTVx+ma6xHxOtcbd6wGW3nkxlCkJ1UuV8NmY5ovMsGnGD\nhJJtUQ2j5ig5BcJUf3tezqCNW4tKnSOgSISfEAKvpn2BPvaFq3yx2Yjz0ruvcGKp\nDMZBXmB/AAtGyN/UFXzkrcfppmLHJTaBYGG6KnmU43gPkSDy4iw46CJFUOupc51A\nFIz7RsE7mbT1plCM8e75gfqaZSn2k+Wmy+8n1HGyYHhVISRVvPqkS7gVLSVEdTea\nUtKP1Vx/818/HDWk3oIvDVWI9CFH73elNxBkMH5zArSNIBTehdnehyAevjY4RaC/\nkK8rslO3e4EtJ9SnA4swOjCiqAIQEwIDAQABo1AwTjAdBgNVHQ4EFgQUv5rc9Smm\n9c4YnNf3hR49t4rH4yswHwYDVR0jBBgwFoAUv5rc9Smm9c4YnNf3hR49t4rH4ysw\nDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEATcL9CAAXg0u//eYUAlQa\nL+l8yKHS1rsq1sdmx7pvsmfZ2g8ONQGfSF3TkzkI2OOnCBokeqAYuyT8awfdNUtE\nEHOihv4ZzhK2YZVuy0fHX2d4cCFeQpdxno7aN6B37qtsLIRZxkD8PU60Dfu9ea5F\nDDynnD0TUabna6a0iGn77yD8GPhjaJMOz3gMYjQFqsKL252isDVHEDbpVxIzxPmN\nw1+WK8zRNdunAcHikeoKCuAPvlZ83gDQHp07dYdbuZvHwGj0nfxBLc9qt90XsBtC\n4IYR7c/bcLMmKXYf0qoQ4OzngsnPI5M+v9QEHvYWaKVwFY4CTcSNJEwfXw+BAeO5\nOA==\n-----END CERTIFICATE-----",
@@ -1626,14 +1981,6 @@ export function disableAggressiveGCScope() {
   };
 }
 
-String.prototype.isLatin1 = function () {
-  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
-};
-
-String.prototype.isUTF16 = function () {
-  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
-};
-
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;
   toBeUTF16String(): void;
@@ -1643,6 +1990,10 @@ interface BunHarnessTestMatchers {
   toSpawn(expectedStdout?: string): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
+  toMatchNodeModulesAt(root: string): Promise<void>;
+  toHaveBins(expectedBins: string[]): void;
+  toBeValidBin(expectedLinkPath: string): void;
+  toBeWorkspaceLink(expectedLinkPath: string): void;
 }
 
 declare module "bun:test" {
@@ -1713,7 +2064,9 @@ export function isGlibcVersionAtLeast(version: string): boolean {
   if (!glibcVersion) {
     return false;
   }
-  return Bun.semver.satisfies(glibcVersion, `>=${version}`);
+  // glibc reports two parts ("2.39"), which is not a semver version: satisfies() answers false for it.
+  const semver = /^\d+\.\d+$/.test(glibcVersion) ? `${glibcVersion}.0` : glibcVersion;
+  return Bun.semver.satisfies(semver, `>=${version}`);
 }
 
 let macOSVersion: string | undefined;
@@ -1908,156 +2261,65 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
-export class VerdaccioRegistry {
-  port: number;
-  process: ChildProcess | undefined;
-  configPath: string;
-  packagesPath: string;
-  users: Record<string, string> = {};
-
-  constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
-    this.port = randomPort();
-    this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
-    this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
-  }
-
-  async start(silent: boolean = true) {
-    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
-    // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
-    // while the install client connects to 127.0.0.1 and every request is refused.
-    const listen = `127.0.0.1:${this.port}`;
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
-      silent,
-      // Prefer using a release build of Bun since it's faster
-      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
-      env: {
-        ...(bunEnv as any),
-        NODE_NO_WARNINGS: "1",
-      },
-    });
-
-    this.process.stderr?.on("data", data => {
-      console.error(`[verdaccio] stderr: ${data}`);
-    });
-
-    const started = Promise.withResolvers();
-
-    this.process.on("error", error => {
-      console.error(`Failed to start verdaccio: ${error}`);
-      started.reject(error);
-    });
-
-    this.process.on("exit", (code, signal) => {
-      if (code !== 0) {
-        console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
-      } else {
-        console.log("Verdaccio exited successfully");
-      }
-    });
-
-    this.process.on("message", (message: { verdaccio_started: boolean }) => {
-      if (message.verdaccio_started) {
-        started.resolve();
-      }
-    });
-
-    await started.promise;
-  }
-
-  registryUrl() {
-    return `http://localhost:${this.port}/`;
-  }
-
-  stop() {
-    rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
-  }
-
-  /**
-   * returns auth token
-   */
-  async generateUser(username: string, password: string): Promise<string> {
-    if (this.users[username]) {
-      throw new Error(`User ${username} already exists`);
-    } else this.users[username] = password;
-
-    const url = `http://localhost:${this.port}/-/user/org.couchdb.user:${username}`;
-    const user = {
-      name: username,
-      password: password,
-      email: `${username}@example.com`,
-    };
-
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(user),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      return data.token;
-    }
-
-    throw new Error("Failed to create user:", response.statusText);
-  }
-
-  async authBunfig(user: string) {
-    const authToken = await this.generateUser(user, user);
-    return Bun.TOML.stringify({
-      install: {
-        cache: false,
-        registry: { url: `http://localhost:${this.port}/`, token: authToken },
-      },
-    });
-  }
-
-  async createTestDir(
-    opts: { bunfigOpts?: BunfigOpts; files?: DirectoryTree | string } = {
-      bunfigOpts: { linker: "hoisted" },
-      files: {},
-    },
-  ) {
-    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
-    const packageDir = tempDir("verdaccio-test-", opts.files ?? {});
-    const packageJson = join(packageDir, "package.json");
-    await this.writeBunfig(packageDir, opts.bunfigOpts);
-    this.users = {};
-    return { packageDir: String(packageDir), packageJson };
-  }
-
-  async writeBunfig(dir: string, opts: BunfigOpts = {}) {
-    await write(
-      join(dir, "bunfig.toml"),
-      Bun.TOML.stringify({
-        install: {
-          cache: join(dir, ".bun-cache"),
-          saveTextLockfile: opts.saveTextLockfile,
-          registry: opts.npm ? undefined : this.registryUrl(),
-          linker: opts.linker,
-          globalStore: opts.globalStore,
-          publicHoistPattern: opts.publicHoistPattern,
-          hoistPattern: opts.hoistPattern,
-          hoist: opts.hoist,
-        },
-      }),
-    );
-  }
+/**
+ * Builds the gzipped tarball GitHub serves for `/repos/<owner>/<repo>/tarball/<ref>`: one
+ * root directory, which GitHub names `<owner>-<repo>-<short sha>`, with the repository's
+ * files inside it. `bun install` reads the dependency's resolved commit (the lockfile's
+ * third tuple element and the installed `.bun-tag`) from the archive's first entry, which
+ * is why the root directory gets an entry of its own ahead of the files.
+ *
+ * Serve the bytes from a local server and pass its URL as `GITHUB_API_URL` to install
+ * `owner/repo#ref` dependencies without contacting api.github.com.
+ */
+export function githubTarball(rootDir: string, files: Record<string, string | Uint8Array>) {
+  const entries: Record<string, string | Uint8Array> = { [`${rootDir}/`]: "" };
+  for (const [path, contents] of Object.entries(files)) entries[`${rootDir}/${path}`] = contents;
+  return new Bun.Archive(entries, { compress: "gzip" }).bytes();
 }
 
-type BunfigOpts = {
-  saveTextLockfile?: boolean;
-  npm?: boolean;
-  linker?: "isolated" | "hoisted";
-  globalStore?: boolean;
-  publicHoistPattern?: string | string[];
-  hoistPattern?: string | string[];
-  hoist?: boolean;
-};
+/**
+ * A git repository on disk standing in for one on a real host, for the cases whose point is the specifier
+ * (`bitbucket:user/repo`, `git@github.com:user/repo.git`): bun has to turn it into one of `cloneUrls`, which git then
+ * rewrites to the local repository (`url.<base>.insteadOf`). A bun spawned with the returned `env` cannot reach the
+ * host: git refuses every transport but `file`, so a clone URL that is not listed fails.
+ */
+export async function hostedGitRepository(cloneUrls: string[], files: Record<string, string>) {
+  const dir = tempDir("git-dep-hosted", files);
+  const git = async (...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: ["git", ...args],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_AUTHOR_NAME: "Test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "Test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} exited with ${exitCode}: ${stderr}`);
+    return stdout.trim();
+  };
+  await git("-c", "init.defaultBranch=main", "init", "--quiet");
+  await git("add", "-A");
+  await git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init");
+  const key = `url.${Bun.pathToFileURL(String(dir)).href}.insteadOf`;
+  const config: Record<string, string> = { GIT_ALLOW_PROTOCOL: "file", GIT_CONFIG_COUNT: `${cloneUrls.length}` };
+  cloneUrls.forEach((url, i) => {
+    config[`GIT_CONFIG_KEY_${i}`] = key;
+    config[`GIT_CONFIG_VALUE_${i}`] = url;
+  });
+  return {
+    /** Of its only commit. */
+    sha: await git("rev-parse", "HEAD"),
+    env: { ...bunEnv, ...config },
+    [Symbol.dispose]: () => dir[Symbol.dispose](),
+  };
+}
 
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);
@@ -2363,4 +2625,104 @@ export function readElf64ProgramHeaders(path: string): Elf64ProgramHeader[] {
   } finally {
     closeSync(fd);
   }
+}
+
+const dtUnknownReaddirMarker = "dt-unknown-readdir-shim: rewrote getdents64 d_type";
+let dtUnknownReaddirShim: Promise<string> | undefined;
+
+async function compileDtUnknownReaddirShim(): Promise<string> {
+  const cc = which("cc") || which("clang") || which("gcc");
+  if (!cc) throw new Error("dtUnknownReaddir: no C compiler (cc/clang/gcc) found in $PATH");
+  const shim = join(tmpdirSync("dt-unknown-readdir-"), "shim.so");
+  const source = join(import.meta.dir, "fixtures", "dt-unknown-readdir-shim.c");
+  const proc = Bun.spawn({
+    cmd: [cc, "-shared", "-fPIC", "-O2", `-DMARKER="${dtUnknownReaddirMarker}"`, "-o", shim, source, "-ldl"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0)
+    throw new Error(`dtUnknownReaddir: compiling the shim failed (exit ${exitCode}):\n${stderr || stdout}`);
+  return shim;
+}
+
+/**
+ * Runs bun as if on a filesystem whose readdir does not report entry types
+ * (FUSE, some NFS servers, XFS formatted with `ftype=0`), without needing such a
+ * mount: `env()` preloads a shim that zeroes `d_type` in every `getdents64`
+ * record. The shim prints `marker` to stderr the first time it does so; assert
+ * on it, otherwise a test here passes vacuously if bun ever stops issuing
+ * `getdents64` through libc's `syscall()` wrapper, which is what the shim hooks.
+ */
+export const dtUnknownReaddir = {
+  /** Linux with a C compiler; `skipIf(!dtUnknownReaddir.available)`. */
+  get available(): boolean {
+    return isLinux && !!(which("cc") || which("clang") || which("gcc"));
+  },
+  marker: dtUnknownReaddirMarker,
+  /**
+   * Compiles the shim the first time it is called. Call it from `beforeAll`
+   * (the compiler can take several seconds on a loaded machine) and spawn bun
+   * with the returned env.
+   */
+  async env(): Promise<NodeJS.Dict<string>> {
+    const shim = await (dtUnknownReaddirShim ??= compileDtUnknownReaddirShim());
+    return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
+  },
+};
+
+/**
+ * Hexadecimal, octal and binary integers as text, each with its exact value. Most lie between two
+ * doubles: 600 from a fixed seed, then ties, neighbours of ties and the edge of `Infinity`.
+ */
+export function integersThatNeedRounding(): [string, bigint][] {
+  // prefix, digits to draw from, longest
+  const prefixes: [string, string, number][] = [
+    ["0x", "0123456789abcdefABCDEF", 40],
+    ["0X", "0123456789abcdef", 40],
+    ["0o", "01234567", 50],
+    ["0b", "01", 140],
+  ];
+  const cases: [string, bigint][] = [];
+  const add = (prefix: string, digits: string) =>
+    cases.push([prefix + digits, BigInt(prefix.toLowerCase() + digits.replaceAll("_", ""))]);
+  let state = 12345;
+  const random = (below: number) => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) % below;
+  };
+  for (let i = 0; i < 600; i++) {
+    const [prefix, alphabet, longest] = prefixes[random(prefixes.length)];
+    let digits = "";
+    for (let length = 1 + random(longest); length > 0; length--) digits += alphabet[random(alphabet.length)];
+    add(prefix, digits);
+  }
+  const edges = [
+    // halfway between two doubles, and one off either side of halfway
+    2n ** 53n + 1n,
+    2n ** 53n + 3n,
+    2n ** 64n + 2n ** 11n,
+    2n ** 64n + 2n ** 11n + 1n,
+    2n ** 64n + 3n * 2n ** 11n,
+    2n ** 200n + 2n ** 147n - 1n,
+    2n ** 200n + 2n ** 147n,
+    2n ** 200n + 2n ** 147n + 1n,
+    // the largest values that are finite, and the first that are not
+    2n ** 1024n - 2n ** 970n - 1n,
+    2n ** 1024n - 2n ** 970n,
+    2n ** 1024n,
+    2n ** 5000n,
+    0n,
+    2n ** 64n - 1n,
+  ];
+  for (const [prefix, alphabet] of prefixes) {
+    const radix = new Set(alphabet.toLowerCase()).size;
+    for (const edge of edges) add(prefix, edge.toString(radix));
+  }
+  add("0x", Buffer.alloc(100, "0").toString() + "b3c8bf81fdf2247");
+  add("0x", "b3c8_bf81_fdf2_247");
+  return cases;
 }

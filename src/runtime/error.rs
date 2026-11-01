@@ -70,12 +70,8 @@ pub enum Error {
     MissingShell,
     #[error("NotFound")]
     NotFound,
-    #[error("InvalidRoot")]
-    InvalidRoot,
     #[error("EmptyKey")]
     EmptyKey,
-    #[error("ExpectedObject")]
-    ExpectedObject,
     #[error("FormatFailed")]
     FormatFailed,
     #[error("SelfExePathFailed")]
@@ -100,8 +96,6 @@ pub enum Error {
     UpgradeFailedBecauseOfMissingExecutableDir,
     #[error("NoBinFound")]
     NoBinFound,
-    #[error("NeedToInstall")]
-    NeedToInstall,
     #[error("PathTooLong")]
     PathTooLong,
     #[error("AssertionError")]
@@ -116,8 +110,6 @@ pub enum Error {
     CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
     #[error("UnableToEncode")]
     UnableToEncode,
     #[error("InvalidHeaderName")]
@@ -282,11 +274,12 @@ impl From<bun_uws::ssl_wrapper::InitError> for Error {
     }
 }
 
-impl From<bun_libarchive::Error> for Error {
-    fn from(e: bun_libarchive::Error) -> Self {
+impl From<bun_archive::Error> for Error {
+    fn from(e: bun_archive::Error) -> Self {
         match e {
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
-            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::Sys(s) => Self::Sys(s),
+            bun_archive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::LeavesDestination(e) => Self::Sys(e.into()),
             _ => Self::Unexpected,
         }
     }
@@ -379,9 +372,7 @@ impl Error {
             Self::UnrecognizedCommand => "UnrecognizedCommand",
             Self::MissingShell => "MissingShell",
             Self::NotFound => "NotFound",
-            Self::InvalidRoot => "InvalidRoot",
             Self::EmptyKey => "EmptyKey",
-            Self::ExpectedObject => "ExpectedObject",
             Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",
             Self::SpawnFailed => "SpawnFailed",
@@ -396,7 +387,6 @@ impl Error {
                 "UpgradeFailedBecauseOfMissingExecutableDir"
             }
             Self::NoBinFound => "NoBinFound",
-            Self::NeedToInstall => "NeedToInstall",
             Self::PathTooLong => "PathTooLong",
             Self::AssertionError => "AssertionError",
             Self::ModuleNotFound => "ModuleNotFound",
@@ -404,7 +394,6 @@ impl Error {
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
-            Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",

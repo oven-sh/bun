@@ -22,6 +22,15 @@ pub enum PathLike<'a> {
     String(Utf8WithString),
     ThreadIsolatedString(Utf8WithString),
     Utf8(Utf8Bytes<'a>),
+    Joined(Box<JoinedPath>),
+}
+
+/// A relative path that starts at the working directory in the executable, which the system does not know.
+#[derive(Clone)]
+pub struct JoinedPath {
+    /// Where it leads: an absolute path.
+    pub joined: Vec<u8>,
+    pub written: Vec<u8>,
 }
 
 impl Default for PathLike<'_> {
@@ -40,6 +49,7 @@ impl Clone for PathLike<'_> {
             Self::String(s) => Self::String(s.clone()),
             Self::ThreadIsolatedString(s) => Self::ThreadIsolatedString(s.clone()),
             Self::Utf8(s) => Self::Utf8(s.clone()),
+            Self::Joined(path) => Self::Joined(path.clone()),
         }
     }
 }
@@ -59,6 +69,7 @@ impl<'a> PathLike<'a> {
     pub fn into_vec(self) -> Vec<u8> {
         match self {
             Self::Utf8(utf8) => utf8.into_vec(),
+            Self::Joined(path) => path.joined,
             path => path.slice().to_vec(),
         }
     }
@@ -69,6 +80,24 @@ impl<'a> PathLike<'a> {
             Self::Buffer(b) => b.slice(),
             Self::String(s) | Self::ThreadIsolatedString(s) => s.slice(),
             Self::Utf8(s) => s.slice(),
+            Self::Joined(path) => &path.joined,
+        }
+    }
+
+    /// What an error, a `Dirent` or `Blob.name` shows; [`PathLike::slice`] is what is opened.
+    #[inline]
+    pub fn as_written(&self) -> &[u8] {
+        match self {
+            Self::Joined(path) => &path.written,
+            path => path.slice(),
+        }
+    }
+
+    /// A copy that owns its bytes, for another thread.
+    pub fn owned_copy(&self) -> PathLike<'static> {
+        match self {
+            Self::Joined(path) => PathLike::Joined(path.clone()),
+            path => PathLike::owned(path.slice().to_vec()),
         }
     }
 
@@ -77,24 +106,23 @@ impl<'a> PathLike<'a> {
             Self::Buffer(b) => b.slice().len(),
             Self::String(_) | Self::ThreadIsolatedString(_) => 0,
             Self::Utf8(s) => s.slice().len(),
+            Self::Joined(path) => path.joined.len() + path.written.len(),
         }
     }
 }
 
 impl PathLike<'static> {
     /// For a path a `Blob` store keeps (dropped on any thread): a JS-backed
-    /// string becomes a private copy never handed to JS; a buffer stays
-    /// pinned and is GC-protected for good.
+    /// string becomes a private copy never handed to JS, and a buffer's bytes
+    /// are copied and its pin is released here, on the JS thread.
     pub fn thread_isolated_copy(self) -> Self {
         match self {
             Self::String(s) | Self::ThreadIsolatedString(s) => {
                 Self::ThreadIsolatedString(s.thread_isolated_copy())
             }
-            Self::Buffer(b) => {
-                b.value.protect();
-                Self::Buffer(b)
-            }
+            Self::Buffer(b) => Self::owned(b.slice().to_vec()),
             Self::Utf8(s) => Self::Utf8(s),
+            Self::Joined(path) => Self::Joined(path),
         }
     }
 }

@@ -1,0 +1,96 @@
+## CLI Usage
+
+```bash
+bun compile [flags] [entry point]
+```
+
+`bun compile` takes every flag of [`bun build`](/bundler#cli-usage), and these. If `package.json` has a `"compile"` script, it runs that script instead.
+
+### Output
+
+<ParamField path="--outfile" type="string">
+  Write the executable to this path
+</ParamField>
+
+<ParamField path="--target" type="string">
+  The platform to build for, such as <code>bun-linux-x64</code>. Compiling ahead of time only targets the platform the
+  build runs on: add <code>--no-aot</code> to build for another one
+</ParamField>
+
+<ParamField path="--asset" type="string">
+  Embed a file or directory into the executable, preserving its relative path. Can be repeated
+</ParamField>
+
+<ParamField path="--compile-exec-argv" type="string">
+  Prepend arguments to the executable's <code>process.execArgv</code>
+</ParamField>
+
+### Compiling ahead of time
+
+<ParamField path="--no-aot" type="boolean">
+  Bundle the JavaScript into the executable instead of compiling it to machine code, like bun build --compile
+</ParamField>
+
+<ParamField path="--explain" type="string">
+  List the code that compiled to a slow path, worst first, with a fix for each. <code>--explain=json</code> prints one
+  object per line. Other reports: <code>guards</code>, <code>guards-json</code>, <code>trim</code>,{" "}
+  <code>missed-optimizations</code>, <code>allocations</code>
+</ParamField>
+
+<ParamField path="--aot-log-type-mismatches" type="boolean">
+  The executable logs every value that doesn't match its declared type
+</ParamField>
+
+<ParamField path="--no-compile-function-source" type="boolean">
+  Don't embed function source code. <code>fn.toString()</code> returns <code>[native code]</code>, and the executable
+  only runs code that was compiled into it
+</ParamField>
+
+<ParamField path="--compile-inspector" type="boolean">
+  Let a debugger attach to the executable. Makes it larger and slower
+</ParamField>
+
+<ParamField path="--aot-allow-code-from-disk" type="boolean">
+  Let <code>import()</code> and <code>require()</code> load code that isn't in the executable from disk at run time.
+  Makes it larger and slower
+</ParamField>
+
+### Size
+
+<ParamField path="--trim" type="boolean">
+  Remove the Bun and Node.js APIs your code never calls
+</ParamField>
+
+<ParamField path="--trim-locales" type="string">
+  Keep only these locales, such as <code>en,de-AT</code>. Implies <code>--trim</code>
+</ParamField>
+
+### Libraries
+
+```bash
+bun compile --library [flags] [entry points]
+```
+
+Builds [a package to publish](/compiler/libraries#publish-a-package-with-its-types) instead of an executable. Without an entry point, it builds the TypeScript files that `"exports"` in `package.json` points to. `dependencies` stay imports, and `devDependencies` are bundled.
+
+<ParamField path="--library" type="boolean">
+  Build a package to publish instead of an executable
+</ParamField>
+
+<ParamField path="--outdir" type="string" default="dist">
+  The folder to write the package to. It cannot be the project's own folder
+</ParamField>
+
+<ParamField path="--target" type="string" default="node">
+  With <code>--library</code>: <code>node</code>, <code>browser</code> or <code>bun</code>
+</ParamField>
+
+<ParamField path="--format" type="string" default="esm">
+  With <code>--library</code>: <code>esm</code>, or <code>cjs</code> for sources that are CommonJS
+</ParamField>
+
+### Scripts
+
+<ParamField path="--no-script" type="boolean">
+  Run this command even if <code>package.json</code> has a <code>"compile"</code> script
+</ParamField>

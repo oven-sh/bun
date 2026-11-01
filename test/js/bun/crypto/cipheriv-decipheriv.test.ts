@@ -68,8 +68,8 @@ it("should encrypt & decrypt using streaming interface", () => {
   // Since Node 26, read() with no size returns one buffered chunk at a time,
   // so drain the stream instead of assuming a single read returns everything.
   const readAll = stream => {
-    const chunks = [];
-    for (let chunk; (chunk = stream.read()) !== null; ) chunks.push(chunk);
+    const chunks: Buffer[] = [];
+    for (let chunk; (chunk = stream.read()) !== null;) chunks.push(chunk);
     return Buffer.concat(chunks);
   };
 
@@ -238,7 +238,7 @@ it("should not accept negative authTagLength, or other coercable values", () => 
   for (const length of lengths) {
     expect(() => {
       createCipheriv("aes-128-gcm", randomBytes(16), randomBytes(16), {
-        authTagLength: length,
+        authTagLength: length as any,
       });
     }).toThrow(`The property 'options.authTagLength' is invalid. Received `);
   }
@@ -260,4 +260,31 @@ it("should ignore authTagLength for non-authenticated cipher modes", () => {
   gcm.update("hi");
   gcm.final();
   expect(gcm.getAuthTag().length).toBe(12);
+});
+
+it("setAutoPadding(false) after update() keeps the block a padded decipher holds back", () => {
+  const [key, iv] = [Buffer.alloc(16, 1), Buffer.alloc(16, 2)];
+  const encrypt = (text: string, padding: boolean) => {
+    const cipher = createCipheriv("aes-128-cbc", key, iv).setAutoPadding(padding);
+    return Buffer.concat([cipher.update(text), cipher.final()]);
+  };
+  const blocks = encrypt("0123456789abcdefFEDCBA9876543210", false);
+  const run = (encrypted: Buffer[], toggles: boolean[]) => {
+    const decipher = createDecipheriv("aes-128-cbc", key, iv);
+    const out = [decipher.update(encrypted[0]).toString()];
+    for (const padding of toggles) decipher.setAutoPadding(padding);
+    for (const chunk of encrypted.slice(1)) out.push(decipher.update(chunk).toString());
+    return [...out, decipher.final().toString()];
+  };
+  expect({
+    thenFinal: run([blocks], [false]),
+    thenUpdate: run([blocks.subarray(0, 16), blocks.subarray(16)], [false]),
+    midBlock: run([blocks.subarray(0, 20), blocks.subarray(20)], [false]),
+    backOn: run([encrypt("hello", true)], [false, true]),
+  }).toEqual({
+    thenFinal: ["0123456789abcdef", "FEDCBA9876543210"],
+    thenUpdate: ["", "0123456789abcdefFEDCBA9876543210", ""],
+    midBlock: ["0123456789abcdef", "FEDCBA9876543210", ""],
+    backOn: ["", "hello"],
+  });
 });

@@ -6,10 +6,10 @@ use bun_http_types::Method::Method;
 
 use crate::response::Response;
 use crate::socket_context::BunSocketContextOptions;
-use crate::web_socket::c::uws_ws;
+use crate::web_socket::c::{uws_app_ws_package_context, uws_ws};
 use crate::{
     AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
-    WebSocketBehavior, thunk, us_socket_t, uws_res,
+    WebSocketBehavior, WebSocketUpgradeContext, thunk, us_socket_t, uws_res,
 };
 use bun_ptr::ThisPtr;
 
@@ -60,6 +60,8 @@ pub struct App<const SSL: bool> {
 /// the call.
 macro_rules! uws_app_route_methods {
     ($($name:ident => $cfn:ident),* $(,)?) => {$(
+        // The C++ side is always_inline, so without this every caller gets its own copy of the route registration.
+        #[inline(never)]
         pub fn $name(
             &mut self,
             pattern: &[u8],
@@ -273,17 +275,6 @@ impl<const SSL: bool> App<SSL> {
         thunk::zst::<H>()(this, AnyRequest::H1(req), resp)
     }
 
-    pub fn domain(&mut self, pattern: &ZStr) {
-        // SAFETY: pattern is NUL-terminated; self is a valid app.
-        unsafe {
-            c::uws_app_domain(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr().cast(),
-            )
-        }
-    }
-
     pub fn on_client_error(
         &mut self,
         handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
@@ -403,12 +394,16 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
+    /// Calls with the same `context_key` share one uWS WebSocketContext. It keeps the first
+    /// call's callbacks and the last call's settings. The key is only compared, never dereferenced.
+    #[inline(never)]
     pub fn ws(
         &mut self,
         pattern: &[u8],
         ctx: *mut c_void,
         id: usize,
         behavior_: WebSocketBehavior,
+        context_key: *const c_void,
     ) {
         let behavior = behavior_;
         // SAFETY: self is a valid app; pattern valid for the call; behavior is stack-local.
@@ -421,6 +416,23 @@ impl<const SSL: bool> App<SSL> {
                 pattern.len(),
                 id,
                 &raw const behavior,
+                context_key,
+            )
+        }
+    }
+
+    /// Returns the app's context for `ws` package sockets with these options, creating it on
+    /// first use. It lives as long as the app. Every call must pass the same callbacks.
+    pub fn ws_package_context(
+        &mut self,
+        behavior: &WebSocketBehavior,
+    ) -> *mut WebSocketUpgradeContext {
+        // SAFETY: self is a valid app; behavior is only read during the call.
+        unsafe {
+            uws_app_ws_package_context(
+                Self::SSL_FLAG,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                behavior,
             )
         }
     }
@@ -613,7 +625,6 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub(crate) fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
         pub(crate) fn uws_app_listen_with_config(
             ssl: i32,
             app: *mut uws_app_t,

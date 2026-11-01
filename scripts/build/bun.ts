@@ -440,7 +440,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // undefined refs, the rlibs satisfy them (and `main`, via crt1.o) and in
   // turn reference JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
   // export the C++ side touches is reached from those roots.
-  const shimInputs = emitShims(n, cfg);
+  emitShims(n, cfg);
   const depLink = lazyDepObjects(cfg, depObjects);
   const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
@@ -448,7 +448,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     libs: depLibs,
     lazyObjects: depLink.lazy,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
+    implicitInputs: linkImplicitInputs(cfg),
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),

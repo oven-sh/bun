@@ -1826,6 +1826,11 @@ const dir = String(
         const counted = new TransformStream({ transform(part) { state.ticks++; } });
         return new Response(new Blob([gzipped]).stream().pipeThrough(new DecompressionStream("gzip")).pipeThrough(counted)).arrayBuffer();
       }
+      // The same chunk, written into a stream that somebody else made and reads.
+      export function writeThenClose(stream, chunk) {
+        const writer = stream.writable.getWriter();
+        writer.write(chunk).then(() => writer.close());
+      }
 
       // A multipart upload: every request after the first is issued from the response to the one before.
       export function uploadInParts(state, endpoint) {
@@ -4319,6 +4324,98 @@ test("ModuleGraph isolation: work that continues from one thread-pool step to th
     hostSteps: true,
   });
 });
+
+test("ModuleGraph isolation: the thread-pool steps of a chunk are its writer's, not the stream maker's: every step reaches the reader in the writer's graph and AsyncLocalStorage store, and disposing a graph ends the chunk it writes into the host's stream, and not the chunk the host writes into the graph's stream", async () => {
+  // 24 MB of a repeated block: well over a hundred steps to decode.
+  const gzipped = Bun.gzipSync(Buffer.alloc(24 << 20, crypto.getRandomValues(new Uint8Array(1024))));
+  const storage = new AsyncLocalStorage<string>();
+  using made = await newGraph();
+  const [graphWrites, hostWrites] = [newState("decompress-graph-writes"), newState("decompress-host-writes")];
+  const [hostMade, graphMade] = [
+    new DecompressionStream("gzip"),
+    made.graph.run(() => new DecompressionStream("gzip")),
+  ];
+  // The host reads both. At every step its sink runs in the graph and the store of the write.
+  const read = (stream: DecompressionStream, state: State, writer: Graph | undefined) =>
+    stream.readable.pipeTo(
+      new WritableStream({
+        write() {
+          if (ModuleGraph.current !== writer)
+            state.wrong.push(state.ticks + ": in " + (ModuleGraph.current ? "another graph" : "the host"));
+          else if (storage.getStore() !== state.tag) state.wrong.push(state.ticks + ": store " + storage.getStore());
+          state.ticks++;
+        },
+      }),
+    );
+  const [ofGraph, ofHost] = [read(hostMade, graphWrites, made.graph), read(graphMade, hostWrites, undefined)];
+  // Both streams have started: a chunk written before that is transformed by the start steps, which are the maker's.
+  await hostTimerTurns(1);
+  storage.run(graphWrites.tag, () => made.graph.run(() => made.app.writeThenClose(hostMade, gzipped)));
+  storage.run(hostWrites.tag, () => hostApp.writeThenClose(graphMade, gzipped));
+  // Some steps in, not all.
+  await until(() => graphWrites.ticks > 2 && hostWrites.ticks > 2);
+  made.graph.dispose();
+  const stoppedAt = graphWrites.ticks;
+  await ofHost;
+  await hostTimerTurns();
+  expect({
+    status: Bun.peek.status(ofGraph),
+    steps: graphWrites.ticks,
+    wrong: [graphWrites.wrong, hostWrites.wrong],
+  }).toEqual({ status: "pending", steps: stoppedAt, wrong: [[], []] });
+});
+
+test.each([
+  ["returns the response at once", (respond: () => Response) => respond()],
+  [
+    "awaits a turn of the event loop first",
+    async (respond: () => Response) => {
+      await new Promise(resolve => setImmediate(resolve));
+      return respond();
+    },
+  ],
+])(
+  "ModuleGraph isolation: the thread-pool steps of a chunk are its writer's, also the ones that another graph's server asks for from a handler that %s: the host's sink behind the same tee() runs as the host, and its timers fire and its chunk finishes after that graph is disposed",
+  async (_, handle) => {
+    // One chunk over 128 KiB that inflates to some 6 MB: a few dozen steps.
+    const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
+    const gzipped = Bun.gzipSync(
+      Buffer.concat([Buffer.alloc(6 << 20, random(1024)), random(65536), random(65536), random(65536)]),
+    );
+    using made = await newGraph();
+    const state = newState("decompress-graph-serves");
+    const stream = new DecompressionStream("gzip");
+    await hostTimerTurns(1);
+    hostApp.writeThenClose(stream, gzipped);
+    const [served, piped] = stream.readable.tee();
+    // The host's sink holds its first write: its branch stops reading, nobody reads the other, and the chunk parks.
+    const held = Promise.withResolvers<void>();
+    let timers = 0;
+    const piping = piped.pipeTo(
+      new WritableStream({
+        write() {
+          if (ModuleGraph.current) state.wrong.push(state.ticks + ": in a graph");
+          setTimeout(() => timers++, 0);
+          if (++state.ticks === 5) made.graph.dispose();
+          if (state.ticks === 1) return held.promise;
+        },
+      }),
+    );
+    await until(() => state.ticks === 1);
+    await hostTimerTurns();
+    // The graph's server reads its branch first: that read asks for a step. The sink is let go on the loop's
+    // next turn, so the host's branch is waiting when that step's output arrives.
+    const respond = () => (setImmediate(held.resolve), new Response(served));
+    const server: Bun.Server<undefined> = made.graph.run(() =>
+      made.app.call(() => Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => handle(respond) })),
+    );
+    const response = await fetch(server.url);
+    // The graph's server goes with the graph: its response is cut off.
+    await Promise.all([piping, response.arrayBuffer().catch(() => {})]);
+    await hostTimerTurns();
+    expect({ wrong: state.wrong, timers }).toEqual({ wrong: [], timers: state.ticks });
+  },
+);
 
 test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first request to the last: disposing the graph mid-way sends no later part and no completion and rolls the upload back, and another graph's upload completes", async () => {
   // A minimal S3: which requests each key (the state's tag) has made. Part 2 of the upload that gets

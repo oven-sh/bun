@@ -1903,16 +1903,29 @@ impl EString {
     pub fn order(&self, other: &EString) -> Ordering {
         debug_assert!(self.is_utf8() == other.is_utf8());
         if self.is_utf8() {
-            strings::order(&self.data, &other.data)
+            strings::order_utf16(&self.data, &other.data)
         } else {
             strings::order_t(self.slice16(), other.slice16())
         }
     }
 
+    /// Whether this string, or a later part of its rope, is 8-bit text that is not ASCII.
+    #[inline(never)]
+    pub fn has_non_ascii_bytes(&self) -> bool {
+        let mut part = Some(self);
+        while let Some(segment) = part {
+            if segment.is_utf8() && !strings::is_all_ascii(&segment.data) {
+                return true;
+            }
+            part = segment.next.as_deref();
+        }
+        false
+    }
+
     pub fn javascript_length(&self) -> Option<u32> {
         if self.rope_len > 0 {
             // We only support ascii ropes for now
-            return Some(self.rope_len);
+            return (!self.has_non_ascii_bytes()).then_some(self.rope_len);
         }
         if self.is_utf8() {
             if !strings::is_all_ascii(&self.data) {

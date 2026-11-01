@@ -2491,30 +2491,12 @@ impl Data {
         match self {
             Data::ENull(_) => Some(0.0),
             Data::EUndefined(_) => Some(f64::NAN),
-            Data::EString(str) => {
-                if str.next.is_some() {
-                    return None;
-                }
-                if !str.is_utf8() {
-                    return None;
-                }
-                // +'1' => 1
-                Some(string_to_equivalent_number_value(str.slice8()))
-            }
+            Data::EString(str) => string_to_number(str),
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(if b.value { 1.0 } else { 0.0 }),
             Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
                 Data::ENumber(num) => Some(num.value()),
-                Data::EString(str) => {
-                    if str.next.is_some() {
-                        return None;
-                    }
-                    if !str.is_utf8() {
-                        return None;
-                    }
-                    // +'1' => 1
-                    Some(string_to_equivalent_number_value(str.slice8()))
-                }
+                Data::EString(str) => string_to_number(str),
                 _ => None,
             },
             _ => None,
@@ -2819,6 +2801,16 @@ pub use data::Store;
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
+
+/// `Number(str)` for a flat 8-bit string.
+fn string_to_number(str: &E::String) -> Option<f64> {
+    if str.next.is_some() || !str.is_utf8() {
+        return None;
+    }
+    // `Number()` trims white space that is not ASCII too.
+    let text = bun_core::strings::trim_js_whitespace(str.slice8());
+    Some(string_to_equivalent_number_value(text))
+}
 
 /// `Number(str)`.
 pub fn string_to_equivalent_number_value(str: &[u8]) -> f64 {

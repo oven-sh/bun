@@ -1059,6 +1059,55 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  // A define makes 8-bit text. No fold reads one byte of it as one character
+  // where the text is not ASCII, so each read prints what node prints.
+  itBundled("minify/StringFoldsOfNonAsciiDefineText", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(("x" + TEXT).length, (TEXT + "x")[3], (TEXT + "x").charCodeAt(3), JSON.stringify(TEXT[1]), \`x\${TEXT}\`.length);
+        console.log(("x" + HIGH) < ("x" + LOW), HIGH < LOW, +\`1\${SPACE}\`, -(SPACE + "1"), TEXT.charCodeAt(3));
+      `,
+    },
+    define: { TEXT: '"a\u00e9b"', HIGH: '"\u{1F600}"', LOW: '"\uffee"', SPACE: '"\u00a0"' },
+    minifySyntax: true,
+    run: { stdout: '4 x 120 "\u00e9" 4\ntrue true 1 -1 NaN' },
+  });
+  // `.charCodeAt()` and the unary operators fold with no minify option.
+  itBundled("minify/StringFoldsOfNonAsciiDefineTextWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(TEXT.charCodeAt(3), TEXT.charCodeAt(0), +SPACE1, -SPACE1, TEXT.charCodeAt(3) === 98 ? "byte" : "unit");
+      `,
+    },
+    define: { TEXT: '"a\u00e9b"', SPACE1: '"\u00a01"' },
+    run: { stdout: "NaN 97 1 -1 unit" },
+  });
+  // An inlined file name is 8-bit text too: "d\u00e9p.cjs"[3] is ".", and byte 3 is "p".
+  itBundled("minify/StringFoldsOfNonAsciiFileName", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./d\u00e9p.cjs");
+      `,
+      "/d\u00e9p.cjs": /* js */ `
+        console.log(module.id, module.id.charCodeAt(3), module.id.charCodeAt(0));
+      `,
+    },
+    run: { stdout: "d\u00e9p.cjs 46 100" },
+  });
+  // In a CommonJS bundle `import.meta.dir` is the text of the build directory, which is 8-bit too.
+  itBundled("minify/StringFoldsOfNonAsciiBuildDirectory", {
+    files: {
+      "/d\u00e9r/entry.js": /* js */ `
+        const base = \`\${import.meta.dir}/assets/\`;
+        const strip = p => (p.startsWith(base) ? p.slice(base.length) : p);
+        console.log(strip(base + "logo.svg"), (import.meta.dir + "/x").length === import.meta.dir.length + 2);
+      `,
+    },
+    entryPoints: ["/d\u00e9r/entry.js"],
+    format: "cjs",
+    minifySyntax: true,
+    run: { stdout: "logo.svg true" },
+  });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `

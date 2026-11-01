@@ -444,6 +444,23 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     /* lsquic then parses nothing past an unclaimed header block. A client's
      * default of 2 lets the body reach JS ahead of the `onheaders` before it. */
     s->es_max_header_sets = 1;
+    /* lsquic's default windows are for HTTP/3: 0 for a bidirectional stream
+     * that the server opens (a server's bidi_local, a client's bidi_remote),
+     * and 12 KiB or 32 KiB for a unidirectional stream. Use the window of the
+     * client-opened bidirectional streams for all three. Upstream lsquic, and
+     * so every bun up to 1.4.x, picks the first send limit of a bidirectional
+     * stream by the role of the connection, not by who opened the stream, and
+     * after 0-RTT it gives a unidirectional stream the limit of a
+     * bidirectional one. With equal windows such a sender reads the right
+     * number in both places. Node's default is 256 KiB for every stream
+     * window (node/src/quic/transportparams.h). */
+    if (is_server) {
+        s->es_init_max_stream_data_bidi_local = s->es_init_max_stream_data_bidi_remote;
+        s->es_init_max_stream_data_uni = s->es_init_max_stream_data_bidi_remote;
+    } else {
+        s->es_init_max_stream_data_bidi_remote = s->es_init_max_stream_data_bidi_local;
+        s->es_init_max_stream_data_uni = s->es_init_max_stream_data_bidi_local;
+    }
 }
 
 #define NQ_SET(field, ctype) \

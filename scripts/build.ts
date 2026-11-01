@@ -295,9 +295,10 @@ async function main(): Promise<void> {
     // binary — bun-debug for debug, bun-profile for release. That's the one
     // you want for dev iteration (has symbols + assertions in debug).
     const exe = result.output.exe;
-    // The tests of the compiler read the engine of this build: where the shell does not say, the build does.
+    // The tests of the compiler read the engine of this build: where the shell does not say, the build does. A program
+    // this build has not made (testaot is built on request) stays unsaid, for the tests to find one elsewhere.
     const env = { ...process.env };
-    for (const [name, path] of Object.entries(aotEnvironmentOf(result.cfg))) env[name] ||= path;
+    for (const [name, path] of Object.entries(aotEnvironmentOf(result.cfg))) if (existsSync(path)) env[name] ||= path;
     const child = spawnSync(exe, args.execArgs, { stdio: "inherit", env });
     if (child.error) {
       throw new BuildError(`Failed to exec ${exe}`, { cause: child.error });

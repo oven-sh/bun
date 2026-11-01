@@ -1,32 +1,24 @@
-// Spawned by fs.test.ts. Reads a FIFO whose content (>256 KB) far exceeds the
-// 0-byte size `fstat` reports for a pipe. The "stat size is wrong" grow path in
-// readFileSync used to reallocate (and RawVec-double) on every read because the
-// buffer length was left at capacity, ballooning RSS to multiple GB and never
-// returning. Prints a single parseable line so the parent can assert.
+// Spawned by fs.test.ts, which creates the FIFO at argv[2] and feeds it more
+// than the 256 KB readFileSync reads before it calls fstat. fstat reports a
+// 0-byte size for a pipe, so the rest arrives through the "stat size is wrong"
+// grow path, which used to reallocate (and RawVec-double) on every read: the
+// process grew by gigabytes or never returned, which is why the read happens in
+// a child the test can kill. Prints one JSON line with what was read and by how
+// much the read raised this process's peak RSS.
 const fs = require("fs");
-const cp = require("child_process");
-const path = require("path");
 
-const dir = process.argv[2];
-const fifo = path.join(dir, "thefifo");
-try {
-  fs.unlinkSync(fifo);
-} catch {}
-cp.execFileSync("mkfifo", [fifo]);
-if (!fs.statSync(fifo).isFIFO()) throw new Error(`not a FIFO: ${fifo}`);
+// This process's own high-water mark. getrusage() cannot be used for this on
+// Linux: ru_maxrss survives exec, so a child starts out with the high-water
+// mark of the test runner that spawned it.
+function peakRss() {
+  if (process.platform === "linux") {
+    return Number(/^VmHWM:\s+(\d+) kB/m.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]) * 1024;
+  }
+  return process.resourceUsage().maxRSS * 1024;
+}
 
-const SIZE = 400 * 1024;
-cp.spawn(
-  process.execPath,
-  [
-    "-e",
-    `const fs=require("fs");const fd=fs.openSync(process.argv[1],"w");` +
-      `const b=Buffer.alloc(${SIZE},0x61);let o=0;` +
-      `while(o<b.length){o+=fs.writeSync(fd,b,o,Math.min(16384,b.length-o))}fs.closeSync(fd);`,
-    fifo,
-  ],
-  { stdio: "inherit" },
-);
+const before = peakRss();
+const data = fs.readFileSync(process.argv[2]);
+const peakGrowth = peakRss() - before;
 
-const data = fs.readFileSync(fifo);
-process.stdout.write(`len=${data.length} allA=${data.every(x => x === 0x61)}`);
+console.log(JSON.stringify({ len: data.length, allA: data.equals(Buffer.alloc(data.length, "a")), peakGrowth }));

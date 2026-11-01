@@ -420,6 +420,12 @@ impl DirEntry {
         }
     }
 
+    /// A read that failed leaves no entries and no identity, so the next newer generation reads again.
+    pub(crate) fn abandon(&mut self) {
+        self.data.clear();
+        self.identity = ListingIdentity::default();
+    }
+
     /// Stamps the listing with `generation` when the open directory is unchanged. Caller holds `entries_mutex`.
     pub(crate) fn keep_if_current(&mut self, fd: Fd, generation: Generation) -> bool {
         if !self.identity.still_current(fd) {

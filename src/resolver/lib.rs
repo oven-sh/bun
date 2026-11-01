@@ -1210,7 +1210,7 @@ pub mod fs {
                 Err(err) => {
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
-                        unsafe { (*existing).data.clear() };
+                        unsafe { (*existing).abandon() };
                     }
                     return self.read_directory_error(dir, err, generation);
                 }
@@ -1532,7 +1532,7 @@ pub mod fs {
                         Ok(h) => h,
                         Err(err) => {
                             // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
+                            unsafe { (*e_ptr).abandon() };
                             return self
                                 .read_directory_error_transient(dir, err.into(), generation)
                                 .ok();
@@ -1557,7 +1557,7 @@ pub mod fs {
                         }
                         Err(err) => {
                             // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
+                            unsafe { (*e_ptr).abandon() };
                             return self
                                 .read_directory_error_transient(dir, err, generation)
                                 .ok();

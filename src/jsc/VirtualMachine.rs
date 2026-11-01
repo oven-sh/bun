@@ -5639,15 +5639,28 @@ impl VirtualMachine {
                         }
                         _ => None,
                     };
+                    let importer_dir = folder_on_disk.as_deref().unwrap_or(source_to_use);
                     let resolver = &mut self.transpiler.resolver;
-                    fresh_generation = Some(resolver.enter_fresh_generation());
-                    resolver.drop_stale_dir_info_chain(
-                        folder_on_disk.as_deref().unwrap_or(source_to_use),
-                    );
-                    if let Some(dir) = bun_paths::dirname(normalized_specifier)
-                        .filter(|_| bun_paths::is_absolute(normalized_specifier))
+                    // SAFETY: the resolver is a field of this VM, which outlives `_resolve`.
+                    fresh_generation = Some(unsafe { resolver.enter_fresh_generation() });
+                    resolver.drop_stale_dir_info_chain(importer_dir);
+                    // The directory a path specifier names: its `package.json` can have appeared.
+                    if bun_paths::is_absolute(normalized_specifier) {
+                        resolver.drop_stale_dir_info_chain(normalized_specifier);
+                    } else if bun_paths::is_absolute(importer_dir)
+                        && (normalized_specifier.starts_with(b"./")
+                            || normalized_specifier.starts_with(b"../")
+                            || normalized_specifier.starts_with(b".\\")
+                            || normalized_specifier.starts_with(b"..\\"))
                     {
-                        resolver.drop_stale_dir_info_chain(dir);
+                        let mut buf = bun_paths::path_buffer_pool::get();
+                        if let Some(named) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                            bun_paths::resolve_path::platform::Auto,
+                        >(
+                            importer_dir, &mut buf[..], &[normalized_specifier]
+                        ) {
+                            resolver.drop_stale_dir_info_chain(named);
+                        }
                     }
                     // `require.resolve(id, { paths })` looks in each of these, not from the importer.
                     if let Some(paths) = resolver.custom_dir_paths {

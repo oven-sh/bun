@@ -386,6 +386,10 @@ bitflags::bitflags! {
         /// This directory has a node_modules subdirectory
         const HasNodeModules    = 1 << 1;
         const InsideNodeModules = 1 << 2;
+        /// A `package.json` file was listed, whether or not it parsed.
+        const HasPackageJsonFile = 1 << 3;
+        /// A `tsconfig.json` or `jsconfig.json` file was listed, whether or not it loaded.
+        const HasTsconfigFile   = 1 << 4;
     }
 }
 impl Flags {

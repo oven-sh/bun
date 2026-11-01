@@ -474,6 +474,18 @@ impl Drop for FreshGeneration {
     }
 }
 
+/// The bytes of a config file as the parser saw them. `None` when it cannot be read.
+fn file_bytes_without_bom(path: &[u8]) -> Option<Vec<u8>> {
+    let bytes = bun_sys::File::openat(FD::cwd(), path, bun_sys::O::RDONLY, 0)
+        .and_then(|file| file.read_to_end())
+        .ok()?;
+    Some(match Fs::BOM::detect(&bytes) {
+        None => bytes,
+        Some(Fs::BOM::Utf8) => bytes[Fs::BOM::UTF8_BYTES.len()..].to_vec(),
+        Some(other) => other.remove_and_convert_to_utf8_and_free(bytes),
+    })
+}
+
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // NOTE: `fs` / `log` are raw aliasing
@@ -2761,7 +2773,11 @@ impl<'a> Resolver<'a> {
     }
 
     /// For one more lookup after a miss: every listing it consults is read again unless unchanged.
-    pub fn enter_fresh_generation(&mut self) -> FreshGeneration {
+    ///
+    /// # Safety
+    /// The guard writes `Resolver::generation` when it drops. The resolver must outlive the
+    /// guard and must not move while the guard lives.
+    pub unsafe fn enter_fresh_generation(&mut self) -> FreshGeneration {
         let previous = self.generation;
         self.generation = bun_core::next_generation();
         FreshGeneration {
@@ -2777,10 +2793,28 @@ impl<'a> Resolver<'a> {
         }
         let mut levels: Vec<DirInfoRef> = Vec::new();
         let mut topmost_stale: Option<usize> = None;
-        let mut level = self.read_dir_info_ignore_error(dir);
+        // The nearest manifest and the nearest tsconfig are the ones a lookup reads.
+        let mut manifest_seen = false;
+        let mut tsconfig_seen = false;
+        // A directory that is not there (a `paths` entry, a deleted importer) starts at its nearest ancestor.
+        let mut start = dir;
+        let mut level = loop {
+            if let Some(info) = self.read_dir_info_ignore_error(start) {
+                break Some(info);
+            }
+            let parent = bun_paths::dirname_platform(start, bun_paths::Platform::AUTO);
+            if parent.is_empty() || parent.len() >= start.len() {
+                break None;
+            }
+            start = parent;
+        };
         while let Some(info) = level {
             levels.push(info);
-            if self.dir_info_is_stale(info, levels.len() == 1) {
+            let check_manifest = !manifest_seen && info.package_json().is_some();
+            let check_tsconfig = !tsconfig_seen && info.tsconfig_json().is_some();
+            manifest_seen |= check_manifest;
+            tsconfig_seen |= check_tsconfig;
+            if self.dir_info_is_stale(info, check_manifest, check_tsconfig) {
                 topmost_stale = Some(levels.len());
             }
             level = info.get_parent();
@@ -2792,8 +2826,13 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// `check_package_json_bytes`: also compare the parsed `package.json` with the file.
-    fn dir_info_is_stale(&mut self, info: DirInfoRef, check_package_json_bytes: bool) -> bool {
+    /// `check_manifest` and `check_tsconfig`: also compare the parsed file with the one on disk.
+    fn dir_info_is_stale(
+        &mut self,
+        info: DirInfoRef,
+        check_manifest: bool,
+        check_tsconfig: bool,
+    ) -> bool {
         let kind_of = |this: &Self, name: &'static [u8]| {
             info.get_entry(this.generation, name)
                 .map(|e| e.entry().kind(this.rfs_ref(), this.store_fd))
@@ -2805,32 +2844,80 @@ impl<'a> Resolver<'a> {
             return true;
         }
         if self.opts.load_package_json
-            && info.package_json().is_some()
+            && info.flags.contains(DirInfo::Flag::HasPackageJsonFile)
                 != (kind_of(self, b"package.json") == Some(Fs::EntryKind::File))
         {
             return true;
         }
-        if self.opts.load_tsconfig_json
-            && info.tsconfig_json().is_some()
-                != (kind_of(self, b"tsconfig.json") == Some(Fs::EntryKind::File)
-                    || kind_of(self, b"jsconfig.json") == Some(Fs::EntryKind::File))
+        if self.opts.load_tsconfig_json {
+            let selected: Option<&[u8]> = [&b"tsconfig.json"[..], &b"jsconfig.json"[..]]
+                .into_iter()
+                .find(|name| kind_of(self, name) == Some(Fs::EntryKind::File));
+            if info.flags.contains(DirInfo::Flag::HasTsconfigFile) != selected.is_some() {
+                return true;
+            }
+            if let Some(tsconfig) = info.tsconfig_json()
+                && selected != Some(bun_paths::basename(&tsconfig.own_abs_path))
+            {
+                return true;
+            }
+        }
+        if check_manifest
+            && let Some(package_json) = info.package_json()
+            && let Some(bytes) = file_bytes_without_bom(package_json.source.path.text)
+            && bytes[..] != package_json.source_contents[..]
         {
             return true;
         }
-        if check_package_json_bytes && let Some(package_json) = info.package_json() {
-            let on_disk = bun_sys::File::openat(
-                FD::cwd(),
-                package_json.source.path.text,
-                bun_sys::O::RDONLY,
-                0,
-            )
-            .and_then(|file| file.read_to_end());
-            return match on_disk {
-                Ok(bytes) => bytes[..] != package_json.source_contents[..],
-                Err(_) => false,
-            };
+        if check_tsconfig
+            && let Some(tsconfig) = info.tsconfig_json()
+            && let Some(bytes) = file_bytes_without_bom(&tsconfig.own_abs_path)
+            && bun_wyhash::hash(&bytes) != tsconfig.own_source_hash
+        {
+            return true;
         }
         false
+    }
+
+    /// bust both the named file and a parent directory, because `./hello` can resolve
+    /// to `./hello.js` or `./hello/index.js`
+    pub fn bust_dir_cache_from_specifier(
+        &mut self,
+        import_source_file: &[u8],
+        specifier: &[u8],
+    ) -> bool {
+        if bun_paths::is_absolute(specifier) {
+            return self.bust_dir_cache_and_parent(specifier);
+        }
+
+        if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
+            return false;
+        }
+        if !bun_paths::is_absolute(import_source_file) {
+            return false;
+        }
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(joined) = bun_paths::join_abs_string_buf_checked(
+            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
+            &mut buf[..],
+            &[specifier],
+            bun_paths::Platform::AUTO,
+        ) else {
+            // Too long to be a cache key (see `dir_info_cached_maybe_log`).
+            return false;
+        };
+        self.bust_dir_cache_and_parent(joined)
+    }
+
+    fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
+        // On Windows the dirname of `a\hello\` is `a\hello`, so strip first.
+        let path = strings::without_trailing_slash_windows_path(path);
+        let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
+
+        let a = self.bust_dir_cache(dir);
+        let b = self.bust_dir_cache(path);
+        a || b
     }
 
     pub(crate) fn load_node_modules(
@@ -4640,7 +4727,7 @@ impl<'a> Resolver<'a> {
                 let base = bun_paths::basename(path);
                 parent_info
                     .get_entries_ref_locked(self.generation)
-                    .is_none_or(|entries| entries.get(base).is_none())
+                    .is_some_and(|entries| entries.get(base).is_none())
             }
             allocators::ItemStatus::NotFound => self.not_found_still_holds_locked(parent_key),
             allocators::ItemStatus::Unknown => false,
@@ -6701,6 +6788,7 @@ impl<'a> Resolver<'a> {
                 if lookup.entry().kind(self.rfs_ref(), self.store_fd)
                     == Fs::file_system::EntryKind::File
                 {
+                    info.flags.insert(DirInfo::Flag::HasPackageJsonFile);
                     // A package in the global cache has a `package_id`, and keeps it even if its
                     // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()
@@ -6791,6 +6879,7 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
+                info.flags.insert(DirInfo::Flag::HasTsconfigFile);
                 let fd = if FeatureFlags::STORE_FILE_DESCRIPTORS {
                     fd
                 } else {
@@ -6908,6 +6997,8 @@ impl<'a> Resolver<'a> {
                 let parent_config = unsafe { &mut *parent_config_ptr };
                 // SAFETY: see loop-wide note above.
                 let mc = unsafe { &mut *merged_config };
+                mc.own_abs_path = core::mem::take(&mut parent_config.own_abs_path);
+                mc.own_source_hash = parent_config.own_source_hash;
                 mc.emit_decorator_metadata =
                     mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                 if let Some(v) = parent_config.use_define_for_class_fields {

@@ -2267,16 +2267,15 @@ impl StackCheck {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Stamp on a cached directory listing: a reader at a newer generation reads the directory again.
-pub type Generation = u32;
+pub type Generation = u64;
 
-static GENERATION_COUNTER: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static GENERATION_COUNTER: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// A generation newer than every one handed out before, on any thread. Never 0.
 pub fn next_generation() -> Generation {
-    GENERATION_COUNTER
-        .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-        .wrapping_add(1)
-        .max(1)
+    // Relaxed: only the uniqueness of the value matters. The stamp reaches
+    // other threads through `entries_mutex`.
+    GENERATION_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1
 }
 
 // ── Ordinal ───────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, promises as fs, mkdirSync, symlinkSync, writeFileSync } from "fs";
+import { existsSync, promises as fs, mkdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createRequire } from "module";
 import * as path from "path";
@@ -245,6 +245,70 @@ describe.concurrent("a file or package created after the resolver read its direc
     expect(req("#b")).toBe("b");
   });
 
+  test("an imports entry added to a package.json above the importer after a miss", async () => {
+    using dir = tempDir("runtime-cache-edited-ancestor-package-json", {
+      "package.json": `{ "name": "app", "imports": { "#a": "./a.js" } }`,
+      "a.js": `module.exports = "a";`,
+      "b.js": `module.exports = "b";`,
+      "src/lib/main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "src", "lib", "main.js"));
+
+    expect(req("#a")).toBe("a");
+    expect(() => req("#b")).toThrow("Cannot find module '#b'");
+    writeFileSync(path.join(root, "package.json"), `{ "name": "app", "imports": { "#a": "./a.js", "#b": "./b.js" } }`);
+    expect(req("#b")).toBe("b");
+  });
+
+  test("a paths entry added to the tsconfig.json next to the importer after a miss", async () => {
+    using dir = tempDir("runtime-cache-edited-tsconfig", {
+      "tsconfig.json": `{ "compilerOptions": { "paths": { "@a": ["./src/a.ts"] } } }`,
+      "src/a.ts": `export const a = 1;`,
+      "src/b.ts": `export const b = 2;`,
+      "main.ts": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.ts"));
+
+    expect(req("@a")).toEqual({ a: 1 });
+    expect(() => req("@b")).toThrow("Cannot find module '@b'");
+    writeFileSync(
+      path.join(root, "tsconfig.json"),
+      `{ "compilerOptions": { "paths": { "@a": ["./src/a.ts"], "@b": ["./src/b.ts"] } } }`,
+    );
+    expect(req("@b")).toEqual({ b: 2 });
+  });
+
+  test("a file where a directory of the import path was, replaced by the directory", async () => {
+    using dir = tempDir("runtime-cache-file-then-dir", {
+      "src/utils": "not a directory",
+      "src/main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "src", "main.js"));
+
+    expect(() => req("./utils/format")).toThrow("Cannot find module './utils/format'");
+    rmSync(path.join(root, "src", "utils"));
+    mkdirSync(path.join(root, "src", "utils"));
+    writeFileSync(path.join(root, "src", "utils", "format.js"), `module.exports = "format";`);
+    expect(req("./utils/format")).toBe("format");
+  });
+
+  test("a package.json with a main field added to a directory imported by path", async () => {
+    using dir = tempDir("runtime-cache-late-main-field", {
+      "lib/.keep": "",
+      "main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.js"));
+
+    expect(() => req("./lib")).toThrow("Cannot find module './lib'");
+    writeFileSync(path.join(root, "lib", "package.json"), `{ "main": "entry.js" }`);
+    writeFileSync(path.join(root, "lib", "entry.js"), `module.exports = "entry";`);
+    expect(req("./lib")).toBe("entry");
+  });
+
   test("a link in node_modules whose target is created after a miss", async () => {
     using dir = tempDir("runtime-cache-link-target-later", {
       "node_modules/.keep": "",
@@ -329,4 +393,24 @@ describe.concurrent("a file or package created after the resolver read its direc
       expect(message).toBe(`Cannot find module '@pk/nope.ts'\nRequire stack:\n- ${path.join(root, "main.ts")}`);
     }
   });
+});
+
+// A listing read again after a miss is kept at the next miss when the directory is unchanged, which
+// needs its ctime to be more than two seconds old. This test waits for that once.
+test("a kept listing still lets a link be stat'ed again", async () => {
+  using dir = tempDir("runtime-cache-kept-listing", {
+    "node_modules/.keep": "",
+    "main.js": "",
+  });
+  const root = String(dir);
+  const req = createRequire(path.join(root, "main.js"));
+  const target = path.join(root, "store", "linked");
+  symlinkSync(target, path.join(root, "node_modules", "linked"), isWindows ? "junction" : "dir");
+  await Bun.sleep(2200);
+
+  expect(() => req("linked")).toThrow("Cannot find module 'linked'");
+  expect(() => req("also-missing")).toThrow("Cannot find module 'also-missing'");
+  mkdirSync(target, { recursive: true });
+  writeFileSync(path.join(target, "index.js"), `module.exports = "linked";`);
+  expect(req("linked")).toBe("linked");
 });

@@ -338,6 +338,8 @@ pub mod dir_entry {
     pub struct Err {
         pub original_err: crate::Error,
         pub canonical_error: crate::Error,
+        /// A reader at a newer generation opens the directory again.
+        pub generation: bun_core::Generation,
     }
 }
 
@@ -354,8 +356,9 @@ impl DirEntryIterator for () {
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct ListingIdentity {
     ino: u64,
-    mtime_ns: i64,
-    /// The read was well after the last change: a later change cannot share its mtime on a coarse clock.
+    /// ctime, not mtime: a tool that restores a directory's mtime still moves its ctime.
+    ctime_ns: i64,
+    /// The read was well after the last change: a later change cannot share its ctime on a coarse clock.
     settled: bool,
 }
 
@@ -364,15 +367,15 @@ impl ListingIdentity {
 
     pub(crate) fn read(fd: Fd) -> Option<Self> {
         let stat = bun_sys::PosixStat::init(&bun_sys::fstat(fd).ok()?);
-        let mtime = stat.mtime();
-        let mtime_ns = mtime
+        let ctime = stat.ctime();
+        let ctime_ns = ctime
             .sec
             .saturating_mul(bun_core::time::NS_PER_S as i64)
-            .saturating_add(mtime.nsec);
-        let settled = bun_core::time::nano_timestamp() - mtime_ns as i128 > Self::SETTLED_AFTER_NS;
+            .saturating_add(ctime.nsec);
+        let settled = bun_core::time::nano_timestamp() - ctime_ns as i128 > Self::SETTLED_AFTER_NS;
         Some(Self {
             ino: stat.ino,
-            mtime_ns,
+            ctime_ns,
             settled,
         })
     }
@@ -381,7 +384,7 @@ impl ListingIdentity {
     pub(crate) fn still_current(&self, fd: Fd) -> bool {
         self.settled
             && Self::read(fd)
-                .is_some_and(|now| now.ino == self.ino && now.mtime_ns == self.mtime_ns)
+                .is_some_and(|now| now.ino == self.ino && now.ctime_ns == self.ctime_ns)
     }
 }
 
@@ -417,6 +420,8 @@ impl DirEntry {
             // SAFETY: EntryStore-owned pointer, valid for the life of the process.
             let entry = unsafe { &*entry };
             if entry.is_link.load(Ordering::Relaxed) {
+                // Under the entry's mutex: a `kind()` in flight must not clear this after its stat.
+                let _guard = entry.mutex.lock_guard();
                 entry.need_stat.store(true, Ordering::Release);
             }
         }

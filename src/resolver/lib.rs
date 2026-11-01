@@ -1039,6 +1039,7 @@ pub mod fs {
             &mut self,
             dir: &[u8],
             err: crate::Error,
+            generation: Generation,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -1047,6 +1048,7 @@ pub mod fs {
                     dir_entry::Err {
                         original_err: err,
                         canonical_error: err,
+                        generation,
                     },
                 )));
             }
@@ -1055,6 +1057,7 @@ pub mod fs {
                 EntriesOption::Err(dir_entry::Err {
                     original_err: err,
                     canonical_error: err,
+                    generation,
                 }),
             )?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
@@ -1108,6 +1111,8 @@ pub mod fs {
                         EntriesOption::Entries(e) if e.generation < generation => {
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
+                        // A directory that could not be opened (ENOTDIR, EACCES) is opened again.
+                        EntriesOption::Err(e) if e.generation < generation => {}
                         cached => return Ok(cached),
                     }
                 } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
@@ -1116,6 +1121,7 @@ pub mod fs {
                         dir_entry::Err {
                             original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                             canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                            generation,
                         },
                     )));
                 }
@@ -1126,7 +1132,7 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => return self.read_directory_error(dir, err, generation),
                 },
             };
 
@@ -1142,6 +1148,10 @@ pub mod fs {
             if let Some(existing) = in_place {
                 // SAFETY: BSSMap-owned `DirEntry`; `entries_mutex` held.
                 if unsafe { &mut *existing }.keep_if_current(handle, generation) {
+                    // Nothing stores the handle on this path.
+                    if !had_handle && !should_close_handle {
+                        let _ = bun_sys::close(handle);
+                    }
                     let slot = std::ptr::from_mut::<EntriesOption>(
                         self.entries
                             .at_index(cache_result.index)
@@ -1181,7 +1191,7 @@ pub mod fs {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };
                     }
-                    return self.read_directory_error(dir, err);
+                    return self.read_directory_error(dir, err, generation);
                 }
             };
 
@@ -1502,7 +1512,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
+                            return self.read_directory_error(dir, err.into(), generation).ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
@@ -1525,7 +1535,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
+                            return self.read_directory_error(dir, err, generation).ok();
                         }
                     }
                 }

@@ -26,7 +26,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isBuildKite, isLinux, isWindows, tempDir } from "harness";
 import { createHash, type webcrypto } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -971,5 +971,32 @@ describe.concurrent("sampling profiler report at exit", () => {
   it("is written on process.exit() when BUN_JSC_samplingProfilerPath is a missing directory", async () => {
     const env = { BUN_JSC_useSamplingProfiler: "1", BUN_JSC_samplingProfilerPath: "missing/profiles" };
     expect(await run(`${work} process.exit(0);`, env)).toEqual(expected);
+  });
+});
+
+// DO NOT MERGE as it is: the first expectation is there to learn whether CI's Linux x64 machines have protection keys.
+it.skipIf(!isLinux || process.arch !== "x64")("the JIT region has a memory protection key", async () => {
+  const cpuFlags = readFileSync("/proc/cpuinfo", "utf8")
+    .match(/^flags\s*:(.*)$/m)![1]
+    .split(" ");
+  expect(cpuFlags).toContain("ospke");
+
+  const script = `
+    function hot(x) { return x * 2 + 1; }
+    for (let i = 0; i < 1e6; i++) hot(i);
+    const mappings = require("fs").readFileSync("/proc/self/smaps", "utf8").split(/\\n(?=[0-9a-f]+-[0-9a-f]+ )/);
+    const jit = mappings.filter(mapping => / rwxp /.test(mapping.split("\\n")[0]));
+    console.log(JSON.stringify(jit.map(mapping => Number(mapping.match(/ProtectionKey:\\s+(\\d+)/)[1]) !== 0)));
+  `;
+  async function jitRegionsHaveKey(env: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+  expect(await jitRegionsHaveKey(bunEnv)).toEqual({ stdout: "[true]", stderr: "", exitCode: 0 });
+  expect(await jitRegionsHaveKey({ ...bunEnv, BUN_JSC_useJITProtectionKey: "0" })).toEqual({
+    stdout: "[false]",
+    stderr: "",
+    exitCode: 0,
   });
 });

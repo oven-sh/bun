@@ -687,6 +687,14 @@ public:
     bool hasOverriddenModuleResolveFilenameFunction = false;
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
     bool hasOverriddenModuleWrapper = false;
+    // The text that each running hook of a module's `_compile` was given, innermost first. The module's own source map is for that text.
+    struct TextGivenToCompileHook {
+        JSC::JSCell* module;
+        const WTF::String& text;
+        const WTF::String& key;
+        TextGivenToCompileHook* outer;
+    };
+    TextGivenToCompileHook* m_textGivenToCompileHook = nullptr;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 

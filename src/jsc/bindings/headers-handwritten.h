@@ -435,6 +435,7 @@ typedef struct BunSourceMapsSupport {
 extern "C" BunSourceMapsSupport Bun__VM__sourceMapsSupport(void* bunVM);
 extern "C" void Bun__VM__setSourceMapsSupport(void* bunVM, BunSourceMapsSupport);
 extern "C" bool Bun__VM__sourceMapsApplyTo(void* bunVM, const BunString* key);
+extern "C" void Bun__VM__forgetOwnSourceMap(void* bunVM, const BunString* key);
 
 // Used in process.version
 extern "C" const char* Bun__version;

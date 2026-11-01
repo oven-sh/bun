@@ -663,6 +663,22 @@ impl SavedSourceMap {
         }
     }
 
+    /// Takes the own source map away from the module at `path`: what runs there is not the text that the map is for.
+    pub fn forget_own_source_map(&mut self, path: &[u8]) {
+        self.lock();
+        if let Some(slot) = self.map.get_mut(&hash(path)) {
+            let value = Value::from(Some(*slot));
+            if let Some(chained) = value.get::<ChainedSourceMap>() {
+                // SAFETY: `put_mappings` stored it with `Arc::into_raw`, and it is live while locked.
+                let loaded = Arc::clone(unsafe { &(*chained).loaded });
+                *slot = Value::init(Arc::into_raw(loaded)).ptr();
+                // SAFETY: the slot has another value now, so the table's ownership of the record ends here.
+                unsafe { Self::release_value(value) };
+            }
+        }
+        self.unlock();
+    }
+
     /// The own source map that shows a source as `name`. A printed error asks for a top frame that a read of `.stack` or a collection renamed: such a frame no longer says which module it is from.
     pub(crate) fn shown_source(&mut self, name: &[u8]) -> ShownSource {
         let mut claimants: Vec<(Arc<ChainedSourceMap>, i32)> = Vec::new();

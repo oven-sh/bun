@@ -4583,6 +4583,16 @@ impl VirtualMachine {
         support.enabled && (support.node_modules || support.applies_to(key.to_utf8().slice()))
     }
 
+    /// A hook gave `Module.prototype._compile` another text for the module `key` than the loader gave the hook.
+    #[unsafe(export_name = "Bun__VM__forgetOwnSourceMap")]
+    pub(crate) extern "C" fn forget_own_source_map(
+        this: &mut VirtualMachine,
+        key: &bun_core::String,
+    ) {
+        this.source_mappings
+            .forget_own_source_map(key.to_utf8().slice());
+    }
+
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
     pub fn allow_ffi_cc(&self) -> bool {
         let opts = &self.transpiler.options.transform_options;

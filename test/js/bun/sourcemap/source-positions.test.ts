@@ -1630,6 +1630,61 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
+  // A handler of `require.extensions` can give `Module.prototype._compile` another text than the loader gave it.
+  // The own source map of a module is for the file on the disk, so it is applied to that text only.
+  test("a require.extensions handler keeps the source map of a module for the text of the file only", async () => {
+    const names = ["pass-through", "printed-again", "read-by-the-handler"];
+    using dir = tempDir("own-source-map-extension-handler", {
+      ...Object.assign({}, ...names.map(name => withMap(`${name}.js`))),
+      "main.cjs": `
+        ${firstFrame}
+        const Module = require("node:module");
+        const fs = require("node:fs");
+        const original = Module._extensions[".js"];
+        Module._extensions[".js"] = function (module, filename) {
+          if (filename.endsWith("read-by-the-handler.js")) {
+            return module._compile(fs.readFileSync(filename, "utf8"), filename);
+          }
+          const compile = module._compile;
+          module._compile = function (code, filename) {
+            module._compile = compile;
+            return module._compile(filename.endsWith("printed-again.js") ? "\\n\\n" + code : code, filename);
+          };
+          return original.call(this, module, filename);
+        };
+        const out = {};
+        for (const name of ${JSON.stringify(names)}) out[name] = firstFrame(require("./" + name + ".js").boom);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["main.cjs"]),
+    ]);
+    expect([printed(withTheFlag), printed(without)]).toMatchInlineSnapshot(`
+      [
+        {
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": {
+            "pass-through": "at boom (<dir>/pass-through.ts:4:13)",
+            "printed-again": "at boom (<dir>/printed-again.js:8:14)",
+            "read-by-the-handler": "at boom (<dir>/read-by-the-handler.js:6:20)",
+          },
+        },
+        {
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": {
+            "pass-through": "at boom (<dir>/pass-through.js:6:15)",
+            "printed-again": "at boom (<dir>/printed-again.js:8:14)",
+            "read-by-the-handler": "at boom (<dir>/read-by-the-handler.js:6:20)",
+          },
+        },
+      ]
+    `);
+  });
+
   // `%00` in a URL is a NUL in the path that the URL names.
   test("a NUL in the URL of the comment or in a source names no file", async () => {
     using dir = tempDir("own-source-map-nul", {

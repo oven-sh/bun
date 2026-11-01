@@ -374,7 +374,7 @@ private:
     void reportFailure(const Failure&);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
 
-    // handlers[name].call(owner, ...arguments). Anything it throws is reported as an uncaught exception.
+    // handlers[name].call(owner, ...arguments). An error it throws is reported as an uncaught exception.
     // Returns the handler's return value, or an empty JSValue if it threw or wasn't called.
     JSC::JSValue callHandler(const JSC::Identifier& name, const JSC::ArgList&);
     void callHandlerWithBuffer(const JSC::Identifier& name, std::span<const uint8_t>, JSC::JSValue secondArgument = {});

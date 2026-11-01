@@ -243,6 +243,18 @@ impl Lazy {
             }
         }
 
+        // Off Linux a pipe reader that wakes after another registration took the bytes blocks in `read`.
+        #[cfg(unix)]
+        let two_can_poll = cfg!(any(target_os = "linux", target_os = "android"))
+            || this.file_type == FileType::Socket;
+        // An event loop keeps one registration per fd number, so a reader that polls a stdio fd takes a dup.
+        #[cfg(unix)]
+        let fd = if two_can_poll && this.pollable && fd.stdio_tag().is_some() {
+            sys::dup_at_least(fd, 3).unwrap_or(fd)
+        } else {
+            fd
+        };
+
         this.fd = fd;
 
         Ok(this)

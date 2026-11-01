@@ -144,29 +144,41 @@ export function expectSameText(text: string, expected: string, what: string) {
 
 export type Decoders = Record<string, (input: Buffer) => string>;
 
+// simdutf counts no UTF-16 unit for a continuation byte with no lead.
+const countsNoUnit = illFormed.filter(bad => bad.bytes.every(byte => (byte & 0xc0) === 0x80));
+
 // Each ill-formed sequence at each offset of the 64-byte blocks that simdutf
 // reads, in text of `character`. Returns how many inputs it checked.
 export function checkEachBlockOffset(character: string, decoders: Decoders) {
   const width = Buffer.byteLength(character);
-  const after = Math.ceil(600 / width);
-  let checked = 0;
-  for (const bad of illFormed) {
+  const shapes = [
     // 70 bytes of text in front reach each offset of a block.
-    for (let before = 0; before * width < 70; before++) {
-      const input = Buffer.concat([
-        Buffer.alloc(before * width, character),
-        bad.bytes,
-        Buffer.alloc(after * width, character),
-      ]);
-      const expected = repeat(character, before) + bad.text + repeat(character, after);
-      for (const [name, decode] of Object.entries(decoders)) {
-        expectSameText(
-          decode(input),
-          expected,
-          `${name}, [${[...bad.bytes].map(b => b.toString(16))}] after ${before} of ${character}`,
-        );
+    { sequences: illFormed, front: 70, after: Math.ceil(600 / width) },
+    // The buffer that simdutf writes to has room for the units that it counts
+    // for the input. With one of these sequences at the end it counts only the
+    // text in front, so ASAN reports a unit that it writes past that text.
+    // Text of up to 288 bytes puts the end at each offset of a block, with
+    // and without blocks in front that a kernel converts with vectors.
+    { sequences: countsNoUnit, front: 288, after: 0 },
+  ];
+  let checked = 0;
+  for (const { sequences, front, after } of shapes) {
+    const bytesAfter = Buffer.alloc(after * width, character);
+    const textAfter = repeat(character, after);
+    for (let before = 0; before * width < front; before++) {
+      const bytesBefore = Buffer.alloc(before * width, character);
+      const textBefore = repeat(character, before);
+      for (const bad of sequences) {
+        const input = Buffer.concat([bytesBefore, bad.bytes, bytesAfter]);
+        const expected = textBefore + bad.text + textAfter;
+        for (const [name, decode] of Object.entries(decoders)) {
+          const text = decode(input);
+          if (text === expected) continue;
+          const bytes = [...bad.bytes].map(byte => byte.toString(16));
+          expectSameText(text, expected, `${name}, [${bytes}] after ${before} and before ${after} of ${character}`);
+        }
+        checked++;
       }
-      checked++;
     }
   }
   return checked;

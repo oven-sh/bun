@@ -105,8 +105,8 @@ describe("bun.strings.toUTF16Alloc with ill-formed sequences", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // 19 sequences at 147 offsets, and 80 random inputs.
-    expect(stdout.trim() || stderr).toBe(JSON.stringify({ checked: 19 * 147 + 80 }));
+    // 19 sequences at 147 offsets, 2 of them at 600 offsets at the end of the input, and 80 random inputs.
+    expect(stdout.trim() || stderr).toBe(JSON.stringify({ checked: 19 * 147 + 2 * 600 + 80 }));
     expect(exitCode).toBe(0);
   });
 

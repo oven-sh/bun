@@ -52,6 +52,13 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(b, a)).toBe(false);
   });
 
+  // Jest's toEqual() rejects this pair too: its iterableEquality compares the constructors of two iterables.
+  it("a boxed string and a String subclass instance with the same text are not equal", () => {
+    class S extends String {}
+    expect(deepEquals(new String("abc"), new S("abc"))).toBe(false);
+    expect(deepEquals(new S("abc"), new String("abc"))).toBe(false);
+  });
+
   // we may change this in the future
   it("functions that are not reference-equal are never equal", () => {
     function foo() {}

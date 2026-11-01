@@ -45,7 +45,7 @@ pub fn loader_by_name(path: &[u8]) -> Loader {
 /// `bun run` goes by Vite's suffixes unless a `type` attribute says otherwise: `raw` among the parameters is the text of the file, `url` its path.
 pub fn loader_by_query(query: &[u8]) -> Option<Loader> {
     let parameters = query.strip_prefix(b"?")?;
-    let has = |name: &[u8]| parameters.split(|&byte| byte == b'&').any(|it| it == name);
+    let has = |name: &[u8]| bun_core::strings::split(parameters, b"&").any(|it| it == name);
     let is_worker = has(b"worker") || has(b"sharedworker");
     match (is_worker, has(b"raw"), has(b"url")) {
         (true, _, true) | (false, false, true) => Some(Loader::File),

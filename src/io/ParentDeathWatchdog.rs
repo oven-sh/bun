@@ -79,6 +79,12 @@ pub fn ppid_to_watch() -> Option<libc::pid_t> {
     Some(ppid)
 }
 
+/// Whether the parent to watch is gone. For a wait without an event loop, where nothing else looks on macOS.
+#[cfg(target_os = "macos")]
+pub fn parent_is_gone() -> bool {
+    ppid_to_watch().is_some_and(|ppid| getppid() != ppid)
+}
+
 /// `bun run`/`bunx` set this to the script's pgid (= script pid, since we
 /// `setpgid(0,0)` in the child) so the exit callback can `kill(-pgid, KILL)`.
 /// Process-group membership survives reparenting to launchd/init, so this

@@ -25,6 +25,7 @@ use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_watcher::restart_on_change;
 use bun_which::which;
 
 use crate::cli;
@@ -2883,19 +2884,28 @@ impl RunCommand {
                     <&'static str>::from(loader),
                 );
             } else {
-                let default_loader = Self::default_loader_for(target_name);
-                if default_loader
-                    .map(Loader::is_javascript_like_or_json)
-                    .unwrap_or(false)
-                    || (!target_name.is_empty()
-                        && (target_name[0] == b'.'
-                            || target_name[0] == b'/'
-                            || paths::is_absolute(target_name)))
-                {
+                if Self::names_a_module(target_name) {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
+                    if ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                        // Ctrl+C ends the wait as it ends a watch session: exit 0, also where SIGINT was inherited as ignored.
+                        #[cfg(unix)]
+                        bun_jsc::posix_signal_handle::enable_watch_mode_signals(
+                            ctx.debug.watch_kill_signal,
+                        );
+                        let clear_terminal =
+                            !this_transpiler.env().has_set_no_clear_terminal_on_reload(
+                                !Output::enable_ansi_colors_stdout(),
+                            );
+                        Self::wait_for_entry_file(
+                            &mut this_transpiler.resolver,
+                            fs_top_level_dir,
+                            target_name,
+                            clear_terminal,
+                        );
+                    }
                 } else if !paths::extension(target_name).is_empty() {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>File not found \"<b>{}<r>\"",
@@ -2915,6 +2925,78 @@ impl RunCommand {
         }
 
         Ok(false)
+    }
+
+    /// Under --watch, restarts the process when a file that `target` can resolve to changes. Returns when no save can end that wait.
+    fn wait_for_entry_file(
+        resolver: &mut bun_resolver::Resolver<'_>,
+        top_level_dir: &[u8],
+        target: &[u8],
+        clear_terminal: bool,
+    ) {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // With the start directory gone, `top_level_dir` is a fallback where the entry never was.
+        if !paths::is_absolute(target) && bun_core::getcwd(&mut buf).is_err() {
+            return;
+        }
+        let Some(path) = paths::resolve_path::join_abs_string_buf_checked::<
+            paths::resolve_path::platform::Auto,
+        >(top_level_dir, &mut buf[..], &[target]) else {
+            return;
+        };
+        let Some(dir) = paths::dirname(path) else {
+            return;
+        };
+        let mut files: Vec<Box<[u8]>> = Vec::new();
+        resolver
+            .for_each_entry_file_candidate(path, |file| files.push(paths::basename(file).into()));
+        // If the target is a directory, the resolver goes on from one of these files in it.
+        let mut in_directory: Vec<Box<[u8]>> = vec![Box::from(&b"package.json"[..])];
+        resolver.for_each_entry_file_candidate(b"index", |file| {
+            if file != b"index" {
+                in_directory.push(file.into());
+            }
+        });
+        let candidates = restart_on_change::Candidates::new(vec![
+            (dir.into(), files),
+            (path.into(), in_directory),
+        ]);
+        // `Err`: the resolver cannot list that directory either, so no save ends a wait there.
+        let Ok(before) = candidates.look() else {
+            return;
+        };
+        // Index 1 is the target as a directory. With a package.json it runs through its `main`, which can name any file.
+        if before.iter().any(|file| file.is(1, b"package.json")) {
+            return;
+        }
+        // The failed start looked before `before` was taken. This finds a file that came back in between.
+        resolver.bust_dir_cache(dir);
+        resolver.bust_dir_cache(path);
+        let with_dot = [b"./".as_slice(), target].concat();
+        let resolves_now = [target, &with_dot[..]].into_iter().any(|name| {
+            resolver
+                .resolve(top_level_dir, name, bun_ast::ImportKind::EntryPointRun)
+                .is_ok()
+        });
+        if resolves_now {
+            restart_on_change::restart(clear_terminal);
+        }
+        restart_on_change::restart_when(path, clear_terminal, || {
+            #[cfg(target_os = "macos")]
+            if bun_io::ParentDeathWatchdog::parent_is_gone() {
+                Global::exit(bun_io::ParentDeathWatchdog::EXIT_CODE as u32);
+            }
+            candidates.changed_since(&before)
+        });
+    }
+
+    /// Whether a target that was not found names a module (a path, a JS-like extension), not a script.
+    fn names_a_module(target: &[u8]) -> bool {
+        Self::default_loader_for(target)
+            .map(Loader::is_javascript_like_or_json)
+            .unwrap_or(false)
+            || (!target.is_empty()
+                && (target[0] == b'.' || target[0] == b'/' || paths::is_absolute(target)))
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,

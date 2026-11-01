@@ -7,8 +7,8 @@ use super::hist;
 use super::huf::HufRepeat;
 use super::internal::{
     BlockSrc, Common, Descent, DictMatchState, DictMode, DictTree, EntropyCTables, First, Hasher,
-    Hints, Match, MatchState, Near, Nodes, OptState, ParamSwitch, Prefix, PriceTable, RawSeq,
-    RawSeqStore, SeqStore, Strategy, TreeInput, ZSTD_OPT_NUM, bt_look_ahead, bt_nodes,
+    Hints, Match, MatchState, Near, Nodes, Older, OptState, ParamSwitch, Prefix, PriceTable,
+    RawSeq, RawSeqStore, SeqStore, Strategy, TreeInput, ZSTD_OPT_NUM, bt_look_ahead, bt_nodes,
     bt_set_children, bt_walk, hash3_of, index_overlap_check, ll_code, ml_code, new_rep,
     offset_to_offbase, table_get, table_put,
 };
@@ -588,13 +588,14 @@ impl<'a> Trees<'a> {
 
     /// Adds the position `ip` of `near`, which starts with `bytes`, to its tree. `visit` is called with each position
     /// that is met on the way, which are all at least `low`, and what it has in common with `ip`, and returns whether
-    /// to go on. Returns how many more positions could have been compared. `FIRST` and `HINTS` are those of [`bt_walk`].
+    /// to go on. Returns how many more positions could have been compared. The rest is for [`bt_walk`].
     #[inline(always)]
     fn walk<const FIRST: First, const HINTS: Hints>(
         &mut self,
         ip: u32,
         bytes: u64,
         low: u32,
+        older: Older,
         visit: impl FnMut(u32, Common) -> Result<bool>,
     ) -> Result<u32> {
         let curr = ip.wrapping_add(self.input.dict_limit);
@@ -620,6 +621,7 @@ impl<'a> Trees<'a> {
             low,
             self.nb_compares,
             descent,
+            older,
             visit,
         )
     }
@@ -627,7 +629,11 @@ impl<'a> Trees<'a> {
     /// `ZSTD_insertBt1`: adds `curr`, which is at least 8 bytes before the end, to its tree. `target` is up to where
     /// the caller is filling them. Returns how many positions to move forward.
     #[inline(always)]
-    fn insert_bt1<const HINTS: Hints>(&mut self, curr: u32, target: u32) -> Result<u32> {
+    fn insert_bt1<const HINTS: Hints, const OLDER: Older>(
+        &mut self,
+        curr: u32,
+        target: u32,
+    ) -> Result<u32> {
         let ip = curr.wrapping_sub(self.input.dict_limit);
         let bytes = self.input.near.read64(ip).ok_or(BUG)?;
         // Only the positions that are still in the window once the trees are filled are of use.
@@ -635,7 +641,7 @@ impl<'a> Trees<'a> {
         let mut match_end_idx = curr.wrapping_add(8 + 1);
         let mut best_length = 8u32;
 
-        self.walk::<{ First::Words }, HINTS>(ip, bytes, window_low, |match_index, common| {
+        let visit = |match_index: u32, common: Common| -> Result<bool> {
             if common.len > best_length {
                 cold_path();
                 best_length = common.len;
@@ -645,7 +651,8 @@ impl<'a> Trees<'a> {
             }
             // If they are equal, there is no telling which is smaller. Dropping it keeps the tree consistent.
             Ok(common.match_is_smaller.is_some())
-        })?;
+        };
+        self.walk::<{ First::Words }, HINTS>(ip, bytes, window_low, OLDER, visit)?;
 
         let positions = if best_length > 384 {
             192.min(best_length - 384)
@@ -655,16 +662,17 @@ impl<'a> Trees<'a> {
         Ok(positions.max(match_end_idx.wrapping_sub(curr.wrapping_add(8))))
     }
 
-    /// `ZSTD_updateTree_internal`: adds the positions from `next_to_update` up to `target` to the trees.
+    /// `ZSTD_updateTree_internal`: adds the positions from `next_to_update` up to `target` to the trees. `OLDER` is not
+    /// for a long run in a long current segment, where HTML takes 1 to 2% longer with anything but a call.
     #[inline(always)]
-    fn update_tree(&mut self, target: u32) -> Result<()> {
+    fn update_tree<const OLDER: Older>(&mut self, target: u32) -> Result<()> {
         if target.saturating_sub(self.next_to_update) < LONG_RUN || !self.input.far {
-            self.update_tree_in_part::<{ Hints::All }>(target, target)?;
+            self.update_tree_in_part::<{ Hints::All }, OLDER>(target, target)?;
         // A match skipped them: they go down past its positions, which follow each other too and so are mostly at hand.
         } else if self.nb_compares > SHORT_WAY_DOWN {
-            self.update_tree_in_part::<{ Hints::Bytes }>(target, target)?;
+            self.update_tree_in_part::<{ Hints::Bytes }, { Older::Called }>(target, target)?;
         } else {
-            self.update_tree_in_part::<{ Hints::None }>(target, target)?;
+            self.update_tree_in_part::<{ Hints::None }, { Older::Called }>(target, target)?;
         }
         self.next_to_update = target;
         Ok(())
@@ -672,10 +680,14 @@ impl<'a> Trees<'a> {
 
     /// The part of [`Self::update_tree`] that gets to `up_to`, or somewhat beyond.
     #[inline(never)]
-    fn update_tree_in_part<const HINTS: Hints>(&mut self, up_to: u32, target: u32) -> Result<()> {
+    fn update_tree_in_part<const HINTS: Hints, const OLDER: Older>(
+        &mut self,
+        up_to: u32,
+        target: u32,
+    ) -> Result<()> {
         let mut idx = self.next_to_update;
         while idx < up_to {
-            idx = idx.wrapping_add(self.insert_bt1::<HINTS>(idx, target)?);
+            idx = idx.wrapping_add(self.insert_bt1::<HINTS, OLDER>(idx, target)?);
         }
         self.next_to_update = idx;
         Ok(())
@@ -769,6 +781,89 @@ impl<'a> Trees<'a> {
         rep: &[u32; ZSTD_REP_NUM],
         ll0: bool,
     ) -> Result<u32> {
+        self.get_all_matches_generic(matches, ip, rep, ll0, Before::Nothing)
+    }
+
+    /// [`Self::get_all_matches`] where a dictionary is searched in place.
+    #[inline(never)]
+    fn get_all_matches_in_place(
+        &mut self,
+        matches: &mut [Match],
+        ip: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+        ll0: bool,
+    ) -> Result<u32> {
+        self.get_all_matches_generic(matches, ip, rep, ll0, Before::Dictionary)
+    }
+
+    /// [`Self::get_all_matches`] where the window has an older segment.
+    #[inline(never)]
+    fn get_all_matches_older(
+        &mut self,
+        matches: &mut [Match],
+        ip: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+        ll0: bool,
+    ) -> Result<u32> {
+        self.get_all_matches_generic(matches, ip, rep, ll0, Before::OlderSegment)
+    }
+
+    /// The one of these three for what there is before the current segment.
+    #[inline(always)]
+    fn get_all_matches_after(
+        &mut self,
+        before: Before,
+        matches: &mut [Match],
+        ip: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+        ll0: bool,
+    ) -> Result<u32> {
+        match before {
+            Before::Nothing => self.get_all_matches(matches, ip, rep, ll0),
+            Before::OlderSegment => self.get_all_matches_older(matches, ip, rep, ll0),
+            Before::Dictionary => self.get_all_matches_in_place(matches, ip, rep, ll0),
+        }
+    }
+
+    /// Whether `ip`, which starts with `bytes`, starts like what is at `rep_offset`, before the current segment too.
+    /// `None` is a bug.
+    #[inline(always)]
+    fn starts_like_rep(
+        &self,
+        before: Before,
+        ip: u32,
+        bytes: u32,
+        rep_offset: u32,
+        most_in_prefix: u32,
+        window_low: u32,
+    ) -> Option<bool> {
+        if rep_offset.wrapping_sub(1) < most_in_prefix {
+            let rep_bytes = self.input.near.read32(ip.wrapping_sub(rep_offset))?;
+            Some(minmatch_differs(rep_bytes, bytes, self.min_match) == 0)
+        } else if rep_offset.wrapping_sub(1) >= ip {
+            let far = match before {
+                Before::Dictionary => self.far_rep(self.dms, ip, rep_offset, window_low),
+                Before::Nothing | Before::OlderSegment => {
+                    debug_assert!(self.dms.is_none());
+                    self.far_rep(None, ip, rep_offset, window_low)
+                }
+            };
+            Some(far.ok()?.is_some())
+        } else {
+            Some(false)
+        }
+    }
+
+    /// [`Self::get_all_matches`], of which there is a copy for each `before`.
+    #[inline(always)]
+    fn get_all_matches_generic(
+        &mut self,
+        matches: &mut [Match],
+        ip: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+        ll0: bool,
+        before: Before,
+    ) -> Result<u32> {
         let near = self.input.near;
         let dict_limit = self.input.dict_limit;
         let curr = ip.wrapping_add(dict_limit);
@@ -777,7 +872,13 @@ impl<'a> Trees<'a> {
             return Ok(0);
         }
         if self.next_to_update < curr {
-            self.update_tree(curr)?;
+            match before {
+                // Periodic data takes 1 to 2% longer with `TriedFirst`.
+                Before::OlderSegment => self.update_tree::<{ Older::TriedLast }>(curr)?,
+                Before::Nothing | Before::Dictionary => {
+                    self.update_tree::<{ Older::Called }>(curr)?;
+                }
+            }
         }
 
         let min_match = self.min_match;
@@ -802,15 +903,26 @@ impl<'a> Trees<'a> {
         };
         // With a dictionary, the range of valid offsets shrinks when the dictionary gets out of reach.
         let most_in_prefix = ip.min(curr.wrapping_sub(window_low));
-        let candidates = rep_offsets.map(|rep_offset| {
-            // The subtraction wraps around to discard 0 and -1: `curr > rep_index >= dict_limit`.
-            if rep_offset.wrapping_sub(1) < most_in_prefix {
-                let rep_bytes = near.read32(ip.wrapping_sub(rep_offset))?;
-                Some(minmatch_differs(rep_bytes, bytes as u32, min_match) == 0)
-            } else {
-                Some(rep_offset.wrapping_sub(1) >= ip)
+        let [a, b, c] = rep_offsets;
+        let candidates = match before {
+            Before::OlderSegment | Before::Dictionary => [
+                self.starts_like_rep(before, ip, bytes as u32, a, most_in_prefix, window_low),
+                self.starts_like_rep(before, ip, bytes as u32, b, most_in_prefix, window_low),
+                self.starts_like_rep(before, ip, bytes as u32, c, most_in_prefix, window_low),
+            ],
+            // With the other case in this closure, it is not inlined: all data takes 10 to 18% longer.
+            Before::Nothing => {
+                rep_offsets.map(|rep_offset| {
+                    // The subtraction wraps around to discard 0 and -1: `curr > rep_index >= dict_limit`.
+                    if rep_offset.wrapping_sub(1) < most_in_prefix {
+                        let rep_bytes = near.read32(ip.wrapping_sub(rep_offset))?;
+                        Some(minmatch_differs(rep_bytes, bytes as u32, min_match) == 0)
+                    } else {
+                        Some(rep_offset.wrapping_sub(1) >= ip)
+                    }
+                })
             }
-        });
+        };
         if candidates != [Some(false); 3] {
             for ((off, rep_offset), is_candidate) in (1..).zip(rep_offsets).zip(candidates) {
                 if !is_candidate.ok_or(BUG)? {
@@ -867,7 +979,11 @@ impl<'a> Trees<'a> {
         }
 
         let mut found = Found::new(mnum, best_length, curr);
-        let nb_compares = self.tree_matches(matches, ip, bytes, match_low, &mut found)?;
+        let older = match before {
+            Before::OlderSegment => Older::TriedFirst,
+            Before::Nothing | Before::Dictionary => Older::Called,
+        };
+        let nb_compares = self.tree_matches(matches, ip, bytes, match_low, &mut found, older)?;
         if dict_root != 0 && nb_compares != 0 {
             // A copy, for the one that the loop above works on to need no place in memory.
             let mut with_dict = found;
@@ -898,6 +1014,7 @@ impl<'a> Trees<'a> {
         bytes: u64,
         match_low: u32,
         found: &mut Found,
+        older: Older,
     ) -> Result<u32> {
         let curr = ip.wrapping_add(self.input.dict_limit);
         let mut is_over = false;
@@ -923,7 +1040,8 @@ impl<'a> Trees<'a> {
             }
             Ok(true)
         };
-        let left = self.walk::<{ First::Apart }, { Hints::All }>(ip, bytes, match_low, visit)?;
+        let left =
+            self.walk::<{ First::Apart }, { Hints::All }>(ip, bytes, match_low, older, visit)?;
         Ok(if is_over { 0 } else { left })
     }
 
@@ -1120,7 +1238,10 @@ impl<'a> Trees<'a> {
             }
 
             let mut found = Found::new(0, min_match - 1, curr);
-            let nb_compares = self.tree_matches(matches, ip, bytes, match_low, &mut found)?;
+            // Noise takes 2 to 4% longer with anything but a call.
+            let older = Older::Called;
+            let nb_compares =
+                self.tree_matches(matches, ip, bytes, match_low, &mut found, older)?;
             if dict_root != 0 && nb_compares != 0 {
                 // A copy, so that `found` need not be in memory: 1 to 2% where there are no matches.
                 let mut with_dict = found;
@@ -1233,7 +1354,7 @@ pub(crate) fn update_tree(
         ms.check_cancelled()?;
         let up_to = ms.next_to_update.saturating_add(1 << 12).min(target);
         let mut trees = Trees::new(ms, prefix, no_dict, None, iend, mls)?;
-        trees.update_tree_in_part::<{ Hints::All }>(up_to, target)?;
+        trees.update_tree_in_part::<{ Hints::All }, { Older::Called }>(up_to, target)?;
         ms.next_to_update = trees.next_to_update;
     }
     ms.next_to_update = target;
@@ -1467,7 +1588,7 @@ fn try_lengths(
     }
 }
 
-/// `ZSTD_compressBlock_opt_generic`. `before` is what `dict_mode` says, as a constant.
+/// `ZSTD_compressBlock_opt_generic`. `before` is a constant: what [`compress_block_opt`] finds before the input.
 #[inline(always)]
 fn compress_block_opt_generic(
     ms: &mut MatchState,
@@ -1586,7 +1707,8 @@ fn parse_block(
                 let litlen = (ip - anchor) as u32;
                 if nb_matches == 0 {
                     let pos = (ip - prefix_start) as u32;
-                    nb_matches = trees.get_all_matches(matches, pos, rep, litlen == 0)?;
+                    nb_matches =
+                        trees.get_all_matches_after(before, matches, pos, rep, litlen == 0)?;
                 }
                 opt_ldm.process_match_candidate(
                     matches,
@@ -1727,12 +1849,9 @@ fn parse_block(
                 }
 
                 {
-                    let mut nb_matches = trees.get_all_matches(
-                        matches,
-                        (inr - prefix_start) as u32,
-                        opt_rep.get(at).ok_or(BUG)?,
-                        ll0,
-                    )?;
+                    let (pos, rep) = ((inr - prefix_start) as u32, opt_rep.get(at).ok_or(BUG)?);
+                    let mut nb_matches =
+                        trees.get_all_matches_after(before, matches, pos, rep, ll0)?;
                     opt_ldm.process_match_candidate(
                         matches,
                         &mut nb_matches,
@@ -1886,8 +2005,8 @@ fn compress_block_opt0(
     compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode, Before::Nothing)
 }
 
-/// [`compress_block_opt0`] with [`Trees::skip_matchless_in_place`]. A copy: one parser that chooses takes 0.4 to 1.4%
-/// longer on most data without a dictionary.
+/// [`compress_block_opt0`] with what [`Trees`] has for a dictionary in place. A copy: one parser that chooses takes 0.4
+/// to 1.4% longer on most data without a dictionary.
 #[inline(never)]
 fn compress_block_opt0_in_place(
     ms: &mut MatchState,
@@ -1899,7 +2018,7 @@ fn compress_block_opt0_in_place(
     compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode, Before::Dictionary)
 }
 
-/// [`compress_block_opt0`] with [`Trees::skip_matchless_older`], likewise.
+/// [`compress_block_opt0`] with what [`Trees`] has for an older segment, likewise.
 #[inline(never)]
 fn compress_block_opt0_older(
     ms: &mut MatchState,

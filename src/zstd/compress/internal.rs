@@ -1377,7 +1377,7 @@ impl<'a> TreeInput<'a> {
     }
 
     /// [`Near::compare_chunks`] for the next 16 bytes alone, if the match has them in the older segment. In words,
-    /// whatever the walk does in the current segment: there is one copy of this, out of line.
+    /// whatever the walk does in the current segment.
     #[inline(always)]
     fn compare_older(
         &self,
@@ -1469,11 +1469,23 @@ pub(crate) enum Hints {
     None,
 }
 
+/// What [`bt_walk`] does with a position of the older segment. With a dictionary of 64 KB there, records take 12 to 19%
+/// less time without the call, HTML and JSON 6%.
+#[derive(Clone, Copy, PartialEq, Eq, ConstParamTy)]
+pub(crate) enum Older {
+    /// A call, once the position is found not to be in the current segment.
+    Called,
+    /// The same without a call.
+    TriedLast,
+    /// Before the current segment is tried, which takes a cycle for a position that is there.
+    TriedFirst,
+}
+
 /// Goes down the tree whose root is `root` for the position `ip` of `input.near`, which `descent` is for and which
 /// becomes the root. `visit` is called with each position that is met on the way, which are all at least `low` and at
 /// most `nb_compares`, and what it has in common with `ip`, and returns whether to go on. Returns how many more positions
 /// could have been compared. With [`First::Alike`], [`Near::compare_head`] is tried before [`Near::compare_chunks`], which
-/// is for ways down that are short.
+/// is for ways down that are short. `older` is a constant.
 #[inline(always)]
 pub(crate) fn bt_walk<const FIRST: First, const HINTS: Hints>(
     bt: &mut Nodes,
@@ -1483,6 +1495,7 @@ pub(crate) fn bt_walk<const FIRST: First, const HINTS: Hints>(
     low: u32,
     mut nb_compares: u32,
     mut descent: Descent,
+    older: Older,
     mut visit: impl FnMut(u32, Common) -> Result<bool>,
 ) -> Result<u32> {
     if bt.is_empty() {
@@ -1514,9 +1527,21 @@ pub(crate) fn bt_walk<const FIRST: First, const HINTS: Hints>(
         let common = match head.and_then(|head| near.compare_head(head, match_pos, from)) {
             Some(common) => common,
             None => {
-                let by_chunks = near.compare_chunks::<FIRST>(ip, match_pos, from);
+                let at_once = matches!(older, Older::TriedFirst) && match_index < dict_limit;
+                let by_chunks = if at_once {
+                    Err(from)
+                } else {
+                    near.compare_chunks::<FIRST>(ip, match_pos, from)
+                };
                 match by_chunks {
                     Ok(common) => common,
+                    Err(from) if at_once || matches!(older, Older::TriedLast) => {
+                        // As a function that `compare_rest` calls too, it takes 1 to 2% more instructions.
+                        match input.compare_older(ip, match_index, from) {
+                            Ok(common) => common,
+                            Err(from) => input.compare_to_the_end(ip, match_index, from)?,
+                        }
+                    }
                     Err(from) => input.compare_rest(ip, match_index, from)?,
                 }
             }
@@ -2922,15 +2947,21 @@ mod tests {
                     for from in [0, len / 2, len] {
                         let match_pos = match_index.wrapping_sub(DICT_LIMIT);
                         let near = input.near;
-                        for by_chunks in [
+                        let called = [
                             near.compare_chunks::<{ First::Alike }>(IP, match_pos, from),
                             near.compare_chunks::<{ First::Apart }>(IP, match_pos, from),
                             near.compare_chunks::<{ First::Words }>(IP, match_pos, from),
-                        ] {
-                            let common = match by_chunks {
-                                Ok(common) => common,
-                                Err(from) => input.compare_rest(IP, match_index, from)?,
-                            };
+                        ]
+                        .map(|by_chunks| match by_chunks {
+                            Ok(common) => Ok(common),
+                            Err(from) => input.compare_rest(IP, match_index, from),
+                        });
+                        let inline = match input.compare_older(IP, match_index, from) {
+                            Ok(common) => Ok(common),
+                            Err(from) => input.compare_to_the_end(IP, match_index, from),
+                        };
+                        for common in called.into_iter().chain([inline]) {
+                            let common = common?;
                             assert_eq!(
                                 (common.len, common.match_is_smaller),
                                 (len, (IP + len < END).then_some(match_is_smaller)),
@@ -2941,6 +2972,84 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Adds the positions from `from` up to `to` to one tree, and compares what each step finds with `window`, which
+    /// starts at the index `low`. Returns how many matches start in the older segment and end in the current one.
+    fn fill_a_tree<const FIRST: First>(
+        bt: &mut Nodes,
+        input: &TreeInput<'_>,
+        window: &[u8],
+        low: u32,
+        (from, to): (u32, u32),
+        older: Older,
+    ) -> Result<u32> {
+        let mut leave_the_older_segment = 0;
+        for curr in from..to {
+            let visit = |index: u32, common: Common| {
+                let here = window.sub((curr - low) as usize..)?;
+                let there = window.sub((index - low) as usize..)?;
+                let len = here.iter().zip(there).take_while(|(a, b)| a == b).count();
+                let is_smaller = here.get(len).map(|byte| there.get(len) < Some(byte));
+                assert_eq!(
+                    (common.len as usize, common.match_is_smaller),
+                    (len, is_smaller),
+                    "{curr} {index}"
+                );
+                let limit = input.dict_limit;
+                leave_the_older_segment += u32::from(index < limit && index + common.len > limit);
+                Ok(is_smaller.is_some())
+            };
+            let (ip, descent) = (curr - input.dict_limit, Descent::new(bt, curr));
+            let root = curr - 1;
+            bt_walk::<FIRST, { Hints::All }>(bt, input, ip, root, low, 64, descent, older, visit)?;
+        }
+        Ok(leave_the_older_segment)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "takes minutes")]
+    fn a_way_down_a_tree_is_the_same_whatever_is_done_with_the_older_segment() -> Result<()> {
+        const LOW: u32 = 100;
+        const OLDER: u32 = 300;
+        const DICT_LIMIT: u32 = LOW + OLDER;
+        const END: u32 = OLDER;
+        // A period with a byte altered now and then: what two positions have in common is often more than 16 bytes.
+        let mut seed = 5u32;
+        let window = Vec::from_iter((0..OLDER + END).map(|at| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (at % 37) as u8 ^ u8::from(seed >> 27 == 0)
+        }));
+        let (older, current) = window.split_at(OLDER as usize);
+        // The older segment gets into the tree while it is the current one.
+        let mut at_first = vec![[0; 2]; 1024];
+        let input = two_segments(&[], LOW, older, LOW, OLDER)?;
+        let positions = (LOW + 1, DICT_LIMIT);
+        fill_a_tree::<{ First::Words }>(
+            &mut at_first,
+            &input,
+            older,
+            LOW,
+            positions,
+            Older::Called,
+        )?;
+
+        let input = two_segments(older, LOW, current, DICT_LIMIT, END)?;
+        let positions = (DICT_LIMIT, DICT_LIMIT + END);
+        let mut trees = Vec::new();
+        for how in [Older::Called, Older::TriedLast, Older::TriedFirst] {
+            let mut by_first = [(); 3].map(|()| at_first.clone());
+            let [alike, apart, words] = &mut by_first;
+            let counts = [
+                fill_a_tree::<{ First::Alike }>(alike, &input, &window, LOW, positions, how)?,
+                fill_a_tree::<{ First::Apart }>(apart, &input, &window, LOW, positions, how)?,
+                fill_a_tree::<{ First::Words }>(words, &input, &window, LOW, positions, how)?,
+            ];
+            assert!(counts.iter().all(|&count| count > 30), "{counts:?}");
+            trees.extend(by_first);
+        }
+        assert!(trees.iter().all(|tree| Some(tree) == trees.first()));
         Ok(())
     }
 

@@ -6,7 +6,7 @@ use core::ops::Range;
 
 use super::internal::{
     BlockSrc, CompressionParameters, Descent, DictMatchState, DictMode, DictTree, First, Hash8,
-    Hasher, Hints, K_SEARCH_STRENGTH, MatchState, Near, Nodes, Prefix, REPCODE1_TO_OFFBASE,
+    Hasher, Hints, K_SEARCH_STRENGTH, MatchState, Near, Nodes, Older, Prefix, REPCODE1_TO_OFFBASE,
     RowTags, SecondTagStats, SeqSink, SeqStore, Strategy, TreeInput, ZSTD_DUBT_UNSORTED_MARK,
     ZSTD_ROW_HASH_CACHE_SIZE, bt_children, bt_look_ahead, bt_low, bt_nodes, bt_set_children,
     bt_walk, count_2segments, hash_ptr, hashed_swap, index_overlap_check, offbase_is_offset,
@@ -227,6 +227,7 @@ impl<'a> Dubt<'a> {
             low,
             self.nb_compares,
             Descent::new(self.bt, curr),
+            Older::Called,
             |match_index, common| {
                 if common.len > best_length {
                     if common.len > match_end_idx.wrapping_sub(match_index) {
@@ -446,6 +447,7 @@ fn sort_dubt1(
         window_low.saturating_add(1),
         nb_compares,
         Descent::down_to(curr, bt_low),
+        Older::Called,
         // If they are equal, there is no way to know which is smaller. Dropped, to keep the tree consistent.
         |_, common| Ok(common.match_is_smaller.is_some()),
     )?;

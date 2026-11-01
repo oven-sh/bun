@@ -1,11 +1,14 @@
 use super::answers::{EnumConstant, GaveUp};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
-use crate::bind::{Binding, Decl, SymFlags};
+use crate::bind::{Binding, Decl, SymFlags, SymbolId};
 use crate::check::Checker;
 use crate::check::errors_enums_names::is_ambient_enum;
 use crate::fold::is_exact_power;
-use crate::hir::{self, BinOp, EnumMemberId, ExprFlags, ExprId, Kind, MemberKey, Node};
+use crate::hir::{
+    self, BinOp, EnumMemberId, ExprFlags, ExprId, Flags, ImportEqualsId, ImportEqualsTarget, Kind,
+    MemberKey, Node,
+};
 use crate::program::{FileId, Sym};
 use crate::types::EnumValue;
 use smallvec::SmallVec;
@@ -49,8 +52,8 @@ struct PathMember {
 
 /// What one part of a namespace exports is in scope in its other parts too, where no declaration
 /// of it stands around the name.
-fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: ExprId) -> bool {
-    let mut around = hir.parent(hir.node(name));
+fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: Node) -> bool {
+    let mut around = hir.parent(name);
     while around.is_some() {
         let mut declarations = declarations.iter();
         if declarations.any(|&declaration| hir.parent(hir.node(declaration)) == around) {
@@ -273,14 +276,66 @@ impl Checker<'_, '_> {
             end.member = files.canonical(files.resolve_alias_as(link, SymFlags::VALUE)?);
         }
         end.is_path_declared_here &= match bound.binding(first) {
-            Binding::Symbol(symbol) => {
-                let symbol = bound.symbol(symbol);
-                !symbol.flags.intersects(SymFlags::ALIAS)
-                    && is_declared_around(hir, symbol.decls, first)
-            }
+            Binding::Symbol(symbol) => self.is_first_name_followed(file, symbol, hir.node(first)),
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
         };
         Some(end)
+    }
+
+    /// Bun's transpiler gives `import X = A.B` the members of the enum or namespace of the file that `A.B` names.
+    fn is_first_name_followed(&self, file: FileId, mut symbol: SymbolId, mut name: Node) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut is_behind_alias = false;
+        for _ in 0..=hir.import_equals.len() {
+            let bound_symbol = bound.symbol(symbol);
+            if !bound_symbol.flags.intersects(SymFlags::ALIAS) {
+                let parent = bound_symbol.parent;
+                // An alias also reaches what another part of its namespace exports.
+                let is_export_of_part =
+                    is_behind_alias && parent.is_some() && parent != bound.file_symbol;
+                return is_export_of_part || is_declared_around(hir, bound_symbol.decls, name);
+            }
+            let [Decl::ImportEquals(import)] = *bound_symbol.decls else {
+                return false;
+            };
+            let Some(root) = self.find_root_of_followed_alias(file, import) else {
+                return false;
+            };
+            (symbol, name, is_behind_alias) = (root, hir.node(import), true);
+        }
+        false
+    }
+
+    fn find_root_of_followed_alias(
+        &self,
+        file: FileId,
+        import: ImportEqualsId,
+    ) -> Option<SymbolId> {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let alias = hir[import];
+        let ImportEqualsTarget::Entity(names) = alias.target else {
+            return None;
+        };
+        let is_export = alias.flags.contains(Flags::EXPORT);
+        if is_export && hir.kind(hir.parent(hir.node(import))) == Kind::ModuleBlock {
+            return None;
+        }
+        let Binding::Symbol(root) = bound.entity_root_binding(import) else {
+            return None;
+        };
+        let mut holder = files.resolve_alias_as(files.sym(file, root), SymFlags::VALUE)?;
+        for name in hir.texts(names).skip(1) {
+            holder = files.canonical(holder);
+            if !files.flags(holder).intersects(SymFlags::NAMESPACE) {
+                return None;
+            }
+            let link = files.namespace_member(holder, name)?;
+            if files.flags(link).intersects(SymFlags::ALIAS) {
+                return None;
+            }
+            holder = files.resolve_alias_as(link, SymFlags::VALUE)?;
+        }
+        Some(root)
     }
 
     fn is_global_number(&self, symbol: Sym) -> bool {

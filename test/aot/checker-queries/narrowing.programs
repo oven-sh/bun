@@ -2529,6 +2529,74 @@ export {};
 //// written-type/enum-access-again.ts
 // Passes on what enum-access-other.ts exports.
 export * from "./enum-access-other";
+//// written-type/enum-access-import-equals.queries.txt
+# An `import X = A.B` alias of an enum or a namespace of the file is followed like the name itself. It is not followed where it is exported from a namespace, where it names a member, an import or `require`, or behind a nearer binding of its name.
+enum-access-import-equals.ts:12 enum `X.Q` = 3
+enum-access-import-equals.ts:12 enum member `P = X.Q` = 3
+enum-access-import-equals.ts:12 enum member `R` = 4
+enum-access-import-equals.ts:13 enum `X.Q` = 3
+enum-access-import-equals.ts:14 enum `X["Q"]` = 3
+enum-access-import-equals.ts:15 enum `AZ.Q` = 5
+enum-access-import-equals.ts:16 enum `N.Z.Q` = 5
+enum-access-import-equals.ts:17 enum `W.Q` = 5
+enum-access-import-equals.ts:25 enum `X.Q` = 9
+enum-access-import-equals.ts:31 enum `Sibling.Q` = 9
+enum-access-import-equals.ts:39 enum `X.Q` = 3
+enum-access-import-equals.ts:39 enum `Behind.Q` = 3
+enum-access-import-equals.ts:41 enum `Behind.Q` = 3
+enum-access-import-equals.ts:44 enum `FromHere.Q` = 3
+
+absent: enum-access-import-equals.ts:18 enum `X?.Q` = 3
+absent: enum-access-import-equals.ts:19 enum `FromModule.X` = 7
+absent: enum-access-import-equals.ts:27 enum `Exported.Q` = 9
+absent: enum-access-import-equals.ts:32 enum `Exported.Q` = 9
+absent: enum-access-import-equals.ts:34 enum `M.Exported.Q` = 9
+absent: enum-access-import-equals.ts:36 enum `X.Q` = 3
+//// written-type/enum-access-import-equals.ts
+// An `import X = A.B` alias of an enum or a namespace of the file is followed like the name itself. It is not followed where it is exported from a namespace, where it names a member, an import or `require`, or behind a nearer binding of its name.
+import { F } from "./enum-access-other";
+enum Z { Q = 3 }
+import X = Z;
+namespace A { export enum Z { Q = 5 } }
+import AZ = A.Z;
+import N = A;
+import W = AZ;
+import FromModule = F;
+import Member = Z.Q;
+import Path = require("node:path");
+enum Counts { P = X.Q, R }
+X.Q;
+X["Q"];
+AZ.Q;
+N.Z.Q;
+W.Q;
+X?.Q;
+FromModule.X;
+Member;
+Path.sep;
+namespace M {
+  export enum Z { Q = 9 }
+  import X = Z;
+  X.Q;
+  export import Exported = Z;
+  Exported.Q;
+}
+namespace M {
+  import Sibling = Z;
+  Sibling.Q;
+  Exported.Q;
+}
+M.Exported.Q;
+function read(X: { Q: number }) {
+  return X.Q;
+}
+function later() {
+  return [X.Q, Behind.Q];
+}
+Behind.Q;
+import Behind = Z;
+export import FromHere = Z;
+FromHere.Q;
 //// written-type/enum-access-other.ts
 // An enum in another checked file, imported by enum-access.ts.
 export enum F { X = 7 }

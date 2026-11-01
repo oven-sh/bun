@@ -1796,6 +1796,10 @@ pub(crate) mod __gated_printer {
                                 v.left_level = Level::Call;
                             }
                         }
+                        // A member of an enum of another module prints as its value too.
+                        _ if self.prints_as_imported_enum_value(&e.left) => {
+                            v.left_level = Level::Call;
+                        }
                         _ => {}
                     }
                 }
@@ -6748,6 +6752,28 @@ pub(crate) mod __gated_printer {
                 E::ImportIdentifier::new(binding, false),
                 target.loc,
             ))
+        }
+
+        fn prints_as_imported_enum_value(&self, expr: &Expr) -> bool {
+            match &expr.data {
+                ExprData::EDot(e) => {
+                    e.optional_chain.is_none()
+                        && self
+                            .try_to_get_imported_enum_value(e.target, &e.name)
+                            .is_some()
+                }
+                ExprData::EIndex(e) => {
+                    e.optional_chain.is_none()
+                        && e.index.data.as_e_string().is_some_and(|name| {
+                            let name = name.flattened(self.bump);
+                            name.is_utf8()
+                                && self
+                                    .try_to_get_imported_enum_value(e.target, name.slice8())
+                                    .is_some()
+                        })
+                }
+                _ => false,
+            }
         }
 
         pub(crate) fn try_to_get_imported_enum_value(

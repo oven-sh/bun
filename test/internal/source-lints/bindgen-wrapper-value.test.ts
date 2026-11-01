@@ -6,11 +6,12 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 
 // The table of built-ins (src/codegen/builtins/collect-bindgen.ts, computeReceiverUses) takes a bindgen member that
 // runs no JavaScript and has no `passThis` to neither keep nor answer the wrapper of its receiver: the body is handed
-// `&self` alone. `JsClass::wrapper_value()` (src/jsc/bindgen.rs) is the one way from `&self` back to the wrapper, so a
+// `&self` alone. `JsPayload::wrapper_value()` (src/jsc/bindgen.rs) is the one way from `&self` back to the wrapper, so a
 // body that calls it can break that claim, and compiled code then calls the next method on the instance without a test.
 //
-// A body that is handed its wrapper stores it at most in a `JsCell` field of the object, and its row keeps Retains: a
-// stored field is no second way to the wrapper.
+// A body that is handed its wrapper (`passThis`) is outside this lint. With `returns: b.self` its row keeps Retains.
+// With `returns: b.this` the schema says that the body answers the wrapper and keeps nothing of it: whoever writes
+// `b.this` has read the body (docs/project/bindgen.mdx, "The receiver").
 //
 // Every file that calls `wrapper_value()` is listed here with how many calls it has, the members whose bodies reach them,
 // and why the claim still holds for them. A body that needs its wrapper asks for it with `passThis`, or has

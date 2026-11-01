@@ -51,7 +51,7 @@ function server(name: string) {
         throws: true,
         length: 3,
       },
-      ref: { returns: b.self, passThis: true, rustName: "do_ref" },
+      ref: { returns: b.this, passThis: true, rustName: "do_ref" },
       reload: {
         args: { options: b.any },
         returns: b.self,
@@ -84,7 +84,7 @@ function server(name: string) {
         capability: "heap",
         throws: true,
       },
-      unref: { returns: b.self, passThis: true, rustName: "do_unref" },
+      unref: { returns: b.this, passThis: true, rustName: "do_unref" },
       upgrade: {
         args: { request: b.any, options: b.any },
         returns: b.bool,

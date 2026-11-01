@@ -352,9 +352,8 @@ function computeReceiverUses(
   return [b.readsContents(), b.writesContents()];
 }
 
-/** The body of a member of the class is handed the wrapper of its receiver: with `passThis`, or through the class's `protoCaller`. */
-const passesWrapperTo = (signature: Signature, type: ClassType | null): boolean =>
-  (signature instanceof Method && signature.passThis) || type?.protoCaller !== undefined;
+/** The body of a member is handed the wrapper of its receiver. A class's `protoCaller` hands it too, to members that all run JavaScript. */
+const passesWrapperTo = (signature: Signature): boolean => signature instanceof Method && signature.passThis;
 
 function createReceiver(
   signature: Signature,
@@ -462,7 +461,7 @@ export function signatureOfBindgen(
 ): SignatureDeclaration {
   const field = createField(
     signature,
-    createReceiver(signature, receiver, null, passesWrapperTo(signature, null)),
+    createReceiver(signature, receiver, null, passesWrapperTo(signature)),
     signature.returns.resultType,
   );
   const [declared] = b
@@ -589,9 +588,8 @@ function collectFunction(
   path: BuiltinPath,
   receiver: ParameterType | null,
   thunkOf: (signature: Signature) => string | null,
-  type: ClassType | null = null,
+  className: string | null = null,
 ): Declaration[] {
-  const className = type?.name ?? null;
   const resultOf = (signature: Signature): TypeSpec => {
     const result = resultTypeOf(signature, fn);
     const ignoresOtherReceivers =
@@ -602,7 +600,7 @@ function collectFunction(
     createFields(
       createField(
         signature,
-        createReceiver(signature, receiver, className, passesWrapperTo(signature, type)),
+        createReceiver(signature, receiver, className, passesWrapperTo(signature)),
         resultOf(signature),
       ),
       signature,
@@ -861,11 +859,12 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
   if (isStatic) return collectFunction(member, path, null, signature => methodSymbolName(type, signature as Method));
   if (!hasInstanceReceiver(type)) return collectFunction(member, path, null, () => null);
   // The host function answers undefined for a receiver that is no instance, and the thunk takes an instance.
-  if (methods[0].invalidThis === "undefined") return collectFunction(member, path, b.any.parameter, () => null, type);
+  if (methods[0].invalidThis === "undefined")
+    return collectFunction(member, path, b.any.parameter, () => null, type.name);
   // The thunk of a function that `protoCaller` calls takes other arguments, and its host function reads the callee, which a frame of values lacks.
-  if (type.protoCaller !== undefined) return collectFunction(member, path, type.parameterType, () => null, type);
+  if (type.protoCaller !== undefined) return collectFunction(member, path, type.parameterType, () => null, type.name);
   const thunkOf = (signature: Signature) => methodSymbolName(type, signature as Method);
-  return collectFunction(member, path, type.parameterType, thunkOf, type).map(declaration =>
+  return collectFunction(member, path, type.parameterType, thunkOf, type.name).map(declaration =>
     declaration.declares === "Member"
       ? { ...declaration, columns: { ...declaration.columns, directEntryOfMethod: directEntryOfMethod(type, member) } }
       : declaration,

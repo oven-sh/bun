@@ -1,7 +1,17 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createCipheriv, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
+import { createCipheriv, createPublicKey, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
+import {
+  ED25519_IDENTITY,
+  ED25519_SMALL_ORDER_POINTS,
+  forgeryWithHonestR,
+  forgeryWithIdentityR,
+  forgeryWithKeyAsR,
+  hexBytes,
+  identityRSignature,
+  zeroSignatureWithR,
+} from "./ed25519-small-order";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -570,6 +580,95 @@ describe("Ed25519", () => {
           await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", cloned, data), data),
         ).toBe(true);
       }
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/46252
+  describe("verify rejects small-order points", () => {
+    const encoder = new TextEncoder();
+
+    it("imports a small-order public key and verifies nothing under it", async () => {
+      const results: Record<string, boolean> = {};
+      for (const { name, hex } of ED25519_SMALL_ORDER_POINTS) {
+        const key = await crypto.subtle.importKey("raw", hexBytes(hex), "Ed25519", true, ["verify"]);
+        expect(key.type).toBe("public");
+        const { message, signature } = forgeryWithIdentityR(hex);
+        results[name] = await crypto.subtle.verify("Ed25519", key, signature, message);
+      }
+      expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
+    });
+
+    // R is an honest point here, so the check on R cannot be what rejects the signature.
+    it("rejects a small-order public key when R is not a small-order point", async () => {
+      const results: Record<string, boolean> = {};
+      for (const { name, hex } of ED25519_SMALL_ORDER_POINTS) {
+        const key = await crypto.subtle.importKey("raw", hexBytes(hex), "Ed25519", false, ["verify"]);
+        const { message, signature } = forgeryWithHonestR(hex);
+        results[name] = await crypto.subtle.verify("Ed25519", key, signature, message);
+      }
+      expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
+    });
+
+    it("rejects a small-order R", async () => {
+      const results: Record<string, boolean> = {};
+      for (const { name, hex, canonical } of ED25519_SMALL_ORDER_POINTS) {
+        if (!canonical) continue;
+        const key = await crypto.subtle.importKey("raw", hexBytes(hex), "Ed25519", false, ["verify"]);
+        const { message, signature } = forgeryWithKeyAsR(hex);
+        results[name] = await crypto.subtle.verify("Ed25519", key, signature, message);
+      }
+      expect(Object.keys(results)).toHaveLength(8);
+      expect(results).toEqual(Object.fromEntries(Object.keys(results).map(name => [name, false])));
+    });
+
+    it("rejects an identity R under an honest key", async () => {
+      const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      const message = encoder.encode("hello");
+      const signature = identityRSignature(await crypto.subtle.exportKey("jwk", privateKey), message);
+      expect(await crypto.subtle.verify("Ed25519", publicKey, signature, message)).toBe(false);
+    });
+
+    it("rejects the identity key through jwk, spki and KeyObject.toCryptoKey", async () => {
+      const identity = hexBytes(ED25519_IDENTITY);
+      const signature = zeroSignatureWithR(ED25519_IDENTITY);
+      const message = encoder.encode("any message at all");
+      const keyObject = createPublicKey({
+        key: { kty: "OKP", crv: "Ed25519", x: Buffer.from(identity).toString("base64url") },
+        format: "jwk",
+      });
+      const keys = {
+        jwk: await crypto.subtle.importKey("jwk", keyObject.export({ format: "jwk" }), "Ed25519", true, ["verify"]),
+        spki: await crypto.subtle.importKey(
+          "spki",
+          keyObject.export({ format: "der", type: "spki" }),
+          "Ed25519",
+          true,
+          ["verify"],
+        ),
+        toCryptoKey: keyObject.toCryptoKey("Ed25519", true, ["verify"]),
+      };
+      const results: Record<string, boolean> = {};
+      for (const [name, key] of Object.entries(keys)) {
+        results[name] = await crypto.subtle.verify("Ed25519", key, signature, message);
+      }
+      expect(results).toEqual({ jwk: false, spki: false, toCryptoKey: false });
+    });
+
+    it("still accepts a real signature", async () => {
+      const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      const message = encoder.encode("hello");
+      const signature = new Uint8Array(await crypto.subtle.sign("Ed25519", privateKey, message));
+      expect(await crypto.subtle.verify("Ed25519", publicKey, signature, message)).toBe(true);
+      const tampered = new Uint8Array(signature);
+      tampered[0] ^= 1;
+      expect(await crypto.subtle.verify("Ed25519", publicKey, tampered, message)).toBe(false);
+      expect(await crypto.subtle.verify("Ed25519", publicKey, signature.subarray(0, 63), message)).toBe(false);
     });
   });
 });

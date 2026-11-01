@@ -3,8 +3,8 @@
  * work around toolchain or OS bugs.
  *
  * Each shim is a ninja build edge (source → output), so ninja handles
- * rebuild-on-change. `emitShims()` registers the edges and returns the
- * implicit inputs to spread into the final link() call.
+ * rebuild-on-change. `emitShims()` registers the edges; link() and the strip
+ * edge name what their commands run as implicit inputs.
  *
  * Every shim MUST have an entry in workarounds.ts that fails configure
  * once the upstream fix ships — see that file for the pattern.
@@ -77,7 +77,8 @@ export function machoPostlinkCommand(cfg: Config): string {
 /**
  * Files the link/strip edges must list as implicit inputs when the postlink
  * command suffix is appended: the tool itself and the entitlements plist it
- * reads. Empty when the fixup isn't needed.
+ * reads. They must exist before the command runs, and a change to one relinks.
+ * Empty when the fixup isn't needed.
  */
 export function machoPostlinkImplicitInputs(cfg: Config): string[] {
   if (!needsMachoPostlink(cfg)) return [];
@@ -103,26 +104,17 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
 }
 
 /**
- * Emit shim build edges and return the link's implicit inputs. Call before the link() call (emitBun).
+ * Emit shim build edges (emitBun).
  *
  * See scripts/build/workarounds.ts for the self-obsoleting check on each.
  */
-export function emitShims(n: Ninja, cfg: Config): string[] {
-  const implicitInputs: string[] = [];
-
+export function emitShims(n: Ninja, cfg: Config): void {
   if (needsMachoPostlink(cfg)) {
-    // The link rule's command ends with `&& macho-postlink $out ...`
-    // (see machoPostlinkCommand), so the tool and the entitlements plist it
-    // reads must exist before the link runs and must trigger a relink when
-    // they change.
     n.build({
       outputs: [machoPostlinkToolPath(cfg)],
       rule: "host_tool_cc",
       inputs: [resolve(cfg.cwd, "scripts", "build", "shims", "macho-postlink.c")],
       implicitInputs: [toolIdentityFile(cfg, "cc")],
     });
-    implicitInputs.push(...machoPostlinkImplicitInputs(cfg));
   }
-
-  return implicitInputs;
 }

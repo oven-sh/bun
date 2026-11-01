@@ -10,15 +10,18 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
+import { link } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
 import { MACOS_SDK_VERSION, macosSdkCachePath, resolveMacosSdkPath } from "../../scripts/build/macos-sdk.ts";
+import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
+import { registerAllRules } from "../../scripts/build/rules.ts";
 import { rustTarget } from "../../scripts/build/rust.ts";
-import { machoEntitlementsPlist, machoPostlinkCommand } from "../../scripts/build/shims.ts";
+import { machoEntitlementsPlist, machoPostlinkCommand, machoPostlinkToolPath } from "../../scripts/build/shims.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -171,6 +174,22 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(existsSync(machoEntitlementsPlist(debug))).toBe(true);
   });
 
+  test("every link waits for macho-postlink, not bun's alone", () => {
+    for (const arch of ["aarch64", "x64"] as const) {
+      const cfg = resolveDarwin({ arch });
+      const n = new Ninja({ buildDir: cfg.buildDir });
+      registerAllRules(n, cfg);
+      link(n, cfg, "tool", [join(cfg.buildDir, "obj", "tool.o")], { libs: [], flags: [] });
+      const edge = readManifest(n.toString()).edges.find(edge => edge.rule === "link")!;
+      expect(edge.implicitInputs.map(input => resolve(cfg.buildDir, input))).toEqual(
+        expect.arrayContaining([
+          machoPostlinkToolPath(cfg),
+          ...(arch === "aarch64" ? [machoEntitlementsPlist(cfg)] : []),
+        ]),
+      );
+    }
+  });
+
   test("native links don't get a postlink command", () => {
     const linux = resolveConfig(
       { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: "/fake" },
@@ -193,18 +212,18 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
   });
 
   test("WebKit prebuilt resolves to the macOS tarball with a macos-keyed cache dir", () => {
-    const cfg = resolveDarwin({ lto: false, aot: false });
+    const cfg = resolveDarwin({ webkit: "prebuilt", lto: false, aot: false });
     const source = webkit.source(cfg);
     if (source.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${source.kind}`);
     expect(source.url).toContain("bun-webkit-macos-arm64.tar.gz");
     expect(source.destDir).toContain("-macos-arm64");
 
-    const x64 = webkit.source(resolveDarwin({ arch: "x64", lto: false, aot: false }));
+    const x64 = webkit.source(resolveDarwin({ webkit: "prebuilt", arch: "x64", lto: false, aot: false }));
     if (x64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${x64.kind}`);
     expect(x64.url).toContain("bun-webkit-macos-amd64.tar.gz");
 
     // Release defaults to LTO, which selects the bitcode (-lto) tarball.
-    const lto = webkit.source(resolveDarwin({ aot: false }));
+    const lto = webkit.source(resolveDarwin({ webkit: "prebuilt", aot: false }));
     if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
     expect(lto.url).toContain("bun-webkit-macos-arm64-lto.tar.gz");
   });

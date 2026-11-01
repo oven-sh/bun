@@ -123,6 +123,14 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(plain.cxxflags).not.toContain("-fno-split-lto-unit");
   });
 
+  test("bun's link lets several objects weak-reference one of bun's hooks", () => {
+    // ThinLTO imports WTF's RunLoop::TimerBase::start() into JSC modules, and lld-link otherwise calls the second
+    // weak external of WTFTimer__update a duplicate symbol.
+    expect(computeFlags(resolveWindowsCross({ lto: true, baseline: false })).ldflags).toContain(
+      "/lld-allow-duplicate-weak",
+    );
+  });
+
   test("the link uses the LLVM toolchain's lld-link, with and without LTO", () => {
     for (const lto of [true, false]) {
       expect(resolveWindowsCross({ lto, baseline: false }).ld).toBe("/fake/llvm/bin/lld-link");
@@ -133,18 +141,18 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // Default windows x64 cross config (baseline=true, lto=true): every x64
     // WebKit is built at the nehalem floor, so the plain -lto tarball is the
     // one baseline fetches too.
-    const def = webkit.source(resolveWindowsCross({ aot: false }));
+    const def = webkit.source(resolveWindowsCross({ webkit: "prebuilt", aot: false }));
     if (def.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${def.kind}`);
     expect(def.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
     expect(def.destDir).toContain("-windows");
     expect(def.destDir).toEndWith("-lto");
 
-    const plain = webkit.source(resolveWindowsCross({ lto: false, aot: false }));
+    const plain = webkit.source(resolveWindowsCross({ webkit: "prebuilt", lto: false, aot: false }));
     if (plain.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${plain.kind}`);
     expect(plain.url).toContain("bun-webkit-windows-amd64.tar.gz");
     expect(plain.destDir).not.toEndWith("-lto");
 
-    const arm64 = webkit.source(resolveWindowsCross({ arch: "aarch64", aot: false }));
+    const arm64 = webkit.source(resolveWindowsCross({ webkit: "prebuilt", arch: "aarch64", aot: false }));
     if (arm64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${arm64.kind}`);
     expect(arm64.url).toContain("bun-webkit-windows-arm64.tar.gz");
   });

@@ -24,7 +24,7 @@ To do that:
 - Publish the new WebKit:
   - Direct: cd vendor/WebKit, commit, `git push origin main`. The push triggers a release tagged `autobuild-<full-sha>`.
   - Preview: push the branch and open a PR on oven-sh/WebKit. CI publishes a prerelease tagged `autobuild-preview-pr-<PR#>-<first-8-chars-of-head-sha>`. (Auto-triggers only for authors with write access; otherwise `gh workflow run build-preview.yml --repo oven-sh/WebKit -f pr_number=<N>`.)
-- Wait until the release exists: `gh release view <tag> --repo oven-sh/WebKit`. It is created only after ALL platform builds succeed (takes a while). Bun's CI downloads prebuilts from it, so don't open the bun PR before it's up.
+- Wait until the release exists: `gh release view <tag> --repo oven-sh/WebKit`. It is created only after ALL platform builds succeed (takes a while). Bun's builds compile the commit itself, but the lint, type and Rust jobs of Bun's CI download files from the release, so don't open the bun PR before it's up.
 - cd back to bun and update WEBKIT_VERSION in scripts/build/deps/webkit.ts:
   - Direct: the new vendor/WebKit commit sha
   - Preview: the full preview tag (`autobuild-preview-pr-...`)
@@ -38,4 +38,5 @@ Things to check for a successful upgrade:
 
 - Did Source/JavaScriptCore/runtime/JSType.h change? The enum values must align with Bun's mirror in src/jsc/JSType.rs.
 - Were there any changes to the WebCore code generator? If there are C++ compilation errors, check for differences in the generated reference code in vendor/WebKit/Source/WebCore/bindings/scripts/test/JS/
+- Did the fork's icu/source.json change? ICU_VERSION and ICU_SHA256 in scripts/build/deps/icu.ts restate it: see "Bump ICU" in scripts/build/CLAUDE.md.
 - If the merge touched the fork's .github/workflows, the release tarball names must still match prebuiltSuffix() in scripts/build/deps/webkit.ts

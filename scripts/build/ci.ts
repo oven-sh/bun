@@ -29,6 +29,7 @@ import { webkitAotFile, webkitJSCPath, webkitTestAotPath, webkitTestFFIPath } fr
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
+import { copyWritable } from "./fs.ts";
 
 interface SpawnAnnotatedOptions {
   /** Working directory for the subprocess. */
@@ -359,7 +360,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     // makeZip names an entry by its base name, and this folder's is `tests`.
     const staged = resolve(buildDir, "aot-tests");
     rmSync(staged, { recursive: true, force: true });
-    cpSync(engineTests, staged, { recursive: true });
+    copyWritable(engineTests, staged);
     files.push("aot-tests");
   }
   // What src/codegen/engine-directory.ts looks for: tests import the generators, which are files of the engine.
@@ -373,7 +374,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
       ["ir", "schema"],
       ["ir", "AOTSchema.def"],
     ]) {
-      cpSync(join(engineDirectory, ...part), join(staged, ...part), { recursive: true });
+      copyWritable(join(engineDirectory, ...part), join(staged, ...part));
     }
     // What the engine was compiled with, where a prebuilt WebKit has it.
     const compiledWith = webkitAotFile(cfg, "builtins-generated");

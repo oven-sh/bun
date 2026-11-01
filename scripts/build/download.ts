@@ -54,7 +54,7 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
 import { locations } from "./ci-images/spec.ts";
 import { BuildError, assert, describeError } from "./error.ts";
-import { formatElapsed } from "./tty.ts";
+import { formatElapsed, nameColor } from "./tty.ts";
 
 // On Windows, prefer the OS-shipped bsdtar. Git-for-Windows / MSYS put GNU tar
 // earlier in PATH, and GNU tar parses `C:\...` as an rsh `host:path` spec
@@ -72,8 +72,8 @@ const tarExe =
  *
  * Layout:
  *   <prefetchDir>/by-url/<sha256(url)[:32]>   raw downloaded bytes (any URL)
- *   <prefetchDir>/extracted/<basename(dest)>/ pre-extracted prebuilt trees
- *                                             (.identity inside)
+ *   <prefetchDir>/extracted/<basename(dest)>/ pre-extracted trees: prebuilts
+ *                                             (.identity inside), WebKit (.ref)
  *
  * Both are content-addressed — a dep version bump changes the URL/identity, so
  * stale prefetch entries are simply not found and the build falls through to
@@ -148,6 +148,101 @@ async function chmodRecursiveWritable(root: string): Promise<void> {
   await chmod(root, st.mode | 0o200);
   if (!st.isDirectory()) return;
   for (const e of await readdir(root)) await chmodRecursiveWritable(resolve(root, e));
+}
+
+const treeStamp = ".ref";
+
+function treeIs(dir: string, identity: string): boolean {
+  try {
+    return readFileSync(resolve(dir, treeStamp), "utf8").trim() === identity;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where the tree `name` that fetchIntoCache() writes is: in the build cache, or, when a CI image has the same one, where
+ * the image has it. Read in place: nothing writes to such a tree, and copying WebKit's 14,000 files out of the image took
+ * a build 23 seconds with every processor idle, as long as fetching them.
+ */
+export function cachedTreeDir(cacheDir: string, name: string, identity: string, prefetch = prefetchDir): string {
+  const baked = prefetch === undefined ? undefined : resolve(prefetch, "extracted", name);
+  return baked !== undefined && treeIs(baked, identity) ? baked : resolve(cacheDir, name);
+}
+
+/**
+ * A tree that configure needs before it can write the graph, in the directory cachedTreeDir() gives, which `identity`
+ * stamps. `fill` writes it into a staging directory that is then renamed into place, so an interrupted configure leaves
+ * nothing that claims to be complete.
+ *
+ * Reports itself the way a dependency's fetch edge does, on stderr like ninja-release.ts: stdout is the built program's
+ * under build-then-exec.
+ */
+export async function fetchIntoCache(
+  name: string,
+  what: string,
+  dir: string,
+  identity: string,
+  fill: (staging: string, say: (line: string) => void) => Promise<void>,
+): Promise<void> {
+  const published = () => treeIs(dir, identity);
+  if (published()) return;
+
+  const say = (line: string) => process.stderr.write(`${nameColor(name, `[${name}]`)} ${line}\n`);
+  const started = performance.now();
+  say(`fetching ${what}`);
+  const staging = `${dir}.${process.pid}.staging`;
+  try {
+    await rm(staging, { recursive: true, force: true });
+    await mkdir(staging, { recursive: true });
+    await fill(staging, say);
+    await writeFile(resolve(staging, treeStamp), identity + "\n");
+    // Builds share the cache. Another may have published the same tree meanwhile and be compiling from it.
+    if (published()) return;
+    await rm(dir, { recursive: true, force: true });
+    await rename(staging, dir).catch(err => {
+      if (!published()) throw err;
+    });
+    say(`extracted to ${dir} (${formatElapsed(performance.now() - started)})`);
+  } finally {
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** CRLF→LF. Used for patch content before hashing and `git apply`. */
+export function normalizeLf(s: string): string {
+  return s.replace(/\r\n/g, "\n");
+}
+
+/**
+ * Apply a patch via `git apply` over stdin.
+ *
+ * Normalizes CRLF→LF (same as the identity hash — see computeSourceIdentity)
+ * so a CRLF-mangled checkout still applies cleanly. --no-index: dest/ is
+ * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
+ * authored against upstream which may have different trailing whitespace.
+ */
+export function applyPatch(dest: string, patchPath: string, patchBody: string): void {
+  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
+    cwd: dest,
+    input: normalizeLf(patchBody),
+    stdio: ["pipe", "ignore", "pipe"],
+    encoding: "utf8",
+  });
+
+  if (result.error) {
+    throw new BuildError(`Failed to spawn git apply`, { cause: result.error });
+  }
+
+  if (result.status !== 0) {
+    // If the patch was already applied, the source dir must have been
+    // partially fetched, which means .ref shouldn't exist, which means
+    // we should have rm'd the dir. A "cleanly" error here = logic bug.
+    throw new BuildError(`Patch failed: ${result.stderr}`, {
+      file: patchPath,
+      hint: "The patch may be out of date with the pinned commit",
+    });
+  }
 }
 
 /** Retry schedule for one download. Sizing rationale: "Retry behavior" above. */

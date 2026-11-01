@@ -11,7 +11,7 @@
  * that apply uniformly to bun's own C/C++ sources.
  */
 
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { bunExeName, linksWithLld, type Config } from "./config.ts";
 import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
@@ -374,7 +374,7 @@ export const globalFlags: Flag[] = [
     // every type it can see, i.e. the whole JSC/WTF universe the PCH pulls
     // in, again. Homing (clang's default on Linux) emits a type once, in the
     // TU that defines its constructor or vtable, so bun's types come from
-    // bun's own objects and JSC's from the WebKit prebuilt, which carries its
+    // bun's own objects and JSC's from WebKit's, which carry their
     // own DWARF. Same types and variables in the debugger; BunObject.cpp
     // measured 8.2s -> 5.35s to compile (the line-tables-only build of the
     // same file is 5.25s), object 9.0 MB -> 5.2 MB. Irrelevant to the LTO
@@ -700,6 +700,13 @@ export const globalFlags: Flag[] = [
       `-ffile-prefix-map=${c.cwd}=.`,
       `-ffile-prefix-map=${c.vendorDir}=vendor`,
       `-ffile-prefix-map=${c.cacheDir}=cache`,
+      // The trees configure fetches into the cache, or reads out of the image. Last: of the prefixes that match, clang
+      // takes the last. Also as ninja spells a source on the command line, which is what __FILE__ says: relative to the
+      // build directory. That of a dep in vendor/ is the same on every machine, and this one is not.
+      ...Object.entries(c.localDeps).flatMap(([name, dir]) => [
+        `-ffile-prefix-map=${dir}=vendor/${name}`,
+        `-ffile-prefix-map=${relative(c.buildDir, dir)}=vendor/${name}`,
+      ]),
     ],
     when: c => c.unix && c.ci,
     desc: "Remap source paths in debug info (reproducible builds)",
@@ -1151,6 +1158,20 @@ export const linkerFlags: Flag[] = [
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
+  },
+  {
+    // WTF/JSC reference bun's hooks (WTFTimer__*, Bun__reportUnhandledError) as
+    // `extern "C" __attribute__((weak))`. COFF has no weak undefined symbol:
+    // clang emits a weak external whose default is a per-TU absolute-0 symbol,
+    // and lld-link (MSVC mode) calls two objects giving the same weak external
+    // different defaults a duplicate symbol, even though bun's strong Rust
+    // definition wins either way. One TU per hook references them in source;
+    // ThinLTO importing RunLoop::TimerBase::start() into a JSC module makes it
+    // two. This is lld-link's own switch for exactly that check (its MinGW-mode
+    // default): duplicate *strong* definitions still error.
+    flag: "/lld-allow-duplicate-weak",
+    when: c => c.windows,
+    desc: "Several TUs may weak-reference the same bun hook (COFF weak externals)",
   },
   {
     flag: "/DEBUG:FULL",
@@ -2103,6 +2124,15 @@ export function computeTargetLinkFlags(cfg: Config): string[] {
   }
   if (!cfg.windows) out.push(cfg.darwin ? "-Wl,-dead_strip" : "-Wl,--gc-sections");
   return out;
+}
+
+/**
+ * What Alpine's clang passes by itself, so what the JSC and ICU of a prebuilt WebKit for musl have always been compiled
+ * with (oven-sh/WebKit's Dockerfile.musl). They come after the dep flags' -fno-stack-protector. Not its
+ * _FORTIFY_SOURCE=2, which does nothing without Alpine's fortify-headers.
+ */
+export function alpineClangDefaults(cfg: Config): string[] {
+  return cfg.abi === "musl" && !cfg.hardened ? ["-fstack-protector-strong", "-fstack-clash-protection"] : [];
 }
 
 export function computeHardeningFlags(cfg: Config): string[] {

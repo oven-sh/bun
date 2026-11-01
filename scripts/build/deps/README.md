@@ -73,10 +73,12 @@ build banner shows `local:<name>` while this is on. Don't edit
 `vendor/<name>/` in place instead — it is wiped whenever the pin or patches
 change.
 
-WebKit is prebuilt unless redirected: `--webkit=local` (the `-local`
-profiles, `bun run build:local`) is `--local-deps=WebKit=$BUN_WEBKIT_PATH`,
-or `vendor/WebKit` when that is unset, and `--local-deps=WebKit=<path>` on any
-profile means the same for one build.
+WebKit is the pinned commit, compiled in this graph, unless redirected:
+`--webkit=local` (the `-local` profiles, `bun run build:local`) is
+`--local-deps=WebKit=$BUN_WEBKIT_PATH`, or `vendor/WebKit` when that is unset,
+and `--local-deps=WebKit=<path>` on any profile means the same for one build.
+`--webkit=prebuilt` links the libraries oven-sh/WebKit's CI published for the
+pinned commit instead of compiling it.
 
 ## Common fields
 
@@ -87,7 +89,7 @@ export const mydep: Dependency = {
   // Source tarball. Fetched from GitHub's archive endpoint (no git history,
   // just the files at `commit`). Most deps use this.
   //
-  // Other kinds: `prebuilt` (download pre-compiled .a, e.g. WebKit default),
+  // Other kinds: `prebuilt` (download pre-compiled files, e.g. nodejs-headers),
   // `local` (user-managed checkout: what a github-archive dep becomes via
   // `--local-deps`, see above), `in-tree` (source in src/).
   source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
@@ -151,10 +153,13 @@ export const mydep: Dependency = {
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **webkit.ts** — `prebuilt`, and for a local checkout a direct build with
-  source `groups` (bmalloc, WTF, JavaScriptCore), generator and executable
-  `steps`, a per-group PCH, and file lists read from the checkout's own CMake
-  files at configure (`../cmake.ts`)
+- **webkit.ts** — a direct build with source `groups` (bmalloc, WTF,
+  JavaScriptCore), generator and executable `steps`, a per-group PCH, and file
+  lists read from the tree's own CMake files at configure (`../cmake.ts`), so
+  configure fetches the tree (`../webkit-source.ts`); `prebuilt` on request
+- **icu.ts** — the same for a release tarball (`../icu-source.ts`), with a step
+  that repacks a data file and one that assembles it into an object
+- **bootstrap-cmds.ts** — a tool for the machine that builds, nothing linked
 
 ## How a dep builds
 

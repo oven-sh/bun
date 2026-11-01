@@ -540,6 +540,9 @@ const aptPackages = [
   ...["libxss1", "libxtst6", "xdg-utils"],
 ];
 
+/** The build image's alone. Apple's migcom, which WebKit's build for macOS runs, is written in them (deps/bootstrap-cmds.ts). */
+const aptBuildPackages = ["bison", "flex"];
+
 const apkPackages = [
   ...["bash", "ca-certificates", "curl", "git", "gnupg", "htop", "tar", "unzip", "wget", "xz"],
   // Bun's own binary links these.
@@ -673,7 +676,9 @@ function packages(image: LinuxImage): Tool {
     name: "packages",
     identity: packageDatabase,
     steps: [
-      image.distro === "alpine" ? apkAdd(apkPackages, { update: true }) : aptInstall(aptPackages, { update: true }),
+      image.distro === "alpine"
+        ? apkAdd(apkPackages, { update: true })
+        : aptInstall([...aptPackages, ...(image.role === "build" ? aptBuildPackages : [])], { update: true }),
     ],
   };
 }

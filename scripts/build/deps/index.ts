@@ -11,10 +11,12 @@
  */
 
 import type { Dependency } from "../source.ts";
+import { bootstrapCmds } from "./bootstrap-cmds.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
+import { icu } from "./icu.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
 import { libuv } from "./libuv.ts";
@@ -67,17 +69,23 @@ export const allDeps: readonly Dependency[] = [
   // a DirectBuild dep its .o files go straight on the link line so static
   // link order doesn't apply.
   lsquic,
+  // A tool of WebKit's build. Nothing of it is linked.
+  bootstrapCmds,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
-  // above might reference (via JavaScriptCore types in headers).
+  // above might reference (via JavaScriptCore types in headers) — and then
+  // ICU, which WTF and JSC call.
   webkit,
+  icu,
 ];
 
 // Re-export individuals for direct import when needed.
 export {
+  bootstrapCmds,
   boringssl,
   brotli,
   cares,
   highway,
+  icu,
   libdeflate,
   libjpegTurbo,
   libuv,

@@ -14,9 +14,11 @@ import { locations, pins } from "./ci-images/spec.ts";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
+import { icuSourceDir } from "./icu-source.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch, toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
+import { webkitSourceDir } from "./webkit-source.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
@@ -24,7 +26,11 @@ export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 /** `full` builds bun. `codegen` runs the code generators and nothing else; it resolves a {@link CodegenConfig}, not a {@link Config}. */
 export type Mode = "full" | "codegen";
-export type WebKitMode = "prebuilt" | "local";
+/**
+ * `source` compiles the pinned WebKit in this graph. `local` does the same with a checkout of yours. `prebuilt` links the
+ * libraries oven-sh/WebKit's CI published for the pinned commit. See deps/webkit.ts.
+ */
+export type WebKitMode = "source" | "local" | "prebuilt";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
 export type DebugInfo = "full" | "lines" | "none";
@@ -165,12 +171,14 @@ export interface Config {
   staticSqlite: boolean;
   staticLibatomic: boolean;
   tinycc: boolean;
+  /** ICU is compiled in this graph (deps/icu.ts): with the pinned WebKit, for every target but macOS, which has the SDK's. */
+  icu: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
   /** With `fuzzilli`: only the ahead-of-time compiler reports coverage (scripts/build/fuzzilli-compiler-coverage.txt). */
   fuzzilliCompilerOnly: boolean;
   /**
-   * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt.
+   * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included (`webkit: "prebuilt"`: the `-hardened` one).
    * The link makes a position-independent executable with full RELRO, eager binding and code in pages of its own.
    * Defines BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
    * Leaves out one thing that any other build can do: an executable that it compiles ahead of time does not start where
@@ -237,21 +245,21 @@ export interface Config {
    * leaves the engine's WebAssembly code out of the binary. Every package that loads a WebAssembly
    * module stops working, and so do the modules that `bun build --compile --aot` compiles ahead of
    * time: it warns at each one that a program imports, and the executable throws a ReferenceError.
-   * Takes a WebKit built from source (`webkit: "local"`) or the one prebuilt without WebAssembly,
+   * Takes a WebKit built from source (`webkit: "source"`, `"local"`) or the one prebuilt without WebAssembly,
    * which `hardened`, `lto` and `aot` together select.
    */
   webAssembly: boolean;
   /**
    * Default true. Off builds a Bun with no `ShadowRealm` global: the engine's `useShadowRealm` option
-   * is false whatever `BUN_JSC_useShadowRealm` says. A WebKit built from source (`webkit: "local"`) is
-   * also built with ENABLE_SHADOW_REALM=0, which leaves the class out of the binary; a prebuilt one
+   * is false whatever `BUN_JSC_useShadowRealm` says. A WebKit built from source (`webkit: "source"`,
+   * `"local"`) is also built with ENABLE_SHADOW_REALM=0, which leaves the class out of the binary; a prebuilt one
    * keeps it.
    */
   shadowRealm: boolean;
   /**
    * Default true. Off builds a Bun whose `bun:ffi` calls no native function and loads no library: dlopen(),
    * linkSymbols(), CFunction(), JSCallback(), cc() with a `library` and what cc() returns throw. A WebKit built from
-   * source (`webkit: "local"`) is also built with ENABLE_FFI=0, which leaves the engine's half of those calls out of
+   * source (`webkit: "source"`, `"local"`) is also built with ENABLE_FFI=0, which leaves the engine's half of those calls out of
    * the binary; a prebuilt one keeps it.
    */
   ffi: boolean;
@@ -289,7 +297,8 @@ export interface Config {
   /**
    * Deps built from a local checkout instead of the pinned tarball, keyed by
    * dep name → absolute source dir. Set via `--local-deps=name=path[,...]`;
-   * `webkit: "local"` is the WebKit entry ($BUN_WEBKIT_PATH or vendor/WebKit).
+   * `webkit: "local"` is the WebKit entry ($BUN_WEBKIT_PATH or vendor/WebKit),
+   * and so is `webkit: "source"` (the tree webkit-source.ts fetches).
    * The checkout is used as-is: no fetch, no `.ref` stamp, and the dep's
    * `patches` are NOT applied (they target the pinned tarball; a fork
    * checkout is expected to carry whatever you're iterating on).
@@ -1119,8 +1128,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // LTO (ThinLTO across bun, JSC and the Rust side): on for every release
   // build without assertions or ASAN, locally as in CI, so a local release
-  // binary has the codegen CI ships. `--lto=off` for faster relinks. JSC
-  // takes part through the prebuilt: `lto` selects the `-lto` WebKit tarball
+  // binary has the codegen CI ships. `--lto=off` for faster relinks. A
+  // prebuilt JSC takes part too: `lto` selects the `-lto` WebKit tarball
   // (deps/webkit.ts prebuiltSuffix), whose archives hold the LLVM bitcode
   // oven-sh/WebKit's CI emitted. The linker here has to read it, which rests
   // on both repos pinning the same LLVM: tools.ts enforces LLVM_VERSION on
@@ -1217,10 +1226,20 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const vendorDir = resolve(cwd, "vendor");
 
   const localDeps = parseLocalDeps(partial.localDeps, cwd);
-  const webkit = partial.webkit ?? (localDeps.WebKit !== undefined ? "local" : "prebuilt");
+  const webkit = partial.webkit ?? (localDeps.WebKit !== undefined ? "local" : "source");
+  if (webkit !== "source" && webkit !== "local" && webkit !== "prebuilt") {
+    throw new BuildError(`Unknown webkit: ${webkit}`, { hint: "Use source, local or prebuilt" });
+  }
   if (webkit === "local") {
     localDeps.WebKit ??= expandLocalPath(process.env.BUN_WEBKIT_PATH || resolve(vendorDir, "WebKit"), cwd);
+  } else if (webkit === "source") {
+    assert(localDeps.WebKit === undefined, "webkit=source can't be combined with --local-deps=WebKit=<path>", {
+      hint: "A checkout of yours is built with --webkit=local",
+    });
+    localDeps.WebKit = webkitSourceDir(cacheDir, webkitVersion);
   }
+  const icu = webkit === "source" && !darwin;
+  if (icu) localDeps.icu ??= icuSourceDir(cacheDir, webkitVersion);
 
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
@@ -1244,8 +1263,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!lockEnvironment || hardened, "lockEnvironment=true requires hardened=true");
   assert(!guardedPages || linux, "guardedPages=true requires os=linux");
   assert(
-    guardedPages === hardened || webkit === "local",
-    "guardedPages=" + guardedPages + " with hardened=" + hardened + " requires webkit=local",
+    guardedPages === hardened || webkit !== "prebuilt",
+    "guardedPages=" + guardedPages + " with hardened=" + hardened + " can't be combined with webkit=prebuilt",
     { hint: "The -hardened WebKit prebuilts are compiled with it, the others without" },
   );
   assert(
@@ -1253,26 +1272,26 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     "executeOnlyStart=false requires os=linux and abi=gnu or musl",
   );
   assert(
-    executeOnlyStart !== hardened || webkit === "local",
-    "executeOnlyStart=" + executeOnlyStart + " with hardened=" + hardened + " requires webkit=local",
+    executeOnlyStart !== hardened || webkit !== "prebuilt",
+    "executeOnlyStart=" + executeOnlyStart + " with hardened=" + hardened + " can't be combined with webkit=prebuilt",
     { hint: "The -hardened WebKit prebuilts are compiled without it, the others with it" },
   );
   const jit = partial.jit ?? true;
   assert(
-    jit || webkit === "local",
-    "jit=false requires webkit=local: there is no prebuilt WebKit without the JIT tiers",
+    jit || webkit !== "prebuilt",
+    "jit=false can't be combined with webkit=prebuilt: there is no prebuilt WebKit without the JIT tiers",
   );
   assert(jit || (partial.aot ?? true), "jit=false requires aot=true");
   assert(jit || (linux && x64), "jit=false requires os=linux and arch=x64");
   assert(jit || !(partial.trimmable ?? false), "jit=false can't be combined with trimmable=true");
   assert(
-    !hardened || webkit === "local" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
-    "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli, or webkit=local",
+    !hardened || webkit !== "prebuilt" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
+    "hardened=true with webkit=prebuilt requires a Linux x64 glibc release build without asan, assertions or fuzzilli",
     { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
   );
   assert(
-    (partial.webAssembly ?? true) || webkit === "local" || (hardened && lto && (partial.aot ?? true)),
-    "webAssembly=false requires hardened=true, lto=true and aot=true, or webkit=local",
+    (partial.webAssembly ?? true) || webkit !== "prebuilt" || (hardened && lto && (partial.aot ?? true)),
+    "webAssembly=false with webkit=prebuilt requires hardened=true, lto=true and aot=true",
     { hint: "That is the one WebKit prebuilt without WebAssembly (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
   );
   assert(
@@ -1423,7 +1442,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       }
     }
     if (webkit === "local") {
-      throw new BuildError("Cross-compiling for Windows requires the prebuilt WebKit (webkit=local needs msbuild)", {
+      throw new BuildError("Cross-compiling a WebKit checkout for Windows is not supported (its ICU needs msbuild)", {
         hint: "Drop --webkit=local or build on a Windows host.",
       });
     }
@@ -1456,11 +1475,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer; only `-mmacosx-version-min` decides what the binary runs on).
   let ld64StripSwap: { ld: string; strip: string } | undefined;
   if (darwinCross) {
-    if (webkit === "local") {
-      throw new BuildError("Cross-compiling for macOS requires the prebuilt WebKit", {
-        hint: "Drop --webkit=local or build on a macOS host.",
-      });
-    }
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
     osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
@@ -1537,6 +1551,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     staticSqlite,
     staticLibatomic,
     tinycc,
+    icu,
     valgrind,
     fuzzilli,
     hardened,
@@ -1967,16 +1982,17 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (!cfg.ffi) features.push("ffi:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
-  if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
-  for (const name of Object.keys(cfg.localDeps)) if (name !== "WebKit") features.push(`local:${name}`);
+  if (cfg.webkit !== "source") features.push(`webkit:${cfg.webkit}`);
+  for (const [name, dir] of Object.entries(cfg.localDeps)) {
+    // Those in the cache are the pinned ones, which configure fetched.
+    if (name !== "WebKit" && !dir.startsWith(cfg.cacheDir + sep)) features.push(`local:${name}`);
+  }
   if (cfg.packageManager !== "bun") features.push(`package-manager:${cfg.packageManager}`);
   // Version pin overrides — show an identifying value so you catch "forgot
   // to revert my WebKit test branch" before the build goes weird. Strip the
   // autobuild- prefix so preview tags show their sha instead of the prefix.
   if (cfg.webkitVersion !== versionDefaults.webkitVersion) {
-    const v = cfg.webkitVersion.startsWith("autobuild-")
-      ? cfg.webkitVersion.slice("autobuild-".length)
-      : cfg.webkitVersion;
+    const v = webkitVersionName(cfg.webkitVersion);
     features.push(`webkit-version:${/^[0-9a-f]{40}$/.test(v) ? v.slice(0, 10) : v}`);
   }
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);

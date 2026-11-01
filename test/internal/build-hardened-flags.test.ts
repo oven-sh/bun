@@ -203,7 +203,9 @@ test("--guarded-pages is on with --hardened=on, and either can be had without th
     expect(Object.values(everyFlagOf(linuxConfig(partial, String(dir)))).flat()).not.toContain(define);
   expect(everyFlagOf(linuxConfig({ hardened: true, webkit: "prebuilt" }, String(dir))).cxx).toContain(define);
   for (const partial of [{ guardedPages: true }, { hardened: true, guardedPages: false }] as PartialConfig[])
-    expect(() => linuxConfig({ ...partial, webkit: "prebuilt" }, String(dir))).toThrow("requires webkit=local");
+    expect(() => linuxConfig({ ...partial, webkit: "prebuilt" }, String(dir))).toThrow(
+      "can't be combined with webkit=prebuilt",
+    );
 });
 
 test("--execute-only-start is off with --hardened=on, and either can be had without the other where WebKit is compiled too", () => {
@@ -223,10 +225,10 @@ test("--execute-only-start is off with --hardened=on, and either can be had with
   expect(withPrebuilt.cxx).toContain(define);
   expect(withPrebuilt.rust).toContain(word);
   expect(() => linuxConfig({ executeOnlyStart: false, webkit: "prebuilt" }, String(dir))).toThrow(
-    "executeOnlyStart=false with hardened=false requires webkit=local",
+    "executeOnlyStart=false with hardened=false can't be combined with webkit=prebuilt",
   );
   expect(() => linuxConfig({ hardened: true, executeOnlyStart: true, webkit: "prebuilt" }, String(dir))).toThrow(
-    "executeOnlyStart=true with hardened=true requires webkit=local",
+    "executeOnlyStart=true with hardened=true can't be combined with webkit=prebuilt",
   );
   expect(() => linuxConfig({ executeOnlyStart: false, abi: "android", arch: "aarch64" }, String(dir))).toThrow(
     "executeOnlyStart=false requires os=linux and abi=gnu or musl",

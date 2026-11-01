@@ -42,7 +42,7 @@ function mockToolchain(): Toolchain {
   };
 }
 
-/** Shorthand: a Linux glibc x64 release target. linuxSysroot stubbed so the
+/** Shorthand: a Linux glibc x64 release target that links the prebuilt WebKit. linuxSysroot stubbed so the
  * cross-arch block in resolveConfig never throws on a non-x64-glibc host. */
 function resolveLinuxRelease(partial: PartialConfig = {}): Config {
   return resolveConfig(
@@ -54,6 +54,7 @@ function resolveLinuxRelease(partial: PartialConfig = {}): Config {
       lto: false,
       baseline: false,
       linuxSysroot: "/fake/linux-sysroot",
+      webkit: "prebuilt",
       ...partial,
     },
     mockToolchain(),
@@ -87,10 +88,7 @@ describe("WebKit prebuilt URL", () => {
   });
 
   test("debug picks the -debug-aot artifact from the same release tag", () => {
-    const cfg = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false, baseline: false, linuxSysroot: "/fake" },
-      mockToolchain(),
-    );
+    const cfg = resolveLinuxRelease({ buildType: "Debug", asan: false });
     expect(prebuiltUrlOf(cfg)).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug-aot.tar.gz`,
     );
@@ -142,10 +140,14 @@ describe("WebKit prebuilt URL", () => {
       { fuzzilli: true },
     ];
     for (const other of others as PartialConfig[]) {
-      expect(() => resolveLinuxRelease({ hardened: true, ...other })).toThrow("or webkit=local");
+      expect(() => resolveLinuxRelease({ hardened: true, ...other })).toThrow(
+        "hardened=true with webkit=prebuilt requires",
+      );
       expect(resolveLinuxRelease({ hardened: true, webkit: "local", ...other }).hardened).toBe(true);
     }
-    expect(() => resolveLinuxRelease({ hardened: true, abi: "musl" })).toThrow("or webkit=local");
+    expect(() => resolveLinuxRelease({ hardened: true, abi: "musl" })).toThrow(
+      "hardened=true with webkit=prebuilt requires",
+    );
   });
 
   test("a build with the ahead-of-time compiler is called -aot, and only what ships comes without it", () => {

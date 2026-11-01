@@ -34,7 +34,7 @@ presets:
   rust             rust-target/ dirs across all profiles + <build cache>/cargo
   cpp              C++ obj/ + pch/ across all profiles
   cache            machine-shared build cache (${sharedCacheDir}: ccache, cargo,
-                   tarballs, prebuilt webkit) — affects ALL checkouts
+                   tarballs, WebKit) — affects ALL checkouts
   deep             build/, target/, vendor/* (except manually managed deps
                    like WebKit)
 

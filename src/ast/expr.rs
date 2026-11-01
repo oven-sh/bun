@@ -736,6 +736,10 @@ impl Expr {
         if l_string.is_utf8() != r_string.is_utf8() {
             return None;
         }
+        // UTF-8 bytes order by code point, and `<` orders by UTF-16 code unit.
+        if l_string.has_non_ascii_bytes() && r_string.has_non_ascii_bytes() {
+            return None;
+        }
 
         Some([l_string, r_string])
     }
@@ -2491,30 +2495,12 @@ impl Data {
         match self {
             Data::ENull(_) => Some(0.0),
             Data::EUndefined(_) => Some(f64::NAN),
-            Data::EString(str) => {
-                if str.next.is_some() {
-                    return None;
-                }
-                if !str.is_utf8() {
-                    return None;
-                }
-                // +'1' => 1
-                Some(string_to_equivalent_number_value(str.slice8()))
-            }
+            Data::EString(str) => string_to_number(str),
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(if b.value { 1.0 } else { 0.0 }),
             Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
                 Data::ENumber(num) => Some(num.value()),
-                Data::EString(str) => {
-                    if str.next.is_some() {
-                        return None;
-                    }
-                    if !str.is_utf8() {
-                        return None;
-                    }
-                    // +'1' => 1
-                    Some(string_to_equivalent_number_value(str.slice8()))
-                }
+                Data::EString(str) => string_to_number(str),
                 _ => None,
             },
             _ => None,
@@ -2819,6 +2805,16 @@ pub use data::Store;
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
+
+/// `Number(str)` for a flat 8-bit string that is ASCII.
+fn string_to_number(str: &E::String) -> Option<f64> {
+    // Text that is not ASCII can be white space, which `Number()` trims.
+    if str.next.is_some() || !str.is_utf8() || str.has_non_ascii_bytes() {
+        return None;
+    }
+    // +'1' => 1
+    Some(string_to_equivalent_number_value(str.slice8()))
+}
 
 /// `Number(str)`.
 pub fn string_to_equivalent_number_value(str: &[u8]) -> f64 {

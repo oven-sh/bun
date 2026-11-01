@@ -1909,6 +1909,19 @@ impl EString {
         }
     }
 
+    /// Whether this string, or a later part of its rope, is 8-bit text that is not ASCII.
+    #[inline(never)]
+    pub fn has_non_ascii_bytes(&self) -> bool {
+        let mut part = Some(self);
+        while let Some(segment) = part {
+            if segment.is_utf8() && !strings::is_all_ascii(&segment.data) {
+                return true;
+            }
+            part = segment.next.as_deref();
+        }
+        false
+    }
+
     pub fn javascript_length(&self) -> Option<u32> {
         if self.rope_len > 0 {
             // We only support ascii ropes for now

@@ -257,6 +257,48 @@ describe("Bun.Transpiler", () => {
       ]);
       expect(exitCode).toBe(0);
     });
+    it("keeps a read of a string under a write or a delete", () => {
+      ts.expectPrintedMin_('"abc".length = 1', '"abc".length = 1');
+      ts.expectPrintedMin_('"abc".length++', '"abc".length++');
+      ts.expectPrintedMin_('delete "abc".length', 'delete "abc".length');
+      ts.expectPrintedMin_('delete "abc"[0]', 'delete "abc"[0]');
+      ts.expectPrintedMin_("delete [y][0]", "delete [y][0]");
+      ts.expectPrintedMin_('x = "abc".length', "x = 3");
+      ts.expectPrintedMin_('x = "abc"[0]', 'x = "a"');
+    });
+    // "\u00c3\u00a9" is two characters, and their code units are the UTF-8 bytes of "\u00e9".
+    it("does not match the key of a literal with one property byte for code unit", () => {
+      ts.expectPrintedMin_('x = ({ "\u00c3\u00a9": 1 }).\u00e9', 'x = { "\u00c3\u00a9": 1 }.\u00e9');
+      ts.expectPrintedMin_('x = ({ "\u00e9": 1 }).\u00e9', 'x = { "\u00e9": 1 }.\u00e9');
+      ts.expectPrintedMin_('x = ({ "\\u0061": 1 }).a', "x = 1");
+    });
+    it("runs a write and a delete on a string or list literal as node does", async () => {
+      const src = `
+        function attempt(fn) { try { return fn(); } catch (e) { return e.constructor.name; } }
+        function kind() { return this === undefined ? "undefined" : typeof this; }
+        console.log(
+          attempt(() => { "use strict"; return ("abc".length = 1); }),
+          attempt(() => { "use strict"; return delete "abc".length; }),
+          attempt(() => { "use strict"; return delete "abc"[0]; }),
+          attempt(() => delete [1][0]),
+          ({ "\u00c3\u00a9": 1 }).\u00e9,
+          ({ "\u00e9": () => 1 }).\u00e9.name === "\u00e9",
+          ({ "\u00e9": kind }).\u00e9\`x\`,
+        );
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "TypeError TypeError TypeError true undefined true object\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
       const lastLine = out => out.trimEnd().split("\n").at(-1);
@@ -344,6 +386,99 @@ describe("Bun.Transpiler", () => {
           stderr: "",
           exitCode: 0,
         });
+      });
+    });
+  });
+
+  // A define makes 8-bit text. A byte of it is a character only where the text is ASCII.
+  describe("8-bit text that is not ASCII", () => {
+    const values = { A: "ab", T: "a\u00e9b", H: "\u{1F600}", L: "\uffee", N: "\u00a01", Z: "" };
+    const define = Object.fromEntries(Object.entries(values).map(([name, value]) => [name, JSON.stringify(value)]));
+    const transpiler = new Bun.Transpiler({ minify: { syntax: true }, define });
+    const fold = source => transpiler.transformSync(source).trimEnd();
+
+    it("keeps a fold that would read it by byte", () => {
+      expect(fold('x = ("x" + T).length')).toBe('x = "xa\u00e9b".length;');
+      expect(fold('x = (T + "x")[1]')).toBe('x = "a\u00e9bx"[1];');
+      expect(fold("x = T[3]")).toBe('x = "a\u00e9b"[3];');
+      expect(fold("x = T.charCodeAt(3)")).toBe('x = "a\u00e9b".charCodeAt(3);');
+      expect(fold('x = (T + "x").charCodeAt(3)')).toBe('x = "a\u00e9bx".charCodeAt(3);');
+      // Code units order "\u{1F600}" before "\uffee", and UTF-8 bytes order it after.
+      expect(fold("x = H < L")).toBe('x = "\u{1F600}" < "\uffee";');
+      expect(fold("x = H >= L")).toBe('x = "\u{1F600}" >= "\uffee";');
+      // A no-break space is white space, so `+"\u00a01"` is 1.
+      expect(fold("x = [+N, -N, ~N]")).toBe('x = [+"\u00a01", -"\u00a01", ~"\u00a01"];');
+    });
+    it("folds where the text that is read is ASCII", () => {
+      expect(fold('x = [("x" + "yz").length, ("ab" + "cd")[1], "abc".charCodeAt(1), "a" < "b", +"1"]')).toBe(
+        'x = [3, "b", 98, !0, 1];',
+      );
+      expect(fold('x = [T[0], T.charCodeAt(0), T < "b", ("x" + T)[0]]')).toBe('x = ["a", 97, !0, "x"];');
+    });
+    // `.charCodeAt()` and the unary operators fold with no minify option.
+    it("keeps the folds that run without a minify option", () => {
+      const plain = new Bun.Transpiler({ define });
+      expect(plain.transformSync("x = [T.charCodeAt(3), T.charCodeAt(0), +N, -N];")).toBe(
+        'x = ["a\u00e9b".charCodeAt(3), 97, +"\u00a01", -"\u00a01"];\n',
+      );
+    });
+    it("keeps a unary operator on an enum member", () => {
+      const typescript = new Bun.Transpiler({ loader: "ts", minify: { syntax: true }, define });
+      expect(
+        typescript.transformSync("enum E { S = N as any }\nx = [+E.S, -E.S, ~E.S];").trimEnd().split("\n").at(-1),
+      ).toBe('x = [+"\u00a01" /* S */, -"\u00a01" /* S */, ~"\u00a01" /* S */];');
+    });
+    // Every operand alone and every pair, joined by `+` and by a template, under every consumer.
+    it("gives what the engine gives for each generated read", () => {
+      const operands = [...Object.keys(values), '"x"', "7"];
+      const expressions = [
+        ...operands.map(operand => `(${operand})`),
+        ...operands.flatMap(left => operands.map(right => `(${left} + ${right})`)),
+        ...operands.flatMap(left => operands.map(right => "`${" + left + "}${" + right + "}`")),
+      ];
+      const consumers = [
+        e => `${e}.length`,
+        ...[0, 1, 3, 4].map(index => e => `${e}[${index}]`),
+        ...[0, 1, 3, 4].map(index => e => `${e}.charCodeAt?.(${index})`),
+        ...["<", ">", "<=", ">="].flatMap(operator => ["T", "H", "L"].map(other => e => `${e} ${operator} ${other}`)),
+        e => `+${e}`,
+        e => `-${e}`,
+        e => `~${e}`,
+        e => `${e} === "xa\u00e9b"`,
+      ];
+      const rows = expressions.flatMap(expression => consumers.map(consumer => consumer(expression)));
+      const source = rows
+        .map((row, index) => `try { o[${index}] = s(${row}); } catch (e) { o[${index}] = "!" + e.constructor.name; }`)
+        .join("\n");
+      const show = value => (typeof value === "number" ? String(value) : JSON.stringify(value));
+      const run = code => {
+        const results = [];
+        new Function("o", "s", ...Object.keys(values), code)(results, show, ...Object.values(values));
+        return results;
+      };
+      const expected = run(source);
+      const actual = run(transpiler.transformSync(source));
+      expect(
+        rows.flatMap((row, index) => (actual[index] === expected[index] ? [] : [`${row}: ${actual[index]}`])),
+      ).toEqual([]);
+      expect(rows.length).toBeGreaterThan(1000);
+    });
+    it("gives what node gives in `bun run`", async () => {
+      const src = `
+        enum E { S = N as any }
+        console.log(("x" + T).length, T[3], T.charCodeAt(3), H < L, +N, (T + "x")[1] === "\\u00e9", +E.S, -E.S, ~E.S);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...Object.entries(define).map(([name, value]) => `--define=${name}=${value}`), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "4 undefined NaN true 1 true 1 -1 -2\n",
+        stderr: "",
+        exitCode: 0,
       });
     });
   });

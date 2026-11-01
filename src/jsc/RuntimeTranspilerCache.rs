@@ -85,7 +85,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-const EXPECTED_VERSION: u32 = 51;
+/// Version 52: `"ab".length`, `"ab"[0]` and `[x][0]` stay under a write or a `delete`, and a string fold leaves 8-bit text that is not ASCII for run time.
+const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

@@ -24,7 +24,7 @@ fn e_string_init(data: &[u8]) -> E::EString {
 fn e_string_javascript_length(s: &E::EString) -> Option<u32> {
     if s.rope_len > 0 {
         // We only support ascii ropes for now
-        return Some(s.rope_len);
+        return (!s.has_non_ascii_bytes()).then_some(s.rope_len);
     }
     if !s.is_utf16 {
         if !s.data.iter().all(|&b| b < 128) {
@@ -42,7 +42,12 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
         s.data == other
     } else {
         let s16 = s.slice16();
-        s16.len() == other.len() && s16.iter().zip(other).all(|(&c, &b)| c == b as u16)
+        // A byte of the name is a code unit of the key only where it is ASCII.
+        s16.len() == other.len()
+            && s16
+                .iter()
+                .zip(other)
+                .all(|(&c, &b)| b < 0x80 && c == b as u16)
     }
 }
 
@@ -547,7 +552,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::EString(str_) => {
                     if p.options.features.minify_syntax {
                         // minify "long-string".length to 11
-                        if name == b"length" {
+                        if name == b"length"
+                            && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                            && !identifier_opts.is_delete_target()
+                        {
                             if let Some(len) = e_string_javascript_length(&str_) {
                                 return Some(p.new_expr(E::Number::new(len as f64), loc));
                             }

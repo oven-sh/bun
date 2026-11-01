@@ -28,6 +28,38 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
+    // An inlined value is 8-bit text. A fold reads one byte of it as one character only where the text is ASCII, so
+    // each of these reads gives what it gives at run time. The path still joins with a literal at build time.
+    if (backend === "cli")
+      itBundled("env/inline non-ascii", {
+        env: {
+          INLINE_NON_ASCII: "é😀",
+          INLINE_LS_NUMBER: "\u2028 12 ",
+          INLINE_DIR: "./dér",
+        },
+        backend: backend,
+        dotenv: "inline",
+        minifySyntax: true,
+        files: {
+          "/a.js": `
+        const v = process.env.INLINE_NON_ASCII;
+        const m = require(process.env.INLINE_DIR + "/m.js");
+        console.log(JSON.stringify([v, process.env.INLINE_NON_ASCII[0], process.env.INLINE_NON_ASCII?.[1], \`\${process.env.INLINE_NON_ASCII}\`.length, process.env.INLINE_NON_ASCII === "é😀", +process.env.INLINE_LS_NUMBER, ~process.env.INLINE_LS_NUMBER, m]));
+      `,
+          "/dér/m.js": `module.exports = "from m";`,
+        },
+        onAfterBundle(api) {
+          expect(api.readFile("/out.js")).toContain("from m");
+        },
+        run: {
+          env: {
+            INLINE_NON_ASCII: "the run-time value, which inlining should have replaced",
+            INLINE_LS_NUMBER: "0",
+          },
+          stdout: '["é😀","é","\\ud83d",3,true,12,-13,"from m"]',
+        },
+      });
+
     // A variable from the process environment (not a .env file) is inlined at build time. It has to be one this
     // process started with (the api backend builds in-process), spelled as the environment spells it (on Windows the
     // inlined name is case-sensitive even though process.env is not: `Path`, not `PATH`).

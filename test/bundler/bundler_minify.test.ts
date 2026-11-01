@@ -1059,6 +1059,41 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  // A define makes 8-bit text. A fold reads one byte of it as one character
+  // only where the text is ASCII, so each read prints what node prints.
+  itBundled("minify/StringFoldsLeaveNonAsciiDefineText", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(("x" + TEXT).length, (TEXT + "x")[3], (TEXT + "x").charCodeAt(3), JSON.stringify(TEXT[1]), \`x\${TEXT}\`.length);
+        console.log(("x" + HIGH) < ("x" + LOW), HIGH < LOW, +\`1\${SPACE}\`, -(SPACE + "1"), TEXT.charCodeAt(3));
+      `,
+    },
+    define: { TEXT: '"a\u00e9b"', HIGH: '"\u{1F600}"', LOW: '"\uffee"', SPACE: '"\u00a0"' },
+    minifySyntax: true,
+    run: { stdout: '4 x 120 "\u00e9" 4\ntrue true 1 -1 NaN' },
+  });
+  // `.charCodeAt()` and the unary operators fold with no minify option.
+  itBundled("minify/StringFoldsLeaveNonAsciiDefineTextWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(TEXT.charCodeAt(3), TEXT.charCodeAt(0), +SPACE1, -SPACE1, TEXT.charCodeAt(3) === 98 ? "byte" : "unit");
+      `,
+    },
+    define: { TEXT: '"a\u00e9b"', SPACE1: '"\u00a01"' },
+    run: { stdout: "NaN 97 1 -1 unit" },
+  });
+  // An inlined file name is 8-bit text too: "d\u00e9p.cjs"[3] is ".", and byte 3 is "p".
+  itBundled("minify/StringFoldsLeaveNonAsciiFileName", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./d\u00e9p.cjs");
+      `,
+      "/d\u00e9p.cjs": /* js */ `
+        console.log(module.id, module.id.charCodeAt(3), module.id.charCodeAt(0));
+      `,
+    },
+    run: { stdout: "d\u00e9p.cjs 46 100" },
+  });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `

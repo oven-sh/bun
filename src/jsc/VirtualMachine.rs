@@ -4378,6 +4378,15 @@ fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
     p
 }
 
+/// For a thread that ends before the process does: the slot has no destructor.
+pub(crate) fn free_specifier_cache_resolver_buf() {
+    let p = SPECIFIER_CACHE_RESOLVER_BUF.replace(core::ptr::null_mut());
+    if !p.is_null() {
+        // SAFETY: `heap::into_raw`'d on this thread; `_resolve`, its only user, does not run now.
+        unsafe { bun_core::heap::destroy(p) };
+    }
+}
+
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
         let writer = bun_js_printer::BufferWriter::init();

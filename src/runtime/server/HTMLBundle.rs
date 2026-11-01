@@ -82,6 +82,17 @@ impl HTMLBundle {
 /// Deprecated: use Route instead.
 pub(crate) type HTMLBundleRoute = Route;
 
+pub(crate) fn source_map_option(is_development: bool) -> bundler_options::SourceMapOption {
+    // Production defaults to no sourcemaps so original sources are not served publicly.
+    if let Some(mode) = crate::cli::Command::get().args.serve_sourcemap {
+        bundler_options::SourceMapOption::from_api(Some(mode))
+    } else if is_development {
+        bundler_options::SourceMapOption::Linked
+    } else {
+        bundler_options::SourceMapOption::None
+    }
+}
+
 /// An HTMLBundle can be used across multiple server instances, an
 /// HTMLBundle.Route can only be used on one server, but is also
 /// reference-counted because a server can have multiple instances of the same
@@ -423,14 +434,7 @@ impl Route {
             config.force_node_env = bundler_options::ForceNodeEnv::Development;
             config.jsx.development = true;
         }
-        // Production defaults to no sourcemaps so original sources are not served publicly.
-        config.source_map = if let Some(mode) = cli.args.serve_sourcemap {
-            bundler_options::SourceMapOption::from_api(Some(mode))
-        } else if is_development {
-            bundler_options::SourceMapOption::Linked
-        } else {
-            bundler_options::SourceMapOption::None
-        };
+        config.source_map = source_map_option(is_development);
 
         // The build is the server's: it continues the script that made the server.
         let mut completion_task =

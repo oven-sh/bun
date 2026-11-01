@@ -20,6 +20,7 @@ use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
 };
 use ::bstr::BStr;
+use bun_bundler::options::SourceMapOption;
 use bun_collections::HashMap;
 use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes, strings};
 use bun_core::{Output, fmt as bun_fmt};
@@ -936,7 +937,7 @@ pub(crate) enum GetOrStartLoadResult<'a> {
 pub(crate) enum ServePluginsCallback {
     HtmlBundleRoute(bun_ptr::ThisPtr<html_bundle::Route>),
     /// The calling server's DevServer.
-    DevServer,
+    DevServer(SourceMapOption),
 }
 
 impl ServePlugins {
@@ -956,7 +957,13 @@ impl ServePlugins {
         loop {
             match &mut self.state {
                 ServePluginsState::Unqueued(_) => {
-                    self.load_and_resolve_plugins(global)?;
+                    let source_map = match cb {
+                        ServePluginsCallback::HtmlBundleRoute(_) => {
+                            html_bundle::source_map_option(server.config().is_development())
+                        }
+                        ServePluginsCallback::DevServer(source_map) => source_map,
+                    };
+                    self.load_and_resolve_plugins(global, source_map)?;
                     // could jump to any branch if synchronously resolved
                     continue;
                 }
@@ -969,7 +976,7 @@ impl ServePlugins {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
                             html_bundle_routes.push(RefPtr::from_this(route));
                         }
-                        ServePluginsCallback::DevServer => {
+                        ServePluginsCallback::DevServer(_) => {
                             // one dev server per server
                             debug_assert!(dev_server.is_none_or(|s| s == server));
                             *dev_server = Some(server);
@@ -989,7 +996,11 @@ impl ServePlugins {
         }
     }
 
-    fn load_and_resolve_plugins(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+    fn load_and_resolve_plugins(
+        &mut self,
+        global: &JSGlobalObject,
+        source_map: SourceMapOption,
+    ) -> JsResult<()> {
         debug_assert!(matches!(self.state, ServePluginsState::Unqueued(_)));
         let ServePluginsState::Unqueued(plugin_list) = &self.state else {
             unreachable!()
@@ -1027,6 +1038,12 @@ impl ServePlugins {
             }
         }
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
+        let source_map_js = match source_map {
+            SourceMapOption::None => global.common_strings().none(),
+            SourceMapOption::Inline => BunString::static_("inline").to_js(global)?,
+            SourceMapOption::External => BunString::static_("external").to_js(global)?,
+            SourceMapOption::Linked => BunString::static_("linked").to_js(global)?,
+        };
 
         self.state = ServePluginsState::Pending {
             promise: jsc::JSPromiseStrong::init(global),
@@ -1041,7 +1058,11 @@ impl ServePlugins {
                 ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
                 _ => unreachable!(),
             }
-            .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
+            .load_and_resolve_plugins_for_serve(
+                plugin_js_array,
+                bunfig_folder_bunstr,
+                source_map_js,
+            )
         })?;
         global.bun_vm().event_loop_mut().exit();
 

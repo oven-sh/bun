@@ -7,9 +7,7 @@ use bun_ast::{Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
-use bun_sourcemap::{
-    self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,
-};
+use bun_sourcemap::{self as SourceMap, LineOffsetTable, SourceMapPieces, SourceMapState};
 // Note: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
 use crate::bake_types as bake;
@@ -1208,7 +1206,6 @@ impl<'a> LinkerContext<'a> {
 
     pub(crate) fn generate_source_map_for_chunk(
         &mut self,
-        isolated_hash: u64,
         _worker: &mut crate::thread_pool::Worker,
         results: &MultiArrayList<CompileResultForSourceMap<'_>>,
         chunk_abs_dir: &[u8],
@@ -1352,17 +1349,7 @@ impl<'a> LinkerContext<'a> {
         }
         let mapping_end = j.len;
 
-        if FeatureFlags::SOURCE_MAP_DEBUG_ID {
-            j.push_static(b"\",\n  \"debugId\": \"");
-            let mut buf = Vec::<u8>::new();
-            use std::io::Write;
-            write!(&mut buf, "{}", DebugIDFormatter { id: isolated_hash })
-                .expect("infallible: in-memory write");
-            j.push_owned(buf.into_boxed_slice());
-            j.push_static(b"\",\n  \"names\": []\n}");
-        } else {
-            j.push_static(b"\",\n  \"names\": []\n}");
-        }
+        SourceMapPieces::push_suffix(&mut j);
 
         let done = j.done()?;
         debug_assert!(done[0] == b'{');
@@ -1912,6 +1899,11 @@ pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(
 }
 
 impl<'a> LinkerContext<'a> {
+    /// The `PathTemplate::print` argument for a chunk path, the same for its hash and its final path.
+    pub(crate) fn sanitize_parent_dirs(&self) -> bool {
+        !self.options.compile_mode.is_executable()
+    }
+
     pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &'a Bump) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
@@ -1966,6 +1958,10 @@ impl<'a> LinkerContext<'a> {
         // any import to be considered different if the import's output path has changed.
         hasher.write(&chunk.template.data);
 
+        // esbuild's template has `[dir]`, `[name]` and `[ext]` filled in by now. Ours prints them here.
+        debug_assert!(chunk.template.placeholder.hash.is_none());
+        hasher.write_path(&chunk.template, self.sanitize_parent_dirs());
+
         let public_path: &[u8] = if chunk
             .flags
             .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
@@ -1997,8 +1993,19 @@ impl<'a> LinkerContext<'a> {
         // data in the spans between them.
         match &chunk.intermediate_output {
             crate::chunk::IntermediateOutput::Pieces(pieces) => {
+                // Standalone HTML prints the bytes of an asset here, not its path.
+                let inlined_assets = self.options.compile_mode.is_standalone_html().then(|| {
+                    self.parse_graph()
+                        .input_files
+                        .items_content_hash_for_additional_file()
+                });
                 for piece in pieces.slice() {
                     hasher.write(piece.data());
+                    if let Some(content_hashes) = inlined_assets
+                        && piece.query.kind() == crate::chunk::QueryKind::Asset
+                    {
+                        hasher.write(&content_hashes[piece.query.index() as usize].to_ne_bytes());
+                    }
                 }
             }
             crate::chunk::IntermediateOutput::Joiner(joiner) => {
@@ -2028,6 +2035,9 @@ impl<'a> LinkerContext<'a> {
         hasher.write(&chunk.output_source_map.prefix);
         hasher.write(&chunk.output_source_map.mappings);
         hasher.write(&chunk.output_source_map.suffix);
+
+        // The mode decides what follows the code: a debug ID, a link to the map, or the map itself.
+        hasher.write(&[chunk.content.sourcemap(self.options.source_maps) as u8]);
 
         hasher.digest()
     }
@@ -2557,11 +2567,11 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Each chunk's final content hash: its own isolated hash (plus the
-    /// asset paths its output pieces reference) and that of every chunk it
+    /// asset paths and chunks its output pieces name) and that of every chunk it
     /// transitively reaches through cross-chunk imports or output pieces, so a
     /// change anywhere below a chunk renames it. Cycles are fine: reachability
     /// is a fixpoint over bitsets, and each chunk digests its own hash first,
-    /// then the rest of its closure in chunk order (so two chunks that reach
+    /// then the sum of the rest of its closure (so two chunks that reach
     /// each other still differ).
     ///
     /// The width is the template's (`[hash]` = 8, `[hashN]` = N) unless two
@@ -2613,13 +2623,19 @@ impl<'a> LinkerContext<'a> {
                             }
                         }
                         crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
-                            out.push(piece.query.index())
+                            let chunk_index = piece.query.index();
+                            out.push(chunk_index);
+                            // Two pieces can trade chunks and keep the closure. esbuild keeps the name then.
+                            hash.write(&chunks[chunk_index as usize].isolated_hash.to_ne_bytes());
                         }
                         crate::chunk::QueryKind::Scb => {
                             let chunk_index = self.graph.files.items_entry_point_chunk_index()
                                 [piece.query.index() as usize];
                             if chunk_index != u32::MAX {
                                 out.push(chunk_index);
+                                hash.write(
+                                    &chunks[chunk_index as usize].isolated_hash.to_ne_bytes(),
+                                );
                             }
                         }
                         crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
@@ -2659,14 +2675,17 @@ impl<'a> LinkerContext<'a> {
             .iter()
             .enumerate()
             .map(|(i, bits)| {
-                let mut hash = ContentHasher::default();
-                hash.write(&own[i].to_ne_bytes());
+                // A sum: one more entry point can put the same chunks in another order.
+                let mut rest: u64 = 0;
                 let mut iter = bits.iterator::<true, true>();
                 while let Some(j) = iter.next() {
                     if j != i {
-                        hash.write(&own[j].to_ne_bytes());
+                        rest = rest.wrapping_add(own[j]);
                     }
                 }
+                let mut hash = ContentHasher::default();
+                hash.write(&own[i].to_ne_bytes());
+                hash.write(&rest.to_ne_bytes());
                 hash.digest()
             })
             .collect();

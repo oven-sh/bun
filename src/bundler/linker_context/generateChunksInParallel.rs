@@ -390,7 +390,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             // runtime bunfs references to out-of-root entrypoints resolve.
             chunk
                 .template
-                .print(&mut rel_path, !c.options.compile_mode.is_executable())
+                .print(&mut rel_path, c.sanitize_parent_dirs())
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
@@ -764,9 +764,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 
             match sourcemap_option {
                 tag @ (SourceMapOption::External | SourceMapOption::Linked) => {
+                    let debug_id = chunks[ci].debug_id();
                     let output_source_map = chunks[ci]
                         .output_source_map
-                        .finalize(&code_result.shifts)
+                        .finalize(&code_result.shifts, debug_id)
                         .expect("Failed to allocate memory for external source map");
 
                     if tag == SourceMapOption::Linked {
@@ -831,9 +832,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     standalone_sourcemaps[ci] = Some(output_source_map);
                 }
                 SourceMapOption::Inline => {
+                    let debug_id = chunks[ci].debug_id();
                     let output_source_map = chunks[ci]
                         .output_source_map
-                        .finalize(&code_result.shifts)
+                        .finalize(&code_result.shifts, debug_id)
                         .expect("Failed to allocate memory for inline source map");
                     let encode_len = bun_base64::encode_len(&output_source_map);
 
@@ -1018,9 +1020,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 
             match chunk.content.sourcemap(c.options.source_maps) {
                 tag @ (SourceMapOption::External | SourceMapOption::Linked) => {
+                    let debug_id = chunk.debug_id();
                     let output_source_map = chunk
                         .output_source_map
-                        .finalize(&code_result.shifts)
+                        .finalize(&code_result.shifts, debug_id)
                         .expect("Failed to allocate memory for external source map");
                     let mut source_map_final_rel_path: Vec<u8> =
                         Vec::with_capacity(chunk.final_rel_path.len() + b".map".len());
@@ -1068,9 +1071,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                         }));
                 }
                 SourceMapOption::Inline => {
+                    let debug_id = chunk.debug_id();
                     let output_source_map = chunk
                         .output_source_map
-                        .finalize(&code_result.shifts)
+                        .finalize(&code_result.shifts, debug_id)
                         .expect("Failed to allocate memory for external source map");
                     let encode_len = bun_base64::encode_len(&output_source_map);
 

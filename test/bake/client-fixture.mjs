@@ -453,6 +453,8 @@ process.on("message", async message => {
     });
   }
   if (message.type === "hard-reload") {
+    // The harness sends the page to load: the current one, or another page on a navigation.
+    url = new URL(message.args[0]);
     expectingReload = true;
     await handleReload();
   }

@@ -1,6 +1,11 @@
 // Tests which apply to both dev and prod. They are run twice.
+//
+// Every case boots a server (a dev server, then a production build) and waits
+// for it to exit. That is most of a case's time, so pages that only differ in
+// their HTML live in one project, one route each.
+import { expect } from "bun:test";
 import { writeFileSync } from "node:fs";
-import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
+import { Dev, devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
 
 const hmrSelfAcceptingModule = (label: string) => `
   console.log(${JSON.stringify(label)});
@@ -9,30 +14,56 @@ const hmrSelfAcceptingModule = (label: string) => `
   }
 `;
 
-devAndProductionTest("define config via bunfig.toml", {
+/**
+ * Fetches a page and splits off the tags the bundler injects in place of the
+ * page's own `<script>` and `<link rel="stylesheet">` tags: one `<link>` per
+ * stylesheet, the page's bundle as one module script and, in development, the
+ * dev server's inline snippet. `html` keeps a marker where they were, with the
+ * whitespace between tags collapsed so the expected document fits on one line.
+ */
+async function fetchPage(dev: Dev, url: string) {
+  const res = await dev.fetch(url);
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toBe("text/html;charset=utf-8");
+  const html = await res.text();
+  const injected = html.match(
+    /((?:<link rel="stylesheet" (?:crossorigin )?href="[^"]+">)*)<script type="module" crossorigin src="([^"]+)"(?: data-bun-dev-server-script)?><\/script>(?:<script>[^<]*<\/script>)?/,
+  );
+  if (!injected) throw new Error("The bundler did not inject its script tag:\n" + html);
+  return {
+    html: html.replace(injected[0], "<!--injected-->").replace(/\s+/g, " ").replaceAll("> <", "><").trim(),
+    styles: Array.from(injected[1].matchAll(/href="([^"]+)"/g), m => m[1]),
+    script: injected[2],
+  };
+}
+
+/** The dev server's "Bundled page" lines so far, without colors and timings. */
+function bundledPages(dev: Dev) {
+  return dev.output.lines
+    .map(line => line.replace(/\x1b\[\d+m/g, "").replaceAll("\\", "/"))
+    .filter(line => line.startsWith("Bundled page"))
+    .map(line => line.replace(/ in \d+ms/, ""));
+}
+
+devAndProductionTest("html entry points of every shape", {
   files: {
-    "index.html": emptyHtmlFile({
-      styles: [],
-      scripts: ["index.ts"],
-    }),
-    "index.ts": `
-      console.log("a=" + DEFINE);
-    `,
     "bunfig.toml": `
       [serve.static]
       define = {
         "DEFINE" = "\\"HELLO\\""
       }
     `,
-  },
-  async test(dev) {
-    const c = await dev.client("/");
-    await c.expectMessage("a=HELLO");
-  },
-});
-devAndProductionTest("invalid html does not crash 1", {
-  files: {
-    "public/index.html": `
+    // define config via bunfig.toml
+    "define/index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["../src/define.ts"],
+    }),
+    "src/define.ts": `
+      console.log("a=" + DEFINE);
+    `,
+    // invalid html does not crash: a self-closing <script /> swallows the rest
+    // of the document as script text.
+    "invalid/index.html": `
       <!DOCTYPE html>
       <html>
         <head>
@@ -45,24 +76,8 @@ devAndProductionTest("invalid html does not crash 1", {
         </body>
       </html>
     `,
-    "src/app/index.tsx": `
-      console.log("hello");
-    `,
-    "src/app/styles.css": `
-      body {
-        background-color: red;
-      }
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("hello");
-    await c.style("body").backgroundColor.expect.toBe("red");
-  },
-});
-devAndProductionTest("missing head end tag works fine", {
-  files: {
-    "public/index.html": `
+    // missing head end tag works fine
+    "no-head-end/index.html": `
       <!DOCTYPE html>
       <html>
         <head>
@@ -74,49 +89,16 @@ devAndProductionTest("missing head end tag works fine", {
         </body>
       </html>
     `,
-    "src/app/index.tsx": `
-      console.log("hello");
-    `,
-    "src/app/styles.css": `
-      body {
-        background-color: red;
-      }
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("hello");
-    await c.style("body").backgroundColor.expect.toBe("red");
-  },
-});
-devAndProductionTest("missing all meta tags works fine", {
-  files: {
-    "public/index.html": `
+    // missing all meta tags works fine
+    "no-meta/index.html": `
       <title>Dashboard</title>
       <link rel="stylesheet" href="../src/app/styles.css"></link>
 
       <div id="root" />
       <script type="module" src="../src/app/index.tsx"></script>
     `,
-    "src/app/index.tsx": `
-      console.log("hello");
-    `,
-    "src/app/styles.css": `
-      body {
-        background-color: red;
-      }
-    `,
-  },
-  async test(dev) {
-    await dev.fetch("/").expect.toInclude("root");
-    await using c = await dev.client("/");
-    await c.expectMessage("hello");
-    await c.style("body").backgroundColor.expect.toBe("red");
-  },
-});
-devAndProductionTest("inline script and styles appear", {
-  files: {
-    "public/index.html": `
+    // inline script and styles appear
+    "inline/index.html": `
       <!DOCTYPE html>
       <html>
         <head>
@@ -128,13 +110,99 @@ devAndProductionTest("inline script and styles appear", {
         </body>
       </html>
     `,
+    "src/app/index.tsx": `
+      console.log("hello");
+    `,
+    "src/app/styles.css": `
+      body {
+        background-color: red;
+      }
+    `,
   },
   async test(dev) {
-    await dev.fetch("/").expect.toInclude("hello");
-    await dev.fetch("/").expect.not.toInclude("hello 3"); // TODO:
-    await using c = await dev.client("/");
+    const isDev = dev.nodeEnv === "development";
+    const script = expect.stringMatching(
+      isDev ? /^\/_bun\/client\/index-[0-9a-f]{16}\.js$/ : /^\/chunk-[a-z0-9]+\.js$/,
+    );
+    const style = expect.stringMatching(isDev ? /^\/_bun\/asset\/[0-9a-f]{16}\.css$/ : /^\/chunk-[a-z0-9]+\.css$/);
+
+    // define config via bunfig.toml
+    expect(await fetchPage(dev, "/define")).toEqual({
+      html: "<!DOCTYPE html><html><head><!--injected--></head><body></body></html>",
+      styles: [],
+      script,
+    });
+    // One client visits every page, as a browser that navigates between them.
+    await using c = await dev.client("/define");
+    await c.expectMessage("a=HELLO");
+
+    // invalid html does not crash 1
+    const invalid = await fetchPage(dev, "/invalid");
+    expect(invalid).toEqual({
+      html: '<!DOCTYPE html><html><head><title>Dashboard</title><!--injected--></head><body><div id="root" />',
+      styles: [style],
+      script,
+    });
+    await c.navigate("/invalid");
+    await c.expectMessage("hello");
+    await c.style("body").backgroundColor.expect.toBe("red");
+
+    // missing head end tag works fine
+    const noHeadEnd = await fetchPage(dev, "/no-head-end");
+    expect(noHeadEnd).toEqual({
+      html: isDev
+        ? '<!DOCTYPE html><html><head><title>Dashboard</title></link><body><div id="root" /></body><!--injected--></html>'
+        : '<!DOCTYPE html><html><head><title>Dashboard</title></link><body><div id="root" /><!--injected--></body></html>',
+      styles: [style],
+      script,
+    });
+    await c.navigate("/no-head-end");
+    await c.expectMessage("hello");
+    await c.style("body").backgroundColor.expect.toBe("red");
+
+    // missing all meta tags works fine
+    const noMeta = await fetchPage(dev, "/no-meta");
+    expect(noMeta).toEqual({
+      html: '<title>Dashboard</title></link><div id="root" /><!--injected-->',
+      styles: [style],
+      script,
+    });
+    await c.navigate("/no-meta");
+    await c.expectMessage("hello");
+    await c.style("body").backgroundColor.expect.toBe("red");
+
+    // The three pages import the same stylesheet, so they share one URL.
+    expect(noHeadEnd.styles).toEqual(invalid.styles);
+    expect(noMeta.styles).toEqual(invalid.styles);
+    const css = await dev.fetch(invalid.styles[0]);
+    expect(css.status).toBe(200);
+    expect(css.headers.get("content-type")).toBe("text/css;charset=utf-8");
+    expect(await css.text()).toBe(
+      isDev ? "/* src/app/styles.css */\nbody {\n  background-color: red;\n}\n" : "body{background-color:red}\n",
+    );
+
+    // inline script and styles appear, untouched by the bundler
+    expect(await fetchPage(dev, "/inline")).toEqual({
+      html: '<!DOCTYPE html><html><head><title>Dashboard</title><style> body { background-color: red; } </style><!--injected--></head><body><script> console.log("hello " + (1 + 2)); </script></body></html>',
+      styles: [],
+      script,
+    });
+    await c.navigate("/inline");
     await c.expectMessage("hello 3");
     await c.style("body").backgroundColor.expect.toBe("red");
+
+    if (isDev) {
+      // Each page is bundled once, on its first request. The page loads above
+      // are served from that bundle.
+      await dev.output.waitForLine(/Bundled page .*inline[\\/]index\.html/);
+      expect(bundledPages(dev)).toEqual([
+        "Bundled page: define/index.html",
+        "Bundled page: invalid/index.html",
+        "Bundled page: no-head-end/index.html",
+        "Bundled page: no-meta/index.html",
+        "Bundled page: inline/index.html",
+      ]);
+    }
   },
 });
 // TODO: revive production

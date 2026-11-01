@@ -14,6 +14,7 @@ import {
   generateKeyPair,
   generateKeyPairSync,
   generateKeySync,
+  type JsonWebKey,
   type JsonWebKeyInput,
   KeyObject,
   privateDecrypt,
@@ -644,6 +645,37 @@ describe("crypto.KeyObjects", () => {
     expect(createPrivateKey({ key: a, format: "jwk" }).export({ format: "jwk" })).toEqual(a);
     expect(() => createPrivateKey({ key: { ...a, d: b.d }, format: "jwk" })).toThrow(
       expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK" }),
+    );
+  });
+
+  test("an RSA jwk needs strings for its members, the n that is p times q, and no oth", () => {
+    const jwk = createPrivateKey(privatePem).export({ format: "jwk" });
+    const { kty, n, e } = jwk;
+    expect(createPrivateKey({ key: jwk, format: "jwk" }).export({ format: "jwk" })).toEqual(jwk);
+    expect(createPublicKey({ key: jwk, format: "jwk" }).export({ format: "jwk" })).toEqual({ kty, n, e });
+
+    const invalid = expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "Invalid JWK RSA key" });
+    const wrongMembers = [
+      { n: jwk.d },
+      { p: jwk.q },
+      { q: jwk.p },
+      { p: "" },
+      { oth: [] },
+      { n: undefined },
+      { e: 5 },
+      { d: null },
+      { p: undefined },
+      { qi: 5 },
+      { p: undefined, q: undefined, dp: undefined, dq: undefined, qi: undefined },
+    ];
+    for (const wrong of wrongMembers) {
+      for (const create of [createPrivateKey, createPublicKey]) {
+        expect(() => create({ key: { ...jwk, ...wrong } as JsonWebKey, format: "jwk" })).toThrow(invalid);
+      }
+    }
+    expect(() => createPublicKey({ key: { kty, n, e, oth: [] }, format: "jwk" })).toThrow(invalid);
+    expect(() => createPrivateKey({ key: { kty, n, e }, format: "jwk" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "JWK does not contain private key material" }),
     );
   });
 

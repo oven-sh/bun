@@ -321,6 +321,7 @@ public:
     struct CipherParams {
         int padding;
         Digest digest;
+        Digest mgf1_digest;
         const Buffer<const void> label;
     };
 
@@ -401,6 +402,8 @@ public:
 
     const PublicKey getPublicKey() const;
     const PrivateKey getPrivateKey() const;
+    // Check that n is the product of all private-key prime factors.
+    bool checkPrimeProduct() const;
     const std::optional<PssParams> getPssParams() const;
 
     bool setPublicKey(BignumPointer&& n, BignumPointer&& e);
@@ -673,6 +676,7 @@ public:
     bool setEcParameters(int curve, int encoding);
 
     bool setRsaOaepMd(const Digest& md);
+    bool setRsaMgf1Md(const Digest& md);
     bool setRsaPadding(int padding);
     bool setRsaKeygenPubExp(BignumPointer&& e);
     bool setRsaKeygenBits(int bits);

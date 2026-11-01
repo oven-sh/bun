@@ -45,7 +45,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
+🟢 Fully implemented. `http.Server` does not extend `net.Server`. `listen(handle)` takes the handle of a listening TCP `net.Server` or `tls.Server`, but an `http.Server` that bound its own port has no handle to give. Bun ignores the `fd` and `ipv6Only` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
@@ -125,7 +125,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟢 Fully implemented, including `BlockList`, `SocketAddress`, `autoSelectFamily`, Unix domain sockets and `server.listen({ fd })`. `new net.Socket({ fd })` cannot read from an existing file descriptor (only write-only wrapping works). `server.listen(handle)` only accepts `{ fd }`. Missing `blockList.toJSON()`/`fromJSON()`.
+🟢 Fully implemented, including `BlockList`, `SocketAddress`, `autoSelectFamily`, Unix domain sockets and `server.listen({ fd })`. `new net.Socket({ fd })` cannot read from an existing file descriptor (only write-only wrapping works). `server.listen(handle)` accepts `{ fd }` and the handle of a listening TCP `net.Server`, but not the handle of a `tls.Server`. Missing `blockList.toJSON()`/`fromJSON()`.
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 

@@ -85,6 +85,33 @@ class ExceptionWithHostPort extends Error {
   }
 }
 
+// ERR_INVALID_ARG_VALUE for what `server.listen()` was given. Like node, the message has at most 128 characters
+// of it: a server that was passed as a handle has its key and its passphrase further in.
+function invalidListenOptions(received: unknown, reason = "is invalid") {
+  let message = `The argument 'options' ${reason}`;
+  try {
+    const text = `${JSON.stringify(received)}`;
+    message += `. Received ${text.length > 128 ? `${text.slice(0, 128)}...` : text}`;
+  } catch {}
+  const error = new TypeError(message) as TypeError & { code: string };
+  error.code = "ERR_INVALID_ARG_VALUE";
+  return error;
+}
+
+// What node's `server.listen(handle)` emits when its `handle.listen()` fails: EINVAL for a handle that is closed,
+// EEXIST for a pipe, which the loop has already. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2006-L2020
+function listenHandleError(closed: boolean) {
+  const { UV_EINVAL, UV_EEXIST } = process.binding("uv");
+  const ex = new ExceptionWithHostPort(
+    closed ? UV_EINVAL : UV_EEXIST,
+    "listen",
+    null as unknown as string,
+    closed ? -1 : undefined,
+  );
+  ex.message += closed ? ": invalid argument" : ": file already exists";
+  return ex;
+}
+
 class NodeAggregateError extends AggregateError {
   constructor(errors: Error[], message?: string) {
     super(new (require("internal/primordials").SafeArrayIterator)(errors), message);
@@ -470,6 +497,8 @@ export default {
   hideFromStack,
   warnNotImplementedOnce,
   ExceptionWithHostPort,
+  invalidListenOptions,
+  listenHandleError,
   NodeAggregateError,
   ConnResetException,
   ErrnoException,

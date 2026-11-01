@@ -591,7 +591,8 @@ declare global {
         host: string | undefined,
         socketPath: string | undefined,
         reusePort: boolean,
-      ): void;
+        listenHandle?: ListenerHandle,
+      ): void | false;
     }
 
     interface Agent {

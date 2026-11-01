@@ -21,6 +21,8 @@ const {
 const {
   ConnResetException,
   ErrnoException,
+  invalidListenOptions,
+  listenHandleError,
   hasObserver,
   startPerf,
   stopPerf,
@@ -505,15 +507,16 @@ function onRequestTimeout(socket) {
   socketOnError.$call(socket, $ERR_HTTP_REQUEST_TIMEOUT("Request timeout"));
 }
 
+// `listen(handle)`: as in node, the handle holds the event loop for every server that has it.
 Server.prototype.ref = function () {
   this._unref = false;
-  this[serverSymbol]?.ref?.();
+  (this._handle || this[serverSymbol])?.ref?.();
   return this;
 };
 
 Server.prototype.unref = function () {
   this._unref = true;
-  this[serverSymbol]?.unref?.();
+  (this._handle || this[serverSymbol])?.unref?.();
   return this;
 };
 
@@ -576,6 +579,15 @@ Server.prototype.close = function (optionalCallback?) {
   if (generation) generation.drainedAtClose = open === swept;
   // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   server.stop();
+  const listenHandle = generation?.listenHandle;
+  if (listenHandle !== undefined) {
+    // `listen(handle)`: as in node, close() closes the handle for every server that has it, also when one of them
+    // listened on it later and got its connections.
+    this._handle = null;
+    listenHandle.stop(false);
+    // The listener has reported its end already if another server closed or took the handle: nothing reports it again.
+    if (generation!.nativeClosed) process.nextTick(emitCloseServer, this);
+  }
   return this;
 };
 
@@ -613,6 +625,15 @@ Server.prototype[Symbol.asyncDispose] = function () {
 
 Server.prototype.address = function () {
   if (!this[serverSymbol]) return null;
+  const handle = this._handle;
+  if (handle) {
+    // `listen(handle)`: as in node, the address is the handle's, whichever server has its connections now, and
+    // EBADF once a server that has the handle closed it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2289-L2299
+    const out = {};
+    const err = handle.getsockname(out);
+    if (err) throw new ErrnoException(err, "address");
+    return out;
+  }
   return this[serverSymbol].address;
 };
 
@@ -630,6 +651,32 @@ Server.prototype.listen = function () {
   if (argc > 0) {
     const arg0 = arguments[0];
     if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
+      if (typeof arg0 === "object") {
+        // (handle[, backlog][, cb]): the `_handle` of a listening server, one level down like node.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
+        const handle = arg0._handle || arg0.handle || arg0;
+        if (typeof handle.onconnection === "function") {
+          let listening;
+          try {
+            // Exclusive, as in node: a cluster worker does not ask the primary.
+            listening = server[kRealListen](tls, 0, undefined, undefined, false, handle);
+          } catch (err) {
+            // A handle that is closed (EINVAL), or that is a pipe (EEXIST): it fails here as it fails for a net.Server.
+            const { syscall, code } = (err ?? {}) as { syscall?: string; code?: string };
+            const listenError = syscall === "listen" ? listenHandleError(code === "EINVAL") : err;
+            process.nextTick(emitListenErrorNextTick, server, listenError);
+          }
+          if (listening !== false) {
+            const lastArg = arguments[argc - 1];
+            if ($isCallable(lastArg)) this.once("listening", lastArg);
+            return this;
+          }
+        }
+        // `fd` and `tls` are bags of their own here. Any other object named no address, and got a port of its own.
+        if (!("port" in arg0 || "path" in arg0 || "fd" in arg0 || "tls" in arg0)) {
+          throw invalidListenOptions(arg0, 'must have the property "port" or "path"');
+        }
+      }
       // (options[...][, cb])
       addServerAbortSignalOption(this, arg0);
       port = arg0.port;
@@ -707,7 +754,9 @@ Server.prototype.listen = function () {
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
+// With `listenHandle`, the `_handle` of a server that listens: this server takes the connections of that handle and binds
+// nothing. `false` if it is no `Bun.listen` listener, which says nothing about where to listen.
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, listenHandle?) {
   {
     // What the first connection and the first request need, so that neither waits for it.
     getNodeHTTPServerSocket();
@@ -722,7 +771,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    this[serverSymbol] = Bun.serve<any>({
+    const serve =
+      listenHandle === undefined
+        ? Bun.serve
+        : options => $bindgen("node_http_binding.bind.ts", "serveOnListenHandle")(options, listenHandle);
+    this[serverSymbol] = serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
       port,
@@ -1141,10 +1194,16 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     });
 
     const handle = this[serverSymbol];
+    if (listenHandle !== undefined) {
+      if (handle === undefined) return false;
+      // As in node, both servers have the one handle from here on, and this one gets its connections.
+      this._handle = listenHandle;
+    }
     listenerGeneration = {
       isUnix: !!socketPath,
       nativeClosed: false,
       drainedAtClose: false,
+      listenHandle,
     };
     this[kListenerGeneration] = listenerGeneration;
     getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this, listenerGeneration));

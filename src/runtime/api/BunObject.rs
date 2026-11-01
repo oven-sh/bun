@@ -1029,6 +1029,28 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
 }
 
 pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    serve_on(cx, options, None)
+}
+
+/// node:http `server.listen(handle)`. `undefined` if node would find no handle in `handle`.
+pub(crate) fn serve_on_listen_handle(
+    cx: &mut JsScope<'_>,
+    options: JsLocal<'_>,
+    handle: Option<&crate::socket::Listener>,
+) -> JsResult<JSValue> {
+    match handle.filter(|handle| !handle.is_named_pipe()) {
+        Some(handle) => serve_on(cx, options, Some(handle)),
+        None => Ok(JSValue::UNDEFINED),
+    }
+}
+
+/// `Bun.serve(options)`. With `handle`, the server takes the connections of that listener's
+/// listen socket (node:http `server.listen(handle)`) and binds none.
+fn serve_on(
+    cx: &mut JsScope<'_>,
+    options: JsLocal<'_>,
+    handle: Option<&crate::socket::Listener>,
+) -> JsResult<JSValue> {
     let global_object = cx.global();
     // The server is the calling script's.
     let context = global_object.bun_vm().context_of_caller();
@@ -1043,6 +1065,10 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             previous_routes: false,
         },
     )?;
+    if handle.is_some() {
+        // A hot reload finds a server by its address, and this one has the address of its handle.
+        config.allow_hot = false;
+    }
 
     // `init()` below `mem::take`s `config` into a heap-boxed `NewServer`, so
     // past that point the raw-`JSValue` handler shadows have no GC root until
@@ -1118,7 +1144,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                 return Ok(JSValue::ZERO);
             }
             // SAFETY: `server` is the live heap-allocated server returned by `init`.
-            let route_list_object = <$ServerType>::listen(server);
+            let route_list_object = <$ServerType>::listen(server, handle);
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }

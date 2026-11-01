@@ -335,9 +335,10 @@ export default b.declarations(
     implementation: b.hostCall,
   }),
 
+  // A listener that is stopped stores nothing and returns a libuv error code.
   b.method("%Listener%.prototype.getsockname", {
     args: { out: b.any.optional },
-    returns: b.undefined,
+    returns: b.union(b.undefined, b.int(-(2 ** 31), -1)),
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,

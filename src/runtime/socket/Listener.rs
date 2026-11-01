@@ -19,6 +19,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
+use crate::generated_bindgen::listener::ListenHandleState;
 use crate::generated_bindgen::listener::js_Listener as js;
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
@@ -744,10 +745,11 @@ impl Listener {
     ) -> JsResult<()> {
         let global = cx.global();
         let tls = tls.to_js();
-        if !this.ssl {
-            return Err(
-                global.throw_invalid_arguments(format_args!("addServerName requires SSL support"))
-            );
+        // A `tls.Server` that listened on the plain handle of another server (`server.listen(handle)`)
+        // wraps each socket itself, and finds the context of a name in its own map. While a
+        // node:http server takes the connections, the names on the listen socket are that server's.
+        if !this.ssl || this.http_server().is_some() {
+            return Ok(());
         }
         if server_name_bytes.is_empty() {
             return Err(
@@ -830,6 +832,7 @@ impl Listener {
             }
             return;
         }
+        self.release_http();
         let listener = self.listener.replace(ListenerType::None);
 
         if matches!(listener, ListenerType::Uws(_)) {
@@ -922,12 +925,19 @@ impl Listener {
         if matches!(self.listener.get(), ListenerType::None) {
             return;
         }
+        // As in node, `ref()` and `unref()` of either server of a shared handle act on the one handle.
+        if let Some(server) = self.http_server() {
+            return server.ref_();
+        }
         self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         self.this_value
             .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
     }
 
     pub(crate) fn unref(&self) {
+        if let Some(server) = self.http_server() {
+            return server.unref();
+        }
         // `this_value` stays strong: the wrapper roots the handlers a future
         // accept dispatches into. `do_stop` / `mark_inactive` downgrade it
         // once the listen socket is closed.
@@ -1337,10 +1347,19 @@ impl Listener {
         }
     }
 
-    pub(crate) fn getsockname(&self, cx: &mut JsScope<'_>, out: JsLocal<'_>) -> JsResult<()> {
+    /// Fills `out` with the address of an IP socket. Like node's handle, a listener that is
+    /// stopped returns `UV_EBADF`.
+    pub(crate) fn getsockname(
+        &self,
+        cx: &mut JsScope<'_>,
+        out: JsLocal<'_>,
+    ) -> JsResult<Option<i32>> {
         let global = cx.global();
-        let ListenerType::Uws(socket) = self.listener.get() else {
-            return Ok(());
+        let socket = match self.listener.get() {
+            ListenerType::Uws(socket) => socket,
+            ListenerType::None => return Ok(Some(-bun_sys::UV_E::BADF)),
+            #[cfg(windows)]
+            ListenerType::NamedPipe(_) => return Ok(None),
         };
 
         let out = out.to_js();
@@ -1354,12 +1373,12 @@ impl Listener {
         let socket_ref = bun_opaque::opaque_deref_mut(socket);
         let address_bytes: &[u8] = match socket_ref.get_local_address(&mut buf) {
             Ok(b) => b,
-            Err(_) => return Ok(()),
+            Err(_) => return Ok(None),
         };
         let is_ipv6 = match address_bytes.len() {
             4 => false,
             16 => true,
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
         // Format with `SocketAddrV{4,6}` so `format_ip`'s strip logic sees the
         // expected `addr:port` / `[addr]:port` shape.
@@ -1382,7 +1401,7 @@ impl Listener {
                 &mut text_buf,
             )
             .unwrap(),
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
         let address_js = EncodedSlice::latin1(formatted).to_js(global);
         let port_js = match socket_ref.get_local_port() {
@@ -1391,7 +1410,117 @@ impl Listener {
         };
 
         bun_jsc::cpp::JSSocketAddressDTO__assign(global, out, address_js, port_js, is_ipv6)?;
-        Ok(())
+        Ok(None)
+    }
+}
+
+/// What [`Listener::attach_http`] gives the node:http server that now takes the connections.
+pub(crate) struct HttpAttached<'a> {
+    /// Ours to close. The server only reads it, until `stop_from_http` or `on_listener_gone`.
+    pub(crate) listen_socket: *mut uws_sys::ListenSocket,
+    /// Whether the listen socket held the event loop open. The server takes that over as it is.
+    pub(crate) referenced: bool,
+    pub(crate) port: u16,
+    pub(crate) hostname: Option<&'a [u8]>,
+}
+
+/// node:http `server.listen(handle)` on the `_handle` of a `net.Server`. As in node, the one
+/// listen socket then has two servers, and the last one to listen on it gets its connections.
+/// Here the socket stays this listener's, which still accepts into its own group. The server's
+/// uWS app gives the socket its accept parameters and the group a vtable (`uWS::ListenForward`),
+/// whose `on_open` moves each accepted socket to the app. The group has a vtable only then.
+impl Listener {
+    /// The node:http server that takes this listener's connections.
+    fn http_server(&self) -> Option<crate::server::AnyServer> {
+        let group = self.group.get();
+        group.vtable?;
+        // SAFETY: only `attach_http` gives this group a vtable.
+        let user = unsafe { group.listen_forward_user() };
+        Some(crate::server::AnyServer::from_packed(user as u64))
+    }
+
+    /// Ends what `attach_http` began, and says nothing to the server.
+    fn detach_http(&self) {
+        // SAFETY: the caller saw `http_server()`. This can run under the forward's `on_open` (a
+        // 'connection' listener that closes a server), which reads nothing of it past its first line.
+        unsafe { (*self.group.as_ptr()).detach_listen_forward() };
+    }
+
+    /// The listen socket and its port, if another server can take its connections. Node does
+    /// that for a TCP handle that listens: its `listen()` fails with `EINVAL` for one that is
+    /// closed, and with `EEXIST` for a unix socket, whose descriptor it opens a second time.
+    fn shared_listen_socket(&self) -> Result<(*mut uws_sys::ListenSocket, u16), bun_sys::E> {
+        let ListenerType::Uws(ls) = self.listener.get() else {
+            return Err(bun_sys::E::EINVAL);
+        };
+        // Only an IP socket has a port. The listener can hold a unix socket as a descriptor.
+        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        match bun_opaque::opaque_deref_mut(ls).get_local_port() {
+            Some(port) => Ok((ls, port)),
+            None => Err(bun_sys::E::EEXIST),
+        }
+    }
+
+    /// A Windows named pipe has no descriptor, so node finds no handle in it.
+    pub(crate) fn is_named_pipe(&self) -> bool {
+        #[cfg(windows)]
+        {
+            matches!(self.listener.get(), ListenerType::NamedPipe(_))
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
+
+    /// `attach` is `NewApp::attach_listen_socket` of the server's app.
+    pub(crate) fn attach_http(
+        &self,
+        attach: impl FnOnce(&mut uws_sys::ListenSocket, *mut uws::SocketGroup),
+    ) -> Result<HttpAttached<'_>, bun_sys::E> {
+        let (ls, port) = self.shared_listen_socket()?;
+        let hostname = match &self.connection {
+            UnixOrHost::Host { host, .. } => Some(&host[..]),
+            _ => None,
+        };
+        // A server that had the connections until now keeps the ones it has.
+        let referenced = match self.http_server() {
+            Some(previous) => {
+                let referenced = previous.has_loop_ref();
+                self.detach_http();
+                previous.on_listener_gone();
+                referenced
+            }
+            None => self.poll_ref.get().is_active(),
+        };
+        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        attach(bun_opaque::opaque_deref_mut(ls), self.group.as_ptr());
+        // The server holds the event loop open from here on.
+        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        Ok(HttpAttached {
+            listen_socket: ls,
+            referenced,
+            port,
+            hostname,
+        })
+    }
+
+    /// The node:http server that took the connections stops listening. As in node, where both
+    /// servers have the one handle, that closes it.
+    pub(crate) fn stop_from_http(&self) {
+        if self.http_server().is_some() {
+            self.detach_http();
+        }
+        self.do_stop(false);
+    }
+
+    /// Before the listen socket closes: the node:http server that took its connections must
+    /// not keep the pointer.
+    fn release_http(&self) {
+        if let Some(server) = self.http_server() {
+            self.detach_http();
+            server.on_listener_gone();
+        }
     }
 }
 
@@ -1401,6 +1530,7 @@ impl Drop for Listener {
         let this = &*self;
         log!("finalize");
         this.abort_handle.leave();
+        this.release_http();
         match this.listener.replace(ListenerType::None) {
             ListenerType::Uws(socket) => {
                 this.unlink_unix_socket_path();
@@ -1604,8 +1734,11 @@ pub(crate) fn set_secure_context(handle: Option<&Listener>, context: Option<&Sec
     let ctx = secure_context.ctx.clone();
     match this.listener.get() {
         ListenerType::Uws(ls) => {
-            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-            bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(&ctx);
+            // While a node:http server takes the connections, the listen socket has the context of that server.
+            if this.http_server().is_none() {
+                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(&ctx);
+            }
             this.secure_ctx.set(Some(ctx));
         }
         #[cfg(windows)]
@@ -1615,6 +1748,40 @@ pub(crate) fn set_secure_context(handle: Option<&Listener>, context: Option<&Sec
         }
         ListenerType::None => {}
     }
+}
+
+/// node:net `server.listen(handle)`: the caller's server gets the connections of `handle` from
+/// now on, through `handle.onconnection`. `None` if node would find no handle in it.
+pub(crate) fn take_listen_handle(handle: Option<&Listener>) -> Option<ListenHandleState> {
+    let this = handle.filter(|this| !this.is_named_pipe())?;
+    let ls = match this.shared_listen_socket() {
+        Ok((ls, _)) => ls,
+        Err(bun_sys::E::EINVAL) => return Some(ListenHandleState::Closed),
+        Err(_) => return Some(ListenHandleState::Pipe),
+    };
+    // This listener decrypts what it accepts. Node's handle gives the raw connection, and a
+    // `tls.Server` that takes it brings its own TLS.
+    if this.ssl {
+        return Some(ListenHandleState::Tls);
+    }
+    // A node:http server had the connections: they are this listener's again.
+    if let Some(server) = this.http_server() {
+        // The handle holds the event loop open or not, as that server left it.
+        let referenced = server.has_loop_ref();
+        this.detach_http();
+        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        bun_opaque::opaque_deref_mut(ls).set_accept(
+            uws::SocketKind::BunListenerTcp,
+            None,
+            size_of::<*mut c_void>() as c_int,
+            this.pause_on_connect,
+        );
+        if referenced {
+            this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        }
+        server.on_listener_gone();
+    }
+    Some(ListenHandleState::Taken)
 }
 
 #[cfg(windows)]

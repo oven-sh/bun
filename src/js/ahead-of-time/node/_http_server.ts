@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
+// Written against that file with the SHA-256 9d053155e61f154b88dfeff481b83a82a2f1a78886d1483f0c26a6d4d1ac54d6.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -44,6 +44,8 @@ const {
 const {
   ConnResetException,
   ErrnoException,
+  invalidListenOptions,
+  listenHandleError,
   hasObserver,
   startPerf,
   stopPerf,
@@ -439,6 +441,8 @@ interface ListenerGeneration {
   isUnix: boolean;
   nativeClosed: boolean;
   drainedAtClose: boolean;
+  /** `listen(handle)`: the handle that close() closes. */
+  listenHandle: $Node.ListenerHandle | undefined;
 }
 
 type PipelinedOperation = [
@@ -537,6 +541,8 @@ declare global {
       shouldUpgradeCallback: (request: IncomingMessage) => boolean;
       blockList?: BlockList;
       _unref: boolean;
+      /** `listen(handle)`: the handle that this server shares with the server it came from. */
+      _handle?: $Node.ListenerHandle | null;
       ref(): this;
       unref(): this;
       close(callback?: (error?: Error) => void): this;
@@ -891,15 +897,16 @@ function onRequestTimeout(socket: $Node.HttpServerSocket) {
   socketOnError.$call(socket, $ERR_HTTP_REQUEST_TIMEOUT("Request timeout"));
 }
 
+// `listen(handle)`: as in node, the handle holds the event loop for every server that has it.
 Server.prototype.ref = function (this: $Node.HttpServer) {
   this._unref = false;
-  this[serverSymbol]?.ref?.();
+  (this._handle || this[serverSymbol])?.ref?.();
   return this;
 };
 
 Server.prototype.unref = function (this: $Node.HttpServer) {
   this._unref = true;
-  this[serverSymbol]?.unref?.();
+  (this._handle || this[serverSymbol])?.unref?.();
   return this;
 };
 
@@ -965,6 +972,15 @@ Server.prototype.close = function (this: $Node.HttpServer, optionalCallback?: (e
   if (generation) generation.drainedAtClose = open === swept;
   // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   server.stop();
+  const listenHandle = generation?.listenHandle;
+  if (listenHandle !== undefined) {
+    // `listen(handle)`: as in node, close() closes the handle for every server that has it, also when one of them
+    // listened on it later and got its connections.
+    this._handle = null;
+    listenHandle.stop(false);
+    // The listener has reported its end already if another server closed or took the handle: nothing reports it again.
+    if (generation!.nativeClosed) process.nextTick(emitCloseServer, this);
+  }
   return this;
 };
 
@@ -1007,6 +1023,15 @@ Server.prototype[Symbol.asyncDispose] = function (this: $Node.HttpServer) {
 
 Server.prototype.address = function (this: $Node.HttpServer) {
   if (!this[serverSymbol]) return null;
+  const handle = this._handle;
+  if (handle) {
+    // `listen(handle)`: as in node, the address is the handle's, whichever server has its connections now, and
+    // EBADF once a server that has the handle closed it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2289-L2299
+    const out: $Node.SocketName = {};
+    const err = handle.getsockname(out);
+    if (err) throw new ErrnoException(err, "address");
+    return out;
+  }
   return this[serverSymbol].address;
 };
 
@@ -1024,6 +1049,32 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
   if (argc > 0) {
     const arg0 = arguments[0];
     if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
+      if (typeof arg0 === "object") {
+        // (handle[, backlog][, cb]): the `_handle` of a listening server, one level down like node.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
+        const handle = arg0._handle || arg0.handle || arg0;
+        if (typeof handle.onconnection === "function") {
+          let listening: void | false = undefined;
+          try {
+            // Exclusive, as in node: a cluster worker does not ask the primary.
+            listening = server[kRealListen](tls, 0, undefined, undefined, false, handle);
+          } catch (err) {
+            // A handle that is closed (EINVAL), or that is a pipe (EEXIST): it fails here as it fails for a net.Server.
+            const { syscall, code } = (err ?? {}) as { syscall?: string; code?: string };
+            const listenError = syscall === "listen" ? listenHandleError(code === "EINVAL") : err;
+            process.nextTick(emitListenErrorNextTick, server, listenError);
+          }
+          if (listening !== false) {
+            const lastArg = arguments[argc - 1];
+            if ($isCallable(lastArg)) this.once("listening", lastArg);
+            return this;
+          }
+        }
+        // `fd` and `tls` are bags of their own here. Any other object named no address, and got a port of its own.
+        if (!("port" in arg0 || "path" in arg0 || "fd" in arg0 || "tls" in arg0)) {
+          throw invalidListenOptions(arg0, 'must have the property "port" or "path"');
+        }
+      }
       // (options[...][, cb])
       addServerAbortSignalOption(this, arg0);
       port = arg0.port;
@@ -1103,6 +1154,8 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
   return this;
 };
 
+// With `listenHandle`, the `_handle` of a server that listens: this server takes the connections of that handle and binds
+// nothing. `false` if it is no `Bun.listen` listener, which says nothing about where to listen.
 Server.prototype[kRealListen] = function (
   this: $Node.HttpServer,
   tls: $Node.HttpServerTLSOptions | null,
@@ -1110,6 +1163,7 @@ Server.prototype[kRealListen] = function (
   host: string | undefined,
   socketPath: string | undefined,
   reusePort: boolean,
+  listenHandle?: $Node.ListenerHandle,
 ) {
   {
     // What the first connection and the first request need, so that neither waits for it.
@@ -1548,7 +1602,15 @@ Server.prototype[kRealListen] = function (
       http_res.$exchange.dispatchPromise = pendingPromise;
       return pendingPromise;
     };
-    this[serverSymbol] = Bun.serve<any>({
+    const serve =
+      listenHandle === undefined
+        ? Bun.serve
+        : (((options: Parameters<typeof Bun.serve>[0]) =>
+            $bindgen("node_http_binding.bind.ts", "serveOnListenHandle")(
+              options,
+              listenHandle,
+            )) as unknown as typeof Bun.serve);
+    this[serverSymbol] = serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls: tls as any,
       port,
@@ -1609,10 +1671,16 @@ Server.prototype[kRealListen] = function (
     });
 
     const handle = this[serverSymbol]!;
+    if (listenHandle !== undefined) {
+      if (handle === undefined) return false;
+      // As in node, both servers have the one handle from here on, and this one gets its connections.
+      this._handle = listenHandle;
+    }
     listenerGeneration = {
       isUnix: !!socketPath,
       nativeClosed: false,
       drainedAtClose: false,
+      listenHandle,
     };
     this[kListenerGeneration] = listenerGeneration;
     getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this, listenerGeneration));

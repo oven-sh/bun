@@ -305,6 +305,34 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
+    /// node:http `server.listen(handle)`: this app takes the connections of `ls`, a listen
+    /// socket that its creator keeps and closes. `ls` gets this app's accept parameters, and
+    /// `owner_group` (the group `ls` accepts into) a vtable that moves each accepted socket
+    /// here as it opens. `user` comes back from [`SocketGroup::listen_forward_user`]. The
+    /// creator ends it with [`SocketGroup::detach_listen_forward`] before this app is
+    /// destroyed.
+    ///
+    /// # Safety
+    /// `owner_group` is the group that `ls` was created in, and it has no vtable. The app is
+    /// a node:http one.
+    pub unsafe fn attach_listen_socket(
+        &mut self,
+        ls: &mut UwsListenSocket,
+        owner_group: *mut crate::SocketGroup,
+        user: *mut c_void,
+    ) {
+        // SAFETY: self is a valid app and `ls` a live listen socket; caller contract for `owner_group`.
+        unsafe {
+            c::uws_app_attach_listen_socket(
+                Self::SSL_FLAG,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                ls,
+                owner_group,
+                user,
+            )
+        }
+    }
+
     pub fn listen_on_unix_socket(
         &mut self,
         handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
@@ -672,6 +700,14 @@ pub mod c {
             flags: i32,
             handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
             user_data: *mut c_void,
+        );
+
+        pub(crate) fn uws_app_attach_listen_socket(
+            ssl_flag: c_int,
+            app: *mut uws_app_t,
+            ls: *mut UwsListenSocket,
+            owner_group: *mut crate::SocketGroup,
+            user: *mut c_void,
         );
 
         pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);

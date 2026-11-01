@@ -554,6 +554,30 @@ extern "C"
     }
   }
 
+  /* node:http `server.listen(handle)`: `app` takes the connections of `ls`, which its creator
+   * keeps and closes. `owner_group` is the group that `ls` accepts into. */
+  void uws_app_attach_listen_socket(int ssl, uws_app_t *app, struct us_listen_socket_t *ls, struct us_socket_group_t *owner_group, void *user)
+  {
+    if (ssl)
+    {
+      ((uWS::SSLApp *)app)->attachListenSocket(ls, owner_group, user);
+    }
+    else
+    {
+      ((uWS::App *)app)->attachListenSocket(ls, owner_group, user);
+    }
+  }
+
+  void *uws_listen_forward_user(const struct us_socket_group_t *owner_group)
+  {
+    return uWS::ListenForward::of(owner_group)->user;
+  }
+
+  void *uws_listen_forward_detach(struct us_socket_group_t *owner_group)
+  {
+    return uWS::ListenForward::detach(owner_group);
+  }
+
   void uws_app_set_max_http_header_size(int ssl, uws_app_t *app, uint64_t max_header_size) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;

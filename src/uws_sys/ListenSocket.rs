@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_void};
 
 use bun_boringssl_sys::OwnedSslCtx;
 
-use crate::{SslCtx, us_socket_t};
+use crate::{SocketGroup, SocketKind, SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a uSockets listen socket.
@@ -56,6 +56,33 @@ impl ListenSocket {
         unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx.as_ptr()) }
     }
 
+    /// The group this listen socket was created in, where the sockets it accepts land.
+    pub fn accept_group(&mut self) -> *mut SocketGroup {
+        us_listen_socket_group(self)
+    }
+
+    /// What each socket accepted from now on gets: its kind, its `SSL_CTX` (`None` is plain
+    /// TCP), the size of its ext block, and whether it starts paused. They still land in
+    /// [`Self::accept_group`]. C up-refs `ssl_ctx` and drops the previous one with its SNI names.
+    pub fn set_accept(
+        &mut self,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        socket_ext_size: c_int,
+        paused: bool,
+    ) {
+        // SAFETY: self is a live listen socket; `ssl_ctx` is null or a live SSL_CTX.
+        unsafe {
+            us_listen_socket_set_accept(
+                self,
+                kind as u8,
+                ssl_ctx.unwrap_or(core::ptr::null_mut()),
+                socket_ext_size,
+                c_int::from(paused),
+            )
+        }
+    }
+
     /// `cb` receives a null `ListenSocket` once this listen socket closed.
     pub fn on_server_name(
         &mut self,
@@ -71,6 +98,14 @@ impl ListenSocket {
 // `safe fn`. Shims with nullable raw / ctx ptr stay unsafe.
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
+    safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
+    fn us_listen_socket_set_accept(
+        ls: *mut ListenSocket,
+        kind: u8,
+        ssl_ctx: *mut SslCtx,
+        socket_ext_size: c_int,
+        paused: c_int,
+    );
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

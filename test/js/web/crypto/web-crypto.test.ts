@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createCipheriv, createSecretKey, type webcrypto } from "node:crypto";
+import { createCipheriv, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1340,6 +1340,8 @@ it.each([
   expect(Buffer.from(await crypto.subtle.exportKey("pkcs8", imported))).toEqual(
     Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)),
   );
+  // The key itself stays as it came.
+  expect(KeyObject.from(imported).export({ format: "der", type: "pkcs8" })).toEqual(withoutPublicKey);
 });
 
 // importKey's empty-usages guard got Node's message; the same predicate in

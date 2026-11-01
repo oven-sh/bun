@@ -1,10 +1,15 @@
 use crate::error::TrimRequestError;
 use crate::model::{IcuLanguage, LocaleGroup, UsedLocales, WantedLocaleGroups};
 
+/// Gives the tag under which `Intl` looks for the data of a language tag, which is what `Intl.getCanonicalLocales`
+/// gives: `he` for `iw`. `None` for a text that is no language tag.
+pub type CanonicalLocaleTag = fn(&[u8]) -> Option<Box<[u8]>>;
+
 pub(crate) fn resolve_wanted_groups(
     used: &UsedLocales,
     requested: Option<&[Box<[u8]>]>,
     languages: &[IcuLanguage],
+    canonical_tag: CanonicalLocaleTag,
 ) -> Result<WantedLocaleGroups, TrimRequestError> {
     if languages.is_empty() {
         return Ok(WantedLocaleGroups::All);
@@ -14,7 +19,7 @@ pub(crate) fn resolve_wanted_groups(
     match (requested, used) {
         (Some(tags), _) => {
             for tag in tags {
-                let group = find_tag_group(languages, tag)
+                let group = find_requested_group(languages, tag, canonical_tag)
                     .ok_or_else(|| TrimRequestError::UnknownLocale(tag.clone()))?;
                 groups.push(group);
             }
@@ -35,15 +40,30 @@ pub(crate) fn resolve_wanted_groups(
     Ok(WantedLocaleGroups::Listed(groups))
 }
 
+/// The program asks `Intl` for the tag as it is written, and `Intl` opens the data of the canonical tag. A text that is
+/// no language tag (`de_DE.UTF-8`) still starts with a language.
+fn find_requested_group(
+    languages: &[IcuLanguage],
+    tag: &[u8],
+    canonical_tag: CanonicalLocaleTag,
+) -> Option<LocaleGroup> {
+    let canonical = canonical_tag(tag).or_else(|| canonical_tag(language_subtag(tag)?))?;
+    find_tag_group(languages, &canonical)
+}
+
 fn find_tag_group(languages: &[IcuLanguage], tag: &[u8]) -> Option<LocaleGroup> {
     find_group(languages, language_of(tag)?)
 }
 
-fn language_of(tag: &[u8]) -> Option<[u8; 4]> {
+fn language_subtag(tag: &[u8]) -> Option<&[u8]> {
     let language = bun_core::strings::split_any(tag, b"-_").next()?;
-    if !matches!(language.len(), 2 | 3) || !language.iter().all(u8::is_ascii_alphabetic) {
-        return None;
-    }
+    let is_language =
+        matches!(language.len(), 2 | 3) && language.iter().all(u8::is_ascii_alphabetic);
+    is_language.then_some(language)
+}
+
+fn language_of(tag: &[u8]) -> Option<[u8; 4]> {
+    let language = language_subtag(tag)?;
     let mut name = [0; 4];
     name[..language.len()].copy_from_slice(language);
     name.make_ascii_lowercase();
@@ -95,13 +115,26 @@ mod tests {
         UsedLocales::Listed(tags.collect())
     }
 
+    // `tl` stands for `fil` and `aam` for `aas`. A text with `_` or `.` is no language tag.
+    fn canonical_tag(tag: &[u8]) -> Option<Box<[u8]>> {
+        if bun_core::strings::index_of_any(tag, b"_.").is_some() {
+            return None;
+        }
+        Some(match tag {
+            b"tl" => Box::from(&b"fil"[..]),
+            b"tl-PH" => Box::from(&b"fil-PH"[..]),
+            b"aam" => Box::from(&b"aas"[..]),
+            _ => Box::from(tag),
+        })
+    }
+
     fn resolve(
         used: &UsedLocales,
         requested: Option<&[&str]>,
     ) -> Result<WantedLocaleGroups, TrimRequestError> {
         let requested: Option<Vec<Box<[u8]>>> =
             requested.map(|tags| tags.iter().map(|tag| Box::from(tag.as_bytes())).collect());
-        resolve_wanted_groups(used, requested.as_deref(), &languages())
+        resolve_wanted_groups(used, requested.as_deref(), &languages(), canonical_tag)
     }
 
     fn wanted(groups: &[u16]) -> Result<WantedLocaleGroups, TrimRequestError> {
@@ -113,8 +146,11 @@ mod tests {
     fn table_without_languages_wants_every_group() {
         let requested: [Box<[u8]>; 1] = [Box::from(&b"xx"[..])];
         for used in [UNKNOWN, listed(&["de"])] {
-            assert_eq!(resolve_wanted_groups(&used, None, &[]), ALL);
-            assert_eq!(resolve_wanted_groups(&used, Some(&requested[..]), &[]), ALL);
+            assert_eq!(resolve_wanted_groups(&used, None, &[], canonical_tag), ALL);
+            assert_eq!(
+                resolve_wanted_groups(&used, Some(&requested[..]), &[], canonical_tag),
+                ALL
+            );
         }
     }
 
@@ -129,6 +165,35 @@ mod tests {
                 "{tag}"
             );
         }
+    }
+
+    #[test]
+    fn requested_alias_wants_group_of_what_it_stands_for() {
+        assert_eq!(resolve(&UNKNOWN, Some(&["tl"])), wanted(&[2]));
+        assert_eq!(
+            resolve(&listed(&["de"]), Some(&["tl-PH", "en"])),
+            wanted(&[1, 2])
+        );
+    }
+
+    #[test]
+    fn requested_alias_without_data_is_rejected_as_written() {
+        let error = Err(TrimRequestError::UnknownLocale(Box::from(&b"aam"[..])));
+        assert_eq!(resolve(&UNKNOWN, Some(&["aam"])), error);
+    }
+
+    #[test]
+    fn requested_text_that_is_no_tag_is_read_by_its_language() {
+        let texts = ["tl_PH.UTF-8", "de_DE", "zh_Hant_TW.UTF-8"];
+        assert_eq!(resolve(&UNKNOWN, Some(&texts)), wanted(&[0, 2, 4]));
+        let error = Err(TrimRequestError::UnknownLocale(Box::from(&b"xx_YY"[..])));
+        assert_eq!(resolve(&UNKNOWN, Some(&["xx_YY"])), error);
+    }
+
+    #[test]
+    fn used_tag_is_looked_up_as_engine_gave_it() {
+        assert_eq!(resolve(&listed(&["fil", "de"]), None), wanted(&[0, 2]));
+        assert_eq!(resolve(&listed(&["tl", "de"]), None), ALL);
     }
 
     #[test]

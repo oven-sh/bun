@@ -80,6 +80,35 @@ pub(crate) fn trim_settings_of(
     }
 }
 
+unsafe extern "C" {
+    fn Bun__canonicalLocaleTag(tag: *const u8, len: usize, out: *mut u8, capacity: usize) -> usize;
+}
+
+/// What `Intl.getCanonicalLocales` gives for `tag`: the tag under which `Intl` looks for its data at run time.
+pub(crate) fn canonical_locale_tag(tag: &[u8]) -> Option<Box<[u8]>> {
+    let mut canonical = vec![0u8; 64];
+    loop {
+        // SAFETY: `tag` is only read, at most `canonical.len()` bytes of `canonical` are written, and the callee keeps
+        // neither pointer.
+        let len = unsafe {
+            Bun__canonicalLocaleTag(
+                tag.as_ptr(),
+                tag.len(),
+                canonical.as_mut_ptr(),
+                canonical.len(),
+            )
+        };
+        if len == 0 {
+            return None;
+        }
+        if len <= canonical.len() {
+            canonical.truncate(len);
+            return Some(canonical.into_boxed_slice());
+        }
+        canonical.resize(len, 0);
+    }
+}
+
 pub(crate) fn plan_trimming(
     used: &UsedFeatures,
     settings: &bun_trim::ExecutableSettings,
@@ -94,7 +123,9 @@ pub(crate) fn plan_trimming(
     if !input.removes_anything() {
         return Ok(None);
     }
-    match with_executable_image(template, |image| bun_trim::plan(&input, image)) {
+    match with_executable_image(template, |image| {
+        bun_trim::plan(&input, image, canonical_locale_tag)
+    }) {
         Err(error) => Err(CompileFailure::TemplateUnreadable { error }),
         // Nobody asked: a Bun that can't be cut is copied whole.
         Ok(Err(TrimError::Unsupported(_))) if !request.is_enabled() => Ok(None),

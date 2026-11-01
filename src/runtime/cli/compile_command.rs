@@ -38,7 +38,7 @@ pub(crate) use self::printing::{
     exit_with_failure, print_error_and_notes, print_failure, print_log, print_report_log,
     write_trimmed_size,
 };
-pub(crate) use self::trimming::{plan_trimming, trim_settings_of};
+pub(crate) use self::trimming::{canonical_locale_tag, plan_trimming, trim_settings_of};
 
 pub(crate) struct CompileCommand;
 

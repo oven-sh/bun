@@ -12,7 +12,7 @@ use bun_removable_features::{
 
 use crate::decide::{CREATES_REALMS, STARTS_WORKERS, decide};
 use crate::error::{TrimError, TrimInternalError, TrimRequestError};
-use crate::locales::resolve_wanted_groups;
+use crate::locales::{CanonicalLocaleTag, resolve_wanted_groups};
 use crate::model::{
     Decision, EntryPointNeeds, FeatureEdges, IcuPackage, ModuleText, OptionRequirement,
     PlannedIcuPackage, PlannedRange, RefusedEntryPoint, RemovableRange, RetainReason, SetIndex,
@@ -20,7 +20,11 @@ use crate::model::{
 };
 use crate::table::read_trim_table;
 
-pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPlan, TrimError> {
+pub fn plan(
+    input: &TrimInput<'_>,
+    executable: &mut Image<'_>,
+    canonical_tag: CanonicalLocaleTag,
+) -> Result<TrimPlan, TrimError> {
     if !input.removes_anything() {
         return Ok(TrimPlan::empty());
     }
@@ -52,6 +56,7 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
         used_locales,
         input.request.locales.as_deref(),
         &table.icu_languages,
+        canonical_tag,
     )?;
     let runs_library_text = is_template
         || can_run_library_text(input.used, &decision.requirements)
@@ -409,7 +414,11 @@ mod tests {
             len: elf.len(),
             read: &mut read,
         };
-        plan(input, &mut image)
+        plan(input, &mut image, tag_as_written)
+    }
+
+    fn tag_as_written(tag: &[u8]) -> Option<Box<[u8]>> {
+        Some(Box::from(tag))
     }
 
     fn plan_encoded_input(table: &TrimTable, input: &TrimInput<'_>) -> TrimPlan {
@@ -1202,7 +1211,7 @@ mod tests {
                 settings: &ExecutableSettings::default(),
                 request,
             };
-            let planned = plan(&input, &mut image).unwrap();
+            let planned = plan(&input, &mut image, tag_as_written).unwrap();
             assert!(planned.is_empty());
             assert!(planned.removed().is_empty());
         }

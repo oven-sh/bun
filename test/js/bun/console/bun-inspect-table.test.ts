@@ -70,7 +70,7 @@ describe("inspect.table", () => {
   it("a container nested in a cell prints as a marker", () => {
     const rows = [{ o: { x: { y: 1 } }, n: [[1]], m: new Map([[1, new Map([[2, 3]])]]) }];
     const out = inspect.table(rows);
-    expect(out).toContain("[Object ...]");
+    expect(out).toContain("{ x: [Object ...] }");
     expect(out).toContain("[ [Array ...] ]");
     expect(out).toContain("Map(1) { 1: [Map ...] }");
   });

@@ -3131,8 +3131,8 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
 // The writev fast path is `#[cfg(unix)]`, and on Windows the amount a send
 // accepts is machine dependent, so the buffered precondition cannot be built there.
 describe.skipIf(isWindows)("socket write while data is buffered natively", () => {
-  // Counts received bytes per fill value. STALL_ON_ACCEPT=1 blocks the loop on
-  // accept so the kernel buffers stay full while the client writes.
+  // Counts received bytes per fill value. STALL_ON_ACCEPT_MS blocks the loop on
+  // accept for that long, so the kernel buffers stay full while the client writes.
   const serverFixture = /* js */ `
     import net from "node:net";
     const KNOWN = [0x61, 0x69, 0x73]; // 'a', 'i', 's'
@@ -3174,9 +3174,8 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       c.on("end", done);
       c.on("close", done);
       c.on("error", done);
-      if (process.env.STALL_ON_ACCEPT === "1") {
-        Bun.sleepSync(1500);
-      }
+      const stall = Number(process.env.STALL_ON_ACCEPT_MS);
+      if (stall) Bun.sleepSync(stall);
     });
     server.listen(0, "127.0.0.1", () => {
       console.log(JSON.stringify({ port: server.address().port }));
@@ -3271,9 +3270,13 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
         "client-fixture.mjs": clientFixture,
       });
 
+      // The server does not read while the client makes its direct writes. A reader that
+      // keeps up takes each of them whole, and then none is left in the native buffer.
+      // "loss" also needs the kernel buffers full at the final write. "dup" needs them
+      // drained by then, so its stall ends well inside the client's 1500 ms sleep.
       await using server = Bun.spawn({
         cmd: [bunExe(), "server-fixture.mjs"],
-        env: phase === "loss" ? { ...bunEnv, STALL_ON_ACCEPT: "1" } : bunEnv,
+        env: { ...bunEnv, STALL_ON_ACCEPT_MS: phase === "loss" ? "1500" : "500" },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",

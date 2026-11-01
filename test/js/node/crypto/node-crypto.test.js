@@ -1285,6 +1285,85 @@ it.concurrent("generatePrime({ safe: true }) refuses the sizes without a reachab
   });
 });
 
+it.concurrent("generatePrime({ add }) finds a prime with that remainder", async () => {
+  // The search did not end for most values of add, so this runs in a process the test can give up on.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { generatePrime, generatePrimeSync, checkPrimeSync } = require("node:crypto");
+      const check = (size, { add, rem, safe }, prime) => ({
+        bits: prime.toString(2).length === size,
+        rem: prime % add === (rem ?? (safe ? 3n : 1n)),
+        prime: checkPrimeSync(prime) && (!safe || checkPrimeSync((prime - 1n) / 2n)),
+      });
+      const large = [
+        [256, { add: 3n }],
+        [256, { add: 10n, rem: 1n }],
+        [512, { add: 12n }],
+        [128, { add: 30n, rem: 7n }],
+        [64, { add: 8n, safe: true }],
+        [64, { add: 7n, rem: 3n, safe: true }],
+        [64, { add: 24n, rem: 23n, safe: true }],
+      ].map(([size, options]) => check(size, options, generatePrimeSync(size, { ...options, bigint: true })));
+      const small = [
+        [2, { add: 2n }],
+        [4, { add: 2n, rem: 1n, safe: true }],
+        [8, { add: 200n, rem: 1n }],
+      ].map(([size, options]) => Number(generatePrimeSync(size, { ...options, bigint: true })));
+      generatePrime(256, { add: 3n, bigint: true }, (err, prime) => {
+        if (err) throw err;
+        console.log(JSON.stringify({ large, small, async: check(256, { add: 3n }, prime) }));
+      });
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const found = { bits: true, rem: true, prime: true };
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    // No prime of 8 bits is 1 modulo 200, so like Node this one goes on to the next size.
+    stdout: JSON.stringify({ large: Array(7).fill(found), small: [3, 11, 401], async: found }),
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it.concurrent("generatePrimeSync({ add, rem }) can be interrupted when no prime has that remainder", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        'require("node:worker_threads").parentPort.postMessage("searching");' +
+          'require("node:crypto").generatePrimeSync(64, { add: 6n, rem: 3n });',
+        { eval: true },
+      );
+      worker.once("message", async () => {
+        await worker.terminate();
+        console.log("terminated");
+      });
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "terminated",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {
   const prime = crypto.generatePrimeSync(512);
   expect(prime).toBeInstanceOf(ArrayBuffer);

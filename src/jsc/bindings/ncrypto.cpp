@@ -409,13 +409,6 @@ bool BignumPointer::generate(const PrimeConfig& params,
             &innerCb);
     }
 
-    // BoringSSL searches forever where OpenSSL refuses: candidates have the top two bits set, the safe primes 11 and 23 do not.
-    // https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/bn/bn_prime.c#L137-L145
-    if (params.safe && !params.add && params.bits < 6 && params.bits != 3) {
-        OPENSSL_PUT_ERROR(BN, BN_R_BITS_TOO_SMALL);
-        return false;
-    }
-
     if (BN_generate_prime_ex(get(),
             params.bits,
             params.safe ? 1 : 0,

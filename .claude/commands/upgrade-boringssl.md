@@ -90,6 +90,7 @@ Then `bun run ci:watch` and fix anything that turns up.
 - **`EVP_PBE_validate_scrypt_params`** — `crypto/evp/scrypt.cc`, `include/openssl/evp.h`
 - **Electron `SSL_want` / `EVP_CIPHER_do_all_sorted`** — `ssl/ssl_lib.cc` (return `rwstate` directly), `ssl/ssl_test.cc` (drops the corresponding test block), `decrepit/evp/evp_do_all.cc`, `crypto/cipher/get_cipher.cc`, `include/openssl/cipher.h`
 - **MLDSA stack-frame pragma** — `crypto/fipsmodule/mldsa/mldsa.cc.inc`
+- **`BN_generate_prime_ex` with `add`** — `crypto/fipsmodule/bn/prime.cc.inc` (one `probable_prime_dh` for plain and safe primes, after OpenSSL's; upstream's never returns for most `add`), `crypto/fipsmodule/bn/bn_test.cc`, `include/openssl/bn.h`
 
 If upstream upstreams any of these (check `git grep` on `upstream/main` before re-applying), drop the fork's copy.
 

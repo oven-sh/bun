@@ -138,7 +138,7 @@ JSValue NodeVMSyntheticModule::link(JSGlobalObject* globalObject, JSArray* speci
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_status != Status::Unlinked) {
+    if (status() != Status::Unlinked) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
         return {};
     }
@@ -167,12 +167,12 @@ JSValue NodeVMSyntheticModule::instantiate(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_status >= Status::Linked) {
+    if (status() >= Status::Linked) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Cannot reinstantiate a SyntheticModule"_s);
         return {};
     }
 
-    if (m_status != Status::Unlinked) {
+    if (status() != Status::Unlinked) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be unlinked before instantiating"_s);
         return {};
     }
@@ -183,7 +183,7 @@ JSValue NodeVMSyntheticModule::instantiate(JSGlobalObject* globalObject)
 
 JSValue NodeVMSyntheticModule::evaluate(JSGlobalObject* globalObject)
 {
-    if (m_status == Status::Evaluated) {
+    if (status() == Status::Evaluated) {
         return m_evaluationResult.get();
     }
 
@@ -192,7 +192,7 @@ JSValue NodeVMSyntheticModule::evaluate(JSGlobalObject* globalObject)
 
     // NodeVMModule::evaluate flips the status to Evaluating before invoking
     // the user's evaluation steps (it is the only caller of this method).
-    if (m_status != Status::Evaluating) {
+    if (status() != Status::Evaluating) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be linked before evaluating"_s);
         return {};
     }

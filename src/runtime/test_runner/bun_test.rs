@@ -1379,6 +1379,8 @@ impl BunTest {
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
+        let mut is_followed = false;
+        let is_followed_out = &mut is_followed;
         let result: JSValue = match vm
             .event_loop_mut()
             .run_callback_with_result_and_forcefully_drain_microtasks(
@@ -1387,9 +1389,15 @@ impl BunTest {
                 global_this,
                 JSValue::UNDEFINED,
                 args_slice,
-                move || drop(on_stack),
+                // Before the drain: `then()` runs one microtask turn after the callback returns, as with `await`.
+                move |returned| {
+                    drop(on_stack);
+                    let returned = returned?;
+                    let awaited = Self::promise_of_thenable(global_this, returned)?;
+                    *is_followed_out = awaited != returned;
+                    Ok(awaited)
+                },
             )
-            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
         {
             Ok(v) => v,
             Err(_) => {
@@ -1490,7 +1498,10 @@ impl BunTest {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: as in the `Rejected` arm.
                         unsafe { (*this).adopt_teardown(&cfg_data, value) };
-                        return Some(cfg_data);
+                        // A thenable that settled in the drain does not end a callback that still waits for done().
+                        if !is_followed || dcb_ref.is_none() {
+                            return Some(cfg_data);
+                        }
                     }
                     PromiseStatus::Rejected => {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
@@ -1520,14 +1531,13 @@ impl BunTest {
         Some(cfg_data)
     }
 
-    /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
-    fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
-        if !returned.is_object() || returned.as_promise().is_some() {
+    /// What `await returned` waits on: a native promise as is, any other thenable through a promise that follows its `then()`. Otherwise `returned`.
+    pub(crate) fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
+        if !returned.is_object() {
             return Ok(returned);
         }
-        // Reads `then` once. Only a value without a callable `then` fulfills the promise right away.
-        let promise = bun_jsc::JSPromise::create(global_this);
-        promise.resolve(global_this, returned)?;
+        // Reads `then` once. Only a value without a callable `then` fulfills a new promise right away.
+        let promise = bun_jsc::JSPromise::promise_resolve(global_this, returned)?;
         Ok(if promise.status() == PromiseStatus::Fulfilled { returned } else { promise.to_js() })
     }
 

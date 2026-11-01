@@ -45,7 +45,7 @@ public:
 
 private:
     // Helpers for `prepareAsymmetricKey`
-    static KeyObject getKeyObjectHandleFromJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* jwk, PrepareAsymmetricKeyMode mode);
+    static KeyObject getKeyObjectHandleFromJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* jwk);
     static KeyObject getKeyObjectHandleFromRaw(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> keyData, ncrypto::EVPKeyPointer::PKFormatType format, const WTF::String& asymmetricKeyType, JSC::JSValue namedCurveValue);
 
 public:

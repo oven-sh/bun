@@ -1612,6 +1612,7 @@ describe("the BoringSSL error queue", () => {
   // BoringSSL refuses a BIGNUM of more than BN_MAX_WORDS (INT_MAX / 256) words, 8 bytes short of 64 MiB.
   const tooLongForBignum = Buffer.alloc(64 * 1024 * 1024 + 64, 0xff);
   const modp5 = () => crypto.createDiffieHellman(crypto.getDiffieHellman("modp5").getPrime());
+  const ecJwk = () => crypto.generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" });
 
   it.each([
     [
@@ -1672,6 +1673,36 @@ describe("the BoringSSL error queue", () => {
       "generateKeyPair with an oversized prime",
       () => util.promisify(crypto.generateKeyPair)("dh", { prime: tooLongForBignum }),
       { code: "ERR_OUT_OF_RANGE" },
+    ],
+    [
+      "createPublicKey of an EC jwk with the d of another key",
+      () => crypto.createPublicKey({ key: { ...ecJwk(), d: ecJwk().d }, format: "jwk" }),
+      { code: "ERR_CRYPTO_INVALID_JWK" },
+    ],
+    [
+      "verify with an EC jwk whose d is zero",
+      () => crypto.verify("sha256", key, { key: { ...ecJwk(), d: "AA" }, format: "jwk" }, iv),
+      { code: "ERR_CRYPTO_INVALID_JWK" },
+    ],
+    [
+      "createPublicKey of an EC jwk whose crv is not a curve",
+      () => crypto.createPublicKey({ key: { ...ecJwk(), crv: "SHA256" }, format: "jwk" }),
+      { code: "ERR_CRYPTO_INVALID_JWK" },
+    ],
+    [
+      "createPublicKey of an EC jwk on a curve BoringSSL lacks",
+      () => crypto.createPublicKey({ key: { ...ecJwk(), crv: "secp256k1" }, format: "jwk" }),
+      { code: "ERR_CRYPTO_INVALID_JWK" },
+    ],
+    [
+      "createPublicKey of an EC jwk with an unknown crv",
+      () => crypto.createPublicKey({ key: { ...ecJwk(), crv: "P-000" }, format: "jwk" }),
+      { code: "ERR_CRYPTO_INVALID_CURVE" },
+    ],
+    [
+      "createPrivateKey of an EC jwk without a d",
+      () => crypto.createPrivateKey({ key: { ...ecJwk(), d: undefined }, format: "jwk" }),
+      { code: "ERR_CRYPTO_INVALID_JWK" },
     ],
     [
       "getCipherInfo with an impossible key length",

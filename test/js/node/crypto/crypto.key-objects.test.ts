@@ -5,6 +5,7 @@ import {
   type AsymmetricKeyType,
   createCipheriv,
   createDecipheriv,
+  createECDH,
   createPrivateKey,
   createPublicKey,
   createSecretKey,
@@ -646,6 +647,210 @@ describe("crypto.KeyObjects", () => {
     expect(() => createPrivateKey({ key: { ...a, d: b.d }, format: "jwk" })).toThrow(
       expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK" }),
     );
+  });
+
+  describe("a jwk decides whether it is a private key", () => {
+    const data = Buffer.from("a jwk decides");
+    // The members are wrong on purpose in most cases, so the key is not typed as a JsonWebKeyInput.
+    const asKey = (key: object): any => ({ key, format: "jwk" });
+    type Call = (key: any, signature: Buffer) => unknown;
+    const publicForms: [string, Call][] = [
+      ["createPublicKey", key => createPublicKey(key)],
+      ["verify", (key, signature) => verify("sha256", data, key, signature)],
+      ["verify with a callback", (key, signature) => verify("sha256", data, key, signature, () => {})],
+      ["Verify#verify", (key, signature) => createVerify("sha256").update(data).verify(key, signature)],
+      ["publicEncrypt", key => publicEncrypt(key, data)],
+      ["publicDecrypt", key => publicDecrypt(key, data)],
+    ];
+    const privateForms: [string, Call][] = [
+      ["createPrivateKey", key => createPrivateKey(key)],
+      ["sign", key => sign("sha256", data, key)],
+      ["sign with a callback", key => sign("sha256", data, key, () => {})],
+      ["Sign#sign", key => createSign("sha256").update(data).sign(key)],
+      ["privateEncrypt", key => privateEncrypt(key, data)],
+      ["privateDecrypt", key => privateDecrypt(key, data)],
+    ];
+    const invalid = (message: string) => expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message });
+    const noPrivateKey = invalid("JWK does not contain private key material");
+
+    describe.each([
+      ["P-256", "prime256v1"],
+      ["P-384", "secp384r1"],
+      ["P-521", "secp521r1"],
+    ])("EC %s", (namedCurve, opensslName) => {
+      const invalidKey = invalid("Invalid JWK EC key");
+      const a = generateKeyPairSync("ec", { namedCurve }).privateKey.export({ format: "jwk" });
+      const b = generateKeyPairSync("ec", { namedCurve }).privateKey.export({ format: "jwk" });
+      const publicA = { kty: a.kty, crv: a.crv, x: a.x, y: a.y };
+      const size = Buffer.from(a.d!, "base64url").length;
+      const signature = sign("sha256", data, asKey(a));
+
+      test.each([...publicForms, ...privateForms])("%s needs the d that belongs to x and y", (_, call) => {
+        const wrongD = [
+          b.d,
+          null,
+          5,
+          {},
+          "",
+          "!!!",
+          Buffer.alloc(size).toString("base64url"),
+          Buffer.alloc(size, 0xff).toString("base64url"),
+          Buffer.alloc(size * 2, 1).toString("base64url"),
+        ];
+        for (const d of wrongD) {
+          expect(() => call(asKey({ ...a, d }), signature)).toThrow(invalidKey);
+        }
+      });
+
+      test("a private jwk is a public key to the functions that take one", () => {
+        const publicKey = createPublicKey(asKey(a));
+        expect(publicKey.type).toBe("public");
+        expect(publicKey.export({ format: "jwk" })).toEqual(publicA);
+        expect(publicKey.equals(createPublicKey(asKey(publicA)))).toBe(true);
+        for (const type of ["pkcs8", "sec1"] as const) {
+          expect(() => publicKey.export({ format: "pem", type })).toThrow(
+            expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+          );
+        }
+        expect(() => sign("sha256", data, publicKey)).toThrow(
+          expect.objectContaining({ code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" }),
+        );
+        expect(verify("sha256", data, asKey(a), signature)).toBe(true);
+        expect(verify("sha256", data, asKey(publicA), signature)).toBe(true);
+      });
+
+      test("d can have leading zeros or none", () => {
+        const ecdh = createECDH(opensslName);
+        ecdh.setPrivateKey(Buffer.from([1]));
+        const point = ecdh.getPublicKey();
+        const generator = {
+          kty: "EC",
+          crv: namedCurve,
+          x: point.subarray(1, 1 + size).toString("base64url"),
+          y: point.subarray(1 + size).toString("base64url"),
+        };
+        const one = Buffer.alloc(size);
+        one[size - 1] = 1;
+        const jwk = { ...generator, d: one.toString("base64url") };
+        for (const d of ["AQ", jwk.d, Buffer.concat([Buffer.alloc(3), one]).toString("base64url")]) {
+          expect(createPrivateKey(asKey({ ...jwk, d })).export({ format: "jwk" })).toEqual(jwk);
+          expect(createPublicKey(asKey({ ...jwk, d })).export({ format: "jwk" })).toEqual(generator);
+        }
+      });
+
+      test.each(privateForms)("%s needs a d", (_, call) => {
+        expect(() => call(asKey(publicA), signature)).toThrow(noPrivateKey);
+        // The other members are checked first, as in Node.
+        expect(() => call(asKey({ ...publicA, x: b.x }), signature)).toThrow(invalidKey);
+      });
+
+      test.each([publicForms[0], privateForms[0]])("%s needs strings for crv, x and y, and a curve", (_, call) => {
+        const wrongMembers = [
+          { crv: undefined },
+          { crv: 5 },
+          { crv: "SHA256" },
+          { x: undefined },
+          { x: 5 },
+          { x: b.x },
+          { y: undefined },
+          { y: 5 },
+          { y: b.y },
+        ];
+        for (const wrong of wrongMembers) {
+          expect(() => call(asKey({ ...a, ...wrong }), signature)).toThrow(invalidKey);
+        }
+        for (const crv of ["P-000", namedCurve.toLowerCase(), ` ${namedCurve}`]) {
+          expect(() => call(asKey({ ...a, crv }), signature)).toThrow(
+            expect.objectContaining({ code: "ERR_CRYPTO_INVALID_CURVE", message: "Invalid EC curve name" }),
+          );
+        }
+      });
+
+      test("crv can be the name OpenSSL has for the curve", () => {
+        expect(createPrivateKey(asKey({ ...a, crv: opensslName })).export({ format: "jwk" })).toEqual(a);
+        expect(createPublicKey(asKey({ ...a, crv: opensslName })).equals(createPublicKey(asKey(publicA)))).toBe(true);
+      });
+
+      test.each([publicForms[0], publicForms[1], privateForms[0], privateForms[1]])(
+        "%s reads kty, crv, x, y and d once each, in that order",
+        (_, call) => {
+          const reads = (jwk: object) => {
+            const log: (string | symbol)[] = [];
+            const logged = new Proxy(jwk, { get: (target, name) => (log.push(name), Reflect.get(target, name)) });
+            try {
+              call(asKey(logged), signature);
+            } catch {}
+            return log;
+          };
+          expect(reads(a)).toEqual(["kty", "crv", "x", "y", "d"]);
+          expect(reads({ ...a, x: 5 })).toEqual(["kty", "crv", "x", "y", "d"]);
+          expect(reads({ ...a, crv: 5 })).toEqual(["kty", "crv"]);
+          expect(reads({ ...a, crv: "P-000" })).toEqual(["kty", "crv"]);
+
+          const error = new Error("the getter of d");
+          const throwingD = Object.defineProperty({ ...a, x: 5 }, "d", {
+            get() {
+              throw error;
+            },
+          });
+          expect(() => call(asKey(throwingD), signature)).toThrow(error);
+        },
+      );
+
+      test("Verify#verify can be called again after a jwk it rejects", () => {
+        const verifier = createVerify("sha256").update(data);
+        expect(() => verifier.verify(asKey({ ...a, d: b.d }), signature)).toThrow(invalidKey);
+        expect(verifier.verify(asKey(publicA), signature)).toBe(true);
+      });
+    });
+
+    test("a P-224 jwk is imported, as in Node", () => {
+      const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-224" });
+      // 0x04, x, y
+      const point = publicKey.export({ format: "raw-public" } as any) as Buffer;
+      const jwk = {
+        kty: "EC",
+        crv: "P-224",
+        x: point.subarray(1, 29).toString("base64url"),
+        y: point.subarray(29).toString("base64url"),
+        d: (privateKey.export({ format: "raw-private" } as any) as Buffer).toString("base64url"),
+      };
+      expect(createPublicKey(asKey(jwk)).equals(publicKey)).toBe(true);
+      expect(createPrivateKey(asKey(jwk)).equals(privateKey)).toBe(true);
+      expect(verify("sha256", data, asKey(jwk), sign("sha256", data, asKey(jwk)))).toBe(true);
+    });
+
+    test.each([
+      ["createPublicKey", createPublicKey],
+      ["createPrivateKey", createPrivateKey],
+    ] as const)("%s needs a kty that is a string and a supported type", (_, create) => {
+      const jwk = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" });
+      for (const kty of [undefined, null, 5, {}]) {
+        expect(() => create(asKey({ ...jwk, kty }))).toThrow(invalid("Invalid JWK format"));
+      }
+      for (const kty of ["ec", "oct", "EC "]) {
+        expect(() => create(asKey({ ...jwk, kty }))).toThrow(invalid(`${kty} is not a supported JWK key type`));
+      }
+    });
+
+    describe.each([
+      ["ed25519", () => generateKeyPairSync("ed25519").publicKey, "x", "Invalid JWK OKP key"],
+      ["x25519", () => generateKeyPairSync("x25519").publicKey, "x", "Invalid JWK OKP key"],
+      ["ml-dsa-44", () => generateKeyPairSync("ml-dsa-44" as any).publicKey as KeyObject, "pub", "Invalid JWK AKP key"],
+      ["rsa", () => createPublicKey(publicPem), undefined, undefined],
+    ] as const)("%s", (_, publicKey, member, message) => {
+      const publicJwk = publicKey().export({ format: "jwk" });
+
+      test.each(privateForms)("%s needs the private member", (_, call) => {
+        expect(() => call(asKey(publicJwk), Buffer.alloc(0))).toThrow(noPrivateKey);
+        if (!member) return;
+        // The other members are checked first, as in Node.
+        const short = Buffer.from(publicJwk[member] as string, "base64url")
+          .subarray(1)
+          .toString("base64url");
+        expect(() => call(asKey({ ...publicJwk, [member]: short }), Buffer.alloc(0))).toThrow(invalid(message!));
+      });
+    });
   });
 
   test("an RSA jwk needs strings for its members, the n that is p times q, and no oth", () => {
@@ -2027,11 +2232,13 @@ describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leak
   }
 });
 
-test("worker.terminate() during createPrivateKey from an EC JWK doesn't crash", async () => {
-  const rounds = isDebug || isASAN ? 2 : 6;
-  using dir = tempDir("ec-jwk-terminate", {
-    "main.mjs": `
-      import { createPrivateKey, generateKeyPairSync } from "node:crypto";
+test.each(["createPrivateKey", "createPublicKey"])(
+  "worker.terminate() during %s from an EC JWK doesn't crash",
+  async create => {
+    const rounds = isDebug || isASAN ? 2 : 6;
+    using dir = tempDir("ec-jwk-terminate", {
+      "main.mjs": `
+      import { ${create} as create, generateKeyPairSync } from "node:crypto";
 
       if (Bun.isMainThread) {
         for (let round = 0; round < ${rounds}; round++) {
@@ -2056,20 +2263,21 @@ test("worker.terminate() during createPrivateKey from an EC JWK doesn't crash", 
         const jwk = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" });
         // Leading zero bytes don't change the scalar, but they make decoding "d" dominate each import.
         jwk.d = Buffer.concat([Buffer.alloc(768 * 1024), Buffer.from(jwk.d, "base64url")]).toString("base64url");
-        createPrivateKey({ key: jwk, format: "jwk" });
+        create({ key: jwk, format: "jwk" });
         postMessage("busy");
-        for (;;) createPrivateKey({ key: jwk, format: "jwk" });
+        for (;;) create({ key: jwk, format: "jwk" });
       }
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "survived\n", stderr: "", exitCode: 0 });
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "survived\n", stderr: "", exitCode: 0 });
+  },
+);

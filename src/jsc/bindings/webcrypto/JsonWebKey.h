@@ -37,8 +37,9 @@ namespace WebCore {
 struct JsonWebKey {
     String kty;
     String use;
-    // Any string is a valid entry (RFC 7517 section 4.3). `usages` is the bitmap of
-    // the entries that name a KeyUsage, set by normalizeJsonWebKey().
+    // Strings, as in the Web Crypto IDL, where WebKit has CryptoKeyUsage: any string is a
+    // valid entry (RFC 7517 section 4.3). `usages` is the bitmap of the entries that name a
+    // KeyUsage, set by normalizeJsonWebKey().
     std::optional<Vector<String>> key_ops;
     CryptoKeyUsageBitmap usages;
     String alg;

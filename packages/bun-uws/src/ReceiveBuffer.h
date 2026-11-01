@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 
 namespace uWS {
 
@@ -59,6 +60,12 @@ struct ReceiveBuffer {
         us_free(buf);
         buf = nullptr;
         len = cap = 0;
+    }
+
+    void swap(ReceiveBuffer &other) {
+        std::swap(buf, other.buf);
+        std::swap(len, other.len);
+        std::swap(cap, other.cap);
     }
 
 private:

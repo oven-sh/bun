@@ -10,8 +10,6 @@ use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::TransformRequest;
 use bun_sema::util::FxHashMap;
 
-use crate::load::test_runner_names::find_names_in_type_queries;
-
 const NAMESPACE_PREFIX: &str = "%import:";
 
 fn text_of<'a>(atoms: &'a Interner<'_>, text: Atom) -> &'a [u8] {
@@ -291,18 +289,20 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
                 members.insert(symbol, (import, member));
             }
         }
-        let in_type_queries = find_names_in_type_queries(self.hir);
+        let bound = self.request.bound;
         let expressions = (0..).map(ExprId).zip(self.hir.exprs.iter());
         let uses = expressions.filter_map(|(expression, node)| {
             let ExprKind::Ident(_) = node.kind else {
                 return None;
             };
-            let Binding::Symbol(symbol) = self.request.bound.binding(expression) else {
+            if !bound.is_evaluated_ident(expression) {
+                return None;
+            }
+            let Binding::Symbol(symbol) = bound.binding(expression) else {
                 return None;
             };
             let &(import, member) = members.get(&symbol)?;
-            let is_value = in_type_queries.binary_search(&expression).is_err();
-            is_value.then_some(Use {
+            Some(Use {
                 expression,
                 import,
                 member,

@@ -47,35 +47,17 @@ fn imports(
     })
 }
 
-// `typeof a.b` holds `a` as an expression, and asks for its type alone.
-pub(super) fn find_names_in_type_queries(hir: &File<'_>) -> Vec<ExprId> {
-    let queried = hir.types.iter().filter_map(|node| match node.kind {
-        TypeNodeKind::Typeof { expr, .. } => Some(expr),
-        _ => None,
-    });
-    let mut names: Vec<ExprId> = queried
-        .map(|mut expression| {
-            while let Some((object, _)) = hir.member_key(expression) {
-                expression = object;
-            }
-            expression
-        })
-        .collect();
-    names.sort_unstable();
-    names
-}
-
 fn find_uses(request: &TransformRequest<'_, '_>, names: &[Atom]) -> Vec<(ExprId, usize)> {
-    let in_type_queries = find_names_in_type_queries(request.hir);
+    let bound = request.bound;
     let expressions = (0..).map(ExprId).zip(request.hir.exprs.iter());
     let uses = expressions.filter_map(|(expression, node)| {
         let ExprKind::Ident(written) = node.kind else {
             return None;
         };
         let name = names.iter().position(|&name| name == written)?;
-        let is_value = in_type_queries.binary_search(&expression).is_err();
-        let is_free = request.bound.binding(expression) == Binding::Free;
-        (is_value && is_free).then_some((expression, name))
+        let is_free =
+            bound.is_evaluated_ident(expression) && bound.binding(expression) == Binding::Free;
+        is_free.then_some((expression, name))
     });
     uses.collect()
 }
@@ -530,12 +512,30 @@ pub(crate) fn import_used_names<'s>(
 #[cfg(test)]
 mod tests {
     use bstr::BStr;
-    use bun_sema::hir::{BinOp, ExprId, ExprKind, PatKind, StmtKind, TypeNodeKind, UnOp};
+    use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PatKind, StmtKind, TypeNodeKind, UnOp};
 
     use crate::compile::testing::{
         default_settings, with_loaded_test_run, with_loaded_test_run_of_vitest,
     };
     use crate::load::ProjectId;
+
+    // `typeof a.b` holds `a` as an expression, and asks for its type alone.
+    fn find_names_in_type_queries(hir: &File<'_>) -> Vec<ExprId> {
+        let queried = hir.types.iter().filter_map(|node| match node.kind {
+            TypeNodeKind::Typeof { expr, .. } => Some(expr),
+            _ => None,
+        });
+        let mut names: Vec<ExprId> = queried
+            .map(|mut expression| {
+                while let Some((object, _)) = hir.member_key(expression) {
+                    expression = object;
+                }
+                expression
+            })
+            .collect();
+        names.sort_unstable();
+        names
+    }
 
     // The names that the first statement behind the directives takes out of "bun:test", how many names of the runner still stand for a value, and how many values have the type of a name of the runner.
     fn describe(name: &str, text: &str) -> String {
@@ -586,7 +586,7 @@ mod tests {
                 }
                 _ => Vec::new(),
             };
-            let in_type_queries = super::find_names_in_type_queries(hir);
+            let in_type_queries = find_names_in_type_queries(hir);
             let written = (0..)
                 .map(ExprId)
                 .zip(hir.exprs.iter())

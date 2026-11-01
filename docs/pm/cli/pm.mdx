@@ -367,7 +367,7 @@ bun pm cache rm
 bun pm cache rm --dry-run   # print the directories that would be deleted
 ```
 
-This deletes everything in the cache directory, including the [global store](/pm/global-store) at `<cache>/links/`. The directory itself stays, so it can be a symlink or a mount. There is no way to remove one package: `bun pm cache rm <package>` is an error. Every project with `globalStore = true` symlinks into that directory, so run `bun install` again in each of them afterwards. Bun refuses to clear a directory that is or contains your project, your home directory or your Bun install.
+This deletes everything in the cache directory, including the [global store](/pm/global-store) at `<cache>/links/`. The directory itself stays, so it can be a symlink or a mount. There is no way to remove one package: `bun pm cache rm <package>` is an error. Every project with `globalStore = true` symlinks into that directory, so run `bun install` again in each of them afterwards. A file system that is mounted on an entry of the cache directory, a volume at `<cache>/links/` for example, is not emptied: the command reports `EBUSY` and exits with code 1, and a global store in it keeps its packages. Bun refuses to clear a directory that is or contains your project, your home directory or your Bun install.
 
 To refresh stale registry metadata without deleting the cache, use `bun add <pkg> --force` or `bun update <pkg>`. See [Cache](/pm/cli/install#cache).
 

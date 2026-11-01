@@ -1896,6 +1896,13 @@ mod posix_impl {
         super::linux_syscall::openat2(dir, path, flags, mode, ResolveFlags::BENEATH)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
+    /// `EXDEV` where a file system is mounted on a component of `path`, a bind mount included. `None`: no `openat2`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn openat2_no_xdev(dir: impl AsFd, path: &ZStr, flags: i32) -> Option<Maybe<Fd>> {
+        use super::linux_syscall::ResolveFlags;
+        let opened = openat2_if_available(dir.as_fd(), path, flags, 0, ResolveFlags::NO_XDEV)?;
+        Some(opened.map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes())))
+    }
     /// `None` on kernels without `openat2` and when seccomp blocks it, which is remembered.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn openat2_if_available(

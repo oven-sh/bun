@@ -6,8 +6,8 @@ use bun_lint_oxlint::ast_util::plain;
 /// Enforces a convention of using Unicode escapes instead of hexadecimal escapes for consistency and clarity.
 pub struct NoHexEscape;
 
-const NO_HEX_ESCAPE: Message =
-    Message::new("", "Use Unicode escapes instead of hexadecimal escapes.");
+const NO_HEX_ESCAPE: &Message =
+    &Message::new("", "Use Unicode escapes instead of hexadecimal escapes.");
 
 impl Rule for NoHexEscape {
     const META: Meta =

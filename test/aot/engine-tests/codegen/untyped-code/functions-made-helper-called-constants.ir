@@ -702,7 +702,7 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f60 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f58]
 function f61 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f62 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f63 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f63 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = ToBoolean v1
@@ -719,9 +719,9 @@ function f63 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-function f64 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=4 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=4 function=f64
-runtimefunction id=69 function=f63
+function f64 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=FunctionPrototypeApply function=f64
+runtimefunction id=ArrayIteratorPrototypeNext function=f63
 # -- generated: f9 f10 f11 f13 f15 f20 f21 f25 choose changed guarded
 # CHECK-LABEL: function {{*}}name="choose"
 # CHECK: module=m0 position=2053 role=ResultWrapper flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=boolean}] results=[{type=f16|f17|f18|f19|f20}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f120}
@@ -815,26 +815,26 @@ runtimefunction id=69 function=f63
 # CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=
-# CHECK: m0 position=2551 kind=Arrow length=1 captures=[{type=string}] thisType={type=anything} parameters=[{type=int[1, 8]}] results=[{type=string}] functionTypes=[f53] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: int[1, 8]):
+# CHECK: m0 position=2551 kind=Arrow length=1 captures=[{type=""|"fell from first; "}] thisType={type=anything} parameters=[{type=int[1, 8]}] results=[{type=string}] functionTypes=[f53] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: ""|"fell from first; ", v1: int[1, 8]):
 # CHECK-NEXT: v2: "after the switch " = String string="after the switch "
 # CHECK-NEXT: v3: string = Strcat v0, v2, v1
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f21 module=
-# CHECK: m0 position=3145 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f54] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=3145 kind=Arrow thisType={type=anything} results=[{type="two"}] functionTypes=[f54] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "two" = String string="two"
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
-# CHECK: m0 position=4043 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f60] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4043 kind=Arrow thisType={type=anything} results=[{type="made after a failure"}] functionTypes=[f60] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "made after a failure" = String string="made after a failure"
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="choose"
-# CHECK: module=m0 position=2053 role=ResultWorker flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=boolean}] results=[{type=i32}, {type=unspecified|env L0}, {type=string|unspecified}, {type=string|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f3} {
+# CHECK: module=m0 position=2053 role=ResultWorker flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=boolean}] results=[{type=i32}, {type=unspecified|env L0}, {type=unspecified|""|"fell from first; "}, {type=unspecified|""|"fell from first; "}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f3} {
 # CHECK-NEXT: b0(v0: string, v1: boolean):
 # CHECK-NEXT: v2: "" = String string=""
 # CHECK-NEXT: SwitchString v0 strings=["first", "second", "third", "last"] -> case b1(), case b2(v2), case b4(), case b5(), otherwise b6(v2)
@@ -846,21 +846,21 @@ runtimefunction id=69 function=f63
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v5: env L0 = NewObject -, v4 layout=L0 fields=[0] allocationSite=21
 # CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: v7: string|unspecified = Unspecified valueType=string
-# CHECK-NEXT: v8: string|unspecified = Unspecified valueType=string
+# CHECK-NEXT: v7: unspecified|""|"fell from first; " = Unspecified valueType=""|"fell from first; "
+# CHECK-NEXT: v8: unspecified|""|"fell from first; " = Unspecified valueType=""|"fell from first; "
 # CHECK-NEXT: v9: undefined = Results v6, v5, v7, v8
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v10: env L0 = NewObject -, v2 layout=L0 fields=[0] allocationSite=21
 # CHECK-NEXT: v11: 2 = Integer integer=2
-# CHECK-NEXT: v12: string|unspecified = Unspecified valueType=string
-# CHECK-NEXT: v13: string|unspecified = Unspecified valueType=string
+# CHECK-NEXT: v12: unspecified|""|"fell from first; " = Unspecified valueType=""|"fell from first; "
+# CHECK-NEXT: v13: unspecified|""|"fell from first; " = Unspecified valueType=""|"fell from first; "
 # CHECK-NEXT: v14: undefined = Results v11, v10, v12, v13
 # CHECK-NEXT: Return v14
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v15: 4 = Integer integer=4
 # CHECK-NEXT: v16: unspecified|env L0 = Unspecified valueType=env L0
-# CHECK-NEXT: v17: string|unspecified = Unspecified valueType=string
+# CHECK-NEXT: v17: unspecified|""|"fell from first; " = Unspecified valueType=""|"fell from first; "
 # CHECK-NEXT: v18: undefined = Results v15, v16, v2, v17
 # CHECK-NEXT: Return v18
 # CHECK-NEXT: b6(v19: ""|"fell from first; "):
@@ -870,13 +870,13 @@ runtimefunction id=69 function=f63
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v22: 8 = Integer integer=8
 # CHECK-NEXT: v23: unspecified|env L0 = Unspecified valueType=env L0
-# CHECK-NEXT: v24: string|unspecified = Unspecified valueType=string
+# CHECK-NEXT: v24: unspecified|""|"fell from first; " = Unspecified valueType=""|"fell from first; "
 # CHECK-NEXT: v25: undefined = Results v22, v23, v24, v19
 # CHECK-NEXT: Return v25
 # CHECK-NEXT: b8():
 # CHECK-NEXT: v26: 16 = Integer integer=16
 # CHECK-NEXT: v27: unspecified|env L0 = Unspecified valueType=env L0
-# CHECK-NEXT: v28: string|unspecified = Unspecified valueType=string
+# CHECK-NEXT: v28: unspecified|""|"fell from first; " = Unspecified valueType=""|"fell from first; "
 # CHECK-NEXT: v29: undefined = Results v26, v27, v19, v28
 # CHECK-NEXT: Return v29
 # CHECK-NEXT: }

@@ -94,11 +94,16 @@ const notAllowed = { ...allowed, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: undefine
               expect(built.stderr).toContain(`Could not resolve: "bun:internal-for-testing"`);
               expect(built.exitCode).toBe(entry === "asks.js" ? 0 : 1);
               if (entry !== "asks.js") continue;
-              const cannotFind = (name: string) => `throws Cannot find module '${name}'`;
+              // The words of plain Bun for a module that does not exist.
+              const importFails = (name: string) => `throws Cannot find package '${name}' imported from asks.js`;
+              const requireFails = (name: string) => `throws Cannot find module '${name}'\nRequire stack:\n- asks.js`;
               for (const env of [allowed, notAllowed]) {
                 const ran = await run([join(folder, outfile)], folder, env);
-                expect({ ...ran, stdout: ran.stdout.replace(/ from '[^'\n]*'$/gm, "") }).toEqual({
-                  stdout: `import ${cannotFind("bun:internal-for-testing")}\nrequire ${cannotFind("bun:internal-for-testing")}\nbinding ${cannotFind("internal/test/binding")}\ngetBuiltinModule undefined\n`,
+                expect({
+                  ...ran,
+                  stdout: ran.stdout.replace(/^(.* imported from |- ).*[\\/]asks\.js$/gm, "$1asks.js"),
+                }).toEqual({
+                  stdout: `import ${importFails("bun:internal-for-testing")}\nrequire ${requireFails("bun:internal-for-testing")}\nbinding ${requireFails("internal/test/binding")}\ngetBuiltinModule undefined\n`,
                   stderr: "",
                   exitCode: 0,
                 });

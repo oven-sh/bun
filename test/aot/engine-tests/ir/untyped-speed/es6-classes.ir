@@ -198,27 +198,20 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: number = CallDirect function=f29 accessSite=0
-# CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: Return v1
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="build"
-# CHECK: module=m0 position=1113 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=6}, {type=12}] results=[{type=undefined|null|L3}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 6, v1: 12):
-# CHECK-NEXT: v2: undefined|null|L3 = CallDirect function=f28
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1113 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=6}, {type=12}] results=[{type=undefined|null|L3}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: module=m0 position=1591 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=30000}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="File"
-# CHECK: module=m0 position=758 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=int|whole}] results=[{type=L1 flags=[IsFromCompiler]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f3 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK: module=m0 position=758 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=int|whole}] results=[{type=L1 flags=[IsFromCompiler]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: string, v3: int|whole):
 # CHECK-NEXT: v4: f9 = AssumeType v1 provenType=f9
-# CHECK-NEXT: v5: object = GetConstructPrototype v4 layout=L0
-# CHECK-NEXT: v6: object ~ L0|L1 = NewObject v5 layout=L0 allocationSite=6 allocationClass=0
-# CHECK-NEXT: v7: L0|L1 = AssumeType v6 provenType=L0|L1
-# CHECK-NEXT: v8: L0|L1 ~ L1 = Upcast v7 castType=object
-# CHECK-NEXT: v9: L1 = AssumeType v8 provenType=L1
-# CHECK-NEXT: Return v9
+# CHECK-NEXT: v5: L0|L1 = CallDirect v4, v2 function=f3 accessSite=13 [isConstruction]
+# CHECK-NEXT: v6: L0|L1 ~ L1 = Upcast v5 castType=object
+# CHECK-NEXT: v7: L1 = AssumeType v6 provenType=L1
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="build"
 # CHECK: module=m0 position=1113 flags=[HasExplicitName] length=2 thisType={type=anything} results=[{type=undefined|null|L3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1} {
@@ -233,6 +226,5 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=1591 flags=[HasExplicitName] length=1 thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2} {
 # CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: undefined|null|L3 = CallDirect function=f28 accessSite=9
-# CHECK-NEXT: v1: object = NewRuntimeError runtimeError=NotDestructurable name="root"
-# CHECK-NEXT: Throw v1
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

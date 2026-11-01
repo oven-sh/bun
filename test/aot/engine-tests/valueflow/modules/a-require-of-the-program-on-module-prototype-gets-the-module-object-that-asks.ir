@@ -1,0 +1,27 @@
+# module.exports = function hidden() {}; Module.prototype.require = function () { return this.exports() }; require(globalThis.name)
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=NodeModulePrototype
+    v3 = NewClosure function=f1
+    PropSet v2, v3 key="require" mode=Strict
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="name" [isFreeName]
+    v7 = RequireDynamic v6 referrer=m0
+    Return
+}
+function f1 name="require" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="exports"
+    v2 = Call v1
+    Return v2
+}
+function f2 name="hidden" module=m0 results=[{type=anything}] {
+    Return
+}

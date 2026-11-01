@@ -9,7 +9,9 @@ use bun_aot_interface::statistics::limit_values;
 use bun_core::current_work::{self, set_step_of_build};
 use bun_sema::check::aot::QueryStatistics;
 
-pub use self::limit_values::{HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build};
+pub use self::limit_values::{
+    HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build, is_lowered_by_all,
+};
 use crate::diagnostics::{ProgramView, SourcePosition, Span, SpanLocator};
 pub use crate::ir::generated::{Architecture, DegradesTo, LimitId, Stage, StatisticId};
 
@@ -27,6 +29,14 @@ pub struct LocatedLoss {
     pub count: u32,
 }
 
+/// `import(`./pages/${name}.js`)`: the files that are compiled because the import may mean them, and the bytes of their text.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ComputedImport<Place> {
+    pub site: Place,
+    pub files: u32,
+    pub bytes: u64,
+}
+
 fn is_lower_subject<T: Ord>(candidate: &Option<T>, current: &Option<T>) -> bool {
     match (candidate, current) {
         (Some(candidate), Some(current)) => candidate < current,
@@ -39,6 +49,7 @@ fn is_lower_subject<T: Ord>(candidate: &Option<T>, current: &Option<T>) -> bool 
 pub struct Counters {
     counts: Vec<(StatisticId, u64)>,
     losses: Vec<Loss>,
+    computed_imports: Vec<ComputedImport<Span>>,
 }
 
 impl Counters {
@@ -58,6 +69,10 @@ impl Counters {
             subject,
             count: 1,
         });
+    }
+
+    pub fn add_computed_import(&mut self, import: ComputedImport<Span>) {
+        self.computed_imports.push(import);
     }
 
     #[cfg(test)]
@@ -82,6 +97,12 @@ impl Counters {
         for loss in other.losses {
             self.add_loss(loss);
         }
+        self.computed_imports.extend(other.computed_imports);
+    }
+
+    #[cfg(test)]
+    pub fn computed_imports(&self) -> &[ComputedImport<Span>] {
+        &self.computed_imports
     }
 
     #[cfg(test)]
@@ -116,6 +137,8 @@ impl Counters {
 pub struct Statistics {
     values: Box<[u64]>,
     losses: Vec<LocatedLoss>,
+    /// The largest first.
+    computed_imports: Vec<ComputedImport<SourcePosition>>,
 }
 
 impl Default for Statistics {
@@ -123,6 +146,7 @@ impl Default for Statistics {
         Statistics {
             values: vec![0; StatisticId::COUNT].into_boxed_slice(),
             losses: Vec::new(),
+            computed_imports: Vec::new(),
         }
     }
 }
@@ -139,6 +163,16 @@ impl Statistics {
     #[cfg(test)]
     pub fn losses(&self) -> &[LocatedLoss] {
         &self.losses
+    }
+
+    pub fn computed_imports(&self) -> &[ComputedImport<SourcePosition>] {
+        &self.computed_imports
+    }
+
+    fn add_computed_imports(&mut self, imports: Vec<ComputedImport<SourcePosition>>) {
+        self.computed_imports.extend(imports);
+        (self.computed_imports)
+            .sort_by(|a, b| (b.bytes, b.files, &a.site).cmp(&(a.bytes, a.files, &b.site)));
     }
 
     pub fn count(&mut self, id: StatisticId, amount: u64) {
@@ -160,7 +194,7 @@ impl Statistics {
         }
     }
 
-    pub fn add_queries(&mut self, queries: QueryStatistics) {
+    pub fn add_queries(&mut self, queries: &QueryStatistics) {
         let sum = |counts: &[u32]| counts.iter().map(|&count| u64::from(count)).sum::<u64>();
         self.count(StatisticId::CheckerQueries, queries.asked);
         self.count(StatisticId::CheckerQueriesGivenUp, sum(&queries.gave_up));
@@ -186,6 +220,30 @@ impl Statistics {
                 count: loss.count,
             });
         }
+        let located = counters.computed_imports.into_iter();
+        let located = located.map(|import| ComputedImport {
+            site: locator.position_of(import.site),
+            files: import.files,
+            bytes: import.bytes,
+        });
+        self.add_computed_imports(located.collect());
+    }
+
+    /// With the stages: what each computed import brings into the build.
+    pub fn log_computed_imports(&self) {
+        if !logs_stages() {
+            return;
+        }
+        for import in &self.computed_imports {
+            bun_core::print_errorln!(
+                "AOT computed import | {}:{}:{} | {} files | {} bytes",
+                bstr::BStr::new(&import.site.path),
+                import.site.line,
+                import.site.column,
+                import.files,
+                import.bytes,
+            );
+        }
     }
 
     pub fn gave_up(&mut self, limit: LimitId, subject: Option<SourcePosition>) {
@@ -201,6 +259,7 @@ impl Statistics {
         for loss in other.losses {
             self.merge_loss(loss);
         }
+        self.add_computed_imports(other.computed_imports);
     }
 
     fn add_loss(&mut self, loss: LocatedLoss) {
@@ -229,6 +288,60 @@ impl Statistics {
 pub struct StageClock {
     times: [Duration; Stage::COUNT],
     running: Option<(Stage, Instant)>,
+    /// Processor time of the process when the running stage began, if stages are logged.
+    cpu_at_start: Duration,
+}
+
+/// Processor time of the process so far, and the memory it has resident now and had at the most, in bytes.
+fn process_info() -> (Duration, usize, usize) {
+    let (mut user, mut system, mut resident, mut peak) = (0, 0, 0, 0);
+    // A build with the address sanitizer has no mimalloc: its lines say zero.
+    if !bun_alloc::USE_MIMALLOC {
+        return (Duration::ZERO, 0, 0);
+    }
+    let unused = core::ptr::null_mut();
+    // SAFETY: it writes a number through each pointer that is not null.
+    unsafe {
+        bun_alloc::mimalloc::mi_process_info(
+            unused,
+            &raw mut user,
+            &raw mut system,
+            &raw mut resident,
+            &raw mut peak,
+            unused,
+            unused,
+            unused,
+        );
+    }
+    (
+        Duration::from_millis((user + system) as u64),
+        resident,
+        own_peak().unwrap_or(peak),
+    )
+}
+
+/// mimalloc asks getrusage(), where on Linux a spawned process starts from the peak of its parent.
+fn own_peak() -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    if let Ok(status) = bun_sys::File::read_from(bun_sys::Fd::cwd(), b"/proc/self/status") {
+        let mut lines = bun_core::strings::split(&status, b"\n");
+        let line = lines.find(|line| line.starts_with(b"VmHWM:"))?;
+        let digits: Vec<u8> = (line.iter().copied()).filter(u8::is_ascii_digit).collect();
+        let kilobytes = bun_core::fmt::parse_int::<usize>(&digits, 10).ok()?;
+        return Some(kilobytes * 1024);
+    }
+    None
+}
+
+pub fn logs_stages() -> bool {
+    bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
+}
+
+/// With the stages: why what was loaded is thrown away and the files are loaded again.
+pub fn log_why_files_are_loaded_again(why: core::fmt::Arguments<'_>) {
+    if logs_stages() {
+        bun_core::print_errorln!("AOT files are loaded again | {}", why);
+    }
 }
 
 impl StageClock {
@@ -236,12 +349,16 @@ impl StageClock {
         StageClock {
             times: [Duration::ZERO; Stage::COUNT],
             running: None,
+            cpu_at_start: Duration::ZERO,
         }
     }
 
     pub fn start(&mut self, stage: Stage) {
         self.stop();
         self.running = Some((stage, Instant::now()));
+        if logs_stages() {
+            self.cpu_at_start = process_info().0;
+        }
         set_step_of_build(match stage {
             Stage::Load => Some(current_work::Step::Load),
             Stage::BindModules => Some(current_work::Step::BindModules),
@@ -254,8 +371,21 @@ impl StageClock {
 
     pub fn stop(&mut self) {
         if let Some((stage, started)) = self.running.take() {
-            self.times[stage as usize] += started.elapsed();
+            let wall = started.elapsed();
+            self.times[stage as usize] += wall;
             set_step_of_build(None);
+            if logs_stages() {
+                // In the form of the engine's lines.
+                let (cpu, resident, peak) = process_info();
+                bun_core::print_errorln!(
+                    "AOT phase times: front end | {} | wall {:.6} ms | cpu {:.6} ms | resident {} MB | peak {} MB",
+                    stage.name(),
+                    wall.as_secs_f64() * 1000.0,
+                    cpu.saturating_sub(self.cpu_at_start).as_secs_f64() * 1000.0,
+                    resident >> 20,
+                    peak >> 20,
+                );
+            }
         }
     }
 
@@ -337,11 +467,12 @@ mod tests {
     }
 
     #[test]
-    fn build_error_limit_cannot_be_lowered() {
+    fn build_error_limit_is_lowered_by_its_name_alone() {
         assert!(fails_build(LimitId::MaxProgramIds));
-        assert!(!can_be_lowered(LimitId::MaxProgramIds));
+        assert!(can_be_lowered(LimitId::MaxProgramIds));
+        assert!(!is_lowered_by_all(LimitId::MaxProgramIds));
         assert!(!can_be_lowered(LimitId::None));
-        assert!(can_be_lowered(LimitId::MaxTypeNodes));
+        assert!(is_lowered_by_all(LimitId::MaxTypeNodes));
     }
 
     #[test]
@@ -362,7 +493,7 @@ mod tests {
         counters.gave_up(LimitId::MaxTypeNodes, span(1, 9));
         counters.gave_up(LimitId::MaxTypeNodes, span(1, 4));
         counters.gave_up(LimitId::MaxTypeNodes, span(2, 0));
-        counters.gave_up(LimitId::MaxNestingDepth, None);
+        counters.gave_up(LimitId::MaxDataNestingDepth, None);
         let expected = [
             Loss {
                 limit: LimitId::MaxTypeNodes,
@@ -370,7 +501,7 @@ mod tests {
                 count: 4,
             },
             Loss {
-                limit: LimitId::MaxNestingDepth,
+                limit: LimitId::MaxDataNestingDepth,
                 subject: None,
                 count: 1,
             },
@@ -430,18 +561,18 @@ mod tests {
             counters.count(StatisticId::FunctionsLowered, 2);
             counters.gave_up(LimitId::MaxTypeNodes, None);
             counters.gave_up(LimitId::MaxTypeNodes, span(file.0, 11));
-            counters.gave_up(LimitId::MaxNestingDepth, None);
+            counters.gave_up(LimitId::MaxDataNestingDepth, None);
             let mut statistics = Statistics::default();
             statistics.add_counters(view, counters);
             statistics
         });
         assert_eq!(statistics.get(StatisticId::FunctionsLowered), 2);
         assert_eq!(statistics.get(LimitId::MaxTypeNodes.hits()), 2);
-        assert_eq!(statistics.get(LimitId::MaxNestingDepth.hits()), 1);
+        assert_eq!(statistics.get(LimitId::MaxDataNestingDepth.hits()), 1);
         let [unlocated, located] = statistics.losses() else {
             panic!("{:?}", statistics.losses());
         };
-        assert_eq!(unlocated.limit, LimitId::MaxNestingDepth);
+        assert_eq!(unlocated.limit, LimitId::MaxDataNestingDepth);
         assert_eq!(unlocated.subject, None);
         assert_eq!((located.limit, located.count), (LimitId::MaxTypeNodes, 2));
         let subject = located.subject.as_ref().expect("a span has a position");
@@ -454,7 +585,7 @@ mod tests {
         let mut statistics = Statistics::default();
         statistics.gave_up(LimitId::MaxTypeNodes, None);
         statistics.gave_up(LimitId::MaxFoldedStringBytes, None);
-        statistics.gave_up(LimitId::MaxNestingDepth, None);
+        statistics.gave_up(LimitId::MaxDataNestingDepth, None);
         let limits = statistics.losses().iter().map(|loss| loss.limit as u32);
         assert!(limits.is_sorted_by(|a, b| a < b));
     }
@@ -487,8 +618,8 @@ mod tests {
         queries.gave_up[3] = 1;
         queries.members_gave_up[1] = 4;
         let mut statistics = Statistics::default();
-        statistics.add_queries(queries);
-        statistics.add_queries(queries);
+        statistics.add_queries(&queries);
+        statistics.add_queries(&queries);
         assert_eq!(statistics.get(StatisticId::CheckerQueries), 10);
         assert_eq!(statistics.get(StatisticId::CheckerQueriesGivenUp), 6);
         assert_eq!(statistics.get(StatisticId::CheckerMembersGivenUp), 8);

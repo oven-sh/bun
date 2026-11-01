@@ -345,11 +345,11 @@ pub mod dir_entry {
 
 /// Per-entry hook invoked by `readdir`, which lends it the filesystem it is running on.
 pub trait DirEntryIterator {
-    fn next<R: EntryKindResolver>(&self, fs: &R, entry: &Entry, fd: Fd);
+    fn next<R: EntryKindResolver>(&mut self, fs: &R, entry: &Entry, fd: Fd);
 }
 
 impl DirEntryIterator for () {
-    fn next<R: EntryKindResolver>(&self, _fs: &R, _entry: &Entry, _fd: Fd) {}
+    fn next<R: EntryKindResolver>(&mut self, _fs: &R, _entry: &Entry, _fd: Fd) {}
 }
 
 pub struct DirEntry {
@@ -661,8 +661,6 @@ impl ModKey {
 // SAFETY: `cache` is the only `!Sync` field. It is shared under the per-entry
 // `mutex` discipline described on `Entry`.
 unsafe impl Sync for Entry {}
-// SAFETY: same invariant as the `Sync` impl above.
-unsafe impl Send for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════
 // CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)

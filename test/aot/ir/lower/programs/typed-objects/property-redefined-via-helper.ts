@@ -110,7 +110,7 @@ everyWay("h", makeSettings("h"));
 // CHECK-NEXT: Return v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_10]] site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_10]] site=[[w_11]] flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: env [[L_9]], v1: undefined|null|[[f_10]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -139,7 +139,7 @@ everyWay("h", makeSettings("h"));
 // CHECK-NEXT: Return v17
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_14]] site=[[w_15]]}, {type=undefined|null|number|string|symbol site=[[w_16]]}, {type=undefined|null|[[f_17]] site=[[w_18]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_19]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_14]] site=[[w_15]] variableName="target"}, {type=undefined|null|number|string|symbol site=[[w_16]] variableName="key"}, {type=undefined|null|[[f_17]] site=[[w_18]] flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_19]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_14]], v1: undefined|null|number|string|symbol, v2: undefined|null|[[f_17]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -159,7 +159,7 @@ everyWay("h", makeSettings("h"));
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|[[L_14]] site=[[w_15]]}, {type=undefined|null|number|string|symbol site=[[w_16]]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_22]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|[[L_14]] site=[[w_15]] variableName="target"}, {type=undefined|null|number|string|symbol site=[[w_16]] variableName="key"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_22]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_14]], v1: undefined|null|number|string|symbol, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

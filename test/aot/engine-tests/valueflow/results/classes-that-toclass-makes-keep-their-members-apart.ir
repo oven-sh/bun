@@ -54,7 +54,7 @@ function f5 name="library" module=m1 kind=Module results=[{type=anything}] {
     v16 = Construct v7
     Return
 }
-function f6 name="toClass" module=m2 kind=Method role=Model length=3 enclosingRuntimeFunction=131085 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f6 name="toClass" module=m2 kind=Method role=Model length=3 enclosingRuntimeFunction=ObjectsToClass thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Builtin builtin=Object
     v4 = Builtin builtin=ObjectCreate
@@ -65,4 +65,4 @@ function f6 name="toClass" module=m2 kind=Method role=Model length=3 enclosingRu
     PropSet v0, v6 key="prototype" mode=Strict
     Return
 }
-runtimefunction id=131085 function=f6
+runtimefunction id=ObjectsToClass function=f6

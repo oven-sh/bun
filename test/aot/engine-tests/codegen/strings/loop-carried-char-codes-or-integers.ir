@@ -1,6 +1,6 @@
 # A variable that holds char codes and integers, stored anew at the foot of a loop and read at its head.
 # FORM: AsRead
-# RUN: lower-to-air size f2 f4 f5
+# RUN: lower-to-air size f0 f2 f4
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
 module m0 path="loop-carried-char-codes-or-integers.ts" displayPath="loop-carried-char-codes-or-integers.ts" body=f0 namespaceLayout=L(m0)
@@ -343,16 +343,16 @@ function f6 name="nested" module=m0 position=3333 flags=[IsChecked, HasExplicitN
     v44 = Convert v43 declared={type=number}
     Return v44
 }
-# -- generated: parseNumbers swapped sometimesMissing
+# -- generated: f0 parseNumbers swapped
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 109, patchpoints: 30, rare instructions: 32
+# CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="parseNumbers"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 188, patchpoints: 35, rare instructions: 207, polls: 6
+# CHECK-NEXT: instructions: 189, patchpoints: 31, rare instructions: 151, polls: 2
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="swapped"
 # CHECK: role=ResultWorker
-# CHECK-NEXT: instructions: 62, patchpoints: 8, rare instructions: 11
+# CHECK-NEXT: instructions: 49, patchpoints: 5, rare instructions: 4
 # CHECK-NEXT: end of function f9
-# CHECK-LABEL: function {{*}}name="sometimesMissing"
-# CHECK: role=Source
-# CHECK-NEXT: instructions: 46, patchpoints: 4, rare instructions: 121, polls: 1
-# CHECK-NEXT: end of function f5

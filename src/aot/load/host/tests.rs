@@ -275,6 +275,7 @@ fn loader_request<'a>(path: &'a [u8], settings: &'a TranspileSettings) -> Loader
     LoaderRequest {
         path,
         kind: CodeImportKind::Import,
+        is_linked_by_bundler: true,
         type_attribute: None,
         embed_attribute: None,
         settings,
@@ -473,10 +474,11 @@ fn loader_follows_attribute_options_and_entry_points() {
     with_host(&[], |fixture| {
         let host = fixture.host;
         let (by_name, named) = (HostLoaderKind::ByName, HostLoaderKind::Loader);
-        let cases: [(&[u8], Option<&[u8]>, HostLoaderKind); 10] = [
+        let cases: [(&[u8], Option<&[u8]>, HostLoaderKind); 11] = [
             (b"/project/a.ts", None, by_name),
             (b"/project/a.ts", Some(b""), by_name),
-            (b"/project/a.txt", Some(b"text"), by_name),
+            (b"/project/a.txt", Some(b"text"), named(Loader::Text)),
+            (b"/project/a.ts", Some(b"ts"), by_name),
             (b"/project/a.ts", Some(b"text"), named(Loader::Text)),
             (b"/project/a.ts", Some(b"json"), named(Loader::Json)),
             (b"/project/a.ts", Some(b"no-such-loader"), by_name),
@@ -590,20 +592,30 @@ fn empty_module_stands_in_place_of_text_that_is_no_program_where_code_runs_in_pl
 }
 
 #[test]
-fn executable_carries_text_that_is_no_program() {
+fn executable_carries_text_that_only_its_name_calls_a_program() {
     with_texts_that_only_their_load_calls_programs(false, |fixture| {
-        let read_as = |path: &[u8]| {
+        let carried = fixture.parse(b"/project/prose", BY_NAME);
+        let source = payload_of(&carried);
+        assert_eq!(source.parse_failure, None);
+        assert_eq!(
+            (source.kind, source.loader),
+            (SourceKind::Data, Loader::File)
+        );
+        // The loader of `bun run` answers the call, and fails there.
+        let required = parse_as_required(fixture, b"/project/library.so");
+        let source = payload_of(&required);
+        let said = source.parse_failure.as_deref();
+        assert_eq!(said, Some(&b"Invalid character. (1:1)"[..]));
+        assert_eq!(source.kind, SourceKind::Program);
+        for path in [&b"/project/program.so"[..], b"/project/wrong.ts"] {
             let parsed = parse_as_required(fixture, path);
             let source = payload_of(&parsed);
             assert_eq!(source.parse_failure, None);
-            (source.kind, source.loader)
-        };
-        let carried = (SourceKind::Data, Loader::File);
-        assert_eq!(read_as(b"/project/library.so"), carried);
-        assert_eq!(read_as(b"/project/prose"), carried);
-        let code = (SourceKind::Program, Loader::Ts);
-        assert_eq!(read_as(b"/project/program.so"), code);
-        assert_eq!(read_as(b"/project/wrong.ts"), code);
+            assert_eq!(
+                (source.kind, source.loader),
+                (SourceKind::Program, Loader::Ts)
+            );
+        }
     });
 }
 

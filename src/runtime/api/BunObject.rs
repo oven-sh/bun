@@ -126,14 +126,9 @@ pub(crate) mod bun_object {
                 // not RCX/RDX, so `extern "C"` reads garbage for both args.
                 bun_jsc::jsc_host_abi! {
                     #[unsafe(no_mangle)]
-                    pub unsafe fn $sym(
-                        this: *mut JSGlobalObject,
-                        object: *mut JSObject,
-                    ) -> JSValue {
-                        // SAFETY: JSC always passes valid pointers here.
-                        let (g, o) = unsafe { (&*this, &*object) };
-                        bun_jsc::to_js_host_call(g, || {
-                            IntoLazyPropResult::into_lazy_prop_result($target(g, o))
+                    pub unsafe fn $sym(this: &JSGlobalObject, object: &JSObject) -> JSValue {
+                        bun_jsc::to_js_host_call(this, || {
+                            IntoLazyPropResult::into_lazy_prop_result($target(this, object))
                         })
                     }
                 }
@@ -787,9 +782,32 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     mode: ResolveMode,
 ) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
+        Resolved::Found(value) if mode == ResolveMode::RequireResolve => {
+            Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
+        }
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
     }
+}
+
+/// `require.resolve` in a program compiled ahead of time answers where the file lay when the program was built, under a computed name as under one that the build has read.
+/// A path in the executable is its own answer.
+fn find_source_path_of_compiled_file(
+    specifier: &BunString,
+    resolved: &BunString,
+) -> Option<BunString> {
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    let program = graph.compiled_program.as_ref()?;
+    program.root_on_build_machine()?;
+    if bun_standalone_graph::is_bun_standalone_file_path(specifier.to_utf8().slice()) {
+        return None;
+    }
+    let path = resolved.to_utf8();
+    let public_root =
+        bun_standalone_graph::StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX
+            .as_bytes();
+    let source_path = program.source_path_of_public(public_root, path.slice())?;
+    Some(BunString::clone_utf8(&source_path))
 }
 
 fn resolve_with_args<const IS_FILE_PATH: bool>(
@@ -988,32 +1006,6 @@ pub(crate) fn bun_resolve_sync_with_paths(
             &specifier_str,
             &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
-        )?
-        .into_js(global)
-    })
-}
-
-bun_output::declare_scope!(importMetaResolve, visible);
-
-// HOST_EXPORT(Bun__resolveSyncWithStrings, c)
-pub(crate) fn bun_resolve_sync_with_strings(
-    global: &JSGlobalObject,
-    specifier: &BunString,
-    source: &BunString,
-    is_esm: bool,
-) -> JSValue {
-    bun_output::scoped_log!(
-        importMetaResolve,
-        "source: {}, specifier: {}",
-        source,
-        specifier
-    );
-    jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(
-            global,
-            specifier,
-            source,
-            ResolveMode::from_ffi_bools(is_esm, false),
         )?
         .into_js(global)
     })
@@ -1482,7 +1474,11 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    JSValue::js_boolean(global_this.bun_vm().standalone_module_graph.is_some())
+    // `bun run --aot` and `bun test --aot` hold a compiled program and are no executable that was shipped.
+    JSValue::js_boolean(
+        global_this.bun_vm().standalone_module_graph.is_some()
+            && !crate::cli::run_compiled::runs_compiled_code(),
+    )
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {

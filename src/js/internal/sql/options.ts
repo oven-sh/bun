@@ -245,6 +245,12 @@ function readInherited(options: AnyOptions, source: AnyOptions, names: string[])
   }
 }
 
+/** The code below checks `instanceof URL`, so a foreign URL (e.g. jsdom's) is turned into its href string. */
+function textOfForeignURL<T>(value: T): T | string {
+  if (typeof value !== "object" || value === null || value instanceof URL) return value;
+  return require("internal/url").isURL(value) ? value.href : value;
+}
+
 function resolveTarget(
   first: AnyOptions | string | URL | null | undefined,
   second: AnyOptions,
@@ -256,6 +262,8 @@ function resolveTarget(
   passedOver: PassedOver | null,
 ] {
   let target: string | URL | null = null;
+  // An options object can have its own `href` and `protocol`. A URL inherits them as accessors.
+  if (typeof first === "object" && first && !ObjectHasOwn(first, "href")) first = textOfForeignURL(first);
   if (typeof first === "string" || first instanceof URL) {
     target = first;
     first = undefined;
@@ -272,7 +280,7 @@ function resolveTarget(
   }
 
   const filename = !adapterOption || adapterOption === "sqlite" ? options.filename : undefined;
-  target = filename || options.url || target || null;
+  target = textOfForeignURL(filename || options.url || target || null);
 
   // What the arguments say themselves: `adapter`, then the scheme. A `filename` without one is a file,
   // unless it stands next to what only a server has.

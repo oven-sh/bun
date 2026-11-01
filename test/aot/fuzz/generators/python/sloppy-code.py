@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""sloppy-code.py <seed>: random SLOPPY JavaScript programs (CommonJS files without "use strict") about the arguments object and what else only sloppy code does: parameters that are kept in the mapped
-arguments object, read and stored by name and by index in any order, with fewer and more arguments than parameters; the mapping cut by delete, defineProperty, freeze; arguments handed to helpers that store into it, sliced, spread, applied,
-kept in a variable, captured by closures, returned; arguments.length stored to; functions with defaults | rest | destructuring (no mapping); strict functions beside them; duplicate parameter names; `this` that is the global object or a boxed
-primitive; stores to names nobody declared; functions declared in blocks; var hoisting and redeclaration."""
+"""sloppy-code.py <seed>: Random sloppy JavaScript programs (CommonJS files without "use strict") about the arguments
+object and other sloppy-only behavior: parameters aliased by the mapped arguments object, read and stored both ways.
+"""
 import random, sys, os
 
 HEAD = r'''var lines = [];

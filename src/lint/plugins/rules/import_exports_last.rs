@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Ensure all exports appear after other statements.
 pub struct ExportsLast;
 
-const EXPORTS_LAST: Message = Message::new("", "Export statements should appear at the end of the file");
+const EXPORTS_LAST: &Message = &Message::new("", "Export statements should appear at the end of the file");
 
 impl Rule for ExportsLast {
     const META: Meta = Meta::plugin(Plugin::Import, "exports-last", Kind::Suggestion);

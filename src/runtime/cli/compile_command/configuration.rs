@@ -6,6 +6,7 @@ use super::library::find_default_library_entry_points;
 use super::{BundlerInputs, CompileProduct, CompileRequest, ExecutableSettings, RequestOrigin};
 pub(super) use crate::cli::build_command::compile_outfile;
 use crate::cli::command::Context;
+use crate::cli::run_compiled;
 use bun_bundler::aot::expand_entry_points;
 use bun_bundler::options;
 use bun_bundler::transpiler::Transpiler;
@@ -112,7 +113,15 @@ fn add_target_defines(ctx: &mut ContextData) {
 }
 
 pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error> {
-    add_target_defines(ctx);
+    if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+        let user_defines = ctx.args.define.as_ref();
+        aot.user_defined_names = user_defines.map_or(Vec::new(), |define| define.keys.clone());
+    }
+    // A test may redefine `process.platform` to take the path of another platform.
+    let aot = ctx.bundler_options.aot.as_ref();
+    if !aot.is_some_and(|aot| aot.runs_tests) {
+        add_target_defines(ctx);
+    }
 
     let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
     // In the arena: the build takes `&'a mut Transpiler<'a>`, which no stack local satisfies.
@@ -152,7 +161,7 @@ fn expand_entry_patterns(this_transpiler: &mut Transpiler<'static>) {
     let expanded = expand_entry_points(
         &this_transpiler.options.entry_points,
         FileSystem::get().top_level_dir(),
-        None,
+        run_compiled::files_in_memory(),
         &mut unreported,
     );
     if let Some(expanded) = expanded {
@@ -185,7 +194,9 @@ fn add_addons_among_assets(ctx: &ContextData, this_transpiler: &mut Transpiler<'
         .iter()
         .map(|path| path.to_vec());
     let all: Vec<Vec<u8>> = written.chain(addons).collect();
-    if let Some(distinct) = expand_entry_points(&all, working_directory, None, &mut unreported) {
+    let in_memory = run_compiled::files_in_memory();
+    if let Some(distinct) = expand_entry_points(&all, working_directory, in_memory, &mut unreported)
+    {
         this_transpiler.options.entry_points =
             distinct.into_iter().map(Vec::into_boxed_slice).collect();
     }
@@ -473,7 +484,7 @@ pub(super) fn request_from_context<'r>(
             event_loop: Some(NonNull::from(event_loop)),
             worker_pool: None,
             plugins: None,
-            file_map: None,
+            file_map: run_compiled::files_in_memory(),
         }),
         executable: ExecutableSettings {
             target: &ctx.bundler_options.compile_target,

@@ -110,22 +110,23 @@ console.log(out.join("\n"));
 // CHECK-NEXT: Throw v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="species"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_5]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_5]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_5]]|[[f_6]]|[[f_7]] flags=[IsExpected]}] results=[{type=undefined|null|[[f_8]]|[[f_9]]|[[f_10]] flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[f_5]]|[[f_6]]|[[f_7]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key=@@species
-// CHECK-NEXT: Return v1
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_8]]|[[f_9]]|[[f_10]] flags=[IsExpected]}
+// CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Failure"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = Absent
 // CHECK-NEXT: v4 = GetSuperBase v0
-// CHECK-NEXT: v5 = SuperConstruct v4, v1, v2 layout=[[L_7]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_7]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = SuperConstruct v4, v1, v2 layout=[[L_12]]
+// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_12]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: v7 = TypeTest v3 testedType=absent
 // CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b12(| 0)
 // CHECK-NEXT: b2(v8):
@@ -135,7 +136,7 @@ console.log(out.join("\n"));
 // CHECK-NEXT: v11 = NewRuntimeError runtimeError=UninitializedThis
 // CHECK-NEXT: Throw v11
 // CHECK-NEXT: b4(v12):
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[L_7]] flags=[IsExpected]}
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[L_12]] flags=[IsExpected]}
 // CHECK-NEXT: v14 = String string="Failure"
 // CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: PropSet v13, v15 key="name"
@@ -165,13 +166,13 @@ console.log(out.join("\n"));
 // CHECK-NEXT: Throw v31
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Deep"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_13]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_9]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_14]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_14]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.hasInstance]"

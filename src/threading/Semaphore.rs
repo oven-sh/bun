@@ -19,9 +19,6 @@ pub struct Semaphore {
 // SAFETY: `permits` is only read/written while `mutex` is held; `Mutex` and
 // `Condition` are themselves `Sync`/`Send`.
 unsafe impl Sync for Semaphore {}
-// SAFETY: `Mutex`, `Condition`, and `UnsafeCell<usize>` are all `Send`; the
-// semaphore holds no thread-affine state.
-unsafe impl Send for Semaphore {}
 
 impl Default for Semaphore {
     fn default() -> Self {

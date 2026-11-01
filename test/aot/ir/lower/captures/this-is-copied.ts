@@ -6,7 +6,7 @@
 // CHECK-NOT: = NewObject
 // CHECK: = NewClosure [[this]] function=
 // CHECK-LABEL: function {{*}}kind=Arrow
-// CHECK: captures=[{type=[[instance]] site=[[site]]}] thisType
+// CHECK: captures=[{type=[[instance]] site=[[site]] variableName="this"}] thisType
 // CHECK-NOT: GetEnvironmentField
 // CHECK: Return
 

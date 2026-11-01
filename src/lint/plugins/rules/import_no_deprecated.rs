@@ -7,8 +7,8 @@ use rustc_hash::FxHashMap;
 /// Forbid imported names marked with `@deprecated` documentation tag.
 pub struct NoDeprecated;
 
-const DEPRECATED: Message = Message::new("", "Deprecated: {{description}}");
-const DEPRECATED_WITHOUT_DESCRIPTION: Message = Message::new("", "Deprecated.");
+const DEPRECATED: &Message = &Message::new("", "Deprecated: {{description}}");
+const DEPRECATED_WITHOUT_DESCRIPTION: &Message = &Message::new("", "Deprecated.");
 
 /// The description of a `@deprecated` tag.
 type Deprecation<'a> = Option<&'a [u8]>;

@@ -167,3 +167,9 @@ test("scrypt reports its arguments and options as Node does", () => {
     'The "callback" argument must be of type function. Received type number (5)',
   );
 });
+
+test("scrypt passes null as the error of a successful derivation", async () => {
+  const { promise, resolve } = Promise.withResolvers<unknown[]>();
+  scrypt("password", "salt", 4, { N: 2 }, (...args) => resolve(args));
+  expect(await promise).toEqual([null, scryptSync("password", "salt", 4, { N: 2 })]);
+});

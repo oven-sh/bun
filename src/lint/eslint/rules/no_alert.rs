@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow the use of `alert`, `confirm`, and `prompt`.
 pub struct NoAlert;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected {{name}}.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected {{name}}.");
 
 const PROHIBITED: [&str; 3] = ["alert", "confirm", "prompt"];
 

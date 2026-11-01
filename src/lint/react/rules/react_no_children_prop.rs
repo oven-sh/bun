@@ -12,23 +12,23 @@ pub struct NoChildrenProp {
     allow_functions: bool,
 }
 
-const NEST_CHILDREN: Message = Message::new(
+const NEST_CHILDREN: &Message = &Message::new(
     "nestChildren",
     "Do not pass children as props. Instead, nest children between the opening and closing tags.",
 );
-const PASS_CHILDREN_AS_ARGS: Message = Message::new(
+const PASS_CHILDREN_AS_ARGS: &Message = &Message::new(
     "passChildrenAsArgs",
     "Do not pass children as props. Instead, pass them as additional arguments to React.createElement.",
 );
-const NEST_FUNCTION: Message = Message::new(
+const NEST_FUNCTION: &Message = &Message::new(
     "nestFunction",
     "Do not nest a function between the opening and closing tags. Instead, pass it as a prop.",
 );
-const PASS_FUNCTION_AS_ARGS: Message = Message::new(
+const PASS_FUNCTION_AS_ARGS: &Message = &Message::new(
     "passFunctionAsArgs",
     "Do not pass a function as an additional argument to React.createElement. Instead, pass it as a prop.",
 );
-const NO_CHILDREN_PROP: Message = Message::new("", "Avoid passing children using a prop.");
+const NO_CHILDREN_PROP: &Message = &Message::new("", "Avoid passing children using a prop.");
 
 impl Rule for NoChildrenProp {
     const META: Meta = Meta::plugin(Plugin::React, "no-children-prop", Kind::None).recommended();

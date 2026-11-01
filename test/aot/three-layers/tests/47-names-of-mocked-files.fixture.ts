@@ -1,0 +1,10 @@
+import { mock } from "bun:test";
+import { check } from "../src/show";
+import { bar as bound } from "../src/named-1";
+const F = "47";
+const both = async (name: string) => [(await import(name)).bar, require(name).bar];
+check(F, "a relative file URL", async () => { mock.module("file:../src/named-1.ts", () => ({ bar: 41 })); return [await both("../src/named-1.ts"), bound]; });
+check(F, "a URL that is computed", async () => { mock.module(new URL("../src/named-2.ts", import.meta.url).href, () => ({ bar: 42 })); return both("../src/named-2.ts"); });
+check(F, "import.meta.resolve", async () => { mock.module(import.meta.resolve("../src/named-3.ts"), () => ({ bar: 43 })); return both("../src/named-3.ts"); });
+check(F, "require.resolve", async () => { mock.module(require.resolve("../src/named-4.ts"), () => ({ bar: 44 })); return both("../src/named-4.ts"); });
+check(F, "a path that is joined", async () => { mock.module(import.meta.dir + "/../src/named-5.ts", () => ({ bar: 45 })); return both("../src/named-5.ts"); });

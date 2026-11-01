@@ -4,7 +4,8 @@ use crate::ir::generated::{FunctionReferenceKind, ImportPhase};
 use crate::ir::testing::build_function;
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, ModuleFailureId as WireModuleFailureId, ModuleId,
-    PropertyKeyId, StringId, Type, TypeId, TypeSiteId,
+    PropertyKey, PropertyKeyId, PropertyKeyKind, StringId, Type, TypeId, TypeSiteId,
+    WellKnownSymbol,
 };
 use crate::link::testing::{
     TestUnit, forward, key_in, reverse, test_class_key, test_function_key, test_variable_key,
@@ -429,4 +430,45 @@ fn unit_keeps_definitions_and_records() {
         ];
         assert_eq!(record_counts, [1; 4]);
     });
+}
+
+#[test]
+fn records_with_gaps_come_back_out_of_numbers() {
+    let full = Variable {
+        name: Some(StringId::new(1)),
+        module: ModuleId::new(2),
+        declared: DeclaredType {
+            ty: TypeId::new(3),
+            site: Some(TypeSiteId::new(4)),
+            flags: PositionFlags::ALL,
+        },
+        initialization: VariableInitialization::Function,
+        function: Some(FunctionId::new(5)),
+        owner: Some(LayoutId::new(6)),
+        flags: VariableFlags::ALL,
+    };
+    for definition in [
+        (VariableId::new(7), full),
+        (VariableId::new(0), Variable::default()),
+    ] {
+        let numbers = definition.to_numbers();
+        assert_eq!(<(VariableId, Variable)>::from_numbers(numbers), definition);
+    }
+
+    let full = PropertyKey {
+        kind: PropertyKeyKind::ModulePrivateName,
+        text: Some(StringId::new(1)),
+        owner: Some(LayoutId::new(2)),
+        symbol: Some(WellKnownSymbol::Unscopables),
+        module: Some(ModuleId::new(3)),
+        call_number: Some(0),
+    };
+    let first_symbol = PropertyKey {
+        kind: PropertyKeyKind::WellKnownSymbol,
+        symbol: Some(WellKnownSymbol::AsyncDispose),
+        ..PropertyKey::default()
+    };
+    for key in [full, first_symbol, PropertyKey::default()] {
+        assert_eq!(PropertyKey::from_numbers(key.to_numbers()), key);
+    }
 }

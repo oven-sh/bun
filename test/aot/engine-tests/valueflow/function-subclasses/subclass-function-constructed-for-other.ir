@@ -541,8 +541,8 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="_cs"
-# CHECK: module=m0 position=4855 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything, v1: anything ~ undefined|null|function, v2: anything ~ undefined|null|Array):
+# CHECK: module=m0 position=4855 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function|f36|f37 flags=[IsExpected]}, {type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything, v1: anything ~ undefined|null|function|f36|f37, v2: anything ~ undefined|null|Array):
 # CHECK-NEXT: v15: f36|f37 = AssumeType v1 provenType=f36|f37
 # CHECK-NEXT: v16: Arguments = AssumeType v2 provenType=Arguments
 # CHECK-NEXT: v3: builtin(Reflect) = Builtin builtin=Reflect
@@ -557,7 +557,7 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v10: builtin(ObjectGetPrototypeOf) = Builtin builtin=ObjectGetPrototypeOf
 # CHECK-NEXT: v11: anything = Call v10, v9, v0 calleeName="Object.getPrototypeOf" accessSite=20 callees=[builtin(ObjectGetPrototypeOf)]
 # CHECK-NEXT: v12: anything = PropGet v11 key="constructor" accessSite=21
-# CHECK-NEXT: v13: anything ~ undefined|null|function = Upcast v12 castType=anything
+# CHECK-NEXT: v13: anything ~ undefined|null|function|f3|f6|f9|f12|f19|f20|f23|f26|f29 = Upcast v12 castType=anything
 # CHECK-NEXT: v14: anything = Call v4, v3, v18, v16, v13 calleeName="Reflect.construct" accessSite=22 callees=[builtin(ReflectConstruct)] [isDoneInPlace]
 # CHECK-NEXT: ReturnCall v14
 # CHECK-NEXT: }

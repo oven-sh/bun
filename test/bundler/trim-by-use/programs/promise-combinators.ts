@@ -1,8 +1,11 @@
 const lines: string[] = [];
 const say = (name: string, value: unknown) => lines.push(`${name}: ${JSON.stringify(value)}`);
-const later = <T>(value: T, after: number) => new Promise<T>(resolve => setTimeout(() => resolve(value), after));
+// Promises settle after a number of microtasks, not milliseconds, so the order never depends on the clock.
+const afterMicrotasks = (count: number, settle: () => void): void =>
+  count === 0 ? settle() : queueMicrotask(() => afterMicrotasks(count - 1, settle));
+const later = <T>(value: T, after: number) => new Promise<T>(resolve => afterMicrotasks(after, () => resolve(value)));
 const failing = (reason: string, after: number) =>
-  new Promise<never>((_, reject) => setTimeout(() => reject(new Error(reason)), after));
+  new Promise<never>((_, reject) => afterMicrotasks(after, () => reject(new Error(reason))));
 
 say(
   "all",

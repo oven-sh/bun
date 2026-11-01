@@ -184,60 +184,60 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b3(v15: "difference"|"intersection"|"isDisjointFrom"|"isSubsetOf"|"isSupersetOf"|"symmetricDifference"|"union"):
 # CHECK-NEXT: v16: 1 = Integer integer=1
 # CHECK-NEXT: v17: int[1, 7] = Add v14, v16
-# CHECK-NEXT: v18: "s" = String string="s"
-# CHECK-NEXT: v19: symbol = CallBuiltin -, v18 overload=Symbol/0 accessSite=14
+# CHECK-NEXT: v18: fact = Specified
+# CHECK-NEXT: v19: "s" = String string="s"
+# CHECK-NEXT: v20: symbol = CallBuiltin -, v19 overload=Symbol/0 accessSite=14
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5():
-# CHECK-NEXT: v21: anything = ElemGet v9, v15 accessSite=15
-# CHECK-NEXT: v22: undefined = Undefined
-# CHECK-NEXT: v23: anything = Call v21, v9, v22 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: v22: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v23: undefined = Undefined
+# CHECK-NEXT: v24: anything = Call v22, v9, v23 calleeName="set[name]" accessSite=16
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b5() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6() handler=b7():
-# CHECK-NEXT: v24: anything = ElemGet v9, v15 accessSite=15
-# CHECK-NEXT: v25: null = Null
-# CHECK-NEXT: v26: anything = Call v24, v9, v25 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: v25: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v26: null = Null
+# CHECK-NEXT: v27: anything = Call v25, v9, v26 calleeName="set[name]" accessSite=16
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b7() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8() handler=b9():
-# CHECK-NEXT: v27: anything = ElemGet v9, v15 accessSite=15
-# CHECK-NEXT: v28: 1 = Integer integer=1
-# CHECK-NEXT: v29: anything = Call v27, v9, v28 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: v28: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v29: 1 = Integer integer=1
+# CHECK-NEXT: v30: anything = Call v28, v9, v29 calleeName="set[name]" accessSite=16
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b9() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10() handler=b11():
-# CHECK-NEXT: v30: anything = ElemGet v9, v15 accessSite=15
-# CHECK-NEXT: v31: "text" = String string="text"
-# CHECK-NEXT: v32: anything = Call v30, v9, v31 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: v31: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v32: "text" = String string="text"
+# CHECK-NEXT: v33: anything = Call v31, v9, v32 calleeName="set[name]" accessSite=16
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b11() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12() handler=b13():
-# CHECK-NEXT: v33: anything = ElemGet v9, v15 accessSite=15
-# CHECK-NEXT: v34: true = Boolean boolean=true
-# CHECK-NEXT: v35: anything = Call v33, v9, v34 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: v34: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v35: true = Boolean boolean=true
+# CHECK-NEXT: v36: anything = Call v34, v9, v35 calleeName="set[name]" accessSite=16
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b13() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14() handler=b15():
-# CHECK-NEXT: v36: anything = ElemGet v9, v15 accessSite=15
-# CHECK-NEXT: v37: bigint = BigInt digits="1"
-# CHECK-NEXT: v38: anything = Call v36, v9, v37 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: v37: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v38: bigint = BigInt digits="1"
+# CHECK-NEXT: v39: anything = Call v37, v9, v38 calleeName="set[name]" accessSite=16
 # CHECK-NEXT: Jump -> next b16()
 # CHECK-NEXT: b15() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b16()
 # CHECK-NEXT: b16() handler=b17():
-# CHECK-NEXT: v39: anything = ElemGet v9, v15 accessSite=15
-# CHECK-NEXT: v40: anything = Call v39, v9, v19 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: v40: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v41: anything = Call v40, v9, v20 calleeName="set[name]" accessSite=16
 # CHECK-NEXT: Jump -> next b18()
 # CHECK-NEXT: b17() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b18()
 # CHECK-NEXT: b18():
-# CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next b1(v17)
 # CHECK-NEXT: b19():
 # CHECK-NEXT: v42: anything = PropGet v9 key="intersection" accessSite=1
@@ -326,7 +326,7 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v103: boolean = ResultAt v102
 # CHECK-NEXT: v104: 1 = Integer integer=1
 # CHECK-NEXT: v105: int[0, 1] = ToNumber v103
-# CHECK-NEXT: v106: i32 = LShift v104, v105
+# CHECK-NEXT: v106: int[1, 2] = LShift v104, v105
 # CHECK-NEXT: v107: anything = ResultAt v102 index=1
 # CHECK-NEXT: v108: 1 = Integer integer=1
 # CHECK-NEXT: v109: int[0, 1] = BitAnd v106, v108
@@ -346,7 +346,7 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v117: boolean = ResultAt v116
 # CHECK-NEXT: v118: 1 = Integer integer=1
 # CHECK-NEXT: v119: int[0, 1] = ToNumber v117
-# CHECK-NEXT: v120: i32 = LShift v118, v119
+# CHECK-NEXT: v120: int[1, 2] = LShift v118, v119
 # CHECK-NEXT: v121: anything = ResultAt v116 index=1
 # CHECK-NEXT: v122: 1 = Integer integer=1
 # CHECK-NEXT: v123: int[0, 1] = BitAnd v120, v122

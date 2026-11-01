@@ -2,7 +2,7 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{AssignTarget, E, Expr, Loc, OpCode, Stmt, StmtOrExpr};
 use bun_core::strings;
-use bun_sema::atom::{Interner, known};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, Decl, PatParent};
 use bun_sema::fold::{Constant, TreeNode, push_children};
 use bun_sema::hir::{
@@ -10,6 +10,7 @@ use bun_sema::hir::{
 };
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
+use std::cell::RefCell;
 
 use super::{ParsedText, PositionSet};
 
@@ -19,6 +20,8 @@ pub(in crate::lower) enum Rewrite {
     Literal {
         position: u32,
         value: Constant,
+        /// `Color.Green` is printed `1 /* Green */`: the name in the comment.
+        enum_member: Option<Atom>,
     },
     /// One of its operands, or the initializer of the variable that it names.
     Operand(ExprId),
@@ -33,6 +36,10 @@ pub(super) struct Rewrites {
     pub(super) expressions: FxHashMap<ExprId, Rewrite>,
     /// The initializers that are evaluated as the value of a `return`, each with the position of that `return`.
     pub(super) returned_initializers: FxHashMap<ExprId, u32>,
+    /// The initializers that are printed in place of a name, each with that name.
+    pub(super) replaced_names: FxHashMap<ExprId, ExprId>,
+    /// Each `a[key]` that is printed `a.name`. Sorted.
+    pub(super) keys_printed_as_names: Vec<ExprId>,
 }
 
 pub(super) struct PrintedTree<'a> {
@@ -46,6 +53,14 @@ pub(super) struct PrintedTree<'a> {
     pub(super) import_paths: &'a [&'a [u8]],
 }
 
+/// How a search for a position went on from a candidate that was taken while no other waited. The numbers count the candidate itself.
+#[derive(Copy, Clone)]
+enum SearchFrom {
+    FoundAfter(u64),
+    NeverFound,
+    NotFoundWithin(u64),
+}
+
 /// Walks the front end's tree and the tree that the transpiler prints side by side.
 pub(super) struct Alignment<'a, 's> {
     hir: &'a hir::File<'s>,
@@ -55,9 +70,14 @@ pub(super) struct Alignment<'a, 's> {
     printed: PrintedTree<'a>,
     rewrites: FxHashMap<ExprId, Rewrite>,
     returned_initializers: FxHashMap<ExprId, u32>,
+    replaced_names: FxHashMap<ExprId, ExprId>,
+    keys_printed_as_names: Vec<ExprId>,
     pending: Vec<(ExprId, Expr)>,
     /// One bit for each expression that has been held against what is printed for it.
     aligned: Vec<u64>,
+    /// `const b = a; const c = b;` and so on are all printed with the literal of `a`, at its position. The search that starts at one of them comes to the
+    /// one before at once, and goes on from there as the search before it did. By candidate, for the position that was last looked for from it.
+    searches: RefCell<FxHashMap<ExprId, (u32, SearchFrom)>>,
 }
 
 fn position_of(position: Loc) -> Option<u32> {
@@ -228,8 +248,11 @@ impl<'a, 's> Alignment<'a, 's> {
             printed,
             rewrites: FxHashMap::default(),
             returned_initializers: FxHashMap::default(),
+            replaced_names: FxHashMap::default(),
+            keys_printed_as_names: Vec::new(),
             pending: Vec::new(),
             aligned: vec![0; parsed.hir.exprs.len() / 64 + 1],
+            searches: RefCell::default(),
         }
     }
 
@@ -257,9 +280,13 @@ impl<'a, 's> Alignment<'a, 's> {
         for expression in (0..self.hir.exprs.len() as u32).map(ExprId) {
             self.align_call(expression);
         }
+        self.keys_printed_as_names.sort_unstable();
+        self.keys_printed_as_names.dedup();
         Rewrites {
             expressions: self.rewrites,
             returned_initializers: self.returned_initializers,
+            replaced_names: self.replaced_names,
+            keys_printed_as_names: self.keys_printed_as_names,
         }
     }
 
@@ -474,6 +501,16 @@ impl<'a, 's> Alignment<'a, 's> {
         hir[declaration].init.some().filter(|_| is_declared)
     }
 
+    fn is_empty_text(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let mut written = hir.skip_type_assertions(expression);
+        if let Some(initializer) = self.find_initializer_of_replaced_name(written) {
+            written = hir.skip_type_assertions(initializer);
+        }
+        let literal = find_written_literal(hir, self.bound, written);
+        matches!(literal, Some(Constant::String(text)) if text == self.atoms.intern(b""))
+    }
+
     /// The position that the parser gives the expression: that of its first operand, without parentheses.
     fn parsed_position(&self, expression: ExprId) -> u32 {
         let hir = self.hir;
@@ -513,6 +550,16 @@ impl<'a, 's> Alignment<'a, 's> {
                 left,
                 right,
             } => smallvec![left, right],
+            // Of `text + ""` and `"" + text` the text.
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } => match (self.is_empty_text(left), self.is_empty_text(right)) {
+                (_, true) => smallvec![left],
+                (true, false) => smallvec![right],
+                (false, false) => SmallVec::new(),
+            },
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
                 smallvec![branches.yes, branches.no]
@@ -563,9 +610,58 @@ impl<'a, 's> Alignment<'a, 's> {
         false
     }
 
+    /// `may_be_printed_as()` for what the parser gives that position, candidate by candidate.
     fn may_be_printed_at(&self, expression: ExprId, position: Loc) -> bool {
-        let position = position_of(position);
-        self.may_be_printed_as(expression, |it| Some(self.parsed_position(it)) == position)
+        let Some(position) = position_of(position) else {
+            return false;
+        };
+        let hir = self.hir;
+        let mut candidates: SmallVec<[ExprId; 8]> = smallvec![expression];
+        // Those that were taken while no other waited, each with how many had been taken by then.
+        let mut taken_alone: SmallVec<[(ExprId, u64); 8]> = SmallVec::new();
+        let mut searched = 0;
+        // How it ends, counted from the candidate that was taken last.
+        let end = loop {
+            let Some(candidate) = candidates.pop() else {
+                break SearchFrom::NeverFound;
+            };
+            searched += 1;
+            if searched > self.max_steps {
+                break SearchFrom::NotFoundWithin(0);
+            }
+            let candidate = hir.skip_type_assertions(candidate);
+            if candidates.is_empty() {
+                match self.searches.borrow().get(&candidate) {
+                    Some(&(known_position, known)) if known_position == position => match known {
+                        SearchFrom::NotFoundWithin(steps) if searched + steps <= self.max_steps => {
+                        }
+                        _ => break known,
+                    },
+                    _ => {}
+                }
+                taken_alone.push((candidate, searched));
+            }
+            if self.parsed_position(candidate) == position {
+                break SearchFrom::FoundAfter(1);
+            }
+            candidates.extend(self.operands_printed_alone(candidate));
+            // A folded result may take the position of what is printed for its first operand.
+            if let ExprKind::Binary { left, .. } = hir[candidate].kind {
+                candidates.push(left);
+            }
+        };
+        let mut searches = self.searches.borrow_mut();
+        for (candidate, taken) in taken_alone {
+            let from_here = match end {
+                SearchFrom::FoundAfter(steps) => SearchFrom::FoundAfter(searched - taken + steps),
+                SearchFrom::NeverFound => SearchFrom::NeverFound,
+                SearchFrom::NotFoundWithin(steps) => {
+                    SearchFrom::NotFoundWithin(searched - taken + steps)
+                }
+            };
+            searches.insert(candidate, (position, from_here));
+        }
+        matches!(end, SearchFrom::FoundAfter(steps) if searched - 1 + steps <= self.max_steps)
     }
 
     fn find_operand_printed_at(&self, expression: ExprId, position: Loc) -> Option<ExprId> {
@@ -623,25 +719,28 @@ impl<'a, 's> Alignment<'a, 's> {
 
     /// True: what is printed evaluates the expression, or what stands for it. False: its value is printed, or it has been aligned before.
     fn align_expression(&mut self, expression: ExprId, printed: Expr) -> bool {
-        let printed = match printed.data {
-            ExprData::EInlinedEnum(member) => member.value,
-            _ => printed,
+        let (printed, enum_member) = match printed.data {
+            ExprData::EInlinedEnum(member) => {
+                (member.value, Some(self.atoms.intern(&member.comment[..])))
+            }
+            _ => (printed, None),
         };
         let literal = self.find_literal_value(printed);
-        self.align_with(expression, Some(printed), literal, printed.loc)
+        self.align_with(expression, Some(printed), literal, enum_member, printed.loc)
     }
 
     fn align_literal(&mut self, expression: ExprId, text: &[u8], position: Loc) {
         let literal = Constant::String(self.atoms.intern(text));
-        self.align_with(expression, None, Some(literal), position);
+        self.align_with(expression, None, Some(literal), None, position);
     }
 
     fn align_with(
         &mut self,
         expression: ExprId,
-        printed: Option<Expr>,
-        literal: Option<Constant>,
-        position: Loc,
+        mut printed: Option<Expr>,
+        mut literal: Option<Constant>,
+        mut enum_member: Option<Atom>,
+        mut position: Loc,
     ) -> bool {
         let hir = self.hir;
         let mut current = hir.skip_type_assertions(expression);
@@ -654,6 +753,19 @@ impl<'a, 's> Alignment<'a, 's> {
                 && self.align_operands(current, printed)
             {
                 return true;
+            }
+            // Of `test ? a : b` with a test that is known to hold and does something, `(test, a)` is printed.
+            if let Some(ExprData::EBinary(comma)) = printed.map(|printed| printed.data)
+                && comma.op == OpCode::BinComma
+                && let Some(operand) = self.find_operand_printed_at(current, comma.right.loc)
+            {
+                self.rewrites.insert(current, Rewrite::Operand(operand));
+                current = hir.skip_type_assertions(operand);
+                printed = Some(comma.right);
+                literal = self.find_literal_value(comma.right);
+                enum_member = None;
+                position = comma.right.loc;
+                continue;
             }
             let written = find_written_literal(hir, self.bound, current);
             if let (Some(written), Some(printed)) = (written, literal)
@@ -680,11 +792,18 @@ impl<'a, 's> Alignment<'a, 's> {
                 break;
             };
             self.rewrites.insert(current, Rewrite::Operand(operand));
+            if let ExprKind::Ident(_) = hir[current].kind {
+                self.replaced_names.insert(operand, current);
+            }
             current = hir.skip_type_assertions(operand);
         }
         if let (Some(value), Some(position)) = (literal, position_of(position)) {
-            self.rewrites
-                .insert(current, Rewrite::Literal { position, value });
+            let literal = Rewrite::Literal {
+                position,
+                value,
+                enum_member,
+            };
+            self.rewrites.insert(current, literal);
             return false;
         }
         if let Some(printed) = printed {
@@ -845,6 +964,7 @@ impl<'a, 's> Alignment<'a, 's> {
             }
             // `a["b" + "c"]` is printed `a.bc`.
             (ExprKind::Index { obj, index, .. }, ExprData::EDot(printed)) => {
+                self.keys_printed_as_names.push(expression);
                 self.push(obj, printed.target);
                 self.align_literal(index, printed.name.slice(), printed.name_loc);
                 true

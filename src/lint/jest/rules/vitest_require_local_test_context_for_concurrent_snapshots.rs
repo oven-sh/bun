@@ -7,7 +7,7 @@ use bun_lint_oxlint::ast_util::{get_inner_expression, static_property_name};
 /// The rule is intended to ensure that concurrent snapshot tests are executed within a properly configured local test context.
 pub struct RequireLocalTestContextForConcurrentSnapshots;
 
-const REQUIRE_LOCAL_TEST_CONTEXT_FOR_CONCURRENT_SNAPSHOTS: Message = Message::new(
+const REQUIRE_LOCAL_TEST_CONTEXT_FOR_CONCURRENT_SNAPSHOTS: &Message = &Message::new(
     "",
     "Require local Test Context for concurrent snapshot tests",
 );

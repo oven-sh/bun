@@ -1,20 +1,27 @@
 use super::assets::EmbeddedFiles;
 use super::macros::MacroThread;
 use super::plugins::PluginRequests;
-use super::{assets, data_loaders, defines, native_plugins, page_bundles};
+use super::{assets, components, data_loaders, defines, native_plugins, page_bundles};
 use crate::options_impl::BundleOptions;
 use crate::{BundleV2, OutputFile, Transpiler, Worker};
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
-    SourceFile,
+    ComponentFile, DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution,
+    ResolveRequest, SourceFile, TranspiledTree,
 };
 use bun_aot::{SourceProvider, WithoutServices};
-use bun_ast::{ASTMemoryAllocator, Loader, Log};
+use bun_ast::{
+    ASTMemoryAllocator, ExportsKind, Indentation, Loader, Log, Part, Source, Stmt, StoreSlice,
+    Target, symbol,
+};
 use bun_js_parser::Define;
+use bun_js_printer::renamer::{NoOpRenamer, Renamer};
+use bun_js_printer::{self as js_printer, PrintResult};
 use bun_paths::resolve_path::posix_to_platform_in_place;
+use bun_react_compiler::Observer;
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
+use bun_resolver::package_names::RefusedName;
 use bun_resolver::{DataURL, GlobalCache, Resolver, ResultUnion};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
@@ -217,15 +224,21 @@ pub(crate) fn with_test_context<R>(
 
 pub(crate) struct BundlerServices {
     context: BuildContext,
+    user_defined_names: Box<[Box<[u8]>]>,
     plugins: Option<PluginRequests>,
     embedded: EmbeddedFiles,
     macros: MacroThread,
     /// Those that no thread holds.
     file_finders: Guarded<Vec<FileFinder>>,
+    refused_names: Guarded<Vec<RefusedName>>,
 }
 
 impl BundlerServices {
-    pub(crate) fn new(bundle: NonNull<BundleV2<'static>>, module_prefix: &[u8]) -> BundlerServices {
+    pub(crate) fn new(
+        bundle: NonNull<BundleV2<'static>>,
+        module_prefix: &[u8],
+        user_defined_names: &[Box<[u8]>],
+    ) -> BundlerServices {
         let context = BuildContext {
             bundle,
             module_prefix: Box::from(module_prefix),
@@ -237,11 +250,17 @@ impl BundlerServices {
             .then(|| PluginRequests::new(bundle));
         BundlerServices {
             context,
+            user_defined_names: Box::from(user_defined_names),
             plugins,
             embedded: EmbeddedFiles::default(),
             macros: MacroThread::new(),
             file_finders: Guarded::new(Vec::new()),
+            refused_names: Guarded::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn take_refused_names(&self) -> Vec<RefusedName> {
+        core::mem::take(&mut *self.refused_names.lock())
     }
 
     pub(crate) fn shut_down(self) -> Vec<OutputFile> {
@@ -260,7 +279,8 @@ impl SourceProvider for BundlerServices {
         atoms: &Interner<'s>,
         log: &mut Log,
     ) -> FoldOptions<'s> {
-        defines::fold_options(self.context.options(), arena, atoms, log)
+        let options = self.context.options();
+        defines::fold_options(options, &self.user_defined_names, arena, atoms, log)
     }
 
     fn define(&self) -> Option<&Define> {
@@ -273,6 +293,63 @@ impl SourceProvider for BundlerServices {
             .flat_map(|flags| flags.keys())
             .map(|name| &**name)
             .collect()
+    }
+
+    // The options are those of `Transpiler::print_ast_esm_ascii` in a virtual machine.
+    fn print_as_run(
+        &self,
+        file: TranspiledTree<'_>,
+        statements: &[(Stmt, u32)],
+    ) -> Option<Vec<Box<[u8]>>> {
+        let TranspiledTree {
+            tree,
+            symbols,
+            source,
+            arena,
+        } = file;
+        let renamer = NoOpRenamer::init(symbol::Map::init_with_one_list(symbols), source);
+        // The printer reserves as much as its source holds, on every call.
+        let source_without_text = Source::init_path_string(source.path.text, b"");
+        let print = |&(statement, indentation): &(Stmt, u32)| {
+            let mut statements = [statement];
+            let part = Part {
+                stmts: StoreSlice::new_mut(&mut statements),
+                ..Default::default()
+            };
+            let options = js_printer::Options {
+                require_ref: Some(tree.require_ref),
+                import_meta_ref: tree.import_meta_ref,
+                hmr_ref: tree.wrapper_ref,
+                indent: Indentation {
+                    count: indentation as usize,
+                    ..Default::default()
+                },
+                target: Target::Bun,
+                minify_syntax: true,
+                print_dce_annotations: false,
+                inline_require_and_import_errors: false,
+                module_type: match tree.exports_kind {
+                    ExportsKind::Cjs => crate::options::Format::Cjs,
+                    _ => crate::options::Format::Esm,
+                },
+                ..Default::default()
+            };
+            let printed = js_printer::print::<false>(
+                arena,
+                Target::Bun,
+                tree,
+                &source_without_text,
+                options,
+                tree.import_records.as_slice(),
+                &[part],
+                Renamer::NoOpRenamer(&renamer),
+            );
+            match printed {
+                PrintResult::Result(printed) => Some(printed.code),
+                PrintResult::Err(_) => None,
+            }
+        };
+        statements.iter().map(print).collect()
     }
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
@@ -296,6 +373,18 @@ impl SourceProvider for BundlerServices {
         let mut finder = idle.unwrap_or_else(create);
         let found = finder.find(search);
         self.file_finders.lock().push(finder);
+        if let FoundCode::NotFound(failure) = found
+            && failure.is_refusal_of_package_json()
+            && search.kind != CodeImportKind::EntryPoint
+        {
+            let mut directory = to_native(search.directory).to_vec();
+            posix_to_platform_in_place(&mut directory);
+            self.refused_names.lock().push(RefusedName {
+                directory,
+                specifier: search.specifier.to_vec(),
+                is_require: search.kind == CodeImportKind::Require,
+            });
+        }
         found
     }
 
@@ -382,6 +471,10 @@ impl SourceProvider for BundlerServices {
         self.embedded.clear();
     }
 
+    fn embed_at_module_path(&self, file: &SourceFile<'_>, module_path: &[u8]) {
+        (self.embedded).embed_at_module_path(&self.context, file, module_path);
+    }
+
     fn parse_data<'s>(
         &self,
         file: &SourceFile<'_>,
@@ -401,6 +494,19 @@ impl SourceProvider for BundlerServices {
     ) -> Result<&'s DataValue<'s>, Failed> {
         self.macros
             .run_macro(&self.context, call, arena, atoms, log)
+    }
+
+    fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
+        match file.can_import_macros {
+            true => (self.macros).compile_components(&self.context, file, observer),
+            false => components::compile_components(
+                &self.context,
+                file,
+                observer,
+                None,
+                &mut Log::init(),
+            ),
+        }
     }
 
     fn bundle_pages<'s>(
@@ -522,7 +628,7 @@ mod tests {
             |_| {},
             |context| {
                 let services =
-                    BundlerServices::new(context.bundle_pointer(), &context.module_prefix);
+                    BundlerServices::new(context.bundle_pointer(), &context.module_prefix, &[]);
                 for namespace in [&b"file"[..], b"virtual"] {
                     assert!(!services.has_load_plugin(ModuleName {
                         namespace,

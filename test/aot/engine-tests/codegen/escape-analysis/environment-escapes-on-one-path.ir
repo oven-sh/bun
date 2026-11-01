@@ -556,159 +556,42 @@ function f31 module=m5 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v32: true = Boolean boolean=true
 # CHECK-NEXT: v33: "true " = String string="true "
-# CHECK-NEXT: v34: 20 = Integer integer=20
-# CHECK-NEXT: v35: int|whole = CallDirect v34, v32 function=f3 accessSite=7
-# CHECK-NEXT: v36: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v33, v35, v36
-# CHECK-NEXT: v38: 1 = Integer integer=1
-# CHECK-NEXT: v39: 2 = Integer integer=2
-# CHECK-NEXT: v40: int[0, 1] = Mod v38, v39
-# CHECK-NEXT: v41: 0 = Integer
-# CHECK-NEXT: v42: boolean = StrictEq v40, v41
-# CHECK-NEXT: v43: " " = String string=" "
-# CHECK-NEXT: v44: 20 = Integer integer=20
-# CHECK-NEXT: v45: int|whole = CallDirect v44, v42 function=f3 accessSite=7
-# CHECK-NEXT: v46: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v42, v43, v45, v46
-# CHECK-NEXT: v48: 2 = Integer integer=2
-# CHECK-NEXT: v49: 2 = Integer integer=2
-# CHECK-NEXT: v50: int[0, 1] = Mod v48, v49
-# CHECK-NEXT: v51: 0 = Integer
-# CHECK-NEXT: v52: boolean = StrictEq v50, v51
-# CHECK-NEXT: v53: " " = String string=" "
-# CHECK-NEXT: v54: 20 = Integer integer=20
-# CHECK-NEXT: v55: int|whole = CallDirect v54, v52 function=f3 accessSite=7
-# CHECK-NEXT: v56: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v52, v53, v55, v56
-# CHECK-NEXT: v58: 3 = Integer integer=3
-# CHECK-NEXT: v59: 2 = Integer integer=2
-# CHECK-NEXT: v60: int[0, 1] = Mod v58, v59
-# CHECK-NEXT: v61: 0 = Integer
-# CHECK-NEXT: v62: boolean = StrictEq v60, v61
-# CHECK-NEXT: v63: " " = String string=" "
-# CHECK-NEXT: v64: 20 = Integer integer=20
-# CHECK-NEXT: v65: int|whole = CallDirect v64, v62 function=f3 accessSite=7
-# CHECK-NEXT: v66: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v62, v63, v65, v66
+# CHECK-NEXT: v34: int|whole = CallDirect v32 function=f37 accessSite=7
+# CHECK-NEXT: v35: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v33, v34, v35
+# CHECK-NEXT: v37: 1 = Integer integer=1
+# CHECK-NEXT: v38: 2 = Integer integer=2
+# CHECK-NEXT: v39: int[0, 1] = Mod v37, v38
+# CHECK-NEXT: v40: 0 = Integer
+# CHECK-NEXT: v41: boolean = StrictEq v39, v40
+# CHECK-NEXT: v42: " " = String string=" "
+# CHECK-NEXT: v43: int|whole = CallDirect v41 function=f37 accessSite=7
+# CHECK-NEXT: v44: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v41, v42, v43, v44
+# CHECK-NEXT: v46: 2 = Integer integer=2
+# CHECK-NEXT: v47: 2 = Integer integer=2
+# CHECK-NEXT: v48: int[0, 1] = Mod v46, v47
+# CHECK-NEXT: v49: 0 = Integer
+# CHECK-NEXT: v50: boolean = StrictEq v48, v49
+# CHECK-NEXT: v51: " " = String string=" "
+# CHECK-NEXT: v52: int|whole = CallDirect v50 function=f37 accessSite=7
+# CHECK-NEXT: v53: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v50, v51, v52, v53
+# CHECK-NEXT: v55: 3 = Integer integer=3
+# CHECK-NEXT: v56: 2 = Integer integer=2
+# CHECK-NEXT: v57: int[0, 1] = Mod v55, v56
+# CHECK-NEXT: v58: 0 = Integer
+# CHECK-NEXT: v59: boolean = StrictEq v57, v58
+# CHECK-NEXT: v60: " " = String string=" "
+# CHECK-NEXT: v61: int|whole = CallDirect v59 function=f37 accessSite=7
+# CHECK-NEXT: v62: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v59, v60, v61, v62
 # CHECK-NEXT: StringBuilderDiscard v6
-# CHECK-NEXT: v69: undefined = Undefined
-# CHECK-NEXT: Return v69
+# CHECK-NEXT: v65: undefined = Undefined
+# CHECK-NEXT: Return v65
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="objectsAcrossCollections"
-# CHECK: module=m0 position=1664 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=20}, {type=boolean}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: 20, v1: boolean):
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v2, v3)
-# CHECK-NEXT: b1(v4: int|whole, v5: int[0, 20]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: boolean = Less v5, v0
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b17()
-# CHECK-NEXT: b2(v8: int[0, 19]):
-# CHECK-NEXT: Branch v1 -> taken b3(), notTaken b16()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v9: Array<f4|f5|f6, proven, pristine[Storage, Names]> = GetModuleVariable variable=g2
-# CHECK-NEXT: v10: L4 = NewObject -, v8 layout=L4 fields=[0] allocationSite=10 allocationClass=0
-# CHECK-NEXT: v11: env L3 = NewObject -, v10 layout=L3 fields=[0] allocationSite=9
-# CHECK-NEXT: v12: f6 = NewClosure v11 function=f6 allocationSite=11
-# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v9, v12 overload=ArrayPrototypePush/0 accessSite=22
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: int[1, 20] = Add v8, v14
-# CHECK-NEXT: v16: L4 = NewObject -, v15 layout=L4 fields=[0] allocationSite=12 allocationClass=0
-# CHECK-NEXT: v17: L4 = FinishObject v16
-# CHECK-NEXT: PutEnvironmentField v11, v17 layout=L3
-# CHECK-NEXT: v19: Array<f4|f5|f6, proven, pristine[Storage, Names]> = GetModuleVariable variable=g2
-# CHECK-NEXT: v20: int[0, 4294967295] = CallBuiltin v19 overload=ArrayPrototypeLength/0 accessSite=24
-# CHECK-NEXT: v21: 1 = Integer integer=1
-# CHECK-NEXT: v22: int[-1, 4294967294] = Sub v20, v21
-# CHECK-NEXT: v23: boolean = HasArrayStorage v19 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v23 -> taken b4(| 0), notTaken b8()
-# CHECK-NEXT: b4(v24: guard):
-# CHECK-NEXT: v25: boolean = IsElementPresent v19, v22, v24 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v25 -> taken b5(| 0), notTaken b8()
-# CHECK-NEXT: b5(v26: guard):
-# CHECK-NEXT: v27: guard = AllGuards v24, v26
-# CHECK-NEXT: v28: f4|f5|f6 = GetArrayElement v19, v22, v27 arrayStorage=Contiguous level=Expected accessSite=25 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v29: boolean = TypeTest v28 testedType=f4
-# CHECK-NEXT: Branch v29 -> taken b9(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b6(v30: f5|f6):
-# CHECK-NEXT: v31: boolean = TypeTest v30 testedType=f5
-# CHECK-NEXT: Branch v31 -> taken b11(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b7(v32: f6):
-# CHECK-NEXT: Jump -> next b13(v32)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v33: undefined|f4|f5|f6 = ElemGet v19, v22 accessSite=25 [keyIsIntegral]
-# CHECK-NEXT: v34: boolean = TypeTest v33 testedType=f4
-# CHECK-NEXT: Branch v34 -> taken b9(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b9(v35: f4):
-# CHECK-NEXT: v36: env L1 = GetCapture v35 function=f4
-# CHECK-NEXT: v37: 5 = Integer integer=5
-# CHECK-NEXT: v38: fact = Entered function=f4
-# CHECK-NEXT: v39: int|whole|unspecified = GetEnvironmentField v36 layout=L1 [mayPrecedeItsStore]
-# CHECK-NEXT: v40: int|whole = AssumeType v39, v38 provenType=int|whole
-# CHECK-NEXT: v41: int|whole = Add v40, v37
-# CHECK-NEXT: PutEnvironmentField v36, v41 layout=L1
-# CHECK-NEXT: v43: string|unspecified = GetEnvironmentField v36 layout=L1 field=1 [mayPrecedeItsStore]
-# CHECK-NEXT: v44: string = AssumeType v43, v38 provenType=string
-# CHECK-NEXT: v45: string = Add v44, v37
-# CHECK-NEXT: PutEnvironmentField v36, v45 layout=L1 field=1
-# CHECK-NEXT: Jump -> next b14(v41)
-# CHECK-NEXT: b10(v47: undefined|f5|f6) frequency=Rare:
-# CHECK-NEXT: v48: boolean = TypeTest v47 testedType=f5
-# CHECK-NEXT: Branch v48 -> taken b11(| 0), notTaken b12(| 0)
-# CHECK-NEXT: b11(v49: f5):
-# CHECK-NEXT: v50: env L2 = GetCapture v49 function=f5
-# CHECK-NEXT: v51: 5 = Integer integer=5
-# CHECK-NEXT: v52: fact = Entered function=f5
-# CHECK-NEXT: v53: int|whole|unspecified = GetEnvironmentField v50 layout=L2 [mayPrecedeItsStore]
-# CHECK-NEXT: v54: int|whole = AssumeType v53, v52 provenType=int|whole
-# CHECK-NEXT: v55: int|whole = Add v54, v51
-# CHECK-NEXT: PutEnvironmentField v50, v55 layout=L2
-# CHECK-NEXT: v57: string|absent = GetEnvironmentField v50 layout=L2 field=1
-# CHECK-NEXT: v58: string = CheckInitialized v57 name="text"
-# CHECK-NEXT: v59: "c" = String string="c"
-# CHECK-NEXT: v60: string = Add v58, v59
-# CHECK-NEXT: PutEnvironmentField v50, v60 layout=L2 field=1
-# CHECK-NEXT: Jump -> next b14(v55)
-# CHECK-NEXT: b12(v62: undefined|f6) frequency=Rare:
-# CHECK-NEXT: v63: boolean = TypeTest v62 testedType=f6
-# CHECK-NEXT: Branch v63 -> taken b13(| 0), notTaken b15()
-# CHECK-NEXT: b13(v64: f6):
-# CHECK-NEXT: v65: env L3 = GetCapture v64 function=f6
-# CHECK-NEXT: v66: 5 = Integer integer=5
-# CHECK-NEXT: v67: fact = Entered function=f6
-# CHECK-NEXT: v68: unspecified|L4 = GetEnvironmentField v65 layout=L3 [mayPrecedeItsStore]
-# CHECK-NEXT: v69: L4 = AssumeType v68, v67 provenType=L4
-# CHECK-NEXT: v70: int|whole = GetSlot v69 key="value" receivers=[L4] level=Proven accessSite=30
-# CHECK-NEXT: v71: int|whole = Add v70, v66
-# CHECK-NEXT: v72: L4 = NewObject -, v71 layout=L4 fields=[0] allocationSite=14 allocationClass=0
-# CHECK-NEXT: v73: L4 = FinishObject v72
-# CHECK-NEXT: PutEnvironmentField v65, v73 layout=L3
-# CHECK-NEXT: Jump -> next b14(v70)
-# CHECK-NEXT: b14(v75: int|whole):
-# CHECK-NEXT: v76: int|whole = Add v4, v75
-# CHECK-NEXT: v77: L4 = GetEnvironmentField v11 layout=L3
-# CHECK-NEXT: v78: int|whole = GetSlot v77 key="value" receivers=[L4] level=Proven accessSite=29
-# CHECK-NEXT: v79: int|whole = Add v76, v78
-# CHECK-NEXT: v80: int[1, 20] = Increment v8
-# CHECK-NEXT: Jump -> next b1(v79, v80)
-# CHECK-NEXT: b15() frequency=Unlikely:
-# CHECK-NEXT: v81: undefined = Undefined
-# CHECK-NEXT: v82: 5 = Integer integer=5
-# CHECK-NEXT: v83: never = Call v81, v19, v82 accessSite=26 callees=[f4, f5, f6]
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v84: 1 = Integer integer=1
-# CHECK-NEXT: v85: int[1, 20] = Add v8, v84
-# CHECK-NEXT: v86: int|whole = Add v4, v85
-# CHECK-NEXT: v87: 5 = Integer integer=5
-# CHECK-NEXT: v88: int[6, 25] = Add v85, v87
-# CHECK-NEXT: v89: int|whole = Add v86, v88
-# CHECK-NEXT: v90: int[1, 20] = Increment v8
-# CHECK-NEXT: Jump -> next b1(v89, v90)
-# CHECK-NEXT: b17():
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1664 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=20}, {type=boolean}] results=[{type=int|whole}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f4 module=
 # CHECK: m0 position=682 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: env L1, v1: int[0, 7]):
@@ -743,4 +626,119 @@ function f31 module=m5 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v6: L4 = FinishObject v5
 # CHECK-NEXT: PutEnvironmentField v0, v6 layout=L3
 # CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="objectsAcrossCollections"
+# CHECK: module=m0 position=1664 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v1: boolean):
+# CHECK-NEXT: v0: 20 = Integer integer=20
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v2, v3)
+# CHECK-NEXT: b1(v4: int|whole, v5: int[0, 20]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: boolean = Less v5, v0
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b17()
+# CHECK-NEXT: b2(v8: int[0, 19]):
+# CHECK-NEXT: Branch v1 -> taken b3(), notTaken b16()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: Array<f4|f5|f6, proven, pristine[Storage, Names]> = GetModuleVariable variable=g2
+# CHECK-NEXT: v10: L4 = NewObject -, v8 layout=L4 fields=[0] allocationSite=10 allocationClass=0
+# CHECK-NEXT: v11: env L3 = NewObject -, v10 layout=L3 fields=[0] allocationSite=9
+# CHECK-NEXT: v12: f6 = NewClosure v11 function=f6 allocationSite=11
+# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v9, v12 overload=ArrayPrototypePush/0 accessSite=22
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: int[1, 20] = Add v8, v14
+# CHECK-NEXT: v16: L4 = NewObject -, v15 layout=L4 fields=[0] allocationSite=12 allocationClass=0
+# CHECK-NEXT: v17: L4 = FinishObject v16
+# CHECK-NEXT: PutEnvironmentField v11, v17 layout=L3
+# CHECK-NEXT: v19: int[0, 4294967295] = CallBuiltin v9 overload=ArrayPrototypeLength/0 accessSite=24
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: int[-1, 4294967294] = Sub v19, v20
+# CHECK-NEXT: v22: boolean = HasArrayStorage v9 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v22 -> taken b4(| 0), notTaken b8()
+# CHECK-NEXT: b4(v23: guard):
+# CHECK-NEXT: v24: boolean = IsElementPresent v9, v21, v23 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v24 -> taken b5(| 0), notTaken b8()
+# CHECK-NEXT: b5(v25: guard):
+# CHECK-NEXT: v26: guard = AllGuards v23, v25
+# CHECK-NEXT: v27: f4|f5|f6 = GetArrayElement v9, v21, v26 arrayStorage=Contiguous level=Expected accessSite=25 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v28: boolean = TypeTest v27 testedType=f4
+# CHECK-NEXT: Branch v28 -> taken b9(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b6(v29: f5|f6):
+# CHECK-NEXT: v30: boolean = TypeTest v29 testedType=f5
+# CHECK-NEXT: Branch v30 -> taken b11(| 0), notTaken b7(| 0)
+# CHECK-NEXT: b7(v31: f6):
+# CHECK-NEXT: Jump -> next b13(v31)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v32: undefined|f4|f5|f6 = ElemGet v9, v21 accessSite=25 [keyIsIntegral]
+# CHECK-NEXT: v33: boolean = TypeTest v32 testedType=f4
+# CHECK-NEXT: Branch v33 -> taken b9(| 0), notTaken b10(| 0)
+# CHECK-NEXT: b9(v34: f4):
+# CHECK-NEXT: v35: env L1 = GetCapture v34 function=f4
+# CHECK-NEXT: v36: 5 = Integer integer=5
+# CHECK-NEXT: v37: fact = Entered function=f4
+# CHECK-NEXT: v38: int|whole|unspecified = GetEnvironmentField v35 layout=L1 [mayPrecedeItsStore]
+# CHECK-NEXT: v39: int|whole = AssumeType v38, v37 provenType=int|whole
+# CHECK-NEXT: v40: int|whole = Add v39, v36
+# CHECK-NEXT: PutEnvironmentField v35, v40 layout=L1
+# CHECK-NEXT: v42: string|unspecified = GetEnvironmentField v35 layout=L1 field=1 [mayPrecedeItsStore]
+# CHECK-NEXT: v43: string = AssumeType v42, v37 provenType=string
+# CHECK-NEXT: v44: string = Add v43, v36
+# CHECK-NEXT: PutEnvironmentField v35, v44 layout=L1 field=1
+# CHECK-NEXT: Jump -> next b14(v40)
+# CHECK-NEXT: b10(v46: undefined|f5|f6) frequency=Rare:
+# CHECK-NEXT: v47: boolean = TypeTest v46 testedType=f5
+# CHECK-NEXT: Branch v47 -> taken b11(| 0), notTaken b12(| 0)
+# CHECK-NEXT: b11(v48: f5):
+# CHECK-NEXT: v49: env L2 = GetCapture v48 function=f5
+# CHECK-NEXT: v50: 5 = Integer integer=5
+# CHECK-NEXT: v51: fact = Entered function=f5
+# CHECK-NEXT: v52: int|whole|unspecified = GetEnvironmentField v49 layout=L2 [mayPrecedeItsStore]
+# CHECK-NEXT: v53: int|whole = AssumeType v52, v51 provenType=int|whole
+# CHECK-NEXT: v54: int|whole = Add v53, v50
+# CHECK-NEXT: PutEnvironmentField v49, v54 layout=L2
+# CHECK-NEXT: v56: string|absent = GetEnvironmentField v49 layout=L2 field=1
+# CHECK-NEXT: v57: string = CheckInitialized v56 name="text"
+# CHECK-NEXT: v58: "c" = String string="c"
+# CHECK-NEXT: v59: string = Add v57, v58
+# CHECK-NEXT: PutEnvironmentField v49, v59 layout=L2 field=1
+# CHECK-NEXT: Jump -> next b14(v54)
+# CHECK-NEXT: b12(v61: undefined|f6) frequency=Rare:
+# CHECK-NEXT: v62: boolean = TypeTest v61 testedType=f6
+# CHECK-NEXT: Branch v62 -> taken b13(| 0), notTaken b15()
+# CHECK-NEXT: b13(v63: f6):
+# CHECK-NEXT: v64: env L3 = GetCapture v63 function=f6
+# CHECK-NEXT: v65: 5 = Integer integer=5
+# CHECK-NEXT: v66: fact = Entered function=f6
+# CHECK-NEXT: v67: unspecified|L4 = GetEnvironmentField v64 layout=L3 [mayPrecedeItsStore]
+# CHECK-NEXT: v68: L4 = AssumeType v67, v66 provenType=L4
+# CHECK-NEXT: v69: int|whole = GetSlot v68 key="value" receivers=[L4] level=Proven accessSite=30
+# CHECK-NEXT: v70: int|whole = Add v69, v65
+# CHECK-NEXT: v71: L4 = NewObject -, v70 layout=L4 fields=[0] allocationSite=14 allocationClass=0
+# CHECK-NEXT: v72: L4 = FinishObject v71
+# CHECK-NEXT: PutEnvironmentField v64, v72 layout=L3
+# CHECK-NEXT: Jump -> next b14(v69)
+# CHECK-NEXT: b14(v74: int|whole):
+# CHECK-NEXT: v75: int|whole = Add v4, v74
+# CHECK-NEXT: v76: L4 = GetEnvironmentField v11 layout=L3
+# CHECK-NEXT: v77: int|whole = GetSlot v76 key="value" receivers=[L4] level=Proven accessSite=29
+# CHECK-NEXT: v78: int|whole = Add v75, v77
+# CHECK-NEXT: v79: int[1, 20] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v78, v79)
+# CHECK-NEXT: b15() frequency=Unlikely:
+# CHECK-NEXT: v80: undefined = Undefined
+# CHECK-NEXT: v81: 5 = Integer integer=5
+# CHECK-NEXT: v82: never = Call v80, v9, v81 accessSite=26 callees=[f4, f5, f6]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v83: 1 = Integer integer=1
+# CHECK-NEXT: v84: int[1, 20] = Add v8, v83
+# CHECK-NEXT: v85: int|whole = Add v4, v84
+# CHECK-NEXT: v86: 5 = Integer integer=5
+# CHECK-NEXT: v87: int[6, 25] = Add v84, v86
+# CHECK-NEXT: v88: int|whole = Add v85, v87
+# CHECK-NEXT: v89: int[1, 20] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v88, v89)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }

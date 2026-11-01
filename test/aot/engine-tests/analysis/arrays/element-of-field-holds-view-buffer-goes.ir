@@ -182,7 +182,7 @@ function f5 module=m0 position=186 kind=Initializer flags=[HasThis, IsHiddenInSt
 # CHECK-NEXT: Void b@140 = Return(b@20, Terminal)
 # CHECK-NEXT: BB#26: ; frequency = 0.000196
 # CHECK-NEXT: Predecessors: #24
-# CHECK-NEXT: Int64 b@129 = Patchpoint(b@112:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000091(children), ControlDependent, v10:PutTypedArrayElement)
+# CHECK-NEXT: Int64 b@129 = Patchpoint(b@112:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000097(children), ControlDependent, v10:PutTypedArrayElement)
 # CHECK-NEXT: Int32 b@130 = Trunc(b@129, v10:PutTypedArrayElement)
 # CHECK-NEXT: Void b@131 = Upsilon(b@130, ^133, WritesLocalState, v10:PutTypedArrayElement)
 # CHECK-NEXT: Void b@132 = Jump(Terminal, v10:PutTypedArrayElement)
@@ -190,7 +190,7 @@ function f5 module=m0 position=186 kind=Initializer flags=[HasThis, IsHiddenInSt
 # CHECK-NEXT: BB#22: ; frequency = 0.000196
 # CHECK-NEXT: Predecessors: #19
 # CHECK-NEXT: Int64 b@114 = Const64(0, v3:IsInsideView)
-# CHECK-NEXT: Int64 b@138 = Patchpoint(b@20:ColdAny, $0(b@114):ColdAny, b@112:Register(%xmm0), resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, TypedArrayElements}|Reads:TypedArrayStorage, v10:PutTypedArrayElement)
+# CHECK-NEXT: Int64 b@138 = Patchpoint(b@20:ColdAny, $0(b@114):ColdAny, b@112:Register(%xmm0), resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, TypedArrayElements}|Reads:TypedArrayStorage, v10:PutTypedArrayElement)
 # CHECK-NEXT: Void b@139 = Jump(Terminal, v10:PutTypedArrayElement)
 # CHECK-NEXT: Successors: #21
 # CHECK-NEXT: BB#18: ; frequency = 0.000196
@@ -208,7 +208,7 @@ function f5 module=m0 position=186 kind=Initializer flags=[HasThis, IsHiddenInSt
 # CHECK-NEXT: BB#7: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #0
 # CHECK-NEXT: Int64 b@113 = Load(b@120, offset = 96, ReadsImmutable, v8:GetTypedArrayElement)
-# CHECK-NEXT: Int64 b@67 = Patchpoint(b@20:Register(%rax), b@113:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, TypedArrayStorage, TypedArrayElements, AllocatorState}, v8:GetTypedArrayElement)
+# CHECK-NEXT: Int64 b@67 = Patchpoint(b@20:Register(%rax), b@113:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, TypedArrayStorage, TypedArrayElements, AllocatorState}, v8:GetTypedArrayElement)
 # CHECK-NEXT: Void b@134 = Jump(Terminal, v8:GetTypedArrayElement)
 # CHECK-NEXT: Successors: #11
 # CHECK-NEXT: BB#11: ; frequency = 0.000977

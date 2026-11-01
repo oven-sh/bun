@@ -6,7 +6,7 @@ use bun_lint::utils::ts_utils::get_for_statement_head_loc;
 /// Disallow iterating over an array with a for-in loop.
 pub struct NoForInArray;
 
-const FOR_IN_VIOLATION: Message = Message::new(
+const FOR_IN_VIOLATION: &Message = &Message::new(
     "forInViolation",
     "For-in loops over arrays skips holes, returns indices as strings, and may visit the prototype chain or other enumerable properties. Use a more robust iteration method such as for-of or array.forEach instead.",
 );

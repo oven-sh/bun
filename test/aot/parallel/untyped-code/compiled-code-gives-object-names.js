@@ -1,7 +1,17 @@
 // An object with names may get elements: by index keys in its literal, by definitions under a computed key, and by stores. Compiled code makes the first element, adds the next ones and lengthens their storage itself. It asks the run time the first time for each kind of object, behind a collection, and wherever somebody has to be asked or told.
 // Env: JSC_aotCountsPath=/dev/null
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const asked = () => count("operationAOTDefineById") + count("operationAOTDefineField") + count("operationAOTPutByVal") + count("operationAOTPutByValAndCache") + count("operationAOTPutByValAndCacheSloppy") + count("operationAOTPutByValGeneric");
+const operations = ["operationAOTDefineById", "operationAOTDefineField", "operationAOTPutByVal", "operationAOTPutByValAndCache", "operationAOTPutByValAndCacheSloppy", "operationAOTPutByValGeneric"];
+// But for the calls that found an allocator without a cell at hand and filled it again: a line "<calls>\trefilled:<name>" in what the shell has counted. How often that is goes by the size of the cells, and with AddressSanitizer it is often.
+const asked = () => {
+  let calls = 0;
+  for (const name of operations) calls += count(name);
+  for (const line of (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "").split("\n")) {
+    const [refills, refilled] = line.split("\trefilled:");
+    if (operations.includes(refilled)) calls -= Number(refills);
+  }
+  return calls;
+};
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 const show = value => JSON.stringify(value, (key, held) => held === undefined ? "undefined" : typeof held === "bigint" ? held + "n" : Object.is(held, -0) ? "-0" : held);
 function attempt(label, work) { let said; try { said = show(work()); } catch (error) { said = "threw " + error.constructor.name + ": " + error.message; } console.log(label + ": " + said); }

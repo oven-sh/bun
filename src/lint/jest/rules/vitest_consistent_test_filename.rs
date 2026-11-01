@@ -19,8 +19,8 @@ enum Matcher {
     Pattern(Option<Box<Regex>>),
 }
 
-const CONSISTENT_TEST_FILENAME: Message =
-    Message::new("", "The file {{file_path}} is a test file, but its name does not match the expected pattern.");
+const CONSISTENT_TEST_FILENAME: &Message =
+    &Message::new("", "The file {{file_path}} is a test file, but its name does not match the expected pattern.");
 
 /// Returns the `pattern` in `/pattern/flags`. The flags are ignored.
 fn source_of(pattern: &str) -> &str {

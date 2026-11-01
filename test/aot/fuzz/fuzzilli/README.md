@@ -129,7 +129,7 @@ A build of 126 generated TypeScript programs of 400 lines takes 14 seconds of on
 
 `--draws ts` or `--draws js` needs no `--programs` and no Fuzzilli: the driver makes the programs of a batch itself. Each starts empty, and `--ordinary-scenes` and `--scenes-of-every-size` write it. `--families 30` draws 30 programs of 100 from the sources of `../sources.ts` instead, which stay as they are drawn, but for the `export {};` that the bed of those sources adds to a text that doesn't say that it stays a script.
 
-All entry points are one program beside a program that can load a module under a name that the build does not know, which text that is evaluated can do too, and the compiler proves less about that one program. So a program that is written to do so (`../the-world-is-open.ts`, or `eval` as a value) waits, and such programs share executables with each other. The build has the say: when its report names a program as the reason, that program leaves for those as well, and the rest is built again. The line of a batch counts "executables with a program for each group" and "executables that are one program".
+All entry points are one program beside a program that can load a module under a name that the build does not know, which text that is evaluated can do too, and the compiler proves less about that one program. So a program that is written to do so (`../open-world-global-access.ts`, or `eval` as a value) waits, and such programs share executables with each other. The build has the say: when its report names a program as the reason, that program leaves for those as well, and the rest is built again. The line of a batch counts "executables with a program for each group" and "executables that are one program".
 
 - A program that the compiler refuses leaves, and the rest is built again.
 - When the process ends in the middle, the program it was in gets the blame and the rest run in a new process. `stopped-before.txt` holds the programs that the runner had stopped earlier in that process: their threads can outlive them.
@@ -220,6 +220,12 @@ A fifth kind is a module whose exports have the names of globals (`NaN`, `Array`
 
 `--ends-early <percent>` runs the executable of that share of the batches three times more. The runner ends the Worker of each program at a moment that it draws from a span of 1 to 256 ms (`BATCH_ENDS_WITHIN`), whatever the program is doing then. In each such pass 1, 2, 4 or 8 Workers run at the same time (`BATCH_AT_ONCE`), and half of the passes run under collections as with `--collects`. What is printed doesn't count. A process that ends by a signal is kept as `ended-early-signal`, or as `bun-run-ended-early-signal` when `bun run` of the same files ends so too. The moment is drawn anew in every run, so a find is repeated by running it many times.
 
+`--minifies <percent>`: that share of the runs of `run-batch.ts` build everything with `--minify-syntax --minify-whitespace`. Both change the shape of the code that the compiler is given and keep its names, so `bun run` of the files as they were written stays the yardstick. `--minify-identifiers` is left out: what a program prints of the names of its functions and classes differs by design. The report of a find holds the flags.
+
+`--checks-proofs <percent>`: that share of the runs of `run-batch.ts` build everything with `--aot-testing=CheckProofsAtRunTime`. Such an executable is built as any other, and checks while it runs each place that the compiler took for unreachable, each type that it assumed, and that nothing uses an object or a closure that is kept in the frame of a function once the function is left (`EscapedFrameCell`, with the place of the allocation). Where one doesn't hold it prints a line that begins with `AOT validation:` and ends. That is kept as `signal`, with the line in its report, also where the program prints the right thing at default flags.
+
+`--checks-the-run-time <percent>` runs the executable of that share of the batches once more with `BUN_JSC_validateAOTRuntime=1` in the environment, which switches on the checks of the run time in any executable, with no other build. An executable ends there where a program does what the compiler took for impossible, also where the output is right. A line on stderr that begins with `AOT validation:` or holds `which the compiler assumed never happens` is kept as `run-time-check`, with the program that ran. Runs of `run-batch.ts` that build with `--aot-testing`, `--aot-validate` or `--aot-check` leave it out.
+
 `--beside-an-external <percent>` is drawn once for a process. Such a process builds everything with `--external a-package-outside`, lays that package into `node_modules` beside the programs, and lets every entry point import it first. The package does nothing. Beside it the compiler counts on code that it hasn't seen, and it compiles every function of the built-in modules: a build takes a minute and a half longer, so such a lane takes large batches.
 
 `--one-scene <percent>` leaves a program one of its scenes: what the compiler makes of a function depends on what else the program holds.
@@ -307,3 +313,46 @@ bun test/aot/fuzz/fuzzilli/lane.ts --kind few --minutes 60 --jobs 8 --out /tmp/l
 BUN_JSC_useJIT=0 python3 test/aot/fuzz/fuzzilli/reprl.py build/fuzzilli/bun-asan build --compile --aot --aot-validate \
   --aot-verify-each-pass --aot-threads=1 /tmp/fuzzilli/program.js -- a.js b.js
 ```
+
+## Test runs: `bun test --aot` against `bun test`
+
+Two tools need nothing but Bun. Neither uses Fuzzilli.
+
+`run-test-projects.ts` draws small projects (test files, helper modules, packages, a preload) and runs each under `bun test`, twice, and under `bun test --aot` with the same flags. Each test writes down what it sees, so a wrong value shows where every test passes. A project is kept where a test ends otherwise or sees another value, where the exit codes differ, or where the compiled run crashes. Finds are filed by the kind of the first test that differs, five to a kind. The options are listed at the top of the file.
+
+```sh
+bun test/aot/fuzz/fuzzilli/run-test-projects.ts --bun build/release/bun --work /tmp/projects/work --finds /tmp/projects/finds --seconds 3600
+```
+
+`compare-test-runs.ts` does the same comparison for a folder written by hand: a probe of one area, the witness of a fault, a group of files of an existing suite. A test of such a folder prints `SEEN <label> | <value>` to stderr.
+
+```sh
+bun test/aot/fuzz/fuzzilli/compare-test-runs.ts --bun build/release/bun --project /tmp/probe --each-alone --words TestRunLayers:0
+```
+
+With `--groups 40` it takes an existing suite, in place: the test files are shuffled, always alike, and cut into groups, and each group runs plain twice and compiled once. It prints the tests that end alike in both plain runs and otherwise compiled. More than sixteen test files are built in layers, so this is the usual form of a large run. `--shrink` takes it from there.
+
+```sh
+bun test/aot/fuzz/fuzzilli/compare-test-runs.ts --bun build/release/bun --project . --groups 40 --files "$(cat files-that-pass-one-by-one.txt)"
+```
+
+| What is drawn                 | From                                                                                                                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What a test does              | About sixty kinds: spies, `mock.module`, replaced built-ins, `require.cache`, copies of a module under a query, Workers, fake timers, snapshots, code from disk, 185 things of the run time |
+| How dense a project is        | Every kind anywhere; sparse, two or three kinds in all files; or bare, where no test file names a built-in module                                                                           |
+| The head of a test file       | Every name of `bun:test` or those it uses, by an import or from `Bun.jest()`; its notes are stored by `node:fs`, by `Bun.write` or by a `require` at call time                              |
+| Where and how a file is named | In the root or up to three folders deep; `.test` or `.spec`; `.js`, `.ts`, `.mjs`, `.mts`, `.jsx`, `.tsx`                                                                                   |
+| The packages                  | ES or CommonJS, five shapes of the default export, an inner file, `main` or `exports`, `sideEffects`, one that reads its own `package.json`, one that uses another                          |
+| The command line              | `--parallel` from 2 to 24 or none, `--randomize`, `-t`, a part of the test files by name, the preload in `bunfig.toml` or as `--preload`                                                    |
+| How the run is built          | `--words`: one program, or layers and pieces of so many files                                                                                                                               |
+| The order of the flow rules   | In three projects of ten `testing=DelayFlowRules`, with or without a number from 1 to 255, or `testing=DelayOtherFlowRules`                                                                 |
+
+What decides whether such a tool can find a fault:
+
+- **What one file does covers the faults of the others.** The build holds one answer for the whole program. One `eval()` admits `runInContext` of `node:vm` everywhere, one `require()` of a module gives it a state of its own, one spy on an object from somewhere opens every export. A project with every kind in it never showed these faults. Sparse projects and `--each-alone` do.
+- **What every file begins with is in every run.** While every drawn file began with an import of `node:fs`, a crash of test files that import no built-in module was never met.
+- **A fault may take a neighbour.** A file that passes alone was refused beside one that takes `test` from `Bun.jest()`. `--shrink` finds the neighbour in a group of forty files in a few minutes; `--each-beside` then asks every form beside it.
+- **A new kind is tried on a build that holds the fault it was written for.** Four kinds found nothing on such a build when they were first written.
+- **The answer may go by the order in which the flow rules run.** A project that is right under the usual order lost the body of an exported function under another.
+- **A run that prints nothing says nothing.** Where plain `bun test` prints no `SEEN` line the form is void, not the same.
+- **On a busy machine** a test with a server or a child process reaches its limit in either mode. A difference without a crash is run again, and one that does not come again is filed apart.

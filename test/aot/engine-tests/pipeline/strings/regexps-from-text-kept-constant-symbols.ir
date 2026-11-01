@@ -384,7 +384,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
 function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f12 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f12 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -418,7 +418,7 @@ function f17 name="finishJoin" module=m2 position=1934 role=Library flags=[IsChe
     Return v4
 }
 function f18 name="finishReduce" module=m2 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w58}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f19 name="traverseArray" module=m2 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w59 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w60}, {type=undefined|number site=w61}, {type=number site=w62}, {type=undefined|null|Array site=w63 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f19 name="traverseArray" module=m2 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w59 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w60}, {type=undefined|number site=w61}, {type=number site=w62}, {type=undefined|null|Array site=w63 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     v6 = Integer integer=1
     v7 = Convert v6 declared={type=1 site=w72}
@@ -970,16 +970,16 @@ function f19 name="traverseArray" module=m2 position=2337 kind=Method role=Libra
   b139(v527):
     Return v527
 }
-runtimefunction id=65 function=f12
-runtimefunction id=131091 function=f19 visibility=Private
+runtimefunction id=ArrayPrototypeMap function=f12
+runtimefunction id=ArrayTraversalTraverseArray function=f19 visibility=Private
 # -- generated: f0 alternatives Speller pattern f5
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f24 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "alpha+" @JSValue = String string="alpha+"
 # CHECK-NEXT: v1: "beta+" @JSValue = String string="beta+"
-# CHECK-NEXT: v2: Array<string, Contiguous> @Cell = NewArray v0, v1 contents=string allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v3: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v2 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: Array<"alpha+"|"beta+", Contiguous> @Cell = NewArray v0, v1 contents="alpha+"|"beta+" allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v3: Array<"alpha+"|"beta+", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v2 provenType=Array<"alpha+"|"beta+", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: L1 @Cell = NewObject -, v3 layout=L1 fields=[1] allocationSite=3 allocation=2 allocationClass=1
 # CHECK-NEXT: v5: L1 @Cell = FinishObject v4
 # CHECK-NEXT: v6: f3 @Cell = NewClosure function=f3 allocationSite=4 allocation=0
@@ -1060,8 +1060,8 @@ runtimefunction id=131091 function=f19 visibility=Private
 # CHECK: module=m0 position=784 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0 site=w12} results=[{type=RegExp<pristine[Storage, Names, AsCreated]> site=w13 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0 @Cell):
 # CHECK-NEXT: v1: "^<(?:" @Cell = String string="^<(?:"
-# CHECK-NEXT: v2: undefined|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = GetSlotOrUndefined v0 key="tags" receivers=[L0] level=Proven accessSite=50 fieldAccess=2
-# CHECK-NEXT: v3: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v2 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: undefined|Array<"ab"|"cd", proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = GetSlotOrUndefined v0 key="tags" receivers=[L0] level=Proven accessSite=50 fieldAccess=2
+# CHECK-NEXT: v3: Array<"ab"|"cd", proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v2 provenType=Array<"ab"|"cd", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: builtin(ArrayPrototypeMap) @Cell = Builtin builtin=ArrayPrototypeMap
 # CHECK-NEXT: v5: undefined|f6 @JSValue = GetSlotOrUndefined v0 key=symbol("spell")@m0:1 receivers=[L0] level=Proven accessSite=52 fieldAccess=0
 # CHECK-NEXT: v6: undefined|f6 @JSValue = AssumeType v5 provenType=undefined|f6
@@ -1086,8 +1086,8 @@ runtimefunction id=131091 function=f19 visibility=Private
 # CHECK-NEXT: PutSlot v0, -, v1 key=symbol("spell")@m0:1 receivers=[L0] level=Proven accessSite=57 fieldAccess=1
 # CHECK-NEXT: v3: "ab" @JSValue = String string="ab"
 # CHECK-NEXT: v4: "cd" @JSValue = String string="cd"
-# CHECK-NEXT: v5: Array<string, Contiguous> @Cell = NewArray v3, v4 contents=string allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v6: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v5 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: Array<"ab"|"cd", Contiguous> @Cell = NewArray v3, v4 contents="ab"|"cd" allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v6: Array<"ab"|"cd", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v5 provenType=Array<"ab"|"cd", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutSlot v0, -, v6 key="tags" receivers=[L0] level=Proven accessSite=58 fieldAccess=3
 # CHECK-NEXT: v8: undefined @JSValue = Undefined
 # CHECK-NEXT: Return v8

@@ -1539,13 +1539,6 @@ pub struct SourceMapDataTask {
     pub(crate) thread_task: ThreadPoolLib::Task,
 }
 
-// SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
-// `OwnedTask: Send` route). `ctx` is a backref into `BundleV2.linker`
-// (`LinkerContext: Send`); `source_index`/`thread_task` are POD. The callback
-// only writes the per-`source_index` SoA cell (see `run_line_offset`
-// CONCURRENCY note), so moving the task to a worker thread is sound.
-unsafe impl Send for SourceMapDataTask {}
-
 impl Default for SourceMapDataTask {
     fn default() -> Self {
         Self {
@@ -1838,11 +1831,6 @@ pub struct GenerateChunkCtx<'a> {
     /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
     pub(crate) chunk: bun_ptr::BackRef<Chunk<'a>, bun_ptr::Mut>,
 }
-// SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
-// shared reads are read-only.
-unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
-// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
-unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
 
 impl<'a> GenerateChunkCtx<'a> {
     /// Recover a shared borrow of the owning `BundleV2` via container_of from
@@ -2553,25 +2541,14 @@ impl<'a> LinkerContext<'a> {
                         let original_name: &[u8] = symbol.original_name.slice();
                         // The hash itself is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
-                        let path_hash = ::bun_base64::wyhash_url_safe(
+                        let final_generated_name = crate::bun_css::css_modules::scoped_name(
                             &scratch,
-                            // use path relative to cwd for determinism
-                            format_args!("{}", bstr::BStr::new(&source.path.pretty)),
-                            false,
+                            source.path.pretty,
+                            original_name,
                         );
-
-                        let mut final_generated_name = Vec::<u8>::new();
-                        use std::io::Write;
-                        write!(
-                            &mut final_generated_name,
-                            "{}_{}",
-                            bstr::BStr::new(original_name),
-                            bstr::BStr::new(path_hash)
-                        )
-                        .expect("infallible: in-memory write");
                         // The map owns its boxed values (freed with `mangled_props`).
                         self.mangled_props
-                            .put(r#ref, final_generated_name.into_boxed_slice())
+                            .put(r#ref, final_generated_name)
                             .expect("OOM");
                     }
                 }
@@ -4999,7 +4976,7 @@ impl<'a> LinkerContext<'a> {
             return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
         }
 
-        let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
+        let mut pieces: Vec<OutputPiece> = Vec::new();
         // Note: `StringJoiner::done()`
         // returns a `Box<[u8]>`; we must keep it alive alongside the pieces
         // (each `OutputPiece` stores a raw `*const u8` into it). It is moved

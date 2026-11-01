@@ -1,0 +1,13 @@
+import { check } from "../src/show";
+import { accessors, makeCounter, Circle, readKey, writeKey, freezeIt } from "fake-shapes";
+import { makeAccount, config, Vec2 } from "fake-typed";
+import { Ring } from "../src/models";
+const F = "03";
+check(F, "object literal accessors", () => { const child: any = Object.create(accessors); child.v = 5; return [child.v, accessors.v, child._v, child.self === child, Object.keys(child)]; });
+check(F, "closures behind getters", () => { const c = makeCounter(), a = makeAccount(10); c.inc(); c.inc(); a.deposit(5); const { inc } = c; inc(); return [c.value, a.balance, a.history, Object.getOwnPropertyDescriptor(c, "value")!.get!.call(null)]; });
+check(F, "descriptors of a foreign class", () => [Object.getOwnPropertyDescriptor(Circle.prototype, "diameter"), Object.getOwnPropertyDescriptor(Ring.prototype, "diameter"), Object.getOwnPropertyDescriptor(Vec2.prototype, "length"), Object.getOwnPropertyDescriptor(new Vec2(1, 2), "x")]);
+check(F, "defineProperty on a foreign instance", () => { const v = new Vec2(1, 2); let reads = 0; Object.defineProperty(v, "x", { get() { reads++; return 10; }, configurable: true }); return [v.x, v.length, v.parts(), String(v), reads, v.add(new Vec2(1, 1)).x]; });
+check(F, "defineProperty on a foreign prototype", () => { Object.defineProperty(Circle.prototype, "twice", { get(this: Circle) { return this.r * 2; }, configurable: true }); const r = new Ring("r", 3, 1); const out = [(r as any).twice, readKey(r, "twice")]; delete (Circle.prototype as any).twice; return [...out, (r as any).twice]; });
+check(F, "frozen by the package, written here", () => { "use strict"; const o = freezeIt({ a: 1, list: [1] }); const out: unknown[] = []; try { (o as any).a = 2; out.push("no throw"); } catch (e) { out.push((e as Error).name); } (o.list as number[]).push(2); try { (o as any).b = 1; out.push("no throw"); } catch (e) { out.push((e as Error).name); } return [out, o, Object.isFrozen(o)]; });
+check(F, "frozen here, written by the package", () => { const o = Object.freeze({ a: 1 }); try { return writeKey(o, "a", 2); } catch (e) { return [(e as Error).name, o]; } });
+check(F, "shared config is one object", () => { config.nested.names.push("c"); config.depth++; return [config, readKey(config, "depth")]; });

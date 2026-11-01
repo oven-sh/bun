@@ -6,8 +6,8 @@ pub struct NoRequireImports {
     allow_as_import: bool,
 }
 
-const NO_REQUIRE_IMPORTS: Message =
-    Message::new("noRequireImports", "A `require()` style import is forbidden.");
+const NO_REQUIRE_IMPORTS: &Message =
+    &Message::new("noRequireImports", "A `require()` style import is forbidden.");
 
 /// Returns the argument of `require(..)` if it's a string or a template without substitutions.
 pub(crate) fn required_path(call: Call<'_>) -> Option<Name<'_>> {

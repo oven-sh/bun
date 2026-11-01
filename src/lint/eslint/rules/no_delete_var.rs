@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow deleting variables.
 pub struct NoDeleteVar;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Variables should not be deleted.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Variables should not be deleted.");
 
 impl Rule for NoDeleteVar {
     const META: Meta = Meta::eslint("no-delete-var", Kind::Suggestion).recommended();

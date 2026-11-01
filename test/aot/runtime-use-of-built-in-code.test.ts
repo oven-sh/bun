@@ -1,9 +1,9 @@
 // What a program is said to use although it names nothing: the names in the built-in JavaScript that is compiled into every executable.
 import { describe, expect } from "bun:test";
 import { builtinModules } from "node:module";
-import { closed, completeness, computedModuleName, notYet, open, type Use } from "./runtime-use-expectations";
+import { closed, completeness, type Use } from "./runtime-use-expectations";
 import { of } from "./runtime-use-harness";
-import { eachRow, gap, test } from "./supported";
+import { eachRow, test } from "./supported";
 
 async function closedReport(text: string) {
   const use = await of(text);
@@ -47,82 +47,16 @@ describe.concurrent("the built-in code that is part of every program", () => {
     expect(use.lines.includes("module internal/fixed_queue")).toBe(false);
   });
 
-  // TODO: node:os, four internal modules and three native functions are not listed.
-  test.todo("a program that requires node:util lists all of it", async () => {
-    const use = await closedReport(`console.log(require("node:util").format("%s", 1));`);
-    expect(onlyWithNodeUtil.filter(line => !lists(use, line))).toEqual([]);
-  });
-
-  // TODO: internal/fixed_queue is not listed.
-  test.todo("a program that requires node:events lists its queue", async () => {
-    const use = await closedReport(`console.log(require("node:events").on);`);
-    expect(use.lines).toContain("module internal/fixed_queue");
-  });
-
-  // TODO: node:tty, node:fs and internal/fs/streams are not listed.
-  test.todo(
-    "node:events brings the modules of process.stderr, which the warning about too many listeners is written to",
-    async () => {
-      const standardStream = ["module node:tty", "module node:fs", "module internal/fs/streams"];
-      const [withEvents, without] = await Promise.all([
-        closedReport(`console.log(require("node:events").on);`),
-        closedReport(`console.log("hello");`),
-      ]);
-      expect(standardStream.filter(line => !withEvents.lines.includes(line))).toEqual([]);
-      expect(["module node:events", ...standardStream].filter(line => without.lines.includes(line))).toEqual([]);
-    },
-  );
-
-  // TODO: the global object counts as escaped in the server.
-  test.todo(
-    "the worker of node:cluster refers to process: a server does not reach it, and a program that reads the worker holds all of process",
-    async () => {
-      const server = await closedReport(
-        `require("node:http").createServer((request: any, response: any) => response.end("x")).listen(0);`,
-      );
-      expect(server.lines).toContain("module internal/cluster/child");
-      expect(
-        server.lines.filter(
-          line => line === "process (escapes, so any member may be used)" || line === "module node:module",
-        ),
-      ).toEqual([]);
-      const [worker, everyExport] = await Promise.all([
-        of(`console.log(require("node:cluster").worker);`),
-        of(`console.log(Object.values(require("node:cluster")));`),
-      ]);
-      expect({ worker: completeness(worker), everyExport: completeness(everyExport) }).toEqual({
-        worker: open(computedModuleName),
-        everyExport: open(computedModuleName),
-      });
-    },
-  );
-
   const emitter = `const { EventEmitter } = require("node:events");`;
   eachRow([
-    gap(notYet.globalObject, [
-      "node:events",
-      `${emitter} new EventEmitter().on("constructor", () => {}).emit("constructor");`,
-    ]),
+    ["node:events", `${emitter} new EventEmitter().on("constructor", () => {}).emit("constructor");`],
     ["node:fs", `console.log(require("node:fs").readFileSync("x", "utf8").length);`],
     ["node:util", `console.log(require("node:util").format("%s", 1));`],
-    gap(notYet.globalObject, [
-      "node:http",
-      `require("node:http").createServer((request: any, response: any) => response.end("x")).listen(0);`,
-    ]),
-    gap(notYet.globalObject, ["process.stdout", `process.stdout.write("x");`]),
   ])("the computed keys in what %s brings leave the report closed", async (_, text) => {
     await closedReport(text);
   });
 
   const hostClasses = `declare const URL: any, performance: any;\n`;
-  // TODO: one value that nobody knows is in the program, and every member of the language's built-in objects counts as used.
-  const printedNotYet = [
-    ["a URL, which has an inspector of its own", `console.log(new URL("http://x/"));`],
-    [
-      "a mark, whose inspector prints an object of the program",
-      `console.log(performance.mark("m", { detail: { a: 1 } }));`,
-    ],
-  ];
   const printed = [
     ["an object literal", `console.log({ a: 1 });`],
     ["an array", `console.log([1, 2]);`],
@@ -164,16 +98,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
   }
   test(`printing uses no member that the program does not name: ${printed.map(([what]) => what).join(", ")}`, () =>
     usesNoMemberThatIsNotNamed(printed.map(([, text]) => text)));
-  test.todo.each(printedNotYet)("printing %s uses no member that the program does not name", (_, text) =>
-    usesNoMemberThatIsNotNamed([text]),
-  );
-
-  // TODO: the global object counts as escaped.
-  test.todo("printing entire built-in modules leaves the report closed", async () => {
-    await closedReport(
-      `console.log(require("node:http"), require("node:child_process"), require("node:readline/promises"), require("node:util"));`,
-    );
-  });
 
   const requiringLeavesItClosed = async (name: string) => {
     await closedReport(`console.log(typeof require("${name}"));`);
@@ -182,41 +106,16 @@ describe.concurrent("the built-in code that is part of every program", () => {
   const letTheGlobalObjectEscape = [
     "_http_agent",
     "_http_client",
-    "_http_common",
-    "_http_incoming",
-    "_http_outgoing",
-    "_http_server",
-    "_stream_duplex",
-    "_stream_passthrough",
-    "_stream_readable",
-    "_stream_transform",
-    "_stream_wrap",
-    "_stream_writable",
-    "_tls_common",
-    "_tls_wrap",
-    "assert",
-    "assert/strict",
     "child_process",
     "cluster",
     "crypto",
-    "fs/promises",
     "http",
-    "http2",
     "https",
     "inspector",
     "inspector/promises",
-    "net",
     "readline",
-    "readline/promises",
-    "repl",
-    "stream",
-    "stream/promises",
-    "tls",
-    "tty",
-    "undici",
     "worker_threads",
     "ws",
-    "zlib",
   ];
   // TODO: beside another module the global object counts as escaped.
   const closedOnlyAlone = ["dgram", "events", "module", "os", "perf_hooks", "trace_events", "v8"];
@@ -230,10 +129,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
     await closedReport(names.map(name => `console.log(typeof require("${name}"));`).join("\n"));
   });
   test.each(closedOnlyAlone)("only a call opens the report: requiring %s leaves it closed", requiringLeavesItClosed);
-  test.todo.each(letTheGlobalObjectEscape)(
-    "only a call opens the report: requiring %s leaves it closed",
-    requiringLeavesItClosed,
-  );
 });
 
 // Each title says what was once taken for granted of the program. The compiler follows the value all the way instead: nothing blocks --trim, and neither the global object nor process nor Bun

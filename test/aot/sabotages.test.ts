@@ -54,6 +54,12 @@ function movesOfTheRegisterAllocator(check: string): Row {
 
 /** The programs under ./parallel that must notice each sabotage. */
 const noticedBy: Record<string, Row | Row[]> = {
+  // `handlers[type](r => { result = r; }).run()`: the read of `run` and its call are one operation, which says nothing of what `run` alone stores to.
+  FusedCallsEnterOnlyUnknownCode: {
+    folder: "calls",
+    flags: [],
+    programs: ["dispatch-by-name.mjs", "stale-variable.mjs"],
+  },
   // The reads of an array are copied for a second kind of array together with what stands between them, a store through a second name among it.
   CopiedReadsKeepTheirProof: {
     folder: "second-names",

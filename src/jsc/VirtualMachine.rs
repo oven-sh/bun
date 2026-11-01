@@ -1067,6 +1067,14 @@ impl VirtualMachine {
         if p.is_null() { None } else { Some(p) }
     }
 
+    /// Signals queue here from any thread. `event_loop` is the macro loop while a macro runs, and no tick drains a signal there.
+    #[cfg(unix)]
+    pub(crate) fn main_thread_regular_loop() -> Option<*mut EventLoop> {
+        let vm = Self::get_main_thread_vm()?;
+        // SAFETY: the main thread's VM is never freed; this projects to a field of it.
+        Some(unsafe { &raw mut (*vm).regular_event_loop })
+    }
+
     #[inline]
     pub fn is_loaded() -> bool {
         VM.get().is_some()
@@ -2055,6 +2063,8 @@ impl VirtualMachine {
         self.macro_mode = false;
         self.event_loop = &raw mut self.regular_event_loop;
         self.transpiler_store.enabled = true;
+        #[cfg(unix)]
+        self.regular_event_loop.wake_for_pending_signal();
     }
 
     pub fn enqueue_task(&mut self, task: bun_event_loop::Task) {

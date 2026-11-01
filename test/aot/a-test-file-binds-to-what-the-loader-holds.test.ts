@@ -9,8 +9,8 @@ import { describe, test as oneAtATime } from "./supported";
 
 // The tests run at once: each builds and runs in a folder of its own.
 const test = oneAtATime.concurrent;
-// They share the processors, so one may take as long as the whole file: minutes with a debug build.
-raiseDefaultTimeout(isDebug ? 3_600_000 : 600_000);
+// supported.ts sets the limit for the first file of a process alone. A debug build takes six minutes for one run over two layers.
+raiseDefaultTimeout(isDebug ? 1_800_000 : 120_000);
 
 // An import statement is bound to the module that the loader holds when the importer is linked. The runner starts a test file behind the test files and the preloads
 // before it, and one of those may have taken a file out of require.cache: then the statement and a require() of the path name one module, the one from disk.

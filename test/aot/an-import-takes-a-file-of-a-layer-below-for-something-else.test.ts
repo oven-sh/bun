@@ -31,15 +31,21 @@ async function seen(words?: string, ...flags: string[]) {
   };
 }
 
-// Plain `bun test` first. The four run at once, each in a copy of the project.
+// Plain `bun test` first. The four run at once, each in a copy of the project, and a test goes on when all four have ended: a run
+// that throws leaves no other running behind the report of the file.
 let runs: Promise<Awaited<ReturnType<typeof seen>>[]> | undefined;
 const ran = () =>
-  (runs ??= Promise.all([
+  (runs ??= Promise.allSettled([
     seen(),
     seen(undefined, "--aot"),
     seen("TestRunLayers:2,TestRunPartFiles:1", "--aot"),
     seen("TestRunLayers:1,TestRunPartFiles:1", "--aot"),
-  ]));
+  ]).then(all =>
+    all.map(each => {
+      if (each.status === "rejected") throw each.reason;
+      return each.value;
+    }),
+  ));
 
 /** `asked`: what the test file prints behind "asked" under plain `bun test`. */
 function runsAsPlain(title: string, asked: string, testFile: (name: string) => string) {
@@ -123,6 +129,16 @@ runsAsPlain(
     import plainly from "./helpers/data.json";
     import text from "./helpers/data.json" with { type: "text" };
     test("${name} asks", () => { console.log("${name} asked", data.name, data === plainly, typeof text); });`,
+);
+
+// The case above asks for the type of the text alone. This one reads the text.
+runsAsPlain(
+  "the text of a data file",
+  `string { "name": "data" }`,
+  name => `
+    import { test } from "bun:test";
+    import text from "./helpers/data.json" with { type: "text" };
+    test("${name} asks", () => { console.log("${name} asked", typeof text, text); });`,
 );
 
 // What no folder answers for alone: nothing else runs or prints, and the run ends with 0.

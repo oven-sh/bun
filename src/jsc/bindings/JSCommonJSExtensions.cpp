@@ -11,9 +11,10 @@ using namespace JSC;
 const JSC::ClassInfo JSCommonJSExtensions::s_info = { "CommonJSExtensions"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSExtensions) };
 
 JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, BunLoaderType loaderType);
+extern "C" BunLoaderType NodeModuleModule__builtinHandlerLoader(JSC::JSGlobalObject*, BunLoaderType handler, const BunString* filename);
 
 // These functions are separate so that assigning one to the other can be
-// detected and use the corresponding loader.
+// detected and use the corresponding loader (NodeModuleModule.rs `builtin_handler_loader`).
 JSC_DEFINE_HOST_FUNCTION(jsLoaderJS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return builtinLoader(globalObject, callFrame, BunLoaderTypeJS);
@@ -238,13 +239,15 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    BunString specifierBunString = Bun::toString(specifierWtfString);
+    loaderType = NodeModuleModule__builtinHandlerLoader(globalObject, loaderType, &specifierBunString);
     if (loaderType != BunLoaderTypeJSON) {
-        bool hasRun = evaluateCompiledFileForDefaultLoader(global, mod, specifierWtfString, loaderType == BunLoaderTypeTS);
+        bool isTypeScriptLoader = loaderType == BunLoaderTypeTS || loaderType == BunLoaderTypeTSX;
+        bool hasRun = evaluateCompiledFileForDefaultLoader(global, mod, specifierWtfString, isTypeScriptLoader);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasRun)
             return JSC::JSValue::encode(jsUndefined());
     }
-    BunString specifierBunString = Bun::toString(specifierWtfString);
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res;

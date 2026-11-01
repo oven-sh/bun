@@ -1,7 +1,8 @@
-// Each program is compiled with --aot, runs with the interpreter forbidden, and must say what plain Bun says; a CommonJS program, what it
-// says as an executable without --aot, where the bundler has linked its require() calls. Where this Bun can leave parts of the runtime
-// out, the executable that is trimmed by what the program names must say the same again. What --trim removes is decided behind the
-// compiler, so one build compiles the program and writes both executables.
+// Each program is compiled with --aot, runs with the interpreter forbidden, and must say what its row states. So must plain Bun, or
+// for a CommonJS program an executable without --aot, where the bundler has linked its require() calls: two runs that fail alike
+// agree and show nothing. Where this Bun can leave parts of the runtime out, the executable that is trimmed by what the program names
+// must say the same again. What --trim removes is decided behind the compiler, so one build compiles the program and writes both
+// executables.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -10,9 +11,8 @@ import { slot } from "./harness/commands";
 import { test } from "./supported";
 import { run as runCommand } from "./harness/run";
 
-export type Program = { source: string; name?: string; files?: Record<string, string>; stdin?: string; ipc?: "json" | "advanced"; greeting?: unknown; exitCode?: number; runsTextAsCode?: true; aheadOfTime?: string };
-
-const normalize = (text: string) => text.replace(/\(node:\d+\)/g, "(node:PID)").replace(/\(Use `[^` ]+ --trace-warnings/g, "(Use `EXE --trace-warnings");
+/** `stdout`: what the program prints. `received`: the messages that its parent gets. The parent sends each one back. */
+export type Program = { source: string; stdout: string; name?: string; files?: Record<string, string>; stdin?: string; ipc?: "json" | "advanced"; greeting?: unknown; received?: unknown[]; exitCode?: number; runsTextAsCode?: true; aheadOfTime?: string };
 
 async function run(cmd: string[], cwd: string, program: Program, env: Record<string, string | undefined>) {
   const received: unknown[] = [];
@@ -35,7 +35,7 @@ async function run(cmd: string[], cwd: string, program: Program, env: Record<str
   });
   if (program.greeting !== undefined) proc.send(program.greeting);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr: normalize(stderr), exitCode, received: received.length };
+  return { stdout, stderr, exitCode, received };
 }
 
 export function describePrograms(what: string, programs: Record<string, Program>) {
@@ -48,11 +48,12 @@ export function describePrograms(what: string, programs: Record<string, Program>
         await slot(async () => {
           const build = async (flags: string[], outfile: string, env = bunEnv) => {
             const { stderr: said, exitCode: built } = await runCommand([bunExe(), "build", "--compile", ...flags, name, "--outfile", outfile], cwd, env);
-            expect({ title, flags, said, built }).toEqual({ title, flags, said: expect.any(String), built: 0 });
+            expect({ title, flags, said, built }).toEqual({ title, flags, said: "", built: 0 });
             return [outfile];
           };
-          const expected = await run(name.endsWith(".cjs") ? await build([], join(cwd, "reference.exe")) : [bunExe(), name], cwd, program, bunEnv);
-          expect({ title, exitCode: expected.exitCode, stderr: expected.stderr }).toEqual({ title, exitCode: program.exitCode ?? 0, stderr: expect.not.stringContaining("error:") });
+          const expected = { stdout: program.stdout, stderr: "", exitCode: program.exitCode ?? 0, received: program.received ?? [] };
+          const reference = await run(name.endsWith(".cjs") ? await build([], join(cwd, "reference.exe")) : [bunExe(), name], cwd, program, bunEnv);
+          expect({ title, ...reference }).toEqual({ title, ...expected });
           const compiled = program.aheadOfTime === undefined ? expected : { ...expected, stdout: program.aheadOfTime };
           const whole = join(cwd, "program.exe");
           const trimmed = canTrim && (await build(["--aot", "--trim"], join(cwd, "trimmed.exe"), { ...bunEnv, BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: whole }));

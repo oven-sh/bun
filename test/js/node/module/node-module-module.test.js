@@ -1381,7 +1381,7 @@ console.log("survived", require("./late.js"));`,
       expect(stderr).toMatchInlineSnapshot(`
         "1 | require("module").runMain = () => {
         2 |   throw new RangeError("from the override");
-                        ^
+                    ^
         RangeError: from the override
             at <anonymous> (file:NN:NN)
 

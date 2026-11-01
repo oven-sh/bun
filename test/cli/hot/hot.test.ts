@@ -578,7 +578,7 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
         const match = nextLine.match(/\s*at.*?:1003:(\d+)$/);
         if (!match) throw new Error("invalid string: " + nextLine);
         const col = match[1];
-        expect(Number(col)).toBe(1 + "throw new ".length + counter * 2);
+        expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
       },
     });
     await runner.exited;
@@ -625,7 +625,7 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error('${counter}');`,
         const match = nextLine.match(/\s*at.*?:(\d+):(\d+)\)?$/);
         if (!match) throw new Error("no :line:col in: " + JSON.stringify(nextLine));
         if (match[1] !== "1003") throw new Error("expected :1003: but got: " + JSON.stringify(nextLine));
-        expect(Number(match[2])).toBe(1 + "throw new ".length + counter * 2);
+        expect(Number(match[2])).toBe(1 + "throw ".length + counter * 2);
       },
     });
     await runner.exited;

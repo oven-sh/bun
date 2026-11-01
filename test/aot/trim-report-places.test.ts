@@ -62,7 +62,7 @@ describe.concurrent("a way for unseen code to run has its place in the program",
       ["a direct eval", `eval(process.argv[2]);`, evaluates, "2:1"],
       ["an indirect eval", `(0, eval)(process.argv[2]);`, `${evaluates} (eval)`, "2:5"],
       ["eval under another name", `const run = eval;\nrun(process.argv[2]);`, `${evaluates} (eval)`, "3:1"],
-      ["new Function", `new Function(process.argv[2]);`, `${evaluates} (Function)`, "2:5"],
+      ["new Function", `new Function(process.argv[2]);`, `${evaluates} (Function)`, "2:1"],
       ["a call of Function", `Function(process.argv[2]);`, `${evaluates} (Function)`, "2:1"],
       ["the constructor of a function", `(() => {}).constructor(process.argv[2]);`, `${evaluates} (Function)`, "2:12"],
       [
@@ -90,7 +90,7 @@ describe.concurrent("a way for unseen code to run has its place in the program",
         "new vm.Script",
         `import { Script } from "node:vm";\nnew Script(process.argv[2]);`,
         `${runsOtherCode} (%NodeVMBinding%.Script)`,
-        "3:5",
+        "3:1",
       ],
       [
         "vm.compileFunction",
@@ -186,16 +186,16 @@ describe.concurrent("a way for unseen code to run has its place in the program",
     };
     const text = `import { make } from "dep";\nmake(process.argv[2]);\nconst worker = new Worker(process.argv[2]);\nconsole.log(worker);`;
     expect((await report(text, files)).whyOpen).toEqual([
-      `${evaluates} (Function) at node_modules/dep/index.js:2:14`,
-      `${loadsByName} (Function) at node_modules/dep/index.js:2:14`,
+      `${evaluates} (Function) at node_modules/dep/index.js:2:10`,
+      `${loadsByName} (Function) at node_modules/dep/index.js:2:10`,
       "dynamic-import: the program starts a Worker from code that isn't in the executable (Worker) at main.ts:4:20",
     ]);
   });
 
   test("evaluated text imports by name, and no statement of the program does: that line has the place of the evaluator", async () => {
     expect((await report(`new Function(process.argv[2]);`)).whyOpen).toEqual([
-      `${evaluates} (Function) at main.ts:2:5`,
-      `${loadsByName} (Function) at main.ts:2:5`,
+      `${evaluates} (Function) at main.ts:2:1`,
+      `${loadsByName} (Function) at main.ts:2:1`,
     ]);
   });
 });

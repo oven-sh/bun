@@ -7,12 +7,14 @@
 #include "Map.h"
 #include "Handle.h"
 #include "napi_handle_scope.h"
-#include <wtf/HashSet.h>
 #include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace v8 {
 namespace shim {
+
+class GlobalInternals;
+struct GlobalHandleLists;
 
 // Stores the V8 handles for one Bun::HandleScopeImpl, which owns this and attaches it on the first
 // V8 call inside the scope. v8::Locals point to the handles, so a SegmentedVector keeps their
@@ -22,7 +24,12 @@ class HandleScopeBuffer {
 
 public:
     HandleScopeBuffer(Bun::HandleScopeImpl* owner, Isolate* isolate);
-    ~HandleScopeBuffer();
+    ~HandleScopeBuffer()
+    {
+        if (m_globalHandleLists) [[unlikely]] {
+            destroyGlobalHandleLists();
+        }
+    }
 
     template<typename T> Local<T> createLocal(JSC::VM& vm, JSC::JSValue value)
     {
@@ -123,15 +130,11 @@ private:
     // close() restores them so they never point into freed handles.
     uintptr_t* m_savedNext;
     uintptr_t* m_savedLimit;
-    // See createGlobalHandle(). A handle is in at most one of these.
-    WTF::HashSet<Handle*> m_liveGlobalHandles;
-    WTF::Vector<Handle*> m_disposedGlobalHandles;
-    WTF::Vector<Handle*> m_freeGlobalHandles;
+    // See createGlobalHandle(). Owned. Null in the buffer of a scope, which pays one pointer for v8::Globals.
+    GlobalHandleLists* m_globalHandleLists { nullptr };
 
     JSC::VM& vm() const;
     Handle& createEmptyHandle();
-    // Overwrite a handle that the GC may be visiting.
-    TaggedPointer* setHandle(Handle& handle, const Handle& value);
 
     // Requires the owner's cellLock(). Return `value`'s target if it is the ObjectLayout of a
     // handle at index >= begin, else null.
@@ -145,6 +148,9 @@ private:
 
     // Requires the owner's cellLock(). Empty the disposed v8::Global handles for reuse.
     void releaseDisposedGlobalHandles(const WTF::AbstractLocker&);
+    // The part of close() for v8::Globals: does nothing while `scope` or a scope around it has V8 handles.
+    static void releaseDisposedGlobalHandlesOutside(GlobalInternals*, Bun::HandleScopeImpl* scope);
+    void destroyGlobalHandleLists();
 };
 
 } // namespace shim

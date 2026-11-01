@@ -56,6 +56,9 @@ public:
     HandleScopeBuffer* globalHandles();
     // Null until the first v8::Global is created. Unlike globalHandles(), this never allocates.
     HandleScopeBuffer* globalHandlesIfCreated();
+    // Whether globalHandles() has disposed handles to release. Every scope that had V8 handles reads this when it closes.
+    bool hasDisposedGlobalHandles() const { return m_hasDisposedGlobalHandles; }
+    void setHasDisposedGlobalHandles(bool value) { m_hasDisposedGlobalHandles = value; }
 
     // Returns the innermost open scope's V8 handles (GlobalObject::m_currentHandleScopeImpl). Like V8,
     // aborts if no scope is open. Bun opens a scope around every native callback it makes.
@@ -133,6 +136,7 @@ private:
     // annotations behind (this cell is swept without running destructors).
     WTF::Vector<TaggedPointer*> m_activeReturnValueSlots;
     JSC::LazyProperty<GlobalInternals, Bun::HandleScopeImpl> m_globalHandles;
+    bool m_hasDisposedGlobalHandles { false };
 
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcPrologueCallbacks;
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcEpilogueCallbacks;

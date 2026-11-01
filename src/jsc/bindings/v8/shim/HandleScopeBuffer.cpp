@@ -2,6 +2,7 @@
 #include "GlobalInternals.h"
 #include "../v8_handle_scope_data.h"
 #include <atomic>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -10,6 +11,18 @@ namespace v8 {
 namespace shim {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HandleScopeBuffer);
+
+// The handles of v8::Globals, by state. A handle is in at most one of these.
+struct GlobalHandleLists {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(GlobalHandleLists);
+    WTF::HashSet<Handle*> live;
+    // Each keeps its value until no open scope has V8 handles: see createGlobalHandle().
+    WTF::Vector<Handle*> disposed;
+    // Empty handles, for the next v8::Global.
+    WTF::Vector<Handle*> free;
+};
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(GlobalHandleLists);
 
 // See releaseRetiredGlobalHandle(). Process-wide, because the v8::Global that points to a retired
 // handle is disposed in another VM, or on a thread that has none.
@@ -35,15 +48,16 @@ HandleScopeBuffer::HandleScopeBuffer(Bun::HandleScopeImpl* owner, Isolate* isola
     m_savedLimit = data->limit;
 }
 
-HandleScopeBuffer::~HandleScopeBuffer()
+NEVER_INLINE void HandleScopeBuffer::destroyGlobalHandleLists()
 {
-    if (m_liveGlobalHandles.isEmpty()) {
+    std::unique_ptr<GlobalHandleLists> lists { std::exchange(m_globalHandleLists, nullptr) };
+    if (lists->live.isEmpty()) {
         return;
     }
     // v8::Globals still point to these handles.
     auto& retired = retiredGlobalHandles();
     WTF::Locker locker { retired.lock };
-    retired.handles.addAll(m_liveGlobalHandles);
+    retired.handles.addAll(lists->live);
     retired.count.store(retired.handles.size());
 }
 
@@ -185,19 +199,13 @@ void HandleScopeBuffer::evacuateActiveReturnValues(Bun::HandleScopeImpl* parent)
     }
 }
 
-TaggedPointer* HandleScopeBuffer::setHandle(Handle& handle, const Handle& value)
-{
-    WTF::Locker locker { m_owner->cellLock() };
-    handle = value;
-    return handle.slot();
-}
-
 TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Handle* reuseHandle)
 {
     int32_t smi;
     if (address.getSmi(smi)) {
         if (reuseHandle) {
-            return setHandle(*reuseHandle, Handle(smi));
+            *reuseHandle = Handle(smi);
+            return reuseHandle->slot();
         } else {
             return createSmiHandle(smi);
         }
@@ -222,13 +230,15 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
         }
         if (v8_object->map()->m_instanceType == InstanceType::HeapNumber) {
             if (reuseHandle) {
-                return setHandle(*reuseHandle, Handle(v8_object->asDouble()));
+                *reuseHandle = Handle(v8_object->asDouble());
+                return reuseHandle->slot();
             } else {
                 return createDoubleHandle(v8_object->asDouble());
             }
         }
         if (reuseHandle) {
-            return setHandle(*reuseHandle, Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner));
+            *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner);
+            return reuseHandle->slot();
         } else {
             return createHandle(v8_object->asCell(), v8_object->map(), vm());
         }
@@ -259,29 +269,40 @@ static bool isRetiredGlobalHandle(Handle* handle)
 
 TaggedPointer* HandleScopeBuffer::createGlobalHandle(TaggedPointer address)
 {
-    Handle* handle = m_freeGlobalHandles.isEmpty() ? &createEmptyHandle() : m_freeGlobalHandles.takeLast();
+    if (!m_globalHandleLists) {
+        m_globalHandleLists = new GlobalHandleLists;
+    }
+    auto& lists = *m_globalHandleLists;
+    Handle* handle = lists.free.isEmpty() ? &createEmptyHandle() : lists.free.takeLast();
     // A v8::Global still points to a retired address, and disposing it would dispose this handle,
     // so the handle stays unused.
     while (isRetiredGlobalHandle(handle)) {
         handle = &createEmptyHandle();
     }
-    TaggedPointer* slot = createHandleFromExistingObject(address, handle);
+    TaggedPointer* slot;
+    {
+        // The GC visits the handles under this lock. Without it, a visit between the write barrier of the new value
+        // and the write of the handle sees an empty handle, and nothing makes the GC visit it again.
+        WTF::Locker locker { m_owner->cellLock() };
+        slot = createHandleFromExistingObject(address, handle);
+    }
     if (slot != handle->slot()) {
         // undefined, null, true or false: the slot is one of the isolate's roots
-        m_freeGlobalHandles.append(handle);
+        lists.free.append(handle);
         return slot;
     }
-    m_liveGlobalHandles.add(handle);
+    lists.live.add(handle);
     return slot;
 }
 
 void HandleScopeBuffer::disposeGlobalHandle(TaggedPointer* slot)
 {
     auto* handle = reinterpret_cast<Handle*>(slot);
-    if (!m_liveGlobalHandles.remove(handle)) {
+    if (!m_globalHandleLists || !m_globalHandleLists->live.remove(handle)) {
         return;
     }
-    m_disposedGlobalHandles.append(handle);
+    m_globalHandleLists->disposed.append(handle);
+    m_isolate->globalInternals()->setHasDisposedGlobalHandles(true);
     if (hasV8Handles(m_isolate->globalObject()->m_currentHandleScopeImpl.get())) {
         return;
     }
@@ -309,13 +330,26 @@ bool HandleScopeBuffer::releaseRetiredGlobalHandle(TaggedPointer* slot)
     return true;
 }
 
+NEVER_INLINE void HandleScopeBuffer::releaseDisposedGlobalHandlesOutside(GlobalInternals* internals, Bun::HandleScopeImpl* scope)
+{
+    if (hasV8Handles(scope)) {
+        return;
+    }
+    if (auto* globalHandles = internals->globalHandlesIfCreated()) {
+        WTF::Locker locker { globalHandles->m_owner->cellLock() };
+        globalHandles->releaseDisposedGlobalHandles(locker);
+    }
+}
+
 void HandleScopeBuffer::releaseDisposedGlobalHandles(const WTF::AbstractLocker&)
 {
-    for (Handle* handle : m_disposedGlobalHandles) {
+    auto& lists = *m_globalHandleLists;
+    for (Handle* handle : lists.disposed) {
         *handle = Handle();
     }
-    m_freeGlobalHandles.appendVector(m_disposedGlobalHandles);
-    m_disposedGlobalHandles.shrink(0);
+    lists.free.appendVector(lists.disposed);
+    lists.disposed.shrink(0);
+    m_isolate->globalInternals()->setHasDisposedGlobalHandles(false);
 }
 
 void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
@@ -334,11 +368,8 @@ void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
     if (parent && !internals->activeReturnValueSlots().isEmpty()) {
         evacuateActiveReturnValues(parent);
     }
-    if (auto* globalHandles = internals->globalHandlesIfCreated()) {
-        if (!globalHandles->m_disposedGlobalHandles.isEmpty() && !hasV8Handles(parent)) {
-            WTF::Locker locker { globalHandles->m_owner->cellLock() };
-            globalHandles->releaseDisposedGlobalHandles(locker);
-        }
+    if (internals->hasDisposedGlobalHandles()) [[unlikely]] {
+        releaseDisposedGlobalHandlesOutside(internals, parent);
     }
     // The owner detaches this buffer and then frees it, along with every handle.
 }

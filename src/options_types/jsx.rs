@@ -9,6 +9,7 @@
 //! crate's `schema` module — so the type sits cleanly at this tier.
 
 use crate::schema::api;
+use bun_core::identifier::is_identifier;
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -248,6 +249,26 @@ impl Pragma {
         Cow::Owned(out)
     }
 
+    /// The first member of `text` that is not an identifier, or all of `text` when it has no members (`"."`).
+    pub fn invalid_member(text: &[u8]) -> Option<&[u8]> {
+        use bun_ast::lexer_tables::{T, keyword};
+
+        let mut members = strings::tokenize(text, b".").peekable();
+        let Some(first) = members.next() else {
+            return Some(text);
+        };
+        // `first` is looked up as a variable. The exceptions are esbuild's (`ParseDefineExprOrJSON`).
+        let first_is_reserved = match keyword(first) {
+            None | Some(T::TNull | T::TThis) => false,
+            Some(T::TImport) => members.peek() != Some(&b"meta".as_slice()),
+            Some(_) => true,
+        };
+        if first_is_reserved || !is_identifier(first) {
+            return Some(first);
+        }
+        members.find(|member| !is_identifier(member))
+    }
+
     /// `"React.createElement"` => `["React", "createElement"]`, or a copy of
     /// `original` (no allocation for `Static`) when `new` names the same
     /// members. `None` when `new` has no members, for example `"."`.
@@ -293,6 +314,44 @@ impl Pragma {
         pragma.development = jsx.development;
         pragma.parse = true;
         pragma
+    }
+}
+
+/// The member list that a `Bun.build` option, a CLI flag or a bunfig.toml key sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberListOption {
+    Factory,
+    Fragment,
+}
+
+impl MemberListOption {
+    /// `Err` says what `text` must be. Empty text means unset.
+    pub fn check(self, text: &[u8]) -> Result<(), &'static str> {
+        if text.is_empty() || Pragma::invalid_member(text).is_none() {
+            return Ok(());
+        }
+        match self {
+            MemberListOption::Factory => Err(
+                "Must be an identifier or a dotted chain of identifiers, for example \"h\" or \"React.createElement\"",
+            ),
+            MemberListOption::Fragment if is_verbatim_constant(text) => Ok(()),
+            MemberListOption::Fragment => Err(
+                "Must be an identifier, a dotted chain of identifiers or a constant, for example \"Fragment\", \"React.Fragment\" or \"'['\"",
+            ),
+        }
+    }
+}
+
+/// A JSON scalar (esbuild takes one for the fragment) that can be split on `.` and printed verbatim: no `.`, no `\` escape.
+fn is_verbatim_constant(text: &[u8]) -> bool {
+    match text {
+        b"true" | b"false" | [b'0'] => true,
+        [b'1'..=b'9', digits @ ..] => digits.iter().all(u8::is_ascii_digit),
+        [quote @ (b'"' | b'\''), body @ .., end] => {
+            quote == end
+                && strings::index_of_any(body, &[*quote, b'\\', b'\r', b'\n', b'.']).is_none()
+        }
+        _ => false,
     }
 }
 

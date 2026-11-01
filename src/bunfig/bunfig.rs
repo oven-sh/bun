@@ -24,6 +24,7 @@ use bun_options_types::context::{
     TestEnvironment, TestGlobals,
 };
 use bun_options_types::global_cache::GlobalCache;
+use bun_options_types::jsx::MemberListOption;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
 
@@ -1156,15 +1157,28 @@ impl<'a> Parser<'a, '_> {
                 jsx_import_source = Box::<[u8]>::from(value);
             }
         }
-        if let Some(expr) = json.get(b"jsxFragment") {
-            if let Some(value) = expr.as_string(self.bump) {
-                jsx_fragment = Box::<[u8]>::from(value);
+        for (key, option, text) in [
+            ("jsxFragment", MemberListOption::Fragment, &mut jsx_fragment),
+            ("jsxFactory", MemberListOption::Factory, &mut jsx_factory),
+        ] {
+            let Some(expr) = json.get(key.as_bytes()) else {
+                continue;
+            };
+            let Some(value) = expr.as_string(self.bump) else {
+                continue;
+            };
+            if let Err(expected) = option.check(value) {
+                self.add_error_format(
+                    expr.loc,
+                    format_args!(
+                        "Invalid {}: {}. {}",
+                        key,
+                        bun_core::fmt::quote(value),
+                        expected
+                    ),
+                )?;
             }
-        }
-        if let Some(expr) = json.get(b"jsxFactory") {
-            if let Some(value) = expr.as_string(self.bump) {
-                jsx_factory = Box::<[u8]>::from(value);
-            }
+            *text = Box::<[u8]>::from(value);
         }
         {
             if let Some(jsx) = self.ctx.args.jsx.as_mut() {

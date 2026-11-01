@@ -143,20 +143,6 @@ static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
     return false;
 }
 
-// Visits every frame and keeps the first ones, so the limit only ends the frames of suspended async functions: two of them can await each other.
-static NEVER_INLINE void getFirstFramesOfWholeStack(JSC::VM& vm, JSC::JSCell* owner, WTF::Vector<JSC::StackFrame>& stackTrace, size_t framesToKeep, const JSC::Interpreter::StackFrameFilter& isWanted)
-{
-    size_t framesKept = 0;
-    auto isWantedInFront = [&](const JSC::StackFrame& frame) {
-        if (framesKept == framesToKeep || !isWanted(frame))
-            return false;
-        framesKept++;
-        return true;
-    };
-    JSC::Interpreter::StackFrameFilter filter = isWantedInFront;
-    vm.interpreter.getStackTrace(owner, stackTrace, 1, 2 * framesToKeep, nullptr, nullptr, nullptr, &filter);
-}
-
 // V8 searches the stack for a JSFunction only. A bound function, a function that a ShadowRealm wraps, a Proxy and a value that is not callable select no frame.
 static JSC::JSObject* functionToFindOnStack(JSC::JSValue caller)
 {
@@ -244,7 +230,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 
     constexpr size_t everyFrame = std::numeric_limits<size_t>::max();
     size_t framesToCollect = stackTraceLimit == everyFrame || !callerObject ? stackTraceLimit : stackTraceLimit + 1;
-    for (bool isSecondWalk = false;; isSecondWalk = true) {
+    for (;; framesToCollect = everyFrame) {
         // Delegate to Interpreter::getStackTrace which includes async stack frames
         // (from the await chain via getAsyncStackTrace). The previous hand-rolled
         // StackVisitor::visit walk only collected synchronous frames.
@@ -255,10 +241,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         // which loses async frames when the caller is the innermost sync frame.
         hasFoundCaller = !callerObject;
         stackTrace.shrink(0);
-        if (isSecondWalk)
-            getFirstFramesOfWholeStack(vm, owner, stackTrace, framesToCollect, filter);
-        else
-            vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect, nullptr, nullptr, nullptr, &filter);
+        vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect, nullptr, nullptr, nullptr, &filter);
 
         // Match V8: if the caller is not found anywhere in the sync portion of the
         // stack, remove everything.
@@ -277,7 +260,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         }
 
         bool hasEveryFrame = stackTrace.size() < framesToCollect;
-        if (hasEveryFrame || isSecondWalk)
+        if (hasEveryFrame)
             break;
         stackTrace.shrink(framesToCollect);
         bool hasAsyncFrame = false;

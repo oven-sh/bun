@@ -2130,6 +2130,84 @@ describe("bundler", () => {
     },
   });
 
+  // The ref validation of `outer` does not converge: the type of `f` holds
+  // itself. babel-plugin-react-compiler 1.0.0 throws there and leaves the
+  // component as written. Here `outer` became a function that reads a ref, and
+  // the validation of `other` then cleared the flag that said it was unfinished.
+  //
+  // The second element of each pair is the `_c(n)` of that component, as in
+  // ClosureAboveReassignedLet. A component that the compiler skips has `[]`.
+  itBundled("react-compiler/NestedFunctionThatDoesNotConverge", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useRef } from "react";
+        import { sizes } from "react/compiler-runtime";
+
+        function NestedReturnsItself(p) {
+          const outer = () => {
+            const f = () => f;
+            return f;
+          };
+          const other = () => 1;
+          return <div onClick={outer} onFocus={other}>{p.a}</div>;
+        }
+        function NestedReturnsItselfOrRefReader(p) {
+          const ref = useRef(null);
+          const outer = () => {
+            const read = () => ref.current;
+            const f = () => (p.a ? f : read);
+            return f;
+          };
+          const other = () => 1;
+          return <div onClick={outer} onFocus={other}>{p.a}</div>;
+        }
+        // The same component without the function that returns itself.
+        function NestedReturnsOne(p) {
+          const outer = () => {
+            const f = () => 1;
+            return f;
+          };
+          const other = () => 1;
+          return <div onClick={outer} onFocus={other}>{p.a}</div>;
+        }
+
+        function render(fn) {
+          const before = sizes().length;
+          const { props } = fn({ a: "a" });
+          const f = props.onClick();
+          return [f() === f || f(), sizes().slice(before)];
+        }
+        console.log(JSON.stringify({
+          NestedReturnsItself: render(NestedReturnsItself),
+          NestedReturnsItselfOrRefReader: render(NestedReturnsItselfOrRefReader),
+          NestedReturnsOne: render(NestedReturnsOne),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.useRef = current => ({ current });`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const sizes = [];
+        exports.c = size => {
+          sizes.push(size);
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.sizes = () => sizes;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        NestedReturnsItself: [true, []],
+        NestedReturnsItselfOrRefReader: [true, []],
+        NestedReturnsOne: [1, [2]],
+      }),
+    },
+  });
+
   // A temporary that has to survive as a variable is "promoted": the compiler
   // names it `#t<n>` (or `#T<n>` for a JSX tag, which has to be capitalised to
   // read as a component) after its declaration id, and the printer drops the
@@ -5204,3 +5282,71 @@ describe("react-compiler does not overflow the stack on a component that is nest
     expect(exitCode).toBe(0);
   });
 });
+
+// The ref validation of the function that holds `const f = () => f` does not
+// converge. It was validated again in each of the 10 rounds of each function
+// or object method around it: 3 levels took 3 seconds and 4 did not finish.
+// In a component with a ref, one arrow around a function that returns itself
+// in two shapes was enough, and used 3 GB in 20 seconds.
+const app = (outer: string) => `
+        export default function App(p) {
+          const outer = ${outer};
+          return <div onClick={outer}>{p.a}</div>;
+        }
+      `;
+const appWithARef = (outer: string) => `
+        import { useRef } from "react";
+        export default function App(p) {
+          const ref = useRef(null);
+          const outer = ${outer};
+          return <div onClick={outer}>{p.a}</div>;
+        }
+      `;
+const functionsThatReturnThemselves = {
+  "under 20 arrows": app(`${Buffer.alloc("() => ".length * 20, "() => ")}{
+    const f = () => f;
+    return f;
+  }`),
+  "under object methods and arrows": app(`{ m() { return () => ({ m() { return () => {
+    const f = () => f;
+    return f;
+  }; } }); } }`),
+  "in two shapes that hold a ref, under one arrow": appWithARef(`() => {
+    const f = () => (p.a ? { f, r: [ref] } : f);
+    return f;
+  }`),
+  "beside a read of a ref, under 20 arrows": appWithARef(`${Buffer.alloc("() => ".length * 20, "() => ")}{
+    const f = () => f;
+    const x = ref.current + 1;
+    return [f, x];
+  }`),
+};
+
+// Not concurrent: when a test times out, `bun test` kills the process that the
+// test spawned only if the tests run one at a time.
+test.each(Object.entries(functionsThatReturnThemselves))(
+  "react-compiler compile time is not exponential for a function that returns itself %s",
+  async (_name, source) => {
+    using dir = tempDir("react-compiler-returns-itself", { "entry.jsx": source });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // Kill switch: without the fix the child does not finish. Let it be killed so
+      // that a regression fails the assertions below and leaves no process behind.
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
+    // The component is left as written, as babel-plugin-react-compiler leaves it.
+    expect(stdout).toContain("const f = () =>");
+    expect(stdout).not.toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+  },
+);

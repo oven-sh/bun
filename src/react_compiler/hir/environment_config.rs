@@ -78,6 +78,8 @@ pub struct EnvironmentConfig {
     pub enable_name_anonymous_functions: bool,
     pub validate_hooks_usage: bool,
     pub validate_ref_access_during_render: bool,
+    /// For `validate_ref_access_during_render`: a nested function that does not converge reads a ref. Upstream throws.
+    pub functions_that_do_not_converge_read_refs: bool,
     /// For `validate_ref_access_during_render`: a ref value that meets a value of another kind, at a
     /// phi or in an object, stays the ref value that it was. It is then reported where `.current`
     /// is read. Upstream forgets where that was, and reports it at each use.
@@ -155,6 +157,7 @@ impl Default for EnvironmentConfig {
             enable_name_anonymous_functions: false,
             validate_hooks_usage: true,
             validate_ref_access_during_render: true,
+            functions_that_do_not_converge_read_refs: false,
             joined_ref_values_keep_their_place: false,
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,

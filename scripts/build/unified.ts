@@ -153,7 +153,9 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/highway_json.cpp",
   // Sixth highway TU (XML structural indexer) — same reason.
   "src/jsc/bindings/highway_xml.cpp",
-  // Seventh highway TU (PNG scanline filters) — same reason.
+  // Seventh highway TU (row kernels of the JPEG codec) — same reason.
+  "src/jsc/bindings/highway_jpeg.cpp",
+  // Eighth highway TU (PNG scanline filters) — same reason.
   "src/jsc/bindings/highway_png.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that

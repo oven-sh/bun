@@ -1,5 +1,5 @@
 //! `Bun.Image` — Sharp-shaped image pipeline backed by the statically linked
-//! libjpeg-turbo / libwebp codecs, `bun_png` and the highway resize kernel.
+//! `bun_jpeg`, `bun_png` and libwebp codecs and the highway resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
@@ -670,8 +670,8 @@ impl Image {
     /// nobody mutates a buffer they just handed to a decoder. The contract is
     /// documented and `.shared`/`.resizable` are refused at construction. The
     /// codec layer is hardened so a hostile mid-decode mutation degrades to
-    /// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.rs` cropping +
-    /// post-check, `codec_webp.rs` owned canvas. (If the attacker already runs
+    /// `DecodeFailed`, not OOB/heap-leak — `bun_jpeg` takes every size from one
+    /// reading of the header, `codec_webp.rs` owned canvas. (If the attacker already runs
     /// JS in-process the threat model is moot anyway; the surface that matters
     /// is hostile *bytes*, which the codec validation handles.)
     fn pin_for_task(

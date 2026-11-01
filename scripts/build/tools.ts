@@ -656,7 +656,7 @@ export function resolveLlvmToolchain(
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
   }
 
-  // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
+  // nasm: BoringSSL win-x64; compile.ts:nasm() asserts at the use site.
   const nasm = findTool({
     names: ["nasm"],
     required: false,

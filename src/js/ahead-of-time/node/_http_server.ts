@@ -3125,7 +3125,7 @@ function ServerResponse(
     this._events = events as any;
     this._eventsCount = 0;
     this[kShapeMode] = false;
-    this._maxListeners = undefined;
+    this._maxListeners ??= undefined;
     if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
       ("unlikely");
       storeEmitWithRejectionCapture(this);
@@ -3195,7 +3195,7 @@ function ServerResponse(
   this._events = Object.create(null);
   this._eventsCount = 0;
   this[kShapeMode] = false;
-  this._maxListeners = undefined;
+  this._maxListeners ??= undefined;
   if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
     storeEmitWithRejectionCapture(this);
   }

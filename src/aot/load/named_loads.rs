@@ -886,7 +886,7 @@ mod tests {
         })
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn assert_files_keep(
         files: &[(&str, &str)],
         kept: &[RuntimeModule],
@@ -901,7 +901,7 @@ mod tests {
         }
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn assert_keeps(source: &str, kept: &[RuntimeModule], dropped: &[RuntimeModule]) {
         assert_files_keep(&[("main.ts", source)], kept, dropped);
     }

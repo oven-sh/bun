@@ -1283,7 +1283,7 @@ mod tests {
         }
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_error(input: &str, msg_contains: &str) {
         let p = run(input.as_bytes(), Which::Utf8);
         assert!(
@@ -1297,7 +1297,7 @@ mod tests {
         );
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn assert_parses_to(input: &str, expected_compact_json: &str) {
         for which in [Which::Utf8, Which::TsConfig] {
             let p = run(input.as_bytes(), which);

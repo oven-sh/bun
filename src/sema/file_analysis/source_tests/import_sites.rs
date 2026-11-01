@@ -704,7 +704,7 @@ fn callee_names<'w>(w: &'w Workspace<'_>, hir: &File<'_>, calls: &[ExprId]) -> V
     calls.iter().map(callee_name).collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn only_site(s: &Analyzed<'_>, text: &str) -> ImportSite {
     let [site] = s.analysis.import_sites else {
         panic!("{text}: {:?}", s.analysis.import_sites);
@@ -712,7 +712,7 @@ fn only_site(s: &Analyzed<'_>, text: &str) -> ImportSite {
     *site
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn first_argument_of_last_call(hir: &File<'_>) -> ExprId {
     let calls = find_exprs(hir, |kind| {
         matches!(kind, ExprKind::Call(_) | ExprKind::ImportCall { .. })

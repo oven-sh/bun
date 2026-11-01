@@ -210,7 +210,7 @@ pub struct Ticket {
 }
 
 impl Ticket {
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn issue(shared: &Arc<Shared>, kind: LoopKind) -> Ticket {
         shared.tickets.fetch_add(1, Ordering::SeqCst);
         #[cfg(debug_assertions)]
@@ -268,7 +268,7 @@ impl Ticket {
 
 impl Clone for Ticket {
     /// One more ticket for the same VM and loop (any thread).
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn clone(&self) -> Ticket {
         Ticket::issue(&self.shared, self.kind)
     }
@@ -517,7 +517,7 @@ impl VirtualMachine {
     /// the loop it is currently ticking. Hold it in the in-flight operation
     /// and drop it after the completion is posted. Infallible until the wait
     /// has finished (after which nothing on this thread starts off-thread work).
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     #[inline]
     pub fn ticket(&self) -> Ticket {
         let h = self.handle_ref();
@@ -812,7 +812,7 @@ pub enum ConcurrentPoster {
 }
 
 impl Clone for ConcurrentPoster {
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn clone(&self) -> Self {
         match self {
             ConcurrentPoster::Js(t) => ConcurrentPoster::Js(t.clone()),
@@ -824,7 +824,7 @@ impl Clone for ConcurrentPoster {
 impl ConcurrentPoster {
     /// Owning thread: for a JS loop, take a ticket on its VM; for a mini loop,
     /// post directly.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn from_event_loop_handle(h: &bun_event_loop::EventLoopHandle) -> Self {
         match h {
             bun_event_loop::EventLoopHandle::Js { owner } => {

@@ -10,7 +10,7 @@ unsafe extern "C" {
 }
 
 impl JSArray {
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn create_empty(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
         crate::from_js_host_call(global, || JSArray__constructEmptyArray(global, len))
     }

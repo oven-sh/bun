@@ -69,7 +69,7 @@ export interface RustUnit {
   /**
    * 16 hex digits: `-C metadata` (rustc mixes it into every symbol). Like cargo's `c_metadata` it leaves the
    * rustflags out, so an instrumented and an optimized PGO build — or any two builds differing only in flags — mangle
-   * identically; and std crates hash by their path inside the sysroot, not relative to the checkout.
+   * identically; and std crates hash by their path inside `library`, not relative to the checkout.
    */
   symbolHash: string;
 
@@ -192,7 +192,7 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
     unit.pkg.source !== null
       ? unit.pkg.id
       : unit.isStd
-        ? relative(plan.rustc.sysroot, unit.pkg.manifest_path)
+        ? relative(plan.stdLibrary, unit.pkg.manifest_path)
         : relative(plan.workspaceRoot, unit.pkg.manifest_path);
   const digest = (parts: unknown[]): string =>
     createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 16);

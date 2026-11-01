@@ -111,7 +111,7 @@ fn find_defining_fragment<'a>(
     })
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_probe_fragment(lowered_files: &[(FileId, LoweredFile)]) -> &Fragment {
     let fragment = find_defining_fragment(lowered_files, "probe");
     fragment.expect("no fragment has a function named probe")

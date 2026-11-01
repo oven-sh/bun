@@ -269,7 +269,7 @@ impl Model {
         programs
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn assert_one_program(&self) {
         let without_skips = self.link_in_every_order(Rule::DefinesEverything);
         assert_eq!(without_skips.len(), 1);

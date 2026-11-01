@@ -307,7 +307,7 @@ impl Case<'_, '_> {
         .collect()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expr(&self, text: &str) -> ExprId {
         let found = self.exprs(text).last().copied();
         found.unwrap_or_else(|| panic!("no expression `{text}` in: {}", self.source))
@@ -338,22 +338,22 @@ impl Case<'_, '_> {
         }
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn path(&self, text: &str) -> Option<BuiltinPath> {
         self.path_at(self.expr(text))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn builtin(&self, text: &str) -> Option<BuiltinId> {
         self.path(text).map(|path| path.id)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn is_pure(&self, text: &str) -> bool {
         self.resolved.of_pure_expr(self.expr(text)).is_some()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn global_path(&self, text: &str) -> Option<Vec<BuiltinId>> {
         let steps = self
             .resolved
@@ -361,12 +361,12 @@ impl Case<'_, '_> {
         Some(steps.iter().map(|step| step.id).collect())
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn intrinsic(&self, text: &str) -> Option<Intrinsic> {
         self.intrinsic_of_expr(self.expr(text))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn intrinsic_at(&self, text: &str, index: usize) -> Option<Intrinsic> {
         self.intrinsic_of_expr(self.exprs(text)[index])
     }
@@ -397,7 +397,7 @@ impl Case<'_, '_> {
             .next()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn symbol(&self, name: &str) -> Option<BuiltinPath> {
         let Some(decl) = self.find_declaration(name) else {
             panic!("no declaration of `{name}` in: {}", self.source);
@@ -405,7 +405,7 @@ impl Case<'_, '_> {
         self.resolved.of_symbol(self.bound.declared_symbol(decl))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn symbol_id(&self, name: &str) -> Option<BuiltinId> {
         self.symbol(name).map(|path| path.id)
     }
@@ -419,12 +419,12 @@ impl Case<'_, '_> {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_builtin(case: &Case<'_, '_>, text: &str, id: BuiltinId) {
     assert_eq!(case.builtin(text), Some(id), "`{text}` in: {}", case.source);
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_unresolved(case: &Case<'_, '_>, text: &str) {
     let resolved = case.resolved_at(case.expr(text));
     assert!(
@@ -434,18 +434,18 @@ fn assert_unresolved(case: &Case<'_, '_>, text: &str) {
     );
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_mutability(case: &Case<'_, '_>, text: &str, mutability: Mutability) {
     let found = case.path(text).map(|path| path.mutability);
     assert_eq!(found, Some(mutability), "`{text}` in: {}", case.source);
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_name(text: &str) -> BuiltinName {
     table::find_name(text.as_bytes()).unwrap_or_else(|| panic!("`{text}` is not in the name table"))
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_member(holder: BuiltinId, name: &str) -> Option<BuiltinId> {
     match table::member(holder, find_name(name)) {
         MemberLookup::Found(member) => Some(table::canonical_id(member)),

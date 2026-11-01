@@ -167,7 +167,7 @@ mod host {
     /// retries forever. Until the build wires the standalone-shim build step,
     /// fail the *process* fast instead.
     #[inline]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn embedded_executable_data() -> &'static [u8] {
         if EMBEDDED_EXECUTABLE_DATA.is_empty() {
             bun_core::pretty_errorln!(

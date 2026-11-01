@@ -1940,8 +1940,8 @@ pub(crate) fn get_timer_count(heap: &JsHeap<'_>) -> JsResult<usize> {
     Ok(unsafe { (*timer_all()).fake_timers.count() })
 }
 
-/// Like Jest and Vitest, a no-op when fake timers are not installed. Only the
-/// functions that advance or count the fake clock throw.
+/// A no-op when fake timers are not installed, as in Jest and Vitest. The
+/// functions that advance, count or configure the fake clock still throw.
 pub(crate) fn clear_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
     if is_active() {

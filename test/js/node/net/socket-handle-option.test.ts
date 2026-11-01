@@ -361,11 +361,7 @@ test("the callback of a write that the handle finishes later runs in the async c
   storage.run("of the handle", () => later.shift()!(0));
   outside.destroy();
 
-  expect(stores).toEqual([
-    "complete null of the write",
-    "cancelled ECANCELED of the write",
-    "outside null undefined",
-  ]);
+  expect(stores).toEqual(["complete null of the write", "cancelled ECANCELED of the write", "outside null undefined"]);
 });
 
 // Node keeps the callback in the request of each write, so two streams over one handle do not take each other's.

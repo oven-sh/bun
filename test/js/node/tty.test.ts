@@ -2645,6 +2645,28 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       `,
       [{ closed: ["reader", "writer"], left: [] }],
     ];
+    // The descriptor of the write poll takes the lowest free number, here the one that the caller closed. That
+    // number is the handle's from then on, and the handle closes it once. A debug build reports a second close.
+    const closedFifoDescriptorRow: DescriptorRow = [
+      "destroy() of a stream over a FIFO whose caller closed its descriptor before a write that waits",
+      { fifo: true },
+      `
+        const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const before = open();
+        const input = new tty.ReadStream(reader), output = new tty.ReadStream(writer);
+        fs.closeSync(writer);
+        input.on("data", () => {});
+        output.on("close", () => input.destroy());
+        input.on("close", () => setImmediate(() => report(before, {}, { [reader]: "reader", [writer]: "writer" })));
+        const ret = output.write(bytes, err => {
+          say({ cb: err ? err.code : null });
+          output.destroy();
+        });
+        say({ ret, theNumberIsOpenAgain: open().includes(writer) });
+      `,
+      [{ ret: false, theNumberIsOpenAgain: true }, { cb: null }, { closed: ["reader", "writer"], left: [] }],
+    ];
     const descriptorRows: DescriptorRow[] = [
       [
         "destroy() with a write that waits",
@@ -2757,7 +2779,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         `,
         [{ closed: [3], left: [] }],
       ],
-      ...(isLinux ? [fifoDescriptorRow] : []),
+      ...(isLinux ? [fifoDescriptorRow, closedFifoDescriptorRow] : []),
     ];
     test.concurrent.each(descriptorRows)(
       "no descriptor of the handle is left after %s",

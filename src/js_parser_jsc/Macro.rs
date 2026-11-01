@@ -664,6 +664,8 @@ impl<'a> Run<'a> {
         // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
         // collapse the payload to its discriminant via `.tag()`.
         match T::get(value, self.global)?.tag.tag() {
+            // A cell under these tags is a Number or Boolean object.
+            T::Boolean | T::Double if value.is_cell() => self.run_boxed_primitive(value),
             T::Error => self.coerce(T::Error, value),
             T::Undefined => self.coerce(T::Undefined, value),
             T::Null => self.coerce(T::Null, value),
@@ -691,6 +693,29 @@ impl<'a> Run<'a> {
                 );
                 Err(MacroError::MacroFailed)
             }
+        }
+    }
+
+    /// Out of line: the Boolean and Double arms of [`run`](Self::run) stay free of calls.
+    #[cold]
+    #[inline(never)]
+    fn run_boxed_primitive(&mut self, value: JSValue) -> Result<Expr, MacroError> {
+        match value.unwrap_boxed_primitive(self.global) {
+            Ok(primitive) => {
+                debug_assert!(!primitive.is_cell());
+                self.run(primitive)
+            }
+            // Left pending, the throw of a user `valueOf` fails later macro loads on this VM.
+            Err(thrown @ JsError::Thrown) => {
+                self.global.take_exception(thrown);
+                self.log.add_error(
+                    Some(self.source),
+                    self.caller.loc,
+                    b"A Number object in this macro's result threw while it was converted to a number",
+                );
+                Err(MacroError::MacroFailed)
+            }
+            Err(error) => Err(error.into()),
         }
     }
 
@@ -759,7 +784,7 @@ impl<'a> Run<'a> {
             T::Boolean => {
                 return Ok(Expr {
                     data: ExprData::EBoolean(E::Boolean {
-                        value: value.to_boolean(),
+                        value: value.as_boolean(),
                     }),
                     loc: self.caller.loc,
                 });
@@ -879,7 +904,7 @@ impl<'a> Run<'a> {
             }
             T::Double => {
                 return Ok(Expr::init(
-                    E::Number::new(value.as_number()),
+                    E::Number::new(value.as_double()),
                     self.caller.loc,
                 ));
             }

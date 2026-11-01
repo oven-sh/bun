@@ -431,6 +431,10 @@ bool generatePrimeOnProgression(BIGNUM* rnd, int bits, bool safe, const BIGNUM* 
     const int depth = sieveDepth(bits);
     const BN_ULONG addWord = BN_get_word(add);
     const BN_ULONG maxDelta = std::min(wordMax - kSievePrimes[depth - 1], wordMax - addWord);
+    // With an `add` of 2^63 or more the sieve cannot step: its first rejection ends the draw.
+    const bool cannotStep = addWord > maxDelta;
+    // mod == 1 means that the prime divides (rnd - 1) / 2.
+    const auto rejects = [safe](BN_ULONG mod) { return safe ? mod <= 1 : mod == 0; };
     std::array<uint16_t, kSievePrimes.size()> mods;
 
     // Unsigned: a search that never ends would overflow an int.
@@ -448,15 +452,15 @@ bool generatePrimeOnProgression(BIGNUM* rnd, int bits, bool safe, const BIGNUM* 
             BN_ULONG mod = BN_mod_word(rnd, kSievePrimes[i]);
             if (mod == static_cast<BN_ULONG>(-1)) return false;
             mods[i] = static_cast<uint16_t>(mod);
+            // Not in OpenSSL, which divides by every prime: the sieve redraws at this one and reads no residue after it.
+            if (cannotStep && rejects(mod)) break;
         }
 
         BN_ULONG delta = 0;
         for (int i = 1; i < depth;) {
             const BN_ULONG prime = kSievePrimes[i];
             if (bits <= 31 && delta <= 0x7fffffff && prime * prime > BN_get_word(rnd) + delta) break;
-            // mod == 1 means that prime divides (rnd - 1) / 2.
-            const BN_ULONG mod = (mods[i] + delta) % prime;
-            if (safe ? mod > 1 : mod != 0) {
+            if (!rejects((mods[i] + delta) % prime)) {
                 i++;
                 continue;
             }
@@ -470,6 +474,7 @@ bool generatePrimeOnProgression(BIGNUM* rnd, int bits, bool safe, const BIGNUM* 
         if (!BN_add_word(rnd, delta)) return false;
 
         if (!BN_GENCB_call(cb, BN_GENCB_GENERATED, static_cast<int>(draws))) return false;
+        // BoringSSL's count for a generated prime, as in BN_generate_prime_ex (16 iterations from 308 bits); OpenSSL runs 64, or 128 above 2048 bits.
         int isPrime = BN_is_prime_fasttest_ex(rnd, BN_prime_checks_for_generation, ctx.get(), 0, cb);
         if (isPrime == 1 && safe) {
             if (!BN_rshift1(t.get(), rnd)) return false;
@@ -500,7 +505,7 @@ bool BignumPointer::generate(const PrimeConfig& params,
             },
             &innerCb);
     }
-    // bits < 2 falls through so that BN_generate_prime_ex reports BN_R_BITS_TOO_SMALL.
+    // Not upstream: BoringSSL's probable_prime_dh rejects every p == 1 (mod a small prime), so { add: 5n } never returns, and neither of its add searches checks the size it ends on (8 bits gives 7703); bits < 2 still goes to BN_generate_prime_ex for BN_R_BITS_TOO_SMALL.
     if (params.add && params.bits >= 2) {
         return generatePrimeOnProgression(get(), params.bits, params.safe, params.add.get(), params.rem.get(), cb.get());
     }

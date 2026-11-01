@@ -68,7 +68,7 @@ pub(crate) struct WindowsNamedPipe {
     pub(crate) connect_req: JsCell<uv::uv_connect_t>,
 
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
-    pub(crate) current_timeout: Cell<u32>,
+    pub(crate) timeout_seconds: Cell<u32>,
     pub(crate) flags: Cell<Flags>,
 }
 
@@ -541,7 +541,7 @@ impl WindowsNamedPipe {
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::WindowsNamedPipe,
             )),
-            current_timeout: Cell::new(0),
+            timeout_seconds: Cell::new(0),
             flags: Cell::new(Flags::DISCONNECTED), // disconnected: bool = true is the only non-false default
         }
     }
@@ -954,24 +954,27 @@ impl WindowsNamedPipe {
     }
 
     pub(crate) fn reset_timeout(&self) {
-        self.set_timeout_in_milliseconds(self.current_timeout.get());
+        self.arm_timeout(self.timeout_seconds.get());
     }
 
-    pub(crate) fn set_timeout_in_milliseconds(&self, ms: c_uint) {
+    pub(crate) fn arm_timeout(&self, seconds: c_uint) {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
-        self.current_timeout.set(ms);
+        self.timeout_seconds.set(seconds);
 
         // if the interval is 0 means that we stop the timer
-        if ms == 0 {
+        if seconds == 0 {
             return;
         }
 
         // reschedule the timer
         // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
-        let next = timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
+        let next = timespec::ms_from_now(
+            bun_core::TimespecMockMode::ForceRealTime,
+            i64::from(seconds) * 1000,
+        );
         self.event_loop_timer.with_mut(|t| {
             t.next = ElTimespec {
                 sec: next.sec,
@@ -988,7 +991,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__set_timeout")]
     pub(crate) fn set_timeout(&self, seconds: c_uint) {
         bun_output::scoped_log!(WindowsNamedPipe, "setTimeout({})", seconds);
-        self.set_timeout_in_milliseconds(seconds * 1000);
+        self.arm_timeout(seconds);
     }
 
     /// Free internal resources, it can be called multiple times.

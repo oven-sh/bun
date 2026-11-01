@@ -2452,7 +2452,6 @@ mod spawn_process_body {
             pub stderr: SyncStdio,
             pub ipc: Option<Fd>,
             pub cwd: Box<[u8]>,
-            pub detached: bool,
 
             pub argv: Vec<Box<[u8]>>,
             /// null = inherit parent env
@@ -2527,7 +2526,6 @@ mod spawn_process_body {
                     stderr: SyncStdio::Inherit,
                     ipc: None,
                     cwd: Box::default(),
-                    detached: false,
                     argv: Vec::new(),
                     envp: None,
                     use_execve_on_macos: false,
@@ -2548,7 +2546,6 @@ mod spawn_process_body {
                     stderr: self.stderr.to_stdio(),
                     ipc: self.ipc,
                     cwd: self.cwd.clone(),
-                    detached: self.detached,
                     use_execve_on_macos: self.use_execve_on_macos,
                     stream: false,
                     argv0: self.argv0,

@@ -495,17 +495,11 @@ impl<'a> ImportRun<'a> {
             && !f.comments().is_ignored(statement.as_ast_nodes())
     }
 
-    /// Call this before printing the line break between the previous statement and `next`. `is_plain` means all
-    /// comments between the two are printed with `next`.
+    /// Call this before printing the line break between the previous statement and `next`.
     #[inline]
-    pub(crate) fn before_separator(
-        &mut self,
-        next: Stmt<'a>,
-        is_plain: bool,
-        f: &mut Formatter<'a>,
-    ) {
+    pub(crate) fn before_separator(&mut self, next: Stmt<'a>, f: &mut Formatter<'a>) {
         if self.how.is_some() {
-            self.end_statement(is_plain.then_some(next), f);
+            self.end_statement(Some(next), f);
         }
     }
 

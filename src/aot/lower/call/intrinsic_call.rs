@@ -18,11 +18,14 @@ use crate::lower::function::{self, EntryArguments};
 use crate::lower::member::PropertyName;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    // JSC reports a call at the name that its callee ends in, and the call of any other callee where the callee ends.
     fn position_of_call(&self, site: &IntrinsicCall<'_>) -> u32 {
-        match self.file.is_shown_without_source_map() {
-            true => self.file.last_mapped_position(site.callee),
-            false => self.file.hir[site.call].pos,
+        let file = &*self.file;
+        if !file.is_shown_without_source_map() {
+            return file.hir[site.call].pos;
         }
+        let name = file.find_name_at_end_of(site.callee);
+        name.unwrap_or_else(|| file.last_mapped_position(site.callee))
     }
 
     pub(super) fn lower_call_with_rest(

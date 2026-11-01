@@ -294,16 +294,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_done_in_place: is_reflect_construct_syntax || self.file.makes_array_in_caller(site),
             call_number: self.file.find_number_of_symbol_call(call),
         };
-        self.set_position(self.file.call_position(site));
+        let position = match hir[call].kind {
+            ExprKind::TaggedTemplate(tagged) => self.file.tag_call_position(tagged),
+            // The call that is printed in place of a `new` has its name where the `new` stands.
+            ExprKind::New(_) => hir[call].pos,
+            _ => self.file.call_position(site),
+        };
+        self.set_position(position);
         // The callee is read from whatever `Reflect` names there.
         let tests_callee = is_reflect_construct_syntax && callee.key.is_some();
-        if is_reflect_construct_syntax && !tests_callee {
-            self.set_position_of_construction_in_place(call);
-        }
-        let construction = tests_callee.then_some(call);
         match tail {
             Tail::No => {
-                let value = self.emit_written_call(construction, callee, arguments, options);
+                let value = self.emit_written_call(tests_callee, callee, arguments, options);
                 self.set_position(hir[call].pos);
                 self.claim_call_result(call, value)
             }
@@ -315,38 +317,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let tail = Tail::Yes { casts: Some(&cast) };
                 self.describe_int32_tail_call(call);
                 let options = CallOptions { tail, ..options };
-                self.emit_written_call(construction, callee, arguments, options)
+                self.emit_written_call(tests_callee, callee, arguments, options)
             }
         }
     }
 
     fn emit_written_call(
         &mut self,
-        construction_if_callee_is_builtin: Option<ExprId>,
+        constructs_if_callee_is_builtin: bool,
         callee: Callee,
         arguments: Arguments,
         options: CallOptions<'_>,
     ) -> ValueId {
-        match construction_if_callee_is_builtin {
-            Some(call) => {
-                self.emit_construction_in_place_or_call(call, callee, &arguments, options)
-            }
-            None => self.emit_call_at(callee, arguments, options),
+        match constructs_if_callee_is_builtin {
+            true => self.emit_construction_in_place_or_call(callee, &arguments, options),
+            false => self.emit_call_at(callee, arguments, options),
         }
-    }
-
-    fn set_position_of_construction_in_place(&mut self, call: ExprId) {
-        // A call site lists the start of a construction only in front of the place where the construction is reported. The key may be a constant that is written earlier.
-        let start = self.file.first_position(call);
-        self.set_position(self.position().max(start));
-        self.builder.set_written_position(start);
     }
 
     /// Bytecode tests the callee of a call that is written `Reflect.construct(..)`, whatever `Reflect` names there. It constructs in place
     /// where the callee is that function, so a stack trace lists no frame of it, and calls anything else.
     fn emit_construction_in_place_or_call(
         &mut self,
-        call: ExprId,
         callee: Callee,
         arguments: &Arguments,
         options: CallOptions<'_>,
@@ -363,9 +355,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         ] {
             self.builder.switch_to(block);
             self.set_position(call_position);
-            if is_done_in_place {
-                self.set_position_of_construction_in_place(call);
-            }
             let arguments = match arguments {
                 Arguments::Values(values) => Arguments::Values(values.clone()),
                 Arguments::List(list) => Arguments::List(*list),
@@ -392,9 +381,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.convert_argument_values(expression, &mut arguments);
         self.set_position(self.file.construct_position(expression));
         let site = call_site(self.file, expression);
-        if !self.file.is_printed_as_call(site) && !self.file.makes_array_in_caller(site) {
+        // The text of a call that is printed in place of the `new` begins at its callee.
+        if self.file.is_printed_as_call(site) {
             self.builder
-                .set_written_position(self.file.hir[expression].pos);
+                .set_written_position(self.file.last_mapped_position(site.callee));
         }
         let value = if self.file.makes_array_in_caller(site) {
             self.emit_array_made_in_caller(callee, arguments)
@@ -477,27 +467,12 @@ impl FileLowering<'_, '_, '_, '_> {
         calls_symbol.then_some(u32::from(number))
     }
 
-    // Bun's transpiler prints a `new` without arguments without `()`, unless something is read from the result or the result is called.
+    // JSC reports `new X(..)` at its `new`, and what `Reflect.construct(X, ..)` constructs in place where it reports that call.
     fn construct_position(&self, expression: ExprId) -> u32 {
-        let site = call_site(self, expression);
-        let is_reported_at_callee = match self.runs_as_written() {
-            true => site.close_pos != u32::MAX,
-            false => {
-                !site.args.is_empty()
-                    || self.is_base_of_access(expression)
-                    || self.is_printed_as_call(site)
-            }
-        };
-        match is_reported_at_callee {
-            true => self.last_mapped_position(site.callee),
-            false => self.hir[expression].pos,
+        match self.hir[expression].kind {
+            ExprKind::New(_) => self.hir[expression].pos,
+            _ => self.call_position(call_site(self, expression)),
         }
-    }
-
-    fn is_base_of_access(&self, expression: ExprId) -> bool {
-        let position = self.hir[expression].pos;
-        let transpiled = self.transpiled.as_ref();
-        transpiled.is_some_and(|transpiled| transpiled.has_accessed_construction_at(position))
     }
 
     // A native error constructor, `Function` and `Array` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call, and in tail position the caller leaves the stack.

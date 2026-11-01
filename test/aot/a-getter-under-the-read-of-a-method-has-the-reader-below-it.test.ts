@@ -43,7 +43,7 @@ describe("compile/aot/a getter under the read of a method has the reader below i
       spawned([executable], cwd, bunEnv),
       spawned([bunExe(), join(root, program)], cwd, bunEnv),
     ]);
-    expect(plain.stdout).toContain("withoutArguments throwsInGetter | Error | 17:51 39:18\n");
+    expect(plain.stdout).toContain("withoutArguments throwsInGetter | Error | 17:47 39:18\n");
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   }, 300_000);
 });

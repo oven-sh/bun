@@ -43,7 +43,7 @@ export async function getStaticPaths() {
     // Strip ANSI codes for cleaner checking
     const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
 
-    const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("6:16");
+    const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("6:1");
     // const hasCorrectCallLine = cleanLines.includes("MyPage") && cleanLines.includes("2") && cleanLines.includes("3");
     const hasCorrectFileName = cleanLines.includes("pages/[...slug].tsx");
 
@@ -101,7 +101,7 @@ export async function getStaticPaths() {
     const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
 
     const hasCorrectThrowLine = cleanLines.includes("throwError") && cleanLines.includes("6:1");
-    const hasCorrectCallLine = cleanLines.includes("ErrorPage") && cleanLines.includes("1:16");
+    const hasCorrectCallLine = cleanLines.includes("ErrorPage") && cleanLines.includes("1:1");
 
     expect(hasCorrectThrowLine).toBe(true);
     expect(hasCorrectCallLine).toBe(true);
@@ -140,8 +140,8 @@ function helperFunction() {
     const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
 
     const hasUtilsThrowLine = cleanLines.includes("helperFunction") && cleanLines.includes("5:1");
-    const hasUtilsCallLine = cleanLines.includes("doSomething2") && cleanLines.includes("1:28");
-    const hasPageCallLine = cleanLines.includes("NestedPage") && cleanLines.includes("3:38");
+    const hasUtilsCallLine = cleanLines.includes("doSomething2") && cleanLines.includes("1:17");
+    const hasPageCallLine = cleanLines.includes("NestedPage") && cleanLines.includes("3:35");
 
     expect(hasUtilsThrowLine).toBe(true);
     expect(hasUtilsCallLine).toBe(true);

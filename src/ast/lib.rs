@@ -2602,6 +2602,8 @@ pub mod error;
 pub use error::{Error, Result};
 pub mod expr;
 pub mod fold_string_addition;
+pub mod frame_token;
+pub use frame_token::FrameToken;
 pub mod g;
 pub mod known_global;
 pub mod new_store;

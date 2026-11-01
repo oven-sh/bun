@@ -1,12 +1,12 @@
+use bun_ast::FrameToken;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{CodeUnit, Parent};
 use bun_sema::check::aot::{
     IndexKey, IndexSignature, MemberLookup, MemberName, PositionTypes, ShapeKind,
 };
-use bun_sema::check::spans::skip_trivia_back;
 use bun_sema::hir::{
     BinOp, Branches, ExprId, ExprKind, File, FnId, MemberKey, Prop, PropId, PropKey, PropKind,
-    is_proto_setter, start_of,
+    is_proto_setter,
 };
 use smallvec::{SmallVec, smallvec};
 
@@ -436,19 +436,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PropKind::Spread => {
                 let (position, recorded) = match in_front {
                     InFront::StartOfLiteral(start) => (start, start),
-                    InFront::Property(_) if self.file.runs_as_written() => {
-                        let value = start_of(hir, prop.value) as usize;
-                        let end_of_dots = skip_trivia_back(&hir.text, value) as u32;
-                        (end_of_dots, end_of_dots)
+                    // JSC reports the copy of any other object at the `...`.
+                    InFront::Property(_) if self.file.runs_as_written() => (prop.start, prop.start),
+                    // The source map knows the `...` only where it starts a line, and else names the property in front of it.
+                    InFront::Property(previous) => {
+                        let in_front = self.file.last_mapped_value_position(hir[previous].value);
+                        let value = self.file.first_position(prop.value);
+                        let dots = self.file.find_token_on_new_line(
+                            FrameToken::Spread,
+                            value,
+                            0,
+                            in_front,
+                        );
+                        let position = dots.unwrap_or(in_front);
+                        (position, position)
                     }
-                    // The source map does not know the parenthesis and answers the token in front of it.
-                    InFront::Property(previous)
-                        if self.file.begins_with_parenthesis(prop.value) =>
-                    {
-                        let last = self.file.last_mapped_value_position(hir[previous].value);
-                        (last, last)
-                    }
-                    InFront::Property(_) => (prop.pos, self.file.first_position(prop.value)),
                 };
                 self.lower_spread(object, dictionary, prop.value, position);
                 self.builder.record_position(recorded);

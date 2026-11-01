@@ -4,6 +4,6 @@
 
 namespace Bun {
 
-ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc);
+ZigStackFramePosition getPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc);
 
 } // namespace Bun

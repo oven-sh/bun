@@ -15,13 +15,13 @@
 // CHECK: = Await {{*}} @2843
 // CHECK-LABEL: function {{*}}name="callsFunctionExpression"
 // CHECK: = NewClosure
-// CHECK: = Call {{*}} @2929
+// CHECK: = Call {{*}} @2936
 // CHECK-LABEL: function {{*}}name="constructsAndReads"
-// CHECK: = Construct {{*}} @3001
+// CHECK: = Construct {{*}} @2997
 // CHECK-LABEL: function {{*}}name="constructsNativeError"
 // CHECK: = Construct {{*}} @3065
 // CHECK-LABEL: function {{*}}name="constructsWithArguments"
-// CHECK: = Construct {{*}} @3155
+// CHECK: = Construct {{*}} @3149
 // CHECK-LABEL: function {{*}}name="constructsWithoutArguments"
 // CHECK: = Construct {{*}} @3226
 // CHECK-LABEL: function {{*}}name="delegates"
@@ -36,10 +36,10 @@
 // CHECK: = IteratorOpen {{*}} @3589
 // CHECK: = IteratorResume {{*}} @3589
 // CHECK-LABEL: function {{*}}name="returnsNativeError"
-// CHECK: [[error]] = Call {{*}}calleeName="RangeError" @3681
+// CHECK: [[error]] = Call {{*}}calleeName="RangeError" @3677
 // CHECK-NEXT: ReturnCall [[error]]
 // CHECK-LABEL: function {{*}}name="spreads"
-// CHECK: AppendSpread {{*}} @3751
+// CHECK: AppendSpread {{*}} @3748
 // CHECK-LABEL: function {{*}}name="stores"
 // CHECK: PropSet {{*}} @3798
 // CHECK-LABEL: function {{*}}name="storesAfterPostfix"

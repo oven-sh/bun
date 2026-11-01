@@ -336,7 +336,7 @@ outermostCaller(process.argv.length);
         expect(framesOf(stdout + stderr).map(frame => frames.get(`${frame.line}:${frame.column}`))).toEqual([
           { name: "outermostCaller", file: "app.ts", line: 2, column: 11 },
           { name: "", file: "app.ts", line: 6, column: 1 },
-          { name: "outermostCaller", file: "app.ts", line: 3, column: 28 },
+          { name: "outermostCaller", file: "app.ts", line: 3, column: 24 },
           { name: "", file: "app.ts", line: 6, column: 1 },
         ]);
       }),

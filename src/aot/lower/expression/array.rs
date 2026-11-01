@@ -153,12 +153,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_appended_spread(&mut self, array: ValueId, spread: ExprId, iterable: ExprId) {
         let hir = self.file.hir;
-        // JSC reports and records the iteration at the end of `...`.
-        let position = match self.file.begins_with_parenthesis(iterable) {
-            _ if self.file.runs_as_written() => hir[spread].pos + 3,
-            true => hir[spread].pos,
-            false => self.file.first_position(iterable),
-        };
+        // JSC reports and records the iteration at the `...`.
+        let position = hir[spread].pos;
         if !ends_in_list_literal(self.file, iterable) {
             let iterable = self.lower_expression(iterable);
             self.set_position(position);

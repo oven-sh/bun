@@ -6,7 +6,7 @@ throw new Error("hello");
                         ^
 
 Error: hello
-    at hellohello.js:2:16
+    at hellohello.js:2:7
     at runInNewContext (unknown)
     at <anonymous> (<this-url>:6:5)"
 `;
@@ -16,7 +16,7 @@ exports[`can get sourceURL inside node:vm 1`] = `
                            ^
 error: hello
       at hello (hellohello.js:4:24)
-      at hellohello.js:7:6
+      at hellohello.js:7:1
       at <anonymous> (<this-url>:21:15)
 "
 `;
@@ -26,7 +26,7 @@ exports[`eval sourceURL is correct 1`] = `
                            ^
 error: hello
       at hello (hellohello.js:4:24)
-      at eval (hellohello.js:7:6)
+      at eval (hellohello.js:7:1)
       at <anonymous> (<this-url>:39:15)
 "
 `;

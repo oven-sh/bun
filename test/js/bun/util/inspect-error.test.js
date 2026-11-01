@@ -15,18 +15,18 @@ test("error.cause", () => {
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
 6 |   const err2 = new Error("error 2", { cause: err });
-                       ^
+                   ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:6:20)
+      at <anonymous> ([dir]/inspect-error.test.js:6:16)
 
 1 | import { describe, expect, jest, test } from "bun:test";
 2 | import { bunEnv, bunExe, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
-                      ^
+                  ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:5:19)
+      at <anonymous> ([dir]/inspect-error.test.js:5:15)
 "
 `);
 });
@@ -44,9 +44,9 @@ test("Error", () => {
 33 | 
 34 | test("Error", () => {
 35 |   const err = new Error("my message");
-                       ^
+                   ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:35:19)
+      at <anonymous> ([dir]/inspect-error.test.js:35:15)
 "
 `);
 });
@@ -103,7 +103,7 @@ test("Error inside minified file (no color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
             at <anonymous> ([dir]/inspect-error.test.js:87:5)"
     `);
@@ -132,7 +132,7 @@ test("Error inside minified file (color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo | ... truncated 
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
             at <anonymous> ([dir]/inspect-error.test.js:115:5)"
     `);
@@ -148,7 +148,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:143:19)"
+    at <anonymous> ([file]:143:15)"
 `);
 });
 
@@ -262,8 +262,8 @@ test("a folder named in parentheses, in the stack of an error whose stack was re
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout.replaceAll("\\", "/").replaceAll(String(dir).replaceAll("\\", "/"), "[dir]").split("\n")).toEqual([
-    "at [dir]/(group)/throws.js:1:11",
-    "at fails ([dir]/(group)/fails.js:1:37)",
+    "at [dir]/(group)/throws.js:1:7",
+    "at fails ([dir]/(group)/fails.js:1:33)",
     "",
   ]);
   expect(exitCode).toBe(0);
@@ -674,7 +674,7 @@ describe("an error with a circular reference to itself", () => {
 // `Malloc=1` lets ASAN catch a read past the end of the source.
 test.concurrent("prints the source preview for an error positioned at the end of the source text", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `(0, eval)("xyz");`],
+    cmd: [bunExe(), "-e", `(0, eval)("delete null.x");`],
     env: { ...bunEnv, NO_COLOR: "1", Malloc: "1" },
     stdout: "pipe",
     stderr: "pipe",
@@ -682,7 +682,11 @@ test.concurrent("prints the source preview for an error positioned at the end of
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, excerpt: stderr.split("\n").slice(0, 3) }).toEqual({
     stdout: "",
-    excerpt: ["1 | xyz", "       ^", "ReferenceError: xyz is not defined"],
+    excerpt: [
+      "1 | delete null.x",
+      "                 ^",
+      "TypeError: null is not an object (evaluating 'delete null.x')",
+    ],
   });
   expect(exitCode).toBe(1);
 });

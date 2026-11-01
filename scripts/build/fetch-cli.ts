@@ -25,7 +25,7 @@ import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
+import { applyPatch, downloadWithRetry, extractTarGz, fetchPrebuilt, normalizeLf } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { formatElapsed } from "./tty.ts";
@@ -372,42 +372,6 @@ export function computeSourceIdentity(commit: string, patchContents: string[]): 
     h.update(normalizeLf(content));
   }
   return h.digest("hex").slice(0, 16);
-}
-
-/** CRLF→LF. Used for patch content before hashing and `git apply`. */
-function normalizeLf(s: string): string {
-  return s.replace(/\r\n/g, "\n");
-}
-
-/**
- * Apply a patch via `git apply` over stdin.
- *
- * Normalizes CRLF→LF (same as the identity hash — see computeSourceIdentity)
- * so a CRLF-mangled checkout still applies cleanly. --no-index: dest/ is
- * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
- * authored against upstream which may have different trailing whitespace.
- */
-export function applyPatch(dest: string, patchPath: string, patchBody: string): void {
-  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
-    cwd: dest,
-    input: normalizeLf(patchBody),
-    stdio: ["pipe", "ignore", "pipe"],
-    encoding: "utf8",
-  });
-
-  if (result.error) {
-    throw new BuildError(`Failed to spawn git apply`, { cause: result.error });
-  }
-
-  if (result.status !== 0) {
-    // If the patch was already applied, the source dir must have been
-    // partially fetched, which means .ref shouldn't exist, which means
-    // we should have rm'd the dir. A "cleanly" error here = logic bug.
-    throw new BuildError(`Patch failed: ${result.stderr}`, {
-      file: patchPath,
-      hint: "The patch may be out of date with the pinned commit",
-    });
-  }
 }
 
 // Only run if this file is the entry point (not imported as a module).

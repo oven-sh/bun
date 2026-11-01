@@ -11,7 +11,7 @@ import { join, relative, resolve } from "node:path";
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { bootstrapCmds } from "../../scripts/build/deps/bootstrap-cmds.ts";
-import { icu } from "../../scripts/build/deps/icu.ts";
+import { icu, ICU_VERSION } from "../../scripts/build/deps/icu.ts";
 import {
   jscPrograms,
   prebuiltHasProgramObjects,
@@ -22,6 +22,7 @@ import {
   webkitTestAotPath,
   type WebKitAotFile,
 } from "../../scripts/build/deps/webkit.ts";
+import { hostZstdPath, zstd } from "../../scripts/build/deps/zstd.ts";
 import { BuildError } from "../../scripts/build/error.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
@@ -32,10 +33,10 @@ import {
   type Dependency,
   type DepName,
   type DirectBuild,
+  type DirectStep,
   type GenStep,
   type ResolvedDep,
 } from "../../scripts/build/source.ts";
-import { webkitSourceDir } from "../../scripts/build/webkit-source.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
 function mockToolchain(): Toolchain {
@@ -80,6 +81,8 @@ const linux = (partial: PartialConfig): Config =>
     mockToolchain(),
   );
 
+const isGenerator = (step: DirectStep): step is GenStep => step.kind === undefined || step.kind === "gen";
+
 describe("which builds compile WebKit", () => {
   test("all but --webkit=prebuilt: the -local profiles a checkout, CI and the defaults the pinned commit", () => {
     const local = ["debug-local", "release-local"];
@@ -93,13 +96,19 @@ describe("which builds compile WebKit", () => {
   });
 
   test("the pinned commit is a --local-deps entry too: a directory of the cache named by the commit", () => {
-    const cfg = linux({ cacheDir: join("/somewhere", "cache") });
-    expect(cfg.localDeps.WebKit).toBe(webkitSourceDir(resolve("/somewhere", "cache"), cfg.webkitVersion));
-    expect(cfg.localDeps.WebKit).toStartWith(resolve("/somewhere", "cache"));
-    expect(cfg.localDeps.WebKit).not.toBe(join(cfg.vendorDir, "WebKit"));
+    const cache = resolve("/somewhere", "cache");
+    const pinned = (webkitVersion: string) => linux({ cacheDir: cache, webkitVersion });
+    const cfg = pinned("0123456789abcdef0123456789abcdef01234567");
+    expect(cfg.localDeps).toEqual({
+      WebKit: join(cache, "webkit-source-0123456789abcdef"),
+      icu: join(cache, `icu-source-${ICU_VERSION}-webkit-0123456789abcdef`),
+    });
     expect(depSource(cfg, webkit)).toMatchObject({ kind: "local", path: cfg.localDeps.WebKit });
-    const other = linux({ cacheDir: join("/somewhere", "cache"), webkitVersion: "0".repeat(40) });
-    expect(other.localDeps.WebKit).not.toBe(cfg.localDeps.WebKit);
+    // The sha of a release tag is at its end.
+    expect(pinned("autobuild-preview-pr-12-89abcdef").localDeps.WebKit).toBe(
+      join(cache, "webkit-source-preview-pr-12-89abcdef"),
+    );
+    expect(() => linux({ webkit: "vendored" as "source" })).toThrow("Unknown webkit: vendored");
     expect(() => linux({ webkit: "source", localDeps: "WebKit=/elsewhere/WebKit" })).toThrow(
       "webkit=source can't be combined with --local-deps=WebKit=<path>",
     );
@@ -107,12 +116,67 @@ describe("which builds compile WebKit", () => {
 
   test("ICU is compiled with the pinned commit, for every target but macOS", () => {
     expect(icu.enabled!(linux({}))).toBe(true);
-    expect(linux({}).localDeps.icu).toStartWith(linux({}).cacheDir);
     expect(linux({ localDeps: "icu=/elsewhere/icu" }).localDeps.icu).toBe(resolve("/elsewhere", "icu"));
     for (const mode of ["local", "prebuilt"] as const) {
       expect(icu.enabled!(linux({ webkit: mode }))).toBe(false);
       expect(linux({ webkit: mode }).localDeps.icu).toBeUndefined();
     }
+  });
+
+  test("ICU's sources are what its own lists name, and its data is repacked with a zstd built for this machine", () => {
+    using dir = tempDir("build-icu", {
+      "icu/source/common/sources.txt": "putil.cpp\nudata.cpp\n",
+      "icu/source/i18n/sources.txt": "calendar.cpp\n",
+    });
+    const source = join(String(dir), "icu", "source");
+    const major = ICU_VERSION.split(".")[0];
+    for (const [cfg, objectFormat, object, target] of [
+      [linux({ localDeps: `icu=${join(String(dir), "icu")}` }), "elf", "icudata.o", ["--target=x86_64-linux-gnu"]],
+      ...(isWindows
+        ? []
+        : ([
+            [
+              resolveConfig(
+                { os: "windows", arch: "x64", winsysroot: "/fake", localDeps: `icu=${join(String(dir), "icu")}` },
+                mockToolchain(),
+              ),
+              "coff",
+              "icudata.obj",
+              ["--target=x86_64-pc-windows-msvc"],
+            ],
+          ] as const)),
+    ] as const) {
+      const spec = icu.build(cfg) as DirectBuild;
+      const data = (file: string) => join(cfg.buildDir, "deps", "icu", "data", file);
+      expect(spec.groups!.map(group => group.sources)).toEqual([
+        [
+          join(source, "common", "putil.cpp"),
+          join(source, "common", "udata.cpp"),
+          join(source, "i18n", "calendar.cpp"),
+        ],
+      ]);
+      expect(spec.configureInputs).toEqual(["common", "i18n"].map(library => join(source, library, "sources.txt")));
+      const [repack, assemble] = spec.steps!;
+      expect(repack).toMatchObject({
+        outputs: [data("icudata.S"), data(`icudt${major}l.dat`), data("icudt.zstdict")],
+        inputs: expect.arrayContaining([
+          join(source, "data", "in", `icudt${major}l.dat`),
+          join(cfg.localDeps.WebKit!, "icu", "keep-raw.txt"),
+          hostZstdPath(cfg),
+        ]),
+        cmd: expect.arrayContaining(["--obj-format", objectFormat]),
+      });
+      expect(assemble).toEqual({
+        kind: "host-cc",
+        output: data(object),
+        sources: [data("icudata.S")],
+        flags: [...target, "-c"],
+        inputs: [data(`icudt${major}l.dat`), data("icudt.zstdict")],
+      });
+      expect(spec.libs).toEqual([data(object)]);
+      expect((zstd.build(cfg) as DirectBuild).steps).toMatchObject([{ kind: "host-cc", output: hostZstdPath(cfg) }]);
+    }
+    expect((zstd.build(linux({ webkit: "prebuilt" })) as DirectBuild).steps).toBeUndefined();
   });
 
   test("with the prebuilt, jsc and testaot are the tarball's objects linked here, where the tarball has them", () => {
@@ -197,6 +261,21 @@ describe("which builds compile WebKit", () => {
       expect(bootstrapCmds.enabled!(mac({ webkit: "local" }))).toBe(true);
       expect(bootstrapCmds.enabled!(mac({ webkit: "prebuilt" }))).toBe(false);
       expect(bootstrapCmds.enabled!(linux({}))).toBe(false);
+
+      const cfg = mac({});
+      const spec = bootstrapCmds.build(cfg) as DirectBuild;
+      const built = (file: string) => join(cfg.buildDir, "deps", "bootstrap_cmds", file);
+      expect(spec.steps!.map(step => (isGenerator(step) ? step.cmd[0] : step.kind))).toEqual([
+        "flex",
+        "bison",
+        "host-cc",
+      ]);
+      expect(spec.steps![2]).toMatchObject({
+        output: built("migcom"),
+        sources: expect.arrayContaining([built("lexxer.c"), built("parser.c")]),
+        inputs: [built("y.tab.h")],
+        flags: expect.arrayContaining([`-I${join(cfg.localDeps.WebKit!, "macos-cross")}`]),
+      });
     },
   );
 
@@ -436,7 +515,7 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       };
     };
     const step = (desc: string) => {
-      const s = spec.steps!.find((s): s is GenStep => s.kind !== "exe" && s.desc === desc)!;
+      const s = spec.steps!.find((s): s is GenStep => isGenerator(s) && s.desc === desc)!;
       return { outputs: s.outputs.map(short), cmd: s.cmd.map(short), inputs: s.inputs.map(short), cwd: short(s.cwd) };
     };
     return { cfg, spec, short, group, step };
@@ -599,11 +678,11 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
 
   test("generators run on the listed inputs, and what configure read reconfigures", () => {
     const { spec, short } = describeBuild({});
-    const outputs = spec.steps!.flatMap(s => (s.kind === "exe" ? [s.output] : s.outputs)).map(short);
+    const outputs = spec.steps!.flatMap(s => (isGenerator(s) ? s.outputs : [s.output])).map(short);
     expect(outputs).toContain("B/JavaScriptCore/DerivedSources/MapPrototype.lut.h");
     expect(outputs).toContain("B/JavaScriptCore/DerivedSources/LLIntAssembly.h");
     expect(outputs).toContain("B/bin/LLIntOffsetsExtractor");
-    const facts = spec.steps!.find((s): s is GenStep => s.kind !== "exe" && s.desc === "AOTRuntimeFactsOfLayouts.def")!;
+    const facts = spec.steps!.find((s): s is GenStep => isGenerator(s) && s.desc === "AOTRuntimeFactsOfLayouts.def")!;
     expect(facts.outputs.map(short)).toEqual(["B/JavaScriptCore/DerivedSources/aot/AOTRuntimeFactsOfLayouts.def"]);
     expect(facts.inputs.map(short)).toEqual(
       expect.arrayContaining(["JSC/aot/image/generator/runtime-facts.ts", "JSC/aot/ir/AOTValue.cpp"]),
@@ -839,6 +918,13 @@ describe("DirectBuild groups and steps", () => {
         steps: [
           { kind: "exe", output: join(out, "bin", "tool"), objectsFrom: ["tool-obj"] },
           {
+            kind: "host-cc",
+            output: join(out, "host-tool"),
+            sources: [join(root, "src", "b.c")],
+            flags: ["-O1", '-DNAME="a b"'],
+            inputs: [join(out, "gen.h")],
+          },
+          {
             outputs: [join(out, "gen.h")],
             inputs: [join(out, "bin", "tool")],
             cmd: ["ruby", "gen.rb"],
@@ -878,6 +964,10 @@ describe("DirectBuild groups and steps", () => {
     expect(edge("deps/zstd/gen.h").line).toBe("build deps/zstd/gen.h: dep_gen deps/zstd/bin/tool");
     expect(edge("deps/zstd/gen.h").vars).toContain(`opts = --cwd=${out} --env=K=V --stdout=${join(out, "gen.h")}`);
     expect(edge("deps/zstd/gen.h").vars).toContain("cmd = ruby gen.rb");
+    expect(edge("deps/zstd/host-tool")).toEqual({
+      line: `build deps/zstd/host-tool: dep_host_cc ${rel(join(root, "src", "b.c"))} | toolchain-identity/hostCc.txt deps/zstd/gen.h`,
+      vars: `flags = -O1 '-DNAME="a b"'`,
+    });
     expect(edge("deps/zstd/bin/tool").line).toStartWith("build deps/zstd/bin/tool: link obj/vendor/zstd/tool.cpp.o |");
     expect(edge("deps/zstd/.lib-ready").line).toBe("build deps/zstd/.lib-ready: phony deps/zstd/gen.h");
     expect(edge("pch/prefix.h.hxx.pch").line).toEndWith("|| pch/.dir deps/zstd/.lib-ready");

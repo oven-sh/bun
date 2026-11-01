@@ -374,7 +374,7 @@ export const globalFlags: Flag[] = [
     // every type it can see, i.e. the whole JSC/WTF universe the PCH pulls
     // in, again. Homing (clang's default on Linux) emits a type once, in the
     // TU that defines its constructor or vtable, so bun's types come from
-    // bun's own objects and JSC's from the WebKit prebuilt, which carries its
+    // bun's own objects and JSC's from WebKit's, which carry their
     // own DWARF. Same types and variables in the debugger; BunObject.cpp
     // measured 8.2s -> 5.35s to compile (the line-tables-only build of the
     // same file is 5.25s), object 9.0 MB -> 5.2 MB. Irrelevant to the LTO

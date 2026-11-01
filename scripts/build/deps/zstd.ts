@@ -13,7 +13,6 @@
 import { join } from "node:path";
 import type { Config } from "../config.ts";
 import { type Dependency, type DirectBuild, depBuildDir, depSourceDir } from "../source.ts";
-import { buildsIcu } from "./icu.ts";
 
 const ZSTD_COMMIT = "f8745da6ff1ad1e7bab384bd1f9d742439278e99";
 
@@ -97,23 +96,19 @@ export const zstd: Dependency = {
       // wrap it in quotes. Avoids clashes with lshpack's copy.
       cflags: ["-DXXH_NAMESPACE=ZSTD_"],
     };
-    if (buildsIcu(cfg)) {
+    if (cfg.icu) {
       const src = depSourceDir(cfg, "zstd");
-      const inputs = [...SOURCES, ...PROGRAM_SOURCES].map(s => join(src, s));
       spec.steps = [
         {
-          outputs: [hostZstdPath(cfg)],
-          inputs,
-          cwd: src,
-          cmd: [
-            ...[cfg.hostCc, "-O2", "-w", "-pthread"],
+          kind: "host-cc",
+          output: hostZstdPath(cfg),
+          sources: [...SOURCES, ...PROGRAM_SOURCES].map(s => join(src, s)),
+          flags: [
+            ...["-O2", "-w", "-pthread"],
             ...["-DZSTD_MULTITHREAD", "-DZSTD_LEGACY_SUPPORT=0", "-DZSTD_DISABLE_ASM=1", "-DXXH_NAMESPACE=ZSTD_"],
             ...["-DZSTD_NOBENCH", "-DZSTD_NOTRACE"],
             ...["lib", "lib/common", "lib/dictBuilder"].map(dir => `-I${join(src, dir)}`),
-            ...["-o", hostZstdPath(cfg)],
-            ...inputs,
           ],
-          desc: "zstd (for this machine)",
         },
       ];
     }

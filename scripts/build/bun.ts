@@ -74,7 +74,7 @@ function systemLibs(cfg: Config): string[] {
         libs.push("-latomic");
       }
     }
-    // Linux local WebKit: link system ICU (prebuilt bundles its own).
+    // Linux local WebKit: link system ICU (prebuilt bundles its own, the pinned commit has deps/icu.ts).
     // Assumes system ICU is in default lib paths — true on most distros.
     // Android: no system ICU; the local WebKit build must bundle it.
     if (cfg.webkit === "local" && cfg.abi !== "android" && linuxIcuRoot(cfg) === undefined) {
@@ -212,7 +212,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
-  // Generated headers a dep declares as outputs of its steps (local WebKit's
+  // Generated headers a dep declares as outputs of its steps (WebKit's
   // DerivedSources): order-only, so regenerating one recompiles its includers
   // (depfiles) rather than the PCH and everything behind it.
   const depGeneratedHeaders: string[] = [];

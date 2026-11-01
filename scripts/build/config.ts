@@ -11,7 +11,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlink
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { locations, pins } from "./ci-images/spec.ts";
-import { buildsIcu } from "./deps/icu.ts";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
@@ -172,12 +171,14 @@ export interface Config {
   staticSqlite: boolean;
   staticLibatomic: boolean;
   tinycc: boolean;
+  /** ICU is compiled in this graph (deps/icu.ts): with the pinned WebKit, for every target but macOS, which has the SDK's. */
+  icu: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
   /** With `fuzzilli`: only the ahead-of-time compiler reports coverage (scripts/build/fuzzilli-compiler-coverage.txt). */
   fuzzilliCompilerOnly: boolean;
   /**
-   * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt.
+   * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included (`webkit: "prebuilt"`: the `-hardened` one).
    * The link makes a position-independent executable with full RELRO, eager binding and code in pages of its own.
    * Defines BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
    * Leaves out one thing that any other build can do: an executable that it compiles ahead of time does not start where
@@ -244,21 +245,21 @@ export interface Config {
    * leaves the engine's WebAssembly code out of the binary. Every package that loads a WebAssembly
    * module stops working, and so do the modules that `bun build --compile --aot` compiles ahead of
    * time: it warns at each one that a program imports, and the executable throws a ReferenceError.
-   * Takes a WebKit built from source (`webkit: "local"`) or the one prebuilt without WebAssembly,
+   * Takes a WebKit built from source (`webkit: "source"`, `"local"`) or the one prebuilt without WebAssembly,
    * which `hardened`, `lto` and `aot` together select.
    */
   webAssembly: boolean;
   /**
    * Default true. Off builds a Bun with no `ShadowRealm` global: the engine's `useShadowRealm` option
-   * is false whatever `BUN_JSC_useShadowRealm` says. A WebKit built from source (`webkit: "local"`) is
-   * also built with ENABLE_SHADOW_REALM=0, which leaves the class out of the binary; a prebuilt one
+   * is false whatever `BUN_JSC_useShadowRealm` says. A WebKit built from source (`webkit: "source"`,
+   * `"local"`) is also built with ENABLE_SHADOW_REALM=0, which leaves the class out of the binary; a prebuilt one
    * keeps it.
    */
   shadowRealm: boolean;
   /**
    * Default true. Off builds a Bun whose `bun:ffi` calls no native function and loads no library: dlopen(),
    * linkSymbols(), CFunction(), JSCallback(), cc() with a `library` and what cc() returns throw. A WebKit built from
-   * source (`webkit: "local"`) is also built with ENABLE_FFI=0, which leaves the engine's half of those calls out of
+   * source (`webkit: "source"`, `"local"`) is also built with ENABLE_FFI=0, which leaves the engine's half of those calls out of
    * the binary; a prebuilt one keeps it.
    */
   ffi: boolean;
@@ -1127,8 +1128,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // LTO (ThinLTO across bun, JSC and the Rust side): on for every release
   // build without assertions or ASAN, locally as in CI, so a local release
-  // binary has the codegen CI ships. `--lto=off` for faster relinks. JSC
-  // takes part through the prebuilt: `lto` selects the `-lto` WebKit tarball
+  // binary has the codegen CI ships. `--lto=off` for faster relinks. A
+  // prebuilt JSC takes part too: `lto` selects the `-lto` WebKit tarball
   // (deps/webkit.ts prebuiltSuffix), whose archives hold the LLVM bitcode
   // oven-sh/WebKit's CI emitted. The linker here has to read it, which rests
   // on both repos pinning the same LLVM: tools.ts enforces LLVM_VERSION on
@@ -1236,8 +1237,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       hint: "A checkout of yours is built with --webkit=local",
     });
     localDeps.WebKit = webkitSourceDir(cacheDir, webkitVersion);
-    if (buildsIcu({ webkit, darwin })) localDeps.icu ??= icuSourceDir(cacheDir, webkitVersion);
   }
+  const icu = webkit === "source" && !darwin;
+  if (icu) localDeps.icu ??= icuSourceDir(cacheDir, webkitVersion);
 
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
@@ -1549,6 +1551,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     staticSqlite,
     staticLibatomic,
     tinycc,
+    icu,
     valgrind,
     fuzzilli,
     hardened,
@@ -1989,9 +1992,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   // to revert my WebKit test branch" before the build goes weird. Strip the
   // autobuild- prefix so preview tags show their sha instead of the prefix.
   if (cfg.webkitVersion !== versionDefaults.webkitVersion) {
-    const v = cfg.webkitVersion.startsWith("autobuild-")
-      ? cfg.webkitVersion.slice("autobuild-".length)
-      : cfg.webkitVersion;
+    const v = webkitVersionName(cfg.webkitVersion);
     features.push(`webkit-version:${/^[0-9a-f]{40}$/.test(v) ? v.slice(0, 10) : v}`);
   }
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);

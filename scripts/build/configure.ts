@@ -29,6 +29,7 @@ import {
   resolveCodegenConfig,
   resolveConfig,
 } from "./config.ts";
+import { bootstrapCmds } from "./deps/bootstrap-cmds.ts";
 import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
@@ -439,6 +440,22 @@ function requirePerl(): void {
   }
 }
 
+/** What fetches WebKit and what its generators are written in (deps/webkit.ts names them bare), before an edge fails on one. */
+function requireWebKitTools(cfg: Config): void {
+  if (cfg.webkit === "prebuilt") return;
+  const tools = [
+    ...(cfg.webkit === "source" ? ["git"] : []),
+    ...["ruby", cfg.host.os === "windows" ? "python" : "python3"],
+    ...(bootstrapCmds.enabled!(cfg) ? ["flex", "bison"] : []),
+  ];
+  const missing = tools.filter(tool => findSystemTool(tool) === undefined);
+  if (missing.length > 0) {
+    throw new BuildError(`${missing.join(", ")} not found in PATH`, {
+      hint: `Compiling WebKit needs ${tools.join(", ")}. Install them, or link a prebuilt WebKit with --webkit=prebuilt`,
+    });
+  }
+}
+
 /** build.ts configuring before it spawns ninja: resolves the ninja to spawn (ninja-release.ts). */
 export function configure(input: ConfigureInput): Promise<ConfigureResult> {
   return generate(input, ensureNinja);
@@ -474,6 +491,7 @@ async function generate<N extends string | undefined>(
     checkImageTools(toolchain);
   }
 
+  requireWebKitTools(cfg);
   // WebKit's and ICU's sources, which say what the graph compiles. Started here and awaited before the graph is emitted,
   // so that they download while the steps in between run.
   const webkitSource = ensureWebKitSource(cfg);

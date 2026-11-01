@@ -14,9 +14,10 @@
  * some 450 sources to compile for the machine that builds. ICU's udata.cpp reaches a compressed item through the weak
  * bun_icu_maybe_decompress (icu/udata-decompress-hook.patch), which src/jsc/bindings/bun_icu_decompress.cpp defines.
  *
- * The package is read and written here. Both are checked: what is read, written again, has to be the input byte for byte.
+ * The package is written here, and read with the reader of the trimmable link (trim/icu-data.ts). Both are checked: what
+ * is read, written again, has to be the input byte for byte.
  *
- *   icu-data.ts --zstd <exe> --in <icudtNNl.dat> --keep-raw <keep-raw.txt> --cover <k=N,d=N|search> --out <dir>
+ *   icu-repack.ts --zstd <exe> --in <icudtNNl.dat> --keep-raw <keep-raw.txt> --cover <k=N,d=N|search> --out <dir>
  *               [--obj-format elf|coff]
  */
 
@@ -26,6 +27,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { BuildError } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
+import { itemsOf } from "./trim/icu-data.ts";
 
 /**
  * Items bun never loads: charset converters and their aliases (TextDecoder is not ICU's; UCONFIG_NO_LEGACY_CONVERSION),
@@ -34,10 +36,10 @@ import { writeIfChanged } from "./fs.ts";
  */
 const REMOVE = /\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit\/|^rbnf\/|^unames\.icu$/;
 const RBNF_KEEP = new Set(["root", "res_index", "ja", "zh", "zh_Hant"]);
-const keepAnyway = (item: string): boolean => {
-  const m = /^rbnf\/(.+)\.res$/.exec(item);
-  return m !== null && RBNF_KEEP.has(m[1]!);
-};
+
+export function isLoaded(item: string): boolean {
+  return !REMOVE.test(item) || RBNF_KEEP.has(/^rbnf\/(.+)\.res$/.exec(item)?.[1] ?? "");
+}
 
 const ZSTD_LEVEL = 19;
 const DICT_SIZE = 128 * 1024;
@@ -45,13 +47,13 @@ const DICT_SIZE = 128 * 1024;
 const MIN_COMPRESS_BYTES = 64;
 const MIN_SAVINGS_BYTES = 4;
 
-interface Item {
+export interface Item {
   /** Without the prefix of the table of contents: "curr/de.res". */
   name: string;
   body: Buffer;
 }
 
-interface Package {
+export interface Package {
   /** ucmndata.h DataHeader, copied as it is. */
   header: Buffer;
   /** "icudt79l": every name in the table of contents is "<prefix>/<name>". */
@@ -65,29 +67,20 @@ interface Package {
 //   char names[]     NUL-terminated, in the table's order
 //   item bodies[]    each 16-byte aligned, the gaps filled with 0xaa
 
-function readPackage(raw: Buffer, path: string): Package {
+export function readPackage(raw: Buffer): Package {
+  const sizes = itemsOf(raw);
   const toc = raw.readUInt16LE(0);
-  if (raw[2] !== 0xda || raw[3] !== 0x27) throw new BuildError(`${path}: not an ICU data file`);
-  if (raw.toString("latin1", 12, 16) !== "CmnD") throw new BuildError(`${path}: not a package of ICU data`);
-  const count = raw.readUInt32LE(toc);
-  const nameAt = (i: number): string => {
-    const start = toc + raw.readUInt32LE(toc + 4 + i * 8);
-    return raw.toString("latin1", start, raw.indexOf(0, start));
-  };
-  const bodyAt = (i: number): number => (i === count ? raw.length : toc + raw.readUInt32LE(toc + 8 + i * 8));
-  const prefix = nameAt(0).split("/")[0]!;
-  if (!/^icudt\d+l$/.test(prefix)) throw new BuildError(`${path}: its names start with '${prefix}', not icudt<NN>l`);
-  const items: Item[] = [];
-  for (let i = 0; i < count; i++) {
-    const name = nameAt(i);
-    if (!name.startsWith(prefix + "/")) throw new BuildError(`${path}: '${name}' does not start with ${prefix}/`);
-    // With the padding behind it, which is not told apart from the item: ICU takes the same range for its length.
-    items.push({ name: name.slice(prefix.length + 1), body: raw.subarray(bodyAt(i), bodyAt(i + 1)) });
-  }
+  const firstName = toc + raw.readUInt32LE(toc + 4);
+  const prefix = raw.toString("latin1", firstName, raw.indexOf("/", firstName));
+  if (!/^icudt\d+l$/.test(prefix))
+    throw new BuildError(`The names of ICU's data start with '${prefix}', not icudt<NN>l`);
+  let at = toc + raw.readUInt32LE(toc + 8);
+  // With the padding behind it, which is not told apart from the item: ICU takes the same range for its length.
+  const items = sizes.map(({ name, size }) => ({ name, body: raw.subarray(at, (at += size)) }));
   return { header: raw.subarray(0, toc), prefix, items };
 }
 
-function writePackage({ header, prefix }: Package, items: readonly Item[]): Buffer {
+export function writePackage({ header, prefix }: Package, items: readonly Item[]): Buffer {
   const toc = header.length;
   const tableBytes = 4 + items.length * 8;
   const padding = (at: number): Buffer => Buffer.alloc((16 - (at % 16)) % 16, 0xaa);
@@ -112,34 +105,19 @@ function writePackage({ header, prefix }: Package, items: readonly Item[]): Buff
   return Buffer.concat([header, table, ...names, ...bodies]);
 }
 
-/** Runs of four or more printable characters in UTF-16LE: what `strings -el` prints. */
-function utf16Strings(buf: Buffer): string[] {
-  const out: string[] = [];
-  let run = "";
-  for (let i = 0; i + 1 < buf.length; i += 2) {
-    const c = buf.readUInt16LE(i);
-    if (c >= 0x20 && c < 0x7f) {
-      run += String.fromCharCode(c);
-      continue;
-    }
-    if (run.length >= 4) out.push(run);
-    run = "";
-  }
-  if (run.length >= 4) out.push(run);
-  return out;
-}
-
 /**
  * ICU reaches rbnf/ by itself: numberingSystems.res has numbering systems whose rules are "<locale>/SpelloutRules/...",
  * and date patterns name those systems. One outside RBNF_KEEP would fail when a program formats with it, not here.
  */
-function assertRbnfKeepList(items: readonly Item[]): void {
+export function assertRbnfKeepList(items: readonly Item[]): void {
   const numberingSystems = items.find(item => item.name === "numberingSystems.res");
-  if (numberingSystems === undefined) throw new BuildError("icu-data: the package has no numberingSystems.res");
-  const locales = new Set(utf16Strings(numberingSystems.body).flatMap(s => /^([A-Za-z_]+)\//.exec(s)?.[1] ?? []));
+  if (numberingSystems === undefined) throw new BuildError("icu-repack: the package has no numberingSystems.res");
+  // What `strings -el` prints: runs of four or more printable characters.
+  const strings = numberingSystems.body.toString("utf16le").match(/[\x20-\x7e]{4,}/g) ?? [];
+  const locales = new Set(strings.flatMap(s => /^([A-Za-z_]+)\//.exec(s)?.[1] ?? []));
   const missing = [...locales].filter(locale => !RBNF_KEEP.has(locale));
   if (missing.length > 0) {
-    throw new BuildError(`icu-data: numberingSystems.res also reaches the rbnf rules of ${missing.join(", ")}`, {
+    throw new BuildError(`icu-repack: numberingSystems.res also reaches the rbnf rules of ${missing.join(", ")}`, {
       file: import.meta.filename,
       hint: "Add them to RBNF_KEEP",
     });
@@ -147,19 +125,12 @@ function assertRbnfKeepList(items: readonly Item[]): void {
 }
 
 /** The lines of icu/keep-raw.txt. `*` stands for part of one path segment. */
-function keepRawPatterns(path: string): RegExp[] {
-  return readFileSync(path, "utf8")
+export function keepRawPatterns(lines: string): RegExp[] {
+  return lines
     .split("\n")
     .map(line => line.replace(/#.*$/, "").trim())
     .filter(Boolean)
     .map(glob => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`));
-}
-
-function writeIfChangedBuffer(path: string, data: Buffer): void {
-  try {
-    if (Buffer.compare(readFileSync(path), data) === 0) return;
-  } catch {}
-  writeFileSync(path, data);
 }
 
 function main(): void {
@@ -175,7 +146,7 @@ function main(): void {
   });
   if (!opts.zstd || !opts.in || !opts["keep-raw"] || !opts.cover || !opts.out) {
     throw new BuildError(
-      "usage: icu-data.ts --zstd <exe> --in <icudtNNl.dat> --keep-raw <file> --cover <k=N,d=N|search> --out <dir>",
+      "usage: icu-repack.ts --zstd <exe> --in <icudtNNl.dat> --keep-raw <file> --cover <k=N,d=N|search> --out <dir>",
     );
   }
   const { zstd, in: input, out } = opts;
@@ -183,25 +154,25 @@ function main(): void {
   if (!coff && opts["obj-format"] !== "elf") throw new BuildError(`--obj-format is elf or coff`);
   const run = (args: string[]): string => {
     const r = spawnSync(zstd, args, { encoding: "utf8", maxBuffer: 1 << 28 });
-    if (r.error) throw new BuildError(`icu-data: could not run ${zstd}`, { cause: r.error });
+    if (r.error) throw new BuildError(`icu-repack: could not run ${zstd}`, { cause: r.error });
     if (r.status !== 0) {
-      throw new BuildError(`icu-data: ${zstd} ${args.join(" ")} exited with ${r.status}\n${r.stderr}`);
+      throw new BuildError(`icu-repack: ${zstd} ${args.join(" ")} exited with ${r.status}\n${r.stderr}`);
     }
     return r.stderr;
   };
 
   const raw = readFileSync(input);
-  const pkg = readPackage(raw, input);
+  const pkg = readPackage(raw);
   if (Buffer.compare(raw, writePackage(pkg, pkg.items)) !== 0) {
-    throw new BuildError(`icu-data: ${input}, read and written again, is not what it was`, {
+    throw new BuildError(`icu-repack: ${input}, read and written again, is not what it was`, {
       hint: "This ICU lays out its package in another way than ucmndata.h's UDataOffsetTOC",
     });
   }
 
-  const items = pkg.items.filter(({ name }) => !REMOVE.test(name) || keepAnyway(name));
+  const items = pkg.items.filter(({ name }) => isLoaded(name));
   assertRbnfKeepList(items);
 
-  const patterns = keepRawPatterns(opts["keep-raw"]);
+  const patterns = keepRawPatterns(readFileSync(opts["keep-raw"], "utf8"));
   const compressible = items.filter(
     ({ name, body }) => body.length >= MIN_COMPRESS_BYTES && !patterns.some(pattern => pattern.test(name)),
   );
@@ -227,7 +198,7 @@ function main(): void {
     run(["-q", `--train-cover=${opts.cover}`, ...train]);
   }
   const dictionary = join(out, "icudt.zstdict");
-  writeIfChangedBuffer(dictionary, readFileSync(trained));
+  writeIfChanged(dictionary, readFileSync(trained));
 
   // From files, so that each frame says how long its content is. No checksum (the data is read-only in the executable)
   // and no dictionary ID (there is one dictionary).
@@ -245,7 +216,7 @@ function main(): void {
     return { name, body: frame };
   });
   const data = join(out, `${pkg.prefix}.dat`);
-  writeIfChangedBuffer(data, writePackage(pkg, repacked));
+  writeIfChanged(data, writePackage(pkg, repacked));
 
   const symbol = pkg.prefix.slice(0, -1) + "_dat";
   // COFF symbols have no type.
@@ -285,10 +256,12 @@ function main(): void {
   rmSync(work, { recursive: true, force: true });
 }
 
-try {
-  main();
-} catch (err) {
-  if (!(err instanceof BuildError)) throw err;
-  process.stderr.write(err.format());
-  process.exit(1);
+if (process.argv[1] === import.meta.filename) {
+  try {
+    main();
+  } catch (err) {
+    if (!(err instanceof BuildError)) throw err;
+    process.stderr.write(err.format());
+    process.exit(1);
+  }
 }

@@ -237,7 +237,22 @@ export interface ExeStep {
   objectsFrom: string[];
 }
 
-export type DirectStep = GenStep | ExeStep;
+/**
+ * One run of `cfg.hostCc`, clang's GNU driver, with none of the target's flags (`dep_host_cc`): a program for the machine
+ * that builds, or an object whose `flags` name its target.
+ */
+export interface HostCcStep {
+  kind: "host-cc";
+  /** Absolute. A program's ends in `cfg.host.exeSuffix`. */
+  output: string;
+  /** Absolute. On the command line, in this order. */
+  sources: string[];
+  flags: string[];
+  /** What the sources include that another edge writes. Absolute. */
+  inputs?: string[];
+}
+
+export type DirectStep = GenStep | ExeStep | HostCcStep;
 
 /** A header derived from a template in the source tree. */
 export interface HeaderSubst {
@@ -851,10 +866,11 @@ export function resolveDep(
     for (const s of buildSpec.sources) {
       directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
     }
-    // What a generator reads of the tree. Its other inputs are outputs of other edges.
+    // What a step reads of the tree. Its other inputs are outputs of other edges.
     for (const step of buildSpec.steps ?? []) {
       if (step.kind === "exe") continue;
-      directSources.push(...step.inputs.filter(input => input.startsWith(srcDir + sep)));
+      const reads = step.kind === "host-cc" ? [...step.sources, ...(step.inputs ?? [])] : step.inputs;
+      directSources.push(...reads.filter(input => input.startsWith(srcDir + sep)));
     }
     for (const h of Object.values(buildSpec.headers ?? {})) {
       if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
@@ -1458,6 +1474,17 @@ function emitDirect(
   const steps = spec.steps ?? [];
   for (const step of steps) {
     if (step.kind === "exe") continue;
+    if (step.kind === "host-cc") {
+      n.build({
+        outputs: [step.output],
+        rule: "dep_host_cc",
+        inputs: step.sources,
+        implicitInputs: [toolIdentityFile(cfg, "hostCc"), ...(step.inputs ?? [])],
+        orderOnlyInputs: orderOnly,
+        vars: { flags: quoteArgs(step.flags, hostWin) },
+      });
+      continue;
+    }
     const streamOpts = [
       `--cwd=${step.cwd}`,
       ...Object.entries(step.env ?? {}).map(([k, v]) => `--env=${k}=${v}`),

@@ -25,9 +25,9 @@ import { dirname } from "node:path";
  * Synchronous because configure is single-threaded and the files are
  * small. Async would add await noise for no concurrency benefit.
  */
-export function writeIfChanged(path: string, content: string): boolean {
+export function writeIfChanged(path: string, content: string | Uint8Array): boolean {
   try {
-    if (readFileSync(path, "utf8") === content) return false;
+    if (readFileSync(path).equals(typeof content === "string" ? Buffer.from(content) : content)) return false;
   } catch {
     // File doesn't exist (or unreadable) — fall through to write.
   }

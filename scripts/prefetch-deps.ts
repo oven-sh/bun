@@ -24,11 +24,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
-import { resolveConfig, type Config, type PartialConfig } from "./build/config.ts";
+import { resolveConfig } from "./build/config.ts";
 import { resolveToolchain } from "./build/configure.ts";
+import { ICU_URL } from "./build/deps/icu.ts";
 import { allDeps } from "./build/deps/index.ts";
 import { downloadWithRetry, extractTarGz, extractZip, prefetchPathForUrl } from "./build/download.ts";
-import { ICU_URL } from "./build/icu-source.ts";
 import { depSource } from "./build/source.ts";
 import { ensureWebKitSource } from "./build/webkit-source.ts";
 
@@ -40,8 +40,7 @@ if (dest === undefined) {
 const byUrlDir = resolve(dest, "by-url");
 const extractedDir = resolve(dest, "extracted");
 
-const toolchain = resolveToolchain();
-const variants: PartialConfig[] = [{ buildType: "Release", ci: true }];
+const cfg = resolveConfig({ buildType: "Release", ci: true }, resolveToolchain());
 
 interface Item {
   url: string;
@@ -56,56 +55,27 @@ interface Item {
   };
 }
 
-const items = new Map<string, Item>();
-const extractNames = new Set<string>();
-function add(item: Item): void {
-  if (items.has(item.url)) return;
-  // Only one item may claim a given extracted/<name>/ — with parallel workers
-  // two would race on the same staging dir. First-wins is fine: today no two
-  // distinct URLs map to the same name (each WebKit suffix produces a unique
-  // destDir basename), so this is a guard against future drift, not a tie-
-  // break that matters.
-  if (item.extract !== undefined) {
-    if (extractNames.has(item.extract.name)) item = { url: item.url };
-    else extractNames.add(item.extract.name);
-  }
-  items.set(item.url, item);
-}
+// The tree as configure puts it in the cache, where tryPrefetchExtracted() looks for it by the directory's name.
+await ensureWebKitSource({ ...cfg, localDeps: { WebKit: resolve(extractedDir, basename(cfg.localDeps.WebKit!)) } });
 
-for (const partial of variants) {
-  let cfg: Config;
-  try {
-    cfg = resolveConfig(partial, toolchain);
-  } catch (err) {
-    // A variant this host cannot configure (a missing cross SDK, an option
-    // combination resolveConfig rejects) is skipped — loudly, so a bake that
-    // silently lost a target's sources is visible in the log.
-    console.warn(`prefetch: skipping ${JSON.stringify(partial)}: ${(err as Error).message}`);
-    continue;
-  }
-
-  // The tree as configure puts it in the cache, where tryPrefetchExtracted() looks for it by the directory's name.
-  await ensureWebKitSource({ ...cfg, localDeps: { WebKit: resolve(extractedDir, basename(cfg.localDeps.WebKit!)) } });
-  add({ url: ICU_URL });
-
-  for (const dep of allDeps) {
-    // WebKit and ICU, above, come out as `local`.
-    const src = depSource(cfg, dep);
-    if (src.kind === "github-archive") {
-      add({ url: `https://github.com/${src.repo}/archive/${src.commit}.tar.gz` });
-    } else if (src.kind === "prebuilt") {
-      const destDir = src.destDir ?? resolve(cfg.vendorDir, dep.name);
-      add({
-        url: src.url,
-        extract: {
-          name: basename(destDir),
-          stamp: ".identity",
-          value: src.identity,
-          kind: "tar.gz",
-          ...(src.rmAfterExtract !== undefined && { rm: src.rmAfterExtract }),
-        },
-      });
-    }
+const items: Item[] = [{ url: ICU_URL }];
+for (const dep of allDeps) {
+  // WebKit and ICU, above, come out as `local`.
+  const src = depSource(cfg, dep);
+  if (src.kind === "github-archive") {
+    items.push({ url: `https://github.com/${src.repo}/archive/${src.commit}.tar.gz` });
+  } else if (src.kind === "prebuilt") {
+    const destDir = src.destDir ?? resolve(cfg.vendorDir, dep.name);
+    items.push({
+      url: src.url,
+      extract: {
+        name: basename(destDir),
+        stamp: ".identity",
+        value: src.identity,
+        kind: "tar.gz",
+        ...(src.rmAfterExtract !== undefined && { rm: src.rmAfterExtract }),
+      },
+    });
   }
 }
 
@@ -120,7 +90,6 @@ await mkdir(extractedDir, { recursive: true });
 
 let ok = 0;
 let skipped = 0;
-let missing = 0;
 
 async function fetchOne(item: Item): Promise<void> {
   // Same key the build's downloadWithRetry will look up — keeps producer and
@@ -130,21 +99,7 @@ async function fetchOne(item: Item): Promise<void> {
   if (existsSync(path)) {
     skipped++;
   } else {
-    try {
-      await downloadWithRetry(item.url, path, basename(new URL(item.url).pathname));
-    } catch (err) {
-      // 404 = the enumerated variant has no published artifact — expected,
-      // the build will just download that one if it ever needs it. Anything
-      // else (CDN outage, TLS, disk write) means a real failure that would
-      // leave the cache silently incomplete; fail loud so the bake operator
-      // sees it instead of shipping an empty image.
-      if (err instanceof Error && /\bHTTP 404\b/.test(err.message)) {
-        console.log(`  (skip — no artifact at ${item.url})`);
-        missing++;
-        return;
-      }
-      throw err;
-    }
+    await downloadWithRetry(item.url, path, basename(new URL(item.url).pathname));
   }
   ok++;
 
@@ -158,8 +113,7 @@ async function fetchOne(item: Item): Promise<void> {
 
   // Extract → hoist single top-level dir → apply rmAfterExtract → stamp.
   // Mirrors fetchPrebuilt so the resulting tree is byte-identical
-  // to what a real build would produce at the same identity. Best-effort —
-  // a corrupt tarball or full disk for one variant shouldn't abort the rest;
+  // to what a real build would produce at the same identity. Best-effort:
   // the build still has the by-url file to fall back on.
   const staging = `${out}.staging`;
   try {
@@ -181,9 +135,8 @@ async function fetchOne(item: Item): Promise<void> {
   }
 }
 
-// Bounded concurrency: enough to overlap GitHub CDN round-trips, not so many
-// that 8× ~200MB WebKit tarballs in flight at once exhaust memory/disk.
-const queue = [...items.values()];
+// Bounded concurrency: enough to overlap GitHub CDN round-trips.
+const queue = [...items];
 const workers = Array.from({ length: 4 }, async () => {
   for (let item; (item = queue.shift());) await fetchOne(item);
 });
@@ -193,5 +146,5 @@ let bytes = 0;
 for (const f of await readdir(byUrlDir)) bytes += (await stat(resolve(byUrlDir, f))).size;
 
 console.log(
-  `\nprefetch: ${ok} downloads cached (${skipped} already present, ${missing} no-artifact) — ${(bytes / 1e6).toFixed(0)} MB in ${byUrlDir}`,
+  `\nprefetch: ${ok} downloads cached (${skipped} already present) — ${(bytes / 1e6).toFixed(0)} MB in ${byUrlDir}`,
 );

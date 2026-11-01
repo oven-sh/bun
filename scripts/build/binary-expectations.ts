@@ -218,8 +218,8 @@ export function binaryFormat(cfg: Config): BinaryFormat {
  * `_GLOBAL__sub_I_<file>` from one of ours is the thing to catch, in debug
  * builds as much as release.
  *
- * JSC/WTF/bmalloc come from the prebuilt WebKit tarball, so "none" for them is
- * a statement about oven-sh/WebKit's build, not about flags set here. It
+ * With `webkit: "prebuilt"`, "none" for JSC/WTF/bmalloc is a statement about
+ * oven-sh/WebKit's build, not about flags set here. It
  * holds for the release tarball (a linux-x64 bun-profile linked against it has
  * exactly the runtime's eight entries below). If another lane's tarball turns
  * out to carry an initializer, fix it in oven-sh/WebKit; if it has to be
@@ -456,8 +456,8 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
   // Android: -llog (WTF's logging goes to logcat) is linked --as-needed, so
   // liblog.so is NEEDED exactly when a live __android_log_* reference
   // survives — a system library either way, allowed rather than pinned.
-  // --webkit=local on Linux links the host's ICU (bun.ts systemLibs); the
-  // prebuilt bundles its own statically. A developer-only flavour, never
+  // --webkit=local on Linux links the host's ICU (bun.ts systemLibs); every
+  // other has its own, linked statically. A developer-only flavour, never
   // shipped, so the sonames (libicuuc.so.78 …) are allowed rather than pinned.
   const localWebKitLibs =
     cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"

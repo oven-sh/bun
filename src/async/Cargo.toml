@@ -13,7 +13,3 @@ harness = false
 
 [lints]
 workspace = true
-
-[dependencies]
-bun_core.workspace = true
-bun_threading.workspace = true

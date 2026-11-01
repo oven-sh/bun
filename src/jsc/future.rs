@@ -1,27 +1,28 @@
 //! `async`/`.await` on the JS event loop. How it fits the loop's rules: `src/async/README.md`.
 //!
-//! [`spawn`] boxes a future and polls it on the JS thread. There is no second
-//! scheduler: a wake-up is a [`Task`] in [`EventLoop::tasks`](crate::event_loop::EventLoop)
+//! The VM owns its futures ([`VirtualMachine::futures`]) and polls them on the JS thread. There is no
+//! second scheduler: a wake-up is a [`Task`] in [`EventLoop::tasks`](crate::event_loop::EventLoop)
 //! like any other.
 
-use core::cell::UnsafeCell;
+use core::cell::Cell;
 use core::future::Future;
+use core::marker::PhantomData;
 use core::pin::Pin;
-use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll};
+use std::rc::Rc;
+use std::sync::Arc;
 
-use bun_async::task::{self, Runnable, Schedule};
-use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
+use bun_async::{Refused, Schedule, Slot, TaskId, Tasks};
 use bun_event_loop::{Task, task_tag};
 use bun_io::KeepAlive;
-use bun_threading::work_pool::WorkPool;
 
 use crate::bindgen::JsScope;
+use crate::job::{Completion, Job, JobContext, JsAffine};
 use crate::virtual_machine::VirtualMachine;
-use crate::vm_handle::{LoopKind, Posted, Ticket, VmHandle};
+use crate::vm_handle::{LoopKind, Ticket};
 use crate::{
-    AbortHandle, ContextId, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsError, JsResult,
-    JsThread,
+    ContextId, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsError, JsResult, JsThread,
 };
 
 // ── AwaitSafe ─────────────────────────────────────────────────────────────
@@ -77,96 +78,78 @@ unsafe impl AwaitSafe for crate::Protected {}
 
 // ── the scheduler ─────────────────────────────────────────────────────────
 
-/// The part of a task's allocation that belongs to the JS loop.
+/// What the JS loop keeps with each task.
+#[derive(Clone, Copy)]
 pub struct OnJsLoop {
-    /// Carries a wake-up from another thread through the loop's concurrent queue.
-    node: UnsafeCell<ConcurrentTaskItem>,
-    handle: VmHandle,
     kind: LoopKind,
-    /// Compared on any thread; dereferenced only where it is the thread's own VM.
-    vm: *mut VirtualMachine,
+    /// The task is polled inside it, and goes when it stops.
     context: ContextId,
-    /// JS thread only, and disarmed there before the allocation can be freed elsewhere.
-    abort: AbortHandle,
 }
 
-// SAFETY: off the JS thread only `schedule` runs, which reads `Copy` fields set
-// at construction, clones the (thread-safe) handle, and writes `node`, which is
-// its alone while the task is being queued. Dropping it elsewhere drops the
-// handle and a disarmed `AbortHandle`, which is a no-op.
-unsafe impl Send for OnJsLoop {}
-// SAFETY: as above.
-unsafe impl Sync for OnJsLoop {}
-
-// SAFETY: both queues are drained by the VM's own thread, and a refused post drops the task.
-unsafe impl Schedule for OnJsLoop {
+impl Schedule for OnJsLoop {
     /// `Err`: what the future's JS left pending, for whoever polled it to fold.
     type Output = JsResult<()>;
 
-    fn schedule(task: Runnable<Self>) {
-        let this = task.scheduler();
-        let (vm, kind, context) = (this.vm, this.kind, this.context);
-        if VirtualMachine::get_or_null() == Some(vm) {
-            let queued = Task::new(task_tag::Future, task.into_raw().as_ptr(), context);
-            // SAFETY: this thread's live VM; a statement-scoped `&mut` to one of its loops.
-            unsafe {
-                // The macro loop only ticks while a macro is waited on. See `macro_loop_if_not_running`.
-                if kind == LoopKind::Macro && (*vm).macro_mode {
-                    (*vm).macro_event_loop.enqueue_task(queued);
-                } else {
-                    (*vm).regular_event_loop.enqueue_task(queued);
-                }
-            }
-            return;
-        }
-        // The JS thread may run and free the task before `post` returns.
-        let handle = this.handle.clone();
-        // SAFETY: projects to a field of the live task.
-        let node = unsafe { UnsafeCell::raw_get(&raw const (*task.scheduler_ptr().as_ptr()).node) };
-        let raw = task.into_raw();
-        // SAFETY: a task is queued by one thread at a time, and is in no queue now.
-        let node = unsafe {
-            node.write(ConcurrentTaskItem {
-                task: Task::new(task_tag::Future, raw.as_ptr(), context),
-                next: bun_threading::Link::new(),
-                auto_delete: false,
-            });
-            NonNull::new_unchecked(node)
-        };
-        if let Posted::Refused(_) = handle.post(kind, node) {
-            // The VM has closed, and dropped every future on its way.
-            // SAFETY: refused, so still this thread's.
-            drop(unsafe { Runnable::<Self>::from_raw(raw) });
-        }
+    fn with_tasks<R>(f: impl FnOnce(&Tasks<Self>) -> R) -> Option<R> {
+        let vm = VirtualMachine::get_or_null()?;
+        // SAFETY: this thread's live VM; the field is only ever borrowed shared.
+        Some(f(unsafe { &(*vm).futures }))
     }
 
-    fn finished(&self) {
-        self.abort.disarm();
+    fn schedule(self, id: TaskId) {
+        let vm = VirtualMachine::get_mut_ptr();
+        let queued = Task::new(task_tag::Future, id.into_ptr(), self.context);
+        // SAFETY: this thread's live VM; a statement-scoped `&mut` to one of its loops.
+        unsafe {
+            // The macro loop only ticks while a macro is waited on. See `macro_loop_if_not_running`.
+            if self.kind == LoopKind::Macro && (*vm).macro_mode {
+                (*vm).macro_event_loop.enqueue_task(queued);
+            } else {
+                (*vm).regular_event_loop.enqueue_task(queued);
+            }
+        }
     }
 }
 
-crate::impl_abort_handle_owner!(OnJsLoop, abort, |this, _cause| {
-    // SAFETY: armed, so the task is allocated; `this` was derived from
-    // `Runnable::scheduler_ptr` in `spawn`; contexts stop on the JS thread.
-    unsafe { task::cancel(NonNull::new_unchecked(this)) }
-});
+/// The event loop reached a [`task_tag::Future`] task, whose `ptr` is a [`TaskId`].
+pub fn run_queued(ptr: *mut ()) -> JsResult<()> {
+    OnJsLoop::with_tasks(|tasks| tasks.run(TaskId::from_ptr(ptr)))
+        .flatten()
+        .unwrap_or(Ok(()))
+}
 
-/// The event loop reached a [`task_tag::Future`] task.
-///
-/// # Safety
-/// `ptr` is the `Task::ptr` [`OnJsLoop::schedule`] queued, once; the JS thread.
-pub unsafe fn run_queued(ptr: *mut ()) -> JsResult<()> {
-    // SAFETY: fn contract.
-    unsafe { Runnable::<OnJsLoop>::from_raw(NonNull::new_unchecked(ptr)).run() }.unwrap_or(Ok(()))
+/// The task whose poll the caller is inside. What it awaits keeps this for [`resume_now`].
+pub fn running_task() -> Option<TaskId> {
+    OnJsLoop::with_tasks(Tasks::running).flatten()
+}
+
+/// Poll `task`, which `waker` wakes, now and in its context, instead of queueing it: for a promise
+/// reaction, so that a future continues where an `async function` awaiting the same promise would.
+/// The caller is not beneath anything the future owns, since the future may end and drop it.
+pub fn resume_now(task: Option<TaskId>, waker: core::task::Waker) -> JsResult<()> {
+    let vm = VirtualMachine::get();
+    let Some((id, on)) = task.and_then(|id| Some((id, vm.futures.scheduler_of(id)?))) else {
+        waker.wake();
+        return Ok(());
+    };
+    let _context = vm.enter_context(on.context);
+    // `waker` is held across the poll, so that dropping it does not find an orphan first.
+    vm.futures.run(id).unwrap_or(Ok(()))
 }
 
 /// It will not: the VM or the task's context has stopped.
-///
-/// # Safety
-/// As [`run_queued`].
-pub unsafe fn release_queued(ptr: *mut ()) {
-    // SAFETY: fn contract.
-    unsafe { Runnable::<OnJsLoop>::from_raw(NonNull::new_unchecked(ptr)).cancel() }
+pub fn release_queued(ptr: *mut ()) {
+    OnJsLoop::with_tasks(|tasks| tasks.cancel(TaskId::from_ptr(ptr)));
+}
+
+/// `context` stops: drop its futures. Whether any was dropped: one that is being polled goes when
+/// that poll returns.
+pub(crate) fn cancel_of_context(context: ContextId) -> bool {
+    OnJsLoop::with_tasks(|tasks| tasks.cancel_where(|on| on.context == context)) > Some(0)
+}
+
+pub(crate) fn any_of_context(context: ContextId) -> bool {
+    OnJsLoop::with_tasks(|tasks| tasks.any(|on| on.context == context)) == Some(true)
 }
 
 // ── spawning ──────────────────────────────────────────────────────────────
@@ -205,17 +188,51 @@ impl JsTask {
         unsafe { JsScope::with(self.global.as_ptr(), f) }
     }
 
-    /// Run `work` on the work pool. It starts now; awaiting collects the result.
+    /// What the loop does with an `Err` a future ends with, for a future that goes on: `error` is
+    /// reported as uncaught.
+    pub fn report_uncaught(&self, error: JsError) {
+        let _ = crate::task::report_error_or_terminate(self.global(), error);
+    }
+
+    /// Run `work` on the work pool, as a [`Job`]. It starts now; awaiting collects the result.
     #[track_caller]
     pub fn blocking<T, F>(&self, work: F) -> Blocking<T>
     where
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
-        Blocking {
-            keeps_loop_alive: LoopRef::new(),
-            work: bun_async::blocking(WorkPool::schedule, self.vm().ticket(), work),
-        }
+        self.blocking_with((), move |_| work())
+    }
+
+    /// [`blocking`](Self::blocking) for work that uses memory JS owns in place, through a
+    /// [`JsPtr`](crate::JsPtr) and the job's [`Ticket`]. `keeps` is what keeps that memory where it
+    /// is (a `PinnedArrayBuffer`). It is dropped on the JS thread once `work` has ended, whether or
+    /// not anything still awaits the result.
+    #[track_caller]
+    pub fn blocking_with<K, T, F>(&self, keeps: K, work: F) -> Blocking<T>
+    where
+        K: JsAffine + 'static,
+        T: Send + 'static,
+        F: FnOnce(&Ticket) -> T + Send + 'static,
+    {
+        let blocking = Blocking {
+            awaited: Rc::new(Awaited {
+                result: Slot::new(),
+                by: Cell::new(None),
+            }),
+            abandoned: Arc::new(AtomicBool::new(false)),
+            keeps_loop_alive: Some(LoopRef::new()),
+        };
+        Job::<PoolWork<K, T, F>>::schedule(
+            &self.thread(),
+            OnPool {
+                work: Some(work),
+                result: None,
+                abandoned: Arc::clone(&blocking.abandoned),
+            },
+            (Waiting(Rc::clone(&blocking.awaited)), keeps),
+        );
+        blocking
     }
 }
 
@@ -227,31 +244,28 @@ pub fn spawn<F>(cx: &JsThread<'_>, future: impl FnOnce(JsTask) -> F) -> JsResult
 where
     F: Future<Output = JsResult<()>> + AwaitSafe + 'static,
 {
-    let vm = cx.vm();
+    let (vm, context) = (cx.vm(), cx.context());
     let js = JsTask {
         global: GlobalRef::new(cx.global()),
-        context: cx.context().id(),
+        context: context.id(),
     };
-    let abort = AbortHandle::for_owner::<OnJsLoop>();
-    // By itself it does nothing. What can resume it is counted where it is armed.
-    abort.set_only_waits_to_be_closed();
-    let task = task::spawn(
-        future(js),
-        OnJsLoop {
-            node: UnsafeCell::new(ConcurrentTaskItem::default()),
-            handle: vm.handle(),
-            kind: vm.current_loop_kind(),
-            vm: VirtualMachine::get_mut_ptr(),
-            context: js.context,
-            abort,
-        },
-    );
-    // SAFETY: heap-pinned until `finished` disarms it; the JS thread.
-    unsafe {
-        AbortHandle::arm_owner(task.scheduler_ptr().as_ptr(), cx.context());
-        task.run()
+    let on = OnJsLoop {
+        kind: vm.current_loop_kind(),
+        context: context.id(),
+    };
+    let id = match vm.futures.spawn(future(js), on) {
+        Ok(id) => id,
+        Err(Refused::Closed) => return Ok(()),
+        Err(Refused::Full) => return Err(cx.global().throw_out_of_memory()),
+    };
+    let finished = vm.futures.run(id);
+    if finished.is_none() && context.is_stopped() {
+        // Script of a disposed graph is still starting things: they go on the next turn of the loop.
+        crate::VirtualMachineRef::get()
+            .as_mut()
+            .stop_graph_context_again(context.id());
     }
-    .unwrap_or(Ok(()))
+    finished.unwrap_or(Ok(()))
 }
 
 /// Why a [`promise`] is rejected.
@@ -294,12 +308,82 @@ where
 
 // ── the work pool ─────────────────────────────────────────────────────────
 
-impl bun_async::InFlight for Ticket {
-    fn is_cancelled(&self) -> bool {
-        self.cancelled()
+/// See [`JsTask::blocking`]. It keeps the process alive until it has the result. Dropping it abandons
+/// the work: skipped if the pool has not started it, and its result dropped if it has.
+#[must_use = "dropping it abandons the work"]
+pub struct Blocking<T> {
+    awaited: Rc<Awaited<T>>,
+    abandoned: Arc<AtomicBool>,
+    keeps_loop_alive: Option<LoopRef>,
+}
+
+struct Awaited<T> {
+    result: Slot<T>,
+    by: Cell<Option<TaskId>>,
+}
+
+// SAFETY: `T: Send`, so it points to no cell, and a `JsError` made on a pool
+// thread says nothing about this VM.
+unsafe impl<T> AwaitSafe for Blocking<T> {}
+
+impl<T> Future for Blocking<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
+        let this = self.get_mut();
+        this.awaited.by.set(running_task());
+        let result = core::task::ready!(this.awaited.result.poll_take(cx));
+        this.keeps_loop_alive = None;
+        Poll::Ready(result)
     }
-    fn before_finish(&self) {
-        self.before_post();
+}
+
+impl<T> Drop for Blocking<T> {
+    fn drop(&mut self) {
+        self.abandoned.store(true, Ordering::Relaxed);
+    }
+}
+
+struct PoolWork<K, T, F>(PhantomData<fn(K, F) -> T>);
+
+struct OnPool<T, F> {
+    work: Option<F>,
+    result: Option<T>,
+    abandoned: Arc<AtomicBool>,
+}
+
+struct Waiting<T>(Rc<Awaited<T>>);
+// SAFETY: a `Job` leaves its `Js` half alone off the JS thread.
+unsafe impl<T> JsAffine for Waiting<T> {}
+
+impl<K, T, F> JobContext for PoolWork<K, T, F>
+where
+    K: JsAffine + 'static,
+    T: Send + 'static,
+    F: FnOnce(&Ticket) -> T + Send + 'static,
+{
+    type OffThread = OnPool<T, F>;
+    type Js = (Waiting<T>, K);
+
+    /// The [`Blocking`] does.
+    const KEEPS_LOOP_ALIVE: bool = false;
+
+    fn run(on_pool: &mut OnPool<T, F>, done: Completion<Self>) -> Option<Completion<Self>> {
+        if !on_pool.abandoned.load(Ordering::Relaxed) {
+            on_pool.result = on_pool.work.take().map(|work| work(done.ticket()));
+        }
+        Some(done)
+    }
+
+    /// The future continues in this task, not in one more.
+    fn then(on_pool: OnPool<T, F>, (waiting, keeps): Self::Js, _: &JsThread<'_>) -> JsResult<()> {
+        drop(keeps);
+        let Some(result) = on_pool.result else {
+            return Ok(());
+        };
+        let (waker, by) = (waiting.0.result.fill_quietly(result), waiting.0.by.get());
+        drop(waiting);
+        waker.map_or(Ok(()), |waker| resume_now(by, waker))
     }
 }
 
@@ -323,27 +407,5 @@ impl Default for LoopRef {
 impl Drop for LoopRef {
     fn drop(&mut self) {
         self.0.unref(bun_io::js_vm_ctx());
-    }
-}
-
-/// See [`JsTask::blocking`].
-#[must_use = "dropping it abandons the work"]
-pub struct Blocking<T> {
-    work: bun_async::Blocking<T>,
-    keeps_loop_alive: LoopRef,
-}
-
-// SAFETY: `T: Send`, so it points to no cell, and a `JsError` made on a pool
-// thread says nothing about this VM.
-unsafe impl<T> AwaitSafe for Blocking<T> {}
-
-impl<T> Future for Blocking<T> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
-        let this = self.get_mut();
-        let value = core::task::ready!(Pin::new(&mut this.work).poll(cx));
-        this.keeps_loop_alive.0.unref(bun_io::js_vm_ctx());
-        Poll::Ready(value)
     }
 }

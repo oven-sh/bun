@@ -34,6 +34,18 @@ describe("what a future can await", () => {
     expect(await futures.fanOut(500)).toBe((499 * 500) / 2);
   });
 
+  test("the work pool, reading a buffer in place", async () => {
+    expect(await futures.sumBytes(new Uint8Array([1, 2, 3, 250]), 0)).toBe(256);
+    expect(await futures.sumBytes("not a buffer", 0)).toBe(null);
+    // Nothing but the job keeps the buffer alive while the pool reads it.
+    const sum = futures.sumBytes(new Uint8Array(1 << 16).fill(1), 20);
+    Bun.gc(true);
+    expect(await sum).toBe(1 << 16);
+    // Storage that can be freed while it is pinned is copied.
+    const memory = new Uint8Array(new WebAssembly.Memory({ initial: 1 }).buffer, 0, 16).fill(2);
+    expect(await futures.sumBytes(memory, 0)).toBe(32);
+  });
+
   test("and make its result through the bindings API", async () => {
     expect(await futures.shout("héllo")).toBe("HéLLO");
   });
@@ -184,6 +196,25 @@ describe("the event loop", () => {
     expect(order).toEqual(["first", "first's tick", "first's microtask", "second"]);
   });
 
+  test("a future continues where an async function awaiting the same promise would", async () => {
+    const order: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    promise.then(() => order.push("then, registered before"));
+    const done = futures.sequence((i: number) => {
+      order.push("native " + i);
+      return i === 0 ? promise : undefined;
+    }, 2);
+    (async () => {
+      await promise;
+      order.push("await, registered after");
+    })();
+    setImmediate(() => order.push("next task"));
+    resolve();
+    await done;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(order).toEqual(["native 0", "then, registered before", "native 1", "await, registered after", "next task"]);
+  });
+
   test("the body runs up to its first await inside the call", () => {
     let called = false;
     futures.sequence(() => void (called = true), 1);
@@ -199,6 +230,50 @@ describe("the event loop", () => {
     expect(stdout).toBe(expected);
     expect(exitCode).toBe(0);
   });
+});
+
+describe("macros", () => {
+  const files = {
+    "macro.ts": `
+      import { futures } from "bun:internal-for-testing";
+      export async function awaited() {
+        await futures.sleep(1);
+        return (await futures.add(1, 2)) + (await futures.sequence(async () => 4, 1));
+      }
+      export function leftBehind() {
+        futures.sleep(5).then(() => console.log("a timer"));
+        futures.add(40, 2).then(sum => console.log("pool work:", sum));
+        return "returned";
+      }
+    `,
+    "main.ts": `
+      import { awaited, leftBehind } from "./macro.ts" with { type: "macro" };
+      console.log("awaited:", awaited());
+      console.log("the macro", leftBehind());
+    `,
+  };
+
+  test.concurrent(
+    "a macro's futures run on its loop while it is waited on, and on the regular loop afterwards",
+    async () => {
+      using dir = tempDir("rust-future-macro", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout.split("\n").filter(line => line && !line.startsWith("[macro]"));
+      expect({ first: lines.slice(0, 2), later: lines.slice(2).sort(), stderr }).toEqual({
+        first: ["awaited: 7", "the macro returned"],
+        later: ["a timer", "pool work: 42"],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe("garbage collection", () => {
@@ -252,6 +327,62 @@ describe("going away with futures in flight", () => {
     const { stdout, stderr, exitCode } = await run(`${inFlight} console.log("exiting"); process.exit(7);`);
     expect({ stdout, stderr }).toEqual({ stdout: "exiting\n", stderr: "" });
     expect(exitCode).toBe(7);
+  });
+
+  test.concurrent("pool work outlives the future that started it, with what it reads", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      futures.sumBytesAbandoned(new Uint8Array(1 << 20).fill(1), 30);
+      Bun.gc(true);
+      console.log(futures.alive());
+    `);
+    expect({ stdout, stderr }).toEqual({ stdout: "0\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("abandoned pool work does not keep the process alive", async () => {
+    const start = performance.now();
+    const { stdout, exitCode } = await run(`
+      const graph = new Bun.ModuleGraph();
+      graph.run(() => void futures.block(60_000));
+      graph.dispose();
+      console.log(futures.alive());
+    `);
+    expect(stdout).toBe("0\n");
+    expect(exitCode).toBe(0);
+    expect(performance.now() - start).toBeLessThan(30_000);
+  });
+
+  test.concurrent.each([
+    ["in its first poll", "futures.sequence(stop, 1)"],
+    ["in a later poll", "futures.callAfter(stop, 1)"],
+  ])("a context that is stopped by its own future, %s", async (_, start) => {
+    const { stdout, stderr, exitCode } = await run(`
+      const graph = new Bun.ModuleGraph();
+      const { promise, resolve } = Promise.withResolvers();
+      const stop = () => { graph.dispose(); console.log("disposed"); resolve(); };
+      graph.run(() => void ${start});
+      await promise;
+      await new Promise(resolve => setImmediate(resolve));
+      console.log(futures.alive());
+    `);
+    expect({ stdout, stderr }).toEqual({ stdout: "disposed\n0\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("process.exit() from inside a future, with the VM torn down", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("bun:internal-for-testing").futures.sequence(() => { console.log("exiting"); process.exit(3); }, 1);`,
+      ],
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "exiting\n", stderr: "" });
+    expect(exitCode).toBe(3);
   });
 
   test.concurrent("a worker that is terminated drops them", async () => {

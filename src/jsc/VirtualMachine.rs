@@ -382,6 +382,8 @@ pub struct VirtualMachine {
     pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
     pub(crate) jobs: crate::JsCell<crate::job::JobList>,
+    /// The Rust futures script started (`crate::future`).
+    pub(crate) futures: bun_async::Tasks<crate::future::OnJsLoop>,
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
@@ -2636,6 +2638,7 @@ impl VirtualMachine {
         // a sweep just closed.
         vm.forbid_script();
         Zig__GlobalObject__prepareForDestruction(vm.global());
+        vm.futures.close();
         // SAFETY: fn contract.
         let sweep = || unsafe {
             let _ = Self::stop_phase_sweep(this, kind);
@@ -3520,6 +3523,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
+            addr_of_mut!((*vm).futures).write(bun_async::Tasks::new());
             addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             addr_of_mut!((*vm).entered_context).write(Cell::new(None));

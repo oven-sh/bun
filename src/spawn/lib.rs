@@ -54,14 +54,12 @@ bun_dispatch::link_interface! {
     pub ProcessExit[
         Subprocess,
         LifecycleScript,
-        InstallGit,
         SecurityScan,
         Shell,
         FilterRunHandle,
         MultiRunHandle,
         TestParallelWorker,
         TestPartBuilder,
-        Command,
         ChromeProcess,
         HostProcess,
         SyncWindows,
@@ -92,6 +90,9 @@ link_impl_ProcessExit! {
             unreachable!("SyncWindows exit handler is Windows-only"),
     }
 }
+mod capture;
+pub use capture::{Capture, CaptureError, Captured, Streams};
+
 #[cfg(unix)]
 pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
 #[cfg(unix)]

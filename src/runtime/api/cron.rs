@@ -36,8 +36,7 @@ use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
 
-use crate::api::bun::process::{self as spawn, Status};
-use crate::future::{Command, CommandError as Failure, Exit, command_error as failure};
+use crate::future::{CommandError as Failure, command, command_error as failure, read_failure};
 use crate::generated_bindgen::cron::{
     Bun__Cron__cron, Bun__Cron__parse, Bun__Cron__remove, Bun__CronJob__onPromiseReject,
     Bun__CronJob__onPromiseResolve, CronOptions, js_CronJob as js,
@@ -46,6 +45,7 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
 #[cfg(not(windows))]
 use bun_core::strings;
+use bun_spawn::{Captured, Status};
 #[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
 // Owned NUL-terminated string — `bun_str` exposes the
@@ -91,8 +91,15 @@ enum Tolerate {
 }
 
 /// Run `argv` to its end.
-async fn run(argv: &[&CStr], stdout: spawn::Stdio, tolerate: Tolerate) -> Result<Exit, Failure> {
-    let exit = Command::spawn(argv, spawn::Stdio::Ignore, stdout)?.await?;
+async fn run(
+    argv: &[&CStr],
+    capture_stdout: bool,
+    tolerate: Tolerate,
+) -> Result<Captured, Failure> {
+    let exit = command(argv, capture_stdout)?.await;
+    if let Some(err) = &exit.read_error {
+        return Err(read_failure(err));
+    }
     match &exit.status {
         Status::Exited(exited) if exited.code != 0 => {
             let is_tolerated = match tolerate {
@@ -194,12 +201,7 @@ async fn crontab_without(
     title: &[u8],
     out_of_memory: &str,
 ) -> Result<Vec<u8>, Failure> {
-    let listed = run(
-        &[crontab.as_cstr(), c"-l"],
-        spawn::Stdio::Buffer,
-        Tolerate::ExitCode1,
-    )
-    .await?;
+    let listed = run(&[crontab.as_cstr(), c"-l"], true, Tolerate::ExitCode1).await?;
     let mut table = Vec::new();
     filter_crontab(&listed.stdout, title, &mut table).map_err(|_| failure!("{out_of_memory}"))?;
     Ok(table)
@@ -216,7 +218,7 @@ async fn install_crontab(
     let file = TempFile::create(path, sys::O::EXCL, 0o600, table, messages)?;
     run(
         &[crontab.as_cstr(), file.path().as_cstr()],
-        spawn::Stdio::Ignore,
+        false,
         Tolerate::Nothing,
     )
     .await?;
@@ -261,7 +263,7 @@ async fn bootout(title: &[u8]) -> Result<(), Failure> {
     .map_err(|_| failure!("Out of memory"))?;
     run(
         &[c"/bin/launchctl", c"bootout", service.as_cstr()],
-        spawn::Stdio::Ignore,
+        false,
         Tolerate::AnyExitCodeOrSignal,
     )
     .await?;
@@ -283,7 +285,7 @@ impl Registration {
                 domain.as_cstr(),
                 plist_path.as_cstr(),
             ],
-            spawn::Stdio::Ignore,
+            false,
             Tolerate::Nothing,
         )
         .await?;
@@ -416,7 +418,7 @@ impl Registration {
                 c"/np",
                 c"/f",
             ],
-            spawn::Stdio::Ignore,
+            false,
             Tolerate::Nothing,
         )
         .await
@@ -441,7 +443,7 @@ async fn unregister(title: ZString) -> Result<(), Failure> {
     let task_name = task_name(title.as_bytes())?;
     run(
         &[c"schtasks", c"/delete", c"/tn", task_name.as_cstr(), c"/f"],
-        spawn::Stdio::Ignore,
+        false,
         Tolerate::AnyExitCode,
     )
     .await?;

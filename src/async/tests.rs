@@ -1,112 +1,64 @@
-//! Run under Miri too (`bun run rust:miri -p bun_async`): every test ends with
-//! nothing allocated, so a lost or doubled reference is a reported leak or
-//! use-after-free.
+//! Run under Miri too (`bun run rust:miri -p bun_async`). Every test leaves its thread's loop empty.
 
 use core::cell::{Cell, RefCell};
-use core::future::{Future, poll_fn};
-use core::pin::pin;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::future::poll_fn;
 use core::task::{Poll, Waker};
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::Arc;
 
-use bun_threading::{Condvar, Guarded};
+use crate::{Either, Refused, Schedule, Slot, TaskId, Tasks, race};
 
-use crate::task::{self, Runnable, Schedule};
-use crate::{Blocking, Either, Slot, race};
-
-thread_local! {
-    static POOL: RefCell<Vec<std::thread::JoinHandle<()>>> = const { RefCell::new(Vec::new()) };
-}
-
-fn join_pool() {
-    for thread in POOL.take() {
-        thread.join().unwrap();
-    }
-}
-
-/// A pool of one thread per task, for [`join_pool`] to end.
-fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Blocking<T> {
-    struct Submitted(*mut bun_threading::work_pool::Task);
-    // SAFETY: a pool task is made to be run by another thread.
-    unsafe impl Send for Submitted {}
-    impl Submitted {
-        fn run(self) {
-            // SAFETY: what a pool does with a task it was given, once.
-            unsafe { ((*self.0).callback)(self.0) }
-        }
-    }
-    crate::blocking(
-        |task| {
-            let task = Submitted(task);
-            POOL.with_borrow_mut(|pool| pool.push(on_another_thread(move || task.run())));
-        },
-        (),
-        work,
-    )
-}
-
-/// The least a loop can be: a queue another thread may push to.
+/// The least a loop can be.
 #[derive(Default)]
 struct Loop {
-    queue: Guarded<VecDeque<Runnable<OnLoop>>>,
-    pushed: Condvar,
-    finished: AtomicUsize,
+    tasks: Tasks<OnLoop>,
+    queue: RefCell<VecDeque<TaskId>>,
 }
 
-struct OnLoop(Arc<Loop>);
+thread_local! {
+    static LOOP: Loop = Loop::default();
+}
 
-// SAFETY: queued tasks are only taken by `Loop`'s methods, which the tests call on the spawning thread.
-unsafe impl Schedule for OnLoop {
+#[derive(Clone, Copy, Default)]
+struct OnLoop {
+    scope: u32,
+}
+
+impl Schedule for OnLoop {
     type Output = u32;
-    fn schedule(task: Runnable<Self>) {
-        let event_loop = Arc::clone(&task.scheduler().0);
-        event_loop.queue.lock().push_back(task);
-        event_loop.pushed.notify_all();
+    fn with_tasks<R>(f: impl FnOnce(&Tasks<Self>) -> R) -> Option<R> {
+        LOOP.try_with(|event_loop| f(&event_loop.tasks)).ok()
     }
-    fn finished(&self) {
-        self.0.finished.fetch_add(1, Ordering::Relaxed);
+    fn schedule(self, id: TaskId) {
+        LOOP.with(|event_loop| event_loop.queue.borrow_mut().push_back(id));
     }
 }
 
-impl Loop {
-    fn spawn(self: &Arc<Self>, future: impl Future<Output = u32> + 'static) -> Runnable<OnLoop> {
-        task::spawn(future, OnLoop(Arc::clone(self)))
-    }
-
-    fn queued(&self) -> usize {
-        self.queue.lock().len()
-    }
-
-    fn run_one(&self) -> Option<u32> {
-        let task = self.queue.lock().pop_front().expect("nothing queued");
-        // SAFETY: the spawning thread.
-        unsafe { task.run() }
-    }
-
-    /// Sleeps until something is queued, as a loop does in `epoll_wait`.
-    fn run_until_finished(&self) -> u32 {
-        loop {
-            let task = {
-                let mut queue = self.queue.lock();
-                loop {
-                    if let Some(task) = queue.pop_front() {
-                        break task;
-                    }
-                    self.pushed.wait_guarded(&mut queue);
-                }
-            };
-            // SAFETY: the spawning thread.
-            if let Some(output) = unsafe { task.run() } {
-                return output;
-            }
-        }
-    }
-
-    fn finished(&self) -> usize {
-        self.finished.load(Ordering::Relaxed)
-    }
+fn spawn_in(scope: u32, future: impl Future<Output = u32> + 'static) -> TaskId {
+    LOOP.with(|event_loop| event_loop.tasks.spawn(future, OnLoop { scope }))
+        .expect("open")
+}
+fn spawn(future: impl Future<Output = u32> + 'static) -> TaskId {
+    spawn_in(0, future)
+}
+fn run(id: TaskId) -> Option<u32> {
+    LOOP.with(|event_loop| event_loop.tasks.run(id))
+}
+fn cancel(id: TaskId) -> bool {
+    LOOP.with(|event_loop| event_loop.tasks.cancel(id))
+}
+fn running() -> Option<TaskId> {
+    LOOP.with(|event_loop| event_loop.tasks.running())
+}
+fn alive() -> usize {
+    LOOP.with(|event_loop| event_loop.tasks.len())
+}
+fn queued() -> usize {
+    LOOP.with(|event_loop| event_loop.queue.borrow().len())
+}
+fn run_one() -> Option<u32> {
+    let id = LOOP.with(|event_loop| event_loop.queue.borrow_mut().pop_front());
+    run(id.expect("nothing queued"))
 }
 
 /// Counts itself out when the future that holds it is dropped.
@@ -127,8 +79,10 @@ fn on_another_thread(f: impl FnOnce() + Send + 'static) -> std::thread::JoinHand
     std::thread::Builder::new().spawn(f).expect("spawn")
 }
 
+type WakerCell = Rc<Cell<Option<Waker>>>;
+
 /// Suspends forever, handing its `Waker` out.
-async fn park(waker: Rc<Cell<Option<Waker>>>) {
+async fn park(waker: WakerCell) {
     poll_fn(|cx| {
         waker.set(Some(cx.waker().clone()));
         Poll::<()>::Pending
@@ -136,21 +90,34 @@ async fn park(waker: Rc<Cell<Option<Waker>>>) {
     .await
 }
 
+/// A suspended task that holds a `Held`, and the `Waker` that keeps it.
+fn parked(scope: u32, held: &Rc<Cell<usize>>) -> (TaskId, WakerCell) {
+    let waker = WakerCell::default();
+    let id = spawn_in(scope, {
+        let (held, waker) = (Held::new(held), Rc::clone(&waker));
+        async move {
+            let _held = held;
+            park(waker).await;
+            0
+        }
+    });
+    assert_eq!(run(id), None);
+    (id, waker)
+}
+
 #[test]
 fn finishes_in_the_first_poll() {
-    let event_loop = Arc::new(Loop::default());
-    let task = event_loop.spawn(async { 7 });
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, Some(7));
-    assert_eq!(event_loop.queued(), 0);
-    assert_eq!(event_loop.finished(), 1);
+    let id = spawn(async { 7 });
+    assert_eq!(alive(), 1);
+    assert_eq!(run(id), Some(7));
+    assert_eq!((alive(), queued()), (0, 0));
+    assert_eq!(run(id), None, "its id names nothing now");
 }
 
 #[test]
 fn a_filled_slot_queues_the_task_once() {
-    let event_loop = Arc::new(Loop::default());
     let slots = Rc::new((Slot::new(), Slot::new()));
-    let task = event_loop.spawn({
+    let id = spawn({
         let slots = Rc::clone(&slots);
         async move {
             let a: u32 = poll_fn(|cx| slots.0.poll_take(cx)).await;
@@ -158,424 +125,329 @@ fn a_filled_slot_queues_the_task_once() {
             a + b
         }
     });
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
-    assert_eq!(event_loop.queued(), 0);
+    assert_eq!(run(id), None);
     slots.1.fill(2);
-    assert_eq!(event_loop.queued(), 0, "nobody waits for it yet");
+    assert_eq!(queued(), 0, "nobody waits for it yet");
     slots.0.fill(40);
     slots.0.fill(40);
-    assert_eq!(event_loop.queued(), 1);
-    assert_eq!(event_loop.run_one(), Some(42));
-    assert_eq!(event_loop.finished(), 1);
+    assert_eq!(queued(), 1);
+    assert_eq!(run_one(), Some(42));
+    assert_eq!((alive(), queued()), (0, 0));
 }
 
 #[test]
-fn a_wake_from_another_thread_reaches_the_loop() {
-    let event_loop = Arc::new(Loop::default());
-    let task = event_loop.spawn(async {
-        let mut thread = None;
-        poll_fn(|cx| {
-            if thread.is_some() {
-                return Poll::Ready(());
-            }
-            let waker = cx.waker().clone();
-            thread = Some(on_another_thread(move || waker.wake()));
-            Poll::Pending
-        })
-        .await;
-        thread.unwrap().join().expect("join");
-        1
+fn what_another_thread_has_comes_through_the_loops_own_queue() {
+    let (door, arrivals) = std::sync::mpsc::channel::<u32>();
+    let slot = Rc::new(Slot::new());
+    let id = spawn({
+        let slot = Rc::clone(&slot);
+        async move { poll_fn(|cx| slot.poll_take(cx)).await }
     });
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
-    assert_eq!(event_loop.run_until_finished(), 1);
+    assert_eq!(run(id), None);
+    let thread = on_another_thread(move || door.send(9).unwrap());
+    slot.fill(arrivals.recv().unwrap());
+    thread.join().unwrap();
+    assert_eq!(run_one(), Some(9));
+    assert_eq!((alive(), queued()), (0, 0));
 }
 
 #[test]
-fn many_threads_wake_one_task() {
-    let event_loop = Arc::new(Loop::default());
-    let hits = Arc::new(AtomicUsize::new(0));
-    const THREADS: usize = 4;
-    let task = event_loop.spawn({
-        let hits = Arc::clone(&hits);
-        async move {
-            let mut threads = Vec::new();
-            poll_fn(|cx| {
-                if threads.is_empty() {
-                    for _ in 0..THREADS {
-                        let (waker, hits) = (cx.waker().clone(), Arc::clone(&hits));
-                        threads.push(on_another_thread(move || {
-                            hits.fetch_add(1, Ordering::Release);
-                            waker.wake_by_ref();
-                        }));
-                    }
-                }
-                match hits.load(Ordering::Acquire) {
-                    THREADS => Poll::Ready(()),
-                    _ => Poll::Pending,
-                }
-            })
-            .await;
-            for thread in threads {
-                thread.join().expect("join");
-            }
-            5
-        }
-    });
-    // SAFETY: the spawning thread.
-    if unsafe { task.run() }.is_none() {
-        assert_eq!(event_loop.run_until_finished(), 5);
-    }
-    while event_loop.queued() > 0 {
-        assert_eq!(event_loop.run_one(), None);
-    }
-}
-
-#[test]
-fn cancelling_a_suspended_task_drops_its_future_at_once() {
-    let event_loop = Arc::new(Loop::default());
-    let (held, waker) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(None)));
-    let task = event_loop.spawn({
-        let (guard, waker) = (Held::new(&held), Rc::clone(&waker));
-        async move {
-            park(waker).await;
-            drop(guard);
-            0
-        }
-    });
-    let scheduler = task.scheduler_ptr();
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
-    assert_eq!(held.get(), 1);
-    // SAFETY: `waker` keeps the task allocated; the spawning thread.
-    unsafe { task::cancel(scheduler) };
-    assert_eq!(held.get(), 0);
-    assert_eq!(event_loop.finished(), 1);
-    // SAFETY: as above.
-    unsafe { task::cancel(scheduler) };
-    assert_eq!(event_loop.finished(), 1);
-    waker.take().unwrap().wake();
-    assert_eq!(event_loop.queued(), 0, "there is nothing left to run");
-}
-
-#[test]
-fn cancelling_a_queued_task_leaves_a_stale_entry() {
-    let event_loop = Arc::new(Loop::default());
-    let (held, waker) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(None)));
-    let task = event_loop.spawn({
-        let (guard, waker) = (Held::new(&held), Rc::clone(&waker));
-        async move {
-            park(waker).await;
-            drop(guard);
-            0
-        }
-    });
-    let scheduler = task.scheduler_ptr();
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
-    waker.take().unwrap().wake();
-    assert_eq!(event_loop.queued(), 1);
-    // SAFETY: the queue keeps the task allocated; the spawning thread.
-    unsafe { task::cancel(scheduler) };
-    assert_eq!(held.get(), 0);
-    assert_eq!(event_loop.run_one(), None);
-    assert_eq!(event_loop.finished(), 1);
-}
-
-#[test]
-fn a_loop_that_is_going_away_cancels_what_is_queued() {
-    let event_loop = Arc::new(Loop::default());
+fn a_waker_on_another_thread_touches_nothing() {
     let held = Rc::new(Cell::new(0));
-    let guard = Held::new(&held);
-    let task = event_loop.spawn(async move {
-        drop(guard);
-        0
-    });
-    // SAFETY: the spawning thread.
-    unsafe { task.cancel() };
-    assert_eq!(held.get(), 0);
-    assert_eq!(event_loop.finished(), 1);
-}
-
-#[test]
-fn a_task_that_cancels_itself_is_dropped_after_the_poll() {
-    let event_loop = Arc::new(Loop::default());
-    let held = Rc::new(Cell::new(0));
-    let scheduler = Rc::new(Cell::new(None));
-    let task = event_loop.spawn({
-        let (guard, scheduler, held) = (Held::new(&held), Rc::clone(&scheduler), Rc::clone(&held));
-        async move {
-            poll_fn(|cx| {
-                // SAFETY: the task is running, on the spawning thread.
-                unsafe { task::cancel::<OnLoop>(scheduler.get().unwrap()) };
-                assert_eq!(held.get(), 1, "not while it is being polled");
-                cx.waker().wake_by_ref();
-                Poll::<()>::Pending
-            })
-            .await;
-            drop(guard);
-            0
-        }
-    });
-    scheduler.set(Some(task.scheduler_ptr()));
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
-    assert_eq!(held.get(), 0);
-    assert_eq!(event_loop.finished(), 1);
-    assert_eq!(event_loop.run_one(), None);
-}
-
-#[test]
-fn a_task_nothing_can_wake_is_dropped_by_its_loop() {
-    let event_loop = Arc::new(Loop::default());
-    let held = Rc::new(Cell::new(0));
-    let guard = Held::new(&held);
-    let task = event_loop.spawn(async move {
-        poll_fn(|_| Poll::<()>::Pending).await;
-        drop(guard);
-        0
-    });
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
-    assert_eq!(held.get(), 1);
-    assert_eq!(event_loop.run_one(), None);
-    assert_eq!(held.get(), 0);
-    assert_eq!(event_loop.finished(), 1);
-}
-
-#[test]
-fn the_last_waker_dropped_on_another_thread_sends_the_task_home() {
-    let event_loop = Arc::new(Loop::default());
-    let (held, waker) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(None)));
-    let task = event_loop.spawn({
-        let (guard, waker) = (Held::new(&held), Rc::clone(&waker));
-        async move {
-            park(waker).await;
-            drop(guard);
-            0
-        }
-    });
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
+    let (id, waker) = parked(0, &held);
     let waker = waker.take().unwrap();
-    on_another_thread(move || drop(waker)).join().expect("join");
-    assert_eq!(held.get(), 1, "its future is this thread's to drop");
-    assert_eq!(event_loop.run_one(), None);
+    let woke = on_another_thread(move || {
+        drop(waker.clone());
+        waker.wake();
+    });
+    assert!(woke.join().is_err(), "waking there is a bug, and says so");
+    assert_eq!((held.get(), queued()), (1, 0));
+    let _ = cancel(id);
+    assert_eq!((held.get(), alive()), (0, 0));
+}
+
+#[test]
+fn cancel_drops_a_suspended_future() {
+    let held = Rc::new(Cell::new(0));
+    let (id, waker) = parked(0, &held);
+    let _ = cancel(id);
+    assert_eq!((held.get(), alive()), (0, 0));
+    let _ = cancel(id);
+    waker.take().unwrap().wake();
+    assert_eq!(queued(), 0, "its `Waker`s do nothing now");
+}
+
+#[test]
+fn cancel_while_queued_leaves_an_entry_that_finds_nothing() {
+    let held = Rc::new(Cell::new(0));
+    let (id, waker) = parked(0, &held);
+    waker.take().unwrap().wake();
+    assert_eq!(queued(), 1);
+    let _ = cancel(id);
+    assert_eq!(held.get(), 0);
+    assert_eq!(run_one(), None);
+    assert_eq!((alive(), queued()), (0, 0));
+}
+
+#[test]
+fn cancel_from_inside_its_own_poll_waits_for_the_poll() {
+    let held = Rc::new(Cell::new(0));
+    let own_id = Rc::new(Cell::new(None));
+    let id = spawn({
+        let (guard, held, own_id) = (Held::new(&held), Rc::clone(&held), Rc::clone(&own_id));
+        async move {
+            let _guard = guard;
+            assert_eq!(running(), own_id.get());
+            assert!(!cancel(own_id.get().unwrap()), "not yet");
+            let all = LOOP.with(|event_loop| event_loop.tasks.cancel_where(|_| true));
+            assert_eq!(
+                all, 0,
+                "whoever repeats this until nothing is dropped comes to an end"
+            );
+            assert_eq!(held.get(), 1);
+            park(WakerCell::default()).await;
+            unreachable!()
+        }
+    });
+    own_id.set(Some(id));
+    assert_eq!(run(id), None);
+    assert_eq!((held.get(), alive(), queued()), (0, 0, 0));
+}
+
+#[test]
+fn cancel_where_picks_by_scheduler() {
+    let held = Rc::new(Cell::new(0));
+    let _first = parked(1, &held);
+    let (second, _waker) = parked(2, &held);
+    let _third = parked(1, &held);
+    let any = |scope| LOOP.with(|event_loop| event_loop.tasks.any(|on| on.scope == scope));
+    assert!(any(1) && any(2) && !any(3));
+    let dropped = LOOP.with(|event_loop| event_loop.tasks.cancel_where(|on| on.scope == 1));
+    assert_eq!((dropped, held.get(), alive()), (2, 1, 1));
+    assert!(!any(1) && any(2));
+    let _ = cancel(second);
+    assert_eq!((held.get(), alive()), (0, 0));
+}
+
+#[test]
+fn a_closed_table_drops_what_it_has_and_what_it_is_given() {
+    #[derive(Clone, Copy)]
+    struct Nowhere;
+    impl Schedule for Nowhere {
+        type Output = ();
+        fn with_tasks<R>(_: impl FnOnce(&Tasks<Self>) -> R) -> Option<R> {
+            None
+        }
+        fn schedule(self, _: TaskId) {}
+    }
+    let held = Rc::new(Cell::new(0));
+    let holds = |held: Held| async move {
+        let _held = held;
+        core::future::pending().await
+    };
+    let tasks = Tasks::new();
+    tasks.spawn(holds(Held::new(&held)), Nowhere).unwrap();
+    assert_eq!(held.get(), 1);
+    tasks.close();
+    assert_eq!((held.get(), tasks.len()), (0, 0));
+    let refused = tasks.spawn(holds(Held::new(&held)), Nowhere);
+    assert_eq!(refused, Err(Refused::Closed));
     assert_eq!(held.get(), 0);
 }
 
 #[test]
-fn abandoning_a_slot_orphans_the_task() {
-    let event_loop = Arc::new(Loop::default());
+fn a_task_whose_last_waker_is_dropped_is_dropped_by_its_loop() {
+    let held = Rc::new(Cell::new(0));
+    let (_, waker) = parked(0, &held);
+    let second = waker.take().unwrap();
+    drop(second.clone());
+    assert_eq!(queued(), 0);
+    drop(second);
+    assert_eq!((held.get(), queued()), (1, 1), "not beneath the drop");
+    assert_eq!(run_one(), None);
+    assert_eq!((held.get(), alive(), queued()), (0, 0, 0));
+}
+
+#[test]
+fn a_task_that_suspends_with_no_waker_anywhere_is_dropped_at_once() {
+    let held = Rc::new(Cell::new(0));
+    let id = spawn({
+        let held = Held::new(&held);
+        async move {
+            let _held = held;
+            core::future::pending().await
+        }
+    });
+    assert_eq!(run(id), None);
+    assert_eq!((held.get(), alive(), queued()), (0, 0, 0));
+}
+
+#[test]
+fn an_abandoned_slot_lets_go_of_the_task() {
     let held = Rc::new(Cell::new(0));
     let slot = Rc::new(Slot::<u32>::new());
-    let task = event_loop.spawn({
-        let (guard, slot) = (Held::new(&held), Rc::clone(&slot));
+    let id = spawn({
+        let (held, slot) = (Held::new(&held), Rc::clone(&slot));
         async move {
-            let value = poll_fn(|cx| slot.poll_take(cx)).await;
-            drop(guard);
-            value
+            let _held = held;
+            poll_fn(|cx| slot.poll_take(cx)).await
         }
     });
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
+    assert_eq!(run(id), None);
     slot.abandon();
-    assert_eq!(held.get(), 1);
-    assert_eq!(event_loop.run_one(), None);
-    assert_eq!(held.get(), 0);
+    assert_eq!(run_one(), None);
+    assert_eq!((held.get(), alive()), (0, 0));
 }
 
 #[test]
-fn a_loop_ticked_from_inside_a_poll_does_not_poll_again() {
-    let event_loop = Arc::new(Loop::default());
+fn a_wake_during_the_poll_queues_it_again() {
     let polls = Rc::new(Cell::new(0));
-    let task = event_loop.spawn({
-        let (event_loop, polls) = (Arc::clone(&event_loop), Rc::clone(&polls));
+    let id = spawn({
+        let polls = Rc::clone(&polls);
         async move {
             poll_fn(|cx| {
                 polls.set(polls.get() + 1);
-                if polls.get() == 2 {
-                    return Poll::Ready(());
+                if polls.get() == 3 {
+                    return Poll::Ready(3);
                 }
                 cx.waker().wake_by_ref();
-                assert_eq!(event_loop.run_one(), None);
-                assert_eq!(polls.get(), 1);
+                cx.waker().wake_by_ref();
                 Poll::Pending
             })
-            .await;
-            9
+            .await
         }
     });
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
-    assert_eq!(event_loop.run_one(), Some(9));
+    assert_eq!(run(id), None);
+    assert_eq!(queued(), 1);
+    assert_eq!(run_one(), None);
+    assert_eq!(run_one(), Some(3));
+    assert_eq!((alive(), queued()), (0, 0));
+}
+
+#[test]
+fn a_tick_of_the_loop_inside_the_poll_does_not_poll_it_twice() {
+    let depth = Rc::new(Cell::new(0));
+    let id = spawn({
+        let depth = Rc::clone(&depth);
+        async move {
+            let mut polls = 0;
+            poll_fn(|cx| {
+                assert_eq!(depth.replace(1), 0, "polled inside its own poll");
+                polls += 1;
+                if polls == 1 {
+                    cx.waker().wake_by_ref();
+                    assert_eq!(run_one(), None);
+                }
+                depth.set(0);
+                if polls == 2 {
+                    Poll::Ready(polls)
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await
+        }
+    });
+    assert_eq!(run(id), None);
+    assert_eq!(queued(), 1, "the nested run is made up for");
+    assert_eq!(run_one(), Some(2));
+    assert_eq!((alive(), queued()), (0, 0));
+}
+
+#[test]
+fn a_waker_does_not_reach_the_task_that_took_its_place() {
+    let held = Rc::new(Cell::new(0));
+    let (first, waker) = parked(0, &held);
+    let stale = waker.take().unwrap();
+    let _ = cancel(first);
+    let (second, _waker) = parked(0, &held);
+    assert_ne!(first, second);
+    stale.wake_by_ref();
+    drop(stale.clone());
+    drop(stale);
+    assert_eq!((held.get(), queued()), (1, 0));
+    let _ = cancel(second);
+    assert_eq!((held.get(), alive()), (0, 0));
+}
+
+#[test]
+fn a_future_may_use_the_table_while_it_is_polled_and_while_it_is_dropped() {
+    struct OnDrop<F: FnMut()>(F);
+    impl<F: FnMut()> Drop for OnDrop<F> {
+        fn drop(&mut self) {
+            (self.0)();
+        }
+    }
+    let held = Rc::new(Cell::new(0));
+    let (other, other_waker) = parked(0, &held);
+    let (third, _third_waker) = parked(0, &held);
+    let id = spawn({
+        let held = Rc::clone(&held);
+        async move {
+            // Grows the table under the poll.
+            let spawned: Vec<_> = (0..64).map(|_| parked(0, &held)).collect();
+            let _on_drop = OnDrop(move || {
+                other_waker.take().unwrap().wake();
+                let _ = cancel(third);
+                spawned.iter().for_each(|(id, _)| _ = cancel(*id));
+                assert_eq!(run(spawn(async { 1 })), Some(1));
+            });
+            core::future::pending().await
+        }
+    });
+    assert_eq!(run(id), None, "nothing holds its `Waker`, so it is dropped");
+    assert_eq!((held.get(), alive(), queued()), (1, 1, 1));
+    let _ = cancel(other);
+    assert_eq!(run_one(), None);
+    assert_eq!((held.get(), alive(), queued()), (0, 0, 0));
+}
+
+#[test]
+fn a_task_can_be_run_without_the_queue() {
+    let slot = Rc::new(Slot::new());
+    let id = spawn({
+        let slot = Rc::clone(&slot);
+        async move {
+            let first: u32 = poll_fn(|cx| slot.poll_take(cx)).await;
+            first + poll_fn(|cx| slot.poll_take(cx)).await
+        }
+    });
+    assert_eq!(run(id), None);
+    assert_eq!(running(), None);
+    let waker = slot.fill_quietly(1).unwrap();
+    assert_eq!(run(id), None);
+    drop(waker);
+    assert_eq!(
+        queued(),
+        0,
+        "it waits for the slot again, so it is no orphan"
+    );
+    // Queued and run at once: the entry left behind finds nothing.
+    slot.fill(2);
+    assert_eq!(run(id), Some(3));
+    assert_eq!(run_one(), None);
+    assert_eq!((alive(), queued()), (0, 0));
 }
 
 #[test]
 fn the_loser_of_a_race_is_dropped() {
-    let event_loop = Arc::new(Loop::default());
     let held = Rc::new(Cell::new(0));
-    let slot = Rc::new(Slot::<u32>::new());
-    let task = event_loop.spawn({
-        let (guard, slot, held) = (Held::new(&held), Rc::clone(&slot), Rc::clone(&held));
+    let slot = Rc::new(Slot::new());
+    let id = spawn({
+        let (held, slot) = (Held::new(&held), Rc::clone(&slot));
         async move {
             let never = async move {
-                poll_fn(|_| Poll::<()>::Pending).await;
-                drop(guard);
+                let _held = held;
+                core::future::pending::<u32>().await
             };
             match race(never, poll_fn(|cx| slot.poll_take(cx))).await {
-                Either::Left(()) => unreachable!(),
-                Either::Right(value) => {
-                    assert_eq!(held.get(), 0);
-                    value
-                }
+                Either::Left(_) => unreachable!(),
+                Either::Right(value) => value,
             }
         }
     });
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
+    assert_eq!(run(id), None);
     slot.fill(3);
-    assert_eq!(event_loop.run_one(), Some(3));
-}
-
-#[test]
-fn blocking_work_comes_back() {
-    let event_loop = Arc::new(Loop::default());
-    let task = event_loop.spawn(async {
-        let input = vec![1u32, 2, 3];
-        let started: Vec<_> = (0..3)
-            .map(|i| {
-                let input = input.clone();
-                blocking(move || input[i] * 10)
-            })
-            .collect();
-        let mut sum = 0;
-        for work in started {
-            sum += work.await;
-        }
-        sum
-    });
-    // SAFETY: the spawning thread.
-    let output = unsafe { task.run() };
-    assert_eq!(
-        output.unwrap_or_else(|| event_loop.run_until_finished()),
-        60
-    );
-    join_pool();
-    while event_loop.queued() > 0 {
-        assert_eq!(event_loop.run_one(), None);
-    }
-}
-
-#[test]
-fn abandoned_blocking_work_frees_itself() {
-    let dropped = Arc::new(AtomicUsize::new(0));
-    struct Result_(Arc<AtomicUsize>);
-    impl Drop for Result_ {
-        fn drop(&mut self) {
-            self.0.fetch_add(1, Ordering::Release);
-        }
-    }
-    let result = Result_(Arc::clone(&dropped));
-    drop(blocking(move || result));
-    join_pool();
-    assert_eq!(dropped.load(Ordering::Acquire), 1);
-}
-
-#[test]
-fn blocking_work_polled_with_a_new_waker_wakes_that_one() {
-    let event_loop = Arc::new(Loop::default());
-    let gate = Arc::new(AtomicUsize::new(0));
-    let task = event_loop.spawn({
-        let gate = Arc::clone(&gate);
-        async move {
-            let mut work = pin!(blocking({
-                let gate = Arc::clone(&gate);
-                move || {
-                    while gate.load(Ordering::Acquire) == 0 {
-                        std::thread::yield_now();
-                    }
-                    4
-                }
-            }));
-            // Registers a waker that goes nowhere, then the task's own.
-            assert!(
-                work.as_mut()
-                    .poll(&mut core::task::Context::from_waker(Waker::noop()))
-                    .is_pending()
-            );
-            let polled = poll_fn(|cx| Poll::Ready(work.as_mut().poll(cx))).await;
-            assert!(polled.is_pending());
-            gate.store(1, Ordering::Release);
-            work.await
-        }
-    });
-    // SAFETY: the spawning thread.
-    let output = unsafe { task.run() };
-    assert_eq!(output.unwrap_or_else(|| event_loop.run_until_finished()), 4);
-    join_pool();
-}
-
-#[test]
-fn cancel_races_with_the_last_waker_dropped_on_another_thread() {
-    let event_loop = Arc::new(Loop::default());
-    let held = Rc::new(Cell::new(0));
-    let waker = Rc::new(Cell::new(None));
-    let task = event_loop.spawn({
-        let (held, waker) = (Held::new(&held), Rc::clone(&waker));
-        async move {
-            let _held = held;
-            park(waker).await;
-            0
-        }
-    });
-    let scheduler = task.scheduler_ptr();
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
-    let waker = waker.take().unwrap();
-    let thread = on_another_thread(move || drop(waker));
-    // SAFETY: it has not finished, so it is allocated; the spawning thread.
-    unsafe { task::cancel(scheduler) };
-    thread.join().unwrap();
-    assert_eq!(held.get(), 0);
-    while event_loop.queued() > 0 {
-        assert_eq!(event_loop.run_one(), None);
-    }
-    assert_eq!(event_loop.finished(), 1);
-}
-
-#[test]
-fn a_loop_that_refuses_an_orphan_is_asked_once() {
-    struct Refuses(Arc<AtomicUsize>);
-    // SAFETY: it drops every `Runnable`.
-    unsafe impl Schedule for Refuses {
-        type Output = u32;
-        fn schedule(task: Runnable<Self>) {
-            task.scheduler().0.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    let asked = Arc::new(AtomicUsize::new(0));
-    let held = Rc::new(Cell::new(0));
-    let waker = Rc::new(Cell::new(None));
-    let task = task::spawn(
-        {
-            let (held, waker) = (Held::new(&held), Rc::clone(&waker));
-            async move {
-                let _held = held;
-                park(waker).await;
-                0
-            }
-        },
-        Refuses(Arc::clone(&asked)),
-    );
-    let scheduler = task.scheduler_ptr();
-    // SAFETY: the spawning thread.
-    assert_eq!(unsafe { task.run() }, None);
-    drop(waker.take());
-    assert_eq!(asked.load(Ordering::Relaxed), 1);
-    assert_eq!(held.get(), 1);
-    // SAFETY: it has not finished, so it is allocated; the spawning thread.
-    unsafe { task::cancel(scheduler) };
-    assert_eq!(held.get(), 0);
+    assert_eq!(run_one(), Some(3));
+    assert_eq!((held.get(), alive(), queued()), (0, 0, 0));
 }

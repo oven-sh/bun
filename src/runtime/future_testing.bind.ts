@@ -29,6 +29,10 @@ export const futures = b.namespace({
   callAfter: { ...promised, args: { callback: b.callable, ms: b.u32 } },
   /** `text` in upper case, from the pool. The result is made through the bindings API. */
   shout: { ...promised, args: { text: b.string.utf8.owned } },
+  /** The sum of the bytes of `buffer`, which the pool reads in place after `ms`. */
+  sumBytes: { ...promised, args: { buffer: b.any, ms: b.u32 } },
+  /** `sumBytes` that nothing waits for: its future is dropped at once. */
+  sumBytesAbandoned: { args: { buffer: b.any, ms: b.u32 }, capability: "js", throws: true },
   /** A future that spawns another and waits for what it leaves behind. */
   nested: { ...promised, args: { value: b.i32 } },
   /** No promise: what `callback` throws after `ms` is an uncaught exception. */

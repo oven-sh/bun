@@ -6,9 +6,10 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::rc::Rc;
 
 use bun_async::{Either, Slot, race};
+use bun_jsc::array_buffer::PinnedArrayBuffer;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
-use bun_jsc::future::{self, Rejection};
-use bun_jsc::{JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StringJsc as _, Strong};
+use bun_jsc::future::{self, JsTask, Rejection};
+use bun_jsc::{JSGlobalObject, JSPromiseStrong, JSValue, JsPtr, JsResult, StringJsc as _, Strong};
 
 use crate::future::{settled as settled_promise, sleep as sleep_for};
 
@@ -178,6 +179,44 @@ pub(crate) fn shout(cx: &mut JsScope<'_>, text: bun_core::Utf8Bytes<'static>) ->
             Ok(string) => Ok(string.to_js()),
             Err(error) => Err(error.into_js_error(cx.global()).into()),
         })
+    })
+}
+
+fn sum_in_place(js: JsTask, buffer: JSValue, ms: u32) -> Option<future::Blocking<u32>> {
+    let pinned = PinnedArrayBuffer::root_read_only(js.global(), buffer)?;
+    // SAFETY: `pinned`, which the job keeps, keeps the bytes where they are.
+    let bytes = unsafe { JsPtr::new(core::ptr::NonNull::from(pinned.byte_slice())) };
+    Some(js.blocking_with(pinned, move |_vm_is_alive| {
+        std::thread::sleep(std::time::Duration::from_millis(u64::from(ms)));
+        // SAFETY: the job holds a ticket and `pinned`, and the test does not write to the buffer.
+        let bytes: &[u8] = unsafe { &*bytes.as_ptr() };
+        bytes.iter().map(|byte| u32::from(*byte)).sum()
+    }))
+}
+
+pub(crate) fn sum_bytes(cx: &mut JsScope<'_>, buffer: JsLocal<'_>, ms: u32) -> JsResult<JSValue> {
+    let buffer = buffer.to_js();
+    future::promise(&cx.js_thread(), |js| {
+        let sum = sum_in_place(js, buffer, ms);
+        async move {
+            let _alive = Alive::new();
+            match sum {
+                Some(sum) => Ok(JSValue::js_number(f64::from(sum.await))),
+                None => Ok(JSValue::NULL),
+            }
+        }
+    })
+}
+
+pub(crate) fn sum_bytes_abandoned(
+    cx: &mut JsScope<'_>,
+    buffer: JsLocal<'_>,
+    ms: u32,
+) -> JsResult<()> {
+    let buffer = buffer.to_js();
+    future::spawn(&cx.js_thread(), |js| {
+        drop(sum_in_place(js, buffer, ms));
+        async { Ok(()) }
     })
 }
 

@@ -232,10 +232,7 @@ pub(crate) fn run_task(
             // its `Completion`; the erased entry runs `then` and frees it.
             unsafe { bun_jsc::job::complete_erased(task.ptr, global) }?;
         }
-        task_tag::Future => {
-            // SAFETY: §Dispatch — queued by the task's own `Waker`.
-            unsafe { bun_jsc::future::run_queued(task.ptr) }?;
-        }
+        task_tag::Future => bun_jsc::future::run_queued(task.ptr)?,
         task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
             // the task owns a ref for its duration; `run_deferred` releases it.
@@ -1681,10 +1678,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr) }
         }
-        task_tag::Future => {
-            // SAFETY: as `release!`.
-            unsafe { bun_jsc::future::release_queued(task.ptr) }
-        }
+        task_tag::Future => bun_jsc::future::release_queued(task.ptr),
         task_tag::AsyncModule => release_in!([Install], bun_jsc::async_module::AsyncModule),
         task_tag::BakeHotReloadEvent => release_in!([Bundler], BakeHotReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),

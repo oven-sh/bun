@@ -513,7 +513,7 @@ pub struct PackageManager {
     pub(crate) git_commits: GitCommitMap,
     /// Git tasks queued by `enqueue_git_task` and not yet started.
     pub(crate) git_tasks: VecDeque<NonNull<Task::Task<'static>>>,
-    /// Git tasks whose `git_runner::GitSubprocess` is alive.
+    /// Git tasks whose `git_runner::GitTask` is alive.
     pub(crate) running_git_tasks: AtomicU32,
     /// Set by the first git task.
     pub(crate) git_env: bun_ptr::JsCell<Option<crate::repository::GitEnv>>,

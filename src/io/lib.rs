@@ -496,12 +496,11 @@ bun_dispatch::link_interface! {
         FileReader,
         FileResponseStream,
         Terminal,
-        Command,
+        Capture,
         FilterRunHandle,
         MultiRunPipeReader,
         TestParallelWorkerPipe,
         LifecycleScript,
-        InstallGit,
         SecurityScan,
     ] {
         fn has_on_read_chunk() -> bool;

@@ -1,9 +1,8 @@
-//! What a future on the JS loop ([`bun_jsc::future`]) can await that this crate owns:
-//! the timer heap, JavaScript promises and child processes.
+//! What a future on the JS loop ([`bun_jsc::future`]) can await that this crate owns: the timer
+//! heap and JavaScript promises. (A child process is `bun_spawn::Capture`, on any loop.)
 //!
-//! Each is the one owner of its kind that the dispatch tables know
-//! (`EventLoopTimerTag::Future`, `native_promise_context::Tag::Future`, `ProcessExit::Command`,
-//! `BufferedReaderParentLink::Command`). An `async fn` that uses them adds no tag, no arm and no
+//! Each is the one owner of its kind that the dispatch tables know (`EventLoopTimerTag::Future`,
+//! `native_promise_context::Tag::Future`). An `async fn` that uses them adds no tag, no arm and no
 //! callback of its own.
 
 use core::cell::Cell;
@@ -15,21 +14,17 @@ use core::ptr::NonNull;
 use core::task::{Context, Poll};
 use std::rc::Rc;
 
-use bun_async::Slot;
+use bun_async::{Slot, TaskId};
 use bun_core::{Timespec, TimespecMockMode};
-use bun_io::BufferedReader as OutputReader;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::future::LoopRef;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{EventLoopHandle, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, Strong};
-use bun_ptr::ThisPtr;
 use bun_resolver::fs::FileSystem;
+use bun_spawn::{Capture, CaptureError, SpawnEnv, SpawnOptions, Stdio, Streams};
 use bun_sys as sys;
 
-#[cfg(not(windows))]
-use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, ProcessHandle, Rusage, SpawnOptions, Status};
 use crate::api::native_promise_context;
 use crate::generated_bindgen::future::{Bun__Future__onFulfilled, Bun__Future__onRejected};
 use crate::jsc_hooks::timer_all_mut as timer_all;
@@ -109,8 +104,9 @@ impl Drop for Sleep {
 
 /// What the reactions of an awaited promise share with the future that awaits it.
 pub(crate) struct Reaction {
-    /// Rooted from the reaction (a microtask) to the poll (the next task).
+    /// Rooted from the reaction to the poll, which is not always inside it.
     outcome: Slot<Result<Strong, Strong>>,
+    awaited_by: Cell<Option<TaskId>>,
 }
 
 impl native_promise_context::NativePromiseContextType for Reaction {
@@ -125,6 +121,7 @@ impl native_promise_context::NativePromiseContextType for Reaction {
 pub(crate) fn settled(global: &JSGlobalObject, value: JSValue) -> JsResult<Settled> {
     let reaction = Rc::new(Reaction {
         outcome: Slot::new(),
+        awaited_by: Cell::new(None),
     });
     let native = (value.as_promise().map(JSPromise::opaque_mut))
         .filter(|promise| promise.is_then_fast_and_non_observable());
@@ -164,6 +161,7 @@ impl Future for Settled {
     type Output = Result<JSValue, JSValue>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.0.awaited_by.set(bun_jsc::future::running_task());
         // The roots go as the values reach the stack.
         self.0.outcome.poll_take(cx).map(|outcome| match outcome {
             Ok(value) => Ok(value.get()),
@@ -186,10 +184,15 @@ impl Reaction {
             return;
         }
         let global = cx.global();
-        reaction.outcome.fill(match outcome {
+        let waker = reaction.outcome.fill_quietly(match outcome {
             Ok(value) => Ok(Strong::create(value, global)),
             Err(reason) => Err(Strong::create(reason, global)),
         });
+        let awaited_by = reaction.awaited_by.get();
+        drop(reaction);
+        if let Some(waker) = waker {
+            crate::dispatch::fold(bun_jsc::future::resume_now(awaited_by, waker));
+        }
     }
 }
 
@@ -220,21 +223,7 @@ pub(crate) fn on_rejected(
 
 // ── child processes ───────────────────────────────────────────────────────
 
-/// A child process spawned to run to its end. Resolves once it has exited and the pipe that
-/// captures its output has reached EOF. Dropping it lets go of the child without killing it.
-#[must_use = "futures do nothing unless awaited"]
-pub(crate) struct Command(NonNull<Child>);
-
-pub(crate) struct Exit {
-    pub(crate) status: Status,
-    /// What it wrote to stdout, if that was `Stdio::Buffer`.
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub(crate) stdout: Vec<u8>,
-    #[cfg(windows)]
-    pub(crate) stderr: Vec<u8>,
-}
-
-/// Why there is no [`Exit`]: the message of the `Error` script gets.
+/// Why a [`command`] did not run to its end: the message of the `Error` script gets.
 pub(crate) type CommandError = Vec<u8>;
 
 macro_rules! command_error {
@@ -246,287 +235,75 @@ macro_rules! command_error {
 }
 pub(crate) use command_error;
 
-/// What the process and the reader call back into. Its callbacks record what happened and wake
-/// the task: nothing is freed, spawned or settled beneath them.
-struct Child {
-    process: JsCell<Option<ProcessHandle>>,
-    #[cfg(unix)]
-    stdout: JsCell<OutputReader>,
+pub(crate) fn read_failure(err: &sys::Error) -> CommandError {
+    command_error!(
+        "Failed to read process output: {}",
+        bstr::BStr::new(err.name())
+    )
+}
+
+/// Spawns `argv` in the top-level directory with this process's environment and nothing on stdin.
+/// stderr is captured on Windows and ignored elsewhere.
+pub(crate) fn command(argv: &[&CStr], capture_stdout: bool) -> Result<Capture, CommandError> {
+    #[cfg(not(windows))]
+    let resolved_argv0: Option<*const core::ffi::c_char> = None;
     #[cfg(windows)]
-    stderr: JsCell<OutputReader>,
-    open_pipes: Cell<u8>,
-    status: JsCell<Option<Status>>,
-    read_error: JsCell<Option<sys::Error>>,
-    finished: Slot<()>,
-    event_loop_handle: EventLoopHandle,
-}
-
-bun_io::impl_buffered_reader_parent! {
-    Command for Child;
-    has_on_read_chunk = false;
-    on_reader_done  = |this| (*this).on_pipe_closed(None);
-    on_reader_error = |this, err| (*this).on_pipe_closed(Some(err));
-    loop_           = |_this| VirtualMachine::get_mut().uv_loop().cast();
-    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
-}
-
-bun_spawn::link_impl_ProcessExit! {
-    Command for Child => |this| {
-        on_process_exit(_process, status, _rusage) => (*this).on_exit(status),
-    }
-}
-
-impl Child {
-    fn on_pipe_closed(&self, error: Option<sys::Error>) {
-        debug_assert!(self.open_pipes.get() > 0);
-        self.open_pipes.set(self.open_pipes.get() - 1);
-        if let Some(error) = error
-            && self.read_error.get().is_none()
-        {
-            self.read_error.set(Some(error));
-        }
-        self.wake_if_finished();
-    }
-
-    fn on_exit(&self, status: Status) {
-        self.status.set(Some(status));
-        self.wake_if_finished();
-    }
-
-    fn read_failure(&self) -> Option<CommandError> {
-        let err = self.read_error.replace(None)?;
-        Some(command_error!(
-            "Failed to read process output: {}",
-            bstr::BStr::new(err.name())
-        ))
-    }
-
-    fn wake_if_finished(&self) {
-        if self.status.get().is_some() && self.open_pipes.get() == 0 {
-            self.finished.fill(());
-        }
-    }
-}
-
-impl Command {
-    /// stderr is captured on Windows and ignored elsewhere.
-    pub(crate) fn spawn(
-        argv: &[&CStr],
-        stdin: spawn::Stdio,
-        stdout: spawn::Stdio,
-    ) -> Result<Command, CommandError> {
-        let event_loop_handle =
-            EventLoopHandle::init(VirtualMachine::get_mut().event_loop().cast::<()>());
-        let command = Command(bun_core::heap::into_raw_nn(Box::new(Child {
-            process: JsCell::new(None),
-            #[cfg(unix)]
-            stdout: JsCell::new(OutputReader::init::<Child>()),
-            #[cfg(windows)]
-            stderr: JsCell::new(OutputReader::init::<Child>()),
-            open_pipes: Cell::new(0),
-            status: JsCell::new(None),
-            read_error: JsCell::new(None),
-            finished: Slot::new(),
-            event_loop_handle,
-        })));
-        let process = command.start(argv, stdin, stdout)?;
-        // SAFETY: the heap `Child`, which outlives the handle: `Command` drops them together.
-        process.set_exit_handler(unsafe { ThisPtr::new(command.0.as_ptr()) });
-        match process.watch_or_reap() {
-            Ok(false) => command.child().process.set(Some(process)),
-            Ok(true) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
-                }
-            }
-        }
-        Ok(command)
-    }
-
-    fn child(&self) -> &Child {
-        // SAFETY: allocated by `spawn`, freed by `drop`.
-        unsafe { self.0.as_ref() }
-    }
-
-    /// Spawns the process and starts the reader.
-    fn start(
-        &self,
-        argv: &[&CStr],
-        stdin: spawn::Stdio,
-        stdout: spawn::Stdio,
-    ) -> Result<ProcessHandle, CommandError> {
-        let child = self.child();
-        let parent: *mut core::ffi::c_void = self.0.as_ptr().cast();
-
-        #[cfg(not(windows))]
-        let resolved_argv0: Option<*const core::ffi::c_char> = None;
-        #[cfg(windows)]
-        let resolved_argv0: Option<*const core::ffi::c_char>;
-        // `resolved_argv0` borrows it until the spawn below.
-        #[cfg(windows)]
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        #[cfg(windows)]
-        {
-            // Resolve the executable via bun.which, matching Bun.spawn's behavior.
-            let path_env = VirtualMachine::get_mut()
-                .transpiler
-                .env()
-                .map
-                .get(b"PATH")
-                .unwrap_or(b"");
-            let argv0 = argv[0].to_bytes();
-            match bun_which::which(&mut path_buf, path_env, b"", argv0) {
-                Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
-                None => {
-                    return Err(command_error!(
-                        "Could not find '{}' in PATH",
-                        bstr::BStr::new(argv0)
-                    ));
-                }
-            }
-        }
-        #[cfg(unix)]
-        let env = spawn::SpawnEnv::Inherit;
-        #[cfg(windows)]
-        let envp_owned = VirtualMachine::get_mut()
+    let resolved_argv0: Option<*const core::ffi::c_char>;
+    // `resolved_argv0` borrows it until the spawn below.
+    #[cfg(windows)]
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    #[cfg(windows)]
+    {
+        // Resolve the executable via bun.which, matching Bun.spawn's behavior.
+        let path_env = VirtualMachine::get_mut()
             .transpiler
-            .env_mut()
+            .env()
             .map
-            .create_null_delimited_env_map()
-            .map_err(|_| command_error!("Failed to create environment block"))?;
-        #[cfg(windows)]
-        let env_strings: Vec<&CStr> = envp_owned.iter().collect();
-        #[cfg(windows)]
-        let env = spawn::SpawnEnv::Strings(&env_strings);
-
-        // `spawn_process_windows` takes the pipe out of `Stdio::Buffer` into
-        // `WindowsStdioResult::Buffer` on success, and leaves it with the caller on error.
-        #[cfg(windows)]
-        let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe =
-            bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-                bun_sys::windows::libuv::Pipe,
-            >()));
-        let cwd = FileSystem::get().top_level_dir();
-        let spawn_options = SpawnOptions {
-            stdin,
-            stdout,
-            #[cfg(windows)]
-            stderr: spawn::Stdio::Buffer(stderr_pipe_ptr),
-            #[cfg(not(windows))]
-            stderr: spawn::Stdio::Ignore,
-            cwd: cwd.into(),
-            argv0: resolved_argv0,
-            #[cfg(windows)]
-            windows: spawn::WindowsOptions {
-                loop_: child.event_loop_handle,
-                ..Default::default()
-            },
-            ..SpawnOptions::default()
-        };
-        #[cfg(windows)]
-        let mut spawn_options = spawn_options;
-
-        let spawned = match spawn::spawn_process_cstr(&spawn_options, argv, env) {
-            Ok(Ok(spawned)) => spawned,
-            Ok(Err(err)) => {
-                #[cfg(windows)]
-                spawn_options.stderr.deinit();
+            .get(b"PATH")
+            .unwrap_or(b"");
+        let argv0 = argv[0].to_bytes();
+        match bun_which::which(&mut path_buf, path_env, b"", argv0) {
+            Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
+            None => {
                 return Err(command_error!(
-                    "Failed to spawn process: {}",
-                    bstr::BStr::new(err.name())
+                    "Could not find '{}' in PATH",
+                    bstr::BStr::new(argv0)
                 ));
             }
-            Err(err) => {
-                #[cfg(windows)]
-                spawn_options.stderr.deinit();
-                return Err(command_error!("Failed to spawn process: {}", err.name()));
-            }
-        };
-        #[cfg(windows)]
-        let mut spawned = spawned;
-
-        #[cfg(unix)]
-        if let Some(stdout) = spawned.stdout {
-            child.stdout.with_mut(|reader| reader.set_parent(parent));
-            if spawned.memfds[1] {
-                child.stdout.with_mut(|reader| reader.start_memfd(stdout));
-            } else {
-                let _ = sys::set_nonblocking(stdout);
-                child.open_pipes.set(child.open_pipes.get() + 1);
-                // A failure calls `on_reader_error`, which touches the other cells only.
-                let started = child.stdout.with_mut(|reader| {
-                    use bun_io::pipe_reader::PosixFlags;
-                    reader
-                        .flags
-                        .insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
-                    reader.start(stdout, true)
-                });
-                if started.is_err() {
-                    return Err(child
-                        .read_failure()
-                        .unwrap_or_else(|| command_error!("Failed to start reading stdout")));
-                }
-                child.stdout.with_mut(|reader| {
-                    if let Some(poll) = reader.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                });
-            }
         }
-        // Before `spawned` drops, which would close the pipe under the reader.
-        #[cfg(windows)]
-        if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-            debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            child.stderr.with_mut(|reader| {
-                reader.set_source(bun_io::Source::Pipe(pipe));
-                reader.set_parent(parent);
-            });
-            child.open_pipes.set(child.open_pipes.get() + 1);
-            if child
-                .stderr
-                .with_mut(|reader| reader.start_with_current_pipe())
-                .is_err()
-            {
-                return Err(child
-                    .read_failure()
-                    .unwrap_or_else(|| command_error!("Failed to start reading stderr")));
-            }
+    }
+    #[cfg(unix)]
+    let env = SpawnEnv::Inherit;
+    #[cfg(windows)]
+    let envp_owned = VirtualMachine::get_mut()
+        .transpiler
+        .env_mut()
+        .map
+        .create_null_delimited_env_map()
+        .map_err(|_| command_error!("Failed to create environment block"))?;
+    #[cfg(windows)]
+    let env_strings: Vec<&CStr> = envp_owned.iter().collect();
+    #[cfg(windows)]
+    let env = SpawnEnv::Strings(&env_strings);
+
+    let options = SpawnOptions {
+        stdin: Stdio::Ignore,
+        stdout: Stdio::Ignore,
+        stderr: Stdio::Ignore,
+        cwd: FileSystem::get().top_level_dir().into(),
+        argv0: resolved_argv0,
+        ..SpawnOptions::default()
+    };
+    let streams = Streams {
+        stdout: capture_stdout,
+        stderr: cfg!(windows),
+    };
+    let event_loop = EventLoopHandle::init(VirtualMachine::get_mut().event_loop().cast::<()>());
+    Capture::spawn(options, streams, argv, env, event_loop).map_err(|err| match err {
+        CaptureError::Spawn(err) => command_error!("Failed to spawn process: {}", err.name()),
+        CaptureError::SpawnSys(err) => {
+            command_error!("Failed to spawn process: {}", bstr::BStr::new(err.name()))
         }
-
-        Ok(spawned.to_process_handle(child.event_loop_handle))
-    }
-}
-
-impl Future for Command {
-    type Output = Result<Exit, CommandError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let child = self.child();
-        core::task::ready!(child.finished.poll_take(cx));
-        child.process.set(None);
-        if let Some(failure) = child.read_failure() {
-            return Poll::Ready(Err(failure));
-        }
-        Poll::Ready(Ok(Exit {
-            status: child.status.replace(None).expect("finished"),
-            #[cfg(all(unix, not(target_os = "macos")))]
-            stdout: child
-                .stdout
-                .with_mut(|reader| core::mem::take(reader.final_buffer())),
-            #[cfg(windows)]
-            stderr: child
-                .stderr
-                .with_mut(|reader| core::mem::take(reader.final_buffer())),
-        }))
-    }
-}
-
-impl Drop for Command {
-    fn drop(&mut self) {
-        // SAFETY: allocated by `spawn`. Dropping the handle detaches the exit handler and
-        // dropping the reader closes it unreported, so nothing calls back into the `Child` again.
-        unsafe { bun_core::heap::destroy(self.0.as_ptr()) };
-    }
+        CaptureError::StartReading(err) => read_failure(&err),
+    })
 }

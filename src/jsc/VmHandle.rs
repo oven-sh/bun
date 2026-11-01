@@ -244,12 +244,6 @@ impl Ticket {
         self.shared.deliver(self.kind, task);
     }
 
-    /// For work whose completion reaches the loop another way than [`post`](Self::post) while it holds this ticket.
-    #[inline]
-    pub(crate) fn before_post(&self) {
-        test_gate::before_ticket_post(self);
-    }
-
     /// Release a keep-alive taken on the VM's loop (any thread).
     pub fn unref_keep_alive(&self) {
         self.shared.add_keep_alive(self.kind, -1);

@@ -304,7 +304,10 @@ impl MiniEventLoop {
 
     #[inline]
     pub fn tick_once(&mut self, context: *mut c_void) {
-        if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
+        if self.tick_concurrent_with_count() == 0
+            && self.tasks.readable_length() == 0
+            && !crate::futures::any_woken()
+        {
             // SAFETY: see `loop_ptr()` invariant.
             unsafe {
                 (*self.loop_ptr()).inc();
@@ -318,6 +321,7 @@ impl MiniEventLoop {
             // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
             unsafe { (*task).run(context) };
         }
+        crate::futures::run_woken();
     }
 
     pub(crate) fn tick_without_idle(&mut self, context: *mut c_void) {
@@ -327,11 +331,15 @@ impl MiniEventLoop {
                 // SAFETY: see tick_once.
                 unsafe { (*task).run(context) };
             }
+            crate::futures::run_woken();
 
             // SAFETY: see `loop_ptr()` invariant.
             unsafe { (*self.loop_ptr()).tick_without_idle() };
 
-            if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
+            if self.tasks.readable_length() == 0
+                && self.tick_concurrent_with_count() == 0
+                && !crate::futures::any_woken()
+            {
                 break;
             }
         }

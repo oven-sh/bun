@@ -278,10 +278,6 @@ dependencies = [
 [[package]]
 name = "bun_async"
 version = "0.0.0"
-dependencies = [
- "bun_core",
- "bun_threading",
-]
 
 [[package]]
 name = "bun_base64"
@@ -646,6 +642,7 @@ dependencies = [
 name = "bun_event_loop"
 version = "0.0.0"
 dependencies = [
+ "bun_async",
  "bun_collections",
  "bun_core",
  "bun_dispatch",
@@ -1923,6 +1920,7 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_analytics",
+ "bun_async",
  "bun_core",
  "bun_dispatch",
  "bun_errno",

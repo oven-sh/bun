@@ -201,9 +201,10 @@ impl ScriptExecutionContext {
         self.timers.take()
     }
 
-    /// Nothing is armed and no client socket is open: freeing it strands nothing.
+    /// Nothing is armed, no future is left and no client socket is open: freeing it strands nothing.
     pub(crate) fn owns_nothing(&self) -> bool {
         self.tail.get().is_null()
+            && !crate::future::any_of_context(self.id())
             && self
                 .socket_groups
                 .with_mut(|groups| groups.as_deref_mut().is_none_or(|groups| groups.is_empty()))
@@ -275,7 +276,11 @@ impl ScriptExecutionContext {
         loop {
             let newest = *self.tail.get();
             if newest.is_null() {
-                return result;
+                if !crate::future::cancel_of_context(self.id()) {
+                    return result;
+                }
+                result = SweepResult::Stopped;
+                continue;
             }
             result = SweepResult::Stopped;
             // SAFETY: linked ⇒ live. The callback may free the owner; nothing

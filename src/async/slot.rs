@@ -28,10 +28,16 @@ impl<T> Slot<T> {
 
     /// The callback's side. Replaces a value nobody took.
     pub fn fill(&self, value: T) {
-        self.value.set(Some(value));
-        if let Some(waker) = self.waker.take() {
+        if let Some(waker) = self.fill_quietly(value) {
             waker.wake();
         }
+    }
+
+    /// [`fill`](Self::fill), leaving it to the caller to wake whoever waits.
+    #[must_use]
+    pub fn fill_quietly(&self, value: T) -> Option<Waker> {
+        self.value.set(Some(value));
+        self.waker.take()
     }
 
     /// The future's side.

@@ -9,33 +9,42 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Instant;
 
-use bun_async::Slot;
-use bun_async::task::{self, Runnable, Schedule};
+use bun_async::{Schedule, Slot, TaskId, Tasks};
+
+thread_local! {
+    static TASKS: Tasks<OnThread> = Tasks::new();
+    static QUEUE: RefCell<VecDeque<TaskId>> = const { RefCell::new(VecDeque::new()) };
+}
+
+#[derive(Clone, Copy)]
+struct OnThread;
+impl Schedule for OnThread {
+    type Output = u32;
+    fn with_tasks<R>(f: impl FnOnce(&Tasks<Self>) -> R) -> Option<R> {
+        TASKS.try_with(f).ok()
+    }
+    fn schedule(self, id: TaskId) {
+        QUEUE.with_borrow_mut(|queue| queue.push_back(id));
+    }
+}
+
+fn spawn(future: impl Future<Output = u32> + 'static) -> TaskId {
+    TASKS.with(|tasks| tasks.spawn(future, OnThread)).unwrap()
+}
+fn run(id: TaskId) -> Option<u32> {
+    TASKS.with(|tasks| tasks.run(id))
+}
+fn run_one() -> Option<u32> {
+    run(QUEUE.with_borrow_mut(|queue| queue.pop_front()).unwrap())
+}
+
+struct ByHand {
+    run: fn(Box<ByHand>) -> u32,
+    a: u32,
+    b: u32,
+}
 
 fn main() {
-    thread_local! {
-        static QUEUE: RefCell<VecDeque<Runnable<OnThread>>> = const { RefCell::new(VecDeque::new()) };
-    }
-    struct OnThread;
-    // SAFETY: the queue is the waking thread's own, and this test has one thread.
-    unsafe impl Schedule for OnThread {
-        type Output = u32;
-        fn schedule(task: Runnable<Self>) {
-            QUEUE.with_borrow_mut(|queue| queue.push_back(task));
-        }
-    }
-    fn run_one() -> Option<u32> {
-        let task = QUEUE.with_borrow_mut(|queue| queue.pop_front()).unwrap();
-        // SAFETY: the spawning thread.
-        unsafe { task.run() }
-    }
-
-    struct ByHand {
-        run: fn(Box<ByHand>) -> u32,
-        a: u32,
-        b: u32,
-    }
-
     const ROUNDS: u32 = 2_000_000;
     let per_round = |name: &str, mut round: Box<dyn FnMut(u32) -> u32>| {
         for i in 0..ROUNDS / 10 {
@@ -65,44 +74,31 @@ fn main() {
     );
     per_round(
         "future: spawn, finish in the first poll, free",
-        Box::new(|i| {
-            let task = task::spawn(async move { black_box(i).wrapping_add(1) }, OnThread);
-            // SAFETY: the spawning thread.
-            unsafe { task.run() }.unwrap()
-        }),
+        Box::new(|i| run(spawn(async move { black_box(i).wrapping_add(1) })).unwrap()),
     );
     per_round(
         "future: spawn, suspend, wake, queue, resume, free",
         Box::new(|i| {
             let slot = Rc::new(Slot::<u32>::new());
-            let task = task::spawn(
-                {
-                    let slot = Rc::clone(&slot);
-                    async move { poll_fn(|cx| slot.poll_take(cx)).await.wrapping_add(1) }
-                },
-                OnThread,
-            );
-            // SAFETY: the spawning thread.
-            assert!(unsafe { task.run() }.is_none());
+            let id = spawn({
+                let slot = Rc::clone(&slot);
+                async move { poll_fn(|cx| slot.poll_take(cx)).await.wrapping_add(1) }
+            });
+            assert!(run(id).is_none());
             slot.fill(i);
             run_one().unwrap()
         }),
     );
     let slot = Rc::new(Slot::<u32>::new());
-    let task = task::spawn(
-        {
-            let slot = Rc::clone(&slot);
-            async move {
-                loop {
-                    black_box(poll_fn(|cx| slot.poll_take(cx)).await);
-                }
+    let id = spawn({
+        let slot = Rc::clone(&slot);
+        async move {
+            loop {
+                black_box(poll_fn(|cx| slot.poll_take(cx)).await);
             }
-        },
-        OnThread,
-    );
-    let scheduler = task.scheduler_ptr();
-    // SAFETY: the spawning thread.
-    assert!(unsafe { task.run() }.is_none());
+        }
+    });
+    assert!(run(id).is_none());
     per_round(
         "future: each further suspend, wake, queue, resume",
         Box::new(move |i| {
@@ -111,6 +107,5 @@ fn main() {
             i
         }),
     );
-    // SAFETY: its `Slot` holds a `Waker`, so it is allocated; the spawning thread.
-    unsafe { task::cancel(scheduler) };
+    assert!(TASKS.with(|tasks| tasks.cancel(id)));
 }

@@ -124,6 +124,8 @@ pub struct Process {
     pub poller: Poller,
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
+    /// Of the future in [`ProcessHandle::poll_exit`].
+    exit_waker: Option<core::task::Waker>,
     pub(crate) event_loop: EventLoopHandle,
     /// How the waiter thread delivers this process's exit to a JS VM
     /// (`None` when owned by a mini event loop, which it posts to directly).
@@ -193,6 +195,30 @@ impl ProcessHandle {
 
     pub fn kill(&self, signal: u8) -> Maybe<()> {
         self.process_mut().kill(signal)
+    }
+
+    /// [`watch_or_reap`](Self::watch_or_reap), where failing to is how the process ended.
+    pub fn watch(&self) {
+        if let Err(err) = self.watch_or_reap()
+            && !self.has_exited()
+        {
+            self.on_exit(Status::Err(err), &rusage_zeroed());
+        }
+    }
+
+    /// How the process (which is [`watch`](Self::watch)ed) ended, for a future. It takes no exit handler.
+    pub fn poll_exit(&self, cx: &core::task::Context<'_>) -> core::task::Poll<Status> {
+        if self.has_exited() {
+            return core::task::Poll::Ready(self.status.clone());
+        }
+        let waker = &mut self.process_mut().exit_waker;
+        if !waker
+            .as_ref()
+            .is_some_and(|waker| waker.will_wake(cx.waker()))
+        {
+            *waker = Some(cx.waker().clone());
+        }
+        core::task::Poll::Pending
     }
 
     /// The process's address, for identity checks in exit callbacks.
@@ -293,6 +319,7 @@ impl Process {
             poller: Poller::Detached,
             status,
             exit_handler: ProcessExitHandler::default(),
+            exit_waker: None,
         }))
     }
 
@@ -301,9 +328,13 @@ impl Process {
     pub fn on_exit(&mut self, status: Status, rusage: &Rusage) {
         // ProcessExitHandler is Copy (owner ptr + &'static vtable), so mirror
         let exit_handler = self.exit_handler;
+        let exit_waker = self.exit_waker.take();
         self.status = status.clone();
         if self.has_exited() {
             self.detach();
+        }
+        if let Some(waker) = exit_waker {
+            waker.wake();
         }
         call_exit_handler(&exit_handler, self, status, rusage);
     }
@@ -717,6 +748,7 @@ impl Process {
     pub fn detach(&mut self) {
         self.close();
         self.exit_handler = ProcessExitHandler::default();
+        self.exit_waker = None;
     }
 
     #[cfg(unix)]
@@ -2280,6 +2312,7 @@ mod spawn_process_body {
             status: Status::Running,
             poller: Poller::Detached,
             exit_handler: ProcessExitHandler::default(),
+            exit_waker: None,
         }));
 
         // SAFETY: process is freshly allocated

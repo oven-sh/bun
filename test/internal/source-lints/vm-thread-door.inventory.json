@@ -43,15 +43,6 @@
       "Shared"
     ]
   },
-  "src/jsc/future.rs": {
-    "WorkPool::schedule*": 1,
-    "unsafe impl Send": [
-      "OnJsLoop"
-    ],
-    "unsafe impl Sync": [
-      "OnJsLoop"
-    ]
-  },
   "src/jsc/hot_reloader.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [

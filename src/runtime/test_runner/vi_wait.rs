@@ -247,7 +247,7 @@ impl ViWait {
                 Ok(None) => {}
                 Ok(Some(outcome)) => return Ok(Some(outcome)),
                 // What a fake timer threw is nobody's in particular, and the wait goes on.
-                Err(err) => crate::dispatch::fold(Err(err)),
+                Err(err) => js.report_uncaught(err),
             }
         }
     }

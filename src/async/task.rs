@@ -1,366 +1,396 @@
-//! A future, boxed together with what an event loop needs to run it. See `README.md`.
+//! The futures of one event loop. See `README.md`.
 //!
-//! Only the thread that spawned a task polls, cancels or drops its future, so
-//! the future needs to be neither `Send` nor `Sync`. Any thread may clone, drop
-//! or wake a `Waker`: those touch the header's atomic word and the scheduler.
+//! [`Tasks`] owns them. Everything else (a `Waker`, an entry in the loop's queue) holds a [`TaskId`],
+//! which is a number: one that outlives its task finds nothing.
 
-use core::cell::{Cell, UnsafeCell};
+use core::cell::{Cell, RefCell};
 use core::future::Future;
 use core::mem::ManuallyDrop;
 use core::pin::Pin;
-use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-/// Where a task's wake-ups go. It is stored in the task's allocation, so it can
-/// embed the queue node its loop links tasks with: a task is in at most one
-/// queue at a time.
-///
-/// # Safety
-/// [`schedule`](Self::schedule) delivers the `Runnable` to the thread that
-/// spawned the task, or drops it.
-pub unsafe trait Schedule: Send + Sync + Sized + 'static {
-    /// What the futures of this loop resolve to. [`Runnable::run`] hands it back.
+/// How a task gets back into its loop's queue. Stored in each task.
+pub trait Schedule: Copy + 'static {
+    /// What the futures of this loop resolve to. [`Tasks::run`] hands it back.
     type Output;
 
-    /// Any thread. The scheduler is [`task.scheduler()`](Runnable::scheduler),
-    /// not `&self`: the task's thread may run and free the task the moment it
-    /// is queued, so nothing of it is touched after it is handed over.
-    fn schedule(task: Runnable<Self>);
+    /// The tasks of the loop that runs on this thread, if one does.
+    fn with_tasks<R>(f: impl FnOnce(&Tasks<Self>) -> R) -> Option<R>;
 
-    /// The task's thread: its future was just dropped, having finished or been
-    /// cancelled. Called once.
-    fn finished(&self) {}
+    /// Queue `id` for [`Tasks::run`]. Called on the loop's thread, at most once until it runs.
+    fn schedule(self, id: TaskId);
 }
 
-/// In its loop's queue.
-const SCHEDULED: u32 = 1 << 0;
-/// The future is gone. There is nothing left to poll.
-const DONE: u32 = 1 << 1;
-/// The last `Waker` went away while the future was pending, so nothing can
-/// resume it. It is queued once more for its thread to drop it.
-const ORPHANED: u32 = 1 << 2;
-const REFERENCE: u32 = 1 << 3;
-const REFERENCES: u32 = !(REFERENCE - 1);
+const _: () = assert!(usize::BITS == 64, "a TaskId is carried in a pointer");
 
-#[repr(C)]
-struct Header<S: Schedule> {
-    /// The flags above, and how many `Waker`s and `Runnable`s point here.
-    state: AtomicU32,
-    /// The three below are the task's thread's alone.
-    polling: Cell<bool>,
-    /// [`Runnable::run`] was entered again from inside the poll (a nested tick of the loop).
-    run_again: Cell<bool>,
-    /// [`cancel`] was called from inside the poll.
-    cancel_after_poll: Cell<bool>,
-    vtable: &'static VTable<S>,
+const INDEX_BITS: u32 = 24;
+const GENERATION_BITS: u32 = 27;
+const TABLE_BITS: u32 = 12;
+const INDEX_MASK: u64 = (1 << INDEX_BITS) - 1;
+const GENERATION_MASK: u64 = (1 << GENERATION_BITS) - 1;
+const TABLE_MASK: u64 = (1 << TABLE_BITS) - 1;
+/// On a `Waker` only: it is one of its task's [`Task::wakers`].
+const COUNTED: u64 = 1 << 63;
+
+/// Names a task for as long as it exists, and nothing afterwards.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TaskId(u64);
+
+impl TaskId {
+    fn new(table: u64, index: usize, generation: u64) -> Self {
+        Self(table << (INDEX_BITS + GENERATION_BITS) | generation << INDEX_BITS | index as u64)
+    }
+    fn index(self) -> usize {
+        (self.0 & INDEX_MASK) as usize
+    }
+    fn generation(self) -> u64 {
+        self.0 >> INDEX_BITS & GENERATION_MASK
+    }
+    fn table(self) -> u64 {
+        self.0 >> (INDEX_BITS + GENERATION_BITS) & TABLE_MASK
+    }
+
+    /// For a queue that stores a pointer. Never null, never dereferenced.
+    #[inline]
+    pub fn into_ptr(self) -> *mut () {
+        core::ptr::without_provenance_mut(self.0 as usize)
+    }
+    #[inline]
+    pub fn from_ptr(ptr: *const ()) -> Self {
+        Self(ptr.addr() as u64 & !COUNTED)
+    }
+}
+
+type BoxedFuture<S> = Pin<Box<dyn Future<Output = <S as Schedule>::Output>>>;
+
+struct Task<S: Schedule> {
+    /// `None` while it is being polled.
+    future: Option<BoxedFuture<S>>,
     scheduler: S,
+    /// How many `Waker`s could still resume it.
+    wakers: u32,
+    /// In its loop's queue.
+    scheduled: bool,
+    /// The last `Waker` went away while it was suspended. It is queued once more, to be dropped.
+    orphaned: bool,
+    /// [`Tasks::run`] was entered again from inside the poll (a nested tick of the loop).
+    run_again: bool,
+    /// [`Tasks::cancel`] was called from inside the poll.
+    cancelled: bool,
 }
 
-struct VTable<S: Schedule> {
-    poll: unsafe fn(NonNull<Header<S>>, &mut Context<'_>) -> Poll<S::Output>,
-    drop_future: unsafe fn(NonNull<Header<S>>),
-    dealloc: unsafe fn(NonNull<Header<S>>),
+struct Entry<S: Schedule> {
+    generation: u64,
+    task: Option<Task<S>>,
+    next_free: usize,
 }
 
-#[repr(C)]
-struct Task<F, S: Schedule> {
-    header: Header<S>,
-    future: UnsafeCell<ManuallyDrop<F>>,
+const NONE_FREE: usize = usize::MAX;
+
+/// Why [`Tasks::spawn`] dropped the future it was given.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// The table is [`close`](Tasks::close)d.
+    Closed,
+    /// It holds as many tasks as an id can tell apart.
+    Full,
 }
 
-impl<F, S> Task<F, S>
-where
-    F: Future<Output = S::Output> + 'static,
-    S: Schedule,
-{
-    const VTABLE: VTable<S> = VTable {
-        poll: Self::poll,
-        drop_future: Self::drop_future,
-        dealloc: Self::dealloc,
-    };
+/// Nothing of a task is dropped, polled or scheduled while `entries` is borrowed: all three run code
+/// that may come back here.
+pub struct Tasks<S: Schedule> {
+    table: u64,
+    entries: RefCell<Vec<Entry<S>>>,
+    first_free: Cell<usize>,
+    len: Cell<usize>,
+    closed: Cell<bool>,
+    running: Cell<Option<TaskId>>,
+}
 
-    /// # Safety
-    /// `header` heads a live `Task<F, S>` whose future has not been dropped;
-    /// the task's thread; not already inside `poll` or `drop_future`.
-    unsafe fn poll(header: NonNull<Header<S>>, cx: &mut Context<'_>) -> Poll<S::Output> {
-        // SAFETY: fn contract. The future never moves: it is dropped in place.
-        let future =
-            unsafe { Pin::new_unchecked(&mut **(*header.cast::<Self>().as_ptr()).future.get()) };
-        future.poll(cx)
-    }
-
-    /// # Safety
-    /// As [`poll`](Self::poll). The future is not used afterwards.
-    unsafe fn drop_future(header: NonNull<Header<S>>) {
-        // SAFETY: fn contract.
-        unsafe { ManuallyDrop::drop(&mut *(*header.cast::<Self>().as_ptr()).future.get()) }
-    }
-
-    /// # Safety
-    /// `header` heads a `Task<F, S>` that nothing else points to and whose
-    /// future has been dropped.
-    unsafe fn dealloc(header: NonNull<Header<S>>) {
-        // SAFETY: fn contract; allocated by `spawn`.
-        unsafe { bun_core::heap::destroy(header.cast::<Self>().as_ptr()) };
+impl<S: Schedule> Default for Tasks<S> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-/// Box `future`. Nothing has polled it yet: the caller runs the `Runnable` now
-/// (the future starts inside the call that spawned it, as an `async function`
-/// does in JavaScript) or queues it.
-pub fn spawn<F, S>(future: F, scheduler: S) -> Runnable<S>
-where
-    F: Future<Output = S::Output> + 'static,
-    S: Schedule,
-{
-    let task = bun_core::heap::alloc_nn(Task {
-        header: Header {
-            state: AtomicU32::new(SCHEDULED | REFERENCE),
-            polling: Cell::new(false),
-            run_again: Cell::new(false),
-            cancel_after_poll: Cell::new(false),
-            vtable: &Task::<F, S>::VTABLE,
-            scheduler,
-        },
-        future: UnsafeCell::new(ManuallyDrop::new(future)),
-    });
-    Runnable(task.cast())
-}
-
-/// A task that was woken, on its way through its loop's queue. Dropping it
-/// instead of running it only gives the reference up, which is all a thread
-/// other than the task's can do.
-#[must_use = "a woken task is run by its loop"]
-pub struct Runnable<S: Schedule>(NonNull<Header<S>>);
-
-// SAFETY: `Schedule::schedule` receives it on the waking thread and moves it to
-// the task's. Off that thread only `into_raw`, `scheduler` and `drop` are safe
-// to call, and they touch the atomic word and `S: Sync`.
-unsafe impl<S: Schedule> Send for Runnable<S> {}
-
-impl<S: Schedule> Runnable<S> {
-    /// For a queue that stores an erased pointer.
-    #[inline]
-    pub fn into_raw(self) -> NonNull<()> {
-        ManuallyDrop::new(self).0.cast()
-    }
-
-    /// # Safety
-    /// `ptr` came from [`into_raw`](Self::into_raw) of a `Runnable<S>`, once.
-    #[inline]
-    pub unsafe fn from_raw(ptr: NonNull<()>) -> Self {
-        Self(ptr.cast())
-    }
-
-    #[inline]
-    pub fn scheduler(&self) -> &S {
-        // SAFETY: a `Runnable` points at a live header.
-        unsafe { &(*self.0.as_ptr()).scheduler }
-    }
-
-    /// [`scheduler`](Self::scheduler) with the provenance of the whole task,
-    /// for [`cancel`] and for a queue node embedded in `S`.
-    #[inline]
-    pub fn scheduler_ptr(&self) -> NonNull<S> {
-        // SAFETY: a `Runnable` points at a live header.
-        unsafe { NonNull::new_unchecked(&raw mut (*self.0.as_ptr()).scheduler) }
-    }
-
-    /// Poll the future. `Some` once it has finished.
-    ///
-    /// # Safety
-    /// The thread that spawned the task.
-    pub unsafe fn run(self) -> Option<S::Output> {
-        let task = ManuallyDrop::new(self).0;
-        // SAFETY: the `Runnable` just consumed keeps the task alive until `release` below.
-        let header = unsafe { task.as_ref() };
-        // Cleared before the poll: a wake that arrives during it queues the task again.
-        let state = header.state.fetch_and(!SCHEDULED, Ordering::AcqRel);
-        let mut output = None;
-        if state & DONE != 0 {
-            // Cancelled while it was queued.
-        } else if state & ORPHANED != 0 {
-            // SAFETY: fn contract; not `DONE`, and an orphan is not being polled.
-            unsafe { finish(task) };
-        } else if header.polling.get() {
-            header.run_again.set(true);
-        } else {
-            header.polling.set(true);
-            // SAFETY: borrows this function's reference, which outlives it.
-            let waker = ManuallyDrop::new(unsafe { Waker::from_raw(raw_waker(task)) });
-            // SAFETY: fn contract; not `DONE`; `polling` was clear.
-            let poll = unsafe { (header.vtable.poll)(task, &mut Context::from_waker(&waker)) };
-            header.polling.set(false);
-            let run_again = header.run_again.take();
-            match poll {
-                Poll::Ready(value) => {
-                    output = Some(value);
-                    // SAFETY: as above.
-                    unsafe { finish(task) };
-                }
-                // SAFETY: as above.
-                Poll::Pending if header.cancel_after_poll.get() => unsafe { finish(task) },
-                // SAFETY: live, see above.
-                Poll::Pending if run_again => unsafe { wake_by_ref::<S>(task.as_ptr().cast()) },
-                Poll::Pending => {}
-            }
+impl<S: Schedule> Tasks<S> {
+    pub fn new() -> Self {
+        static TABLES: AtomicU64 = AtomicU64::new(0);
+        Self {
+            // Not 0, so that no id is a null pointer.
+            table: TABLES.fetch_add(1, Ordering::Relaxed) % TABLE_MASK + 1,
+            entries: RefCell::new(Vec::new()),
+            first_free: Cell::new(NONE_FREE),
+            len: Cell::new(0),
+            closed: Cell::new(false),
+            running: Cell::new(None),
         }
-        // SAFETY: the reference taken from `self`.
-        unsafe { release(task) };
-        output
     }
 
-    /// Drop the future without polling it: the loop is going away.
-    ///
-    /// # Safety
-    /// The thread that spawned the task.
-    pub unsafe fn cancel(self) {
-        // SAFETY: fn contract; `self` keeps the task alive.
-        unsafe { cancel(self.scheduler_ptr()) };
+    pub fn len(&self) -> usize {
+        self.len.get()
     }
-}
 
-impl<S: Schedule> Drop for Runnable<S> {
-    fn drop(&mut self) {
-        // SAFETY: a `Runnable` owns one reference.
-        unsafe { release(self.0) };
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
-}
 
-/// Drop a task's future now, wherever the task is: suspended, queued, or (from
-/// inside its own poll) as soon as that poll returns. Its `Waker`s stay valid
-/// and do nothing. A no-op once the future is gone.
-///
-/// # Safety
-/// `scheduler` came from [`Runnable::scheduler_ptr`] of a task that is still
-/// allocated, as one is until [`Schedule::finished`]; the thread that spawned it.
-pub unsafe fn cancel<S: Schedule>(scheduler: NonNull<S>) {
-    // SAFETY: fn contract: `scheduler` is the field of a live `Header<S>` and
-    // carries the provenance of the whole task.
-    let task: NonNull<Header<S>> = unsafe {
-        NonNull::new_unchecked(bun_core::from_field_ptr!(
-            Header<S>,
+    /// Take ownership of `future`. Nothing has polled it: the caller [`run`](Self::run)s it now (it
+    /// starts inside the call that spawned it, as an `async function` does) or queues it.
+    pub fn spawn(
+        &self,
+        future: impl Future<Output = S::Output> + 'static,
+        scheduler: S,
+    ) -> Result<TaskId, Refused> {
+        if self.closed.get() {
+            return Err(Refused::Closed);
+        }
+        if self.len.get() > INDEX_MASK as usize {
+            return Err(Refused::Full);
+        }
+        let task = Task {
+            future: Some(Box::pin(future)),
             scheduler,
-            scheduler.as_ptr()
-        ))
-    };
-    // SAFETY: fn contract.
-    let header = unsafe { task.as_ref() };
-    if header.state.load(Ordering::Acquire) & DONE != 0 {
-        return;
-    }
-    if header.polling.get() {
-        header.cancel_after_poll.set(true);
-        return;
-    }
-    // The future may hold the only `Waker`s.
-    header.state.fetch_add(REFERENCE, Ordering::Relaxed);
-    // SAFETY: fn contract; not `DONE`, not polling.
-    unsafe {
-        finish(task);
-        release(task);
-    }
-}
-
-/// # Safety
-/// The task's thread; the caller holds a reference; the future has not been
-/// dropped and is not being polled.
-unsafe fn finish<S: Schedule>(task: NonNull<Header<S>>) {
-    // SAFETY: fn contract.
-    let header = unsafe { task.as_ref() };
-    // First, so that the `Waker`s the future drops do not find an orphan.
-    header.state.fetch_or(DONE, Ordering::AcqRel);
-    // SAFETY: fn contract.
-    unsafe { (header.vtable.drop_future)(task) };
-    header.scheduler.finished();
-}
-
-/// [`cancel`] reaches a pending task without a reference, so the last reference of one is never
-/// counted down and then looked at: in one step it becomes the reference of the orphan's `Runnable`.
-/// If the loop drops that too, the task stays allocated for `cancel`, with no reference.
-///
-/// # Safety
-/// The caller owns one reference to `task` and does not use it afterwards.
-unsafe fn release<S: Schedule>(task: NonNull<Header<S>>) {
-    // SAFETY: fn contract.
-    let header = unsafe { task.as_ref() };
-    let mut state = header.state.load(Ordering::Relaxed);
-    loop {
-        let orphans = state & (REFERENCES | DONE | ORPHANED) == REFERENCE;
-        let next = if orphans {
-            state | SCHEDULED | ORPHANED
-        } else {
-            state - REFERENCE
+            wakers: 0,
+            scheduled: true,
+            orphaned: false,
+            run_again: false,
+            cancelled: false,
         };
-        match header
-            .state
-            .compare_exchange_weak(state, next, Ordering::AcqRel, Ordering::Relaxed)
-        {
-            Err(actual) => state = actual,
-            Ok(_) if orphans => return S::schedule(Runnable(task)),
-            Ok(_) => {
-                if next & (REFERENCES | DONE) == DONE {
-                    // SAFETY: that was the last reference, and the future is gone.
-                    unsafe { (header.vtable.dealloc)(task) };
-                }
-                return;
+        let mut entries = self.entries.borrow_mut();
+        let index = self.first_free.get();
+        let index = if index == NONE_FREE {
+            entries.push(Entry {
+                generation: 0,
+                task: Some(task),
+                next_free: NONE_FREE,
+            });
+            entries.len() - 1
+        } else {
+            self.first_free.set(entries[index].next_free);
+            entries[index].task = Some(task);
+            index
+        };
+        self.len.set(self.len.get() + 1);
+        Ok(TaskId::new(self.table, index, entries[index].generation))
+    }
+
+    /// The task whose poll the caller is inside, for what it awaits to remember who awaits it.
+    pub fn running(&self) -> Option<TaskId> {
+        self.running.get()
+    }
+
+    fn get(entries: &mut [Entry<S>], id: TaskId) -> Option<&mut Task<S>> {
+        let entry = entries.get_mut(id.index())?;
+        if entry.generation != id.generation() {
+            return None;
+        }
+        entry.task.as_mut()
+    }
+
+    /// The caller drops what this returns once `entries` is released.
+    #[must_use]
+    fn remove(&self, entries: &mut [Entry<S>], index: usize) -> Option<Task<S>> {
+        let entry = &mut entries[index];
+        entry.generation = (entry.generation + 1) & GENERATION_MASK;
+        entry.next_free = self.first_free.replace(index);
+        self.len.set(self.len.get() - 1);
+        entry.task.take()
+    }
+
+    pub fn scheduler_of(&self, id: TaskId) -> Option<S> {
+        self.on_this_table(id, |task| task.scheduler).flatten()
+    }
+
+    /// The loop reached `id` in its queue: poll it. `Some` once it has finished.
+    ///
+    /// Also for a caller that cannot wait for the queue. An entry `id` has there then polls it once
+    /// more, or finds nothing.
+    pub fn run(&self, id: TaskId) -> Option<S::Output> {
+        let mut future = {
+            let mut entries = self.entries.borrow_mut();
+            let task = Self::get(&mut entries, id)?;
+            task.scheduled = false;
+            if task.orphaned {
+                let task = self.remove(&mut entries, id.index());
+                drop(entries);
+                drop(task);
+                return None;
             }
+            let Some(future) = task.future.take() else {
+                task.run_again = true;
+                return None;
+            };
+            future
+        };
+
+        // SAFETY: `VTable`'s functions take a number. Never dropped, so it is not one of `wakers`;
+        // `COUNTED` so that `will_wake` is true of its clones.
+        let waker = ManuallyDrop::new(unsafe { Waker::from_raw(raw_waker::<S>(id.0 | COUNTED)) });
+        let outer = self.running.replace(Some(id));
+        let poll = future.as_mut().poll(&mut Context::from_waker(&waker));
+        self.running.set(outer);
+
+        let mut entries = self.entries.borrow_mut();
+        let task = Self::get(&mut entries, id).expect("only `run` removes what it is polling");
+        let nothing_can_resume_it = task.wakers == 0 && !task.scheduled && !task.run_again;
+        if poll.is_ready() || task.cancelled || nothing_can_resume_it {
+            let task = self.remove(&mut entries, id.index());
+            drop(entries);
+            drop(future);
+            drop(task);
+            return match poll {
+                Poll::Ready(output) => Some(output),
+                Poll::Pending => None,
+            };
+        }
+        task.future = Some(future);
+        let schedule = core::mem::take(&mut task.run_again) && !task.scheduled;
+        task.scheduled |= schedule;
+        let scheduler = task.scheduler;
+        drop(entries);
+        if schedule {
+            scheduler.schedule(id);
+        }
+        None
+    }
+
+    /// Drop a task's future now, wherever the task is: suspended, queued, or (from inside its own
+    /// poll) as soon as that poll returns. Whether it was dropped by this call.
+    pub fn cancel(&self, id: TaskId) -> bool {
+        let mut entries = self.entries.borrow_mut();
+        let Some(task) = Self::get(&mut entries, id) else {
+            return false;
+        };
+        if task.future.is_none() {
+            task.cancelled = true;
+            return false;
+        }
+        let task = self.remove(&mut entries, id.index());
+        drop(entries);
+        drop(task);
+        true
+    }
+
+    pub fn any(&self, mut which: impl FnMut(&S) -> bool) -> bool {
+        !self.is_empty()
+            && (self.entries.borrow().iter()).any(|entry| {
+                entry
+                    .task
+                    .as_ref()
+                    .is_some_and(|task| which(&task.scheduler))
+            })
+    }
+
+    /// [`cancel`](Self::cancel) every task whose scheduler `which` picks. How many were dropped.
+    pub fn cancel_where(&self, mut which: impl FnMut(&S) -> bool) -> usize {
+        let (mut index, mut cancelled) = (0, 0);
+        loop {
+            if self.is_empty() {
+                return cancelled;
+            }
+            let id = match self.entries.borrow().get(index) {
+                None => return cancelled,
+                Some(entry) => (entry.task.as_ref())
+                    .filter(|task| which(&task.scheduler))
+                    .map(|_| TaskId::new(self.table, index, entry.generation)),
+            };
+            if let Some(id) = id {
+                cancelled += usize::from(self.cancel(id));
+            }
+            index += 1;
+        }
+    }
+
+    /// The loop is going away: cancel everything, take nothing more, and keep no memory.
+    pub fn close(&self) {
+        self.closed.set(true);
+        self.cancel_where(|_| true);
+        if self.is_empty() {
+            self.entries.take();
+        }
+    }
+
+    /// `None`: `id` is of another loop's table.
+    fn on_this_table<R>(&self, id: TaskId, f: impl FnOnce(&mut Task<S>) -> R) -> Option<Option<R>> {
+        (id.table() == self.table).then(|| Self::get(&mut self.entries.borrow_mut(), id).map(f))
+    }
+
+    fn wake(&self, id: TaskId) -> Option<()> {
+        let scheduler = self.on_this_table(id, |task| {
+            (!core::mem::replace(&mut task.scheduled, true)).then_some(task.scheduler)
+        })?;
+        if let Some(scheduler) = scheduler.flatten() {
+            scheduler.schedule(id);
+        }
+        Some(())
+    }
+
+    fn waker_cloned(&self, id: TaskId) -> bool {
+        self.on_this_table(id, |task| task.wakers += 1)
+            .flatten()
+            .is_some()
+    }
+
+    fn waker_dropped(&self, id: TaskId) {
+        let orphan = self.on_this_table(id, |task| {
+            task.wakers -= 1;
+            // It may be a collector's sweep that drops it, so the future is not dropped from here.
+            let is_orphan = task.wakers == 0 && !task.scheduled && task.future.is_some();
+            task.orphaned = is_orphan;
+            task.scheduled |= is_orphan;
+            is_orphan.then_some(task.scheduler)
+        });
+        if let Some(scheduler) = orphan.flatten().flatten() {
+            scheduler.schedule(id);
         }
     }
 }
 
-struct WakerVTable<S>(core::marker::PhantomData<S>);
-impl<S: Schedule> WakerVTable<S> {
+impl<S: Schedule> Drop for Tasks<S> {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+// A `Waker` has to be `Send + Sync`, and a number is. What it does on a thread other than its loop's:
+// cloned, the clone is not counted; dropped, it stays counted, so its task waits for `cancel`; woken,
+// it panics. What another thread has for a task goes through the loop's own cross-thread queue.
+
+struct VTable<S>(core::marker::PhantomData<S>);
+impl<S: Schedule> VTable<S> {
     const VTABLE: RawWakerVTable =
         RawWakerVTable::new(clone::<S>, wake::<S>, wake_by_ref::<S>, drop_waker::<S>);
 }
 
 #[inline]
-fn raw_waker<S: Schedule>(task: NonNull<Header<S>>) -> RawWaker {
-    RawWaker::new(task.as_ptr().cast(), &WakerVTable::<S>::VTABLE)
+fn raw_waker<S: Schedule>(id: u64) -> RawWaker {
+    RawWaker::new(
+        core::ptr::without_provenance(id as usize),
+        &VTable::<S>::VTABLE,
+    )
 }
 
-/// # Safety
-/// (This and the three below.) `data` is the `Header<S>` of a `Waker` made by
-/// [`raw_waker`], which owns a reference.
-unsafe fn clone<S: Schedule>(data: *const ()) -> RawWaker {
-    // SAFETY: fn contract.
-    let task = unsafe { NonNull::new_unchecked(data.cast_mut().cast::<Header<S>>()) };
-    // SAFETY: fn contract.
-    let state = unsafe { task.as_ref() }
-        .state
-        .fetch_add(REFERENCE, Ordering::Relaxed);
-    assert!(state < u32::MAX / 2, "too many Wakers for one task");
-    raw_waker(task)
+fn clone<S: Schedule>(data: *const ()) -> RawWaker {
+    let id = TaskId::from_ptr(data);
+    let counted = S::with_tasks(|tasks| tasks.waker_cloned(id)) == Some(true);
+    raw_waker::<S>(if counted { id.0 | COUNTED } else { id.0 })
 }
 
-unsafe fn wake<S: Schedule>(data: *const ()) {
-    // SAFETY: fn contract.
-    let task = unsafe { NonNull::new_unchecked(data.cast_mut().cast::<Header<S>>()) };
-    // SAFETY: fn contract.
-    let header = unsafe { task.as_ref() };
-    let state = header.state.fetch_or(SCHEDULED, Ordering::AcqRel);
-    // The `Waker`'s reference becomes the queue's, or is given up.
-    let runnable = Runnable(task);
-    if state & (SCHEDULED | DONE) == 0 {
-        S::schedule(runnable);
+fn wake<S: Schedule>(data: *const ()) {
+    wake_by_ref::<S>(data);
+    drop_waker::<S>(data);
+}
+
+fn wake_by_ref<S: Schedule>(data: *const ()) {
+    S::with_tasks(|tasks| tasks.wake(TaskId::from_ptr(data)))
+        .flatten()
+        .expect("a task was woken on a thread other than its loop's");
+}
+
+fn drop_waker<S: Schedule>(data: *const ()) {
+    if data.addr() as u64 & COUNTED != 0 {
+        S::with_tasks(|tasks| tasks.waker_dropped(TaskId::from_ptr(data)));
     }
-}
-
-unsafe fn wake_by_ref<S: Schedule>(data: *const ()) {
-    // SAFETY: fn contract.
-    let task = unsafe { NonNull::new_unchecked(data.cast_mut().cast::<Header<S>>()) };
-    // SAFETY: fn contract.
-    let header = unsafe { task.as_ref() };
-    let state = header.state.fetch_or(SCHEDULED, Ordering::AcqRel);
-    if state & (SCHEDULED | DONE) == 0 {
-        header.state.fetch_add(REFERENCE, Ordering::Relaxed);
-        S::schedule(Runnable(task));
-    }
-}
-
-unsafe fn drop_waker<S: Schedule>(data: *const ()) {
-    // SAFETY: fn contract.
-    unsafe { release(NonNull::new_unchecked(data.cast_mut().cast::<Header<S>>())) };
 }

@@ -170,8 +170,10 @@ server.reload({
 const socket = await Bun.connect({/* config */});
 
 socket.reload({
-  data() {
-    // new 'data' handler
+  socket: {
+    data() {
+      // new 'data' handler
+    },
   },
 });
 ```
@@ -206,6 +208,7 @@ import { ArrayBufferSink } from "bun";
 const sink = new ArrayBufferSink();
 sink.start({
   stream: true, // [!code ++]
+  asUint8Array: true, // flush() returns a Uint8Array
   highWaterMark: 1024,
 });
 

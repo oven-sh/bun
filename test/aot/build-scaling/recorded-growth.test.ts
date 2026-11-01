@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 import { lowerRecordedGrowth } from "./recorded-growth";
 
 test("a run under the default bound keeps a recorded growth", () => {

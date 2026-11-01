@@ -1,4 +1,5 @@
-import { spyOn, mock, beforeEach, afterEach } from "bun:test";
+import { spyOn, mock } from "bun:test";
+import { beforeEach, afterEach } from "../../harness/declare";
 import * as index from "../src/spies/index";
 import { own, callsOwn } from "../src/spies/own";
 import { fetchIt, usesAll } from "../src/spies/kinds";

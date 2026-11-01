@@ -1,7 +1,8 @@
 // What --explain=json prints is a function of the program: the same rows, reasons and places every time, at any number of threads.
 // In the functions here a value comes from several places that the compiler knows nothing about at once: parsed text, a callback,
 // a global, a caught error, a method of a receiver nobody knows. Which of them a row names may not follow which thread got where first.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { slot, spawned, unsupported } from "./harness/commands";
 

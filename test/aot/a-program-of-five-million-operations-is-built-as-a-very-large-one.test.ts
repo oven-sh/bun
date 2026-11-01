@@ -1,4 +1,5 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
+import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";

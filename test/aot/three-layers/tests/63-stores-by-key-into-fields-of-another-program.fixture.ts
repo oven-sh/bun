@@ -1,7 +1,8 @@
 // One store by key, in the test file and in a package, for objects of the files between. First into fields that are there, what is no object: the short road takes that and remembers
 // it. Then what fits the field and what does not, also into objects that do not have the field yet. What is remembered about an object of another program must not be read in the
 // numbers of this one: where it was, this ended the process.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../harness/declare";
 import { set as setInPackage } from "one-site";
 import { makers } from "../src/fields-not-yet-there";
 function setHere(object: Record<string, unknown>, key: string, value: unknown) {

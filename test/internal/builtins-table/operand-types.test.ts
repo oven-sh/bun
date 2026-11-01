@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import { checkOperandTypes } from "../../../src/codegen/builtins/check-operand-types.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type { ModelOperand, ModelOverload, ModelParameter, ModelType } from "../../../src/codegen/builtins/model.ts";

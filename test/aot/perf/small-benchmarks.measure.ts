@@ -23,7 +23,8 @@
 //   AOT_BUDGETS=accept ..                                           writes every number as measured
 //
 // Each program prints one line that begins with BUDGET.
-import { afterAll, beforeAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, beforeAll } from "../harness/declare";
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { basename, join } from "path";

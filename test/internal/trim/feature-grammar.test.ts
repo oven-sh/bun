@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { join } from "node:path";
 import { BuildError } from "../../../scripts/build/error";

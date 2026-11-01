@@ -11,7 +11,8 @@
 //   AOT_PERF=lower ..                                 writes every number that got better into the file
 //   AOT_PERF=update ..                                rewrites the pinned numbers as measured
 //   AOT_SERVERS_MODULES=<node_modules folder> ..      nothing is downloaded
-import { afterAll, beforeAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, beforeAll } from "../harness/declare";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";

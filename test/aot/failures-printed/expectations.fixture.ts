@@ -1,4 +1,5 @@
-import { describe, expect, it, mock, test } from "bun:test";
+import { expect, mock } from "bun:test";
+import { describe, it, test } from "../harness/declare";
 
 function check(value: number, wanted: number): void {
   expect(value).toBe(wanted);

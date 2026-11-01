@@ -1,7 +1,8 @@
 // A number that a function of node:* checks against a range is passed or refused as lib/internal/validators.js of Node does it, also where the lower end of the range lies above the upper one:
 // no number is inside such a range. ./parallel/builtin-modules/numbers-checked-against-ranges/as-node-checks.cjs holds what Node does.
 import { exposedInternals } from "bun:internal-for-testing";
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";

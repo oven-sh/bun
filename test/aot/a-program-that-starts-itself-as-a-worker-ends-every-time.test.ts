@@ -3,7 +3,8 @@
 // at once, so that it meets more orders: every run prints the same lines and ends. A run that does not end is killed at
 // spawned()'s time limit and is listed with that signal and with what it had printed. The runs from source say whether an order
 // that goes wrong is one of compiled code alone.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "./harness/commands";

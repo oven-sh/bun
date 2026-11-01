@@ -1,6 +1,7 @@
 // ./compare-builds.ts compares two builds of Bun by instruction counts. Here it compares the Bun under test with itself: nothing may move by over 2%.
 // That is also the proof that its numbers repeat on a machine as busy as a shard of CI.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "../harness/declare";
 import { rmSync, writeFileSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";

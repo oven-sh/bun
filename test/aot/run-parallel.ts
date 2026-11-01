@@ -91,6 +91,7 @@ import {
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { isProgramLeftOut } from "./harness/every-build";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
 import { withoutCoreDump } from "./harness/without-core-dump";
 import "./harness/without-installing-packages";
@@ -205,9 +206,13 @@ const option = (name: string) =>
   process.argv.find(argument => argument.startsWith(`--${name}=`))?.slice(name.length + 3);
 const root = resolve(option("root") ?? join(import.meta.dir, "parallel"));
 const listed = option("files-from");
-const files = listed
+const named = listed
   ? readFileSync(listed, "utf8").split(/\r?\n/).filter(Boolean)
   : process.argv.slice(2).filter(argument => !argument.startsWith("--"));
+// CI runs what ./parallel/every-build.txt names: ./harness/every-build.ts.
+const leftOut = named.filter(file => isProgramLeftOut(relative(root, resolve(file)).replaceAll("\\", "/")));
+const isLeftOut = new Set(leftOut);
+const files = named.filter(file => !isLeftOut.has(file));
 const jobs = Number(option("jobs")) || availableParallelism();
 const erases = !process.argv.includes("--no-erased");
 const eachAlone = process.argv.includes("--each-alone");
@@ -1154,6 +1159,9 @@ const whySkipped = refusal
     : "only a canary build of Bun reads BUN_AOT_START_AT";
 // Whoever deals asks what belongs together. What a Bun cannot build is said where the programs are run.
 const deals = process.argv.includes("--deal");
+if (!deals)
+  for (const file of leftOut)
+    say({ file, state: "skip", message: "not in every build: test/aot/parallel/every-build.txt. AOT_WHOLE=1 runs it" });
 if (whySkipped && !deals) {
   for (const file of files) say({ file, state: "skip", message: whySkipped });
   console.error(`SKIPPED all ${files.length} programs: ${whySkipped}`);
@@ -1243,6 +1251,8 @@ if (deals) {
   for (const batch of batches)
     if (batch[0].way === "compiled")
       console.log(JSON.stringify({ ms: weightOf(batch) * msOfWeight, files: batch.map(({ file }) => file) }));
+  for (let at = 0; at < leftOut.length; at += 250)
+    console.log(JSON.stringify({ ms: 0, files: leftOut.slice(at, at + 250) }));
   process.exit(0);
 }
 const runs = batches.map(run);

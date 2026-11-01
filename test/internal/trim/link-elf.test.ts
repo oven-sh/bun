@@ -1,5 +1,6 @@
 import { trimExecutable } from "bun:internal-for-testing";
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
+import { describe, test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { closeSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { constants } from "node:os";

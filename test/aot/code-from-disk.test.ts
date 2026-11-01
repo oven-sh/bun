@@ -14,7 +14,8 @@
 //   aotFlags  more flags for the build with --aot
 //   env       more of the environment in which both run
 //   differs   what the build with --aot prints where it is meant to differ from the other, and the case says why
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";

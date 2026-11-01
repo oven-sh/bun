@@ -19,7 +19,8 @@
 //   //@ todo <why>          it does not pass today
 //   //@ not-seen            the build does not see that the call reaches an evaluator: both executables end with the same EvalError
 //   //@ evaluated-code-uses-removed-api   where --trim removed the feature, the call in the evaluated code throws
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "../harness/declare";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

@@ -2,7 +2,8 @@
 // run-parallel.ts builds with Bun and sees neither the IR nor the machine code, so it passes over all of them but `// COUNTER:`.
 // shell/expectations.py asks them, of testaot and the `jsc` shell. shell/known-failures.txt lists the lines that are not met today:
 // one more fails here, and so does a listed one that is met again, so the list only gets shorter.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { isArm64, isASAN, isDebug, isLinux } from "harness";
 import { join } from "path";
 import { run } from "./harness/run";

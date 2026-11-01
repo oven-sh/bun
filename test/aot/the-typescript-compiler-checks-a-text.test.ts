@@ -1,6 +1,7 @@
 // The type checker of the typescript package (./servers/typescript-check.ts imports it: nine megabytes of JavaScript that nobody wrote with this compiler in mind) is built, and then
 // checks one fixed text. The small programs do not reach what this one reaches. For x64 ./servers/budgets-of-typescript.test.ts builds it anyway, and asks it there.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { cpSync, mkdirSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";

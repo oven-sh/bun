@@ -1,4 +1,5 @@
-import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, describe as describeAnywhere, test } from "./harness/declare";
 import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { linkSync } from "node:fs";
 import { join } from "node:path";

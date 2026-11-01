@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, beforeAll } from "../harness/declare";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { availableParallelism } from "node:os";

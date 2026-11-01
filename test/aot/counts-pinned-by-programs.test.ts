@@ -4,7 +4,8 @@
 // shell/counts-known.txt lists those that do not today. shell/tools.ts says what the scripts need.
 // run-parallel.ts and shell/expectations.py ask the same of a program that they are given, where there is a shell. A shard of CI that runs programs
 // need not have one: this test holds all of them wherever Bun has the compiler.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
 import { run } from "./harness/run";

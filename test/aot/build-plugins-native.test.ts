@@ -1,6 +1,7 @@
 // Native plugins of `Bun.build` (onBeforeParse) with `compile: { aot: true }` and without `aot`: build-both-ways.ts.
 // ./build-plugins-native/shout.c is built with the system's C compiler against the headers in src/runtime/napi, without node-gyp.
-import { afterAll, beforeAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, beforeAll } from "./harness/declare";
 import { rmSync } from "fs";
 import { bunEnv, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";

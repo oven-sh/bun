@@ -1,4 +1,5 @@
-import { test, expect, spyOn, mock } from "bun:test";
+import { expect, spyOn, mock } from "bun:test";
+import { test } from "../harness/declare";
 import * as lib from "./lib";
 import def, { Animal, Base, Shape, MyError, Emitter, mixin, sym, counter } from "./lib";
 

@@ -1,4 +1,5 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 import * as L from "./lib3";
 
 // What one image has found out about an object of the other is kept, and has to go when the object, its class or anything above it changes.

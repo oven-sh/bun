@@ -1,6 +1,7 @@
 // The flags of `bun build` that change what the program does. Each program is built with `--compile` and with `--compile --aot` under the same
 // flags, and both executables print what is written here. A flag that --aot does not support stops the build with an error.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported } from "./harness/commands";

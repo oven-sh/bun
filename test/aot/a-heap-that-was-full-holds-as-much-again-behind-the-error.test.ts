@@ -2,7 +2,8 @@
 // It could not: on the way to a handler the registers of the handler's frame pass through a buffer on the stack, which the collector
 // reads for references. What was left there, the list that had filled the heap, stayed alive until the next throw, so every second
 // attempt ran out of memory almost at once.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";

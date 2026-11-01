@@ -1,6 +1,7 @@
 // What an executable built with --aot does at run time, seen from outside: what it prints to stderr, a profile, dumps of the engine.
 // The programs share one build.
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
+import { describe } from "../aot/harness/declare";
 import { bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { run as runCommand } from "../aot/harness/run";

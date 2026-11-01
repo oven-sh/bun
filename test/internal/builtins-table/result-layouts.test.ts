@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import { checkResultLayouts } from "../../../src/codegen/builtins/check-overloads.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type {

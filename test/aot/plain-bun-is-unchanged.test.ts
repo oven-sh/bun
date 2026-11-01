@@ -1,5 +1,6 @@
 // What Bun without --aot must not get from the compiler. Every test here passes on a Bun that has no compiler at all.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // The collector reads every word of a live stack frame. A word that only a compiled or validated program writes keeps what an

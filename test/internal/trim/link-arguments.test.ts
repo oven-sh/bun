@@ -1,4 +1,5 @@
-import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
+import { expect, setDefaultTimeout, spyOn } from "bun:test";
+import { describe, test } from "../../aot/harness/declare";
 import { bunExe, tempDir } from "harness";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

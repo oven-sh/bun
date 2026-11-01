@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "../harness/declare";
 import { readFileSync } from "fs";
 import { join } from "path";
 

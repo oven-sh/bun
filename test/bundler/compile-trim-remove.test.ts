@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, describe, test } from "../aot/harness/declare";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows } from "harness";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

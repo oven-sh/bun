@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 import { inspect } from "node:util";
 import * as t from "./theirs";
 

@@ -1,5 +1,6 @@
 // ./let-values-be-something-else.ts writes no program without an end: where something else comes in the place of a value, the program still ends.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 import { writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { availableParallelism } from "os";

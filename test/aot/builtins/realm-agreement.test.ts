@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
+import { describe } from "../harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned } from "../harness/commands";

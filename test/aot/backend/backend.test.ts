@@ -12,7 +12,8 @@
 //
 // ./measure has the benchmark. See ./README.md.
 import { SQL } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, beforeAll, describe, test } from "../harness/declare";
 import { cpSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isDockerEnabled, isWindows, tempDir } from "harness";
 import { join } from "path";

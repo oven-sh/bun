@@ -1,6 +1,7 @@
 // `bun build --compile --aot` gives each executable a name of 32 hexadecimal digits, made of the program and of the build of Bun. It tells the
 // builds of one program apart in a crash report. Nothing compares it with anything when the executable starts.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";

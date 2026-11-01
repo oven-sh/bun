@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { join, resolve } from "node:path";
 import { collectBindgen } from "../../../src/codegen/builtins/collect-bindgen.ts";

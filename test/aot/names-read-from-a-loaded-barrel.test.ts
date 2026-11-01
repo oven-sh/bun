@@ -2,7 +2,8 @@
 // own: which names does a file read from the object of a module that `import()` or `require()` evaluates to? Three tests of
 // src/aot/compile/barrel_tests.rs list entry points by what is loaded behind a barrel. This test holds the same lines against the bundler:
 // a file behind the barrel is in the output or it is not. Where the two answer differently, `inTheBundler` holds the bundler's answer.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

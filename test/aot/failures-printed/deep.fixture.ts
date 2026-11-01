@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 
 function down(depth: number): number {
   if (depth === 0) throw new Error("forty calls down");

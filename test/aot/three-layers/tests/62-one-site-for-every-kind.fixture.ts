@@ -2,7 +2,8 @@
 // answer: fields that the layout has and the object not yet, classes over classes of other programs, accessors, objects that take no more. First come values that are no objects,
 // then values of every kind, fitting the field or not. Each kind prints a digest of all that was seen. What one program remembers about an object of another must not be read in its own
 // numbers: with one such hole open this ends in a fault, wherever the places are.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../harness/declare";
 import * as pkg from "one-site";
 // The same places, in the program of the test file.
 const get = (o: any, k: any) => o[k];

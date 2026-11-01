@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";

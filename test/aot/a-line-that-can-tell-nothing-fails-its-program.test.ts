@@ -6,7 +6,8 @@
 //   `// IR- <a declaration>[\s\S]*<a use of it>` where nothing is declared so
 //   a pattern that finds nothing but itself: the dump quotes the text of the program, these lines included
 // And the top-level code of a module that awaits is read where it is, not in the few operations that make its promise.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "./harness/commands";

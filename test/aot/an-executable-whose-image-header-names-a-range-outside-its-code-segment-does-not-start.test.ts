@@ -1,4 +1,5 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import {
   bunEnv,

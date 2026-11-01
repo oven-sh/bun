@@ -1,6 +1,7 @@
 // `__dirname` and `__filename` hold the folder of the build, as with `bun build --compile`. Where that folder is on the machine, a program finds there what `bun build --compile` finds.
 // Where it is not, on the machine that the executable is shipped to, what the executable holds answers under those paths: its modules, and what --asset embedded.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";

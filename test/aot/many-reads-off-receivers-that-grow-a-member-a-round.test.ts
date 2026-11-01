@@ -1,6 +1,7 @@
 // One value may be an instance of any of 300 classes, which reach it one a round, and 1,000 statements each read a
 // property of their own off it.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";

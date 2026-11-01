@@ -1,5 +1,6 @@
 // Where a program can make util.inspect read any member of a value, every member counts as used.
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
+import { describe } from "./harness/declare";
 import { closed, completeness, type Use } from "./runtime-use-expectations";
 import { of } from "./runtime-use-harness";
 import { eachRow } from "./supported";

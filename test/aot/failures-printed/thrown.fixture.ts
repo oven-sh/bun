@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, it, test } from "../harness/declare";
 
 class HttpError extends Error {
   name = "HttpError";

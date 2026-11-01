@@ -2,7 +2,8 @@
 // types, names and whole expressions. None of that runs, none of it asks for a file or a package, and a mistake in it stops no build.
 // Every tag that the parser knows, with texts behind it that would be code if they were read as code, at every kind of place, in each kind
 // of JavaScript file: the executable prints what `bun run` prints. A call that ran says which case it stands in.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";

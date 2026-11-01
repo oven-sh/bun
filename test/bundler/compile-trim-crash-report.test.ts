@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../aot/harness/declare";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "../aot/harness/run";

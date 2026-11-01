@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import type { WrittenSignature } from "../../../src/codegen/builtins/build-entries.ts";
 import { applyUses, OverloadContext, type EntryContext } from "../../../src/codegen/builtins/build-uses.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";

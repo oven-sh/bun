@@ -1,6 +1,7 @@
 // @ts-nocheck
 import statically from "bun:fs";
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 
 function codeOf(run: () => unknown) {
   try {

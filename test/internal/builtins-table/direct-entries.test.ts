@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import { checkDirectEntries } from "../../../src/codegen/builtins/check-direct-entries.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type {

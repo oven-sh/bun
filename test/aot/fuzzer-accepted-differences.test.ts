@@ -1,7 +1,8 @@
 // fuzz/accepted-differences.tsv has patterns for programs whose output depends on a clock, randomness, a PID, a random
 // folder name or the whole global object. A finding that matches is counted and not kept. A program that merely uses
 // these things and prints something else wrong must still be kept.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

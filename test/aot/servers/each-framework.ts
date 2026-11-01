@@ -15,7 +15,8 @@
 //   other build options  the same with --trim and --disallow-code-generation-from-strings, for the frameworks that ask for it: it is a second build
 //
 // Each test file works in a copy of ./app, where it installs the packages of ./app/bun.lock.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "../harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

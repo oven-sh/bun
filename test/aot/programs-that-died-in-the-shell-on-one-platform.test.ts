@@ -2,7 +2,8 @@
 // run on that platform would most likely not take them. Every run takes these: as they stand, and compiled as if every function were hot,
 // cold, or neither. Where the shell dies of a signal on Linux, shell/quick.py says where (shell/where-it-died.py). shell/tools.ts says what
 // the scripts need.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
 import { run } from "./harness/run";

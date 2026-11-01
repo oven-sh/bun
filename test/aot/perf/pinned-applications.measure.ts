@@ -1,4 +1,4 @@
-import { test } from "bun:test";
+import { test } from "../harness/declare";
 import { unsupported } from "../harness/compiler";
 import { pinnedApplications } from "./pinned-applications";
 

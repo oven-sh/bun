@@ -1,6 +1,7 @@
 // Every build that Bun's own tests make verifies the program between the stages of the compiler (bunEnv has BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING). A user's build does not. The tests judge what users get
 // only if the two builds make the same executable, byte for byte.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { mkdirSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";

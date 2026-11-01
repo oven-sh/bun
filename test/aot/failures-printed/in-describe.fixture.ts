@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { expect } from "bun:test";
+import { describe, it } from "../harness/declare";
 
 describe("a body that throws", () => {
   it("before the throw", () => {

@@ -12,7 +12,8 @@
 //   a finding in a multi-file program is first tried as a single file; if it needs the files, files are removed first, then lines
 //   a shared build is one program with many modules, except in the mode separate-entry-points, where the compiler treats each program as it would alone
 //   for two long lines that differ, the shown part starts a little before the first difference
-import { expect, test as one } from "bun:test";
+import { expect } from "bun:test";
+import { test as one } from "./harness/declare";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";

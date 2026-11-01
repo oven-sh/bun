@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, beforeAll, describe, test } from "../aot/harness/declare";
 import { tempDirWithBunTypes as tempDir } from "harness";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";

@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { closed, completeness, external } from "./runtime-use-expectations";
 import { of } from "./runtime-use-harness";
 

@@ -1,6 +1,7 @@
 // WebKit's own build knows nothing of Bun's natives. What it compiles the engine with has to be what Bun's generator expects of an engine,
 // or a prebuilt WebKit and Bun's table would not fit each other.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";

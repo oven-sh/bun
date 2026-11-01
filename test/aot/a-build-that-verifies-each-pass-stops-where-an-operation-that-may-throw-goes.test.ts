@@ -1,6 +1,7 @@
 // Between two passes an operation that may throw or run code of the program goes only with a reason: its effects under the proven types of its operands say that it does neither, or the pass answers for it.
 // `--aot-sabotage=ErasedValuesHaveEffects` has a pass take out what has lost its last use whatever it does. A build that verifies each pass names the pass, the function and the operation; without the sabotage it builds.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";

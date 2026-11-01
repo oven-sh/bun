@@ -1,6 +1,7 @@
 // The sampling profiler's tier breakdown has a row for compiled code: a sample whose top frame is a compiled function counts as "AOT".
 // Plain Bun has no such row.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";

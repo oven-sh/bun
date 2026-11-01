@@ -1,7 +1,8 @@
 // A module of Bun's library, internal/process/pre_execution, carries out --stack-trace-limit and the --trace options. The image of a compiled program has the
 // modules that the program uses, so an executable does without that one: native code sets the limit as the module would, and the options that only print or write
 // something for whoever started the program are ignored with a warning. A server starts, whatever its environment holds.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";

@@ -3,7 +3,8 @@
 // A compiler that crashes ends as Bun does at any other crash: that line stands in the crash report, behind the reason, and the process ends by the signal.
 //
 // `--aot-sabotage=<name>` (hidden) makes a build stop at a known place: in a function named stopsTheCompiler, or at a step that every build has.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { existsSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";

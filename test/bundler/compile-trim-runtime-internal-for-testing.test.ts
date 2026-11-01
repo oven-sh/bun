@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "../aot/harness/declare";
 import { bunEnv, bunExe, isDebug, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";

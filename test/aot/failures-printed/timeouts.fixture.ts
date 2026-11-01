@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, test } from "bun:test";
+import { expect } from "bun:test";
+import { beforeEach, describe, it, test } from "../harness/declare";
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 

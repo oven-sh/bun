@@ -16,7 +16,8 @@
 //   AOT_PERF=lower bun test test/aot/perf/operations.test.ts    writes every number that got better into the file
 //   AOT_PERF=update ..                                          rewrites the pinned numbers as measured
 //   AOT_PERF_ONLY='^field_' ..                                  only the rows whose name matches the regular expression
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "../harness/declare";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";

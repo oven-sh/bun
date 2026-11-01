@@ -1,5 +1,6 @@
 // A Worker that starts from code which the build has not compiled runs the modules that come with the runtime from their source. An executable holds that source where the program may start such a Worker, and not where the build has compiled the code of every Worker.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

@@ -1,5 +1,6 @@
 import { readTrimTable } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "../aot/harness/declare";
 import { bunEnv, bunExe, isGlibc, isLinux, isWindows } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

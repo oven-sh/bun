@@ -56,7 +56,8 @@
 //                                                                       with musl both write `millionInstructionsWithMusl` and nothing else
 //
 // Each shape prints one line that begins with SCALING.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "../harness/declare";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";

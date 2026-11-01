@@ -1,7 +1,8 @@
 // TS100031 ends with "Write '..'". Whoever does that, by hand or by a script, gets a program that builds and prints what the
 // program printed before, as long as its numbers stay int32: `A[top++] = x` still stores at the old `top`, and `++i * 3` is
 // still a product. Every form of the advice stands here, each where the words around it matter.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";

@@ -2,7 +2,8 @@
 // the order in which threads finish or the folder that holds the program. The functions here keep more numbers alive across a loop than
 // there are registers, so each of them moves several values between the stack and registers at the ends of its loop: the order of such
 // moves once followed addresses.
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, describe, test } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";

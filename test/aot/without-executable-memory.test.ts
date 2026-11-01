@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { copyFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";

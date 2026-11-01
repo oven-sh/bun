@@ -1,6 +1,7 @@
 // scripts/runner.node.ts splits the tests of the ahead-of-time compiler across the lanes of CI: no lane runs them all. Every
 // other test runs on every lane, as it did before.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

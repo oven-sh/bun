@@ -1,6 +1,7 @@
 // The program names next to nothing. Which names are read and which functions are called is only known at run time, so --trim removes what stands behind them.
 // Reading a name gives what it gives in the whole executable. Calling a function that was removed throws an error that the program can catch.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";

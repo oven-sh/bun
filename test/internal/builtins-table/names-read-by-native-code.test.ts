@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { checkNamesReadByNativeCode } from "../../../src/codegen/builtins/check-host-uses.ts";

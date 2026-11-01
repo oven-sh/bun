@@ -1,6 +1,7 @@
 // Types are erased from a program. A name or a text that only a type spells leaves nothing in an executable built with --aot,
 // unless something outside the program can bring it in and the executable has to know it then.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";

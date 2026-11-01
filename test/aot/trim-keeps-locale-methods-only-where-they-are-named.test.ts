@@ -1,6 +1,7 @@
 // `--trim` keeps toLocaleString and localeCompare where the program names them. A name that arrives as data names nothing: the call throws an error that says how to keep the method.
 // A list or a comparison that holds the name keeps it.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";

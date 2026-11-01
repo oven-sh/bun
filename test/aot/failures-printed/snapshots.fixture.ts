@@ -1,4 +1,5 @@
-import { describe, expect, it, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, it, test } from "../harness/declare";
 
 describe("snapshots", () => {
   it("a stored object differs", () => {

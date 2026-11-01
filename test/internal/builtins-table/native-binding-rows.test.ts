@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import type { Schema } from "../../../src/codegen/aot-schema/load.ts";
 import { buildEntries, ModelBuilder } from "../../../src/codegen/builtins/build-entries.ts";
 import type { Declaration, SourcedDeclaration } from "../../../src/codegen/builtins/declarations.ts";

@@ -2,7 +2,8 @@
 // The build knows both, so it knows the name, and the file is in the executable.
 // ./addons-named-by-the-platform/addon.c is built with the system's C compiler against the headers in src/runtime/napi, without node-gyp, and laid under the names that this machine asks for.
 // Each program is built, its sources and the addon are deleted, and the executable runs in another folder: it prints what plain Bun printed while they were there.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, beforeAll, describe, test } from "./harness/declare";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join, resolve } from "path";

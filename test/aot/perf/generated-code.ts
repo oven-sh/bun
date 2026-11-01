@@ -26,7 +26,8 @@
 //   AOT_PERF_OPTION_WORDS='disable=b3:UnrollLoops' ..                                 option words for testaot: to see what fails without one optimization
 //
 // To see the code: `testaot print <program> --command="lower-to-air loops entry-modules" references=narrow`. The engine's aot/tests/codegen has B3 tests of the same lowerings.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "../harness/declare";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "path";

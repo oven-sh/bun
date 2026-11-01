@@ -1,7 +1,8 @@
 // A string literal type names a text. Where a build-time constant removes every expression that produced the text or compared with it,
 // `bun build --compile` leaves the text out of the executable, and `bun build --compile --aot` must leave it out too, although
 // the type still lists it. A value that holds the text can still arrive from parsed data, and is handled as the type says.
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, describe, test } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";

@@ -1,5 +1,6 @@
 import { spawn } from "bun";
-import { afterAll, expect, setDefaultTimeout } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
+import { afterAll } from "../aot/harness/declare";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";

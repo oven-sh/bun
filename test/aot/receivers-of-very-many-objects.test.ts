@@ -1,7 +1,8 @@
 // Two receivers that may each be any of two hundred objects share a third of them, and read and write names that single objects read and write too.
 // Flow links receivers of very many objects through the sets of objects they share.
 // No test program is that large, so the limit is lowered.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";

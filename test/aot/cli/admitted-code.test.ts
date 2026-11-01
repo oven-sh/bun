@@ -2,7 +2,8 @@
 // An executable only runs code that was compiled into it, so it rejects the first kind when it starts, and a build rejects it in
 // --compile-exec-argv. What the bunfig.toml of the working directory would load is ignored. A build with --compile-inspector, or with --inspect in --compile-exec-argv, takes both kinds, unless it has
 // --no-compile-function-source or --obfuscate.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "../harness/declare";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";

@@ -2,7 +2,8 @@
 // run time, and that call once left the register that reports an exception as it found it: the loop spun on behind a termination,
 // or the handler of exceptions ran with nothing thrown. The program is one of the corpus, of which a run takes a share. This file
 // runs it on every platform, every time.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";

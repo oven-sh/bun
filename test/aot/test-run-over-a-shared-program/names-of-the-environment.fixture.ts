@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterEach, test } from "../harness/declare";
 import { atLoad, isProduction } from "./environment";
 
 const before = process.env.NODE_ENV;

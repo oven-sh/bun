@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
+import { describe } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";

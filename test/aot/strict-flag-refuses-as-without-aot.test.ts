@@ -1,7 +1,8 @@
 // `--disallow-code-generation-from-strings=strict` in an executable: whatever would turn a string or a file on the disk into
 // code ends in the flag's own error, an EvalError with one text. An executable built with --aot refuses code from the disk
 // anyway, in words of its own. Where the flag is set it says what the flag says, so the two builds print the same.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";

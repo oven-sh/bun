@@ -5,7 +5,8 @@
 //   LOCKED  the addon changes a built-in object. It gets what the program itself gets for the same store (LOCKED_BY=program).
 //   TEXT    the addon has text evaluated. As plain Bun, or the call throws an EvalError and what the program reads afterwards is what it read before.
 //   HIDDEN  the addon walks from the global object through process.mainModule, which the program never names. As plain Bun, or the walk throws a TypeError and nothing has changed.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, beforeAll, describe, test } from "./harness/declare";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";

@@ -1,4 +1,5 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 import * as lib from "./lib";
 
 // Every call from one image into the other notes which image ran below it. Far more calls are nested here than there is room for at first,

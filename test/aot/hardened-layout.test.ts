@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
+import { describe } from "./harness/declare";
 import { bunExe, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

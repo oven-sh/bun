@@ -1,6 +1,7 @@
 // A `// IRM=` line in a program counts operations in the top-level code of the program's own module.
 // shell/expectations.py has to find that code in the printed IR first. If it cannot, every such line fails.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { isArm64, isASAN, isDebug } from "harness";
 import { join } from "path";
 import { run } from "./harness/run";

@@ -1,6 +1,7 @@
 // `list.sort((a, b) => a.rank - b.rank)` on a short list: the comparator reads two fields, so nobody can see the list while it is sorted, and it is sorted where it lies.
 // A comparator that can look at the list keeps the copy: it has to see the list as it was.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";

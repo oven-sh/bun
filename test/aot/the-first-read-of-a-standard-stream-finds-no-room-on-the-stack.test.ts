@@ -2,7 +2,8 @@
 // that read stands in the deepest frames of a recursion that has just run out of stack, the code fails: Bun reports the error and
 // the property is undefined from then on. The compiler held both to be objects always, and a read of a member died of a
 // segmentation fault. The report goes to stderr with positions that differ between the two ways to run, so only stdout is compared.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";

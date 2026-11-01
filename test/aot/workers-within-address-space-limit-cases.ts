@@ -1,4 +1,5 @@
-import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, describe as describeAnywhere, test } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";

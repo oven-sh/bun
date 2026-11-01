@@ -1,5 +1,6 @@
 import { builtinFeatureUses } from "bun:internal-for-testing";
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import { globSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

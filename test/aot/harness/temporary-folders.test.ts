@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./declare";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";

@@ -6,7 +6,8 @@
 // says which tool.
 //   $TESTAOT run <aot/tests>/passes/sink-allocations --jobs=1     one folder, serially, each path printed before it runs
 //   $TESTAOT native <filter> --part=2/4                           every fourth of the native tests whose name holds the filter, from the second on
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { isASAN, isCI, isWindows, tempDir } from "harness";
 import { join } from "path";
 import {

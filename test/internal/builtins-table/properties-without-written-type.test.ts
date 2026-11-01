@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import { typeOfPropertyWithoutWrittenType } from "../../../src/codegen/builtins/build-overloads.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
 import type { ModelBuiltin, ModelName, NameKind } from "../../../src/codegen/builtins/model.ts";

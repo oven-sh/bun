@@ -18,7 +18,8 @@
 // benchmark says, and what it buys has to be asked of the programs (--aot-disable=pass:<name>).
 //
 // It prints one line a pass that begins with PASS: the changes by program; and one that begins with ROUNDS.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "../harness/declare";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";

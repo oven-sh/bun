@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../aot/harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";

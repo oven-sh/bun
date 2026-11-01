@@ -1,5 +1,6 @@
 // A throw leaves frames of the shared program and of the test file in turn. Handlers, cleanups and what the frames have kept are on both sides.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 import * as lib from "./throws";
 const text = (e: unknown) => (e instanceof Error ? e.name + ": " + e.message + ((e as any).code ? " #" + (e as any).code : "") : typeof e + " " + String(e));
 const rows: string[] = [];

@@ -1,6 +1,7 @@
 // Asking the compiler what it did changes nothing of what it does: a build with a report, or with its explanations, writes the same executable, byte for byte.
 // To explain how a value came somewhere the flow analysis keeps more than it needs to compile, and what it keeps may not decide what it finds.
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, describe, test } from "./harness/declare";
 import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";

@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/harness/declare";
 import { bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";

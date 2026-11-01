@@ -1,7 +1,8 @@
 // `import * as other` used by every function of a module: each use ties the namespace object to all the exports of the
 // other module, so one round of flow logged uses times exports edges, nearly all of them the same: 4,500,000 for this
 // program, which needs far fewer than the bound below.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";

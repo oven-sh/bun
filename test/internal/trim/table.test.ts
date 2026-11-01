@@ -1,5 +1,6 @@
 import { readTrimTable } from "bun:internal-for-testing";
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, describe, test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

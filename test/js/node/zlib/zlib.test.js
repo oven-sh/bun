@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, nodeExeAtLeast, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -107,19 +107,29 @@ describe("zlib", () => {
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 
-  it("flush() takes a numeric string or a BigInt, and any kind after end()", async () => {
-    for (const kind of ["2", 2n]) {
-      const gzip = zlib.createGzip();
-      expect(Object.keys(gzip)).not.toContain("_flushBoundIdx");
-      const chunks = [];
-      gzip.on("data", chunk => chunks.push(chunk));
-      gzip.write("hello");
-      await new Promise(done => gzip.flush(kind, done));
-      const flushed = zlib.gunzipSync(Buffer.concat(chunks), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
-      expect(flushed.toString()).toBe("hello");
-      gzip.end();
-      await new Promise(done => gzip.flush("none", done));
-    }
+  // Node.js checks the kind since v26.5.0, before it looks at the stream (nodejs/node#63746). The fixture has the assertions.
+  for (const [name, runtime] of [
+    ["bun", bunExe()],
+    ["node", nodeExeAtLeast("26.5.0")],
+  ]) {
+    it.concurrent.skipIf(!runtime)(
+      `flush() refuses a kind that is not a number in the range of the codec, in every stream state (${name})`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [runtime, resolve(import.meta.dir, "zlib-flush-kind-fixture.cjs")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+      },
+    );
+  }
+
+  it("a stream has no _flushBoundIdx", () => {
+    // Node.js keeps the index of the flush bounds in this own property.
+    expect(Object.keys(zlib.createGzip())).not.toContain("_flushBoundIdx");
   });
 
   describe("libdeflate level validation", () => {
@@ -215,6 +225,8 @@ describe("zlib", () => {
       expect({ stdout, stderr }).toEqual({ stdout: "ok\n", stderr: "" });
       expect(exitCode).toBe(0);
     },
+    // On a debug build the process and its Worker need 2 s to start, and the two kinds run at the same time.
+    isDebug ? 30_000 : undefined,
   );
 
   describe("memLevel and strategy", () => {

@@ -78,6 +78,7 @@ private:
     ::Bun::DeclaredModuleLoad::require<::Bun::InternalModuleRegistry::Field::field>((globalObject), onBehalfOf##_s __VA_OPT__(, ) __VA_ARGS__)
 
 JSC_DECLARE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode);
+JSC_DECLARE_HOST_FUNCTION(jsInternalModulesCompiledFromSource);
 JSC_DECLARE_HOST_FUNCTION(jsInternalModuleBytecode);
 
 } // namespace Bun

@@ -129,8 +129,14 @@ class Methods { static { row("methods and accessors are there from the start", (
 // CHECK-NEXT: v10 = Convert v9 declared={type=number} illTypedCause=Assertion
 // CHECK-NEXT: Return v10
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v11 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v11
+// CHECK-NEXT: v11 = TypeTest v3 testedType=undefined|null
+// CHECK-NEXT: Branch v11 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v12):
+// CHECK-NEXT: v13 = PropGet v12 key="#a"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v14):
+// CHECK-NEXT: v15 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="poke"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=[[w_12]]}] results=[{type=anything}] functionTypes={{*}}[[f_13]]] {
@@ -155,6 +161,12 @@ class Methods { static { row("methods and accessors are there from the start", (
 // CHECK-NEXT: v12 = Undefined
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v13 = NewRuntimeError runtimeError=InvalidPrivateWrite
-// CHECK-NEXT: Throw v13
+// CHECK-NEXT: v13 = TypeTest v2 testedType=undefined|null
+// CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v14):
+// CHECK-NEXT: v15 = PropGet v14 key="#v"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v16):
+// CHECK-NEXT: v17 = NewRuntimeError runtimeError=InvalidPrivateWrite
+// CHECK-NEXT: Throw v17
 // CHECK-NEXT: }

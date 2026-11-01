@@ -161,12 +161,23 @@ pub fn resolve_callee(
 ) -> Option<KnownCallee> {
     let (hir, bound) = (input.files.hir(file), input.files.bound(file));
     let mut callee = hir.skip_type_assertions(callee);
+    // `(0, helper)(..)`. A known call may evaluate no callee, so what stands in front of the comma has to do nothing.
     while let ExprKind::Binary {
         op: BinOp::Comma,
+        left,
         right,
-        ..
     } = hir[callee].kind
     {
+        if !matches!(
+            hir[hir.skip_type_assertions(left)].kind,
+            ExprKind::Number(_)
+                | ExprKind::String(_)
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Null
+        ) {
+            return None;
+        }
         callee = hir.skip_type_assertions(right);
     }
     if let ExprKind::Ident(_) = hir[callee].kind {

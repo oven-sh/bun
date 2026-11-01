@@ -3017,7 +3017,7 @@ for (const report of reports) report();
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="detail"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=undefined|null|[[L_1]] flags=[IsExpected] variableName="v"}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -3077,7 +3077,7 @@ for (const report of reports) report();
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.asyncIterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=undefined|null|[[L_1]] flags=[IsExpected] variableName="v"}] thisType={type=anything} results=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -356,6 +356,7 @@ fn only_link_defines_synthetic_exports() {
                 module: prepared.modules.index_of(exporter),
                 name: atoms.intern(name),
                 is_known_member: false,
+                is_replaceable: false,
                 writer: ExportWriter::Body,
             };
             assert_eq!(variable_definition(&prepared, key), Some(definition));
@@ -403,6 +404,7 @@ fn copy_is_defined_where_the_file_has_a_face() {
             module: prepared.modules.index_of(face),
             name: projects.application.loaded.files().atoms.intern(b"a"),
             is_known_member: false,
+            is_replaceable: false,
             writer: ExportWriter::Face,
         };
         assert_eq!(variable_definition(&prepared, copy), Some(definition));
@@ -444,6 +446,7 @@ fn synthetic_export_of_two_projects_is_one_variable() {
             module: prepared.modules.index_of(exporter),
             name,
             is_known_member: false,
+            is_replaceable: false,
             writer: ExportWriter::Loader,
         };
         assert_eq!(variable_definition(&prepared, shared), Some(definition));

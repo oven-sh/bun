@@ -6,6 +6,7 @@ use crate::builtins::{BuiltinId, BuiltinKind, Mutability, Platforms, table};
 
 struct LockedPathWalk<'a, 's> {
     platform: Platforms,
+    replaced: &'a [u32],
     arena: &'s Arena,
     atoms: &'a Interner<'s>,
     names: Vec<Atom>,
@@ -33,6 +34,7 @@ impl LockedPathWalk<'_, '_> {
         if entry.mutability != Mutability::AlwaysLocked
             || table::is_symbol_name(entry.name)
             || !table::exists_on(location, self.platform)
+            || self.replaced.binary_search(&(location as u32)).is_ok()
         {
             return;
         }
@@ -57,13 +59,16 @@ impl LockedPathWalk<'_, '_> {
 }
 
 /// Every path of names from the global scope on which each step is always locked and which ends at a function, an object or a well-known symbol.
+/// `replaced`: `LoadOptions::replaced_builtins`.
 pub(crate) fn locked_builtin_defines<'s>(
     platform: Platforms,
+    replaced: &[u32],
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> Vec<Define<'s>> {
     let mut walk = LockedPathWalk {
         platform,
+        replaced,
         arena,
         atoms,
         names: Vec::new(),
@@ -147,7 +152,7 @@ mod tests {
             .iter()
             .map(|name| atoms.intern(name.as_bytes()))
             .collect();
-        let defines = locked_builtin_defines(Platforms::LINUX, session.arena(), &atoms);
+        let defines = locked_builtin_defines(Platforms::LINUX, &[], session.arena(), &atoms);
         let mut found = defines.iter().filter(|define| {
             define.path.root == DefineRoot::Global(names[0]) && define.path.members == &names[1..]
         });

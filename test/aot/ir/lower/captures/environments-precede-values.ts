@@ -5,7 +5,7 @@
 // CHECK: [[environment]] = NewObject {{*}}layout=[[layout]]
 // CHECK: = NewClosure [[environment]], [[p]] function=
 // CHECK-LABEL: function {{*}}kind=Arrow
-// CHECK: captures=[{type=env [[layout]] flags=[IsFromCompiler]}, {type=undefined|null|string site=[[site]] flags=[OmitsNull, OmitsUndefined]}] thisType
+// CHECK: captures=[{type=env [[layout]] flags=[IsFromCompiler]}, {type=undefined|null|string site=[[site]] flags=[OmitsNull, OmitsUndefined] variableName="p"}] thisType
 
 export function f(p: string) {
   let b = 0;

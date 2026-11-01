@@ -292,6 +292,7 @@ fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Ma
     js_parser::Macro::MacroContext {
         javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
         data: data.cast::<core::ffi::c_void>(),
+        known_answers: None,
     }
 }
 

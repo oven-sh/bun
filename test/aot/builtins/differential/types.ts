@@ -150,7 +150,14 @@ function findInstanceMismatch(
   const description = realm.table.classes.get(part.class);
   const classes = realm.classesOf(value);
   const hasBrand = description !== undefined && description.instanceTest !== "None";
-  const canRecognize = hasBrand || isObject(realm.valueOf(description?.prototype ?? null)) || classes.includes(part.class);
+  // A bound function is known by its name. The one that `format` of a formatter answers has none, as any native function may.
+  const mayBeBoundUnseen =
+    part.class === "BoundFunction" &&
+    typeof value === "function" &&
+    Reflect.getOwnPropertyDescriptor(value, "name")?.value === "" &&
+    !Object.hasOwn(value, "prototype");
+  const canRecognize =
+    !mayBeBoundUnseen && (hasBrand || isObject(realm.valueOf(description?.prototype ?? null)) || classes.includes(part.class));
   // Whatever its prototype is, an object that no other class claims is an ordinary object.
   const isOrdinary = part.class === "Object" && typeof value === "object" && (classes.length === 0 || classes[0] === "Object");
   if (canRecognize && !isOrdinary && !classes.includes(part.class)) return `${describeClass(realm, value)} is no ${part.class}`;

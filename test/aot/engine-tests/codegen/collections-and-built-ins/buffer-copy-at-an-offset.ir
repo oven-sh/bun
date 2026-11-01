@@ -1,0 +1,112 @@
+# function write(target: Buffer, chunk: Buffer, offset: number): number {
+#   return chunk.copy(target, offset);
+# }
+# declare const input: any;
+# const target = Buffer.alloc(64);
+# const chunk = Buffer.alloc(4);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = write(target, chunk, +input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 not-windows unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=46 kind=Parameter
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=152 kind=CallResult
+typesite w3 module=m0 position=184 kind=CallResult
+typesite w4 module=m0 position=210 kind=Variable
+typesite w5 module=m0 position=271 kind=CallResult
+typesite w6 module=m0 position=81 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Buffer" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Buffer) flags=[IsExpected]}
+    v5 = PropGet v4 key="alloc"
+    v6 = Convert v5 declared={type=builtin(BufferAlloc) flags=[IsExpected]}
+    v7 = Integer integer=64
+    v8 = Call v6, v4, v7 calleeKey="alloc" calleeName="Buffer.alloc"
+    v9 = Convert v8 declared={type=undefined|null|Buffer site=w2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="Buffer" [isFreeName]
+    v12 = Convert v11 declared={type=builtin(Buffer) flags=[IsExpected]}
+    v13 = PropGet v12 key="alloc"
+    v14 = Convert v13 declared={type=builtin(BufferAlloc) flags=[IsExpected]}
+    v15 = Integer integer=4
+    v16 = Call v14, v12, v15 calleeKey="alloc" calleeName="Buffer.alloc"
+    v17 = Convert v16 declared={type=undefined|null|Buffer site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v18 = Integer
+    v19 = Convert v18 declared={type=number site=w4}
+    Jump -> next b2(v19)
+  b2(v20: number):
+    LoopHint
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="input" [isFreeName]
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    v25 = Less v20, v24
+    Branch v25 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v26):
+    Jump -> next b4()
+  b4():
+    v27 = Builtin builtin=GlobalThis
+    v28 = PropGet v27 key="globalThis" [isFreeName]
+    v29 = Convert v28 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v30 = Convert v29 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="input" [isFreeName]
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    v34 = ToNumber v33
+    v35 = Call v1, -, v9, v17, v34 calleeName="write"
+    v36 = Convert v35 declared={type=number site=w5}
+    PropSet v30, v36 key="answer"
+    Jump -> next b5()
+  b5():
+    v38 = Increment v26
+    v39 = Convert v38 declared={type=number site=w4}
+    Jump -> next b2(v39)
+  b6(v40):
+    Jump -> next b7()
+  b7():
+    v41 = Undefined
+    Return v41
+}
+function f1 name="write" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Buffer, v1: undefined|null|Buffer, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = PropGet v1 key="copy"
+    v4 = Call v3, v1, v0, v2 calleeKey="copy" calleeName="chunk.copy"
+    ReturnCall v4 casts=[{declared={type=number site=w6}}, {declared={type=number site=w1}}]
+}
+
+# The bytes are moved in place: the function of the host is entered only for a position that is negative or has a fraction and for a view that can change its length. As many bytes go as there are and as there is room for, and that number is the answer, unboxed.
+# CHECK-LABEL: name="write" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK: Int64 b@[[start]] = Patchpoint(b@[[given]]:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction
+# CHECK-NEXT: Double b@[[whole]] = IToD(b@[[start]])
+# CHECK-NEXT: Int32 b@{{*}} = Equal(b@[[given]], b@[[whole]])
+# CHECK: Successors: Then:#{{*}}, Else:Rare:#[[miss]]
+# CHECK: Int32 b@{{*}} = GreaterEqual(b@[[start]], $0(b@
+# CHECK: Successors: Then:#{{*}}, Else:Rare:#[[miss]]
+# CHECK: Successors: Then:Rare:#[[miss]], Else:#
+# CHECK: Int64 b@[[available]] = Load(b@{{*}}, offset = 24, ControlDependent|Reads:JSArrayBufferView_length)
+# CHECK-NEXT: Int64 b@[[length]] = Load(b@{{*}}, offset = 24, ControlDependent|Reads:JSArrayBufferView_length)
+# CHECK-NEXT: Int64 b@[[room]] = Sub(b@[[length]], b@[[start]])
+# CHECK: Int64 b@[[least]] = Select(b@{{*}}, b@[[available]], b@[[room]])
+# CHECK: Int64 b@[[count]] = Select(b@{{*}}, b@[[least]], $0(b@
+# CHECK-NEXT: Branch(b@[[count]], Terminal)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Unlikely:#
+# Up to sixteen bytes go through a stub that keeps every register but two. More go through a call that moves bytes, throws nothing and collects nothing.
+# CHECK: Int32 b@{{*}} = BelowEqual(b@[[count]], $16(b@
+# CHECK: Void b@{{*}} = Patchpoint(b@[[to]]:Register({{*}}), b@[[from]]:Register({{*}}), b@[[count]]:Register({{*}}), {{*}}resultConstraints = WarmAny, ControlDependent|Writes:{{*}}TypedArrayElements}|Reads:{{*}}TypedArrayElements}
+# CHECK: Void b@{{*}} = Patchpoint(b@[[to]]:Register({{*}}), b@[[from]]:Register({{*}}), b@[[count]]:Register({{*}}), resultConstraints = WarmAny, ControlDependent|Writes:{{*}}TypedArrayElements}|Reads:TypedArrayElements)
+# CHECK-LABEL: end of function
+# X64: instructions: 29, patchpoints: 5, rare instructions: 19

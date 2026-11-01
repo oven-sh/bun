@@ -13,7 +13,6 @@ const {
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
-const fs = require("internal/fs/streams");
 
 type Environment = Record<string, string | undefined>;
 type DoneCallback = (error?: Error | null) => void;
@@ -37,7 +36,6 @@ declare global {
 }
 
 const NumberIsInteger = Number.isInteger;
-const ReflectDefineProperty = Reflect.defineProperty;
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L46-L49: `fd` is not converted.
 function isatty(fd: unknown): boolean {
@@ -49,27 +47,33 @@ function WriteStream(this: Self, fd: number): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd) as any;
   if (fd >> 0 !== fd || fd < 0) throw $ERR_INVALID_FD(fd);
 
-  // Answers its `this`: the prototype below is `fs.WriteStream.prototype` itself.
-  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false }) as unknown as Self;
-  stream.columns = undefined;
-  stream.rows = undefined;
-  stream.isTTY = isatty(stream.fd);
+  require("internal/fs/streams").WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
+  this.columns = undefined;
+  this.rows = undefined;
+  this.isTTY = isatty(this.fd);
 
-  if (stream.isTTY) {
+  if (this.isTTY) {
     const windowSizeArray = [0, 0];
     if (_getWindowSize(fd, windowSizeArray) === true) {
-      stream.columns = windowSizeArray[0];
-      stream.rows = windowSizeArray[1];
+      this.columns = windowSizeArray[0];
+      this.rows = windowSizeArray[1];
     }
   }
-
-  return stream as unknown as void;
 }
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    const Prototype = Object.create(require("internal/fs/streams").WriteStream.prototype);
+    Object.defineProperty(WriteStream, "prototype", { value: Prototype });
+
+    WriteStream.prototype._destroy = function (this: $Node.TTYWriteStream, err: Error | null, cb: DoneCallback) {
+      // Ending a FileSink never closes the stream's fd, so only a stream without one has to skip the close.
+      if (isStdio(this.fd) && !this[require("internal/fs/streams").kWriteStreamFastPath]) {
+        this.fd = null;
+        return cb(err);
+      }
+      require("internal/fs/streams").WriteStream.prototype._destroy.$call(this, err, cb);
+    };
 
     WriteStream.prototype._refreshSize = function (this: $Node.TTYWriteStream) {
       const oldCols = this.columns;
@@ -146,19 +150,24 @@ Object.defineProperty(WriteStream, "prototype", {
       })();
     };
 
-    return Real;
+    return Prototype;
   },
   enumerable: true,
   configurable: true,
 });
 
+// Node's tty streams wrap a libuv TTY handle, and closing one never closes descriptors 0-2.
+function isStdio(fd: number | null) {
+  return fd != null && fd <= 2;
+}
+
 // An accessor, as the stream classes of node:fs: node:tty loads node:net when ReadStream is first read or assigned.
 function materializeReadStream<T>(value: T): T {
-  ReflectDefineProperty(tty_exports, "ReadStream", { value, writable: true, configurable: true });
+  Reflect.defineProperty(tty, "ReadStream", { value, writable: true, configurable: true });
   return value;
 }
 
-var tty_exports = {
+const tty = {
   get ReadStream() {
     return materializeReadStream(require("internal/tty/read_stream").ReadStream);
   },
@@ -168,4 +177,4 @@ var tty_exports = {
   WriteStream,
   isatty,
 };
-export default tty_exports;
+export default tty;

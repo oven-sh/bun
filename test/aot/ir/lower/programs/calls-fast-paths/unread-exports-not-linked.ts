@@ -74,16 +74,15 @@ export const usedTable = { usedEntry: 2 };
 // CHECK-NEXT: RecordRequire module=[[m_2]] referrer=[[m_0]]
 // CHECK-NEXT: v35 = Boolean boolean=true
 // CHECK-NEXT: v36 = Convert v35 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v37 = Convert v36 declared={type=undefined|null|object site=[[w_12]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v38 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v39 = CheckInitialized v38 name="lines"
-// CHECK-NEXT: v40 = PropGet v39 key="push"
-// CHECK-NEXT: v41 = GetModuleVariable variable=[[g_13]]
-// CHECK-NEXT: v42 = CheckInitialized v41 name="used"
-// CHECK-NEXT: v43 = Convert v42 declared={type=undefined|null|[[f_4]] site=[[w_14]]} illTypedCause=Assertion
-// CHECK-NEXT: v44 = TypeOf v43
-// CHECK-NEXT: v45 = Call v40, v39, v44 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v46 = Convert v45 declared={type=number site=[[w_15]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v47 = Undefined
-// CHECK-NEXT: Return v47
+// CHECK-NEXT: v37 = GetEnvironmentField v0 layout=[[L_1]]
+// CHECK-NEXT: v38 = CheckInitialized v37 name="lines"
+// CHECK-NEXT: v39 = PropGet v38 key="push"
+// CHECK-NEXT: v40 = GetModuleVariable variable=[[g_12]]
+// CHECK-NEXT: v41 = CheckInitialized v40 name="used"
+// CHECK-NEXT: v42 = Convert v41 declared={type=undefined|null|[[f_4]] site=[[w_13]]} illTypedCause=Assertion
+// CHECK-NEXT: v43 = TypeOf v42
+// CHECK-NEXT: v44 = Call v39, v38, v43 calleeKey="push" calleeName="lines.push"
+// CHECK-NEXT: v45 = Convert v44 declared={type=number site=[[w_14]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v46 = Undefined
+// CHECK-NEXT: Return v46
 // CHECK-NEXT: }

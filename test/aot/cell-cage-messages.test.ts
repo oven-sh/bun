@@ -1,10 +1,11 @@
-import { afterAll, expect, setDefaultTimeout } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { withoutCoreDump } from "./harness/commands";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { beforeAll, describe, test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const canLimitAddressSpace = isLinux && !isASAN && !isDebug;
 const cageSize = (size: string | undefined) => ({ ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: size });

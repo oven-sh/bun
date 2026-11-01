@@ -825,11 +825,11 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 ask Row
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 2895, patchpoints: 462, rare instructions: 1472, polls: 16
+# CHECK-NEXT: instructions: 2659, patchpoints: 378, rare instructions: 1790, polls: 15
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="ask"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 128, patchpoints: 17, rare instructions: 218, polls: 2
+# CHECK-NEXT: instructions: 123, patchpoints: 17, rare instructions: 209, polls: 2
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="Row"
 # CHECK: role=Source

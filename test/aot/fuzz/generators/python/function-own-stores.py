@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""function-own-stores.py: in `if (!node.id) { node.id = next } return node.id` a read of `o.name` is taken for what the function stored to `o.name`. Here something else stores nil to the same place in between: an alias, a call, a closure, a setter, an await, a yield. Each row has types of its own."""
+"""function-own-stores.py: In `if (!node.id) { node.id = next } return node.id` a read of `o.name` may be forwarded from
+the function's own store. Here something else stores to the same location in between: an alias, a call, a closure, a
+setter.
+"""
 HEAD = '''declare const console: { log(...values: unknown[]): void };
 function say(what: string, make: () => string): void { try { console.log(what + ":", make()); } catch (e) { console.log(what + ":", "throws", (e as Error).name); } }
 async function sayLater(what: string, make: () => Promise<string>): Promise<void> { try { console.log(what + ":", await make()); } catch (e) { console.log(what + ":", "throws", (e as Error).name); } }

@@ -208,7 +208,7 @@ attempt("an object literal that reads itself", () => {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=[[f_10]] flags=[IsFromCompiler]}] thisType={type=[[L_8]] flags=[IsExpected]} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=[[f_10]] flags=[IsFromCompiler] variableName="outcome"}] thisType={type=[[L_8]] flags=[IsExpected]} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: [[f_10]], v1: [[L_8]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

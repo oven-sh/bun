@@ -191,7 +191,6 @@ Certificate.verifySpkac = verifySpkac;
 Certificate.exportPublicKey = exportPublicKey;
 Certificate.exportChallenge = exportChallenge;
 
-var Buffer = globalThis.Buffer;
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function getArrayBufferOrView(buffer: string | BufferSource, name: string, encoding?: string): BufferSource {
@@ -265,7 +264,8 @@ Object.assign(Sign.prototype, {
     callback();
   },
   update: function (this: $Node.Sign | $Node.Verify, data: CryptoData, encoding?: string) {
-    return this[kHandle].update(this, data, encoding);
+    this[kHandle].update(undefined, data, encoding);
+    return this;
   },
   sign: function (this: $Node.Sign, options: unknown, encoding?: string) {
     return this[kHandle].sign(options, encoding);
@@ -329,7 +329,7 @@ Object.assign(Hash.prototype, {
     return new Hash(this[kHandle], options);
   },
   _transform: function (this: $Node.Hash, chunk: CryptoData, encoding: string, callback: DoneCallback) {
-    this[kHandle].update(this, chunk, encoding, false);
+    this[kHandle].update(undefined, chunk, encoding, false);
     callback();
   },
   _flush: function (this: $Node.Hash, callback: DoneCallback) {
@@ -337,7 +337,8 @@ Object.assign(Hash.prototype, {
     callback();
   },
   update: function (this: $Node.Hash, data: CryptoData, encoding?: string) {
-    return this[kHandle].update(this, data, encoding);
+    this[kHandle].update(undefined, data, encoding);
+    return this;
   },
   digest: function (this: $Node.Hash, outputEncoding?: string) {
     return this[kHandle].digest(outputEncoding);
@@ -363,13 +364,14 @@ $toClass(Hmac, "Hmac", LazyTransform);
 
 Object.assign(Hmac.prototype, {
   update: function (this: $Node.Hmac, data: CryptoData, encoding?: string) {
-    return this[kHandle].update(this, data, encoding);
+    this[kHandle].update(undefined, data, encoding);
+    return this;
   },
   digest: function (this: $Node.Hmac, outputEncoding?: string) {
     return this[kHandle].digest(outputEncoding);
   },
   _transform: function (this: $Node.Hmac, chunk: CryptoData, encoding: string, callback: DoneCallback) {
-    this[kHandle].update(this, chunk, encoding, false);
+    this[kHandle].update(undefined, chunk, encoding, false);
     callback();
   },
   _flush: function (this: $Node.Hmac, callback: DoneCallback) {

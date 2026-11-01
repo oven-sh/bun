@@ -9,6 +9,7 @@ import {
   type FeatureName,
   type TrimFeature,
 } from "../../scripts/build/trim/features";
+import { describeFiller } from "../../scripts/build/trim/report";
 import type { TrimTable } from "../../scripts/build/trim/table";
 import type { BuiltinEntry } from "../../scripts/build/trim/types";
 
@@ -219,7 +220,7 @@ export function describeBytesRemovedWith(feature: FeatureName, removedIndexes: r
         const kept = sets[set]!.filter(index => !removed.has(index)).map(nameOf);
         return `${cuttable} bytes that can be cut and ${fillOnly} that can only be filled go with ${sets[set]!.map(nameOf).join(", ")}; kept: ${kept.join(", ") || "none"}`;
       }),
-    `${holes.length} holes`,
+    describeFiller(holes.map(hole => hole.bytes)),
     ...holes.flatMap(({ bytes, bytesOfFeature }, index) =>
       bytesOfFeature > 0
         ? [`hole ${index + 1} by size: ${bytes} bytes, ${bytesOfFeature} of them go with ${feature}`]

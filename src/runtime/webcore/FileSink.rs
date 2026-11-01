@@ -75,8 +75,11 @@ pub struct FileSink {
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
     pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
-    /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open.
+    /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open, and under
+    /// `bun test --isolate` while its copy of a descriptor is.
     abort_handle: bun_jsc::AbortHandle,
+    /// It is a test file's: closed once the file's realm is retired, unless something is still unwritten.
+    closes_with_test_file: Cell<bool>,
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
@@ -513,6 +516,58 @@ impl FileSink {
         }
     }
 
+    /// This sink owns a copy of a descriptor, as `process.stdout`'s and `process.stderr`'s do. Under
+    /// `bun test --isolate` the copy is closed with the test file that made it. Left to the
+    /// finalizer, it would be closed by some collection in the middle of a later file.
+    #[cfg(unix)]
+    fn close_with_test_file(&self, context: &bun_jsc::ScriptExecutionContext) {
+        let Some(vm) = self.js_vm() else {
+            return;
+        };
+        if vm.as_graph_context(context).is_some() {
+            return;
+        }
+        if let Some(context) = vm.as_context_that_stops_early(context) {
+            self.closes_with_test_file.set(true);
+            self.abort_handle.set_only_waits_to_be_closed();
+            // SAFETY: a started sink is heap-allocated; it leaves its context in `on_close`.
+            unsafe {
+                bun_jsc::AbortHandle::arm_owner(core::ptr::from_ref(self).cast_mut(), context);
+            }
+        }
+    }
+
+    /// The sweep that stops the file's handles comes first; its close handlers and last microtasks
+    /// follow and may still write. At the VM's end the sink is left to flush as it always has been.
+    ///
+    /// # Safety
+    /// `this` is live.
+    unsafe fn close_at_retirement(this: *mut FileSink, cause: bun_jsc::AbortCause) {
+        use bun_jsc::{AbortCause, StopReason};
+        if !matches!(cause, AbortCause::ContextStopped(StopReason::Disposed)) {
+            return;
+        }
+        // SAFETY: fn contract.
+        let Some(vm) = (unsafe { &*this }).js_vm() else {
+            return;
+        };
+        // SAFETY: fn contract; the ref keeps the sink until the closure has run.
+        let sink = unsafe { RefPtr::init_ref(this) };
+        vm.release_at_retirement(Box::new(move || {
+            let this = sink.as_ptr();
+            // SAFETY: `sink` holds a ref across `close()` and `run_pending`.
+            unsafe {
+                if (*this).done.get() || (*this).writer.get().has_pending_data() {
+                    return;
+                }
+                (*this).done.set(true);
+                (*this).writer.with_mut(|w| w.close());
+                FileSink::run_pending(this);
+                FileSink::clear_keep_alive_ref(this);
+            }
+        }));
+    }
+
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)). May free `this`.
@@ -737,8 +792,12 @@ impl FileSink {
             sys::Result::Ok(fd) => fd,
         };
 
-        if matches!(options.input_path, PathOrFileDescriptor::Path(_)) {
-            self.close_with_graph(context);
+        match options.input_path {
+            PathOrFileDescriptor::Path(_) => self.close_with_graph(context),
+            #[cfg(unix)]
+            PathOrFileDescriptor::Fd(_) => self.close_with_test_file(context),
+            #[cfg(not(unix))]
+            PathOrFileDescriptor::Fd(_) => {}
         }
 
         #[cfg(windows)]
@@ -1602,17 +1661,21 @@ impl FileSink {
             pump_promise_ref: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
+            closes_with_test_file: Cell::new(false),
         }
     }
 }
 
-bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, cause| {
     // What is buffered is dropped with the graph: the writer closes without draining (a reader
     // that never reads would keep it open for ever), and a parked write gives up its promise and
     // the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
     // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) with
     // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
     unsafe {
+        if (*this).closes_with_test_file.get() {
+            return FileSink::close_at_retirement(this, cause);
+        }
         let _guard = RefPtr::init_ref(this);
         (*this).done.set(true);
         #[cfg(windows)]

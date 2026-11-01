@@ -1235,8 +1235,8 @@ mod tests {
         };
         assert_eq!(finished_run_failures(directives, &result), [3, 5, 7]);
         let absent_is_zero = "// RUN: link\n\
-            // STATISTIC: MaxNestingDepthHits = 0\n\
-            // STATISTIC: MaxNestingDepthHits >= 1\n";
+            // STATISTIC: MaxDataNestingDepthHits = 0\n\
+            // STATISTIC: MaxDataNestingDepthHits >= 1\n";
         assert_eq!(finished_run_failures(absent_is_zero, &result), [3]);
     }
 

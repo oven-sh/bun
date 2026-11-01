@@ -1816,7 +1816,7 @@ pub mod bv2_impl {
             /// needn't name the JSC event-loop type.
             pub enqueue_task_concurrent: unsafe fn(
                 core::ptr::NonNull<super::JSBundleCompletionTask>,
-                *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+                core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
             ),
         }
         #[derive(Copy, Clone)]
@@ -1847,7 +1847,7 @@ pub mod bv2_impl {
                 task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
             ) {
                 // SAFETY: vtable contract.
-                unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task.as_ptr()) }
+                unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
             }
         }
     }

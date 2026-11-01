@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use bun_builtin_sources::Manifest;
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::ExprId;
@@ -12,11 +14,12 @@ use super::{
 use crate::builtins::RuntimeModule;
 use crate::diagnostics::{DiagnosticBuffer, InternalError, Span};
 use crate::ir::{InParallel, for_each_mut};
+use crate::load::evaluated_texts::create_public_path;
 use crate::load::loaders::{BY_NAME, loader_by_name};
 use crate::load::module_paths::{
-    FileMaps, PathContext, PathInput, check_unique_public_paths, collect_entry_point_paths,
-    compute_display_path, compute_name_of_third_party_file, compute_public_path, file_ids,
-    is_linkable,
+    FileMaps, PathContext, PathInput, are_all_different, check_unique_public_paths,
+    collect_entry_point_paths, compute_name_of_module_held_in_part,
+    compute_name_of_third_party_file, compute_public_path, file_ids, is_linkable,
 };
 use crate::load::project::{PerProject, ProjectId};
 use crate::options::Options;
@@ -77,20 +80,25 @@ pub(crate) fn freeze_sources(
     modules.shared_sort_unstable_by_key(|entry| entry.0.registry_id());
     let functions = &mut all.evaluated_functions;
     functions.shared_sort_unstable_by_key(|entry| entry.0);
+    name_texts_after_evaluators(files, &mut all);
     let sources = Sources {
         #[cfg(test)]
         project: input.project,
         entry_points: collect_entry_points(input, &all.entries),
         entries: all.entries,
+        project_root: input.options.load.project_root[..].into(),
         runtime_module_files: all.runtime_module_files,
         modules_named_at_run_time: input.modules_named_at_run_time.to_vec(),
         web_assembly_files: all.web_assembly_files,
         pages: all.pages,
         evaluated_functions: all.evaluated_functions,
         manifest: input.manifest,
+        holds_source_paths: Default::default(),
     };
-    let linkable_files = file_ids(file_count).filter(|&file| is_linkable(files, file));
-    check_unique_public_paths(linkable_files.map(|file| (file, sources.module_paths(file))))?;
+    let linkable_files = || file_ids(file_count).filter(|&file| is_linkable(files, file));
+    if !are_all_different(linkable_files().map(|file| sources.public_path(file))) {
+        check_unique_public_paths(linkable_files().map(|file| (file, sources.module_paths(file))))?;
+    }
     Ok(FrozenSources {
         sources,
         diagnostics: all.diagnostics,
@@ -134,6 +142,8 @@ struct FrozenRun {
     web_assembly_files: Vec<FileId>,
     pages: Vec<(FileId, Box<[u8]>)>,
     evaluated_functions: Vec<((FileId, ExprId), FunctionRef)>,
+    /// Each evaluated text with the file that evaluates it.
+    evaluators: Vec<(FileId, FileId)>,
 }
 
 impl FrozenRun {
@@ -148,6 +158,7 @@ impl FrozenRun {
         self.pages.append(&mut following.pages);
         self.evaluated_functions
             .append(&mut following.evaluated_functions);
+        self.evaluators.append(&mut following.evaluators);
     }
 
     fn add_compiled_file(
@@ -187,6 +198,7 @@ impl FrozenRun {
                     file_name,
                 ));
             };
+            self.evaluators.push((text_file, file));
             let text = parsed_source(files, text_file);
             if let Some(function) = text.and_then(|text| text.evaluated_function) {
                 let function = FunctionRef {
@@ -198,6 +210,36 @@ impl FrozenRun {
         }
         Ok(())
     }
+}
+
+/// The file name of an evaluated text holds the file name of its evaluator. An executable is the same wherever it is built, so it names
+/// the text after the public path of the evaluator.
+fn name_texts_after_evaluators(files: &Files<'_>, all: &mut FrozenRun) {
+    let (entries, evaluators) = (&mut all.entries, &mut all.evaluators);
+    evaluators.shared_sort_unstable_by_key(|entry| entry.0);
+    let texts = evaluators.iter().map(|entry| entry.0);
+    let paths: Vec<Box<[u8]>> = texts
+        .map(|text| compute_path_by_evaluator(files, entries, evaluators, text).into())
+        .collect();
+    for (&(text, _), path) in evaluators.iter().zip(paths) {
+        let entry = &mut entries[text.idx()];
+        entry.display_path = OnceLock::from(path.clone());
+        entry.diagnostic_path.clone_from(&path);
+        entry.public_path = path;
+    }
+}
+
+fn compute_path_by_evaluator(
+    files: &Files<'_>,
+    entries: &[SourceEntry],
+    evaluators: &[(FileId, FileId)],
+    file: FileId,
+) -> Vec<u8> {
+    let Ok(index) = evaluators.binary_search_by_key(&file, |entry| entry.0) else {
+        return entries[file.idx()].public_path.to_vec();
+    };
+    let evaluator_path = compute_path_by_evaluator(files, entries, evaluators, evaluators[index].1);
+    create_public_path(files.module(file).file_name(), &evaluator_path)
 }
 
 fn freeze_file(
@@ -223,36 +265,36 @@ fn freeze_file(
         None => loader_by_name(module.file_name()),
     };
     let plugin_module = payload.and_then(|payload| payload.plugin_module.as_ref());
+    let with_query = payload.and_then(|payload| payload.file_with_query.as_ref());
+    let file_name = with_query.map_or_else(|| module.file_name(), |it| &it.file);
+    let query = with_query.map_or(&b""[..], |it| &it.query);
     let public_path = compute_public_path(
         context,
         &PathInput {
             file,
             kind,
             plugin_module,
-            file_name: module.file_name(),
+            file_name,
+            query,
             canonical_path: module.path.text,
             host_loader: compiled.map_or(BY_NAME, |compiled| compiled.loader),
             is_linkable: is_linkable(files, file),
             is_default_library: module.is_lib,
         },
     );
-    let (diagnostic_path, display_path): (Box<[u8]>, Box<[u8]>) = match (kind, plugin_module) {
+    let (diagnostic_path, display_path): (Box<[u8]>, _) = match (kind, plugin_module) {
         (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, None) => {
-            let native_path = to_native(files.module(file).file_name());
-            let project_root = &input.options.load.project_root;
-            (
-                native_path.into(),
-                compute_display_path(project_root, native_path),
-            )
+            (to_native(file_name).into(), OnceLock::new())
         }
         (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, Some(_))
         | (
             SourceKind::EvaluatedText | SourceKind::RuntimeModule(_) | SourceKind::RuntimeFunctions,
             Some(_) | None,
         ) => {
-            let shown = compute_name_of_third_party_file(context.manifest, kind);
+            let shown = compute_name_of_third_party_file(context.manifest, kind)
+                .or_else(|| compute_name_of_module_held_in_part(context.manifest, kind));
             let shown = shown.unwrap_or_else(|| public_path.clone());
-            (public_path.clone(), shown)
+            (public_path.clone(), OnceLock::from(shown))
         }
     };
     if let (Some(compiled), Some(payload)) = (compiled, payload) {
@@ -262,6 +304,10 @@ fn freeze_file(
         kind,
         loader,
         byte_count: payload.map_or(0, |payload| payload.byte_count as u64),
+        query_length: match public_path.ends_with(query) {
+            true => query.len(),
+            false => 0,
+        },
         public_path,
         display_path,
         diagnostic_path,
@@ -276,7 +322,7 @@ fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) ->
         ProjectId::Application => {
             let mut named_files = FxHashSet::default();
             let command_line_files = files.entry_points().iter().enumerate();
-            command_line_files
+            let mut entry_points: Vec<EntryPoint> = command_line_files
                 .filter(|&(_, &file)| named_files.insert(file))
                 .map(|(index, &file)| {
                     let kind = match index {
@@ -285,7 +331,19 @@ fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) ->
                     };
                     EntryPoint { file, kind }
                 })
-                .collect()
+                .collect();
+            // The programs below load by names that no build follows, and this build does not see them. Such a name finds an entry point.
+            let aot = &input.options.aot;
+            if aot.is_part_of_test_files && aot.imports_are_in_other_images {
+                let others = files.compiled_files().iter().copied().filter(|&file| {
+                    entries[file.idx()].kind == SourceKind::Program && named_files.insert(file)
+                });
+                entry_points.extend(others.map(|file| EntryPoint {
+                    file,
+                    kind: EntryPointKind::Additional,
+                }));
+            }
+            entry_points
         }
         ProjectId::Runtime => {
             let host_loaded_modules = collect_host_loaded_modules(input, entries);

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Programs whose functions build strings in many ways: templates, +, +=, loops that run no, one or several times, conditional parts, early
-returns, calls in the middle of a concatenation, numbers in several radixes, objects whose toString() and valueOf() are heard, exceptions
-in the middle and try blocks. Every result is printed with its length and a hash, and the order of the side effects at the end."""
+"""Functions that build strings in many ways: templates, +, +=, loops that run zero, one or several times, conditional
+parts, early returns, calls in the middle of a concatenation, numbers in several radixes, objects with toString() and
+valueOf().
+"""
 import random, sys
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 14
 R = random.Random(seed)

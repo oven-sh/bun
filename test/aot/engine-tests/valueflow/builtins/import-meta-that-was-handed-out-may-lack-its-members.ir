@@ -1,0 +1,25 @@
+# hide(import.meta); Object.setPrototypeOf(hide(), hide()); import.meta.resolve("./x.mjs"); return import.meta.url
+# The object nobody knows that is given another prototype may be import.meta, which was handed out
+# RUN: valueflow-solve calls primitives
+# CHECK: f0 v10 ->{{*}} unknown ImportMetaResolve
+# RUN(APPLY): valueflow-apply
+# APPLY-NOT: AssumeType v8
+# APPLY-NOT: AssumeType v11
+
+module m0 path="/app/main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectSetPrototypeOf
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="hide" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = Call v4, -
+    v7 = Call v1, v0, v6, v6
+    v8 = PropGet v2 key="resolve"
+    v9 = String string="./x.mjs"
+    v10 = Call v8, v2, v9 calleeKey="resolve"
+    v11 = PropGet v2 key="url"
+    Return v11
+}

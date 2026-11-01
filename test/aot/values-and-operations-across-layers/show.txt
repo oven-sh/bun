@@ -1,0 +1,43 @@
+const show = (value, depth = 0) => {
+  if (value === null) return "null";
+  const kind = typeof value;
+  if (kind === "string") return JSON.stringify(value);
+  if (kind === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (kind === "bigint") return value + "n";
+  if (kind === "symbol") return String(value);
+  if (kind === "function") return "function " + String(value.name) + "/" + String(value.length);
+  if (kind !== "object") return String(value);
+  if (depth > 3) return "...";
+  if (Array.isArray(value)) { const parts = []; for (let i = 0; i < value.length; i++) parts.push(i in value ? show(value[i], depth + 1) : "hole"); return "[" + parts.join(",") + "]"; }
+  const tag = Object.prototype.toString.call(value).slice(8, -1);
+  const parts = [];
+  for (const k of Reflect.ownKeys(value)) { if (k === "stack") continue; const d = Reflect.getOwnPropertyDescriptor(value, k); parts.push(String(k) + (d.enumerable ? "" : "~") + ":" + ("value" in d ? show(d.value, depth + 1) : "accessor")); if (parts.length > 45) break; }
+  return tag + "{" + parts.join(",") + "}";
+};
+const runMatrix = (label, someMakers, someOps, lines) => {
+  for (const valueName of Object.keys(someMakers)) for (const opName of Object.keys(someOps)) {
+    let said; try { said = show(someOps[opName](someMakers[valueName]())); } catch (error) { said = "throws " + error?.name + ": " + String(error?.message).slice(0, 90); }
+    lines.push(label + " | " + valueName + " | " + opName + " | " + said);
+    if (process.env.MATRIX_GC && lines.length % Number(process.env.MATRIX_GC) === 0) Bun.gc(true);
+  }
+};
+const runHigher = async (label, someCallbacks, someHigher, someLater, lines) => {
+  for (const name of Object.keys(someCallbacks)) {
+    for (const opName of Object.keys(someHigher)) {
+      if (typeof someHigher[opName] !== "function") continue;
+      let said; try { said = show(someHigher[opName](someCallbacks[name])); } catch (error) { said = "throws " + error?.name + ": " + String(error?.message).slice(0, 90); }
+      lines.push(label + " | " + name + " | " + opName + " | " + said);
+    }
+    for (const opName of Object.keys(someLater)) {
+      let said; try { said = show(await someLater[opName](someCallbacks[name])); } catch (error) { said = "throws " + error?.name + ": " + String(error?.message).slice(0, 90); }
+      lines.push(label + " | " + name + " | later " + opName + " | " + said);
+    }
+  }
+};
+const runPairs = (label, one, other, expect, lines) => {
+  const passes = ask => { try { ask(); return true; } catch { return false; } };
+  for (const name of Object.keys(one)) {
+    let said; try { const a = one[name](), b = other[name](); said = show([Bun.deepEquals(a, b), Bun.deepEquals(a, b, true), passes(() => expect(a).toEqual(b)), passes(() => expect(a).toStrictEqual(b)), passes(() => expect([a]).toEqual([b])), passes(() => expect({ a }).toMatchObject({ a: b })), passes(() => expect(a).toBe(b)), passes(() => expect(a).toBeInstanceOf(b?.constructor ?? Object))]); } catch (error) { said = "throws " + error?.name + ": " + String(error?.message).slice(0, 90); }
+    lines.push(label + " | " + name + " | pair | " + said);
+  }
+};

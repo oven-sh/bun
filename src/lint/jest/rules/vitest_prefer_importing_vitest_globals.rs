@@ -13,8 +13,8 @@ pub struct PreferImportingVitestGlobals;
 
 const VITEST_GLOBAL_BITS: [u32; 17] = jest::mention_bits(VITEST_GLOBALS);
 
-const PREFER_IMPORTING_VITEST_GLOBALS: Message =
-    Message::new("", "Do not use Vitest global functions");
+const PREFER_IMPORTING_VITEST_GLOBALS: &Message =
+    &Message::new("", "Do not use Vitest global functions");
 
 const VITEST_GLOBALS: [&str; 17] = [
     "afterAll",

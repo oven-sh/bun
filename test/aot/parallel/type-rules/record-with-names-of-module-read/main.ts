@@ -1,7 +1,7 @@
 // A module namespace that is only read from never comes to be as an object, so it opens no record type that has its names.
 // One that is handed on as a value does.
-// IR- ^layout (L\d+) .*name="Attempt" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR+ ^layout (L\d+) .*name="Codec" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR- ^layout (L\d+) .*name="Attempt" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR= 2 roundTrip  = PropGet v\d+ key="(encode|decode)" 
 import * as Steps from './steps'
 import * as Codecs from './codecs'
 import { Grouped } from './grouped'

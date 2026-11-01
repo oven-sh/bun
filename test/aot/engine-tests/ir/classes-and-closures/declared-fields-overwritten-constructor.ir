@@ -946,21 +946,17 @@ function f54 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f40 role=
 # CHECK: Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
-# CHECK-NEXT: Int64 b@20 = Load(b@10, offset = -1114104, ControlDependent|Reads:ModuleVariables.47, v1:GetModuleVariable)
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
-# CHECK-NEXT: Void b@21 = Store(b@20, b@18, offset = 16, ControlDependent|Writes:ObjectFields.18, v2:PutSlot)
-# CHECK-NEXT: Void b@22 = Patchpoint(b@18:SomeRegister, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, v2:PutSlot)
-# CHECK-NEXT: Int32 b@24 = Load8Z(b@18, offset = 6, ControlDependent|Reads:JSCell_typeInfoFlags, v4:PutSlot)
-# CHECK-NEXT: Int32 b@25 = Const32(128, v4:PutSlot)
-# CHECK-NEXT: Int32 b@26 = BitOr(b@24, $128(b@25), v4:PutSlot)
-# CHECK-NEXT: Void b@27 = Store8(b@26, b@18, offset = 6, ControlDependent|Writes:JSCell_typeInfoFlags, v4:PutSlot)
-# CHECK-NEXT: Int64 b@15 = Load(b@10, offset = -80, ReadsImmutable, v4:PutSlot)
-# CHECK-NEXT: Void b@28 = Store(b@15, b@18, offset = 24, ControlDependent|Writes:ObjectFields.56, v4:PutSlot)
-# CHECK-NEXT: Int64 b@17 = Load(b@10, offset = -80, ReadsImmutable, v6:PutSlot)
-# CHECK-NEXT: Void b@29 = Store(b@17, b@18, offset = 32, ControlDependent|Writes:ObjectFields.9, v6:PutSlot)
-# CHECK-NEXT: Void b@31 = Return(Terminal)
+# CHECK-NEXT: Int32 b@21 = Load8Z(b@18, offset = 6, ControlDependent|Reads:JSCell_typeInfoFlags, v2:PutSlot)
+# CHECK-NEXT: Int32 b@22 = Const32(128, v2:PutSlot)
+# CHECK-NEXT: Int32 b@23 = BitOr(b@21, $128(b@22), v2:PutSlot)
+# CHECK-NEXT: Void b@24 = Store8(b@23, b@18, offset = 6, ControlDependent|Writes:JSCell_typeInfoFlags, v2:PutSlot)
+# CHECK-NEXT: Int64 b@17 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@20 = Load(b@17, offset = -80, ReadsImmutable, v2:PutSlot)
+# CHECK-NEXT: Void b@25 = Store(b@20, b@18, offset = 16, ControlDependent|Writes:ObjectFields.56, v2:PutSlot)
+# CHECK-NEXT: Int64 b@16 = Load(b@17, offset = -80, ReadsImmutable, v4:PutSlot)
+# CHECK-NEXT: Void b@26 = Store(b@16, b@18, offset = 24, ControlDependent|Writes:ObjectFields.9, v4:PutSlot)
+# CHECK-NEXT: Void b@28 = Return(Terminal)
 # CHECK-NEXT: Known properties:
-# CHECK-NEXT: b@10: dereferenceableBytes = 409600
 # CHECK-NEXT: b@18: dereferenceableBytes = 48
 # CHECK-NEXT: end of function f40

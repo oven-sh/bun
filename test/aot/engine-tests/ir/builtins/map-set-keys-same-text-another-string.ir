@@ -166,16 +166,8 @@ function f1 name="textOf" module=m0 position=266 flags=[IsChecked, HasExplicitNa
     v32 = Convert v6 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}
     Return v32
 }
-# -- generated: f0 textOf
+# -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 77, patchpoints: 12, rare instructions: 19, polls: 2
+# CHECK-NEXT: instructions: 188, patchpoints: 22, rare instructions: 40, polls: 3
 # CHECK-NEXT: end of function f0
-# CHECK-LABEL: function {{*}}name="textOf"
-# CHECK: role=Source
-# CHECK-NEXT: instructions: 105, patchpoints: 10, rare instructions: 23, polls: 1
-# CHECK-NEXT: end of function f3
-# CHECK-LABEL: function {{*}}name="textOf"
-# CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 89, patchpoints: 10, rare instructions: 20, polls: 1
-# CHECK-NEXT: end of function f4

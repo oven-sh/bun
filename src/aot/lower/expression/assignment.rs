@@ -300,9 +300,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match self.file.classify_assignment_target(target) {
             AssignmentTarget::Identifier { identifier, name } => {
                 let binding = self.file.bound.binding(identifier);
-                let key = self
-                    .file
-                    .function_name_key(binding, name, self.file.hir[identifier].pos);
+                let written_at = self.file.hir[identifier].pos;
+                let key = self.file.given_name_key(value, binding, name, written_at);
                 let position = self.file.recorded_name_position(identifier);
                 self.record_store_ahead_of_value(binding, position);
                 let assigned = self.lower_named_evaluation(value, PropertyName::Constant(key));

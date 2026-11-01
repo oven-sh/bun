@@ -4,11 +4,11 @@ use bun_lint::tokens::next_token;
 /// Disallow unnecessary constructors.
 pub struct NoUselessConstructor;
 
-const NO_USELESS_CONSTRUCTOR: Message = Message::new("noUselessConstructor", "Useless constructor.");
+const NO_USELESS_CONSTRUCTOR: &Message = &Message::new("noUselessConstructor", "Useless constructor.");
 /// oxlint's messages.
-const EMPTY_CONSTRUCTOR: Message = Message::new("noUselessConstructor", "Empty constructors are unnecessary");
-const REDUNDANT_SUPER_CALL: Message = Message::new("noUselessConstructor", "Redundant super call in constructor");
-const REMOVE_CONSTRUCTOR: Message = Message::new("removeConstructor", "Remove the constructor.");
+const EMPTY_CONSTRUCTOR: &Message = &Message::new("noUselessConstructor", "Empty constructors are unnecessary");
+const REDUNDANT_SUPER_CALL: &Message = &Message::new("noUselessConstructor", "Redundant super call in constructor");
+const REMOVE_CONSTRUCTOR: &Message = &Message::new("removeConstructor", "Remove the constructor.");
 
 /// Returns the arguments, if `body` is a single `super` call.
 fn single_super_call<'a>(body: List<'a, Stmt<'a>>) -> Option<List<'a, Expr<'a>>> {

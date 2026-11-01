@@ -428,11 +428,11 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="listSum"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 104, patchpoints: 8, rare instructions: 198, polls: 1
+# CHECK-NEXT: instructions: 106, patchpoints: 8, rare instructions: 157, polls: 1
 # CHECK-NEXT: end of function f28
 # CHECK-LABEL: function {{*}}name="listSum"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 54, patchpoints: 11, rare instructions: 4, polls: 2
+# CHECK-NEXT: instructions: 49, patchpoints: 9, rare instructions: 2, polls: 2
 # CHECK-NEXT: end of function f34
 # CHECK-LABEL: function {{*}}name="listSum"
 # CHECK: role=GenericEntrypoint
@@ -440,5 +440,5 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f43
 # CHECK-LABEL: function f12 role=
 # CHECK: ResultWrapper
-# CHECK-NEXT: instructions: 35, patchpoints: 3, rare instructions: 17
+# CHECK-NEXT: instructions: 33, patchpoints: 3, rare instructions: 5
 # CHECK-NEXT: end of function f12

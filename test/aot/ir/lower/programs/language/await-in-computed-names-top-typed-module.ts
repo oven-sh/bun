@@ -143,18 +143,19 @@ show(await arrow());
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewDictionary
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="name"
-// CHECK-NEXT: v3 = String string="arrow"
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="name"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v6 = Await v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v8 = ToPropertyKey v7
-// CHECK-NEXT: v9 = Integer integer=1
-// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_12]]}
-// CHECK-NEXT: ElemDefine v0, v8, v10
-// CHECK-NEXT: v12 = Convert v0 declared={type=undefined|null|object site=[[w_13]]}
-// CHECK-NEXT: Return v12
+// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_10]]
+// CHECK-NEXT: v1 = CheckInitialized v0 name="name"
+// CHECK-NEXT: v2 = String string="arrow"
+// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="name"
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v5 = Await v4
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+// CHECK-NEXT: v7 = ToPropertyKey v6
+// CHECK-NEXT: v8 = Integer integer=1
+// CHECK-NEXT: v9 = Convert v8 declared={type=number site=[[w_12]]}
+// CHECK-NEXT: v10 = NewObject layout=[[L_13]]
+// CHECK-NEXT: ElemDefine v10, v7, v9
+// CHECK-NEXT: v12 = FinishObject v10
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|object site=[[w_14]]}
+// CHECK-NEXT: Return v13
 // CHECK-NEXT: }

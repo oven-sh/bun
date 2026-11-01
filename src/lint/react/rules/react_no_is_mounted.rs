@@ -9,8 +9,8 @@ use bun_lint_oxlint::ast_util::{as_member_expression, as_method_definition, as_o
 /// Disallow usage of isMounted
 pub struct NoIsMounted;
 
-const NO_IS_MOUNTED: Message = Message::new("noIsMounted", "Do not use isMounted");
-const OXLINT: Message = Message::new("", "Do not use `isMounted`.");
+const NO_IS_MOUNTED: &Message = &Message::new("noIsMounted", "Do not use isMounted");
+const OXLINT: &Message = &Message::new("", "Do not use `isMounted`.");
 
 impl Rule for NoIsMounted {
     const META: Meta = Meta::plugin(Plugin::React, "no-is-mounted", Kind::None).recommended();

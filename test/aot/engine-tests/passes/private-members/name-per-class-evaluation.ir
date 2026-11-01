@@ -752,7 +752,7 @@ function f45 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f47 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f48 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f49 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f49 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = ToBoolean v1
@@ -768,7 +768,7 @@ function f49 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
   b2(v10):
     Unreachable
 }
-function f50 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=12 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f50 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|function, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
     v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6
     v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder]
@@ -800,7 +800,7 @@ function f50 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasA
     Jump -> next b3(v28)
   b5(v29):
     v30 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v31 = Call v30, v0, v2, v14
+    v31 = Call v30, v0, v2, v14 [isDoneInPlace]
     Return v31
   b6():
     Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b7(), case b7(), case b8(), case b9(), case b10(), case b11(), otherwise b12()
@@ -841,10 +841,10 @@ function f50 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasA
     Jump -> next b13(v52)
   b15(v53):
     v54 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v55 = Call v54, v0, v2, v38
+    v55 = Call v54, v0, v2, v38 [isDoneInPlace]
     ReturnCall v55
 }
-function f51 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=4 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f51 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|function, v1: anything, v2: anything):
     v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder]
     v4 = StrictEq v0, v3
@@ -855,73 +855,73 @@ function f51 name="apply" module=m2 position=1161 kind=Method role=Library flags
     Branch v6 -> taken b2(), notTaken b3()
   b2():
     v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v8 = Call v7, v0, v1, v2
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace]
     Return v8
   b3():
     v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v10 = Call v9, v0, v1, v2
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace]
     ReturnCall v10
 }
-runtimefunction id=4 function=f51
-runtimefunction id=12 function=f50
-runtimefunction id=69 function=f49
+runtimefunction id=FunctionPrototypeApply function=f51
+runtimefunction id=FunctionPrototypeCall function=f50
+runtimefunction id=ArrayIteratorPrototypeNext function=f49
 # -- generated: makeBox
 # CHECK-LABEL: function {{*}}name="makeBox"
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@20 = Const64(6, v1:NewObject)
-# CHECK-NEXT: Int64 b@21 = Patchpoint($6(b@20):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewObject)
+# CHECK-NEXT: Int64 b@21 = Patchpoint($6(b@20):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewObject)
 # CHECK-NEXT: Void b@22 = Fence(Fence|Reads:jscRoot, v1:NewObject)
 # CHECK-NEXT: Int64 b@23 = Const64(7, v2:NewObject)
-# CHECK-NEXT: Int64 b@24 = Patchpoint($7(b@23):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v2:NewObject)
+# CHECK-NEXT: Int64 b@24 = Patchpoint($7(b@23):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v2:NewObject)
 # CHECK-NEXT: Void b@25 = Fence(Fence|Reads:jscRoot, v2:NewObject)
 # CHECK-NEXT: Int32 b@26 = Const32(5, v3:NewClassToken)
-# CHECK-NEXT: Int64 b@27 = Patchpoint($5(b@26):Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{frameSlots, AllocatorState}, v3:NewClassToken)
+# CHECK-NEXT: Int64 b@27 = Patchpoint($5(b@26):Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{frameSlots, AllocatorState}, v3:NewClassToken)
 # CHECK-NEXT: Int64 b@28 = Const64(1, v4:NewClosure)
-# CHECK-NEXT: Int64 b@29 = Patchpoint($1(b@28):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v4:NewClosure)
+# CHECK-NEXT: Int64 b@29 = Patchpoint($1(b@28):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v4:NewClosure)
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
-# CHECK-NEXT: Int64 b@30 = Load(b@10, offset = 8264, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v4:NewClosure)
+# CHECK-NEXT: Int64 b@30 = Load(b@10, offset = 7848, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v4:NewClosure)
 # CHECK-NEXT: Void b@31 = Store(b@30, b@29, ControlDependent|Writes:JSCell_header, v4:NewClosure)
 # CHECK-NEXT: Int64 b@32 = Const64(0, v4:NewClosure)
-# CHECK-NEXT: Void b@33 = Store($0(b@32), b@29, offset = 8, ControlDependent|Writes:JSObject_butterfly, v4:NewClosure)
+# CHECK-NEXT: Void b@33 = Store($0(b@32), b@29, offset = 8, ControlDependent|Writes:JSNonArray_butterfly, v4:NewClosure)
 # CHECK-NEXT: Int64 b@34 = Load(b@10, offset = 112, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v4:NewClosure)
 # CHECK-NEXT: Void b@35 = Store(b@34, b@29, offset = 16, ControlDependent|Writes:JSCallee_scope, v4:NewClosure)
-# CHECK-NEXT: Int64 b@36 = Load(b@10, offset = 8216, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v4:NewClosure)
+# CHECK-NEXT: Int64 b@36 = Load(b@10, offset = 7800, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v4:NewClosure)
 # CHECK-NEXT: Void b@37 = Store(b@36, b@29, offset = 24, ControlDependent|Writes:JSFunction_executableOrRareData, v4:NewClosure)
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
 # CHECK-NEXT: Void b@38 = Store(b@18, b@29, offset = 40, ControlDependent|Writes:AOTClosure_captures_0, v4:NewClosure)
 # CHECK-NEXT: Void b@39 = Store(b@27, b@29, offset = 48, ControlDependent|Writes:AOTClosure_captures_1, v4:NewClosure)
-# CHECK-NEXT: Int64 b@40 = Load(b@10, offset = 8192, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v4:NewClosure)
-# CHECK-NEXT: Int64 b@41 = Load(b@40, offset = 640, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v4:NewClosure)
+# CHECK-NEXT: Int64 b@40 = Load(b@10, offset = 7776, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v4:NewClosure)
+# CHECK-NEXT: Int64 b@41 = Load(b@40, offset = 120, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v4:NewClosure)
 # CHECK-NEXT: Void b@42 = Store(b@41, b@29, offset = 32, ControlDependent|Writes:AOTClosure_entry, v4:NewClosure)
 # CHECK-NEXT: Void b@43 = Fence(Fence|Reads:jscRoot, v4:NewClosure)
 # CHECK-NEXT: Int32 b@44 = Const32(20, v5:NewClass)
-# CHECK-NEXT: Int64 b@45 = Patchpoint($20(b@44):Register(%rsi), b@29:Register(%rdx), $0(b@32):Register(%rcx), $0(b@32):Register(%r8), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, PrototypeLinks, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v5:NewClass)
-# CHECK-NEXT: Int64 b@47 = Const64(82, v6:NewClosure)
-# CHECK-NEXT: Int64 b@48 = Patchpoint($82(b@47):Register(%r10), b@27:Register(%rdx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v6:NewClosure)
-# CHECK-NEXT: Int64 b@50 = Const64(83, v7:NewClosure)
-# CHECK-NEXT: Int64 b@51 = Patchpoint($83(b@50):Register(%r10), b@27:Register(%rdx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v7:NewClosure)
-# CHECK-NEXT: Int64 b@53 = Const64(84, v8:NewClosure)
-# CHECK-NEXT: Int64 b@54 = Patchpoint($84(b@53):Register(%r10), b@27:Register(%rdx), b@48:Register(%rcx), b@51:Register(%r8), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v8:NewClosure)
-# CHECK-NEXT: Int64 b@55 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000001, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v9:DefineMethod)
+# CHECK-NEXT: Int64 b@45 = Patchpoint($20(b@44):Register(%rsi), b@29:Register(%rdx), $0(b@32):Register(%rcx), $0(b@32):Register(%r8), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, PrototypeLinks, NamedProperties, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:Top, v5:NewClass)
+# CHECK-NEXT: Int64 b@47 = Const64(17, v6:NewClosure)
+# CHECK-NEXT: Int64 b@48 = Patchpoint($17(b@47):Register(%r10), b@27:Register(%rdx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v6:NewClosure)
+# CHECK-NEXT: Int64 b@50 = Const64(18, v7:NewClosure)
+# CHECK-NEXT: Int64 b@51 = Patchpoint($18(b@50):Register(%r10), b@27:Register(%rdx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v7:NewClosure)
+# CHECK-NEXT: Int64 b@53 = Const64(19, v8:NewClosure)
+# CHECK-NEXT: Int64 b@54 = Patchpoint($19(b@53):Register(%r10), b@27:Register(%rdx), b@48:Register(%rcx), b@51:Register(%r8), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v8:NewClosure)
+# CHECK-NEXT: Int64 b@55 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000001, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}, v9:DefineMethod)
 # CHECK-NEXT: Int32 b@56 = Const32(1, v9:DefineMethod)
-# CHECK-NEXT: Void b@57 = Patchpoint(b@45:Register(%rsi), b@55:Register(%rdx), b@54:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v9:DefineMethod)
-# CHECK-NEXT: Int64 b@59 = Const64(85, v10:NewClosure)
-# CHECK-NEXT: Int64 b@60 = Patchpoint($85(b@59):Register(%r10), b@24:Register(%rdx), b@45:Register(%rcx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v10:NewClosure)
-# CHECK-NEXT: Int64 b@61 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000005, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v11:DefineMethod)
-# CHECK-NEXT: Void b@62 = Patchpoint(b@45:Register(%rsi), b@61:Register(%rdx), b@60:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v11:DefineMethod)
-# CHECK-NEXT: Int64 b@64 = Const64(86, v12:NewClosure)
-# CHECK-NEXT: Int64 b@65 = Patchpoint($86(b@64):Register(%r10), b@27:Register(%rdx), b@48:Register(%rcx), b@51:Register(%r8), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v12:NewClosure)
-# CHECK-NEXT: Int64 b@66 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000002, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v13:DefineMethod)
-# CHECK-NEXT: Void b@67 = Patchpoint(b@45:Register(%rsi), b@66:Register(%rdx), b@65:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v13:DefineMethod)
-# CHECK-NEXT: Int64 b@69 = Const64(87, v14:NewClosure)
-# CHECK-NEXT: Int64 b@70 = Patchpoint($87(b@69):Register(%r10), b@27:Register(%rdx), b@48:Register(%rcx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v14:NewClosure)
-# CHECK-NEXT: Int64 b@71 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000003, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v15:DefineMethod)
-# CHECK-NEXT: Void b@72 = Patchpoint(b@45:Register(%rsi), b@71:Register(%rdx), b@70:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v15:DefineMethod)
-# CHECK-NEXT: Int64 b@74 = Const64(88, v16:NewClosure)
-# CHECK-NEXT: Int64 b@75 = Patchpoint($88(b@74):Register(%r10), b@21:Register(%rdx), b@24:Register(%rcx), b@45:Register(%r8), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v16:NewClosure)
-# CHECK-NEXT: Int64 b@76 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000004, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v17:DefineMethod)
-# CHECK-NEXT: Void b@77 = Patchpoint(b@45:Register(%rsi), b@76:Register(%rdx), b@75:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v17:DefineMethod)
+# CHECK-NEXT: Void b@57 = Patchpoint(b@45:Register(%rsi), b@55:Register(%rdx), b@54:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:Top, v9:DefineMethod)
+# CHECK-NEXT: Int64 b@59 = Const64(20, v10:NewClosure)
+# CHECK-NEXT: Int64 b@60 = Patchpoint($20(b@59):Register(%r10), b@24:Register(%rdx), b@45:Register(%rcx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v10:NewClosure)
+# CHECK-NEXT: Int64 b@61 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000005, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}, v11:DefineMethod)
+# CHECK-NEXT: Void b@62 = Patchpoint(b@45:Register(%rsi), b@61:Register(%rdx), b@60:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:Top, v11:DefineMethod)
+# CHECK-NEXT: Int64 b@64 = Const64(21, v12:NewClosure)
+# CHECK-NEXT: Int64 b@65 = Patchpoint($21(b@64):Register(%r10), b@27:Register(%rdx), b@48:Register(%rcx), b@51:Register(%r8), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v12:NewClosure)
+# CHECK-NEXT: Int64 b@66 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000002, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}, v13:DefineMethod)
+# CHECK-NEXT: Void b@67 = Patchpoint(b@45:Register(%rsi), b@66:Register(%rdx), b@65:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:Top, v13:DefineMethod)
+# CHECK-NEXT: Int64 b@69 = Const64(22, v14:NewClosure)
+# CHECK-NEXT: Int64 b@70 = Patchpoint($22(b@69):Register(%r10), b@27:Register(%rdx), b@48:Register(%rcx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v14:NewClosure)
+# CHECK-NEXT: Int64 b@71 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000003, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}, v15:DefineMethod)
+# CHECK-NEXT: Void b@72 = Patchpoint(b@45:Register(%rsi), b@71:Register(%rdx), b@70:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:Top, v15:DefineMethod)
+# CHECK-NEXT: Int64 b@74 = Const64(23, v16:NewClosure)
+# CHECK-NEXT: Int64 b@75 = Patchpoint($23(b@74):Register(%r10), b@21:Register(%rdx), b@24:Register(%rcx), b@45:Register(%r8), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v16:NewClosure)
+# CHECK-NEXT: Int64 b@76 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000004, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}, v17:DefineMethod)
+# CHECK-NEXT: Void b@77 = Patchpoint(b@45:Register(%rsi), b@76:Register(%rdx), b@75:Register(%rcx), $1(b@56):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards.61, NamedProperties, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:Top, v17:DefineMethod)
 # CHECK-NEXT: Void b@78 = Return(b@45, Terminal)
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@10: dereferenceableBytes = 425984

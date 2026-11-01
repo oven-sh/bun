@@ -8,11 +8,11 @@ pub struct NoExtraneousClass {
     allow_with_decorator: bool,
 }
 
-const EMPTY: Message = Message::new("empty", "Unexpected empty class.");
-const ONLY_CONSTRUCTOR: Message = Message::new("onlyConstructor", "Unexpected class with only a constructor.");
-const ONLY_STATIC: Message = Message::new("onlyStatic", "Unexpected class with only static properties.");
+const EMPTY: &Message = &Message::new("empty", "Unexpected empty class.");
+const ONLY_CONSTRUCTOR: &Message = &Message::new("onlyConstructor", "Unexpected class with only a constructor.");
+const ONLY_STATIC: &Message = &Message::new("onlyStatic", "Unexpected class with only static properties.");
 /// oxlint's suggestion.
-const REMOVE_CLASS: Message = Message::new("removeClass", "Remove the class.");
+const REMOVE_CLASS: &Message = &Message::new("removeClass", "Remove the class.");
 
 impl NoExtraneousClass {
     /// For oxlint a constructor, a static block and an index signature aren't static, and a class counts as

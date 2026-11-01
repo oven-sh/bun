@@ -10,6 +10,7 @@ use super::unit::LinkUnit;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
     Data, EvalScope, ExpectedResult, Function, Layout, LayoutFlags, LayoutKind, TypeSite, Variable,
+    VariableFlags,
 };
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, Id, IdMap, InParallel, LayoutId, StringTable,
@@ -311,7 +312,7 @@ pub(super) fn move_definitions(
         },
     );
     let definitions = input.definitions.variables.iter();
-    let mut synthetic_exports: Vec<(VariableId, u32, Atom, ExportWriter, bool)> = definitions
+    let mut synthetic_exports: Vec<(VariableId, u32, Atom, ExportWriter, bool, bool)> = definitions
         .zip(&numbering.variables)
         .filter_map(|(&definition, &id)| match definition {
             Some(VariableDefinition::SyntheticExport {
@@ -319,16 +320,20 @@ pub(super) fn move_definitions(
                 name,
                 writer,
                 is_known_member,
-            }) => Some((id?, module, name, writer, is_known_member)),
+                is_replaceable,
+            }) => Some((id?, module, name, writer, is_known_member, is_replaceable)),
             Some(VariableDefinition::Unit(_)) | None => None,
         })
         .collect();
     synthetic_exports.shared_sort_unstable_by_key(|&(id, ..)| id);
-    for (id, module, name, writer, is_known_member) in synthetic_exports {
+    for (id, module, name, writer, is_known_member, is_replaceable) in synthetic_exports {
         let name = strings.intern(input.atoms.bytes(name));
         let module = numbering.modules[module as usize]
             .expect("the mark keeps the module of a retained synthetic export");
-        let variable = synthetic_export_variable(name, module, writer, is_known_member);
+        let mut variable = synthetic_export_variable(name, module, writer, is_known_member);
+        if is_replaceable {
+            variable.flags |= VariableFlags::IS_REPLACEABLE;
+        }
         variables.insert(id, variable);
     }
     let (type_sites, expected_results, eval_scopes, data) = joined;

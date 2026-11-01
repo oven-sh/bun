@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Enforce `default` clauses in `switch` statements to be last.
 pub struct DefaultCaseLast;
 
-const NOT_LAST: Message = Message::new("notLast", "Default clause should be the last clause.");
+const NOT_LAST: &Message = &Message::new("notLast", "Default clause should be the last clause.");
 
 impl Rule for DefaultCaseLast {
     const META: Meta = Meta::eslint("default-case-last", Kind::Suggestion);

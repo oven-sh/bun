@@ -66,7 +66,7 @@ console.log(require_inner());
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="__commonJS"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=2 captures=[{type=undefined|null|[[f_3]]|builtin(ObjectGetOwnPropertyNames) flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|[[L_9]] flags=[IsExpected]}] results=[{type=undefined|null|[[f_10]] flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=2 captures=[{type=undefined|null|[[f_3]]|builtin(ObjectGetOwnPropertyNames) flags=[IsExpected] variableName="__getOwnPropNames"}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|[[L_9]] flags=[IsExpected]}] results=[{type=undefined|null|[[f_10]] flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_3]]|builtin(ObjectGetOwnPropertyNames), v1: undefined|null|object, v2: undefined|null|[[L_9]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -76,7 +76,7 @@ console.log(require_inner());
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="__require"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] captures=[{type=env [[L_11]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_3]]|builtin(ObjectGetOwnPropertyNames) flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] captures=[{type=env [[L_11]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_3]]|builtin(ObjectGetOwnPropertyNames) flags=[IsExpected] variableName="__getOwnPropNames"}, {type=undefined|null|object flags=[IsExpected] variableName="cb"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: env [[L_11]], v1: undefined|null|[[f_3]]|builtin(ObjectGetOwnPropertyNames), v2: undefined|null|object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -655,115 +655,25 @@ function f65 name="answers" module=m0 position=5066 flags=[HasExplicitName] leng
 function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
 # -- generated: elementAtInteger_looseEq_literalFirst kindBySwitch ofSlice answers
 # CHECK-LABEL: function {{*}}name="elementAtInteger_looseEq_literalFirst"
-# CHECK: module=m0 position=2057 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=i32 flags=[IsExpected]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: anything @JSValue):
-# CHECK-NEXT: v2: undefined|number @JSValue = AssumeType v1 provenType=undefined|number
+# CHECK: module=m0 position=2057 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m"}, {type=i32 flags=[IsExpected]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString, v1: anything @JSValue):
+# CHECK-NEXT: v2: number @JSValue = AssumeType v1 provenType=number
 # CHECK-NEXT: v3: 0 @Int32 = Integer
-# CHECK-NEXT: v4: boolean @Boolean = TypeTest v2 testedType=i32
-# CHECK-NEXT: TestAndBranch v4 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v5: i32 @Int32):
-# CHECK-NEXT: v6: i32 @Int32 = BitOr v5, v3 form=Integers
-# CHECK-NEXT: Jump -> next b2(v6)
-# CHECK-NEXT: b2(v7: i32 @Int32):
-# CHECK-NEXT: v8: string @JSValue = RequireObjectCoercible v0
-# CHECK-NEXT: v9: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v8, -, -, v7
-# CHECK-NEXT: v10: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v11: boolean @Boolean = Eq v10, v9 form=Integers
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v12: i32 @Int32 = BitOr v2, v3 form=Numbers
-# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: v4: i32 @Int32 = BitOr v2, v3 form=Numbers
+# CHECK-NEXT: v5: ""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString = RequireObjectCoercible v0
+# CHECK-NEXT: v6: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v5, -, -, v4
+# CHECK-NEXT: v7: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v8: boolean @Boolean = Eq v7, v6 form=Integers
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="kindBySwitch"
-# CHECK: module=m0 position=4511 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=undefined|number}] results=[{type=int[0, 4]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: undefined|number @OptionalDouble):
-# CHECK-NEXT: v2: string @JSValue = RequireObjectCoercible v0 name="charAt"
-# CHECK-NEXT: v3: undefined|number @OptionalDouble = Upcast v1 castType=anything
-# CHECK-NEXT: v4: string @Cell = CallInline v2, v3 inlineBuiltin=StringCharAt overload=StringPrototypeCharAt/0 accessSite=17
-# CHECK-NEXT: SwitchString v4 strings=["a", "m", "\u{4e2d}", "z"] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v5: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v6: 2 @Int32 = Integer integer=2
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v7: 3 @Int32 = Integer integer=3
-# CHECK-NEXT: Return v7
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v8: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v9: 0 @Int32 = Integer
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: }
+# CHECK: module=m0 position=4511 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m"}, {type=number}] results=[{type=int[0, 4]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="ofSlice"
-# CHECK: module=m0 position=4909 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: anything @JSValue):
-# CHECK-NEXT: v2: undefined|number @JSValue = AssumeType v1 provenType=undefined|number
-# CHECK-NEXT: v3: string @JSValue = RequireObjectCoercible v0 name="slice"
-# CHECK-NEXT: v4: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v5: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v6: flatstring @Cell = FlattenString v3
-# CHECK-NEXT: v7: int[0, 2147483647] @Int32 = GetStringLength v6
-# CHECK-NEXT: v8: undefined @Void = StringRange v7, v4, v5
-# CHECK-NEXT: v9: int[0, 2147483647] @Int32 = ResultAt v8
-# CHECK-NEXT: v10: int[0, 2147483647] @Int32 = ResultAt v8 index=1
-# CHECK-NEXT: v11: string @Cell = Substring v6, v9, v10
-# CHECK-NEXT: v12: 0 @Int32 = Integer
-# CHECK-NEXT: v13: boolean @Boolean = TypeTest v2 testedType=i32
-# CHECK-NEXT: TestAndBranch v13 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v14: i32 @Int32):
-# CHECK-NEXT: v15: i32 @Int32 = BitOr v14, v12 form=Integers
-# CHECK-NEXT: v16: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v15
-# CHECK-NEXT: v17: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v18: boolean @Boolean = StrictEq v16, v17 form=Integers
-# CHECK-NEXT: v19: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v14
-# CHECK-NEXT: v20: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v21: boolean @Boolean = Less v19, v20 form=Integers
-# CHECK-NEXT: v22: int[-2147483647, 2147483647] @Int32 = Sub v10, v9 form=Integers
-# CHECK-NEXT: v23: undefined @Void = StringRange v22, v14 method=SingleRelativeIndex
-# CHECK-NEXT: v24: int[0, 2147483647] @Int32 = ResultAt v23
-# CHECK-NEXT: v25: int[0, 2147483647] @Int32 = ResultAt v23 index=1
-# CHECK-NEXT: v26: int[0, 4294967294] @Int64 = Add v9, v24 form=Integers
-# CHECK-NEXT: v27: int[0, 4294967294] @Int64 = Add v9, v25 form=Integers
-# CHECK-NEXT: v28: 0 @Int32 = Integer
-# CHECK-NEXT: v29: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v26, v27, v28
-# CHECK-NEXT: v30: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v31: boolean @Boolean = GreaterEq v29, v30 form=Integers
-# CHECK-NEXT: v32: 0 @Int32 = Integer
-# CHECK-NEXT: v33: i32 @Int32 = BitOr v14, v32 form=Integers
-# CHECK-NEXT: Jump -> next b2(v18, v21, v31, v33)
-# CHECK-NEXT: b2(v34: boolean @Boolean, v35: boolean @Boolean, v36: boolean @Boolean, v37: i32 @Int32):
-# CHECK-NEXT: v38: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v37
-# CHECK-NEXT: v39: 109 @Int64 = Integer integer=109
-# CHECK-NEXT: v40: int[0, 4294967295] @Int64 = ToUint32 v38
-# CHECK-NEXT: v41: boolean @Boolean = LessEq v40, v39 form=Integers
-# CHECK-NEXT: v42: "," @Cell = String string="," @0 tail
-# CHECK-NEXT: v43: "," @Cell = String string="," @0 tail
-# CHECK-NEXT: v44: "," @Cell = String string="," @0 tail
-# CHECK-NEXT: v45: string @Cell = Strcat v34, v42, v35, v43, v36, v44, v41 @0 tail
-# CHECK-NEXT: Return v45
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v46: i32 @Int32 = BitOr v2, v12 form=Numbers
-# CHECK-NEXT: v47: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v6, v9, v10, v46
-# CHECK-NEXT: v48: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v49: boolean @Boolean = StrictEq v47, v48 form=Integers
-# CHECK-NEXT: v50: string @Cell = CallInline v11, v2 inlineBuiltin=StringCharAt overload=StringPrototypeCharAt/0 accessSite=22
-# CHECK-NEXT: v51: int[-1, 1] @Int32 = StringOrderToCharacter v50 codeUnit=109
-# CHECK-NEXT: v52: 0 @Int32 = Integer
-# CHECK-NEXT: v53: boolean @Boolean = Less v51, v52 form=Integers
-# CHECK-NEXT: v54: undefined|string @JSValue = CallInline v11, v2 inlineBuiltin=StringAt overload=StringPrototypeAt/0 accessSite=24
-# CHECK-NEXT: v55: "m" @JSValue = String string="m"
-# CHECK-NEXT: v56: boolean @Boolean = GreaterEq v54, v55 form=NullableStrings
-# CHECK-NEXT: v57: 0 @Int32 = Integer
-# CHECK-NEXT: v58: i32 @Int32 = BitOr v2, v57 form=Numbers
-# CHECK-NEXT: Jump -> next b2(v49, v53, v56, v58)
-# CHECK-NEXT: }
+# CHECK: module=m0 position=4909 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m"}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="answers"
-# CHECK: module=m0 position=5066 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f28 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: anything @JSValue):
-# CHECK-NEXT: v2: undefined|number @JSValue = AssumeType v1 provenType=undefined|number
+# CHECK: module=m0 position=5066 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m"}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f28 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString, v1: anything @JSValue):
+# CHECK-NEXT: v2: number @JSValue = AssumeType v1 provenType=number
 # CHECK-NEXT: v3: f1 @Cell = GetModuleVariable variable=g0
 # CHECK-NEXT: v4: anything @JSValue = Call v3, -, v0, v2 calleeName="element_lt" accessSite=28 callees=[f1]
 # CHECK-NEXT: v5: f2 @Cell = GetModuleVariable variable=g1
@@ -819,87 +729,73 @@ function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=
 # CHECK-NEXT: v55: f27 @Cell = GetModuleVariable variable=g26
 # CHECK-NEXT: v56: anything @JSValue = Call v55, -, v0, v2 calleeName="elementAtInteger_looseEq" accessSite=54 callees=[f27]
 # CHECK-NEXT: v57: 0 @Int32 = Integer
-# CHECK-NEXT: v58: boolean @Boolean = TypeTest v2 testedType=i32
-# CHECK-NEXT: TestAndBranch v58 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v59: i32 @JSValue):
-# CHECK-NEXT: v60: i32 @Int32 = BitOr v59, v57 form=Integers
-# CHECK-NEXT: v61: string @JSValue = RequireObjectCoercible v0
-# CHECK-NEXT: v62: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v61, -, -, v60
-# CHECK-NEXT: v63: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v64: boolean @Boolean = Eq v63, v62 form=Integers
-# CHECK-NEXT: v65: f29 @Cell = GetModuleVariable variable=g28
-# CHECK-NEXT: v66: anything @JSValue = Call v65, -, v61, v59 calleeName="charAt_lt" accessSite=56 callees=[f29]
-# CHECK-NEXT: Jump -> next b2(v61)
-# CHECK-NEXT: b2(v67: string @JSValue):
-# CHECK-NEXT: v68: f30 @Cell = GetModuleVariable variable=g29
-# CHECK-NEXT: v69: anything @JSValue = Call v68, -, v67, v2 calleeName="charAt_lt_literalFirst" accessSite=57 callees=[f30]
-# CHECK-NEXT: v70: f31 @Cell = GetModuleVariable variable=g30
-# CHECK-NEXT: v71: anything @JSValue = Call v70, -, v67, v2 calleeName="charAt_le" accessSite=58 callees=[f31]
-# CHECK-NEXT: v72: f32 @Cell = GetModuleVariable variable=g31
-# CHECK-NEXT: v73: anything @JSValue = Call v72, -, v67, v2 calleeName="charAt_le_literalFirst" accessSite=59 callees=[f32]
-# CHECK-NEXT: v74: f33 @Cell = GetModuleVariable variable=g32
-# CHECK-NEXT: v75: anything @JSValue = Call v74, -, v67, v2 calleeName="charAt_gt" accessSite=60 callees=[f33]
-# CHECK-NEXT: v76: f34 @Cell = GetModuleVariable variable=g33
-# CHECK-NEXT: v77: anything @JSValue = Call v76, -, v67, v2 calleeName="charAt_gt_literalFirst" accessSite=61 callees=[f34]
-# CHECK-NEXT: v78: f35 @Cell = GetModuleVariable variable=g34
-# CHECK-NEXT: v79: anything @JSValue = Call v78, -, v67, v2 calleeName="charAt_ge" accessSite=62 callees=[f35]
-# CHECK-NEXT: v80: f36 @Cell = GetModuleVariable variable=g35
-# CHECK-NEXT: v81: anything @JSValue = Call v80, -, v67, v2 calleeName="charAt_ge_literalFirst" accessSite=63 callees=[f36]
-# CHECK-NEXT: v82: f37 @Cell = GetModuleVariable variable=g36
-# CHECK-NEXT: v83: anything @JSValue = Call v82, -, v67, v2 calleeName="charAt_eq" accessSite=64 callees=[f37]
-# CHECK-NEXT: v84: f38 @Cell = GetModuleVariable variable=g37
-# CHECK-NEXT: v85: anything @JSValue = Call v84, -, v67, v2 calleeName="charAt_eq_literalFirst" accessSite=65 callees=[f38]
-# CHECK-NEXT: v86: f39 @Cell = GetModuleVariable variable=g38
-# CHECK-NEXT: v87: anything @JSValue = Call v86, -, v67, v2 calleeName="charAt_ne" accessSite=66 callees=[f39]
-# CHECK-NEXT: v88: f40 @Cell = GetModuleVariable variable=g39
-# CHECK-NEXT: v89: anything @JSValue = Call v88, -, v67, v2 calleeName="charAt_ne_literalFirst" accessSite=67 callees=[f40]
-# CHECK-NEXT: v90: f41 @Cell = GetModuleVariable variable=g40
-# CHECK-NEXT: v91: anything @JSValue = Call v90, -, v67, v2 calleeName="charAt_looseEq" accessSite=68 callees=[f41]
-# CHECK-NEXT: v92: f42 @Cell = GetModuleVariable variable=g41
-# CHECK-NEXT: v93: anything @JSValue = Call v92, -, v67, v2 calleeName="charAt_looseEq_literalFirst" accessSite=69 callees=[f42]
-# CHECK-NEXT: v94: f43 @Cell = GetModuleVariable variable=g42
-# CHECK-NEXT: v95: anything @JSValue = Call v94, -, v67, v2 calleeName="at_lt" accessSite=70 callees=[f43]
-# CHECK-NEXT: v96: f44 @Cell = GetModuleVariable variable=g43
-# CHECK-NEXT: v97: anything @JSValue = Call v96, -, v67, v2 calleeName="at_lt_literalFirst" accessSite=71 callees=[f44]
-# CHECK-NEXT: v98: f45 @Cell = GetModuleVariable variable=g44
-# CHECK-NEXT: v99: anything @JSValue = Call v98, -, v67, v2 calleeName="at_le" accessSite=72 callees=[f45]
-# CHECK-NEXT: v100: f46 @Cell = GetModuleVariable variable=g45
-# CHECK-NEXT: v101: anything @JSValue = Call v100, -, v67, v2 calleeName="at_le_literalFirst" accessSite=73 callees=[f46]
-# CHECK-NEXT: v102: f47 @Cell = GetModuleVariable variable=g46
-# CHECK-NEXT: v103: anything @JSValue = Call v102, -, v67, v2 calleeName="at_gt" accessSite=74 callees=[f47]
-# CHECK-NEXT: v104: f48 @Cell = GetModuleVariable variable=g47
-# CHECK-NEXT: v105: anything @JSValue = Call v104, -, v67, v2 calleeName="at_gt_literalFirst" accessSite=75 callees=[f48]
-# CHECK-NEXT: v106: f49 @Cell = GetModuleVariable variable=g48
-# CHECK-NEXT: v107: anything @JSValue = Call v106, -, v67, v2 calleeName="at_ge" accessSite=76 callees=[f49]
-# CHECK-NEXT: v108: f50 @Cell = GetModuleVariable variable=g49
-# CHECK-NEXT: v109: anything @JSValue = Call v108, -, v67, v2 calleeName="at_ge_literalFirst" accessSite=77 callees=[f50]
-# CHECK-NEXT: v110: f51 @Cell = GetModuleVariable variable=g50
-# CHECK-NEXT: v111: anything @JSValue = Call v110, -, v67, v2 calleeName="at_eq" accessSite=78 callees=[f51]
-# CHECK-NEXT: v112: f52 @Cell = GetModuleVariable variable=g51
-# CHECK-NEXT: v113: anything @JSValue = Call v112, -, v67, v2 calleeName="at_eq_literalFirst" accessSite=79 callees=[f52]
-# CHECK-NEXT: v114: f53 @Cell = GetModuleVariable variable=g52
-# CHECK-NEXT: v115: anything @JSValue = Call v114, -, v67, v2 calleeName="at_ne" accessSite=80 callees=[f53]
-# CHECK-NEXT: v116: f54 @Cell = GetModuleVariable variable=g53
-# CHECK-NEXT: v117: anything @JSValue = Call v116, -, v67, v2 calleeName="at_ne_literalFirst" accessSite=81 callees=[f54]
-# CHECK-NEXT: v118: f55 @Cell = GetModuleVariable variable=g54
-# CHECK-NEXT: v119: anything @JSValue = Call v118, -, v67, v2 calleeName="at_looseEq" accessSite=82 callees=[f55]
-# CHECK-NEXT: v120: f56 @Cell = GetModuleVariable variable=g55
-# CHECK-NEXT: v121: anything @JSValue = Call v120, -, v67, v2 calleeName="at_looseEq_literalFirst" accessSite=83 callees=[f56]
-# CHECK-NEXT: v122: f57 @Cell = GetModuleVariable variable=g56
-# CHECK-NEXT: v123: anything @JSValue = Call v122, -, v67, v2 calleeName="isDigit" accessSite=84 callees=[f57]
-# CHECK-NEXT: v124: f58 @Cell = GetModuleVariable variable=g57
-# CHECK-NEXT: v125: anything @JSValue = Call v124, -, v67, v2 calleeName="isLetter" accessSite=85 callees=[f58]
-# CHECK-NEXT: v126: f59 @Cell = GetModuleVariable variable=g58
-# CHECK-NEXT: v127: anything @JSValue = Call v126, -, v67, v2 calleeName="isBelowSpaceOrMissing" accessSite=86 callees=[f59]
-# CHECK-NEXT: v128: "11111111111111111111111111111111111111111111111111111111111" @Cell = String string="11111111111111111111111111111111111111111111111111111111111"
-# CHECK-NEXT: Return v128
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v129: i32 @Int32 = BitOr v2, v57 form=Numbers
-# CHECK-NEXT: v130: string @JSValue = RequireObjectCoercible v0
-# CHECK-NEXT: v131: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v130, -, -, v129
-# CHECK-NEXT: v132: 109 @Int32 = Integer integer=109
-# CHECK-NEXT: v133: boolean @Boolean = Eq v132, v131 form=Integers
-# CHECK-NEXT: v134: f29 @Cell = GetModuleVariable variable=g28
-# CHECK-NEXT: v135: anything @JSValue = Call v134, -, v130, v2 calleeName="charAt_lt" accessSite=56 callees=[f29]
-# CHECK-NEXT: Jump -> next b2(v130)
+# CHECK-NEXT: v58: i32 @Int32 = BitOr v2, v57 form=Numbers
+# CHECK-NEXT: v59: ""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @JSValue = RequireObjectCoercible v0
+# CHECK-NEXT: v60: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v59, -, -, v58
+# CHECK-NEXT: v61: 109 @Int32 = Integer integer=109
+# CHECK-NEXT: v62: boolean @Boolean = Eq v61, v60 form=Integers
+# CHECK-NEXT: v63: f29 @Cell = GetModuleVariable variable=g28
+# CHECK-NEXT: v64: anything @JSValue = Call v63, -, v59, v2 calleeName="charAt_lt" accessSite=56 callees=[f29]
+# CHECK-NEXT: v65: f30 @Cell = GetModuleVariable variable=g29
+# CHECK-NEXT: v66: anything @JSValue = Call v65, -, v59, v2 calleeName="charAt_lt_literalFirst" accessSite=57 callees=[f30]
+# CHECK-NEXT: v67: f31 @Cell = GetModuleVariable variable=g30
+# CHECK-NEXT: v68: anything @JSValue = Call v67, -, v59, v2 calleeName="charAt_le" accessSite=58 callees=[f31]
+# CHECK-NEXT: v69: f32 @Cell = GetModuleVariable variable=g31
+# CHECK-NEXT: v70: anything @JSValue = Call v69, -, v59, v2 calleeName="charAt_le_literalFirst" accessSite=59 callees=[f32]
+# CHECK-NEXT: v71: f33 @Cell = GetModuleVariable variable=g32
+# CHECK-NEXT: v72: anything @JSValue = Call v71, -, v59, v2 calleeName="charAt_gt" accessSite=60 callees=[f33]
+# CHECK-NEXT: v73: f34 @Cell = GetModuleVariable variable=g33
+# CHECK-NEXT: v74: anything @JSValue = Call v73, -, v59, v2 calleeName="charAt_gt_literalFirst" accessSite=61 callees=[f34]
+# CHECK-NEXT: v75: f35 @Cell = GetModuleVariable variable=g34
+# CHECK-NEXT: v76: anything @JSValue = Call v75, -, v59, v2 calleeName="charAt_ge" accessSite=62 callees=[f35]
+# CHECK-NEXT: v77: f36 @Cell = GetModuleVariable variable=g35
+# CHECK-NEXT: v78: anything @JSValue = Call v77, -, v59, v2 calleeName="charAt_ge_literalFirst" accessSite=63 callees=[f36]
+# CHECK-NEXT: v79: f37 @Cell = GetModuleVariable variable=g36
+# CHECK-NEXT: v80: anything @JSValue = Call v79, -, v59, v2 calleeName="charAt_eq" accessSite=64 callees=[f37]
+# CHECK-NEXT: v81: f38 @Cell = GetModuleVariable variable=g37
+# CHECK-NEXT: v82: anything @JSValue = Call v81, -, v59, v2 calleeName="charAt_eq_literalFirst" accessSite=65 callees=[f38]
+# CHECK-NEXT: v83: f39 @Cell = GetModuleVariable variable=g38
+# CHECK-NEXT: v84: anything @JSValue = Call v83, -, v59, v2 calleeName="charAt_ne" accessSite=66 callees=[f39]
+# CHECK-NEXT: v85: f40 @Cell = GetModuleVariable variable=g39
+# CHECK-NEXT: v86: anything @JSValue = Call v85, -, v59, v2 calleeName="charAt_ne_literalFirst" accessSite=67 callees=[f40]
+# CHECK-NEXT: v87: f41 @Cell = GetModuleVariable variable=g40
+# CHECK-NEXT: v88: anything @JSValue = Call v87, -, v59, v2 calleeName="charAt_looseEq" accessSite=68 callees=[f41]
+# CHECK-NEXT: v89: f42 @Cell = GetModuleVariable variable=g41
+# CHECK-NEXT: v90: anything @JSValue = Call v89, -, v59, v2 calleeName="charAt_looseEq_literalFirst" accessSite=69 callees=[f42]
+# CHECK-NEXT: v91: f43 @Cell = GetModuleVariable variable=g42
+# CHECK-NEXT: v92: anything @JSValue = Call v91, -, v59, v2 calleeName="at_lt" accessSite=70 callees=[f43]
+# CHECK-NEXT: v93: f44 @Cell = GetModuleVariable variable=g43
+# CHECK-NEXT: v94: anything @JSValue = Call v93, -, v59, v2 calleeName="at_lt_literalFirst" accessSite=71 callees=[f44]
+# CHECK-NEXT: v95: f45 @Cell = GetModuleVariable variable=g44
+# CHECK-NEXT: v96: anything @JSValue = Call v95, -, v59, v2 calleeName="at_le" accessSite=72 callees=[f45]
+# CHECK-NEXT: v97: f46 @Cell = GetModuleVariable variable=g45
+# CHECK-NEXT: v98: anything @JSValue = Call v97, -, v59, v2 calleeName="at_le_literalFirst" accessSite=73 callees=[f46]
+# CHECK-NEXT: v99: f47 @Cell = GetModuleVariable variable=g46
+# CHECK-NEXT: v100: anything @JSValue = Call v99, -, v59, v2 calleeName="at_gt" accessSite=74 callees=[f47]
+# CHECK-NEXT: v101: f48 @Cell = GetModuleVariable variable=g47
+# CHECK-NEXT: v102: anything @JSValue = Call v101, -, v59, v2 calleeName="at_gt_literalFirst" accessSite=75 callees=[f48]
+# CHECK-NEXT: v103: f49 @Cell = GetModuleVariable variable=g48
+# CHECK-NEXT: v104: anything @JSValue = Call v103, -, v59, v2 calleeName="at_ge" accessSite=76 callees=[f49]
+# CHECK-NEXT: v105: f50 @Cell = GetModuleVariable variable=g49
+# CHECK-NEXT: v106: anything @JSValue = Call v105, -, v59, v2 calleeName="at_ge_literalFirst" accessSite=77 callees=[f50]
+# CHECK-NEXT: v107: f51 @Cell = GetModuleVariable variable=g50
+# CHECK-NEXT: v108: anything @JSValue = Call v107, -, v59, v2 calleeName="at_eq" accessSite=78 callees=[f51]
+# CHECK-NEXT: v109: f52 @Cell = GetModuleVariable variable=g51
+# CHECK-NEXT: v110: anything @JSValue = Call v109, -, v59, v2 calleeName="at_eq_literalFirst" accessSite=79 callees=[f52]
+# CHECK-NEXT: v111: f53 @Cell = GetModuleVariable variable=g52
+# CHECK-NEXT: v112: anything @JSValue = Call v111, -, v59, v2 calleeName="at_ne" accessSite=80 callees=[f53]
+# CHECK-NEXT: v113: f54 @Cell = GetModuleVariable variable=g53
+# CHECK-NEXT: v114: anything @JSValue = Call v113, -, v59, v2 calleeName="at_ne_literalFirst" accessSite=81 callees=[f54]
+# CHECK-NEXT: v115: f55 @Cell = GetModuleVariable variable=g54
+# CHECK-NEXT: v116: anything @JSValue = Call v115, -, v59, v2 calleeName="at_looseEq" accessSite=82 callees=[f55]
+# CHECK-NEXT: v117: f56 @Cell = GetModuleVariable variable=g55
+# CHECK-NEXT: v118: anything @JSValue = Call v117, -, v59, v2 calleeName="at_looseEq_literalFirst" accessSite=83 callees=[f56]
+# CHECK-NEXT: v119: f57 @Cell = GetModuleVariable variable=g56
+# CHECK-NEXT: v120: anything @JSValue = Call v119, -, v59, v2 calleeName="isDigit" accessSite=84 callees=[f57]
+# CHECK-NEXT: v121: f58 @Cell = GetModuleVariable variable=g57
+# CHECK-NEXT: v122: anything @JSValue = Call v121, -, v59, v2 calleeName="isLetter" accessSite=85 callees=[f58]
+# CHECK-NEXT: v123: f59 @Cell = GetModuleVariable variable=g58
+# CHECK-NEXT: v124: anything @JSValue = Call v123, -, v59, v2 calleeName="isBelowSpaceOrMissing" accessSite=86 callees=[f59]
+# CHECK-NEXT: v125: "11111111111111111111111111111111111111111111111111111111111" @Cell = String string="11111111111111111111111111111111111111111111111111111111111"
+# CHECK-NEXT: Return v125
 # CHECK-NEXT: }

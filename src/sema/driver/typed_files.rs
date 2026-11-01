@@ -14,7 +14,7 @@ use bun_sema::program::FileId;
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use bun_sema::types::TypeId;
-use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
 struct Source<'a> {
     path: &'a [u8],
@@ -1167,7 +1167,7 @@ impl<'a, 's> Syntax<'a, 's> {
                 ranges.push((property.pos, node.pos));
             }
         }
-        ranges.sort_by_key(|range| (range.0, std::cmp::Reverse(range.1)));
+        ranges.shared_sort_by_key(|range| (range.0, std::cmp::Reverse(range.1)));
         let mut outermost: Vec<(u32, u32)> = Vec::new();
         for range in ranges {
             match outermost.last() {
@@ -1294,7 +1294,7 @@ impl Mappings {
                 entries.push((generated_offset as u32, source as u32, original as u32));
             }
         }
-        entries.sort_by_key(|entry| entry.0);
+        entries.shared_sort_by_key(|entry| entry.0);
         Ok(Mappings { entries })
     }
 
@@ -1356,7 +1356,7 @@ impl Insertions {
     }
 
     fn apply(mut self, javascript: &[u8]) -> Vec<u8> {
-        self.list.sort_by_key(|a| (a.0, a.1, a.2));
+        self.list.shared_sort_by_key(|a| (a.0, a.1, a.2));
         let mut text = Vec::with_capacity(javascript.len() * 2);
         let append = |text: &mut Vec<u8>, bytes: &[u8]| {
             let is_word_byte =
@@ -1381,7 +1381,7 @@ impl Insertions {
 
 fn outermost_only(mut slots: Vec<Slot>, regions: &[(u32, u32)]) -> Vec<Slot> {
     slots.retain(|slot| slot.end > slot.start);
-    slots.sort_by_key(|slot| (slot.start, std::cmp::Reverse(slot.end)));
+    slots.shared_sort_by_key(|slot| (slot.start, std::cmp::Reverse(slot.end)));
     let mut retained: Vec<Slot> = Vec::new();
     let mut covered = 0;
     for slot in slots {
@@ -2187,7 +2187,7 @@ fn link(
             .iter()
             .map(|(&name, found)| (name, found))
             .collect();
-        in_order.sort_by_key(|(_, found)| {
+        in_order.shared_sort_by_key(|(_, found)| {
             found
                 .names
                 .first()
@@ -2664,7 +2664,7 @@ fn link(
                     );
                 }
             }
-            edits.sort();
+            edits.shared_sort();
             edits.dedup_by_key(|edit| edit.0);
             for edit in edits.iter_mut().filter(|edit| {
                 nested_names[index].contains(&edit.2[..])
@@ -2679,7 +2679,7 @@ fn link(
         all_edits.push(edits);
     }
 
-    shadowed.sort();
+    shadowed.shared_sort();
     shadowed.dedup();
     if !shadowed.is_empty() {
         linked.hoisted.extend_from_slice(
@@ -2775,7 +2775,7 @@ fn link(
             .iter()
             .map(|&(index, statement)| (index, StmtId(statement))),
     );
-    hoisted_statements.sort();
+    hoisted_statements.shared_sort();
     hoisted_statements.dedup();
     drop(names);
     drop(declared);
@@ -4638,7 +4638,7 @@ fn import_typed_outputs(
             ))
         })
         .collect();
-    replacements.sort_unstable();
+    replacements.shared_sort_unstable();
     replacements.dedup();
     let mut rewritten = text.to_vec();
     for (start, end, specifier) in replacements.into_iter().rev() {
@@ -4663,7 +4663,7 @@ pub fn annotate_implicit_any(
             _ => None,
         })
         .collect();
-        places.sort_unstable();
+        places.shared_sort_unstable();
         places.dedup();
         let mut written = text.clone();
         for &(at, annotation) in places.iter().rev().filter(|place| place.0 <= text.len()) {

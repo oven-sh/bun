@@ -113,6 +113,40 @@ function turn(i: number): number {
     .take(2)
     .toArray()[1]!;
 }
+//// iterator-helpers-for-each
+const numbers = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let sum = 0;
+  numbers
+    .values()
+    .map(n => n + i)
+    .forEach(n => {
+      sum += n;
+    });
+  return sum | 0;
+}
+//// array-from-a-set-with-a-mapper
+const iterable = new Set([1, 2, 3, 4, 5, 6, 7, 8]);
+function turn(i: number): number {
+  return Array.from(iterable, value => value * 2).length + (i & 1);
+}
+//// set-iterator-by-hand
+const numbers = new Set([1, 2, 3, 4, 5, 6, 7, 8]);
+function turn(i: number): number {
+  const iterator = numbers.values();
+  let sum = i & 1;
+  for (let step = iterator.next(); !step.done; step = iterator.next()) sum += step.value;
+  return sum;
+}
+//// first-key-of-a-map
+const recent = new Map([
+  ["a", 1],
+  ["b", 2],
+  ["c", 3],
+]);
+function turn(i: number): number {
+  return recent.keys().next().value!.length + (i & 1);
+}
 //// array-iterator-by-hand
 const letters = ["a", "bb", "ccc"];
 function turn(i: number): number {
@@ -624,6 +658,34 @@ function descend(levels: number): number {
 }
 function turn(i: number): number {
   return descend(10) + (i & 1);
+}
+//// capture-a-stack-trace-below-two-functions-that-call-each-other-through-small-ones
+function throughFirst(levels: number, error: Error): number {
+  return second(levels - 1, error) + 1;
+}
+function throughSecond(levels: number, error: Error): number {
+  return first(levels - 1, error) + 1;
+}
+function first(levels: number, error: Error): number {
+  if (levels <= 0) {
+    Error.captureStackTrace(error);
+    return 0;
+  }
+  let sum = 0;
+  for (let i = 0; i < levels; i++) sum += i;
+  return throughFirst(levels, error) + (sum & 1);
+}
+function second(levels: number, error: Error): number {
+  if (levels <= 0) {
+    Error.captureStackTrace(error);
+    return 0;
+  }
+  let sum = 0;
+  for (let i = 0; i < levels; i++) sum ^= i;
+  return throughSecond(levels, error) + (sum & 1);
+}
+function turn(i: number): number {
+  return first(10, new Error("near")) + (i & 1);
 }
 //// capture-a-stack-trace-below-a-function-that-is-not-on-the-stack
 function absent(): void {}

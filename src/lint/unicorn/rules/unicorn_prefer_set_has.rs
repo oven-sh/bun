@@ -7,8 +7,8 @@ use rustc_hash::FxHashSet;
 /// Prefer `Set#has()` over `Array#includes()` when checking for existence or non-existence.
 pub struct PreferSetHas;
 
-const PREFER_SET_HAS: Message =
-    Message::new("", "should be a `Set`, and use `.has()` to check existence or non-existence.");
+const PREFER_SET_HAS: &Message =
+    &Message::new("", "should be a `Set`, and use `.has()` to check existence or non-existence.");
 
 const ARRAY_METHODS_RETURNS_ARRAY: [&str; 15] = [
     "concat",

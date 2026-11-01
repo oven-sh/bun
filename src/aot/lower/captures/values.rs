@@ -2,7 +2,7 @@ use bun_sema::bind::Binding;
 use smallvec::SmallVec;
 
 use super::{Capture, CaptureList};
-use crate::ir::generated::{Field, FieldFlags, Layout, LayoutKind};
+use crate::ir::generated::{DeclaredCapture, Field, FieldFlags, Layout, LayoutKind};
 use crate::ir::{
     DeclaredType, FunctionKey, LayoutId, LayoutKey, PropertyKey, Type, TypeTable, ValueId,
 };
@@ -24,13 +24,14 @@ fn find_pack_layout(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -
     }
     let positions = file.list_positions(key);
     let mut fields = Vec::with_capacity(positions.len());
-    for (index, declared) in positions.into_iter().enumerate() {
+    for (index, capture) in positions.into_iter().enumerate() {
         let label = file.intern_bytes(format!("capture.{index}").as_bytes());
         let key = PropertyKey::from_engine_private_name(label);
         fields.push(Field {
             key: Some(file.fragment.property_keys.intern(key)),
-            declared,
+            declared: capture.declared(),
             flags: FieldFlags::IS_REQUIRED | FieldFlags::IS_IMMUTABLE,
+            variable_name: capture.variable_name,
             ..Field::default()
         });
     }
@@ -146,28 +147,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(in crate::lower) fn capture_positions(&mut self, key: FunctionKey) -> Vec<DeclaredType> {
+    pub(in crate::lower) fn capture_positions(&mut self, key: FunctionKey) -> Vec<DeclaredCapture> {
         match find_pack_layout(self, key) {
             Some(layout) => {
                 let pack = self.fragment.types.intern(Type::environment(layout));
-                vec![DeclaredType::from_compiler(pack)]
+                vec![DeclaredType::from_compiler(pack).into()]
             }
             None => self.list_positions(key),
         }
     }
 
-    fn list_positions(&mut self, key: FunctionKey) -> Vec<DeclaredType> {
+    fn list_positions(&mut self, key: FunctionKey) -> Vec<DeclaredCapture> {
         let captures: CaptureList = SmallVec::from_slice(self.scopes.captures(key));
         let is_left_out = is_left_out(self, key);
         let positions = captures.into_iter().map(|capture| match capture {
             Capture::Environment(scope) => {
                 let layout = scope::environment_layout(self, scope);
                 let environment = self.fragment.types.intern(Type::environment(layout));
-                DeclaredType::from_compiler(environment)
+                DeclaredType::from_compiler(environment).into()
             }
             // The declaration of a variable may be left out with the function. What fills a slot never is.
-            Capture::Value(BindingRef::Symbol(_)) if is_left_out => DeclaredType::untyped(),
-            Capture::Value(binding) => self.stored_position(binding),
+            Capture::Value(BindingRef::Symbol(_)) if is_left_out => DeclaredType::untyped().into(),
+            Capture::Value(binding) => {
+                let name = self.written_name(binding);
+                DeclaredCapture::new(self.stored_position(binding), name)
+            }
         });
         positions.collect()
     }

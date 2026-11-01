@@ -14,11 +14,11 @@ pub struct ZodPreferLazySchema {
     lazy_wrapper: Option<Box<[u8]>>,
 }
 
-const EAGER_SCHEMA: Message = Message::new(
+const EAGER_SCHEMA: &Message = &Message::new(
     "eagerSchema",
     "This schema is built as soon as the module is imported. Build it when it is first used.",
 );
-const EAGER_SCHEMA_WITH_WRAPPER: Message = Message::new(
+const EAGER_SCHEMA_WITH_WRAPPER: &Message = &Message::new(
     "eagerSchemaWithWrapper",
     "This schema is built as soon as the module is imported. Build it when it is first used: `{{wrapper}}(() => ..)`.",
 );

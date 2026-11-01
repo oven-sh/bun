@@ -4,7 +4,7 @@
 // CHECK: b0([[p]]: number):
 // CHECK: = NewClosure [[p]] function=
 // CHECK-LABEL: function {{*}}kind=Arrow
-// CHECK: captures=[{type=number site=[[site]]}] thisType
+// CHECK: captures=[{type=number site=[[site]] variableName="p"}] thisType
 
 // RUN(ENVIRONMENTS): lower
 // ENVIRONMENTS-NOT: = NewObject

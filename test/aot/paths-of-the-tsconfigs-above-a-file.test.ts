@@ -20,7 +20,7 @@ async function run(cwd: string, ...args: string[]) {
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 const errors = (said: string) =>
-  [...said.matchAll(/^error: (TS\d+):.*\n +at .*paths-of-the-tsconfigs-above[^\\/]*[\\/](.+):(\d+):\d+$/gm)]
+  [...said.matchAll(/^(?:error|warn): (TS\d+):.*\n +at .*paths-of-the-tsconfigs-above[^\\/]*[\\/](.+):(\d+):\d+$/gm)]
     .map(match => `${match[2]!.replaceAll("\\", "/")}:${match[3]} ${match[1]}`)
     .sort();
 
@@ -60,7 +60,7 @@ test("a type imported by a name that only a tsconfig.json further up knows is fo
   expect(passed(plain.said)).toEqual(["root", "two"]);
   const alone = await run(String(dir), "test", "--aot", "./packages/two/two.test.ts");
   expect(errors(alone.said)).toEqual(["packages/two/two.test.ts:2 TS2307"]);
-  expect(passed(alone.said)).toEqual([]);
+  expect(passed(alone.said)).toEqual(["two"]);
   const together = await run(String(dir), "test", "--aot");
   expect(errors(together.said)).toEqual([]);
   expect(passed(together.said)).toEqual(["root", "two"]);
@@ -93,7 +93,7 @@ test("the paths of a tsconfig.json that is not above a file have a say about it 
   const ofTheLibrary = await run(String(dir), "test", "--aot", "./lib/lib.test.ts");
   expect({ errors: errors(ofTheLibrary.said), passed: passed(ofTheLibrary.said) }).toEqual({
     errors: ["lib/index.ts:1 TS2307"],
-    passed: [],
+    passed: ["lib"],
   });
   const ofTheApplication = await run(String(dir), "test", "--aot", "./app/app.test.ts");
   expect({ errors: errors(ofTheApplication.said), passed: passed(ofTheApplication.said) }).toEqual({

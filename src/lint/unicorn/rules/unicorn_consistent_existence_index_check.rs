@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// `findLastIndex()`.
 pub struct ConsistentExistenceIndexCheck;
 
-const CONSISTENT_EXISTENCE_INDEX_CHECK: Message = Message::new(
+const CONSISTENT_EXISTENCE_INDEX_CHECK: &Message = &Message::new(
     "",
     "Prefer `{{replacement_operator}} -1` over `{{original_operator}} {{original_value}}` to check non-existence.",
 );

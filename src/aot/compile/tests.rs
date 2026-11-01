@@ -820,6 +820,29 @@ fn names_of_commonjs_package_that_is_left_out_are_not_looked_for() {
     }
 }
 
+// The file may be imported while it runs, so whoever imports it asks for `default` when it is linked.
+#[test]
+fn commonjs_file_that_is_left_out_of_a_cycle_is_asked_for_nothing() {
+    let linked = link_successfully(&[
+        ("main.mjs", "import b from \"./b.mjs\";\nconsole.log(b);\n"),
+        ("a.cjs", "module.exports = require(\"./b.mjs\");\n"),
+        ("b.mjs", "import a from \"./a.cjs\";\nexport default 7;\n"),
+        (
+            "package.json",
+            r#"{ "name": "program", "sideEffects": false }"#,
+        ),
+        GLOBALS,
+    ]);
+    let program = &linked.program;
+    let find = |name: &str| {
+        let mut modules = program.modules.iter();
+        modules.find(|module| program.strings.get(module.path).ends_with_str(name))
+    };
+    assert!(find("a.cjs").is_none());
+    let importer = find("b.mjs").expect("b.mjs has a record");
+    assert!(importer.required_names.is_empty());
+}
+
 #[test]
 fn link_error_names_the_files_and_the_import() {
     use super::link_stage::describe_link_error;
@@ -866,6 +889,14 @@ fn link_error_names_the_files_and_the_import() {
             describe_link_error(loaded, &missing),
             b"MissingUnit: /project/main.js"
         );
+        let missing = LinkError::MissingRecord {
+            module: ProgramModule::Face(file(b"/project/tools.cjs")),
+            named_by: Some(ProgramModule::File(main)),
+        };
+        assert_eq!(
+            describe_link_error(loaded, &missing),
+            b"MissingRecord: the face of /project/tools.cjs, named by /project/main.js"
+        );
     });
 }
 
@@ -893,6 +924,36 @@ fn package_that_is_left_out_takes_along_what_the_build_does_not_compile() {
     ] {
         link_with_unused_package(importer, manifest, package);
     }
+}
+
+#[test]
+fn skipped_star_barrel_still_imports_listed_side_effects() {
+    let manifest = r#"{ "name": "lib", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": ["./polyfill.js", "./listed.js"] }"#;
+    let linked = link_successfully(&[
+        ("main.js", "import { a } from \"lib\";\na();\n"),
+        ("node_modules/lib/package.json", manifest),
+        (
+            "node_modules/lib/index.js",
+            "console.log(0);\nimport \"./polyfill.js\";\nimport \"./pure.js\";\nexport * from \"./a.js\";\nexport { listed } from \"./listed.js\";\n",
+        ),
+        ("node_modules/lib/polyfill.js", "console.log(1);\n"),
+        ("node_modules/lib/pure.js", "console.log(2);\n"),
+        ("node_modules/lib/a.js", "export function a() {}\n"),
+        (
+            "node_modules/lib/listed.js",
+            "console.log(3);\nexport const listed = 1;\n",
+        ),
+        GLOBALS,
+    ]);
+    let program = &linked.program;
+    let name_of = |module: ModuleId| {
+        let path = program.strings.get(program.modules[module.index()].path);
+        BStr::new(path.rsplit_str("/").next().unwrap_or_default()).to_string()
+    };
+    let main = (0..program.modules.len()).find(|&index| name_of(ModuleId::new(index)) == "main.js");
+    let requests = &program.modules[main.expect("the entry point has a record")].requests;
+    let requested: Vec<String> = requests.iter().map(|it| name_of(it.target)).collect();
+    assert_eq!(requested, ["polyfill.js", "a.js", "listed.js"]);
 }
 
 fn list_evaluated_files_of_package(main: &str, page: &str, index: &str) -> Vec<String> {
@@ -1193,4 +1254,53 @@ fn build_that_compiles_refuses_the_whole_program() {
     let project = TestProject::with_entry_points(&files, 2, &default_settings());
     let (result, _) = link_project(&project, &WithoutServices);
     assert_eq!(expect_failure(result).refused_entry_points, None);
+}
+
+#[test]
+fn engine_that_analyzed_nothing_says_nothing_about_module_objects() {
+    use crate::ir::generated::{SourceLocation, UnseenCodeRecord, Witness};
+    use crate::ir::ids::ABSENT_WORD;
+    let both = WaysBetweenModuleObjects {
+        children: true,
+        parent: true,
+    };
+    for cause in [UnseenCodeCause::FlowResultDisabled] {
+        let unseen_code = [UnseenCodeRecord {
+            cause,
+            builtin: ABSENT_WORD,
+            witness: Witness {
+                function: ABSENT_WORD,
+                value: ABSENT_WORD,
+                location: SourceLocation {
+                    module: ABSENT_WORD,
+                    position: 0,
+                },
+            },
+        }];
+        let found = FlowFindings {
+            unseen_code: &unseen_code,
+            builtins_used: &[],
+            library_functions_lacked: &[],
+            exports_that_spies_replace: &[],
+            builtins_that_tests_replace: &[],
+            names_that_tests_add: &[],
+            text_of_names: &[],
+        };
+        assert!(reads_main_module(&found, false));
+        assert_eq!(find_ways_read_out_of_sight(&found, both), both);
+        assert!(find_ways_named_that_nobody_reads(&found, both).is_empty());
+    }
+    // It has analyzed the program, and lists no use.
+    let found = FlowFindings {
+        unseen_code: &[],
+        builtins_used: &[],
+        library_functions_lacked: &[],
+        exports_that_spies_replace: &[],
+        builtins_that_tests_replace: &[],
+        names_that_tests_add: &[],
+        text_of_names: &[],
+    };
+    assert!(!reads_main_module(&found, false));
+    assert!(find_ways_read_out_of_sight(&found, both).is_empty());
+    assert_eq!(find_ways_named_that_nobody_reads(&found, both), both);
 }

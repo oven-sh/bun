@@ -220,6 +220,8 @@ struct Outer<'a> {
     dialect: CodeDialect,
     /// `saveDiagnosticsLength`
     diagnostics: usize,
+    /// How many there were of `Stacks::stray_decorators` and of `File::stray_decorators`.
+    stray_decorators: (usize, usize),
 }
 
 /// A parse that only keeps its parse errors.
@@ -823,6 +825,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             has_top_level_await: self.has_top_level_await,
             dialect: self.enter_typescript_dialect(),
             diagnostics: self.f.diagnostics.len(),
+            stray_decorators: (self.s.stray_decorators.len(), self.f.stray_decorators.len()),
         };
         self.lx
             .set_src(outer.src.get(..cut as usize).unwrap_or(outer.src));
@@ -855,6 +858,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.last_nullable_type = outer.last_nullable_type;
         self.parameter_question_pos = outer.parameter_question_pos;
         self.has_top_level_await = outer.has_top_level_await;
+        // `/** @import inside (@media) */`: a decorator that no class follows becomes a statement in front of the one that is being parsed.
+        // A mistake in a comment of a JavaScript file stops nothing, so that statement would run.
+        self.s.stray_decorators.truncate(outer.stray_decorators.0);
+        self.f.stray_decorators.truncate(outer.stray_decorators.1);
         self.jsdoc.is_in_comment = false;
         match self.lx.rejection {
             None => {}

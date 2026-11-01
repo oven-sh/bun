@@ -121,7 +121,7 @@ lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().v
 // CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|null|[[L_8]]|Generator flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="add"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=env [[L_11]] flags=[IsFromCompiler]}, {type=undefined|null|Map flags=[IsExpected]}, {type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[L_12]] flags=[IsExpected]}] functionTypes={{*}}[[f_13]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=env [[L_11]] flags=[IsFromCompiler]}, {type=undefined|null|Map flags=[IsExpected] variableName="table"}, {type=undefined|null|Array flags=[IsExpected] variableName="list"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[L_12]] flags=[IsExpected]}] functionTypes={{*}}[[f_13]]] {
 // CHECK-NEXT: b0(v0: env [[L_11]], v1: undefined|null|Map, v2: undefined|null|Array, v3: anything, v4: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

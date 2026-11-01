@@ -21,8 +21,9 @@ use super::program_reach::{TOP_LEVEL, find_parent_past_casts, is_only_read};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self};
 use crate::builtins::{
-    BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ResolveInput, Resolved,
-    RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
+    BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ReplacedMembersSought,
+    ResolveInput, Resolved, RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect,
+    resolve_within,
 };
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
@@ -155,6 +156,8 @@ pub(crate) struct ReachInput<'a, 's> {
     pub further: &'a RuntimeUses,
     pub keeps_code_without_names: bool,
     pub holds_guessed_code: bool,
+    /// `FurtherLibraryCode::holds_test_files_alone`. So does Bun's own code that comes along.
+    pub holds_test_files_alone: bool,
 }
 
 /// The part of Bun's own code that the program can run, found the way a bundler finds it: by bindings, never by what a value is.
@@ -204,6 +207,7 @@ impl HeldLibraryCode {
                 .filter(|(module, _)| is_lacked(module))
                 .collect(),
             functions: (functions.filter(|it| self.functions.binary_search(it).is_err())).collect(),
+            linked_functions: Box::default(),
         }
     }
 }
@@ -1226,6 +1230,13 @@ impl<'a, 's> Walk<'a, 's> {
 
     // Native code reads what it likes from a module that it loads.
     fn reach_uses(&mut self, uses: &RuntimeUses) {
+        if self.input.holds_test_files_alone {
+            for function in uses.functions_held_with_caller() {
+                self.note_import(self.input.library.find_function_file(function));
+                self.reach_function(function);
+            }
+            return;
+        }
         for &module in &uses.modules {
             self.note_import(self.input.library.find_module_file(module));
             self.evaluate(ModuleRef::Runtime(module));
@@ -1244,7 +1255,7 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else.
+    // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else. So does `export { a, b } from "node:x"`.
     fn reach_named_imports(
         &mut self,
         application: &Files<'_>,
@@ -1274,6 +1285,14 @@ impl<'a, 's> Walk<'a, 's> {
                         core::str::from_utf8(application.atoms.bytes(hir[it].imported)).ok()
                     })
                     .collect()
+                }
+                ImportSiteKind::ExportFrom(export)
+                    if !hir[export].type_only
+                        && hir[export].items.iter().any(|it| !hir[it].type_only) =>
+                {
+                    let read = hir[export].items.iter().filter(|&it| !hir[it].type_only);
+                    read.map(|it| core::str::from_utf8(application.atoms.bytes(hir[it].local)).ok())
+                        .collect()
                 }
                 _ => None,
             };
@@ -1543,6 +1562,8 @@ impl<'a, 's> Walk<'a, 's> {
                 names,
                 platform,
                 dialect: SourceDialect::Runtime,
+                replaced: &[],
+                replaced_members_sought: ReplacedMembersSought::None,
             };
             let facts = facts[text.file.idx()]
                 .as_ref()

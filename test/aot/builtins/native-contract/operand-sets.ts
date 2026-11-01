@@ -1,6 +1,6 @@
 // Operands for a function about which nothing is declared: a few kinds of value, position by position, then every kind of real
 // object where an object got furthest, then plain objects with the names that the function was seen to look for.
-import { closeSync, mkdirSync, openSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, rmSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
 import {
   contentOrigin,
   createCallback,
@@ -95,8 +95,10 @@ export const descriptorCandidate: Candidate = {
     if (openDescriptor !== undefined) return openDescriptor;
     // An earlier call may have taken the file away or closed it to its owner.
     rmSync(scratchFile, { force: true, recursive: true });
-    writeFileSync(scratchFile, "text");
-    openDescriptor = openSync(scratchFile, "r+");
+    // The file is opened once. A call that the thread pool makes after its descriptor was closed meets whatever has the number by then, which is this
+    // file, and may close it to its owner too.
+    openDescriptor = openSync(scratchFile, "w+");
+    writeSync(openDescriptor, "text", 0);
     return openDescriptor;
   },
   release(isAsMade = false) {

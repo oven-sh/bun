@@ -7,9 +7,10 @@ use bun_exe_format::image::KnownSection;
 use bun_exe_format::section::find_known_section;
 use bun_removable_features::{
     Feature, FeatureSet, RemovableFeatureState, Removal, RuntimeRequirement,
+    features_running_uncompiled_code,
 };
 
-use crate::decide::{CREATES_REALMS, decide};
+use crate::decide::{CREATES_REALMS, STARTS_WORKERS, decide};
 use crate::error::{TrimError, TrimInternalError, TrimRequestError};
 use crate::locales::resolve_wanted_groups;
 use crate::model::{
@@ -18,8 +19,6 @@ use crate::model::{
     TrimInput, TrimPlan, TrimTable, UsedFeatures, UsedLocales, WantedLocaleGroups,
 };
 use crate::table::read_trim_table;
-
-const STARTS_WORKERS: Feature = Feature::WorkerConstructor;
 
 pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPlan, TrimError> {
     if !input.removes_anything() {
@@ -94,10 +93,11 @@ fn runs_unseen_code(option: &OptionRequirement) -> bool {
     }
 }
 
-fn can_run_unseen_code(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
+pub fn can_run_unseen_code(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
     used.causes
         .iter()
         .any(|unseen| unseen.cause.lets_unseen_code_run())
+        || used.can_start_worker_from_unseen_code()
         || requirements.iter().any(runs_unseen_code)
 }
 
@@ -111,13 +111,15 @@ fn can_run_library_text(used: &UsedFeatures, requirements: &[OptionRequirement])
         || requirements.iter().any(runs_unseen_code)
 }
 
-// A Worker that starts from a text that the build has not compiled gets a VM without the image, where nothing that a program can enter is removed (`runs_worker_of_text_apart` in src/jsc/compiled_program.rs). Its realm holds nothing compiled and runs each built-in module from its text.
+// A Worker that starts from a text that the build has not compiled gets a VM without the image (`runs_worker_of_text_apart` in src/jsc/compiled_program.rs). Its realm holds nothing compiled and runs each built-in module from its text.
 fn can_start_worker_without_image(used: &UsedFeatures, decision: &Decision) -> bool {
     let has_compiled_code_of_each = !used.starts_workers_from_unseen_code && used.causes.is_empty();
     let removed = decision.removed();
     used.uses(STARTS_WORKERS)
         && !has_compiled_code_of_each
-        && RuntimeRequirement::WholeRuntime.is_available_with(|feature| removed.contains(feature))
+        && !features_running_uncompiled_code()
+            .iter()
+            .any(|feature| removed.contains(feature))
 }
 
 pub fn read_feature_edges(executable: &mut Image<'_>) -> Result<FeatureEdges, TrimError> {
@@ -1124,7 +1126,7 @@ mod tests {
         let whole = TrimRequest::default();
         let starting = UsedFeatures::from_features(&[Feature::WorkerConstructor]);
         assert!(keeps_texts(&starting, &whole));
-        assert!(!keeps_texts(&starting, &removing_unused()));
+        assert!(keeps_texts(&starting, &removing_unused()));
         assert!(!keeps_texts(&UsedFeatures::from_features(&[]), &whole));
 
         let compiled = UsedFeatures {

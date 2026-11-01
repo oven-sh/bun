@@ -1363,6 +1363,10 @@ pub(crate) unsafe fn __bun_fire_timer(
                 |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
             )
         }
+        EventLoopTimerTag::FakeTimersTick => {
+            // SAFETY: per fn contract.
+            crate::timer::FakeTimers::on_tick_timer(unsafe { (*vm).global() })
+        }
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
                 .run(&mut *vm))
@@ -1550,6 +1554,18 @@ pub(crate) unsafe fn __bun_fire_timer(
             ) -> JsResult<()> {
                 crate::node::quic::QuicEndpoint::on_timer_fire(c);
                 Ok(())
+            }
+        ),
+        EventLoopTimerTag::ViWait => in_features!(
+            [Test],
+            (
+                c: *mut crate::test_runner::vi_wait::ViWait =
+                    owner!(crate::test_runner::vi_wait::ViWait, timer),
+                now: *const ElTimespec = now,
+                vm: *mut VirtualMachine = vm,
+            ) -> JsResult<()> {
+                // SAFETY: an armed wait roots its JS wrapper, which owns `c`; `now` and `vm` per fn contract.
+                unsafe { (*c).on_timer_fire(&*now, &*vm) }
             }
         ),
         EventLoopTimerTag::UvTimer => {

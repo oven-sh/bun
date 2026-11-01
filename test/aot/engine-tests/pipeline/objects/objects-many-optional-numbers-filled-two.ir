@@ -202,5 +202,5 @@ function f6 name="sum23" module=m0 position=4069 flags=[IsChecked, HasExplicitNa
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 181, patchpoints: 18, rare instructions: 23, polls: 1
+# CHECK-NEXT: instructions: 165, patchpoints: 15, rare instructions: 181, polls: 1
 # CHECK-NEXT: end of function f0

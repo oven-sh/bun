@@ -1,5 +1,5 @@
 //! `Bun.Image` — Sharp-shaped image pipeline backed by the statically linked
-//! libjpeg-turbo / libspng / libwebp codecs and the highway resize kernel.
+//! libjpeg-turbo / libwebp codecs, `bun_png` and the highway resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
@@ -663,26 +663,6 @@ enum PinError {
 }
 
 impl Image {
-    /// Fresh slice into the input bytes for use ON THE JS THREAD ONLY (re-reads
-    /// the ArrayBuffer's vector each call so a detach between construction and
-    /// here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
-    fn js_thread_bytes(&self, this_value: JSValue, global: &JSGlobalObject) -> Option<&[u8]> {
-        match self.source.get() {
-            Source::JsBuffer => js::source_js_get_cached(this_value)
-                .and_then(|v: JSValue| v.as_array_buffer(global))
-                .map(|ab| {
-                    // SAFETY: `ArrayBuffer` is a view struct (ptr+len); the
-                    // bytes live in the JS heap, not in `ab` — the returned
-                    // slice borrows the JS heap with `&self`'s lifetime, which
-                    // is sound only on the JS thread. `this_value` keeps the
-                    // buffer alive for this JS-thread call — see fn doc above.
-                    unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
-                }),
-            Source::Owned(b) => Some(b.as_slice()),
-            Source::Path(_) | Source::Blob(_) => None,
-        }
-    }
-
     /// Pin the source ArrayBuffer for the duration of one off-thread task and
     /// return a slice that's safe for the worker to read. Unpinned in `then()`.
     ///
@@ -899,7 +879,21 @@ impl Image {
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
-        if let Some(buf) = self.js_thread_bytes(this_value, global) {
+        //
+        // Fresh slice into the input bytes for use ON THE JS THREAD ONLY (re-reads
+        // the ArrayBuffer's vector so a detach between construction and
+        // here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
+        let view;
+        let bytes: Option<&[u8]> = match self.source.get() {
+            Source::JsBuffer => {
+                view = js::source_js_get_cached(this_value)
+                    .and_then(|v: JSValue| v.as_array_buffer(global));
+                view.as_ref().map(ArrayBuffer::byte_slice)
+            }
+            Source::Owned(b) => Some(b.as_slice()),
+            Source::Path(_) | Source::Blob(_) => None,
+        };
+        if let Some(buf) = bytes {
             match codecs::probe(buf, self.max_pixels) {
                 Ok(p) => {
                     let mut w = p.width;
@@ -1701,7 +1695,7 @@ impl PipelineTask {
         let Kind::Encode(enc_opt) = &self.kind else {
             unreachable!()
         };
-        let mut enc: codecs::EncodeOptions = enc_opt.unwrap_or(codecs::EncodeOptions {
+        let enc: codecs::EncodeOptions = enc_opt.unwrap_or(codecs::EncodeOptions {
             format: match src_format {
                 codecs::Format::Bmp | codecs::Format::Tiff | codecs::Format::Gif => {
                     codecs::Format::Png
@@ -1710,18 +1704,18 @@ impl PipelineTask {
             },
             ..Default::default()
         });
-        // Carry the source ICC profile through to the encoder unless the
-        // caller already set one (reserved for a future `.withIccProfile()`
-        // method). The pipeline doesn't colour-convert the RGBA, so dropping
+        // Carry the source ICC profile through to the encoder.
+        // The pipeline doesn't colour-convert the RGBA, so dropping
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
-        if enc.icc_profile.is_none() {
-            // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
-            // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
-            enc.icc_profile = decoded.icc_profile.as_deref().map(core::ptr::NonNull::from);
-        }
-        let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, enc) {
+        let out = match codecs::encode(
+            &decoded.rgba,
+            decoded.width,
+            decoded.height,
+            enc,
+            decoded.icc_profile.as_deref(),
+        ) {
             Ok(o) => o,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1809,8 +1803,7 @@ impl PipelineTask {
                     Deliver::Blob => {
                         // Blob.Store frees via an Allocator; dupe for that path.
                         let owned = out_slice.to_vec();
-                        // SAFETY: explicit free in lieu of suppressed `Drop`.
-                        unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
+                        drop(mem::ManuallyDrop::into_inner(out));
                         let blob = Blob::init(owned, global);
                         blob.content_type
                             .set(crate::webcore::blob::BlobContentType::Static(

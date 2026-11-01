@@ -353,7 +353,7 @@ WTF::String formatStackTrace(
                     previousCompiledModule = position->source;
                     previousCompiledFrame = i;
                 } else
-                    sourceURLs[i] = Zig::sourceURL(*position);
+                    sourceURLs[i] = Zig::sourceURL(frame.compiledFrame(), *position);
             }
             continue;
         }
@@ -862,6 +862,8 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     return true;
 }
 
+bool isImportMetaEnvForTests(JSC::JSObject*);
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     // Every Bun::GlobalScope installs this. In a node:vm context, lexicalGlobalObject is a NodeVMGlobalObject, not a Zig::GlobalObject.
@@ -869,8 +871,9 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
+    // V8 rejects a Proxy too. JS would never see a `stack` written to the cell's own storage.
     // A WebAssembly GC object can't get a property and its Structure has no global object. V8 rejects it too.
-    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType) {
+    if (!objectArg.isObject() || asObject(objectArg)->type() == JSC::ProxyObjectType || asObject(objectArg)->type() == JSC::JSType::WebAssemblyGCObjectType || isImportMetaEnvForTests(asObject(objectArg))) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 

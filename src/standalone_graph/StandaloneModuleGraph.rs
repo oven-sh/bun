@@ -289,11 +289,11 @@ impl StandaloneModuleGraph {
     /// the errno an `open(O_DIRECTORY)` of it would produce.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         let mut buf = bun_paths::path_buffer_pool::get();
-        if let Some(index) = self
-            .directory_key(name, &mut buf)
-            .and_then(|key| self.dirs.get_index(key))
-        {
-            return Ok(&self.dirs.keys()[index]);
+        if let Some(key) = self.directory_key(name, &mut buf) {
+            return Ok(match self.dirs.get_index(key) {
+                Some(index) => &self.dirs.keys()[index],
+                None => keep_key_of_directory_with_code_alone(key),
+            });
         }
         let name = Self::normalize_dir_path(name, &mut buf);
         Err(if self.find_ref(name).is_some() {
@@ -349,6 +349,16 @@ impl StandaloneModuleGraph {
                 path::resolve_path::platform_to_posix_in_place::<u8>(&mut source_path);
                 push(&source_path, false);
             }
+            program.for_each_module_below(name, &mut |path| {
+                let mut end = prefix.len();
+                while recursive && let Some(length) = strings::index_of_char(&path[end..], b'/') {
+                    end += length as usize;
+                    push(&path[..end], true);
+                    end += 1;
+                }
+                push(path, false);
+                true
+            });
         }
 
         let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
@@ -367,6 +377,19 @@ impl StandaloneModuleGraph {
         #[cfg(not(windows))]
         self.files.get_mut(name)
     }
+}
+
+/// A directory that holds nothing but compiled files has no key in the graph. Whoever opens one holds its key for as long as the process lives, so each is copied once.
+fn keep_key_of_directory_with_code_alone(key: &[u8]) -> &'static [u8] {
+    static KEPT: bun_threading::Guarded<std::collections::BTreeSet<&'static [u8]>> =
+        bun_threading::Guarded::new(std::collections::BTreeSet::new());
+    let mut kept = KEPT.lock();
+    if let Some(&key) = kept.get(key) {
+        return key;
+    }
+    let key: &'static [u8] = Box::leak(Box::from(key));
+    kept.insert(key);
+    key
 }
 
 #[cfg(windows)]
@@ -1130,7 +1153,7 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
         const HAS_COMPILED_PROGRAM          = 1 << 14;
-        // _padding: u16
+        // _padding: u17
     }
 }
 
@@ -2628,8 +2651,7 @@ pub(crate) fn inject<'a>(
             }
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2698,8 +2720,7 @@ pub(crate) fn inject<'a>(
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2811,8 +2832,7 @@ pub(crate) fn inject<'a>(
 
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2901,8 +2921,7 @@ pub(crate) fn inject<'a>(
             let _ = Syscall::write(cloned_executable_fd, &total_byte_count.to_ne_bytes());
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
 
             return Some(Injected::new(
@@ -3465,9 +3484,32 @@ impl StandaloneModuleGraph {
         len: usize,
         payload_file: Option<ImageFile>,
     ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+        let Some(offsets) = Self::read_offsets(base, len) else {
+            return Ok(None);
+        };
+        let graph = from_bytes_alloc(base, len, offsets, payload_file)?;
+        // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
+        unsafe { &*graph }.prefetch_startup_pages();
+        Ok(Some(graph))
+    }
+
+    /// A graph beside that of the process.
+    #[cfg(unix)]
+    pub(crate) fn read_payload(
+        base: *mut u8,
+        len: usize,
+        payload_file: Option<ImageFile>,
+    ) -> crate::Result<Option<StandaloneModuleGraph>> {
+        let Some(offsets) = Self::read_offsets(base, len) else {
+            return Ok(None);
+        };
+        Self::from_bytes(base, len, offsets, payload_file).map(Some)
+    }
+
+    fn read_offsets(base: *mut u8, len: usize) -> Option<Offsets> {
         if len < size_of::<Offsets>() + TRAILER.len() {
             bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-            return Ok(None);
+            return None;
         }
         // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
         // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
@@ -3478,14 +3520,10 @@ impl StandaloneModuleGraph {
             unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
         if trailer_bytes != TRAILER {
             bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-            return Ok(None);
+            return None;
         }
         // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-        let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-        let graph = from_bytes_alloc(base, len, offsets, payload_file)?;
-        // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
-        unsafe { &*graph }.prefetch_startup_pages();
-        Ok(Some(graph))
+        Some(unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) })
     }
 
     /// Starts reading the payload pages the entry point's static import closure

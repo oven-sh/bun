@@ -418,8 +418,8 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f44]
 function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f44]
 function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f46 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f46 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -452,50 +452,30 @@ function f49 name="appendParts" module=m3 position=1242 role=Library flags=[IsCh
 function f50 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w110 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f51 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w111 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w112 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w113}, {type=number site=w114}] results=[{type=undefined|null|string site=w115 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f52 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w116}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f53 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w117 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w118}, {type=undefined|number site=w119}, {type=number site=w120}, {type=undefined|null|Array site=w121 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=65 function=f46
-runtimefunction id=69 function=f45
-runtimefunction id=131091 function=f53 visibility=Private
-# -- generated: f0 withSharedTargets f30 map
+function f53 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w117 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w118}, {type=undefined|number site=w119}, {type=number site=w120}, {type=undefined|null|Array site=w121 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=ArrayPrototypeMap function=f46
+runtimefunction id=ArrayIteratorPrototypeNext function=f45
+runtimefunction id=ArrayTraversalTraverseArray function=f53 visibility=Private
+# -- generated: f0 withSharedTargets f30
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0() frequency=Rare:
-# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationSite=1 allocationClass=0
-# CHECK-NEXT: v1: L0 = FinishObject v0
-# CHECK-NEXT: v2: "5" = String string="5"
-# CHECK-NEXT: v3: "" = String string=""
-# CHECK-NEXT: v4: "five" = String string="five"
-# CHECK-NEXT: v5: null = Null
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: v7: bigint = BigInt digits="5"
-# CHECK-NEXT: v8: bigint = BigInt digits="0"
-# CHECK-NEXT: v9: true = Boolean boolean=true
-# CHECK-NEXT: v10: false = Boolean
-# CHECK-NEXT: v11: Array<5, Int32> = Data data=d4 allocationSite=2 arrayStorage=Int32
-# CHECK-NEXT: v12: Array<5, proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<5, proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v13: 5 = Integer integer=5
-# CHECK-NEXT: v14: Number = CallBuiltin -, v13 overload=Number/2 accessSite=0
-# CHECK-NEXT: v15: symbol = Builtin builtin=SymbolIterator
-# CHECK-NEXT: v16: 13 = Integer integer=13
-# CHECK-NEXT: v17: Array<undefined|null|boolean|string|bigint|@@iterator|L0|Array<5, proven, Int32, pristine[Storage, Names, Dense]>|Number, Contiguous> = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v1, v12, v14 contents=undefined|null|boolean|string|bigint|@@iterator|L0|Array<5, proven, Int32, pristine[Storage, Names, Dense]>|Number capacity=v16 allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v18: Array<undefined|null|boolean|string|bigint|@@iterator|L0|Array<5, proven, Int32, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<undefined|null|boolean|string|bigint|@@iterator|L0|Array<5, proven, Int32, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElement v18, v15
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: 2 = Integer integer=2
-# CHECK-NEXT: v22: 5 = Integer integer=5
-# CHECK-NEXT: v23: 9 = Integer integer=9
-# CHECK-NEXT: v24: 3 = Integer integer=3
-# CHECK-NEXT: v25: fractional = Double number=1.5
-# CHECK-NEXT: v26: "1" = String string="1"
-# CHECK-NEXT: v27: undefined = Undefined
-# CHECK-NEXT: v28: bigint = BigInt digits="2"
-# CHECK-NEXT: v29: Array<undefined|int[1, 9]|fractional|bigint|"1", Contiguous> = NewArray v20, v21, v22, v23, v24, v25, v26, v27, v28 contents=undefined|int[1, 9]|fractional|bigint|"1" allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v30: Array<undefined|int[1, 9]|fractional|bigint|"1", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<undefined|int[1, 9]|fractional|bigint|"1", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v31: f30 = NewClosure function=f30 allocationSite=6 storage=Frame
-# CHECK-NEXT: v32: undefined = Undefined
-# CHECK-NEXT: v33: anything = CallDirect v30, v31, v32 function=f59 accessSite=2
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: Return v34
+# CHECK-NEXT: v0: 1 = Integer integer=1
+# CHECK-NEXT: v1: 2 = Integer integer=2
+# CHECK-NEXT: v2: 5 = Integer integer=5
+# CHECK-NEXT: v3: 9 = Integer integer=9
+# CHECK-NEXT: v4: 3 = Integer integer=3
+# CHECK-NEXT: v5: fractional = Double number=1.5
+# CHECK-NEXT: v6: "1" = String string="1"
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: bigint = BigInt digits="2"
+# CHECK-NEXT: v9: Array<undefined|int[1, 9]|fractional|bigint|"1", Contiguous> = NewArray v0, v1, v2, v3, v4, v5, v6, v7, v8 contents=undefined|int[1, 9]|fractional|bigint|"1" allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v10: Array<undefined|int[1, 9]|fractional|bigint|"1", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<undefined|int[1, 9]|fractional|bigint|"1", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: f30 = NewClosure function=f30 allocationSite=6 storage=Frame
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: v13: anything = CallDirect v10, v11, v12 function=f58 accessSite=2
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="withSharedTargets"
 # CHECK: module=m0 position=2031 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int|fractional|bigint|"1"}] results=[{type=string site=w16 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -548,118 +528,4 @@ runtimefunction id=131091 function=f53 visibility=Private
 # CHECK-NEXT: Jump -> next b2(v1)
 # CHECK-NEXT: b7():
 # CHECK-NEXT: Jump -> next b4(v1)
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="map"
-# CHECK: module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=Array flags=[IsExpected]} parameters=[{type=function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-# CHECK-NEXT: b0(v0: anything ~ Array, v1: anything ~ function, v2: anything):
-# CHECK-NEXT: v3: object ~ Array = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v5: Array):
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: Jump -> next b8(v6, v5)
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v7: anything = PropGet v3 key="length" accessSite=6
-# CHECK-NEXT: v8: int[0, 9007199254740991] = ToLength v7
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: Jump -> next b3(v9)
-# CHECK-NEXT: b3(v10: int|whole ~ int[0, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b4(v10)
-# CHECK-NEXT: b4(v12: int|whole ~ int[0, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: v13: boolean = ElemHas v3, v12 accessSite=7 [keyIsIntegral]
-# CHECK-NEXT: v14: int|whole ~ int[0, 2147483647] = Upcast v12 castType=int|whole
-# CHECK-NEXT: v15: anything = ElemGet v3, v14 accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v16: anything = Call v1, v2, v15, v14, v3 accessSite=9
-# CHECK-NEXT: Jump -> next b5(v14)
-# CHECK-NEXT: b5(v17: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v18: int|whole ~ int[1, 2147483648] = Increment v17
-# CHECK-NEXT: v19: boolean ~ true = TypeTest v18 testedType=int[1, 2147483648]
-# CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b13()
-# CHECK-NEXT: b6(v20: int[1, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: v21: boolean ~ true = TypeTest v3 testedType=Array
-# CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b12()
-# CHECK-NEXT: b7(v22: Array) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8(v20, v22)
-# CHECK-NEXT: b8(v23: int[0, 2147483648] ~ 0, v24: Array):
-# CHECK-NEXT: Jump -> next b9(v23)
-# CHECK-NEXT: b9(v25: int[0, 2147483648]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v27: boolean = IsPristine v24 builtinClass=Array aspects=[Storage, Names]
-# CHECK-NEXT: Branch v27 -> taken b10(| 0), notTaken b4(v25)
-# CHECK-NEXT: b10(v28: guard):
-# CHECK-NEXT: v29: int[0, 2147483648] ~ int[0, 2147483647] = Upcast v25 castType=int|whole
-# CHECK-NEXT: v30: anything = GetArrayElement v24, v29, v28 level=Expected accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v31: anything = Call v1, v2, v30, v29, v24 accessSite=9
-# CHECK-NEXT: v32: boolean ~ true = TypeTest v29 testedType=i32
-# CHECK-NEXT: Branch v32 -> taken b11(| 0), notTaken b5(v29)
-# CHECK-NEXT: b11(v33: int[0, 2147483647]):
-# CHECK-NEXT: v34: int[1, 2147483648] = Increment v33
-# CHECK-NEXT: Jump -> next b9(v34)
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b3(v18)
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="map"
-# CHECK: module=m2 position=5210 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=65 captures=[{type=f46}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f46} creator=Entrypoint{target=f46 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f46, v1: anything, v2: anything, v3: anything) frequency=Rare:
-# CHECK-NEXT: v4: anything = CallDirect v1, v2, v3 function=f46
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="map"
-# CHECK: module=m2 position=5210 kind=Method role=CalleeVersion flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=Array flags=[IsExpected]} parameters=[{type=function}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f46 parameter=1073741825 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f46} {
-# CHECK-NEXT: b0(v0: anything ~ Array, v1: function, v2: anything):
-# CHECK-NEXT: v3: object ~ Array = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v5: Array):
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: Jump -> next b8(v6, v5)
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v7: anything = PropGet v3 key="length" accessSite=6
-# CHECK-NEXT: v8: int[0, 9007199254740991] = ToLength v7
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: Jump -> next b3(v9)
-# CHECK-NEXT: b3(v10: int|whole ~ int[0, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b4(v10)
-# CHECK-NEXT: b4(v12: int|whole ~ int[0, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: v13: boolean = ElemHas v3, v12 accessSite=7 [keyIsIntegral]
-# CHECK-NEXT: v14: int|whole ~ int[0, 2147483647] = Upcast v12 castType=int|whole
-# CHECK-NEXT: v15: anything = ElemGet v3, v14 accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v16: anything = Call v1, v2, v15, v14, v3 accessSite=9
-# CHECK-NEXT: Jump -> next b5(v14)
-# CHECK-NEXT: b5(v17: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v18: int|whole ~ int[1, 2147483648] = Increment v17
-# CHECK-NEXT: v19: boolean ~ true = TypeTest v18 testedType=int[1, 2147483648]
-# CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b13()
-# CHECK-NEXT: b6(v20: int[1, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: v21: boolean ~ true = TypeTest v3 testedType=Array
-# CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b12()
-# CHECK-NEXT: b7(v22: Array) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8(v20, v22)
-# CHECK-NEXT: b8(v23: int[0, 2147483648] ~ 0, v24: Array):
-# CHECK-NEXT: Jump -> next b9(v23)
-# CHECK-NEXT: b9(v25: int[0, 2147483648]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v27: boolean = IsPristine v24 builtinClass=Array aspects=[Storage, Names]
-# CHECK-NEXT: Branch v27 -> taken b10(| 0), notTaken b4(v25)
-# CHECK-NEXT: b10(v28: guard):
-# CHECK-NEXT: v29: int[0, 2147483648] ~ int[0, 2147483647] = Upcast v25 castType=int|whole
-# CHECK-NEXT: v30: anything = GetArrayElement v24, v29, v28 level=Expected accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v31: anything = Call v1, v2, v30, v29, v24 accessSite=9
-# CHECK-NEXT: v32: boolean ~ true = TypeTest v29 testedType=i32
-# CHECK-NEXT: Branch v32 -> taken b11(| 0), notTaken b5(v29)
-# CHECK-NEXT: b11(v33: int[0, 2147483647]):
-# CHECK-NEXT: v34: int[1, 2147483648] = Increment v33
-# CHECK-NEXT: Jump -> next b9(v34)
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b3(v18)
 # CHECK-NEXT: }

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Functions that build one string in a very long chain of statements, each using the string before it once: text added at the end, text
-added in front, and a condition between the links. The seed is the number of links."""
+"""Functions that build one string in a very long chain of statements, each using the previous string once: text
+appended, text prepended, and a condition between the links. The seed is the number of links.
+"""
 import sys
 links = int(sys.argv[1])
 shapes = {

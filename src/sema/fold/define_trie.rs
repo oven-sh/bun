@@ -1,5 +1,6 @@
 use super::inputs::{
-    DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, LinkForm, PathState, TrieNode,
+    DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, LinkForm, PathState,
+    StoredByMocks, TrieNode,
 };
 use super::{Constant, slice_in};
 use crate::atom::Atom;
@@ -12,6 +13,9 @@ impl<'s> FoldInputs<'s> {
         for define in options.defines {
             trie.ensure_path(define.path).value = Some(define.value);
         }
+        for &path in options.user_defined {
+            trie.ensure_path(path).is_user_defined = true;
+        }
         for &path in options.dropped_calls {
             trie.ensure_path(path).ends_dropped_path = true;
         }
@@ -21,6 +25,7 @@ impl<'s> FoldInputs<'s> {
             .map(|node| TrieNode {
                 edges: slice_in(&node.edges, arena),
                 value: node.value,
+                is_user_defined: node.is_user_defined,
                 ends_dropped_path: node.ends_dropped_path,
             })
             .collect();
@@ -37,12 +42,20 @@ impl<'s> FoldInputs<'s> {
             minifies_syntax: options.minifies_syntax,
             max_string_bytes: options.max_string_bytes,
             is_called_before_it_runs: false,
+            stored_by_mocks: StoredByMocks::Nothing,
         }
     }
 
     pub fn for_file_called_before_it_runs(self) -> FoldInputs<'s> {
         FoldInputs {
             is_called_before_it_runs: true,
+            ..self
+        }
+    }
+
+    pub fn for_file_stored_by_mocks(self, stored_by_mocks: StoredByMocks<'s>) -> FoldInputs<'s> {
+        FoldInputs {
+            stored_by_mocks,
             ..self
         }
     }
@@ -110,6 +123,13 @@ impl<'s> FoldInputs<'s> {
         }
     }
 
+    #[inline]
+    pub(super) fn is_user_defined(&self, state: PathState) -> bool {
+        state
+            .node
+            .is_some_and(|node| self.nodes[node as usize].is_user_defined)
+    }
+
     pub(super) fn has_feature(&self, flag: Atom) -> bool {
         self.features.contains(&flag)
     }
@@ -142,6 +162,7 @@ impl<'s> FoldInputs<'s> {
 struct NodeBuilder<'s> {
     edges: Vec<(Atom, u32)>,
     value: Option<DefineValue<'s>>,
+    is_user_defined: bool,
     ends_dropped_path: bool,
 }
 

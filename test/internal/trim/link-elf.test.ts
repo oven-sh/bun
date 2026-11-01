@@ -70,6 +70,9 @@ import {
   model,
   Other,
   otherSource,
+  plainPointerToBuiltinEnteringOtherSources,
+  plainSpellingsEntryPoints,
+  plainSpellingsSource,
   pointerToBuiltinEnteringOtherObjects,
   pointerToBuiltinEnteringOtherSources,
   reviewFiles,
@@ -494,6 +497,33 @@ describeLink("each stub", () => {
     },
   );
 
+  test.each([
+    ["native code", {}],
+    ["bitcode", { spellings: thinLtoFlags }],
+  ])(
+    "written out in C as the engine's header writes it does what its kind says, and the list of removed ranges answers for a pointer: %s",
+    async (_, compileFlags) => {
+      using dir = tempDir("trim-elf-stubs", { ...sources, "spellings.c": plainSpellingsSource });
+      const folder = String(dir);
+      const objects = ["feature_code", "embedder", "spellings"];
+      const result = await linked(folder, { objects, compileFlags, linkFlags: ["-Wl,--undefined=body"] });
+      expect(result.programResult.stdout).toBe(wholeSpellingsOutput + "\n");
+      expect(result.trimmedResult.stdout).toBe(trimmedSpellingsOutput + "\n");
+      expect(await exitCodeOf(folder, "trimmed", ["abort"])).toBe(endedByTrap);
+      const removableLines = entryPointsText(folder, "program")
+        .split(foldedEntryPointsHeading)[0]!
+        .trimEnd()
+        .split("\n");
+      expect([...new Set(removableLines.map(line => line.split(" ")[1]!))].sort()).toEqual(spellingsStubs);
+      const symbols = (await run([tools["llvm-nm"]!, "program"], folder)).stdout;
+      const addressOfFunction = (name: string) =>
+        parseInt(new RegExp(`^([0-9a-f]+) [tT] ${name}$`, "m").exec(symbols)![1]!, 16);
+      const featuresOfEntryPoints = plainSpellingsEntryPoints.map(name => result.featuresAt(addressOfFunction(name)));
+      expect(featuresOfEntryPoints).toEqual(plainSpellingsEntryPoints.map(() => [Extra]));
+      expectRetained(result, ["body", "main"]);
+    },
+  );
+
   for (const [name, isBitcode] of [
     ["native code", false],
     ["bitcode", true],
@@ -711,6 +741,30 @@ describeLink("two features", () => {
         );
       },
     );
+
+    test("have the pointer of the built-in refused where nothing uses the feature behind the guard that aborts, with the guards written out in C", async () => {
+      using dir = tempDir("trim-elf-two", { ...sources, ...plainPointerToBuiltinEnteringOtherSources });
+      const folder = String(dir);
+      const objects = pointerToBuiltinEnteringOtherObjects;
+      const always = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
+      const { table, programResult } = await linked(folder, { objects, builtins: always });
+      expect(table.entryPointNeeds.map(({ own, always, sometimes }) => [own, always, sometimes])).toEqual([
+        [table.sets.findIndex(set => set.join() === `${indexOf(Extra)}`), expect.any(Number), undefined],
+      ]);
+      expect(table.sets[table.entryPointNeeds[0]!.always!]).toEqual([indexOf(Other)]);
+      expect(programResult).toEqual({ ...cleanExit, stdout: "1 0\n" });
+      trimExecutable(join(folder, "program"), join(folder, "without-other"), [], [Extra]);
+      expect(await run([join(folder, "without-other")], folder)).toEqual({
+        ...cleanExit,
+        stdout: `0 ${indexOf(Other) + 1}\n`,
+      });
+      // A program that uses both may have named the built-in, so the pointer stays where the second is forced out.
+      trimExecutable(join(folder, "program"), join(folder, "forced-out"), [Other], [Extra, Other]);
+      expect(await exitCodeOf(folder, "forced-out", [])).toBe(endedByTrap);
+      expect(readFileSync(join(folder, "program.trim", "needs.txt"), "utf8")).toStartWith(
+        `toy.extra needs always ${Other}: enters_other (`,
+      );
+    });
 
     test("fail the link when the table does not list the built-in", async () => {
       using dir = tempDir("trim-elf-two", files);

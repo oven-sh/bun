@@ -80,7 +80,7 @@ console.log(first.name, first.isSafe(), first.isActive(), first.run(), second.la
 // CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|string site=[[w_29]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_27]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="label"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_1]] site=[[w_2]]}] thisType={type=anything} results=[{type=undefined|null|string site=[[w_30]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_31]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_1]] site=[[w_2]] variableName="def"}] thisType={type=anything} results=[{type=undefined|null|string site=[[w_30]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_31]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

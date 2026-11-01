@@ -591,8 +591,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// top-level `DirInfo`, configures the bundler linker / JSX runtime, and
     /// seeds the `npm_*` env vars.
     ///
-    /// Returns a raw `*mut DirInfo` borrowed from the resolver's directory
-    /// cache (process-lifetime).
+    /// Returns the initialized `Transpiler` and a `DirInfo` borrowed from the
+    /// resolver's directory cache (process-lifetime).
     ///
     /// Hot-path note: the common `bun run <package.json script>` case never
     /// transpiles anything through this `Transpiler` (it shells out / boots a
@@ -600,12 +600,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// [`Self::configure_env_for_run_without_linker`] instead — that skips the
     /// `configure_linker()` + `load_tsconfig_json` work, which is the single
     /// largest block of bundler/linker code otherwise faulted in by `bun run`.
-    pub(crate) fn configure_env_for_run(
+    pub(crate) fn configure_env_for_run<'t>(
         ctx: &mut ContextData,
-        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+        this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
-    ) -> crate::Result<bun_resolver::DirInfoRef> {
+    ) -> crate::Result<(&'t mut Transpiler<'static>, bun_resolver::DirInfoRef)> {
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, true)
     }
 
@@ -613,12 +613,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// bundler linker or enable `load_tsconfig_json` — for callers that only
     /// use the returned `Transpiler` for module resolution / env / `$PATH`
     /// lookup (the `bun run <script>` dispatch path), never for transpiling.
-    pub(crate) fn configure_env_for_run_without_linker(
+    pub(crate) fn configure_env_for_run_without_linker<'t>(
         ctx: &mut ContextData,
-        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+        this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
-    ) -> crate::Result<bun_resolver::DirInfoRef> {
+    ) -> crate::Result<(&'t mut Transpiler<'static>, bun_resolver::DirInfoRef)> {
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, false)
     }
 
@@ -637,13 +637,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.configure_linker();
     }
 
-    fn configure_env_for_run_impl(
+    fn configure_env_for_run_impl<'t>(
         ctx: &mut ContextData,
-        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+        this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
         with_linker: bool,
-    ) -> crate::Result<bun_resolver::DirInfoRef> {
+    ) -> crate::Result<(&'t mut Transpiler<'static>, bun_resolver::DirInfoRef)> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
         // Process-lifetime arena singleton for the runner's transpiler;
@@ -652,9 +652,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Out-param constructor — `configure_env_for_run` writes the whole struct.
         // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
         // so callers MUST pass a `MaybeUninit` slot.
-        this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
-        // SAFETY: fully written on the line above.
-        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        let this_transpiler = this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
@@ -774,7 +772,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        Ok(root_dir_info)
+        Ok((this_transpiler, root_dir_info))
     }
 
     /// Best-effort default-loader lookup by file extension. Thin forwarder to
@@ -805,7 +803,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             path,
             loader: Some(Self::loader_of_main(ctx, path, loader)),
             // `[eval]`, `[stdin]`
-            text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
+            text: Some(ctx.runtime_options.eval.script).filter(|it| !it.is_empty()),
         };
         // src/js/internal/html.ts serves every argument that is a page.
         let is_page = |path: &&[u8]| path.ends_with(b".html");
@@ -885,7 +883,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Kick off TCP preconnects for
     /// `--preconnect <url>` before the entry module loads.
-    fn do_preconnect(preconnect: &[Box<[u8]>]) {
+    fn do_preconnect(preconnect: &[&'static [u8]]) {
         if preconnect.is_empty() {
             return;
         }
@@ -893,13 +891,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_removable_features::removable_body!(Fetch, Abort, {
             bun_http::http_thread::init(&Default::default());
 
-            for url_str in preconnect {
-                // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
-                // (CLI argv-derived, never freed); erase the borrow lifetime so
-                // `URL<'static>` (which `AsyncHTTP::preconnect` requires) can hold
-                // a backref into it.
-                let url_str: &'static [u8] =
-                    unsafe { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
+            for &url_str in preconnect {
                 let url = bun_url::URL::parse(url_str);
 
                 if !url.is_http() && !url.is_https() {
@@ -1102,17 +1094,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if let Some(entry) = entry
             && !ctx.runtime_options.eval.script.is_empty()
         {
-            // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
-            // (CLI argv); erase the borrow lifetime so the `Source` (stored in
-            // the VM for the process duration) can backref into it.
-            let script: &'static [u8] = unsafe {
-                ::core::slice::from_raw_parts(
-                    ctx.runtime_options.eval.script.as_ptr(),
-                    ctx.runtime_options.eval.script.len(),
-                )
-            };
-            vm.module_loader.eval_source =
-                Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
+            vm.module_loader.eval_source = Some(Box::new(bun_ast::Source::init_path_string(
+                entry,
+                ctx.runtime_options.eval.script,
+            )));
             vm.module_loader.interactive_eval_script =
                 ctx.runtime_options.eval.interactive_script.take();
             if ctx.runtime_options.eval.eval_and_print {
@@ -1248,13 +1233,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub(crate) fn boot_standalone(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
-        graph: &mut bun_standalone_graph::Graph,
+        graph: &'static bun_standalone_graph::Graph,
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         let runs_compiled_code =
-            bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some();
+            bun_resolver::StandaloneModuleGraph::compiled_program(graph).is_some();
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             runs_compiled_code,
@@ -1278,22 +1263,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::cli::startup_options::reject_unusable_bunfig_settings(ctx);
         }
 
-        // layering — `Options::graph` is the resolver's trait object
-        // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete
-        // `bun_standalone_graph::Graph` implements it. The graph is the
-        // process-global singleton (`StandaloneModuleGraph::set` in
-        // `cli_body.rs`), so erasing the borrow lifetime via raw-pointer
-        // round-trip per PORTING.md §process-lifetime borrows is sound.
-        // SAFETY: `graph` lives in the process-global INSTANCE static; never
-        // freed (`global_exit` ends the process before any deinit).
-        let graph_dyn: &'static dyn bun_resolver::StandaloneModuleGraph = unsafe {
-            &*(std::ptr::from_ref::<bun_standalone_graph::Graph>(graph)
-                as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
-        };
         let vm_ptr = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
             log: std::ptr::NonNull::new(ctx.log),
             args: ctx.args.clone(),
-            graph: Some(graph_dyn),
+            graph: Some(graph),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
             // `Options::dns_result_order` is `u8` until the
@@ -1380,6 +1353,36 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 // without a crate-cycle; `crate::run_main` re-exports it.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `--cpu-prof` and `--heap-prof`. `VirtualMachine::on_exit` writes the profiles.
+pub(crate) fn start_profilers(vm: &mut VirtualMachine, ctx: &ContextData) {
+    // ── CPU profiler ────────────────────────────────────────────────────
+    if ctx.runtime_options.cpu_prof.enabled {
+        let opts = &ctx.runtime_options.cpu_prof;
+        vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+            name: opts.name,
+            dir: opts.dir,
+            md_format: opts.md_format,
+            json_format: opts.json_format,
+            interval: opts.interval,
+        });
+        bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
+        // SAFETY: `vm.jsc_vm` set in `init`.
+        bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
+        bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // ── Heap profiler ───────────────────────────────────────────────────
+    if ctx.runtime_options.heap_prof.enabled {
+        let opts = &ctx.runtime_options.heap_prof;
+        vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
+            name: opts.name,
+            dir: opts.dir,
+            text_format: opts.text_format,
+        });
+        bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// Everything [`Run::start`] needs; built on the stack at the end of
 /// `RunCommand::boot` / `boot_standalone`.
 pub(crate) struct Run<'a> {
@@ -1427,12 +1430,16 @@ impl Run<'_> {
     /// Wire `--eval`/`--print`
     /// node-module globals and `--expose-gc` into the JSC global object.
     fn add_conditional_globals(global: &JSGlobalObject, ctx: &ContextData) {
+        unsafe extern "C" {
+            safe fn Bun__NodeVM__setNewContextsHaveGC(value: bool);
+        }
         let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
             bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(global);
         }
         if ro.expose_gc {
             bun_jsc::cpp::JSC__JSGlobalObject__addGc(global);
+            Bun__NodeVM__setNewContextsHaveGC(true);
         }
     }
 
@@ -1452,41 +1459,7 @@ impl Run<'_> {
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
-        // ── CPU profiler ────────────────────────────────────────────────────
-        if ctx.runtime_options.cpu_prof.enabled {
-            let opts = &ctx.runtime_options.cpu_prof;
-            // SAFETY: `ctx` is process-lifetime; erase `Box<[u8]>` borrows to
-            // `'static` for `CPUProfilerConfig`.
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
-            // SAFETY: same process-lifetime erasure as `name` above.
-            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name,
-                dir,
-                md_format: opts.md_format,
-                json_format: opts.json_format,
-                interval: opts.interval,
-            });
-            bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
-            // SAFETY: `vm.jsc_vm` set in `init`.
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
-            bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
-        }
-
-        // ── Heap profiler ───────────────────────────────────────────────────
-        if ctx.runtime_options.heap_prof.enabled {
-            let opts = &ctx.runtime_options.heap_prof;
-            // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
-            // SAFETY: same process-lifetime erasure as `name` above.
-            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name,
-                dir,
-                text_format: opts.text_format,
-            });
-            bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
-        }
+        start_profilers(vm, ctx);
 
         Self::add_conditional_globals(global, ctx);
 
@@ -2501,7 +2474,7 @@ impl RunCommand {
         // otherwise faulted in for a plain `bun run <script>`).
         let this_transpiler: &'static mut ::core::mem::MaybeUninit<Transpiler<'static>> =
             runner_arena().alloc(::core::mem::MaybeUninit::<Transpiler<'static>>::uninit());
-        let root_dir_info = Self::configure_env_for_run_without_linker(
+        let (this_transpiler, root_dir_info) = Self::configure_env_for_run_without_linker(
             ctx,
             this_transpiler,
             None,
@@ -2510,9 +2483,6 @@ impl RunCommand {
                 store_root_fd: false,
             },
         )?;
-        // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
-        // slot is fully initialized via `MaybeUninit::write`.
-        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         bun_core::asan::register_root_region(
             std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
             ::core::mem::size_of::<Transpiler>(),
@@ -3092,7 +3062,7 @@ impl RunCommand {
         if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
             return Ok(false);
         }
-        ctx.runtime_options.eval.script = list.into_boxed_slice();
+        ctx.runtime_options.eval.script = list.leak();
 
         #[cfg(windows)]
         const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
@@ -3139,9 +3109,8 @@ impl RunCommand {
         // Stash the user's `-e` (so `process._eval` is correct) and boot the
         // bootstrap via `[eval]`; it runs `process._eval` like Node's
         // internal/main/repl.js — no source splicing.
-        ctx.runtime_options.eval.interactive_script =
-            Some(::core::mem::take(&mut ctx.runtime_options.eval.script));
-        ctx.runtime_options.eval.script = bootstrap.to_vec().into_boxed_slice();
+        ctx.runtime_options.eval.interactive_script = Some(ctx.runtime_options.eval.script);
+        ctx.runtime_options.eval.script = bootstrap;
         Self::exec_eval(ctx)
     }
 
@@ -3334,21 +3303,16 @@ type DoneChannel =
 /// `async_http.task` (embedded in ThreadPool.Task) has a stable
 /// address — HTTPThread.schedule does `container_of` on that task,
 /// so moving the struct would break the worker's callback.
-struct RemoteImageDownload {
-    // Assigned immediately after the struct literal in
-    // prefetchRemoteImages (can't be set in the literal because
-    // AsyncHTTP.init needs a pointer to response_buffer, which only
-    // has a stable address once the owning struct is live).
-    // Self-referential: borrows from `url: Box<[u8]>` below.
-    async_http: bun_http::AsyncHTTP<'static>,
+struct RemoteImageDownload<'a> {
+    async_http: bun_http::AsyncHTTP<'a>,
     response_buffer: bun_core::MutableString,
-    url: Box<[u8]>,
-    done: *const DoneChannel,
+    url: &'a [u8],
+    done: &'a DoneChannel,
 }
 
-impl RemoteImageDownload {
+impl RemoteImageDownload<'_> {
     fn on_done(
-        this: *mut RemoteImageDownload,
+        this: *mut Self,
         async_http: *mut bun_http::AsyncHTTP<'static>,
         mut result: bun_http::HTTPClientResult<'_>,
     ) {
@@ -3372,7 +3336,7 @@ impl RemoteImageDownload {
             result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
             // walks `downloads[]` to read per-task state after N wakeups.
-            let _ = (*this.done).write_item(0);
+            let _ = this.done.write_item(0);
         }
     }
 }
@@ -3411,7 +3375,7 @@ impl RunCommand {
         // http(s) ones. If there are no remote URLs we never spawn the
         // HTTP worker or allocate any Download structs.
         let mut seen: StringHashMap<()> = StringHashMap::default();
-        let mut remote_urls: Vec<Box<[u8]>> = Vec::new();
+        let mut remote_urls: Vec<&[u8]> = Vec::new();
         for u in collector.urls.iter() {
             let u: &[u8] = u.as_ref();
             if !u.starts_with(b"http://") && !u.starts_with(b"https://") {
@@ -3426,7 +3390,7 @@ impl RunCommand {
             if remote_urls.try_reserve(1).is_err() {
                 continue;
             }
-            remote_urls.push(u.to_vec().into_boxed_slice());
+            remote_urls.push(u);
         }
         if remote_urls.is_empty() {
             return;
@@ -3434,63 +3398,46 @@ impl RunCommand {
 
         bun_http::http_thread::init(&Default::default());
 
+        let done_channel = DoneChannel::init_static();
+
         // Heap-allocate each Download so AsyncHTTP.task has a stable
         // address (see RemoteImageDownload doc comment).
         let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
         // Drop frees response_buffer + the Box for each download.
-
-        let done_channel = DoneChannel::init_static();
 
         // Kick off every download in parallel. Accumulate tasks into a
         // single ThreadPool.Batch, then ship the whole batch to the
         // HTTP thread in one schedule() call — worker picks up and runs
         // them concurrently.
         let mut batch = bun_threading::thread_pool::Batch::default();
-        for raw_url in remote_urls.into_iter() {
+        for raw_url in remote_urls.iter() {
             let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
                 continue;
             };
-            // `AsyncHTTP` holds non-nullable `fn()` pointers (result_callback,
-            // task.callback), so `mem::zeroed()` would be instant UB. Allocate
-            // an uninit `Box`, write the cheap fields first to obtain stable
-            // heap addresses for `url`/`response_buffer`, then `ptr::write`
-            // the fully-formed `AsyncHTTP` last.
-            let mut d: Box<::core::mem::MaybeUninit<RemoteImageDownload>> =
-                Box::new(::core::mem::MaybeUninit::uninit());
-            let slot = d.as_mut_ptr();
-            // SAFETY: writing to uninitialized fields of a freshly-allocated
-            // `MaybeUninit` slot; no prior value is dropped.
-            unsafe {
-                ::core::ptr::addr_of_mut!((*slot).response_buffer).write(response_buffer);
-                ::core::ptr::addr_of_mut!((*slot).url).write(raw_url);
-                ::core::ptr::addr_of_mut!((*slot).done).write(&raw const done_channel);
-            }
-            // SAFETY: `(*slot).url` is heap-owned and outlives the AsyncHTTP
-            // (freed only when `downloads` drops after the channel drains).
-            let url_static: &'static [u8] = unsafe {
-                let url = &*::core::ptr::addr_of!((*slot).url);
-                ::core::slice::from_raw_parts(url.as_ptr(), url.len())
-            };
-            let d_ptr: *mut RemoteImageDownload = slot;
-            let async_http = bun_http::AsyncHTTP::init(
-                bun_http::Method::GET,
-                bun_url::URL::parse(url_static),
-                Default::default(),
-                b"",
-                b"",
-                bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
-                    d_ptr,
-                    RemoteImageDownload::on_done,
-                ),
-                bun_http::FetchRedirect::Follow,
-                Default::default(),
+            // The callback needs the heap address before there is a value to put there.
+            let mut d: Box<::core::mem::MaybeUninit<RemoteImageDownload>> = Box::new_uninit();
+            let d_ptr: *mut RemoteImageDownload = d.as_mut_ptr();
+            let mut d = Box::write(
+                d,
+                RemoteImageDownload {
+                    async_http: bun_http::AsyncHTTP::init(
+                        bun_http::Method::GET,
+                        bun_url::URL::parse(raw_url),
+                        Default::default(),
+                        b"",
+                        b"",
+                        bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
+                            d_ptr,
+                            RemoteImageDownload::on_done,
+                        ),
+                        bun_http::FetchRedirect::Follow,
+                        Default::default(),
+                    ),
+                    response_buffer,
+                    url: raw_url,
+                    done: &done_channel,
+                },
             );
-            // SAFETY: last field — all four fields are now initialized.
-            unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
-            // SAFETY: every field of `RemoteImageDownload` was `ptr::write`n above.
-            let mut d: Box<RemoteImageDownload> = unsafe {
-                bun_core::heap::take(bun_core::heap::into_raw(d).cast::<RemoteImageDownload>())
-            };
             d.async_http.schedule(&mut batch);
             downloads.push(d);
         }
@@ -3597,7 +3544,7 @@ impl RunCommand {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            out_map.put_assume_capacity(&d.url, path.into_boxed_slice());
+            out_map.put_assume_capacity(d.url, path.into_boxed_slice());
         }
     }
 
@@ -3808,7 +3755,7 @@ impl RunCommand {
         }
 
         let mut results = ResultList::new();
-        let mut descriptions: Vec<&[u8]> = Vec::new();
+        let mut descriptions: Vec<&'static [u8]> = Vec::new();
 
         if FILTER != Filter::ScriptExclude {
             if let Some(defaults) = default_completions {
@@ -4046,41 +3993,17 @@ impl RunCommand {
         this_transpiler.resolver.care_about_bin_folder = false;
         this_transpiler.resolver.care_about_scripts = false;
 
-        // `ShellCompletions` stores `&'static [&'static [u8]]`; the
-        // keys interned into `filename_store` / boxed from static tables outlive
-        // the process. The owning `results` ArrayHashMap is held in a process-
-        // lifetime arena slot so the borrowed keys remain valid.
-        let mut all_keys: Vec<&'static [u8]> = results
-            .keys()
-            .iter()
-            .map(|k| -> &'static [u8] {
-                // SAFETY: every key is a freshly-boxed `Box<[u8]>` owned by
-                // `results`. The owning `ArrayHashMap` is parked in the
-                // process-lifetime `runner_arena()` below and `bun_alloc::Arena`
-                // never runs `Drop`, so the boxed bytes live until process
-                // exit and erasing to `'static` is sound.
-                unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }
-            })
-            .collect();
-        strings::sort_asc(&mut all_keys);
-        // Park the owning maps in the runner arena (process-lifetime) so the
-        // `'static` slices above remain valid without leaking/forgetting.
-        let parked = runner_arena().alloc(results);
+        // `ShellCompletions` borrows the keys for `'static`: the arena never runs `Drop`.
+        let results: &'static ResultList = runner_arena().alloc(results);
         bun_core::asan::register_root_region(
-            std::ptr::from_ref::<ResultList>(parked).cast(),
+            std::ptr::from_ref::<ResultList>(results).cast(),
             ::core::mem::size_of::<ResultList>(),
         );
+        let mut all_keys: Vec<&'static [u8]> = results.keys().iter().map(|k| &**k).collect();
+        strings::sort_asc(&mut all_keys);
         shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
-        shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(
-            // SAFETY: descriptions borrow into the package.json source buffer
-            // (process-lifetime); erase to `'static`.
-            unsafe {
-                ::core::slice::from_raw_parts(
-                    descriptions.as_ptr().cast::<&'static [u8]>(),
-                    descriptions.len(),
-                )
-            },
-        ));
+        shell_out.descriptions =
+            std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&descriptions));
 
         Ok(shell_out)
     }

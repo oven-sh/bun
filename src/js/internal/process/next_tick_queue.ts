@@ -43,8 +43,12 @@ function takeTick(callback: TickCallback | undefined, frame: Frame): Tick {
 }
 
 // process.nextTick of a program that is compiled ahead of time.
-function nextTick(cb: TickCallback, ...args: unknown[]) {
-  if (typeof cb !== "function") throw $ERR_INVALID_ARG_TYPE("callback", "function", cb);
+function /* as in builtins/ProcessObjectInternals.ts: function nextTick */ nextTick(
+  cb: TickCallback,
+  ...args: unknown[]
+) {
+  ("frames are native code");
+  if (typeof cb !== "function") throw require("internal/validate_function")["::bunternal::"](cb, "callback");
   if (!isSetUp) setUp();
   if (tickingProcess._exiting) return;
 
@@ -52,7 +56,7 @@ function nextTick(cb: TickCallback, ...args: unknown[]) {
   const frame: Frame = $getInternalField(asyncContext, 0);
   if (tickInitHooks.length !== 0) {
     ("unlikely");
-    ring.pushWithInitHooks!(cb, count !== 0 ? listOf(...args) : undefined, frame);
+    (whileHooked.push ?? ring.pushWithInitHooks)!(cb, count !== 0 ? listOf(...args) : undefined, frame);
   } else if (count > 3) {
     ("unlikely");
     pushWithList(cb, listOf(...args), frame);
@@ -152,6 +156,12 @@ function install(process: NodeJS.Process, marker: unknown, start: () => void, pr
   return processNextTick;
 }
 
+// What follows is for nextTick alone. It stands behind the functions that run without ahead-of-time compilation too, whose lines a stack names.
+
+// What nextTick queues a tick with while an `init` hook is enabled. node:async_hooks puts it here with the first hook, where it is compiled with the program.
+// An executable that runs code from outside makes the modules that it does not hold out of the library's text. That text fills `ring.pushWithInitHooks` alone.
+const whileHooked: { push: TickRing["pushInsideNextTick"] | undefined } = { push: undefined };
+
 export default {
   install,
   setUp,
@@ -165,4 +175,5 @@ export default {
   queueTick3,
   ring,
   takeTick,
+  whileHooked,
 };

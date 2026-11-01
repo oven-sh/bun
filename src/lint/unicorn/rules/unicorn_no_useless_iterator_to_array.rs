@@ -6,14 +6,14 @@ use bun_lint::rule::Plugin;
 /// Disallow unnecessary `.toArray()` on iterators.
 pub struct NoUselessIteratorToArray;
 
-const ITERABLE_ACCEPTING: Message =
-    Message::new("", "`{{description}}` accepts an iterable, `.toArray()` is unnecessary.");
-const FOR_OF: Message = Message::new("", "`for…of` can iterate over an iterable, `.toArray()` is unnecessary.");
-const YIELD_STAR: Message = Message::new("", "`yield*` can delegate to an iterable, `.toArray()` is unnecessary.");
-const SPREAD: Message = Message::new("", "Spread works on iterables, `.toArray()` is unnecessary.");
-const ITERATOR_METHOD: Message =
-    Message::new("", "`Iterator` has a `.{{method}}()` method, `.toArray()` is unnecessary.");
-const REMOVE_TO_ARRAY: Message = Message::new("", "Remove `.toArray()`.");
+const ITERABLE_ACCEPTING: &Message =
+    &Message::new("", "`{{description}}` accepts an iterable, `.toArray()` is unnecessary.");
+const FOR_OF: &Message = &Message::new("", "`for…of` can iterate over an iterable, `.toArray()` is unnecessary.");
+const YIELD_STAR: &Message = &Message::new("", "`yield*` can delegate to an iterable, `.toArray()` is unnecessary.");
+const SPREAD: &Message = &Message::new("", "Spread works on iterables, `.toArray()` is unnecessary.");
+const ITERATOR_METHOD: &Message =
+    &Message::new("", "`Iterator` has a `.{{method}}()` method, `.toArray()` is unnecessary.");
+const REMOVE_TO_ARRAY: &Message = &Message::new("", "Remove `.toArray()`.");
 
 /// The `a.method` in `a.method(..)`, if neither has a `?.` and the name isn't computed.
 fn plain_method_callee(call: Call<'_>) -> Option<Expr<'_>> {

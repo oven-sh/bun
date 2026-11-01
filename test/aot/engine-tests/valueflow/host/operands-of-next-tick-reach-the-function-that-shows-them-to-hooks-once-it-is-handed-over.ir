@@ -1,5 +1,5 @@
-# ring.pushWithInitHooks = show; process.nextTick(callback); function show(cb) { cb.seen() }
-# While a hook of node:async_hooks is enabled, process.nextTick hands the callback and its arguments to the function that lies on the ring, which node:async_hooks has put there.
+# whileHooked.push = show; process.nextTick(callback); function show(cb) { cb.seen() }
+# While a hook of node:async_hooks is enabled, process.nextTick hands the callback and its arguments to the function that node:async_hooks has put into whileHooked.push.
 # A row keeps what lies there in a native cell, and the overload calls it with the operands of the call. operands-of-next-tick-reach-nobody-without-a-hook.ir has no store.
 # LIBRARY: own
 # RUN: valueflow-solve calls
@@ -8,16 +8,16 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal/process/next_tick_queue" displayPath="internal/process/next_tick_queue" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessNext_tick_queue body=f2
 entry module=m0
-runtimefunction id=65580 function=f1
-layout L0 name="Exports" fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="ring" declared={type=anything} flags=[IsRequired]}]
-layout L1 name="Ring" fields=[{key="pushWithInitHooks" declared={type=anything} flags=[IsRequired]}]
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f1
+layout L0 name="Exports" fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="whileHooked" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="WhileHooked" fields=[{key="push" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="nextTick" module=m1 declared={type=anything} initialization=Function function=f3 flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = RequireModule module=m1 referrer=m0 specifier="internal/process/next_tick_queue"
-    v1 = PropGet v0 key="ring"
+    v1 = PropGet v0 key="whileHooked"
     v2 = NewClosure function=f5
-    PropSet v1, v2 key="pushWithInitHooks"
+    PropSet v1, v2 key="push"
     v4 = Builtin builtin=Process
     v5 = PropGet v4 key="nextTick"
     v6 = NewClosure function=f4
@@ -26,7 +26,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v9 = Call v5, v4, v6
     Return
 }
-function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65580 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = RequireModule module=m1 referrer=m1 specifier="internal/process/next_tick_queue"
     v4 = PropGet v3 key="nextTick"

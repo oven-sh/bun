@@ -1,8 +1,9 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunExe, isASAN, isDebug, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const modules = 3000;
 const exportsOfEach = 10;
@@ -38,11 +39,13 @@ test.skipIf(isDebug || isASAN)(
   "the work of a test build grows with the number of its modules, not with the square of it",
   async () => {
     using dir = tempDir("many-modules-in-place", files());
+    // The limit is on the builds. A busy disk takes 20 s to write the modules.
+    const began = performance.now();
     const plain = await seen(String(dir), ["test", "./main.test.ts"]);
     expect(plain.seen.length).toBe(1);
     // From the sources, and as compiled code.
     for (const flag of ["--aot", "--debug-aot"])
       expect({ flag, ...(await seen(String(dir), ["test", flag, "./main.test.ts"])) }).toEqual({ flag, ...plain });
+    expect(performance.now() - began).toBeLessThan(40_000);
   },
-  40_000,
 );

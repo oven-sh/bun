@@ -6,6 +6,7 @@
 //! is replaced wholesale.
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
+use core::mem::MaybeUninit;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque-type helper — thin sugar over the canonical
@@ -743,9 +744,9 @@ unsafe extern "C" {
     ) -> *mut u8;
 
     // ── SHA-1 ────────────────────────────────────────────────────────────
-    // `*_Init` are write-only initialisers but stay `*mut`: callers feed
-    // `MaybeUninit::as_mut_ptr()`, and forcing `&mut CTX` would require a
-    // valid (initialised) `CTX` first — defeating the point.
+    // `*_Init` are write-only initialisers. They take `*mut` because callers feed
+    // `MaybeUninit::as_mut_ptr()`; `&mut CTX` would require a valid (initialised)
+    // `CTX` first. (`&mut MaybeUninit<CTX>`, as on `HMAC_CTX_init`, would not.)
     pub fn SHA1_Init(sha: *mut SHA_CTX) -> c_int;
     pub fn SHA1_Update(sha: *mut SHA_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA1_Final(out: *mut u8, sha: *mut SHA_CTX) -> c_int;
@@ -1103,7 +1104,8 @@ unsafe extern "C" {
     pub safe fn ERR_load_crypto_strings();
 
     // ── HMAC (streaming) ─────────────────────────────────────────────────
-    pub fn HMAC_CTX_init(ctx: *mut HMAC_CTX);
+    // Write-only initialiser: reads nothing from `ctx`.
+    pub safe fn HMAC_CTX_init(ctx: &mut MaybeUninit<HMAC_CTX>);
     pub fn HMAC_CTX_cleanup(ctx: *mut HMAC_CTX);
     pub fn HMAC_CTX_copy(dest: *mut HMAC_CTX, src: *const HMAC_CTX) -> c_int;
     pub fn HMAC_Init_ex(

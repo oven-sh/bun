@@ -597,13 +597,6 @@ void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)
         vm.setOnEachMicrotaskTick(nullptr);
 }
 
-GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
-{
-    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &globalObjectMethodTable());
-    ptr->finishCreation(vm);
-    return ptr;
-}
-
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, &globalObjectMethodTable());

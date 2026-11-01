@@ -1808,8 +1808,8 @@ console.log("survived", require("./late.js"));`,
           "wrapper.cjs": `
             const path = require("node:path");
             ${print("wrapper.cjs", isMain, id)}
-            if (!process.env.WRAPPER_RAN) {
-              process.env.WRAPPER_RAN = "1";
+            if (!process.launcherRan) {
+              process.launcherRan = true;
               process.on("exit", () => { ${print("at exit", mainModule)} });
               ${start("target.cjs")}
               setImmediate(() => {
@@ -1940,11 +1940,14 @@ console.log("survived", require("./late.js"));`,
             });
             Module.runMain(path.resolve("outer.cjs"));
           `,
-          "outer.cjs": print("outer.cjs", isMain, id),
-          "inner.cjs": print("inner.cjs", isMain, id),
+          "outer.cjs": print("outer.cjs", isMain, id, parent),
+          "inner.cjs": print("inner.cjs", isMain, id, parent),
         },
         ["wrapper.cjs"],
-        ["inner.cjs: require.main===module true | id .", "outer.cjs: require.main===module true | id ."],
+        [
+          "inner.cjs: require.main===module true | id . | parent null",
+          "outer.cjs: require.main===module true | id . | parent null",
+        ],
         { bunOnly: true },
       ],
       // Node has no import.meta in a CommonJS module.
@@ -2014,8 +2017,8 @@ console.log("survived", require("./late.js"));`,
           "host.cjs": `
             const path = require("node:path");
             ${print("host.cjs", id)}
-            if (!process.env.HOST_RAN) {
-              process.env.HOST_RAN = "1";
+            if (!process.hostRan) {
+              process.hostRan = true;
               process.on("exit", () => { ${print("at exit", mainModule)} });
               ${start("other.cjs")}
               setImmediate(() => new Bun.ModuleGraph().import(__filename));

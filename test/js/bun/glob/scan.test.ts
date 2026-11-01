@@ -24,7 +24,18 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  dtUnknownReaddir,
+  isLinux,
+  isRoot,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+  unprivilegedSpawnOptions,
+} from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -1192,6 +1203,311 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
       new Glob("linkdir/file.txt").scan({ cwd: String(dir), followSymlinks: false }),
     );
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
+  });
+
+  // In relative output the `..` of a pattern goes to the file system with the path. On
+  // POSIX `link/..` is then the parent of the link's target, as for `ls link/..`.
+  describe("`..` after a symlink", () => {
+    // a/lnkdir -> real          the target and the link have the same parent
+    // up -> a                   the same, for a link in the cwd
+    // a/real/loop -> .          the target's parent is `a`, the link's is `a/real`
+    // a/far -> ../other/deep    the target's parent is `other`
+    function makeDotDotTree(prefix: string) {
+      const dir = tempDir(prefix, {
+        "a/real/x.ts": "",
+        "a/real/sub/s.ts": "",
+        "a/f.ts": "",
+        "other/o.ts": "",
+        "other/deep/d.ts": "",
+        "top.ts": "",
+      });
+      const link = (target: string, at: string, type: "dir" | "file" = "dir") =>
+        fs.symlinkSync(target, path.join(String(dir), at), type);
+      link("real", "a/lnkdir");
+      link("a", "up");
+      link(".", "a/real/loop");
+      link(path.join("..", "other", "deep"), "a/far");
+      link("f.ts", "a/flink", "file");
+      link("missing", "a/broken");
+      return dir;
+    }
+
+    type Scanned = string[] | { code: string; syscall: string; path: string };
+    const errorOf = (e: any): Scanned => ({ code: e.code, syscall: e.syscall, path: e.path });
+    // What each pattern lists, or the error of its scan, so that one throw does not hide the other rows.
+    const scanEach = (cwd: string, patterns: string[], opts: GlobScanOptions = {}) => {
+      const scanned: Record<string, Scanned> = {};
+      for (const pattern of patterns) {
+        try {
+          scanned[pattern] = norm(Array.from(new Glob(pattern).scanSync({ cwd, ...opts })));
+        } catch (e) {
+          scanned[pattern] = errorOf(e);
+        }
+      }
+      return scanned;
+    };
+
+    const sibling: Record<string, string[]> = {
+      "a/lnkdir/../f.ts": ["a/lnkdir/../f.ts"],
+      "a/lnkdir/../x.ts": [],
+      "a/lnkdir/../*.ts": ["a/lnkdir/../f.ts"],
+      "a/lnkdir/../../*.ts": ["a/lnkdir/../../top.ts"],
+      "a/lnkdir/../**/*.ts": ["a/lnkdir/../f.ts", "a/lnkdir/../real/sub/s.ts", "a/lnkdir/../real/x.ts"],
+      "a/lnkdir/./../f.ts": ["a/lnkdir/./../f.ts"],
+      "./a/lnkdir/../f.ts": ["./a/lnkdir/../f.ts"],
+      "a/lnkdir/../real/x.ts": ["a/lnkdir/../real/x.ts"],
+      "a/lnkdir/../lnkdir/x.ts": ["a/lnkdir/../lnkdir/x.ts"],
+      "a/lnkdir/sub/../x.ts": ["a/lnkdir/sub/../x.ts"],
+      "a/lnkdir/sub/../../lnkdir/x.ts": ["a/lnkdir/sub/../../lnkdir/x.ts"],
+      "up/../top.ts": ["up/../top.ts"],
+      "up/../up/f.ts": ["up/../up/f.ts"],
+      "a/flink/../*.ts": [],
+      "a/broken/../*.ts": [],
+    };
+    // Windows takes `..` off the path text before the open, so there `link\..` is the link's own parent.
+    const elsewhere: Record<string, string[]> = {
+      "a/lnkdir/loop/../f.ts": ["a/lnkdir/loop/../f.ts"],
+      "a/real/loop/../*.ts": ["a/real/loop/../f.ts"],
+      "a/far/../*.ts": ["a/far/../o.ts"],
+      "a/far/../deep/d.ts": ["a/far/../deep/d.ts"],
+      "a/far/../../top.ts": ["a/far/../../top.ts"],
+    };
+    const expected = isWindows ? sibling : { ...sibling, ...elsewhere };
+
+    test("scanSync lists the parent of the link's target", () => {
+      using dir = makeDotDotTree("glob-scan-symlink-dotdot");
+      const cwd = String(dir);
+      const scanned = scanEach(cwd, Object.keys(expected));
+      expect(scanned).toEqual(expected);
+      // `path.join` would take the `..` off: the file system has to resolve it.
+      const listed = Object.values(scanned).flat() as string[];
+      expect(listed.filter(matched => !fs.existsSync(`${cwd}/${matched}`))).toEqual([]);
+    });
+
+    test("scan lists the parent of the link's target", async () => {
+      using dir = makeDotDotTree("glob-scan-symlink-dotdot-async");
+      const cwd = String(dir);
+      const scanned = await Promise.all(
+        Object.keys(expected).map(async pattern => [
+          pattern,
+          await Array.fromAsync(new Glob(pattern).scan({ cwd })).then(norm, errorOf),
+        ]),
+      );
+      expect(Object.fromEntries(scanned)).toEqual(expected);
+    });
+
+    test("with followSymlinks, onlyFiles and absolute", () => {
+      using dir = makeDotDotTree("glob-scan-symlink-dotdot-options");
+      const cwd = String(dir);
+      expect({
+        ...scanEach(cwd, ["a/l*/../x.ts", "a/l*/../f.ts", "a/lnkdir/../*/x.ts"], { followSymlinks: true }),
+        ...scanEach(cwd, ["a/lnkdir/../*"], { onlyFiles: false }),
+      }).toEqual({
+        "a/l*/../x.ts": [],
+        "a/l*/../f.ts": ["a/lnkdir/../f.ts"],
+        "a/lnkdir/../*/x.ts": ["a/lnkdir/../lnkdir/x.ts", "a/lnkdir/../real/x.ts"],
+        "a/lnkdir/../*": [
+          "a/lnkdir/../broken",
+          "a/lnkdir/../f.ts",
+          "a/lnkdir/../far",
+          "a/lnkdir/../flink",
+          "a/lnkdir/../lnkdir",
+          "a/lnkdir/../real",
+        ],
+      });
+
+      // `absolute` takes the `..` off the text of its output, which names the same file after these links.
+      const absolute = Object.fromEntries(
+        Object.entries(sibling).map(([pattern, listed]) => [pattern, norm(listed.map(it => path.join(cwd, it)))]),
+      );
+      expect(scanEach(cwd, Object.keys(sibling), { absolute: true })).toEqual(absolute);
+    });
+
+    // A `**` after the `..` goes through `lnkdir` again. The walk left the link's target, so that is no cycle.
+    test("`**` after the `..` lists what it lists after a directory", () => {
+      using dir = makeDotDotTree("glob-scan-symlink-dotdot-globstar");
+      const cwd = String(dir);
+      const forms = [
+        ["a/lnkdir/../**/*.ts", "a/real/../**/*.ts"],
+        ["a/lnkdir/sub/../../**/*.ts", "a/real/sub/../../**/*.ts"],
+      ];
+      for (const [throughLink, throughDirectory] of forms) {
+        const prefix = (pattern: string) => pattern.slice(0, pattern.indexOf("**"));
+        const listed = scanEach(cwd, [throughLink, throughDirectory], { followSymlinks: true });
+        expect(listed[throughDirectory]).toContain(prefix(throughDirectory) + "lnkdir/x.ts");
+        expect(listed[throughLink]).toEqual(
+          (listed[throughDirectory] as string[]).map(it => it.replace(prefix(throughDirectory), prefix(throughLink))),
+        );
+      }
+    });
+
+    test("a pattern without a wildcard lists its path exactly when stat finds a file there", () => {
+      using dir = makeDotDotTree("glob-scan-symlink-dotdot-literal");
+      const cwd = String(dir);
+      const root = fs.realpathSync(cwd);
+      const stat = (relative: string) => fs.statSync(`${cwd}/${relative}`, { throwIfNoEntry: false });
+      const folders = ["a", "real", "lnkdir", "loop", "sub", "far", "up", "other", "deep", ".", ".."];
+      const files = ["f.ts", "x.ts", "s.ts", "o.ts", "d.ts", "top.ts"];
+      const patterns: string[] = [];
+      const addBelow = (prefix: string, depth: number) => {
+        for (const file of files) patterns.push(prefix + file);
+        if (depth === 3) return;
+        for (const folder of folders) {
+          // A `..` in the cwd leaves the tree.
+          if (folder === ".." && fs.realpathSync(`${cwd}/${prefix}`) === root) continue;
+          if (stat(prefix + folder)?.isDirectory()) addBelow(`${prefix}${folder}/`, depth + 1);
+        }
+      };
+      addBelow("", 0);
+
+      const found = patterns.filter(pattern => stat(pattern)?.isFile());
+      expect(found).toEqual(expect.arrayContaining(["a/lnkdir/../f.ts", "a/lnkdir/loop/x.ts", "up/../top.ts"]));
+      const scanned = scanEach(cwd, patterns);
+      const wrong = patterns.filter(
+        pattern => !Bun.deepEquals(scanned[pattern], found.includes(pattern) ? [pattern] : []),
+      );
+      expect(Object.fromEntries(wrong.map(pattern => [pattern, scanned[pattern]]))).toEqual({});
+    });
+
+    // An absolute pattern starts its walk at the first wildcard, here in `a`.
+    test.skipIf(isWindows)("in an absolute pattern", () => {
+      using dir = makeDotDotTree("glob-scan-symlink-dotdot-absolute-pattern");
+      const cwd = String(dir);
+      const listed = Array.from(new Glob(`${cwd}/a/l*/../*.ts`).scanSync({ followSymlinks: true }));
+      expect(listed.map(it => fs.realpathSync(it))).toEqual([fs.realpathSync(`${cwd}/a/f.ts`)]);
+    });
+
+    // `absolute` joins its output as text, so after a link to another parent it names a path that the walk did not find.
+    describe.skipIf(isWindows)("with absolute and a link whose target has another parent", () => {
+      test.failing("every path is the file that the walk found", () => {
+        using dir = makeDotDotTree("glob-scan-symlink-dotdot-absolute-elsewhere");
+        const cwd = String(dir);
+        const scanned = scanEach(cwd, Object.keys(elsewhere), { absolute: true });
+        const found = Object.fromEntries(
+          Object.entries(elsewhere).map(([pattern, listed]) => [
+            pattern,
+            listed.map(it => fs.realpathSync(`${cwd}/${it}`)),
+          ]),
+        );
+        expect(
+          Object.fromEntries(
+            Object.entries(scanned).map(([pattern, listed]) => [
+              pattern,
+              Array.isArray(listed) ? listed.map(it => (fs.existsSync(it) ? fs.realpathSync(it) : it)) : listed,
+            ]),
+          ),
+        ).toEqual(found);
+      });
+    });
+
+    test.skipIf(isWindows)("a broken link before `..` is still a broken link", () => {
+      using dir = makeDotDotTree("glob-scan-symlink-dotdot-broken");
+      const cwd = String(dir);
+      expect(() => [...new Glob("a/broken/../*.ts").scanSync({ cwd, throwErrorOnBrokenSymlink: true })]).toThrow(
+        expect.objectContaining({ code: "ENOENT", syscall: "open", path: "a/broken" }),
+      );
+    });
+
+    // For a child: prints what each pattern lists from the child's cwd, or the error of the scan.
+    const scanScript = (patterns: string[]) => `
+      const scanned = {};
+      for (const pattern of ${JSON.stringify(patterns)}) {
+        try {
+          scanned[pattern] = [...new Bun.Glob(pattern).scanSync({ cwd: "." })].sort();
+        } catch (e) {
+          scanned[pattern] = { code: e.code, syscall: e.syscall, path: e.path };
+        }
+      }
+      console.log(JSON.stringify(scanned));
+    `;
+
+    // Without an entry type from readdir, the walker finds the link with `lstat`.
+    describe.skipIf(!dtUnknownReaddir.available)("readdir that reports no entry type", () => {
+      let env: NodeJS.Dict<string>;
+      // The first call compiles the shim, which can take longer than the default hook timeout.
+      beforeAll(async () => {
+        if (dtUnknownReaddir.available) env = await dtUnknownReaddir.env();
+      }, 30_000);
+
+      test("scanSync lists the parent of the link's target", async () => {
+        using dir = makeDotDotTree("glob-scan-symlink-dotdot-dt-unknown");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", scanScript(Object.keys(expected))],
+          cwd: String(dir),
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(dtUnknownReaddir.marker);
+        expect(JSON.parse(stdout)).toEqual(expected);
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    // Windows has no mode bits. Root ignores them, so the scan runs in a child that is not root.
+    test.skipIf(isWindows)("a parent of the link's target that cannot be listed is an error", async () => {
+      using dir = tempDir("glob-scan-symlink-dotdot-perms", {
+        "a/f.ts": "",
+        "other/o.ts": "",
+        "other/deep/d.ts": "",
+      });
+      const cwd = String(dir);
+      fs.symlinkSync(path.join("..", "other", "deep"), path.join(cwd, "a", "far"), "dir");
+      using unprivileged = unprivilegedSpawnOptions(cwd);
+      const other = path.join(cwd, "other");
+      // Mode 311: the directory can be entered and cannot be listed.
+      fs.chmodSync(other, 0o311);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", scanScript(["a/far/*.ts", "a/far/../*.ts"])],
+          cwd,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          "a/far/*.ts": ["a/far/d.ts"],
+          "a/far/../*.ts": { code: "EACCES", syscall: "open", path: "a/far/.." },
+        });
+        expect(exitCode).toBe(0);
+      } finally {
+        fs.chmodSync(other, 0o755);
+      }
+    });
+  });
+
+  // Only a `**` can walk into the target of a link without end. A name or a `*` is used up by one entry.
+  test("a link to a directory that the walk is inside of is entered by a name or a `*`", () => {
+    using dir = tempDir("glob-scan-symlink-reenter", {
+      "a/real/x.ts": "",
+      "m/f.ts": "",
+    });
+    const cwd = String(dir);
+    fs.symlinkSync("real", path.join(cwd, "a", "lnkdir"), "dir");
+    fs.symlinkSync(".", path.join(cwd, "a", "real", "loop"), "dir");
+    for (const self of ["l1", "l2", "l3"]) fs.symlinkSync(".", path.join(cwd, "m", self), "dir");
+    const scan = (pattern: string, opts: GlobScanOptions = {}) =>
+      norm(Array.from(new Glob(pattern).scanSync({ cwd, ...opts })));
+
+    expect({
+      "a/lnkdir/loop/x.ts": scan("a/lnkdir/loop/x.ts"),
+      "a/real/loop/loop/x.ts": scan("a/real/loop/loop/x.ts"),
+      "a/*/loop/x.ts": scan("a/*/loop/x.ts", { followSymlinks: true }),
+      "m/*/f.ts": scan("m/*/f.ts", { followSymlinks: true }).length,
+      "m/*/*/f.ts": scan("m/*/*/f.ts", { followSymlinks: true }).length,
+      "m/**/f.ts": scan("m/**/f.ts", { followSymlinks: true }),
+    }).toEqual({
+      "a/lnkdir/loop/x.ts": ["a/lnkdir/loop/x.ts"],
+      "a/real/loop/loop/x.ts": ["a/real/loop/loop/x.ts"],
+      "a/*/loop/x.ts": ["a/lnkdir/loop/x.ts", "a/real/loop/x.ts"],
+      "m/*/f.ts": 3,
+      "m/*/*/f.ts": 9,
+      "m/**/f.ts": ["m/f.ts", "m/l1/f.ts", "m/l2/f.ts", "m/l3/f.ts"],
+    });
   });
 });
 

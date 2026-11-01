@@ -147,6 +147,11 @@ pub(crate) struct IncrementalResult {
     pub(crate) failures_removed: Vec<SerializedFailure>,
     pub(crate) client_components_affected: Vec<incremental_graph::ServerFileIndex>,
     pub(crate) failures_added: Vec<SerializedFailure>,
+    /// Failed files that a build of this bundle found missing, each with the indices of its importers from
+    /// before the bundle. `retract_dead_failures` decides their failures.
+    pub(crate) failed_files_deleted: Vec<(serialized_failure::OwnerPacked, Vec<u32>)>,
+    /// Failed files that lost their last importer in this bundle.
+    pub(crate) failed_files_unimported: Vec<serialized_failure::OwnerPacked>,
 }
 impl IncrementalResult {
     pub(crate) const EMPTY: IncrementalResult = IncrementalResult {
@@ -156,6 +161,8 @@ impl IncrementalResult {
         had_adjusted_edges: false,
         failures_removed: Vec::new(),
         failures_added: Vec::new(),
+        failed_files_deleted: Vec::new(),
+        failed_files_unimported: Vec::new(),
         client_components_added: Vec::new(),
         client_components_removed: Vec::new(),
         client_components_affected: Vec::new(),
@@ -174,7 +181,16 @@ impl IncrementalResult {
         self.failures_removed.clear();
         self.client_components_affected.clear();
         self.failures_added.clear();
+        self.failed_files_deleted.clear();
+        self.failed_files_unimported.clear();
         // NOTE: `had_adjusted_edges` is NOT reset here (matches spec).
+    }
+
+    /// True if this bundle gave the file a failure. `File.failed` cannot tell that failure from an older one.
+    pub(crate) fn added_failure_for(&self, owner: serialized_failure::OwnerPacked) -> bool {
+        self.failures_added
+            .iter()
+            .any(|failure| failure.file_owner() == Some(owner))
     }
 }
 
@@ -514,7 +530,7 @@ pub(crate) struct DevServer {
     pub(crate) assets: Assets,
     /// Similar to `assets`, specialized for the additional needs of source mappings.
     pub(crate) source_maps: SourceMapStore,
-    /// All bundling failures are stored until a file is saved and rebuilt.
+    /// All bundling failures are stored until `IncrementalGraph::retract_failure` removes them.
     /// They are stored in the wire format the HMR runtime expects so that
     /// serialization only happens once.
     /// Keyed by `failure.owner`, stored as `OwnerPacked → SerializedFailure`.

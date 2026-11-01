@@ -166,22 +166,13 @@ impl DevServer {
                 continue;
             }
             let file_index = html.bundled_file;
-            let failed_in_this_bundle = |failure: &SerializedFailure| {
-                matches!(
-                    failure.get_owner(),
-                    serialized_failure::Owner::Client(owner) if owner == file_index
-                )
-            };
+            let owner = serialized_failure::OwnerPacked::new(bake::Side::Client, file_index.get());
             let has_failure = match route_bundle.server_state {
                 route_bundle::State::Unqueued | route_bundle::State::DeferredToNextBundle => {
                     continue;
                 }
                 // `finalize_bundle` answers this bundle's requests from the failures it added: re-add an older one.
-                route_bundle::State::Bundling => self
-                    .incremental_result
-                    .failures_added
-                    .iter()
-                    .any(failed_in_this_bundle),
+                route_bundle::State::Bundling => self.incremental_result.added_failure_for(owner),
                 // An earlier failure still gates the route, unless this bundle cleared it without delivering html.
                 route_bundle::State::PossibleBundlingFailures | route_bundle::State::Loaded => {
                     self.client_graph.bundled_files.values()[file_index.get() as usize].failed
@@ -376,6 +367,93 @@ impl DevServer {
             )?;
         }
         Ok(())
+    }
+
+    /// Takes back the failure of each failed file that this bundle found missing or left with no importer, if
+    /// the failure is dead. Runs after Pass 2: the edges and the failures of the bundle are final then.
+    pub(super) fn retract_dead_failures(&mut self) {
+        let result = &mut self.incremental_result;
+        let deleted = core::mem::take(&mut result.failed_files_deleted);
+        let unimported = core::mem::take(&mut result.failed_files_unimported);
+        let deleted = deleted
+            .iter()
+            .map(|(owner, importers)| (*owner, Some(&importers[..])));
+        for (owner, importers) in deleted.chain(unimported.iter().map(|owner| (*owner, None))) {
+            let file = owner.file();
+            match owner.side() {
+                bake::Side::Client => {
+                    if self.failure_is_dead(&self.client_graph, file, importers) {
+                        self.client_graph
+                            .retract_failure(incremental_graph::FileIndex::init(file));
+                    }
+                }
+                bake::Side::Server => {
+                    if self.failure_is_dead(&self.server_graph, file, importers) {
+                        self.server_graph
+                            .retract_failure(incremental_graph::FileIndex::init(file));
+                    }
+                }
+            }
+        }
+    }
+
+    /// `importers` is `None` for a file that lost its last importer. For a file that a build found missing,
+    /// it holds the importers of the file from before the bundle.
+    fn failure_is_dead<const SIDE: bake::Side>(
+        &self,
+        graph: &IncrementalGraph<SIDE>,
+        index: u32,
+        importers: Option<&[u32]>,
+    ) -> bool {
+        let file = &graph.bundled_files.values()[index as usize];
+        // A route bundles its own files with no importer to report them: only a build takes their failure back.
+        if !file.failed || file.is_route || file.html_route_bundle_index.is_some() {
+            return false;
+        }
+        // The file is there again and this bundle failed it.
+        let owner = serialized_failure::OwnerPacked::new(SIDE, index);
+        if self.incremental_result.added_failure_for(owner) {
+            return false;
+        }
+        let first_importer = graph.edge_lists[index as usize].first_dep;
+        let Some(importers) = importers else {
+            // No bundle reaches a file that nothing imports, unless a framework bundles it from a route or from
+            // the other graph.
+            return self.frontend_only && first_importer.is_none();
+        };
+        // An importer that this bundle failed reports the missing file. One that built did not see it go.
+        let reported = |importer: u32| {
+            self.failed_in_this_bundle(&graph.bundled_files.keys()[importer as usize])
+        };
+        if !self.frontend_only {
+            // With a framework, no importer is no proof, and the RSC and SSR copies of a file write one edge list.
+            return !importers.is_empty() && importers.iter().all(|&importer| reported(importer));
+        }
+        let mut edge = first_importer;
+        while let Some(edge_index) = edge {
+            let importer = &graph.edges[edge_index.get() as usize];
+            edge = importer.next_dependency;
+            if !reported(importer.dependency.get()) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// A "use client" file that fails in a build for the server has its failure in the client graph.
+    fn failed_in_this_bundle(&self, path: &[u8]) -> bool {
+        let client = self
+            .client_graph
+            .get_file_index(path)
+            .map(|index| serialized_failure::OwnerPacked::new(bake::Side::Client, index.get()));
+        let server = self
+            .server_graph
+            .get_file_index(path)
+            .map(|index| serialized_failure::OwnerPacked::new(bake::Side::Server, index.get()));
+        [client, server]
+            .into_iter()
+            .flatten()
+            .any(|owner| self.incremental_result.added_failure_for(owner))
     }
 
     /// Return a log to write resolution failures into.

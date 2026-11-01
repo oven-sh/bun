@@ -1,4 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
+import type { Bake } from "bun";
 import { expect } from "bun:test";
 import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
@@ -364,6 +365,355 @@ devTest("deleting imported file shows error then recovers", {
     await c.expectNoWebSocketActivity(async () => {
       await dev.delete("unrelated.ts");
     });
+  },
+});
+// No build bundles a deleted file again, so the build that finds the delete has to take its build error back.
+// The importers of the file report that it is gone.
+devTest("deleting a file that failed to build takes its build error back", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./other";
+      console.log(value);
+    `,
+    "other.ts": `
+      export const value = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    await dev.write("other.ts", `export const value = ;`, {
+      errors: ["other.ts:1:22: error: Unexpected ;"],
+    });
+    await dev.delete("other.ts", {
+      errors: ['index.ts:1:23: error: Could not resolve: "./other"'],
+    });
+    // A page load lists every build error that the dev server holds.
+    await c.hardReload({
+      errors: ['index.ts:1:23: error: Could not resolve: "./other"'],
+    });
+    // The error page reloads only when no build error is left.
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("without other");`);
+    });
+    await c.expectMessage("without other");
+    // The file gets its old place in the graph back. That place holds no build error.
+    await dev.write(
+      "index.ts",
+      `
+        import { value } from "./other";
+        console.log(value);
+      `,
+      { errors: ['index.ts:1:23: error: Could not resolve: "./other"'] },
+    );
+    await c.expectReload(async () => {
+      await dev.write("other.ts", `export const value = 456;`);
+    });
+    await c.expectMessage(456);
+  },
+});
+devTest("deleting a server file that failed to build takes its build error back", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { value } from '../db';
+      export default function (req, meta) {
+        return new Response('value: ' + value);
+      }
+    `,
+    "db.ts": `export const value = 123;`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("value: 123");
+    await dev.write("db.ts", `export const value = ;`, { errors: null });
+    {
+      // The "Build Failed" page only hears of build errors that come and go.
+      await using c = await dev.client("/", {
+        errors: ["db.ts:1:22: error: Unexpected ;"],
+      });
+      await dev.delete("db.ts", {
+        errors: [`routes/index.ts:1:23: error: Could not resolve: "../db"`],
+      });
+      await using fresh = await dev.client("/", {
+        errors: [`routes/index.ts:1:23: error: Could not resolve: "../db"`],
+      });
+    }
+    await dev.write("db.ts", `export const value = 456;`);
+    await dev.fetch("/").equals("value: 456");
+  },
+});
+// Each importer of a deleted file has to report it. The files of one directory are found missing in any order.
+devTest("deleting a directory takes the build errors of its files back", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { bad } from "./feature/bad";
+      import { mid } from "./feature/mid";
+      console.log("feature " + bad + " " + mid);
+    `,
+    "feature/bad.ts": `export const bad = 1;`,
+    "feature/mid.ts": `
+      import { leaf } from "./leaf";
+      export const mid = leaf;
+    `,
+    "feature/leaf.ts": `export const leaf = 2;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("feature 1 2");
+    await dev.write("feature/bad.ts", `export const bad = ;`, {
+      errors: ["feature/bad.ts:1:20: error: Unexpected ;"],
+    });
+    await dev.write("feature/leaf.ts", `export const leaf = ;`, {
+      errors: ["feature/bad.ts:1:20: error: Unexpected ;", "feature/leaf.ts:1:21: error: Unexpected ;"],
+    });
+    {
+      await using batch = await dev.batchChanges({
+        errors: [
+          'index.ts:1:21: error: Could not resolve: "./feature/bad"',
+          'index.ts:2:21: error: Could not resolve: "./feature/mid"',
+        ],
+      });
+      fs.rmSync(dev.join("feature"), { recursive: true });
+    }
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("without feature");`);
+    });
+    await c.expectMessage("without feature");
+  },
+});
+// Without a framework, no bundle reaches a file that nothing imports.
+devTest("removing the import of a file that failed to build takes its build error back", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./other";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "other.ts": `
+      export const value = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    await dev.write("other.ts", `export const value = ;`, {
+      errors: ["other.ts:1:22: error: Unexpected ;"],
+    });
+    await dev.write(
+      "index.ts",
+      `
+        console.log("without other");
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("without other");
+    // The file is still on disk and still fails.
+    await dev.write(
+      "index.ts",
+      `
+        import { value } from "./other";
+        console.log(value);
+        import.meta.hot.accept();
+      `,
+      { errors: ["other.ts:1:22: error: Unexpected ;"] },
+    );
+    // The page runs the last good build of the file.
+    await c.expectMessage(123);
+  },
+});
+// The save of the file and the save that removes its import are in one bundle. The file has a new build error.
+devTest("a file that fails again in the bundle that removes its import keeps its build error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./other";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "other.ts": `
+      export const value = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    await dev.write("other.ts", `export const value = ;`, {
+      errors: ["other.ts:1:22: error: Unexpected ;"],
+    });
+    {
+      await using batch = await dev.batchChanges({
+        errors: ["other.ts:1:27: error: Unexpected ;"],
+      });
+      await dev.write("index.ts", `import.meta.hot.accept();`);
+      await dev.write("other.ts", `export const otherValue = ;`);
+    }
+    // The dev server holds the build error that the page shows, so the save that repairs the file takes it back.
+    await dev.write("other.ts", `export const value = 456;`);
+  },
+});
+// The dev server does not watch node_modules, so it does not see this delete.
+devTest("a deleted file keeps its build error while a file that built still imports it", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "pkg";
+      console.log(value);
+    `,
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+    "node_modules/pkg/index.js": `export const value = ;`,
+  },
+  async test(dev) {
+    const pkgError = "node_modules/pkg/index.js:1:22: error: Unexpected ;";
+    await using c = await dev.client("/", { errors: [pkgError] });
+    fs.unlinkSync(dev.join("node_modules/pkg/index.js"));
+    // This bundle has the importer when it finds that the file is gone, so it does not build the importer
+    // again to report that. The build error of the file stays: the build is not good.
+    await dev.write(
+      "index.ts",
+      `
+        import { value } from "pkg";
+        console.log(value, "saved");
+      `,
+      { errors: [pkgError] },
+    );
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("without pkg");`);
+    });
+    await c.expectMessage("without pkg");
+  },
+});
+devTest("a deleted file keeps its build error while a page that built still imports it", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { value } from "pkg";
+      export default function (req, meta) {
+        return new Response("value: " + value);
+      }
+    `,
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+    "node_modules/pkg/index.js": `export const value = ;`,
+  },
+  async test(dev) {
+    const pkgError = "node_modules/pkg/index.js:1:22: error: Unexpected ;";
+    await using c = await dev.client("/", { errors: [pkgError] });
+    fs.unlinkSync(dev.join("node_modules/pkg/index.js"));
+    await dev.write(
+      "routes/index.ts",
+      `
+        import { value } from "pkg";
+        export default function (req, meta) {
+          return new Response("saved value: " + value);
+        }
+      `,
+      { errors: [pkgError] },
+    );
+  },
+});
+// One bundle takes the import from one file and gives it to another. The failing file has an importer at the end.
+devTest("moving the import of a file that failed to build to another file keeps its build error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./a";
+      import "./b";
+    `,
+    "a.ts": `
+      import { value } from "pkg";
+      console.log("a", value);
+    `,
+    "b.ts": `console.log("b");`,
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+    "node_modules/pkg/index.js": `export const value = ;`,
+  },
+  async test(dev) {
+    const pkgError = "node_modules/pkg/index.js:1:22: error: Unexpected ;";
+    await using c = await dev.client("/", { errors: [pkgError] });
+    {
+      await using batch = await dev.batchChanges({ errors: [pkgError] });
+      await dev.write("a.ts", `console.log("a");`);
+      await dev.write(
+        "b.ts",
+        `
+          import { value } from "pkg";
+          console.log("b", value);
+        `,
+      );
+    }
+    await c.hardReload({ errors: [pkgError] });
+  },
+});
+// The importer reaches the file through a link to its directory, so its build does not see that the file is gone.
+devTest(
+  "deleting a file that failed to build and that is imported through a directory link keeps the page on its build error",
+  {
+    files: {
+      "index.html": emptyHtmlFile({
+        styles: [],
+        scripts: ["index.ts"],
+      }),
+      "index.ts": `
+      import { value } from "@scope/pkg";
+      console.log(value);
+    `,
+      "packages/pkg/package.json": JSON.stringify({ name: "@scope/pkg", version: "1.0.0", main: "index.ts" }),
+      "packages/pkg/index.ts": `export const value = ;`,
+      "node_modules/@scope/keep/package.json": "{}",
+    },
+    async test(dev) {
+      fs.symlinkSync(dev.join("packages/pkg"), dev.join("node_modules/@scope/pkg"), "junction");
+      await using c = await dev.client("/", {
+        errors: ["packages/pkg/index.ts:1:22: error: Unexpected ;"],
+      });
+      await dev.delete("packages/pkg/index.ts", { errors: null });
+      await c.expectReload(async () => {
+        await dev.write("packages/pkg/index.ts", `export const value = 456;`);
+      });
+      await c.expectMessage(456);
+    },
+  },
+);
+// `handle_parse_task_failure` gives the html file of a route that is gone a build error. Only a build takes it back.
+devTest("a deleted html route file keeps its build error when its last importer drops the import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import text from "./other.html" with { type: "text" };
+      console.log("other: " + typeof text);
+    `,
+    "other.html": emptyHtmlFile({ body: "<h1>other</h1>" }),
+  },
+  htmlFiles: ["index.html", "other.html"],
+  async test(dev) {
+    expect((await dev.fetch("/index")).status).toBe(200);
+    await dev.delete("other.html", { errors: null });
+    expect((await dev.fetch("/other")).status).toBe(500);
+    await dev.write("index.ts", `console.log("no import");`, { errors: null });
+    expect((await dev.fetch("/other")).status).toBe(500);
   },
 });
 // Without a separate SSR graph, the server bundle keeps a "use client" module
@@ -876,6 +1226,300 @@ const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGra
       await dev.fetch("/other").equals("other shared");
     },
   });
+}
+// The pages of this framework load a client script, so a client on the "Build Failed" page reloads into the page.
+{
+  const framework = (separateSSRGraph: boolean): Bake.Framework => ({
+    fileSystemRouterTypes: [
+      {
+        root: "routes",
+        style: "nextjs-pages",
+        serverEntryPoint: "./framework/server.ts",
+        clientEntryPoint: "./framework/client.ts",
+      },
+    ],
+    serverComponents: {
+      separateSSRGraph,
+      serverRuntimeImportSource: "./framework/server.ts",
+      serverRegisterClientReferenceExport: "registerClientReference",
+    },
+  });
+  const frameworkFiles = {
+    "framework/server.ts": `
+      export function render(req, meta) {
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        return new Response("<!DOCTYPE html><html><body>" + meta.pageModule.default() + scripts + "</body></html>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+    "framework/client.ts": `
+      console.log("page: " + document.body.textContent);
+    `,
+  };
+  const componentFiles = {
+    ...frameworkFiles,
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default () => typeof Comp.marker;
+    `,
+    "components/Comp.ts": `
+      "use client";
+      export const marker = "initial";
+    `,
+  };
+
+  // Only the browser build of the component fails, so the client copy of the component owns the build error.
+  // Without its "use client", the component has no client copy. If that copy never built, the bundle that
+  // drops it also builds it one last time. With a separate SSR graph, that bundle does not drop such a copy.
+  const browserOnlyComponent = `
+    "use client";
+    import { file } from "bun";
+    export const marker = typeof file;
+  `;
+  for (const { separateSSRGraph, neverBuilt } of [
+    { separateSSRGraph: true, neverBuilt: false },
+    { separateSSRGraph: false, neverBuilt: false },
+    { separateSSRGraph: false, neverBuilt: true },
+  ]) {
+    devTest(
+      `removing 'use client' from a component that ${neverBuilt ? "never built" : "failed to build"} takes its build error back (separateSSRGraph: ${separateSSRGraph})`,
+      {
+        framework: framework(separateSSRGraph),
+        files: neverBuilt ? { ...componentFiles, "components/Comp.ts": browserOnlyComponent } : componentFiles,
+        async test(dev) {
+          if (!neverBuilt) {
+            await dev.fetch("/").expect.toInclude("<body>object<");
+            await dev.write("components/Comp.ts", browserOnlyComponent, { errors: null });
+          }
+          await using c = await dev.client("/", {
+            errors: ['components/Comp.ts:2:22: error: Browser build cannot import Bun builtin: "bun"'],
+          });
+          await c.expectReload(async () => {
+            await dev.write(
+              "components/Comp.ts",
+              `
+                import { file } from "bun";
+                export const marker = typeof file;
+              `,
+            );
+          });
+          await c.expectMessage("page: string");
+          // A build error that stays stops the hot update of every route.
+          await c.expectReload(async () => {
+            await dev.write(
+              "routes/index.ts",
+              `
+                import * as Comp from '../components/Comp';
+                export default () => "edited " + typeof Comp.marker;
+              `,
+            );
+          });
+          await c.expectMessage("page: edited string");
+        },
+      },
+    );
+  }
+  // The plugin makes the browser build of the component a syntax error. The bundle that drops the client copy
+  // gives that copy a build error before it drops the copy.
+  devTest("removing 'use client' from a component takes back the build error that the same bundle gave it", {
+    framework: framework(false),
+    pluginFile: `
+      export default [
+        {
+          name: "the browser build of Comp.ts fails",
+          setup(build) {
+            build.onLoad({ filter: /Comp\\.ts$/ }, args => {
+              if (args.side !== "client") return undefined;
+              return { contents: "export const marker = ;", loader: "ts" };
+            });
+          },
+        },
+      ];
+    `,
+    files: componentFiles,
+    async test(dev) {
+      await using c = await dev.client("/", {
+        errors: ["components/Comp.ts:1:23: error: Unexpected ;"],
+      });
+      await c.expectReload(async () => {
+        await dev.write("components/Comp.ts", `export const marker = "server only";`);
+      });
+      await c.expectMessage("page: string");
+    },
+  });
+  // The route reaches the client copy of the component with no importer in the client graph. That copy keeps
+  // its build error when it is gone, and when its last importer in the client graph drops it.
+  devTest("a 'use client' component whose first build failed recovers when it is deleted and written again", {
+    framework: framework(true),
+    files: { ...componentFiles, "components/Comp.ts": browserOnlyComponent },
+    async test(dev) {
+      const browserError = 'components/Comp.ts:2:22: error: Browser build cannot import Bun builtin: "bun"';
+      await using c = await dev.client("/", { errors: [browserError] });
+      await dev.delete("components/Comp.ts", { errors: [browserError] });
+      await c.expectReload(async () => {
+        await dev.write("components/Comp.ts", componentFiles["components/Comp.ts"], { errors: null });
+        // Only the watcher of Linux names a file that is created again. On the other platforms a request
+        // bundles the page.
+        await dev.fetch("/");
+      });
+      await c.expectMessage("page: object");
+    },
+  });
+  devTest("a 'use client' component keeps its build error when another client component stops importing it", {
+    framework: framework(false),
+    files: {
+      ...componentFiles,
+      "routes/index.ts": `
+        import * as Comp from '../components/Comp';
+        import * as Other from '../components/Other';
+        export default () => typeof Comp.marker + typeof Other.other;
+      `,
+      "components/Comp.ts": browserOnlyComponent,
+      "components/Other.ts": `
+        "use client";
+        import { marker } from './Comp';
+        export const other = marker;
+      `,
+    },
+    async test(dev) {
+      const browserError = 'components/Comp.ts:2:22: error: Browser build cannot import Bun builtin: "bun"';
+      // The build for the server and the build of the other component each report the component.
+      await using c = await dev.client("/", { errors: [browserError, browserError] });
+      await dev.write(
+        "components/Other.ts",
+        `
+          "use client";
+          export const other = "no import";
+        `,
+        { errors: [browserError, browserError] },
+      );
+    },
+  });
+  // The page is a file of its route: the route bundles it with no importer. No build reports that it is gone,
+  // so the page keeps its build error. An editor that saves with a rename and a new file deletes it for a moment.
+  devTest("a page that failed to build recovers when it is deleted and written again", {
+    framework: framework(false),
+    files: {
+      ...frameworkFiles,
+      "routes/index.ts": `export default () => "index" ;;; (`,
+    },
+    async test(dev) {
+      const pageError = "routes/index.ts:1:34: error: Unexpected end of file";
+      await using c = await dev.client("/", { errors: [pageError] });
+      await dev.delete("routes/index.ts", { errors: [pageError] });
+      await c.expectReload(async () => {
+        await dev.write("routes/index.ts", `export default () => "index fixed";`, { errors: null });
+        // Only the watcher of Linux names a file that is created again. On the other platforms a request
+        // bundles the page.
+        await dev.fetch("/");
+      });
+      await c.expectMessage("page: index fixed");
+    },
+  });
+  const pageThatImportsAPage = {
+    ...frameworkFiles,
+    "routes/index.ts": `
+      import other from "./other";
+      export default () => "index and " + other();
+    `,
+    "routes/other.ts": `export default () => "other";`,
+  };
+  const otherError = "routes/other.ts:1:34: error: Unexpected end of file";
+  devTest("a deleted page that failed to build keeps its build error when another page reports it", {
+    framework: framework(false),
+    files: pageThatImportsAPage,
+    async test(dev) {
+      await dev.fetch("/").expect.toInclude("<body>index and other<");
+      await dev.write("routes/other.ts", `export default () => "other" ;;; (`, { errors: null });
+      const errors = [otherError, 'routes/index.ts:1:19: error: Could not resolve: "./other"'];
+      await using c = await dev.client("/other", { errors: [otherError] });
+      await dev.delete("routes/other.ts", { errors });
+      {
+        // The route of the page still answers with the "Build Failed" page.
+        await using fresh = await dev.client("/other", { errors });
+      }
+      await c.expectReload(async () => {
+        await dev.write("routes/other.ts", `export default () => "other fixed";`);
+      });
+      await c.expectMessage("page: other fixed");
+    },
+  });
+}
+// With a separate SSR graph, a "use client" file that fails in the build for the server has its build error in
+// the client graph, and the edges of its server file do not show what its SSR copy imports.
+{
+  const framework: Bake.Framework = {
+    ...minimalFramework,
+    serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: true },
+  };
+  const route = `
+    import * as Comp from '../components/Comp';
+    export default function (req, meta) {
+      return new Response('page: ' + typeof Comp.marker);
+    }
+  `;
+  devTest(
+    "deleting a file that failed to build and that a 'use client' component imports takes its build errors back",
+    {
+      framework,
+      files: {
+        "routes/index.ts": route,
+        "components/Comp.ts": `
+        "use client";
+        import { value } from './dep';
+        export const marker = value;
+      `,
+        "components/dep.ts": `export const value = 123;`,
+      },
+      async test(dev) {
+        await dev.fetch("/").equals("page: object");
+        await dev.write("components/dep.ts", `export const value = ;`, { errors: null });
+        await dev.delete("components/dep.ts", { errors: null });
+        {
+          await using c = await dev.client("/", {
+            errors: ['components/Comp.ts:2:23: error: Could not resolve: "./dep"'],
+          });
+        }
+        await dev.write("components/dep.ts", `export const value = 456;`);
+        await dev.fetch("/").equals("page: object");
+      },
+    },
+  );
+  devTest(
+    "deleting a file that failed to build and that only the SSR copy of a 'use client' component imports takes its build error back",
+    {
+      framework,
+      files: {
+        "package.json": JSON.stringify({
+          imports: { "#dep": { browser: "./dep-client.ts", default: "./dep-ssr.ts" } },
+        }),
+        "routes/index.ts": route,
+        "components/Comp.ts": `
+        "use client";
+        import { dep } from '#dep';
+        export const marker = dep;
+      `,
+        "dep-client.ts": `export const dep = "client";`,
+        "dep-ssr.ts": `export const dep = "ssr";`,
+      },
+      async test(dev) {
+        await dev.fetch("/").equals("page: object");
+        await dev.write("dep-ssr.ts", `export const dep = ;`, { errors: null });
+        await dev.delete("dep-ssr.ts", { errors: null });
+        {
+          await using c = await dev.client("/", {
+            errors: ['components/Comp.ts:2:21: error: Could not resolve: "#dep". Maybe you need to "bun install"?'],
+          });
+        }
+        await dev.write("dep-ssr.ts", `export const dep = "ssr again";`);
+        await dev.fetch("/").equals("page: object");
+      },
+    },
+  );
 }
 devTest("build error in a file imported by a 'use client' component", {
   framework: minimalFramework,

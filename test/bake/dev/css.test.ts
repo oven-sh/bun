@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -808,6 +808,116 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+// The server graph owns the build error of a stylesheet that fails in the bundle of a route that imports it.
+// The save that repairs the stylesheet bundles it alone. The next bundle of a file that imports it gives the
+// stylesheet a new place in the server graph: the build error has to go at that time.
+for (const assumePerfectIncremental of ["0", "1"]) {
+  devTest(
+    `a framework route recovers from a stylesheet that failed on its first load (BUN_ASSUME_PERFECT_INCREMENTAL=${assumePerfectIncremental})`,
+    {
+      framework: minimalFramework,
+      env: { BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental },
+      files: {
+        "routes/index.ts": `
+          import "../styles.css";
+          export default function (req, meta) {
+            return new Response("index stylesheets: " + meta.styles.length);
+          }
+        `,
+        "routes/broken.ts": `export default function (`,
+        "styles.css": `
+          .one {
+            color: red;
+          }}
+        `,
+      },
+      async test(dev) {
+        expect((await dev.fetch("/")).status).toBe(500);
+        await dev.write("styles.css", `.one { color: red; }`, { errors: null });
+        if (assumePerfectIncremental === "1") {
+          // With this setting a request does not bundle the route again.
+          expect((await dev.fetch("/")).status).toBe(500);
+          await dev.write(
+            "routes/index.ts",
+            `
+              import "../styles.css";
+              export default function (req, meta) {
+                return new Response("index stylesheets: " + meta.styles.length);
+              }
+              export const saved = true;
+            `,
+            { errors: null },
+          );
+        }
+        await dev.fetch("/").equals("index stylesheets: 1");
+        // A "Build Failed" page lists each build error that the dev server holds.
+        await using c = await dev.client("/broken", {
+          errors: ["routes/broken.ts:1:25: error: Expected identifier but found end of file"],
+        });
+      },
+    },
+  );
+}
+for (const importer of ["html", "script"]) {
+  const importerError =
+    importer === "html"
+      ? 'index.html: error: Could not resolve: "styles.css". Maybe you need to "bun install"?'
+      : 'index.ts:1:8: error: Could not resolve: "./styles.css"';
+  devTest(`deleting a stylesheet that failed to build takes its build error back (imported by the ${importer})`, {
+    files: {
+      "index.html": emptyHtmlFile({
+        styles: importer === "html" ? ["styles.css"] : [],
+        scripts: ["index.ts"],
+      }),
+      "index.ts": importer === "html" ? `console.log("loaded");` : `import "./styles.css"; console.log("loaded");`,
+      "styles.css": `body { color: red; }`,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("loaded");
+      await c.style("body").color.expect.toBe("red");
+      await dev.write("styles.css", `body { color: red; }}`, {
+        errors: ["styles.css:1:22: error: Unexpected end of input"],
+      });
+      await dev.delete("styles.css", { errors: [importerError] });
+      await c.hardReload({ errors: [importerError] });
+      await c.expectReload(async () => {
+        await dev.write("styles.css", `body { color: blue; }`);
+      });
+      await c.expectMessage("loaded");
+      await c.style("body").color.expect.toBe("#00f");
+    },
+  });
+}
+// A save of a stylesheet that another stylesheet imports bundles only the stylesheets that import it. After the
+// `@import` is gone, no bundle reaches the file.
+devTest("removing the @import of a stylesheet that failed to build takes its build error back", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./part.css";
+      body {
+        color: red;
+      }
+    `,
+    "part.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("#00f");
+    await dev.write("part.css", `h1 { color: blue; }}`, {
+      errors: ["part.css:1:21: error: Unexpected end of input"],
+    });
+    await dev.write("styles.css", `body { color: green; }`);
+    await c.style("body").color.expect.toBe("green");
   },
 });
 

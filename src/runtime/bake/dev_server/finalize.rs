@@ -617,6 +617,8 @@ fn finalize_bundle_inner(
         )?;
     }
 
+    dev.retract_dead_failures();
+
     // Index all failed files now that the incremental graph has been updated.
     if !dev.incremental_result.failures_removed.is_empty()
         || !dev.incremental_result.failures_added.is_empty()

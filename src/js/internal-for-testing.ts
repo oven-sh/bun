@@ -97,6 +97,23 @@ export const resolverDirInfoSlotsUsed = $bindgen(
   "resolverDirInfoSlotsUsed",
 ) as () => number;
 
+/** How many times the resolver found its caches stale after a miss and ran the lookup again. */
+export const resolverLookupsRunAgain = $bindgen(
+  "BunObjectInternals.bind.ts",
+  "resolverLookupsRunAgain",
+) as () => number;
+
+/**
+ * For a test with two threads. After `hold`, the next lookup of this thread that misses waits between
+ * reading the caches again and the verdict on what it read. `waitUntilHeld`, on another thread, returns
+ * true when that thread waits, and false when it called `release` first. `release` lets it continue.
+ */
+export const resolverMissCheck = {
+  hold: $bindgen("BunObjectInternals.bind.ts", "resolverHoldNextMissCheck") as () => void,
+  waitUntilHeld: $bindgen("BunObjectInternals.bind.ts", "resolverWaitUntilMissCheckIsHeld") as () => boolean,
+  release: $bindgen("BunObjectInternals.bind.ts", "resolverReleaseMissCheck") as () => void,
+};
+
 export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (
   left: string,
   right: string,

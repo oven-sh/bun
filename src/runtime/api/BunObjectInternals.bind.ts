@@ -11,3 +11,11 @@ export const registerMacro = b.fn({
 
 /** `bun:internal-for-testing`. */
 export const resolverDirInfoSlotsUsed = b.fn({ returns: b.usize });
+
+/** `bun:internal-for-testing`. */
+export const resolverLookupsRunAgain = b.fn({ returns: b.usize });
+
+/** `bun:internal-for-testing`. */
+export const resolverHoldNextMissCheck = b.fn({});
+export const resolverWaitUntilMissCheckIsHeld = b.fn({ returns: b.bool });
+export const resolverReleaseMissCheck = b.fn({});

@@ -575,6 +575,9 @@ pub struct Resolver<'a> {
 
     /// Set for the length of a call by `with_trusted_cache` and `with_deferred_miss_check`.
     after_miss: AfterMiss,
+
+    /// Set once by `trust_cached_misses`, and inherited by `for_worker`.
+    trusts_cached_misses: bool,
 }
 
 /// What a lookup does after it misses.
@@ -588,14 +591,16 @@ enum AfterMiss {
 }
 
 /// What a lookup read from the caches. Collected only while it runs again after a miss (the replay).
-#[derive(Default)]
 struct TouchedDirs {
-    records: Vec<TouchedDir>,
-    /// Path bytes the disk facts index into.
+    /// Cached facts that `Resolver::judge_touched_dirs` compares with the disk.
+    facts: Vec<DiskRecord>,
+    /// Path bytes the facts index into.
     bytes: Vec<u8>,
+    /// The `DirInfo` slots that were read.
+    slots: Vec<SlotRecord>,
 }
 
-/// A cached fact that `Resolver::bust_touched_dirs` compares with the disk.
+/// A cached fact that the check after a miss compares with the disk.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DiskFact {
     /// The directory did not exist (a NOT_FOUND sentinel or a failed open), or it was not cached.
@@ -608,7 +613,14 @@ enum DiskFact {
     DirEntry,
 }
 
-/// What the replay read a `DirInfo` for. One bit each: a slot has one record.
+#[derive(Clone, Copy)]
+struct DiskRecord {
+    fact: DiskFact,
+    dir: (u32, u32),
+    name: (u32, u32),
+}
+
+/// What the replay read a `DirInfo` for. One bit each.
 #[derive(Clone, Copy)]
 #[repr(u8)]
 enum SlotUse {
@@ -616,32 +628,37 @@ enum SlotUse {
     Read = 1 << 0,
     /// A `node_modules` search level whose cached listing has no `node_modules`.
     NoNodeModules = 1 << 1,
-    /// A searched level. Dropped with a level above it that changed, so that its parent link is rebuilt.
+    /// A `node_modules` search level that was searched or skipped.
     SearchLevel = 1 << 2,
     /// The listing has a `package.json` that gave nothing when it was read. Dropped once it can be read.
     UnparsedPackageJson = 1 << 3,
 }
 
+/// The miss came from this slot, whatever the cache maps its path to later.
 #[derive(Clone, Copy)]
-enum TouchedDir {
-    Disk {
-        fact: DiskFact,
-        dir: (u32, u32),
-        name: (u32, u32),
-    },
-    /// The miss came from this slot, whatever the cache maps its path to later.
-    Slot { uses: u8, slot: DirInfoRef },
+struct SlotRecord {
+    slot: DirInfoRef,
+    /// `SlotUse` bits.
+    uses: u8,
 }
 
-const _: () = assert!(core::mem::size_of::<TouchedDir>() <= 24);
-
 impl TouchedDirs {
+    /// Sized for the miss of a package path from a few levels below the root, so that the lists do not grow.
+    fn new() -> TouchedDirs {
+        TouchedDirs {
+            facts: Vec::with_capacity(48),
+            bytes: Vec::with_capacity(2048),
+            slots: Vec::with_capacity(16),
+        }
+    }
+
     fn push_disk(&mut self, fact: DiskFact, dir: &[u8], name: &[u8]) {
+        let dir = strings::without_trailing_slash_windows_path(dir);
         let dir_start = self.bytes.len();
         self.bytes.extend_from_slice(dir);
         let name_start = self.bytes.len();
         self.bytes.extend_from_slice(name);
-        self.records.push(TouchedDir::Disk {
+        self.facts.push(DiskRecord {
             fact,
             dir: (dir_start as u32, dir.len() as u32),
             name: (name_start as u32, name.len() as u32),
@@ -649,20 +666,16 @@ impl TouchedDirs {
     }
 
     fn push_slot(&mut self, slot_use: SlotUse, slot: DirInfoRef) {
-        for record in &mut self.records {
-            if let TouchedDir::Slot {
-                uses,
-                slot: recorded,
-            } = record
-                && recorded.as_ptr() == slot.as_ptr()
-            {
-                *uses |= slot_use as u8;
-                return;
-            }
+        // A walk reads one slot several times in a row. `Resolver::read_dirs_now` merges the rest.
+        if let Some(last) = self.slots.last_mut()
+            && last.slot.as_ptr() == slot.as_ptr()
+        {
+            last.uses |= slot_use as u8;
+            return;
         }
-        self.records.push(TouchedDir::Slot {
-            uses: slot_use as u8,
+        self.slots.push(SlotRecord {
             slot,
+            uses: slot_use as u8,
         });
     }
 
@@ -671,8 +684,106 @@ impl TouchedDirs {
     }
 }
 
+/// A directory whose `DirInfo` the replay read.
+struct ReadDir {
+    dir: &'static [u8],
+    key: u64,
+    /// `SlotUse` bits of every slot that the replay read for it.
+    uses: u8,
+    /// A slot that the replay read for it.
+    recorded: DirInfoRef,
+    /// The slot that the cache maps it to after the replay.
+    mapped: Option<DirInfoRef>,
+    /// The replay read a slot that is not `mapped`: a watcher or another thread dropped it since.
+    replaced: bool,
+    /// `mapped` points at a parent slot that the cache no longer maps.
+    link_is_stale: bool,
+}
+
+/// What the cache maps after a replay. `Resolver::judge_touched_dirs` has no other view of the cache.
+struct CacheNow {
+    /// Ancestors first.
+    read_dirs: bun_collections::smallvec::SmallVec<[ReadDir; 16]>,
+    /// The slot of the floor directory, when the replay did not read that directory.
+    unread_floor: Option<DirInfoRef>,
+}
+
+/// What `Resolver::judge_touched_dirs` found stale.
+struct Verdict<'t> {
+    /// Look up again.
+    stale: bool,
+    /// Directories that exist now. Dropped with the ancestors that do not list them.
+    new_dirs: Vec<&'t [u8]>,
+    /// Directories whose listing has an entry that differs on disk.
+    stale_listings: Vec<&'t [u8]>,
+    /// Slots with a config file or a `node_modules` that differs on disk. Dropped while the cache maps them.
+    stale_slots: Vec<(&'t [u8], DirInfoRef)>,
+}
+
 /// How many replays collect now, on all threads. `Relaxed`: only a hint, a thread's own `REPLAY` is the gate.
 static ARMED_REPLAYS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+static LOOKUPS_RUN_AGAIN: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// `bun:internal-for-testing`: how many times the check after a miss found the caches stale and the lookup ran again.
+pub fn lookups_run_again() -> usize {
+    LOOKUPS_RUN_AGAIN.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// `bun:internal-for-testing`: makes one thread wait between the replay of a miss and the verdict on it,
+/// so that a test can change the caches from another thread at that point.
+pub mod miss_check_hold {
+    use bun_threading::Futex;
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    const OFF: u32 = 0;
+    const ARMED: u32 = 1;
+    const HELD: u32 = 2;
+    static STATE: AtomicU32 = AtomicU32::new(OFF);
+
+    thread_local! {
+        static ARMED_HERE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+    }
+
+    /// The next check after a miss on this thread waits for `release`.
+    pub fn arm() {
+        ARMED_HERE.set(true);
+        STATE.store(ARMED, Ordering::Release);
+    }
+
+    /// Waits for the thread that called `arm`. False: it called `release` and never got to a check.
+    pub fn wait_until_held() -> bool {
+        while STATE.load(Ordering::Acquire) == ARMED {
+            Futex::wait_forever(&STATE, ARMED);
+        }
+        STATE.load(Ordering::Acquire) == HELD
+    }
+
+    pub fn release() {
+        ARMED_HERE.set(false);
+        STATE.store(OFF, Ordering::Release);
+        Futex::wake(&STATE, u32::MAX);
+    }
+
+    #[inline]
+    pub(super) fn wait_if_armed() {
+        if STATE.load(Ordering::Relaxed) != OFF {
+            wait();
+        }
+    }
+
+    #[cold]
+    fn wait() {
+        if !ARMED_HERE.replace(false) {
+            return;
+        }
+        STATE.store(HELD, Ordering::Release);
+        Futex::wake(&STATE, u32::MAX);
+        while STATE.load(Ordering::Acquire) == HELD {
+            Futex::wait_forever(&STATE, HELD);
+        }
+    }
+}
 
 thread_local! {
     /// Where this thread's replay collects. No `Resolver` field: the runtime copies its `Transpiler` bytewise.
@@ -698,22 +809,17 @@ impl Drop for ReplayGuard {
     }
 }
 
-/// Whether some thread replays a lookup. The cheap test in front of each record.
-#[inline(always)]
-pub(crate) fn replay_armed() -> bool {
-    ARMED_REPLAYS.load(core::sync::atomic::Ordering::Relaxed) != 0
-}
-
 /// Whether this thread replays a lookup. A replay reads the caches and changes nothing.
-#[inline]
-fn replaying() -> bool {
-    replay_armed() && !REPLAY.get().is_null()
+/// The test in front of each record: one load while no thread replays, this thread's `REPLAY` too while one does.
+#[inline(always)]
+pub(crate) fn replaying() -> bool {
+    ARMED_REPLAYS.load(core::sync::atomic::Ordering::Relaxed) != 0 && !REPLAY.get().is_null()
 }
 
 /// The cached listing of `dir` has no entry `name`. Called from `DirEntry::get`.
 #[inline]
 pub(crate) fn record_missing_entry(dir: &[u8], name: &[u8]) {
-    if replay_armed() {
+    if replaying() {
         record_disk_fact(DiskFact::MissingEntry, dir, name);
     }
 }
@@ -750,11 +856,10 @@ fn with_replay_list(record: impl FnOnce(&mut TouchedDirs)) {
 #[cold]
 #[inline(never)]
 fn record_disk_fact(fact: DiskFact, dir: &[u8], name: &[u8]) {
-    let dir = strings::without_trailing_slash_windows_path(dir);
     with_replay_list(|list| list.push_disk(fact, dir, name));
 }
 
-/// The replay read `slot`: `Resolver::bust_touched_dirs` judges this slot, not the one cached later.
+/// The replay read `slot`: the check after the miss judges this slot, not the one cached later.
 #[cold]
 #[inline(never)]
 fn record_slot(slot_use: SlotUse, slot: DirInfoRef) {
@@ -833,7 +938,9 @@ impl<'a> Resolver<'a> {
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
+            // Scoped to a call of `from`: not inherited.
             after_miss: AfterMiss::Recheck,
+            trusts_cached_misses: from.trusts_cached_misses,
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
@@ -1194,7 +1301,14 @@ impl<'a> Resolver<'a> {
             custom_dir_paths: None,
             esm_failure: None,
             after_miss: AfterMiss::Recheck,
+            trusts_cached_misses: false,
         }
+    }
+
+    /// For the resolver of a build that a command starts once, on caches that the same process filled:
+    /// its lookups, and those of every resolver made from it with `for_worker`, take a cached miss as it is.
+    pub fn trust_cached_misses(&mut self) {
+        self.trusts_cached_misses = true;
     }
 
     pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
@@ -1774,6 +1888,7 @@ impl<'a> Resolver<'a> {
         };
         // The flag is set for what an executable compiled in place holds at the path.
         let (tmp, is_at_source_path) = self.retry_while_stale(
+            self.after_miss(),
             source_dir_normalized,
             import_path,
             |this| {
@@ -2125,6 +2240,7 @@ impl<'a> Resolver<'a> {
     /// Runs `attempt`. While it misses: check on disk what the miss read, and run it again if that was stale.
     fn retry_while_stale<T>(
         &mut self,
+        after_miss: AfterMiss,
         source_dir: &[u8],
         import_path: &[u8],
         mut attempt: impl FnMut(&mut Self) -> T,
@@ -2134,8 +2250,9 @@ impl<'a> Resolver<'a> {
         let esm_failure = self.esm_failure;
         let mut result = attempt(self);
         let mut reread: Vec<u64> = Vec::new();
+        let mut earlier_msgs: Vec<bun_ast::Msg> = Vec::new();
         for _ in 0..Self::MAX_RECHECKS {
-            if !missed(&result) || self.after_miss == AfterMiss::TrustCache || replaying() {
+            if !missed(&result) || after_miss == AfterMiss::TrustCache || replaying() {
                 break;
             }
             let stale = self.recheck_after_miss(source_dir, import_path, &mut reread, |this| {
@@ -2144,12 +2261,16 @@ impl<'a> Resolver<'a> {
             if !stale {
                 break;
             }
+            LOOKUPS_RUN_AGAIN.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note(b"Retrying after dropping stale directory cache entries".to_vec());
             }
-            self.truncate_log(log_mark);
+            self.take_log(log_mark, &mut earlier_msgs);
             self.esm_failure = esm_failure;
             result = attempt(self);
+        }
+        if !earlier_msgs.is_empty() && missed(&result) {
+            self.put_back_log(log_mark.0, earlier_msgs);
         }
         result
     }
@@ -2166,6 +2287,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// For a caller's own lookups that fall back one to the next: one check on disk when all of them miss.
+    /// A resolver that trusts cached misses runs this check too, as the old retry of an entry point ran in every mode.
     pub fn with_deferred_miss_check<T, E>(
         &mut self,
         source_dir: &[u8],
@@ -2173,11 +2295,21 @@ impl<'a> Resolver<'a> {
         mut sequence: impl FnMut(&mut Self) -> core::result::Result<T, E>,
     ) -> core::result::Result<T, E> {
         self.retry_while_stale(
+            self.after_miss,
             source_dir,
             import_path,
             |this| this.with_trusted_cache(&mut sequence),
             |result| result.is_err(),
         )
+    }
+
+    /// What a lookup of this resolver does after a miss, outside `with_deferred_miss_check`.
+    fn after_miss(&self) -> AfterMiss {
+        if self.trusts_cached_misses {
+            AfterMiss::TrustCache
+        } else {
+            self.after_miss
+        }
     }
 
     #[inline]
@@ -2187,11 +2319,42 @@ impl<'a> Resolver<'a> {
     }
 
     /// Takes back what the run that missed wrote to the log. The next run writes again what still holds.
-    fn truncate_log(&mut self, (len, warnings, errors): (usize, u32, u32)) {
+    fn take_log(
+        &mut self,
+        (len, warnings, errors): (usize, u32, u32),
+        into: &mut Vec<bun_ast::Msg>,
+    ) {
         let log = self.log_mut();
-        log.msgs.truncate(len);
+        into.extend(log.msgs.drain(len.min(log.msgs.len())..));
         log.warnings = warnings;
         log.errors = errors;
+    }
+
+    /// For a lookup that misses at last: what its earlier runs wrote to the log and its last run did not,
+    /// in front of what the last run wrote. The package manager reports a request that failed only once.
+    #[cold]
+    fn put_back_log(&mut self, len: usize, earlier_msgs: Vec<bun_ast::Msg>) {
+        let log = self.log_mut();
+        let len = len.min(log.msgs.len());
+        let last_msgs = log.msgs.split_off(len);
+        let same =
+            |a: &bun_ast::Msg, b: &bun_ast::Msg| a.kind == b.kind && a.data.text == b.data.text;
+        for msg in earlier_msgs {
+            if last_msgs
+                .iter()
+                .chain(&log.msgs[len..])
+                .any(|kept| same(kept, &msg))
+            {
+                continue;
+            }
+            match msg.kind {
+                bun_ast::Kind::Err => log.errors += 1,
+                bun_ast::Kind::Warn => log.warnings += 1,
+                _ => {}
+            }
+            log.msgs.push(msg);
+        }
+        log.msgs.extend(last_msgs);
     }
 
     /// Replays `lookup` to collect what it reads, checks that on disk, and drops what differs. Returns whether to look up again.
@@ -2202,7 +2365,7 @@ impl<'a> Resolver<'a> {
         reread: &mut Vec<u64>,
         lookup: impl FnOnce(&mut Self) -> bool,
     ) -> bool {
-        let mut touched = TouchedDirs::default();
+        let mut touched = TouchedDirs::new();
         let found = {
             let _armed = ReplayGuard::arm(&mut touched);
             // The first run already wrote the notes and the messages of this lookup.
@@ -2225,6 +2388,7 @@ impl<'a> Resolver<'a> {
             bun_paths::Platform::AUTO,
         )
         .map(strings::without_trailing_slash_windows_path);
+        miss_check_hold::wait_if_armed();
         let stale = self.bust_touched_dirs(&touched, floor_dir, reread);
         // A replay that finds an answer read what the run before it put in the caches.
         stale || found
@@ -2977,7 +3141,7 @@ impl<'a> Resolver<'a> {
     /// `dir` was looked up and did not exist.
     #[inline]
     fn record_missing_dir(&self, dir: &[u8]) {
-        if replay_armed() {
+        if replaying() {
             record_disk_fact(DiskFact::MissingDir, dir, b"");
         }
     }
@@ -2985,7 +3149,7 @@ impl<'a> Resolver<'a> {
     /// `dir_info` was a `node_modules` search level that the cache says has none.
     #[inline]
     fn record_no_node_modules(&self, dir_info: DirInfoRef) {
-        if replay_armed() {
+        if replaying() {
             record_slot(SlotUse::NoNodeModules, dir_info);
         }
     }
@@ -2993,7 +3157,7 @@ impl<'a> Resolver<'a> {
     /// `dir_info` was a `node_modules` search level that was searched or skipped.
     #[inline]
     fn record_search_level(&self, dir_info: DirInfoRef) {
-        if replay_armed() {
+        if replaying() {
             record_slot(SlotUse::SearchLevel, dir_info);
         }
     }
@@ -3010,141 +3174,173 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Judges each record and drops the cached directories that are stale. Returns whether to look up again.
+    /// Judges what the replay read and drops the cached directories that are stale. Returns whether to look up again.
     fn bust_touched_dirs(
         &mut self,
         touched: &TouchedDirs,
         floor_dir: Option<&[u8]>,
         reread: &mut Vec<u64>,
     ) -> bool {
-        use Fs::file_system::EntryKind;
-        /// A directory whose `DirInfo` the replay read, with the slot that the cache maps it to now.
-        struct ReadDir {
-            dir: &'static [u8],
-            key: u64,
-            uses: u8,
-            mapped: Option<DirInfoRef>,
+        let floor = floor_dir.map(|dir| (dir, bun_wyhash::hash(dir)));
+        let now = self.read_dirs_now(&touched.slots, floor);
+        let verdict = self.judge_touched_dirs(touched, &now, floor, reread);
+        let stale = self.drop_stale_dirs(verdict, &now.read_dirs, reread);
+        bun_core::scoped_log!(
+            ResolverDev,
+            "Bust {} touched dirs = {}",
+            touched.facts.len() + touched.slots.len(),
+            stale
+        );
+        stale
+    }
+
+    /// The directories whose `DirInfo` the replay read, each with the slot that the cache maps it to now.
+    /// Every read of the cache by path that the judge needs is here, in one hold of the resolver mutex.
+    fn read_dirs_now(&mut self, slots: &[SlotRecord], floor: Option<(&[u8], u64)>) -> CacheNow {
+        let mut read_dirs: bun_collections::smallvec::SmallVec<[ReadDir; 16]> = slots
+            .iter()
+            .map(|record| {
+                let dir = strings::without_trailing_slash_windows_path(record.slot.abs_path);
+                ReadDir {
+                    dir,
+                    key: bun_wyhash::hash(dir),
+                    uses: record.uses,
+                    recorded: record.slot,
+                    mapped: None,
+                    replaced: false,
+                    link_is_stale: false,
+                }
+            })
+            .collect();
+        // The path of a parent is shorter than the path of its child. The records of one directory are adjacent.
+        read_dirs.sort_unstable_by_key(|read| (read.dir.len(), read.key));
+        read_dirs.dedup_by(|later, kept| {
+            if later.key != kept.key {
+                return false;
+            }
+            kept.uses |= later.uses;
+            kept.replaced |= later.recorded.as_ptr() != kept.recorded.as_ptr();
+            true
+        });
+        let mutex = self.mutex;
+        let _lock = mutex.lock_guard();
+        for read in &mut read_dirs {
+            read.mapped = self.mapped_dir_info(read.dir);
+            match read.mapped {
+                Some(mapped) => {
+                    read.replaced |= mapped.as_ptr() != read.recorded.as_ptr();
+                    read.link_is_stale = self.parent_link_is_stale(mapped);
+                }
+                None => read.replaced = true,
+            }
         }
-        const LEVEL: u8 = SlotUse::NoNodeModules as u8 | SlotUse::SearchLevel as u8;
-        let mut stale = false;
-        let mut read_dirs: bun_collections::smallvec::SmallVec<[ReadDir; 16]> = Default::default();
-        for record in &touched.records {
-            let TouchedDir::Slot { uses, slot } = *record else {
+        let unread_floor = floor
+            .filter(|&(_, key)| !read_dirs.iter().any(|read| read.key == key))
+            .and_then(|(dir, _)| self.mapped_dir_info(dir));
+        CacheNow {
+            read_dirs,
+            unread_floor,
+        }
+    }
+
+    /// Compares what the replay read with the disk. With `&self` it cannot read the cache by path:
+    /// a slot that another thread read after the replay cannot make the miss look current.
+    fn judge_touched_dirs<'t>(
+        &self,
+        touched: &'t TouchedDirs,
+        now: &CacheNow,
+        floor: Option<(&'t [u8], u64)>,
+        reread: &[u64],
+    ) -> Verdict<'t> {
+        use Fs::file_system::EntryKind;
+        let mut verdict = Verdict {
+            stale: now.read_dirs.iter().any(|read| read.replaced),
+            new_dirs: Vec::new(),
+            stale_listings: Vec::new(),
+            stale_slots: Vec::new(),
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // Each fact once, whatever the order of the records.
+        let mut facts: Vec<(u64, u32)> = (0..)
+            .zip(&touched.facts)
+            .map(|(index, record)| {
+                let name = bun_wyhash::hash(touched.bytes(record.name));
+                let dir = touched.bytes(record.dir);
+                let key = bun_wyhash::hash_with_seed(record.fact as u64 ^ name, dir);
+                (key, index)
+            })
+            .collect();
+        facts.sort_unstable();
+        facts.dedup_by_key(|&mut (key, _)| key);
+        for (_, index) in facts {
+            let DiskRecord { fact, dir, name } = touched.facts[index as usize];
+            let dir = touched.bytes(dir);
+            if fact == DiskFact::MissingDir {
+                if Self::can_open_directory(dir) {
+                    verdict.new_dirs.push(dir);
+                }
+                continue;
+            }
+            let cached = match fact {
+                DiskFact::FileEntry => Some(EntryKind::File),
+                DiskFact::DirEntry => Some(EntryKind::Dir),
+                _ => None,
+            };
+            // An entry that is gone, or that `stat()` cannot read, leaves the miss a miss.
+            let on_disk = self.entry_kind_now(&mut buf, &[dir, touched.bytes(name)]);
+            if on_disk.is_some() && on_disk != cached {
+                verdict.stale_listings.push(dir);
+            }
+        }
+        for read in &now.read_dirs {
+            // A directory that this lookup dropped and read again is as new as the disk.
+            let Some(mapped) = read.mapped.filter(|_| !reread.contains(&read.key)) else {
                 continue;
             };
-            let dir = strings::without_trailing_slash_windows_path(slot.abs_path);
-            let key = bun_wyhash::hash(dir);
-            let index = match read_dirs.iter().position(|read| read.key == key) {
-                Some(index) => index,
-                None => {
-                    let mapped = self.cached_dir_info(dir);
-                    read_dirs.push(ReadDir {
-                        dir,
-                        key,
-                        uses: 0,
-                        mapped,
-                    });
-                    read_dirs.len() - 1
-                }
+            let config_changed = if floor.is_some_and(|(_, key)| key == read.key) {
+                self.config_files_changed_on_disk(&mut buf, mapped)
+            } else {
+                read.uses & SlotUse::UnparsedPackageJson as u8 != 0
+                    && self.package_json_changed_on_disk(&mut buf, mapped)
             };
-            let read = &mut read_dirs[index];
-            read.uses |= uses;
-            // The miss came from a slot that a watcher or another thread replaced since.
-            stale |= read
-                .mapped
-                .is_none_or(|mapped| mapped.as_ptr() != slot.as_ptr());
+            let has_new_node_modules = read.uses & SlotUse::NoNodeModules as u8 != 0
+                && !mapped.has_node_modules()
+                && self.entry_kind_now(&mut buf, &[read.dir, b"node_modules"])
+                    == Some(EntryKind::Dir);
+            if config_changed || has_new_node_modules {
+                verdict.stale_slots.push((read.dir, mapped));
+            }
         }
-
-        // Decide first: what is dropped must not depend on the order of the records.
-        let mut seen: Vec<u64> = Vec::with_capacity(touched.records.len());
-        // Directories that exist now: dropped with the ancestors that do not list them.
-        let mut new_dirs: Vec<&[u8]> = Vec::new();
-        let mut stale_listings: Vec<&[u8]> = Vec::new();
-        // Directories whose config files differ from the slot that was compared.
-        let mut stale_configs: Vec<(&ReadDir, DirInfoRef)> = Vec::new();
-        // Every walked level inside one of these gets a new `DirInfo`, to link it to the new parent.
-        let mut changed_levels: Vec<&[u8]> = Vec::new();
-        let mut floor_was_read = false;
+        // The floor directory keeps the refresh that the old retry gave it, also when the replay did not read it.
+        if let Some((dir, key)) = floor
+            && let Some(slot) = now.unread_floor
+            && !reread.contains(&key)
+            && self.config_files_changed_on_disk(&mut buf, slot)
         {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            for record in &touched.records {
-                let TouchedDir::Disk { fact, dir, name } = *record else {
-                    continue;
-                };
-                let dir = touched.bytes(dir);
-                let name = touched.bytes(name);
-                let key = bun_wyhash::hash_with_seed(fact as u64 ^ bun_wyhash::hash(name), dir);
-                if seen.contains(&key) {
-                    continue;
-                }
-                seen.push(key);
-                if fact == DiskFact::MissingDir {
-                    if Self::can_open_directory(dir) {
-                        new_dirs.push(dir);
-                    }
-                    continue;
-                }
-                let cached = match fact {
-                    DiskFact::FileEntry => Some(EntryKind::File),
-                    DiskFact::DirEntry => Some(EntryKind::Dir),
-                    _ => None,
-                };
-                // An entry that is gone, or that `stat()` cannot read, leaves the miss a miss.
-                let now = self.entry_kind_now(&mut buf, &[dir, name]);
-                if now.is_some() && now != cached {
-                    stale_listings.push(dir);
-                }
-            }
-            for read in &read_dirs {
-                let is_floor = floor_dir == Some(read.dir);
-                floor_was_read |= is_floor;
-                if let Some(mapped) = read.mapped
-                    && !reread.contains(&read.key)
-                {
-                    let changed = if is_floor {
-                        self.config_files_changed_on_disk(&mut buf, mapped)
-                    } else {
-                        read.uses & SlotUse::UnparsedPackageJson as u8 != 0
-                            && self.package_json_changed_on_disk(&mut buf, mapped)
-                    };
-                    if changed {
-                        stale_configs.push((read, mapped));
-                    }
-                }
-                if read.uses & LEVEL == 0 {
-                    continue;
-                }
-                if read.uses & SlotUse::NoNodeModules as u8 != 0
-                    && self.entry_kind_now(&mut buf, &[read.dir, b"node_modules"])
-                        == Some(EntryKind::Dir)
-                {
-                    stale_listings.push(read.dir);
-                    changed_levels.push(read.dir);
-                } else if self.parent_link_is_stale(read.mapped) {
-                    changed_levels.push(read.dir);
-                }
-            }
+            verdict.stale_slots.push((dir, slot));
         }
-        // `load_node_modules` reaches a level through the parent link of the level below it.
-        let mut relinks: Vec<&ReadDir> = Vec::new();
-        for &changed_dir in &changed_levels {
-            for read in &read_dirs {
-                if read.uses & LEVEL != 0 && Self::is_dir_or_inside(read.dir, changed_dir) {
-                    relinks.push(read);
-                }
-            }
-        }
+        verdict
+    }
 
-        for dir in new_dirs {
+    /// Drops what the judge found stale. Then relinks: see `relink_read_dirs`. Returns whether to look up again.
+    fn drop_stale_dirs(
+        &mut self,
+        verdict: Verdict<'_>,
+        read_dirs: &[ReadDir],
+        reread: &mut Vec<u64>,
+    ) -> bool {
+        let mut stale = verdict.stale;
+        let mut dropped = false;
+        for dir in verdict.new_dirs {
             let key = bun_wyhash::hash(dir);
             stale = true;
             // In `reread`: this lookup read it again, and another thread dropped it since.
             if !reread.contains(&key) {
                 reread.push(key);
-                self.bust_dir_and_stale_parents(dir);
+                dropped |= self.bust_dir_and_stale_parents(dir);
             }
         }
-        for dir in stale_listings {
+        for dir in verdict.stale_listings {
             let key = bun_wyhash::hash(dir);
             // This lookup dropped `dir` and read it again: what it has now is as new as the disk.
             if reread.contains(&key) {
@@ -3153,39 +3349,39 @@ impl<'a> Resolver<'a> {
             reread.push(key);
             // Also when another thread dropped it first: the fact did not match the disk.
             stale = true;
-            self.bust_dir_cache(dir);
+            dropped |= self.bust_dir_cache(dir);
         }
-        for (read, compared) in stale_configs {
-            if reread.contains(&read.key) {
-                continue;
-            }
+        for (dir, compared) in verdict.stale_slots {
             stale = true;
-            if self.bust_dir_cache_if_mapped(read.dir, compared) {
-                reread.push(read.key);
+            // In `reread` only after an own removal: the next round judges a slot that another thread read since.
+            if self.bust_dir_cache_if_mapped(dir, compared) {
+                reread.push(bun_wyhash::hash(dir));
+                dropped = true;
             }
         }
-        for read in relinks {
-            if reread.contains(&!read.key) || reread.contains(&read.key) {
-                continue;
-            }
-            stale = true;
-            // The listing is still right. Only the link to the parent is not.
-            if let Some(mapped) = read.mapped
-                && self.dir_cache_mut().remove_if(read.dir, mapped.as_ptr())
-            {
-                reread.push(!read.key);
-            }
+        if dropped || read_dirs.iter().any(|read| read.link_is_stale) {
+            stale |= self.relink_read_dirs(read_dirs);
         }
-        if !floor_was_read && let Some(dir) = floor_dir {
-            stale |= self.bust_stale_config_dir(dir, reread);
-        }
-        bun_core::scoped_log!(
-            ResolverDev,
-            "Bust {} touched dirs = {}",
-            touched.records.len(),
-            stale
-        );
         stale
+    }
+
+    /// Unmaps each read directory whose slot points at a parent slot that the cache no longer maps.
+    /// The listing stays. `read_dirs` has ancestors first: a directory that is unmapped here leaves
+    /// the one below it with such a link, so one pass relinks a chain of any length.
+    fn relink_read_dirs(&mut self, read_dirs: &[ReadDir]) -> bool {
+        let mutex = self.mutex;
+        let _lock = mutex.lock_guard();
+        let mut relinked = false;
+        for read in read_dirs {
+            let Some(mapped) = self.mapped_dir_info(read.dir) else {
+                continue;
+            };
+            if self.parent_link_is_stale(mapped) {
+                self.dir_cache_mut().remove_if(read.dir, mapped.as_ptr());
+                relinked = true;
+            }
+        }
+        relinked
     }
 
     /// Drops `dir` while the cache still maps it to `slot`. Another thread's newer slot stays.
@@ -3316,52 +3512,28 @@ impl<'a> Resolver<'a> {
             || (tsconfig_applies && self.tsconfig_changed_on_disk(buf, dir_info))
     }
 
-    /// For a floor directory that the replay did not read: the refresh that the old retry gave it on every miss.
-    fn bust_stale_config_dir(&mut self, dir: &[u8], reread: &mut Vec<u64>) -> bool {
-        let key = bun_wyhash::hash(dir);
-        if reread.contains(&key) {
-            return false;
-        }
-        let Some(dir_info) = self.cached_dir_info(dir) else {
-            return false;
-        };
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if !self.config_files_changed_on_disk(&mut buf, dir_info) {
-            return false;
-        }
-        if self.bust_dir_cache_if_mapped(dir, dir_info) {
-            reread.push(key);
-        }
-        true
-    }
-
-    /// The slot that the cache maps `dir` to now. For a directory that the replay read, only the recorded slot says "not stale".
+    /// The slot that the cache maps `dir` to now. For the drops only: `judge_touched_dirs` gets `CacheNow`.
     fn cached_dir_info(&mut self, dir: &[u8]) -> Option<DirInfoRef> {
         let mutex = self.mutex;
         let _lock = mutex.lock_guard();
+        self.mapped_dir_info(dir)
+    }
+
+    /// `cached_dir_info` for a caller that holds the resolver mutex.
+    fn mapped_dir_info(&mut self, dir: &[u8]) -> Option<DirInfoRef> {
         self.dir_cache_mut().get(dir).map(DirInfoRef::from_slot)
     }
 
-    /// Whether `mapped` is gone, or points at a parent slot that was replaced: a walk up reads the old one.
-    fn parent_link_is_stale(&mut self, mapped: Option<DirInfoRef>) -> bool {
-        let Some(dir_info) = mapped else {
-            return true;
-        };
-        let Some(parent) = dir_info.get_parent() else {
+    /// Whether `slot` points at a parent slot that the cache no longer maps: a walk up from it reads the old parent.
+    /// The caller holds the resolver mutex.
+    fn parent_link_is_stale(&mut self, slot: DirInfoRef) -> bool {
+        let Some(parent) = slot.get_parent() else {
             return false;
         };
         let parent_dir = strings::without_trailing_slash_windows_path(parent.abs_path);
         !self
-            .cached_dir_info(parent_dir)
-            .is_some_and(|current| current.as_ptr() == parent.as_ptr())
-    }
-
-    /// Both are cache keys: absolute, no trailing separator unless a root.
-    fn is_dir_or_inside(path: &[u8], ancestor: &[u8]) -> bool {
-        path.starts_with(ancestor)
-            && (path.len() == ancestor.len()
-                || ResolvePath::is_sep_any(path[ancestor.len()])
-                || ancestor.last().is_some_and(|&c| ResolvePath::is_sep_any(c)))
+            .mapped_dir_info(parent_dir)
+            .is_some_and(|mapped| mapped.as_ptr() == parent.as_ptr())
     }
 
     /// Drops `dir`, then each ancestor whose cached listing lacks the child below it (a link's target is read there).
@@ -5307,7 +5479,9 @@ impl<'a> Resolver<'a> {
 
         if top == root_path {
             let result = self.dir_cache_mut().get_or_put(root_path)?;
-            if result.status != allocators::ItemStatus::Unknown {
+            if result.hash == top_result.hash {
+                // The root itself was asked for: it is `queue[0]`, and it has no parent.
+            } else if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {
                 if i >= queue.len() {
@@ -6582,7 +6756,7 @@ impl<'a> Resolver<'a> {
         let mut package_json: Option<*const PackageJSON> = None;
 
         // Try using the main field(s) from "package.json"
-        if replay_armed() && dir_info.package_json().is_none() {
+        if replaying() && dir_info.package_json().is_none() {
             self.record_no_package_json(dir_info);
         }
         if let Some(pkg_json) = dir_info.package_json() {
@@ -7952,3 +8126,7 @@ impl Dirname {
         &path[0..end_index + 1]
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "miss_check_tests.rs"]
+mod miss_check_tests;

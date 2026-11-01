@@ -240,7 +240,7 @@ impl Entry {
             }
         }
         let kind = self.cache().kind;
-        if crate::resolver::replay_armed() {
+        if crate::resolver::replaying() {
             crate::resolver::record_entry_kind(self.dir, self.base(), kind);
         }
         kind

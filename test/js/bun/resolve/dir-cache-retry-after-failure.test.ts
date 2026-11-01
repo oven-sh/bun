@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, parse } from "node:path";
 
 // The resolver caches every directory it reads, including the ones it did not
 // find, for the life of the process and shares that cache between the runtime,
@@ -65,7 +65,7 @@ const files = {
     const path = require("node:path");
     const { createRequire } = require("node:module");
     exports.specifier = { tsconfig: "late-alias", imports: "#late", unparsed: "pkg", parentlink: "#late" };
-    exports.importer = (kind, round) => path.resolve("race", kind + round, kind === "parentlink" ? "src" : "");
+    exports.importer = kind => path.resolve("race", kind, kind === "parentlink" ? "src" : "");
     exports.resolves = (dir, specifier) => {
       try {
         createRequire(path.join(dir, "x.cjs")).resolve(specifier);
@@ -74,9 +74,9 @@ const files = {
         return 0;
       }
     };
-    // Cells that both threads read: the turn the worker is ready for, the turn to run, the worker's answer.
-    exports.READY = 0;
-    exports.GO = 1;
+    // Cells that both threads read: the turn to run, the turn the worker is set for, the worker's answer.
+    exports.GO = 0;
+    exports.SET = 1;
     exports.ANSWER = 2;
     exports.store = (cell, index, value) => {
       Atomics.store(cell, index, value);
@@ -91,15 +91,18 @@ const files = {
   `,
   "race-worker.cjs": `
     const { workerData } = require("node:worker_threads");
-    const { specifier, importer, resolves, READY, GO, ANSWER, store, waitWhile } = require("./race-shared.cjs");
-    const { cell, rounds, kinds } = workerData;
+    const { resolverMissCheck } = require("bun:internal-for-testing");
+    const { specifier, importer, resolves, GO, SET, ANSWER, store, waitWhile } = require("./race-shared.cjs");
+    const { cell, kinds } = workerData;
     let turn = 0;
     for (const kind of kinds) {
-      for (let lookup = 0; lookup < rounds[kind] * 2; lookup++) {
-        store(cell, READY, ++turn);
-        waitWhile(cell, GO, turn - 1);
-        store(cell, ANSWER, resolves(importer(kind, lookup >> 1), specifier[kind]) + 1);
-      }
+      waitWhile(cell, GO, turn++);
+      // This lookup misses, reads the caches again, and waits there for the other thread.
+      resolverMissCheck.hold();
+      store(cell, SET, turn);
+      const found = resolves(importer(kind), specifier[kind]);
+      resolverMissCheck.release();
+      store(cell, ANSWER, found + 1);
     }
   `,
   "main.mjs": `
@@ -587,16 +590,59 @@ const files = {
         write(path.join("w", "lib", "new.cjs"), "");
         write(path.join("w", "tsconfig.json"), aliases({ "late-alias": ["./lib/new.cjs"] }));
         res("LS3", () => w.resolve("late-alias"));
+
+        // More than one directory to link again in one lookup. The importer's package.json
+        // no longer parses, so the lookup walks up. Two levels above, the directory with the
+        // alias has a new entry.
+        const manifest = (name, imports) => JSON.stringify({ name, imports });
+        write(path.join("n", "b", "c", "package.json"), manifest("c", { "#other": "./m.cjs" }));
+        const n = requireFrom(path.join("n", "b", "c"));
+        res("LN1", () => n.resolve("not-installed"));
+        write(path.join("n", "lib.cjs"), "");
+        write(path.join("n", "b", "c", "package.json"), '{ "name": ');
+        write(path.join("n", "package.json"), manifest("n", { "#late": "./lib.cjs" }));
+        res("LN2", () => requireFrom("n").resolve("#late"));
+        res("LN3", () => n.resolve("#late"));
+
+        // The same with each directory of the chain on an old entry of the one above it.
+        const again = dir => {
+          try {
+            requireFrom(dir).resolve("./late.cjs");
+          } catch {}
+          write(path.join(dir, "late.cjs"), "");
+          requireFrom(dir).resolve("./late.cjs");
+        };
+        write(path.join("o", "b", "c", "d", "package.json"), manifest("d", { "#other": "./m.cjs" }));
+        const o = requireFrom(path.join("o", "b", "c", "d"));
+        res("LO1", () => o.resolve("#late"));
+        again("o");
+        res("LO2", () => requireFrom(path.join("o", "b", "c")).resolve("not-installed"));
+        write(path.join("o", "b", "lib.cjs"), "");
+        write(path.join("o", "b", "package.json"), manifest("b", { "#late": "./lib.cjs" }));
+        res("LO3", () => requireFrom(path.join("o", "b")).resolve("#late"));
+        write(path.join("o", "b", "c", "d", "package.json"), '{ "name": ');
+        res("LO4", () => o.resolve("#late"));
+
+        // A lookup that starts below the importer, whose package.json gets the alias while
+        // the directory above it gets a node_modules.
+        fs.mkdirSync(path.join("g", "b", "c", "d"), { recursive: true });
+        res("LG1", () => requireFrom(path.join("g", "b", "c")).resolve("#late"));
+        write(path.join("g", "node_modules", "x", "package.json"), JSON.stringify({ name: "x" }));
+        write(path.join("g", "b", "lib.cjs"), "");
+        write(path.join("g", "b", "package.json"), manifest("b", { "#late": "./lib.cjs" }));
+        res("LG2", () => requireFrom(path.join("g", "b")).resolve("#late", { paths: [path.resolve("g", "b", "c", "d")] }));
       },
 
       async race() {
-        // Both threads miss, a config file changes, and both look up again at the same
-        // instant. The thread that checks second read the same old cache entry as the
-        // first, which has replaced it by then. It must not keep its miss.
-        const { specifier, importer, resolves, READY, GO, ANSWER, store, waitWhile } = require("./race-shared.cjs");
+        // A Worker looks up from the cache entries of before a change, misses, reads them again, and
+        // waits. This thread then finds the module: it drops such an entry and reads the directory
+        // again. The Worker continues. The new entry is as the disk is, but the Worker did not read it:
+        // it must look up again, and it must not drop what this thread has just read.
+        const { resolverMissCheck, resolverDirInfoSlotsUsed } = require("bun:internal-for-testing");
+        const { specifier, importer, resolves, GO, SET, ANSWER, store, waitWhile } = require("./race-shared.cjs");
         const json = (file, value) => write(file, JSON.stringify(value));
         const named = (names, value) => Object.fromEntries(names.map(name => [name, value]));
-        // Each writes the files of one round and returns the change.
+        // Each writes the files of its kind and returns the change.
         const setup = {
           // An alias added to the tsconfig.json next to the importer.
           tsconfig(top) {
@@ -606,13 +652,11 @@ const files = {
             paths(["other"]);
             return () => paths(["other", "late-alias"]);
           },
-          // An "imports" entry added to the package.json next to the importer.
+          // The package.json next to the importer gets its "imports".
           imports(top) {
             write(path.join(top, "real.cjs"), "");
-            const imports = names =>
-              json(path.join(top, "package.json"), { name: "p", imports: named(names, "./real.cjs") });
-            imports(["#other"]);
-            return () => imports(["#other", "#late"]);
+            json(path.join(top, "package.json"), { name: "p" });
+            return () => json(path.join(top, "package.json"), { name: "p", imports: { "#late": "./real.cjs" } });
           },
           // The package.json of a package that was read while half written.
           unparsed(top) {
@@ -634,33 +678,29 @@ const files = {
             };
           },
         };
-        // The test gives the number of rounds: more for the first kind, which loses most.
-        const [most, less] = process.env.RACE_ROUNDS.split(",").map(Number);
-        const rounds = { tsconfig: most, imports: less, unparsed: less, parentlink: less };
         const kinds = Object.keys(setup);
         const cell = new Int32Array(new SharedArrayBuffer(12));
-        const worker = new Worker(path.resolve("race-worker.cjs"), { workerData: { cell, rounds, kinds } });
+        const worker = new Worker(path.resolve("race-worker.cjs"), { workerData: { cell, kinds } });
         let turn = 0;
-        // How many of the two threads find the module, when both look it up at the same instant.
-        const both = (dir, name) => {
-          waitWhile(cell, READY, turn++);
-          Atomics.store(cell, ANSWER, 0);
-          store(cell, GO, turn);
-          const mine = resolves(dir, name);
-          waitWhile(cell, ANSWER, 0);
-          return mine + Atomics.load(cell, ANSWER) - 1;
-        };
         for (const kind of kinds) {
-          let early = 0;
-          let lost = 0;
-          for (let round = 0; round < rounds[kind]; round++) {
-            const dir = importer(kind, round);
-            const change = setup[kind](path.resolve("race", kind + round), dir);
-            early += both(dir, specifier[kind]);
-            change();
-            lost += 2 - both(dir, specifier[kind]);
-          }
-          console.log(kind + ": found before the change " + early + ", lost after it " + lost);
+          const dir = importer(kind);
+          const change = setup[kind](path.resolve("race", kind), dir);
+          const early = resolves(dir, specifier[kind]);
+          change();
+          Atomics.store(cell, ANSWER, 0);
+          store(cell, GO, ++turn);
+          waitWhile(cell, SET, turn - 1);
+          if (!resolverMissCheck.waitUntilHeld()) throw new Error(kind + ": the lookup of the Worker did not miss");
+          const mine = resolves(dir, specifier[kind]);
+          const slots = resolverDirInfoSlotsUsed();
+          resolverMissCheck.release();
+          waitWhile(cell, ANSWER, 0);
+          const theirs = Atomics.load(cell, ANSWER) - 1;
+          const again = resolverDirInfoSlotsUsed() - slots;
+          console.log(
+            kind + ": found before the change " + early + ", then by this thread " + mine + ", by the Worker " + theirs +
+              ", directories the Worker read again " + again,
+          );
         }
         await worker.terminate();
       },
@@ -669,19 +709,21 @@ const files = {
         // The test wrote these files before this process started, and nothing
         // changes on disk here. So no miss may drop a directory: a directory that
         // is dropped is read again, and its package.json parsed again, into memory
-        // that is never freed.
-        const { resolverDirInfoSlotsUsed } = require("bun:internal-for-testing");
-        const s1 = requireFrom("s1");
-        const s2 = requireFrom("s2");
-        const s3 = requireFrom(path.join("s3", "src"));
-        const s5 = requireFrom(path.join("s5", "src"));
+        // that is never freed. No miss may run its lookup again either.
+        const { resolverDirInfoSlotsUsed, resolverLookupsRunAgain } = require("bun:internal-for-testing");
+        // The working directory can be another one: see the test.
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const s1 = requireFrom(path.join(here, "s1"));
+        const s2 = requireFrom(path.join(here, "s2"));
+        const s3 = requireFrom(path.join(here, "s3", "src"));
+        const s5 = requireFrom(path.join(here, "s5", "src"));
         const misses = [
           // A package that is not installed, and a file that an installed one does not have.
           ["Z1", () => require.resolve("never-installed")],
           ["Z2", () => require.resolve("s0/hidden")],
           // A file that is not there, by a relative and by an absolute path.
           ["Z3", () => require.resolve("./nope.cjs")],
-          ["Z4", () => require.resolve(path.resolve("nope.cjs"))],
+          ["Z4", () => require.resolve(path.join(here, "nope.cjs"))],
           // The package.json next to the importer has a byte order mark, which the loader strips.
           ["Z5", () => s1.resolve("#x")],
           // The same in UTF-16.
@@ -697,7 +739,8 @@ const files = {
           ["Z10", () => require.resolve("./s7.cjs")],
         ];
         for (const [label, miss] of misses) res(label, miss);
-        const before = resolverDirInfoSlotsUsed();
+        const slots = resolverDirInfoSlotsUsed();
+        const lookups = resolverLookupsRunAgain();
         for (let round = 0; round < 20; round++) {
           for (const [, miss] of misses) {
             try {
@@ -705,7 +748,8 @@ const files = {
             } catch {}
           }
         }
-        console.log("directories read again by 200 more misses:", resolverDirInfoSlotsUsed() - before);
+        console.log("directories read again by 200 more misses:", resolverDirInfoSlotsUsed() - slots);
+        console.log("lookups run again by 200 more misses:", resolverLookupsRunAgain() - lookups);
       },
 
       async build() {
@@ -755,13 +799,16 @@ async function runGroup(
   group: string,
   env: (dir: string) => Record<string, string> = () => ({}),
   setup: (dir: string) => void = () => {},
+  // Where the process starts, and its flags.
+  start: (dir: string) => { cwd: string; flags: string[] } = dir => ({ cwd: dir, flags: [] }),
 ) {
   using dir = tempDir("dir-cache-retry", files);
   setup(String(dir));
+  const { cwd, flags } = start(String(dir));
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.mjs", group],
+    cmd: [bunExe(), ...flags, join(String(dir), "main.mjs"), group],
     env: { ...bunEnv, ...env(String(dir)) },
-    cwd: String(dir),
+    cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -769,7 +816,6 @@ async function runGroup(
   return { stdout: normalizeBunSnapshot(stdout, String(dir)), stderr: stderr.trim(), exitCode };
 }
 
-// Four blocks, so that few processes of a debug build start at the same time.
 describe.concurrent("a failed resolution sees packages and files created after the miss", () => {
   test("packages and directories created in the node_modules search path", async () => {
     expect(await runGroup("search")).toMatchInlineSnapshot(`
@@ -1009,7 +1055,16 @@ describe.concurrent("a failed resolution checks again the config files and links
       LC2 OK q/src/real.cjs
       LS1 ERR MODULE_NOT_FOUND
       LS2 OK w/lib/old.cjs
-      LS3 OK w/lib/new.cjs"
+      LS3 OK w/lib/new.cjs
+      LN1 ERR MODULE_NOT_FOUND
+      LN2 OK n/lib.cjs
+      LN3 OK n/lib.cjs
+      LO1 ERR MODULE_NOT_FOUND
+      LO2 ERR MODULE_NOT_FOUND
+      LO3 OK o/b/lib.cjs
+      LO4 OK o/b/lib.cjs
+      LG1 ERR MODULE_NOT_FOUND
+      LG2 OK g/b/lib.cjs"
       ,
       }
     `);
@@ -1096,7 +1151,13 @@ describe.concurrent("a failed resolution checks again what else it read from the
     `);
   });
 
-  test("a miss drops no directory when nothing changed on disk", async () => {
+  // From the root of the file system too: the root used to get two cache entries when it was the
+  // directory asked for, the second linked to the first. That link looked stale to each miss.
+  test.each([
+    ["the project", (dir: string) => ({ cwd: dir, flags: [] })],
+    // No package is installed for a miss where no node_modules is above the working directory.
+    ["the root of the file system", (dir: string) => ({ cwd: parse(dir).root, flags: ["--no-install"] })],
+  ])("a miss drops no directory when nothing changed on disk, started in %s", async (_, start) => {
     const steadyFiles = (dir: string) => {
       const write = (file: string, contents: string | Buffer) => {
         mkdirSync(dirname(join(dir, file)), { recursive: true });
@@ -1117,25 +1178,24 @@ describe.concurrent("a failed resolution checks again what else it read from the
       write("s6.cjs", "");
       symlinkSync("nowhere.cjs", join(dir, "s7.cjs"), "file");
     };
-    expect(await runGroup("steady", undefined, steadyFiles)).toMatchInlineSnapshot(`
-      {
-        "exitCode": 0,
-        "stderr": "",
-        "stdout": 
-      "Z1 ERR MODULE_NOT_FOUND
-      Z2 ERR MODULE_NOT_FOUND
-      Z3 ERR MODULE_NOT_FOUND
-      Z4 ERR MODULE_NOT_FOUND
-      Z5 ERR MODULE_NOT_FOUND
-      Z6 ERR MODULE_NOT_FOUND
-      Z7 ERR MODULE_NOT_FOUND
-      Z8 ERR MODULE_NOT_FOUND
-      Z9 ERR MODULE_NOT_FOUND
-      Z10 ERR MODULE_NOT_FOUND
-      directories read again by 200 more misses: 0"
-      ,
-      }
-    `);
+    expect(await runGroup("steady", undefined, steadyFiles, start)).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: [
+        "Z1 ERR MODULE_NOT_FOUND",
+        "Z2 ERR MODULE_NOT_FOUND",
+        "Z3 ERR MODULE_NOT_FOUND",
+        "Z4 ERR MODULE_NOT_FOUND",
+        "Z5 ERR MODULE_NOT_FOUND",
+        "Z6 ERR MODULE_NOT_FOUND",
+        "Z7 ERR MODULE_NOT_FOUND",
+        "Z8 ERR MODULE_NOT_FOUND",
+        "Z9 ERR MODULE_NOT_FOUND",
+        "Z10 ERR MODULE_NOT_FOUND",
+        "directories read again by 200 more misses: 0",
+        "lookups run again by 200 more misses: 0",
+      ].join("\n"),
+    });
   });
 });
 
@@ -1156,19 +1216,17 @@ test("a file added to a resolved package, from this thread and a Worker", async 
   `);
 });
 
-// Runs alone too: each round needs both threads at the same instant. A debug build has
-// no time for more rounds than these.
-test("two threads that miss find the module when a config file changes", async () => {
-  const rounds = isDebug ? "20,5" : "200,50";
-  expect(await runGroup("race", () => ({ RACE_ROUNDS: rounds }))).toMatchInlineSnapshot(`
+// The Worker waits at a fixed point of its lookup for this to be true of every run. See the fixture.
+test("a miss that another thread's lookup made out of date is looked up again", async () => {
+  expect(await runGroup("race")).toMatchInlineSnapshot(`
     {
       "exitCode": 0,
       "stderr": "",
       "stdout": 
-    "tsconfig: found before the change 0, lost after it 0
-    imports: found before the change 0, lost after it 0
-    unparsed: found before the change 0, lost after it 0
-    parentlink: found before the change 0, lost after it 0"
+    "tsconfig: found before the change 0, then by this thread 1, by the Worker 1, directories the Worker read again 0
+    imports: found before the change 0, then by this thread 1, by the Worker 1, directories the Worker read again 0
+    unparsed: found before the change 0, then by this thread 1, by the Worker 1, directories the Worker read again 0
+    parentlink: found before the change 0, then by this thread 1, by the Worker 1, directories the Worker read again 0"
     ,
     }
   `);

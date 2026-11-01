@@ -1125,6 +1125,32 @@ describe.concurrent("auto-install reports why a package could not be installed",
     expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
     expect(exitCode).toBe(1);
   });
+
+  // A package.json that appears next to the importer makes the lookup run again after its miss.
+  // The package manager reports a request that failed once: the second run must keep the note.
+  const afterAChange = (name: string) =>
+    `require("node:fs").writeFileSync(__dirname + "/package.json", JSON.stringify({ name: "app" }));\nrequire("${name}");\n`;
+
+  test("tarball 404, from a lookup that runs again", async () => {
+    const name = "pkg-whose-tarball-is-missing-twice";
+    using r = registryWithMissingTarball(name);
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", afterAChange(name));
+
+    expect(r.requests).toEqual([`/${name}`, r.tarballPath]);
+    expect(stderr).toContain(`note: GET ${r.tarballUrl} - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("manifest 404, from a lookup that runs again", async () => {
+    const name = "pkg-whose-manifest-is-missing-twice";
+    using r = registryWithMissingTarball("some-other-package");
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", afterAChange(name));
+
+    expect(r.requests).toEqual([`/${name}`]);
+    expect(stderr).toContain(`error: Cannot find package '${name}'`);
+    expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
+    expect(exitCode).toBe(1);
+  });
 });
 
 // A registry whose every package has exactly one version, 1.0.0, published now.

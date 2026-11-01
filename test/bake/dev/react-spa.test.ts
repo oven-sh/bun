@@ -2,9 +2,9 @@
 // react is big and we do lots of stuff like fast refresh.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { symlinkSync } from "node:fs";
+import { symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Client, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Client, Dev, devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 
 /** To test react refresh's registration system */
 const reactAndRefreshStub = {
@@ -199,6 +199,8 @@ devTest("react refresh cases", {
       expectHookComponent((await import("./default_arrow_hooks")).default, "default_arrow_hooks.tsx", "default");
       expectHookComponent((await import("./local_var_hooks")).LocalVar, "local_var_hooks.tsx", "LocalVar");
       expectHookComponent((await import("./local_const_hooks")).LocalConst, "local_const_hooks.tsx", "LocalConst");
+      expectHookComponent((await import("./two_declarators_hooks")).First, "two_declarators_hooks.tsx", "First");
+      expectHookComponent((await import("./two_declarators_hooks")).Second, "two_declarators_hooks.tsx", "Second");
       await import("./non_exported_hooks");
 
       console.log("PASS");
@@ -288,6 +290,16 @@ devTest("react refresh cases", {
         const [count, setCount] = useState(0);
         return <div>{count}</div>;
       }
+    `,
+    "two_declarators_hooks.tsx": `
+      import { useState } from "react";
+      export const First = () => {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }, Second = () => {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      };
     `,
     "non_exported_hooks.tsx": `
       import { useState } from "react";
@@ -902,7 +914,174 @@ devTest("react component with hooks and mutual recursion renders without error",
   },
 });
 
-test("bun bake hydrates a .tsx page, and Fast Refresh keeps its state after an edit", async () => {
+// The tests below run the React of the test suite in the page. A component is a
+// button that counts its clicks, so an edit that keeps its state keeps the count.
+const counter = (id: string, label: string, extraHook = false) => `
+  ${extraHook ? "useRef(null);" : ""}
+  const [count, setCount] = useState(0);
+  return <button id="${id}" className="counter" onClick={() => setCount(c => c + 1)}>{"${label} " + count}</button>;
+`;
+const reactImports = `import * as React from "react";\nimport { Component, forwardRef, memo, useRef, useState } from "react";`;
+const wrappers = `
+  import { createElement, memo } from "react";
+  export const withElement = Inner => function WithElement(props) { return createElement(Inner, props); };
+  export const withCall = render => function WithCall(props) { return render(props); };
+  // The shape of mobx's observer().
+  export const observer = render => memo(function Observer(props) { return render(props); });
+`;
+/** `modules[name]` is the source of `${name}.tsx`. Its `Counter` or default export is rendered. */
+function writeApp(dev: Dev, modules: Record<string, string>) {
+  const names = Object.keys(modules);
+  for (const name of names) writeFileSync(dev.join(name + ".tsx"), `${reactImports}\n${modules[name]}`);
+  writeFileSync(dev.join("wrappers.ts"), wrappers);
+  writeFileSync(
+    dev.join("App.tsx"),
+    `
+      import { createElement, useState } from "react";
+      ${names.map(name => `import * as ${name} from "./${name}";`).join("\n")}
+      export default function App() {
+        const [renders, setRenders] = useState(0);
+        return (
+          <div>
+            <button id="parent" onClick={() => setRenders(n => n + 1)}>{"parent " + renders}</button>
+            ${names.map(name => `{createElement(${name}.Counter ?? ${name}.default)}`).join("\n")}
+          </div>
+        );
+      }
+    `,
+  );
+}
+/** Waits until every counter shows `text`, then returns what each one shows. */
+function counters(c: Client, text: string): Promise<Record<string, string>> {
+  return c.js`
+    const deadline = Date.now() + ${2000 * WAIT_MULTIPLIER};
+    let shown;
+    do {
+      shown = Object.fromEntries(Array.from(document.querySelectorAll(".counter"), b => [b.id, b.textContent]));
+      if (Object.values(shown).every(value => value === ${text})) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    } while (Date.now() < deadline);
+    return shown;
+  `;
+}
+const clickCounters = (c: Client) => c.js`for (const b of document.querySelectorAll(".counter")) b.click();`;
+
+// react-refresh keeps the state of a component when the module registers the
+// same id again. It can only do that for a value that the module registered.
+const wrapperCalls: Record<string, (body: string) => string> = {
+  DefaultMemoFunction: body => `export default memo(function Counter() {${body}});`,
+  DefaultMemoArrow: body => `export default memo(() => {${body}});`,
+  NamedMemoArrow: body => `export const Counter = memo(() => {${body}});`,
+  MemoThenDefault: body => `const Counter = memo(function Counter() {${body}});\nexport default Counter;`,
+  ForwardRefFunction: body => `export const Counter = forwardRef(function Counter(props, ref) {${body}});`,
+  MemoForwardRef: body => `export default memo(forwardRef((props, ref) => {${body}}));`,
+  MemberCallee: body => `export default React.memo(() => {${body}});`,
+  MemoWithCompare: body => `export default memo(() => {${body}}, () => false);`,
+  FunctionThenMemo: body => `function Counter() {${body}}\nexport default memo(Counter);`,
+  ForwardRefThenMemo: body => `const Inner = forwardRef((props, ref) => {${body}});\nexport default memo(Inner);`,
+  // The file that docs/lint/rules/react/only-export-components.mdx gives as a good one.
+  BesideAPlainComponent: body => `export const Label = () => <span />;\nexport const Counter = memo(() => {${body}});`,
+  NotExported: body => `const Row = memo(() => {${body}});\nexport function Counter() { return <Row />; }`,
+  UserWrapperRenders: body =>
+    `import { withElement } from "./wrappers";\nexport const Counter = withElement(() => {${body}});`,
+  UserWrapperCalls: body => `import { withCall } from "./wrappers";\nexport const Counter = withCall(() => {${body}});`,
+  UserWrapperCallsAName: body =>
+    `import { withCall } from "./wrappers";\nfunction Inner() {${body}}\nexport const Counter = withCall(Inner);`,
+  Observer: body => `import { observer } from "./wrappers";\nexport const Counter = observer(() => {${body}});`,
+  ObserverOfAName: body =>
+    `import { observer } from "./wrappers";\nfunction Inner() {${body}}\nexport default observer(Inner);`,
+};
+devTest("Fast Refresh keeps the state of a component that is the value of a wrapper call", {
+  fixture: "react-fast-refresh",
+  async test(dev) {
+    const names = Object.keys(wrapperCalls);
+    const modules = (label: string, extraHook = false) =>
+      Object.fromEntries(names.map(name => [name, wrapperCalls[name](counter(name, label, extraHook))]));
+    const all = (text: string) => Object.fromEntries(names.map(name => [name, text]));
+    writeApp(dev, modules("count"));
+
+    await using c = await dev.client("/");
+    await clickCounters(c);
+    await clickCounters(c);
+    expect(await counters(c, "count 2")).toEqual(all("count 2"));
+
+    // An edit that keeps the hooks keeps the state, and the page shows the edit.
+    for (const [name, source] of Object.entries(modules("clicks"))) {
+      await dev.write(name + ".tsx", `${reactImports}\n${source}`);
+    }
+    expect(await counters(c, "clicks 2")).toEqual(all("clicks 2"));
+
+    // The parent now renders the new value of each wrapper call. React takes it for the old one.
+    await c.click("#parent");
+    await c.expectElemText("#parent", "parent 1");
+    expect(await counters(c, "clicks 2")).toEqual(all("clicks 2"));
+
+    // An edit that changes the hooks mounts the component again. A wrapper that calls the
+    // function in its own component would otherwise run the new hooks on the old state.
+    for (const [name, source] of Object.entries(modules("taps", true))) {
+      await dev.write(name + ".tsx", `${reactImports}\n${source}`);
+    }
+    expect(await counters(c, "taps 0")).toEqual(all("taps 0"));
+    await clickCounters(c);
+    expect(await counters(c, "taps 1")).toEqual(all("taps 1"));
+  },
+});
+devTest("Fast Refresh mounts a component again when an edit changes its wrapper calls", {
+  fixture: "react-fast-refresh",
+  async test(dev) {
+    // Each value is a different kind of React type. One id for two of them would
+    // render a fiber of the old kind with a type of the new kind.
+    const steps = [
+      (body: string) => `export const Counter = memo(() => {${body}});`,
+      (body: string) => `export const Counter = memo(forwardRef((props, ref) => {${body}}));`,
+      (body: string) => `export const Counter = forwardRef((props, ref) => {${body}});`,
+      (body: string) => `export const Counter = memo(() => {${body}});`,
+      (body: string) =>
+        `import { withElement } from "./wrappers";\nexport const Counter = withElement(() => {${body}});`,
+      (body: string) => `import { withCall } from "./wrappers";\nexport const Counter = withCall(() => {${body}});`,
+    ];
+    writeApp(dev, { Changing: steps[0](counter("Changing", "step 0")) });
+
+    await using c = await dev.client("/");
+    for (let i = 1; i < steps.length; i++) {
+      await clickCounters(c);
+      expect(await counters(c, `step ${i - 1} 1`)).toEqual({ Changing: `step ${i - 1} 1` });
+      await dev.write("Changing.tsx", `${reactImports}\n${steps[i](counter("Changing", `step ${i}`))}`);
+      expect(await counters(c, `step ${i} 0`)).toEqual({ Changing: `step ${i} 0` });
+    }
+  },
+});
+// The dev server lets a module accept its own updates when every export looks like a
+// component. A class looks like one and is not registered, so an update of this module
+// must still reach the module that imports it, or the class would stay as it was.
+devTest("Fast Refresh still shows an edit of a class next to a wrapper call", {
+  fixture: "react-fast-refresh",
+  async test(dev) {
+    const source = (label: string) => `
+      export const Counter = memo(() => {${counter("Memo", "count")}});
+      export class Legacy extends Component {
+        render() { return <i id="legacy">${label}</i>; }
+      }
+    `;
+    writeApp(dev, {
+      Mixed: source("before"),
+      Other: `import { Legacy } from "./Mixed";\nexport function Counter() { return <Legacy />; }`,
+    });
+
+    await using c = await dev.client("/");
+    await clickCounters(c);
+    await clickCounters(c);
+    expect(await counters(c, "count 2")).toEqual({ Memo: "count 2" });
+
+    await dev.write("Mixed.tsx", `${reactImports}\n${source("after")}`);
+    await c.expectElemText("#legacy", "after");
+    expect(await counters(c, "count 2")).toEqual({ Memo: "count 2" });
+  },
+});
+
+// A debug build takes about 4 s for the first bundle of a page alone.
+const bakeTest = (name: string, fn: () => Promise<void>) => test(name, fn, 10_000 * WAIT_MULTIPLIER);
+bakeTest("bun bake hydrates a .tsx page, and Fast Refresh keeps its state after an edit", async () => {
   const page = (label: string) => `
     import { useState } from "react";
     export default function Home() {
@@ -940,7 +1119,7 @@ test("bun bake hydrates a .tsx page, and Fast Refresh keeps its state after an e
   await client.expectElemText("button", "clicks 2");
 });
 
-test("bun bake hydrates a page with server props, and loads it again when only its data changes", async () => {
+bakeTest("bun bake hydrates a page with server props, and loads it again when only its data changes", async () => {
   using dir = tempDir("bake-hydrate-props", {
     "app/data.ts": `export const start = 5;`,
     "app/pages/index.tsx": `

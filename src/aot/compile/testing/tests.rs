@@ -1,4 +1,5 @@
 use super::*;
+use crate::ir::Opcode;
 use crate::load::source_provider::{
     DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
     SourceFile,
@@ -496,4 +497,77 @@ fn on_disk_project_compiles_file_under_the_aot_condition() {
         panic!("{} files are aot sources", typed_paths.len());
     };
     assert!(typed_path.ends_with(b"/node_modules/p/x.aot.ts"));
+}
+
+fn counts_executions(fragment: &Fragment) -> bool {
+    let mut functions = fragment.functions.iter();
+    functions.any(|(_, function)| {
+        let mut values = function.body.blocks().flat_map(|block| block.values());
+        values.any(|value| value.opcode == Opcode::CountExecution)
+    })
+}
+
+/// `bun test --aot --coverage` in `directory`: the functions of `names` whose files count their executions.
+fn find_counted(
+    directory: &str,
+    files: &[(&str, &str)],
+    names: &[&'static str],
+) -> Vec<&'static str> {
+    let configuration_path = format!("{directory}/{CONFIGURATION_FILE}");
+    let configuration = write_configuration(&default_settings());
+    let files = files.iter().map(|&(path, text)| (path, text.as_bytes()));
+    let files = files.chain([(configuration_path.as_str(), &configuration[..])]);
+    let mut in_memory_files: Vec<(Vec<u8>, Vec<u8>)> = files
+        .map(|(path, text)| (path.as_bytes().to_vec(), text.to_vec()))
+        .collect();
+    in_memory_files.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let mut project = TestProject {
+        in_memory_files,
+        ..TestProject::on_disk(directory.as_bytes(), &["main.ts"])
+    };
+    project.aot.counts_executions = true;
+    let lowered = lower_application(&project);
+    let is_counted = |name: &&str| {
+        let fragment = find_defining_fragment(&lowered, name);
+        counts_executions(fragment.expect("a lowered file defines the function"))
+    };
+    names.iter().copied().filter(is_counted).collect()
+}
+
+#[test]
+fn coverage_counts_the_files_of_the_project_and_no_package() {
+    let plain = [
+        (
+            "/project/main.ts",
+            "import { nested } from \"./node_modules/nested/index.js\";\nexport function main() { return nested(); }\nmain();\n",
+        ),
+        (
+            "/project/node_modules/nested/index.js",
+            "export function nested() { return 1; }\n",
+        ),
+    ];
+    assert_eq!(
+        find_counted("/project", &plain, &["main", "nested"]),
+        ["main"]
+    );
+    // The project is a package folder of `node_modules`. The packages below and beside it are still packages.
+    let in_package_folder = [
+        (
+            "/p/node_modules/my-pkg/main.ts",
+            "import { nested } from \"./node_modules/nested/index.js\";\nimport { hoisted } from \"../hoisted/index.js\";\nexport function main() { return nested() + hoisted(); }\nmain();\n",
+        ),
+        (
+            "/p/node_modules/my-pkg/node_modules/nested/index.js",
+            "export function nested() { return 1; }\n",
+        ),
+        (
+            "/p/node_modules/hoisted/index.js",
+            "export function hoisted() { return 2; }\n",
+        ),
+    ];
+    let names = ["main", "nested", "hoisted"];
+    assert_eq!(
+        find_counted("/p/node_modules/my-pkg", &in_package_folder, &names),
+        ["main"]
+    );
 }

@@ -382,8 +382,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let path = inputs.sources.diagnostic_path(file);
         let is_counted = inputs.options.counts_executions
             && inputs.sources.kind(file) == load::SourceKind::Program
-            && !bun_core::strings::contains(path, b"/node_modules/")
-            && !bun_core::strings::contains(path, b"\\node_modules\\");
+            && !inputs.sources.is_package_file_to_coverage(path);
         let counted_places = is_counted.then(|| CountedPlaces::find(hir, bound, path));
         let scopes = scopes.unwrap_or_else(|| {
             let may_hold_registries = may_hold_registries(inputs, file);

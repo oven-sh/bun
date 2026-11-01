@@ -19,7 +19,7 @@ use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestGlobals};
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
-use bun_paths::string_paths::without_leading_path_separator;
+use bun_paths::string_paths::{NodeModulesScope, without_leading_path_separator};
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -3910,8 +3910,12 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     // so we skip the ascii check
     let slice: &[u8] = zig_slice.slice();
 
-    // always ignore node_modules.
-    if strings::contains(slice, b"/node_modules/") || strings::contains(slice, b"\\node_modules\\")
+    // Skip package files. The folder bun started in tells which `node_modules` components count.
+    if strings::contains(slice, b"node_modules")
+        && NodeModulesScope::below_root(
+            bun_path::fs::FileSystem::instance().initial_top_level_dir(),
+        )
+        .file_is_inside_node_modules(slice)
     {
         return false;
     }

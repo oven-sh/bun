@@ -527,6 +527,12 @@ struct ReplCommand {
     handler: fn(&mut Repl, &[u8]) -> ReplResult,
 }
 
+enum InputLine<'a> {
+    Code,
+    Command(&'static ReplCommand, &'a [u8]),
+    UnknownCommand(&'a [u8]),
+}
+
 impl ReplCommand {
     const ALL: [ReplCommand; 9] = [
         ReplCommand {
@@ -576,11 +582,32 @@ impl ReplCommand {
         },
     ];
 
-    fn find(name: &[u8]) -> Option<&'static ReplCommand> {
+    /// `.5` is a number and `..` starts a spread: lines that are JavaScript, as in node's REPL.
+    fn may_name(line: &[u8]) -> bool {
+        line.first() == Some(&b'.') && !matches!(line.get(1), Some(b'0'..=b'9' | b'.'))
+    }
+
+    /// A line of a pending input can be a member access (`.b`), so only a full name is a command there.
+    fn find(name: &[u8], mode: InputMode) -> Option<&'static ReplCommand> {
+        let prefixes = mode == InputMode::Normal;
         Self::ALL.iter().find(|&cmd| {
             strings::eql_long(cmd.name, name, true)
-                || (name.len() > 1 && cmd.name.starts_with(name))
+                || (prefixes && name.len() > 1 && cmd.name.starts_with(name))
         })
+    }
+
+    fn classify(line: &[u8], mode: InputMode) -> InputLine<'_> {
+        // `.editor` mode stores every line as text. Only Tab asks about a line there.
+        if mode == InputMode::Editor || !Self::may_name(line) {
+            return InputLine::Code;
+        }
+        let (name, args) = strings::split_once_char(line, b' ').unwrap_or((line, b""));
+        match Self::find(name, mode) {
+            Some(cmd) => InputLine::Command(cmd, args),
+            // `.then(f)` under `(promise` continues the expression.
+            None if mode == InputMode::Multiline => InputLine::Code,
+            None => InputLine::UnknownCommand(name),
+        }
     }
 }
 
@@ -1491,7 +1518,7 @@ impl<'a> Repl<'a> {
         if self.line_editor.cursor != line.len() {
             return;
         }
-        if line.is_empty() || line[0] == b'.' {
+        if line.is_empty() || ReplCommand::may_name(&line) {
             return; // skip REPL dot-commands
         }
 
@@ -2532,20 +2559,8 @@ impl<'a> Repl<'a> {
         }
 
         // Check for REPL commands
-        if !line.is_empty() && line[0] == b'.' {
-            let space_idx = strings::index_of_char(&line, b' ');
-            let cmd_name = if let Some(idx) = space_idx {
-                &line[..idx as usize]
-            } else {
-                &line[..]
-            };
-            let args = if let Some(idx) = space_idx {
-                &line[idx as usize + 1..]
-            } else {
-                &b""[..]
-            };
-
-            if let Some(cmd) = ReplCommand::find(cmd_name) {
+        match ReplCommand::classify(&line, self.input_mode) {
+            InputLine::Command(cmd, args) => {
                 let result = (cmd.handler)(self, args);
                 match result {
                     ReplResult::ExitRepl => {
@@ -2559,7 +2574,8 @@ impl<'a> Repl<'a> {
                         return Ok(());
                     }
                 }
-            } else {
+            }
+            InputLine::UnknownCommand(cmd_name) => {
                 self.print_error(format_args!("Unknown command: {}\n", BStr::new(cmd_name)));
                 self.print(format_args!(
                     "Type {}.help{} for available commands\n",
@@ -2570,6 +2586,7 @@ impl<'a> Repl<'a> {
                 self.refresh_line();
                 return Ok(());
             }
+            InputLine::Code => {}
         }
 
         // Handle empty line
@@ -2675,7 +2692,8 @@ impl<'a> Repl<'a> {
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
 
         // Complete REPL commands
-        if !line.is_empty() && line[0] == b'.' {
+        let kind = ReplCommand::classify(&line, self.input_mode);
+        if !matches!(kind, InputLine::Code) {
             let mut matches: Vec<&'static [u8]> = Vec::new();
 
             for cmd in &ReplCommand::ALL {

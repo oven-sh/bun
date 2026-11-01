@@ -58,6 +58,7 @@ using namespace JSC;
     macro(close) \
     macro(cmd) \
     macro(code) \
+    macro(consoleTask) \
     macro(createCommonJSModule) \
     macro(createFIFO) \
     macro(createInternalModuleById) \

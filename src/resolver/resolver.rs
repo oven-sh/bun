@@ -2792,9 +2792,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Drops each `DirInfo` from `dir` up whose listing-derived facts changed, with the levels below it.
-    ///
-    /// A chain stops at a level that `checked` holds from an earlier chain of the same retry.
+    /// Drops each `DirInfo` from `dir` up whose listing-derived facts changed, with the levels below it. Stops at a level in `checked`.
     pub fn drop_stale_dir_info_chain(&mut self, dir: &[u8], checked: &mut CheckedDirs) {
         // A lookup reads no `DirInfo` for a path that does not fit a path buffer.
         if !bun_paths::is_absolute(dir) || dir.len() >= MAX_PATH_BYTES {

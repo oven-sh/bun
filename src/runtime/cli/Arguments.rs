@@ -1343,6 +1343,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                         Global::exit(1);
                     }
                 };
+                ctx.bundler_options.elide_lines_from_cli = true;
             }
         }
     }
@@ -1979,6 +1980,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // "run.silent" in bunfig.toml
         if args.flag(b"--silent") {
             ctx.debug.silent = true;
+            ctx.debug.silent_from_cli = true;
         }
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
@@ -1994,6 +1996,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                         Global::exit(1);
                     }
                 };
+                ctx.bundler_options.elide_lines_from_cli = true;
             }
         }
     }
@@ -2005,6 +2008,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // "run.bun" in bunfig.toml
         if args.flag(b"--bun") {
             ctx.debug.run_in_bun = true;
+            ctx.debug.run_in_bun_from_cli = true;
         }
     }
 
@@ -2111,8 +2115,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if let Some(shell) = args.option(b"--shell") {
             if shell == b"bun" {
                 ctx.debug.use_system_shell = false;
+                ctx.debug.use_system_shell_from_cli = true;
             } else if shell == b"system" {
                 ctx.debug.use_system_shell = true;
+                ctx.debug.use_system_shell_from_cli = true;
             } else {
                 Output::err_generic(
                     "Expected --shell to be one of 'bun' or 'system'. Received: \"{}\"",

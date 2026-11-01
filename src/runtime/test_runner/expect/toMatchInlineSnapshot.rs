@@ -3,8 +3,10 @@ use bun_jsc::{JSValue, JsResult};
 
 use super::throw;
 use super::Expect;
+use super::Received;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_match_inline_snapshot(
         &self,
         this_value: JsWrapper<'_, Self>,
@@ -84,7 +86,8 @@ impl Expect {
         )?;
         this.inline_snapshot(
             global,
-            value,
+            this_value,
+            Received::Value(value),
             property_matchers,
             expected_slice,
             "toMatchInlineSnapshot",

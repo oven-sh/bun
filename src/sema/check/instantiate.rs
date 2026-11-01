@@ -858,6 +858,9 @@ impl<'p, 's> Checker<'p, 's> {
             self.reset_instantiation_count_if_idle();
         }
         self.instantiation_depth += 1;
+        if self.leaves_depth_limit_unreported {
+            self.instantiation_chain.push((ty, mapper));
+        }
         if serial == 0 {
             self.active_mappers.push(mapper);
         }
@@ -878,6 +881,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if serial == 0 {
             self.active_mappers.pop();
+        }
+        if self.leaves_depth_limit_unreported {
+            self.instantiation_chain.pop();
         }
         self.instantiation_depth -= 1;
         // tsgo's only instantiation cache is the active mappers' one. So a result that contains the

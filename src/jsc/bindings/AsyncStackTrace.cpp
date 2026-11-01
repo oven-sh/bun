@@ -10,6 +10,7 @@
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/Interpreter.h>
 #include <JavaScriptCore/JSAsyncFunctionGenerator.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromiseReaction.h>
@@ -18,6 +19,73 @@
 #include <JavaScriptCore/UnlinkedCodeBlock.h>
 
 using namespace JSC;
+
+// collectAsyncStackFramesFromPromise for a process with compiled code: what awaits a promise is a JSAsyncFunctionGenerator or a suspended compiled async function, and the engine answers for both.
+static NEVER_INLINE void collectAsyncStackFramesFromPromiseWithCompiledCode(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, WTF::Vector<JSC::StackFrame>& results, size_t maxStackSize)
+{
+    JSC::AssertNoGC assertNoGC;
+
+    auto dynamicCastValue = []<typename T>(JSC::JSValue v, T** out) -> bool {
+        if (!v || !v.isCell())
+            return false;
+        *out = dynamicDowncast<T>(v.asCell());
+        return *out != nullptr;
+    };
+
+    auto unwrapAsyncFunctionFromContext = [&](JSC::JSValue context) -> JSC::JSCell* {
+        JSC::InternalFieldTuple* tuple = nullptr;
+        if (dynamicCastValue(context, &tuple))
+            context = tuple->getInternalField(0);
+        return JSC::Interpreter::asyncFunctionIn(context);
+    };
+
+    auto getAwaitingAsyncFunction = [&](JSC::JSPromise* p) -> JSC::JSCell* {
+        for (unsigned hops = 0; p && hops < 32; hops++) {
+            if (p->status() != JSC::JSPromise::Status::Pending)
+                return nullptr;
+            switch (p->inlineReactionKind()) {
+            case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
+                if (auto* asyncFunction = unwrapAsyncFunctionFromContext(p->inlineReactionContext()))
+                    return asyncFunction;
+                if (auto* next = dynamicDowncast<JSC::JSPromise>(p->payloadCell())) {
+                    p = next;
+                    continue;
+                }
+                return nullptr;
+            }
+            case JSC::JSPromise::InlineReactionKind::FulfillHandler:
+            case JSC::JSPromise::InlineReactionKind::RejectHandler: {
+                p = p->inlineHandlerResultPromise();
+                continue;
+            }
+            case JSC::JSPromise::InlineReactionKind::None:
+                break;
+            }
+            auto* reaction = dynamicDowncast<JSC::JSPromiseReaction>(p->payloadCell());
+            if (!reaction)
+                return nullptr;
+            if (auto* asyncFunction = unwrapAsyncFunctionFromContext(JSC::JSPromiseReaction::tryGetContext(reaction)))
+                return asyncFunction;
+            if (!dynamicCastValue(reaction->promise(), &p))
+                return nullptr;
+        }
+        return nullptr;
+    };
+
+    JSC::JSCell* asyncFunction = getAwaitingAsyncFunction(promise);
+    while (asyncFunction && results.size() < maxStackSize) {
+        JSC::Interpreter::appendAsyncStackFrame(vm, owner, results, asyncFunction);
+        asyncFunction = JSC::Interpreter::appendDirectAsyncCallers(vm, owner, results, asyncFunction, maxStackSize);
+        if (!asyncFunction)
+            break;
+        JSC::JSPromise* returnPromise = JSC::Interpreter::asyncFunctionPromise(asyncFunction);
+        if (!returnPromise)
+            break;
+        asyncFunction = getAwaitingAsyncFunction(returnPromise);
+    }
+    if (results.size() > maxStackSize)
+        results.shrink(maxStackSize);
+}
 
 // Walk a promise's reaction chain to find the async generators awaiting it,
 // and collect them as async StackFrames. Used when an error is created from
@@ -32,6 +100,11 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
 {
     if (!JSC::Options::useAsyncStackTrace() || !promise)
         return;
+
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        collectAsyncStackFramesFromPromiseWithCompiledCode(vm, owner, promise, results, maxStackSize);
+        return;
+    }
 
     JSC::AssertNoGC assertNoGC;
 

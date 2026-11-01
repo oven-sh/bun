@@ -1,0 +1,16 @@
+# new Event("y").__lookupGetter__("isTrusted")
+# `isTrusted` is an own accessor of the event, which native code made: the result may be a function.
+# RUN: valueflow-apply
+# CHECK-NOT: provenType=undefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Event
+    v1 = String string="y"
+    v2 = Construct v0, -, v1
+    v3 = Builtin builtin=ObjectPrototype__lookupGetter__
+    v4 = String string="isTrusted"
+    v5 = Call v3, v2, v4
+    Return v5
+}

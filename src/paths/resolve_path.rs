@@ -2178,11 +2178,11 @@ fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
 }
 
 fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
-    if core::mem::size_of::<T>() == 1 {
-        return strings::last_index_of_any(bun_core::cast_slice::<T, u8>(slice), b"/\\");
+    match T::units(slice) {
+        strings::CodeUnits::U8(slice) => strings::last_index_of_any(slice, b"/\\"),
+        // No two-needle reverse kernel for u16.
+        strings::CodeUnits::U16(slice) => slice.iter().rposition(|&c| is_sep_any_t(c)),
     }
-    // No two-needle reverse kernel for u16.
-    slice.iter().rposition(|&c| is_sep_any_t::<T>(c))
 }
 
 fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {

@@ -6,7 +6,7 @@ pub struct NoElseReturn {
     allows_else_if: bool,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unnecessary 'else' after 'return'.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unnecessary 'else' after 'return'.");
 
 /// ESLint's `isSafeToDeclare`: true if `names` can be declared in `scope` without a conflict and without capturing a
 /// reference.

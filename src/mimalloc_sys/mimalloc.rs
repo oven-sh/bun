@@ -17,6 +17,8 @@ unsafe extern "C" {
     /// No preconditions; returns null on failure.
     pub safe fn mi_zalloc(size: usize) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> usize;
+    /// The size of the block that a request for `size` bytes gets. No preconditions.
+    pub safe fn mi_good_size(size: usize) -> usize;
 }
 
 pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
@@ -64,9 +66,11 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    pub fn mi_heap_new() -> *mut Heap;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_heap_new() -> *mut Heap;
     pub fn mi_heap_destroy(heap: *mut Heap);
-    pub fn mi_heap_main() -> *mut Heap;
+    /// No preconditions; returns the process's main heap, which is always live.
+    pub safe fn mi_heap_main() -> *mut Heap;
     pub fn mi_heap_malloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_zalloc(heap: *mut Heap, size: usize) -> *mut c_void;
     pub fn mi_heap_realloc(heap: *mut Heap, p: *mut c_void, newsize: usize) -> *mut c_void;
@@ -154,12 +158,14 @@ pub enum Option {
     page_commit_on_demand = 40,
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
+    purge_holes = 56,
 }
 
 unsafe extern "C" {
     // `mi_option_*` take only by-value `#[repr(C)]` enum + scalar args and
     // mutate mimalloc-internal global state; no pointer invariants → `safe fn`.
     pub safe fn mi_option_set(option: Option, value: c_long);
+    pub safe fn mi_option_set_default(option: Option, value: c_long);
     pub fn mi_malloc_usable_size(p: *const c_void) -> usize;
     pub fn mi_free_size(p: *mut c_void, size: usize);
     pub fn mi_free_size_aligned(p: *mut c_void, size: usize, alignment: usize);

@@ -4,7 +4,7 @@ use super::*;
 
 pub(crate) struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
-    pub sources: &'a [bun_ast::Source],
+    pub sources: &'a [bun_ast::Source<'a>],
     /// bundle_v2.Graph.ast.items(.import_records)
     pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.input_files.items(.loader)
@@ -67,11 +67,14 @@ impl<'a> HotUpdateContext<'a> {
 }
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
-    bv2.deinit_without_freeing_arena();
     let script_requests = match &mut dev.current_bundle {
-        Some(current_bundle) => ::core::mem::take(&mut current_bundle.script_requests),
+        Some(current_bundle) => {
+            drain_current_bundle_requests(current_bundle);
+            ::core::mem::take(&mut current_bundle.script_requests)
+        }
         None => Vec::new(),
     };
+    bv2.deinit_without_freeing_arena();
     // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
     dev.current_bundle = None;
     dev.log.clear_and_free();
@@ -157,36 +160,18 @@ pub(super) fn finalize_bundle(
     result: &mut bundler::bundle_v2::DevServerOutput,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
-    // Note: `had_sent_hmr_event` is read inside the outer-defer scopeguard
-    // and mutated later in the body. Use a `Cell` so the closure capture is `&Cell`
-    // (shared), letting the body keep writing through `.set()`.
-    let had_sent_hmr_event = ::core::cell::Cell::new(false);
+    let mut had_sent_hmr_event = false;
+    let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
+    finalize_bundle_cleanup(dev, bv2, had_sent_hmr_event);
+    finalized
+}
 
-    // Both `defer!`s below (outer cleanup, then current_bundle request
-    // drain) are registered before the first fallible operation — the only
-    // statements in between are infallible (raw-pointer copies and the
-    // `expect` on an invariant). Guards run LIFO (drain → outer), and the
-    // `graph_safety_lock` guard declared after them drops first.
-    // Note: erase `dev`/`bv2` to raw pointers inside the guard so the
-    // long-lived closure capture doesn't lock borrowck for the entire fn body.
-    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-    let bv2_ptr = std::ptr::from_mut::<BundleV2>(bv2);
-    // Note: copy the raw ptrs into closure-only locals so `defer!`'s by-ref
-    // capture does not hold `*dev_ptr`/`*bv2_ptr` borrowed for the entire fn body.
-    let dev_ptr_outer: *mut DevServer = dev_ptr;
-    let bv2_ptr_outer: *mut BundleV2 = bv2_ptr;
-    scopeguard::defer! {
-        // SAFETY: `dev`/`bv2` are `&mut` params erased above; both outlive
-        // this fn-scoped guard, and no borrow of either is live when it runs.
-        unsafe {
-            finalize_bundle_cleanup(
-                &mut *dev_ptr_outer,
-                &mut *bv2_ptr_outer,
-                had_sent_hmr_event.get(),
-            )
-        };
-    };
-
+fn finalize_bundle_inner(
+    dev: &mut DevServer,
+    bv2: &mut BundleV2,
+    result: &mut bundler::bundle_v2::DevServerOutput,
+    had_sent_hmr_event: &mut bool,
+) -> JsResult<()> {
     // Note: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
     // mutably. Erase to a raw pointer and reborrow at each use site via the
     // `current_bundle!()` macro.
@@ -197,22 +182,12 @@ pub(super) fn finalize_bundle(
     macro_rules! current_bundle {
         () => {
             // SAFETY: `dev.current_bundle` is `Some` for the entire fn body —
-            // it is only set to `None` inside the outer `finalize_bundle_cleanup` defer, which runs after
-            // every use of this macro. `dev.current_bundle` is never reassigned
-            // (so the inner `CurrentBundle` is not moved) between here and the
-            // outer-defer.
+            // it is only set to `None` by `finalize_bundle_cleanup`, which the
+            // caller runs after this fn returns. `dev.current_bundle` is never
+            // reassigned (so the inner `CurrentBundle` is not moved) before then.
             unsafe { &mut *current_bundle_ptr }
         };
     }
-    // Note: see `dev_ptr_outer` rationale above — separate copy for the
-    // `defer!` capture so `current_bundle!()` keeps reborrowing freely.
-    let current_bundle_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-    scopeguard::defer! {
-        // SAFETY: see `current_bundle!` SAFETY above; this `defer!` runs
-        // before the outer cleanup guard (LIFO), so `current_bundle_ptr` is
-        // still live and no borrow of `*current_bundle_ptr` remains.
-        unsafe { drain_current_bundle_requests(&mut *current_bundle_ptr_defer) };
-    };
 
     let _lock = dev.graph_safety_lock.guard();
 
@@ -340,7 +315,7 @@ pub(super) fn finalize_bundle(
                     }
                 ));
                 debug_assert!(
-                    dev.server_transpiler().options.source_map
+                    dev.server_transpiler.options.source_map
                         != bundler::options::SourceMapOption::None
                 );
                 debug_assert!(!part_range.source_index.is_runtime());
@@ -477,13 +452,13 @@ pub(super) fn finalize_bundle(
         // TODO: use a hash mix with the first half being a path hash and the second half content hash
         let h = hash(key);
         // Track css files that look like tailwind files.
-        // Note: hoisted before `replace_path` because that consumes
+        // Note: hoisted before `replace_asset_path` because that consumes
         // `code.buffer`.
         let looks_like_tailwind = dev.has_tailwind_plugin_hack.is_some() && {
             let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
             strings::index_of(first_1024, b"tailwind").is_some()
         };
-        dev.assets.replace_path(
+        dev.replace_asset_path(
             key,
             crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
             &MimeType::CSS,
@@ -550,7 +525,7 @@ pub(super) fn finalize_bundle(
         else {
             continue;
         };
-        let route_bundle = dev.route_bundle_ptr(route_bundle_index);
+        let route_bundle = &mut dev.route_bundles[route_bundle_index.get() as usize];
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
         // Note: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
         // so the `cached_response` take is done before the long-lived `html` borrow.
@@ -561,9 +536,7 @@ pub(super) fn finalize_bundle(
             .take()
             .is_some()
         {
-            // SAFETY: `route_bundle` borrows `dev.route_bundles[_]`; `source_maps`
-            // is a disjoint field reborrowed through the raw `dev_ptr`.
-            route_bundle.invalidate_client_bundle(unsafe { &mut (*dev_ptr).source_maps });
+            route_bundle.invalidate_client_bundle(&mut dev.source_maps);
         }
         let html = match &mut route_bundle.data {
             route_bundle::Data::Html(h) => h,
@@ -648,7 +621,7 @@ pub(super) fn finalize_bundle(
     if !dev.incremental_result.failures_removed.is_empty()
         || !dev.incremental_result.failures_added.is_empty()
     {
-        had_sent_hmr_event.set(true);
+        *had_sent_hmr_event = true;
     }
     dev.index_failures()?;
 
@@ -672,30 +645,13 @@ pub(super) fn finalize_bundle(
 
         // Get the source map if available and render to JSON
         let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
-            'json: {
-                // Create a temporary source map entry to render
-                let mut source_map_entry = source_map_store::Entry {
-                    ref_count: 1,
-                    ..Default::default()
-                };
+            // Create a temporary source map entry to render
+            let mut source_map_entry = source_map_store::Entry::default();
 
-                // Fill the source map entry
-                dev.server_graph.take_source_map(&mut source_map_entry)?;
-                // Note: erase to raw ptr so `render_json` can borrow the entry
-                // while the cleanup guard is armed.
-                let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
-                scopeguard::defer! {
-                    // SAFETY: `source_map_entry` is a stack local that outlives this guard.
-                    unsafe {
-                        (*entry_ptr).ref_count = 0;
-                        (*entry_ptr).deinit();
-                    }
-                };
+            // Fill the source map entry
+            dev.server_graph.take_source_map(&mut source_map_entry)?;
 
-                let json_data =
-                    source_map_entry.render_json(dev, ChunkKind::HmrChunk, bake::Side::Server)?;
-                break 'json Some(json_data);
-            }
+            Some(source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?)
         } else {
             None
         };
@@ -749,26 +705,19 @@ pub(super) fn finalize_bundle(
                 }
             }
         };
-        // Note: `make_array_for_server_components_patch` needs `&mut self`
-        // while reading `self.incremental_result.client_components_{added,removed}`.
-        // It only touches `server_graph.bundled_files.keys()`, so reborrow the
-        // index slices via `dev_ptr` (disjoint fields).
-        // SAFETY: `dev_ptr == dev`; `incremental_result` is not mutated by
-        // `make_array_for_server_components_patch`.
-        let (added, removed) = unsafe {
-            let ir = &(*dev_ptr).incremental_result;
-            (
-                ir.client_components_added.as_slice(),
-                ir.client_components_removed.as_slice(),
-            )
-        };
         let errors = match dev.server_register_update_callback.get().unwrap().call(
             global,
             global.to_js_value(),
             &[
                 server_modules,
-                dev.make_array_for_server_components_patch(global, added)?,
-                dev.make_array_for_server_components_patch(global, removed)?,
+                dev.make_array_for_server_components_patch(
+                    global,
+                    &dev.incremental_result.client_components_added,
+                )?,
+                dev.make_array_for_server_components_patch(
+                    global,
+                    &dev.incremental_result.client_components_removed,
+                )?,
             ],
         ) {
             Ok(v) => v,
@@ -926,30 +875,20 @@ pub(super) fn finalize_bundle(
 
     // `route_bits` will have all of the routes that were modified.
     if has_route_bits_set && (will_hear_hot_update || dev.incremental_result.had_adjusted_edges) {
-        // Note: copy out before the loop so the `&mut RouteBundle` borrow
-        // below doesn't overlap a `&dev.incremental_result` read.
         let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
         let mut it = route_bits.iterator::<true, true>();
         // List 2
         while let Some(i) = it.next() {
-            // Note: erase to raw ptr — `trace_all_route_imports` below needs
-            // `&mut *dev` while `route_bundle` (a sub-borrow of `dev.route_bundles`)
-            // is still live; the two do not actually alias.
-            let route_bundle: *mut RouteBundle = dev.route_bundle_ptr(route_bundle::Index::init(
-                u32::try_from(i).expect("int cast"),
-            ));
+            let route_bundle = &mut dev.route_bundles[i];
             if had_adjusted_edges {
-                // SAFETY: `route_bundle` points into `dev.route_bundles` (not
-                // resized in this loop); the exclusive borrow is scoped to this match.
-                match unsafe { &mut (*route_bundle).data } {
+                match &mut route_bundle.data {
                     route_bundle::Data::Framework(fw_bundle) => {
                         fw_bundle.cached_css_file_array.clear_without_deallocation()
                     }
                     route_bundle::Data::Html(html) => html.cached_response = None,
                 }
             }
-            // SAFETY: statement-scoped read; no `&mut` into `*route_bundle` is live.
-            if unsafe { (*route_bundle).active_viewers } == 0 || !will_hear_hot_update {
+            if route_bundle.active_viewers == 0 || !will_hear_hot_update {
                 continue;
             }
             w_int!(i32, i32::try_from(i).expect("int cast"));
@@ -959,10 +898,17 @@ pub(super) fn finalize_bundle(
             if had_adjusted_edges {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();
-                // SAFETY: `trace_all_route_imports` does not mutate `route_bundles`;
-                // shared, call-scoped reborrow.
-                let route_bundle_ref = unsafe { &*route_bundle };
-                dev.trace_all_route_imports(route_bundle_ref, ctx.gts, TraceImportGoal::FindCss)?;
+                match &route_bundle.data {
+                    route_bundle::Data::Framework(fw) => {
+                        let route_index = fw.route_index;
+                        dev.trace_all_route_imports(route_index, ctx.gts, TraceImportGoal::FindCss)?
+                    }
+                    route_bundle::Data::Html(html) => dev.client_graph.trace_imports(
+                        html.bundled_file,
+                        ctx.gts,
+                        TraceImportGoal::FindCss,
+                    )?,
+                }
                 let css_ids = &dev.client_graph.current_css_files;
 
                 w_int!(i32, i32::try_from(css_ids.len()).expect("int cast"));
@@ -1053,10 +999,7 @@ pub(super) fn finalize_bundle(
                     .put_or_increment_ref_count(script_id, sockets)?
                 {
                     source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
-                        // Note: reborrow `client_graph` via `dev_ptr` so the
-                        // `&mut Entry` borrow inside `source_maps` does not alias.
-                        // SAFETY: `dev_ptr` is live for this fn; disjoint fields.
-                        unsafe { &mut (*dev_ptr).client_graph }.take_source_map(entry)?;
+                        dev.client_graph.take_source_map(entry)?;
                         break 'brk entry;
                     }
                     source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
@@ -1079,18 +1022,15 @@ pub(super) fn finalize_bundle(
         }
 
         dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
-        had_sent_hmr_event.set(true);
+        *had_sent_hmr_event = true;
     }
 
     if !dev.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
-        // Note: erase the agent borrow to a raw pointer so it can be passed
-        // through `send_serialized_failures` (which takes `&mut *dev` while
-        // the borrow derives from `&*dev`) and then re-used below. The agent
-        // lives in the VM's `Debugger`, which outlives this scope.
-        let mut inspector_agent_ptr: Option<*const BunFrontendDevServerAgent> =
-            dev.inspector().map(std::ptr::from_ref);
+        // Borrowed from the VM, where the agent lives, so that `dev` stays free below.
+        let vm = dev.vm;
+        let mut inspector_agent = BunFrontendDevServerAgent::of(&vm);
 
         while let Some(node) = current_bundle!().requests.pop_first() {
             // SAFETY: `pop_first` hands back ownership of the intrusive node;
@@ -1113,24 +1053,15 @@ pub(super) fn finalize_bundle(
                 Handler::BundledHtmlPage(ram) => ram.response,
             };
 
-            // SAFETY: see Note on `failures` above; `dev_ptr` is live and
-            // `send_serialized_failures` does not mutate `bundling_failures`.
-            let failures = unsafe { (*dev_ptr).bundling_failures.values() };
             dev.send_serialized_failures(
                 resp,
-                failures,
-                // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
-                inspector_agent_ptr.take().map(|p| unsafe { &*p }),
+                dev.bundling_failures.values(),
+                inspector_agent.take(),
             )?;
         }
-        if let Some(agent_ptr) = inspector_agent_ptr {
+        if let Some(agent) = inspector_agent {
             let mut buf: Vec<u8> = Vec::new();
-            dev.encode_serialized_failures(
-                dev.bundling_failures.values(),
-                &mut buf,
-                // SAFETY: `agent_ptr` is from `dev.inspector()` above; live for this scope.
-                Some(unsafe { &*agent_ptr }),
-            )?;
+            dev.encode_serialized_failures(dev.bundling_failures.values(), &mut buf, Some(agent))?;
         }
 
         return Ok(());
@@ -1242,7 +1173,8 @@ pub(super) fn finalize_bundle(
 
     // Release the lock because the underlying handler may acquire one.
     dev.graph_safety_lock.unlock();
-    // SAFETY: `dev_ptr` is live for the entire fn body; runs before `_lock` (LIFO),
+    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
+    // SAFETY: `*dev_ptr` outlives this guard, which runs before `_lock` (LIFO),
     // so the outer unlock guard sees a locked state again.
     scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
 
@@ -1304,7 +1236,7 @@ pub(super) fn finalize_bundle(
 
 impl DevServer {
     fn make_array_for_server_components_patch(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         items: &[incremental_graph::ServerFileIndex],
     ) -> JsResult<JSValue> {

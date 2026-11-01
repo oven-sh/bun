@@ -1,0 +1,238 @@
+# interface Item { id: number }
+# const stores = Number(argv[2]);
+# const first: Item = { id: -1 };
+# const byElement: Item[][] = [], byPush: Item[][] = [];
+# for (let i = 0; i < 6000; i++) {
+#   byElement.push([first, first, first, first]);
+#   const withRoom = [first, first, first, first]; withRoom.pop(); withRoom.pop(); byPush.push(withRoom);
+# }
+# collect();
+# function storeElements(owners: Item[][], count: number): void { for (let i = 0; i < count; i++) owners[i][1] = { id: i }; }
+# function pushElements(owners: Item[][], count: number): void { for (let i = 0; i < count; i++) owners[i].push({ id: i }); }
+# storeElements(byElement, stores);
+# pushElements(byPush, stores);
+# collect();
+# let sum = 0;
+# for (let i = 0; i < stores; i++) sum += byElement[i][1].id - byPush[i][2].id;
+# report(sum, byPush[0].length);
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "5500"]; globalThis.collect = () => fullGC(); globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["RememberElement"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 60 ? "seldom" : calls); } };
+# Every array is old and gets a young cell once, so every store has to remember its array. The stub does that itself, and calls the run time only for a new segment of the list.
+# CHECK: 0 3
+# CHECK-NEXT: RememberElement seldom
+# CHECK-NEXT: exited with 0
+
+module m0 path="store.ts" displayPath="store.ts" flags=[KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=205 kind=Variable
+typesite w1 module=m0 position=237 kind=Variable
+typesite w2 module=m0 position=263 kind=Variable
+typesite w3 module=m0 position=811 kind=Variable
+typesite w4 module=m0 position=507 kind=Parameter function=f1
+typesite w5 module=m0 position=525 kind=Parameter function=f1
+typesite w6 module=m0 position=630 kind=Parameter function=f2
+typesite w7 module=m0 position=648 kind=Parameter function=f2
+typesite w8 module=m0 position=189 kind=Element
+typesite w9 module=m0 position=182 kind=CallResult
+typesite w10 module=m0 position=295 kind=Variable
+typesite w11 module=m0 position=375 kind=Variable
+typesite w12 module=m0 position=321 kind=CallResult
+typesite w13 module=m0 position=416 kind=CallResult
+typesite w14 module=m0 position=432 kind=CallResult
+typesite w15 module=m0 position=448 kind=CallResult
+typesite w16 module=m0 position=829 kind=Variable
+typesite w17 module=m0 position=860 kind=Element
+typesite w18 module=m0 position=881 kind=Element
+typesite w19 module=m0 position=910 kind=Element
+typesite w20 module=m0 position=910 kind=PropertyRead
+typesite w21 module=m0 position=557 kind=Variable
+typesite w22 module=m0 position=580 kind=Element
+typesite w23 module=m0 position=680 kind=Variable
+typesite w24 module=m0 position=703 kind=Element
+typesite w25 module=m0 position=703 kind=CallResult
+layout L0 name="Item" module=m0 fields=[{key="id" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Builtin builtin=Number
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="argv" [isFreeName]
+    v7 = Integer integer=2
+    v8 = ElemGet v6, v7
+    v9 = Convert v8 declared={type=undefined|null|string site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v10 = Call v4, -, v9 calleeName="Number"
+    v11 = Convert v10 declared={type=number site=w9} illTypedCause=DeclarationWithoutBody
+    v12 = Data data=d0
+    v13 = Convert v12 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v14 = Data data=d1
+    v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|L0>> site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v16 = Data data=d2
+    v17 = Convert v16 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|L0>> site=w2 flags=[OmitsNull, OmitsUndefined]}
+    v18 = Integer
+    v19 = Convert v18 declared={type=number site=w10}
+    Jump -> next b2(v19)
+  b2(v20: number):
+    LoopHint
+    v22 = Integer integer=6000
+    v23 = Less v20, v22
+    Branch v23 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v24):
+    Jump -> next b4()
+  b4():
+    v25 = PropGet v15 key="push"
+    v26 = NewArray v13, v13, v13, v13 contents=undefined|null|L0
+    v27 = Call v25, v15, v26 calleeKey="push" calleeName="byElement.push"
+    v28 = Convert v27 declared={type=number site=w12} illTypedCause=DeclarationWithoutBody
+    v29 = NewArray v13, v13, v13, v13 contents=undefined|null|L0
+    v30 = Convert v29 declared={type=undefined|null|Array<undefined|null|L0> site=w11 flags=[OmitsNull, OmitsUndefined]}
+    v31 = PropGet v30 key="pop"
+    v32 = Call v31, v30 calleeKey="pop" calleeName="withRoom.pop"
+    v33 = Convert v32 declared={type=undefined|null|L0 site=w13 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v34 = PropGet v30 key="pop"
+    v35 = Call v34, v30 calleeKey="pop" calleeName="withRoom.pop"
+    v36 = Convert v35 declared={type=undefined|null|L0 site=w14 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v37 = PropGet v17 key="push"
+    v38 = Call v37, v17, v30 calleeKey="push" calleeName="byPush.push"
+    v39 = Convert v38 declared={type=number site=w15} illTypedCause=DeclarationWithoutBody
+    Jump -> next b5()
+  b5():
+    v40 = Increment v24
+    v41 = Convert v40 declared={type=number site=w10}
+    Jump -> next b2(v41)
+  b6(v42):
+    Jump -> next b7()
+  b7():
+    v43 = Builtin builtin=GlobalThis
+    v44 = PropGet v43 key="collect" [isFreeName]
+    v45 = Call v44 calleeName="collect"
+    v46 = Call v1, -, v15, v11 calleeName="storeElements"
+    v47 = Call v3, -, v17, v11 calleeName="pushElements"
+    v48 = Builtin builtin=GlobalThis
+    v49 = PropGet v48 key="collect" [isFreeName]
+    v50 = Call v49 calleeName="collect"
+    v51 = Integer
+    v52 = Convert v51 declared={type=number site=w3}
+    v53 = Integer
+    v54 = Convert v53 declared={type=number site=w16}
+    Jump -> next b8(v52, v54)
+  b8(v55: number, v56: number):
+    LoopHint
+    v58 = Convert v56 declared={type=i32 flags=[IsExpected]}
+    v59 = Less v58, v11
+    Branch v59 -> taken b9(| 0, 1), notTaken b12(| 0, 1)
+  b9(v60, v61):
+    Jump -> next b10()
+  b10():
+    v62 = Convert v60 declared={type=i32 flags=[IsExpected]}
+    v63 = ElemGet v15, v62
+    v64 = Convert v63 declared={type=undefined|null|Array<undefined|null|L0> site=w17 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v65 = Integer integer=1
+    v66 = ElemGet v64, v65
+    v67 = Convert v66 declared={type=undefined|null|L0 site=w17 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v68 = PropGet v67 key="id"
+    v69 = ElemGet v17, v62
+    v70 = Convert v69 declared={type=undefined|null|Array<undefined|null|L0> site=w18 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v71 = Integer integer=2
+    v72 = ElemGet v70, v71
+    v73 = Convert v72 declared={type=undefined|null|L0 site=w18 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v74 = PropGet v73 key="id"
+    v75 = Sub v68, v74
+    v76 = Add v55, v75
+    v77 = Convert v76 declared={type=number site=w3}
+    Jump -> next b11()
+  b11():
+    v78 = Increment v62
+    v79 = Convert v78 declared={type=number site=w16}
+    Jump -> next b8(v77, v79)
+  b12(v80, v81):
+    Jump -> next b13()
+  b13():
+    v82 = Builtin builtin=GlobalThis
+    v83 = PropGet v82 key="report" [isFreeName]
+    v84 = Integer
+    v85 = ElemGet v17, v84
+    v86 = Convert v85 declared={type=undefined|null|Array<undefined|null|L0> site=w19 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v87 = PropGet v86 key="length"
+    v88 = Convert v87 declared={type=number site=w20} illTypedCause=Assertion
+    v89 = Call v83, -, v55, v88 calleeName="report"
+    v90 = Undefined
+    Return v90
+}
+function f1 name="storeElements" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<undefined|null|L0>> site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w5}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array<undefined|null|L0>>, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w21}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
+    v6 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    v7 = Less v6, v1
+    Branch v7 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v8, v9):
+    Jump -> next b4()
+  b4():
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = ElemGet v0, v10
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|L0> site=w22 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v13 = Integer integer=1
+    v14 = Convert v10 declared={type=number}
+    v15 = NewObject -, v14 layout=L0 fields=[0]
+    v16 = FinishObject v15
+    v17 = Convert v16 declared={type=undefined|null|L0 site=w22 flags=[OmitsNull, OmitsUndefined]}
+    ElemSet v12, v13, v17
+    Jump -> next b5()
+  b5():
+    v19 = Increment v10
+    v20 = Convert v19 declared={type=number site=w21}
+    Jump -> next b2(v20)
+  b6(v21, v22):
+    Jump -> next b7()
+  b7():
+    v23 = Undefined
+    Return v23
+}
+function f2 name="pushElements" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<undefined|null|L0>> site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w7}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array<undefined|null|L0>>, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w23}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
+    v6 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    v7 = Less v6, v1
+    Branch v7 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v8, v9):
+    Jump -> next b4()
+  b4():
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = ElemGet v0, v10
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|L0> site=w24 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v13 = PropGet v12 key="push"
+    v14 = Convert v10 declared={type=number}
+    v15 = NewObject -, v14 layout=L0 fields=[0]
+    v16 = FinishObject v15
+    v17 = Call v13, v12, v16 calleeKey="push" calleeName="owners[i].push"
+    v18 = Convert v17 declared={type=number site=w25} illTypedCause=DeclarationWithoutBody
+    Jump -> next b5()
+  b5():
+    v19 = Increment v10
+    v20 = Convert v19 declared={type=number site=w23}
+    Jump -> next b2(v20)
+  b6(v21, v22):
+    Jump -> next b7()
+  b7():
+    v23 = Undefined
+    Return v23
+}
+data d0 root=Object{layout=L0 members=[{key="id" value=Number{value=-1}}]} module=m0
+data d1 root=Array{contents=undefined|null|Array<undefined|null|L0>} module=m0
+data d2 root=Array{contents=undefined|null|Array<undefined|null|L0>} module=m0

@@ -1,0 +1,3 @@
+// A literal of 24 flags, as a minifier writes it, is asked for its keys. One of the keys is also the text that a constructor stores into a field which nothing reads: the store goes, and with it the only place
+// where code spells that text. The list of keys is typed by all 24 texts and holds all 24, and no code reads an element under that type.
+var flags={alpha:!0,bravo:!0,charlie:!0,delta:!0,echo:!0,foxtrot:!0,golf:!0,hotel:!0,india:!0,juliet:!0,kilo:!0,lima:!0,mike:!0,november:!0,oscar:!0,papa:!0,quebec:!0,romeo:!0,sierra:!0,tango:!0,uniform:!0,victor:!0,whiskey:!0,xray:!0},names=Object.keys(flags);function Tag(n){this.kind="alpha";this.n=n}var tags=[new Tag(1),new Tag(2)];function size(){return names.length}console.log(size());console.log(tags[0].n+tags[1].n);

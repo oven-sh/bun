@@ -81,6 +81,39 @@ test.concurrent(
   timeout,
 );
 
+// Same as under ESLint 10.12.0. eslint-plugin-import-x looks for its "node" resolver in `<package directory>/node`.
+test.concurrent(
+  "`require.resolve()` in an installed plugin doesn't find the project's TypeScript files without their extension",
+  async () => {
+    const files = {
+      "node_modules/eslint-plugin-demo/package.json": `{ "name": "eslint-plugin-demo", "main": "index.js" }`,
+      "node_modules/eslint-plugin-demo/index.js": `const path = require("node:path");
+        const find = name => {
+          try {
+            return path.relative(process.cwd(), require.resolve(path.resolve(name))).replaceAll(path.sep, "/");
+          } catch (error) {
+            return error.code;
+          }
+        };
+        const all = () => ["node", "file", "file.ts", "js"].map(find).join(" ");
+        const create = context => ({ Program: node => context.report({ node, message: context.options[0] + ", " + all() }) });
+        module.exports = { found: all(), rules: { show: { meta: { schema: false }, create } } };`,
+      "node/index.ts": "export {};\n",
+      "file.ts": "export {};\n",
+      "js/index.js": "",
+      // The option is what the plugin finds while the configuration is read.
+      "eslint.config.mjs": `import demo from "eslint-plugin-demo";
+        export default [{ plugins: { demo }, rules: { "demo/show": ["error", demo.found] } }];`,
+      "a.js": "a;\n",
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+    const found = "MODULE_NOT_FOUND MODULE_NOT_FOUND file.ts js/index.js";
+    expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual([`${found}, ${found}`]);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
 // Reports every identifier called `foo`, using most of the report API.
 const noFoo = `
 export default {
@@ -3431,6 +3464,112 @@ describe.concurrent("AST nodes in JavaScript plugins", () => {
           file,
           shapes: [expected.oxlint[file].split("\n")],
         });
+      }
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // A rule written for espree or oxlint reads `node.start` and `node.end`. typescript-estree's nodes don't have them.
+  // Without an ESLint or oxlint config there's no parser to match, so every file has them. Issue #46971.
+  test(
+    "have `start` and `end` in every file without an ESLint or oxlint config",
+    async () => {
+      const plugin = `const keys = it => Object.keys(it).join();
+        const positions = it => [it.start, it.end, ...it.range].join();
+        const selected = new Set();
+        export default { meta: { name: "probe" }, rules: { positions: { create: context => ({
+          // Selectors are matched natively, with the same properties.
+          "VariableDeclaration[start=13][end>13]"(node) { selected.add(node); },
+          "Program:exit"(node) {
+            const [line, block] = context.sourceCode.getAllComments();
+            const tokens = context.sourceCode.getTokens(node);
+            const regex = tokens.find(it => it.type === "RegularExpression");
+            const [declaration] = node.body;
+            const annotation = declaration.declarations[0].id.typeAnnotation;
+            context.report({ node, message: JSON.stringify({
+              selected: selected.has(declaration), keys: keys(declaration), positions: positions(declaration),
+              annotationKeys: annotation ? keys(annotation) : null, annotationPositions: annotation ? positions(annotation) : null,
+              lineKeys: keys(line), linePositions: positions(line), blockKeys: keys(block), blockPositions: positions(block),
+              tokenKeys: keys(tokens[0]), tokenPositions: positions(tokens[0]),
+              regexKeys: keys(regex), regexPositions: positions(regex), regex: keys(regex.regex),
+            }) });
+          },
+        }) } } };`;
+      const files = {
+        "plugin.mjs": plugin,
+        "bunfig.toml": `[lint]\nplugins = ["./plugin.mjs"]\n[lint.rules]\n"probe/positions" = "error"\n`,
+        "index.ts": "// a\n/* b */\nconst answer: number = 42, re = /c/g;\n",
+        "index.js": "// a\n/* b */\nconst answer = 42, re = /c/g;\n",
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", "index.ts", "index.js"]);
+      const results: { filePath: string; messages: { ruleId: string; message: string }[] }[] = JSON.parse(raw);
+      const said = Object.fromEntries(
+        results.map(it => [
+          it.filePath.replaceAll("\\", "/").split("/").at(-1),
+          JSON.parse(it.messages.find(message => message.ruleId === "probe/positions")!.message),
+        ]),
+      );
+      expect(said).toEqual({
+        "index.ts": {
+          selected: true,
+          keys: "type,declarations,declare,kind,start,end,range,loc,parent",
+          positions: "13,50,13,50",
+          annotationKeys: "type,loc,start,end,range,typeAnnotation,parent",
+          annotationPositions: "25,33,25,33",
+          lineKeys: "type,loc,start,end,range,value",
+          linePositions: "0,4,0,4",
+          blockKeys: "type,loc,start,end,range,value",
+          blockPositions: "5,12,5,12",
+          tokenKeys: "type,loc,start,end,range,value",
+          tokenPositions: "13,18,13,18",
+          regexKeys: "type,loc,start,end,range,regex,value",
+          regexPositions: "45,49,45,49",
+          regex: "flags,pattern",
+        },
+        "index.js": {
+          selected: true,
+          keys: "type,start,end,loc,range,declarations,kind,parent",
+          positions: "13,42,13,42",
+          annotationKeys: null,
+          annotationPositions: null,
+          lineKeys: "type,value,start,end,range,loc",
+          linePositions: "0,4,0,4",
+          blockKeys: "type,value,start,end,range,loc",
+          blockPositions: "5,12,5,12",
+          tokenKeys: "type,value,start,end,loc,range",
+          tokenPositions: "13,18,13,18",
+          regexKeys: "type,value,start,end,loc,range,regex",
+          regexPositions: "37,41,37,41",
+          regex: "flags,pattern",
+        },
+      });
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // The same trees as with an ESLint config, with `start` and `end` before `range` in the files that typescript-estree parses.
+  // Bun picks the source type by what the file has, where ESLint's config sets it.
+  test(
+    "have those layouts, with `start` and `end`, without an ESLint or oxlint config",
+    async () => {
+      const config = `[lint]\nplugins = ["./dump.cjs"]\nignorePatterns = ["dump.cjs"]\n[lint.rules]\n"dump/tree" = "error"\n`;
+      const { raw, exitCode } = await lint({ "dump.cjs": dump, "bunfig.toml": config, ...treeCases }, [
+        "-f",
+        "json",
+        ...Object.keys(treeCases),
+      ]);
+      const results: { filePath: string; messages: { ruleId: string; message: string }[] }[] = JSON.parse(raw);
+      const lines = (tree: string | undefined) => tree?.split(/(?<=[[ ])(?=(?:Node )?\{ type: )/);
+      const withoutSourceType = (tree: string) => tree.replace(/sourceType: "\w+"/, "sourceType");
+      for (const file of Object.keys(treeCases)) {
+        const result = results.find(it => it.filePath.replaceAll("\\", "/").endsWith(`/${file}`));
+        const found = result?.messages.filter(it => it.ruleId === "dump/tree").map(it => withoutSourceType(it.message));
+        let tree = withoutSourceType(expected.eslint[file]);
+        if (!file.endsWith(".js"))
+          tree = tree.replace(/range: \[(\d+), (\d+)\]/g, "start: $1, end: $2, range: [$1, $2]");
+        expect({ file, trees: found?.map(lines) }).toEqual({ file, trees: [lines(tree)] });
       }
       expect(exitCode).toBe(1);
     },

@@ -35,6 +35,7 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 
@@ -44,6 +45,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -228,14 +230,135 @@ void JSDOMExceptionPrototype::finishCreation(VM& vm)
 const ClassInfo JSDOMException::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMException) };
 
 JSDOMException::JSDOMException(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DOMException>&& impl)
-    : JSDOMWrapper<DOMException>(structure, globalObject, WTF::move(impl))
+    : Base(globalObject.vm(), structure, JSC::ErrorType::Error)
+    , m_wrapped(WTF::move(impl))
 {
 }
 
 void JSDOMException::finishCreation(VM& vm)
 {
-    Base::finishCreation(vm);
+    Base::finishCreationForEmbedderError(vm);
     ASSERT(inherits(info()));
+
+    // ErrorInstance leaves .stack unset on an empty trace; other engines still give the header line, made when it is read.
+    auto* trace = stackTrace();
+    if (!trace || trace->isEmpty()) {
+        auto* realm = defaultGlobalObject(globalObject());
+        putDirectCustomAccessor(vm, vm.propertyNames->stack, realm->m_lazyStackCustomGetterSetter.get(realm), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor);
+    }
+}
+
+void JSDOMException::setStackValue(VM& vm, JSValue stack)
+{
+    setStackFrames(vm, {});
+    putDirect(vm, vm.propertyNames->stack, stack, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+}
+
+void JSDOMException::willMaterializeErrorInfo(JSGlobalObject* globalObject, ErrorInstance* error)
+{
+    if (auto* domException = dynamicDowncast<JSDOMException>(error))
+        domException->prependStackHeaderIfFramesOnly(globalObject);
+}
+
+// A collection formats the frames alone once one of them dies.
+void JSDOMException::prependStackHeaderIfFramesOnly(JSGlobalObject* globalObject)
+{
+    if (!m_stackStringIsFramesOnly || m_errorInfoMaterialized) [[likely]]
+        return;
+    String header = displayHeader(globalObject);
+    String stack = tryMakeString(header, m_stackString);
+    Locker locker { cellLock() };
+    m_stackString = stack.isNull() ? WTF::move(header) : WTF::move(stack);
+    m_stackStringIsFramesOnly = false;
+}
+
+bool JSDOMException::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    if (isLazilyMaterialized(globalObject->vm(), propertyName)) [[unlikely]]
+        uncheckedDowncast<JSDOMException>(object)->prependStackHeaderIfFramesOnly(globalObject);
+    return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+}
+
+void JSDOMException::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
+{
+    if (mode == DontEnumPropertiesMode::Include)
+        uncheckedDowncast<JSDOMException>(object)->prependStackHeaderIfFramesOnly(globalObject);
+    Base::getOwnSpecialPropertyNames(object, globalObject, propertyNames, mode);
+}
+
+bool JSDOMException::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    if (isLazilyMaterialized(globalObject->vm(), propertyName)) [[unlikely]]
+        uncheckedDowncast<JSDOMException>(object)->prependStackHeaderIfFramesOnly(globalObject);
+    return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
+}
+
+bool JSDOMException::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    if (isLazilyMaterialized(globalObject->vm(), propertyName)) [[unlikely]]
+        uncheckedDowncast<JSDOMException>(cell)->prependStackHeaderIfFramesOnly(globalObject);
+    return Base::put(cell, globalObject, propertyName, value, slot);
+}
+
+bool JSDOMException::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    if (isLazilyMaterialized(globalObject->vm(), propertyName)) [[unlikely]]
+        uncheckedDowncast<JSDOMException>(cell)->prependStackHeaderIfFramesOnly(globalObject);
+    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+}
+
+// Same joining rule as ErrorInstance::stackWithHeader(), whose fallback also keeps a header past String::MaxLength from crashing.
+String JSDOMException::displayHeader(JSGlobalObject* globalObject)
+{
+    auto name = displayName(globalObject);
+    auto message = displayMessage(globalObject);
+    String header = tryMakeString(name, name.isEmpty() || message.isEmpty() ? ""_s : ": "_s, message);
+    return header.isNull() ? message : header;
+}
+
+// What [[Get]] reads, without running JS: the first data property along the prototype chain, or
+// DOMException.prototype's attribute, read from the impl. A getter is skipped, as
+// ErrorInstance::sanitizedNameString() skips one. Past a Proxy, the impl's value is the best guess.
+String JSDOMException::headerPart(JSGlobalObject* globalObject, PropertyName propertyName, const String& implValue, ASCIILiteral absent)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue value;
+    for (JSObject* object = this; object; object = object->getPrototypeDirect().getObject()) {
+        if (object->type() == ProxyObjectType)
+            return implValue;
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool found = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
+        if (scope.exception()) [[unlikely]]
+            break;
+        if (!found)
+            continue;
+        if (slot.isValue()) {
+            value = slot.getValue(globalObject, propertyName);
+            break;
+        }
+        if (dynamicDowncast<JSDOMExceptionPrototype>(object))
+            return implValue;
+    }
+    String string;
+    // toWTFString throws for a Symbol, or on OOM resolving a rope.
+    if (!scope.exception() && value && value.isPrimitive() && !value.isUndefined())
+        string = value.toWTFString(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return absent;
+    }
+    return string.isNull() ? String(absent) : WTF::move(string);
+}
+
+String JSDOMException::displayName(JSGlobalObject* globalObject)
+{
+    return headerPart(globalObject, globalObject->vm().propertyNames->name, wrapped().name(), "Error"_s);
+}
+
+String JSDOMException::displayMessage(JSGlobalObject* globalObject)
+{
+    return headerPart(globalObject, globalObject->vm().propertyNames->message, wrapped().message(), ""_s);
 }
 
 JSObject* JSDOMException::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -310,7 +433,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMException_message, (JSGlobalObject * lexicalGlobal
 
 JSC::GCClient::IsoSubspace* JSDOMException::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMException, m_subspaceForDOMException));
+    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMException, m_subspaceForDOMException),
+        [](JSHeapData& heapData) -> JSC::HeapCellType& { return heapData.m_heapCellTypeForJSDOMException; });
 }
 
 void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

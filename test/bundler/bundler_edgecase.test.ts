@@ -1752,6 +1752,290 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain(`= (a, b) => a + b`);
     },
   });
+  // A URL has its answer before tsconfig `paths` is asked. `packages: "external"`
+  // does not change that: `url(#x)` names an element of the page, not a file.
+  for (const packages of ["bundle", "external"] as const) {
+    itBundled(`edgecase/TSConfigPathsDoNotClaimURLs/${packages}`, {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/x.css";
+          .a { fill: url(#x) }
+          .b { fill: url(#y) }
+          .c { background: url(https://example.com/x.svg) }
+          .d { background: url(http://example.com/img/x.svg) }
+          .e { background: url(data:image/png;base64,AAAA) }
+        `,
+        "/x.css": `.x { color: red }`,
+        "/x.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+        "/y.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+        "/tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "#x": ["./x.svg"],
+              "#*": ["./*.svg"],
+              "https://example.com/x.css": ["./x.css"],
+              "https://example.com/x.svg": ["./x.svg"],
+              "http://example.com/img/*": ["./*"],
+              "data:*": ["./x.svg"],
+            },
+          },
+        }),
+      },
+      outfile: "/out.css",
+      packages,
+      backend: packages === "external" ? "cli" : undefined,
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+          @import "https://example.com/x.css";
+          /* entry.css */
+          .a { fill: url("#x"); }
+          .b { fill: url("#y"); }
+          .c { background: url("https://example.com/x.svg"); }
+          .d { background: url("http://example.com/img/x.svg"); }
+          .e { background: url("data:image/png;base64,AAAA"); }
+        `);
+      },
+    });
+    itBundled(`edgecase/TSConfigPathsDoNotClaimURLImport/${packages}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import remote from "https://example.com/x.js";
+          import inline from "data:text/javascript,export default 'inline'";
+          console.log(remote, inline);
+        `,
+        "/x.js": `export default "LOCAL";`,
+        "/tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "https://example.com/x.js": ["./x.js"], "data:*": ["./x.js"] } },
+        }),
+      },
+      packages,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        const imports = new Bun.Transpiler().scanImports(out).map(i => i.path);
+        // `packages: "external"` takes a `data:` URL for a package by its spelling.
+        expect(imports).toEqual(
+          packages === "external"
+            ? ["https://example.com/x.js", "data:text/javascript,export default 'inline'"]
+            : ["https://example.com/x.js"],
+        );
+        if (packages === "bundle") expect(out).toContain(`= "inline"`);
+        expect(out).not.toContain("LOCAL");
+      },
+    });
+  }
+  // Neither is a specifier with a NUL byte, which names no file. A `*` target would put the byte in a path.
+  for (const [id, target] of [
+    ["File", "./target.js"],
+    ["Wildcard", "./src/*"],
+  ]) {
+    itBundled(`edgecase/TSConfigPathsDoNotClaimNulSpecifier/${id}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "a\\0b";
+          console.log("entry");
+        `,
+        "/target.js": `console.log("TARGET");`,
+        "/src/index.js": `console.log("TARGET");`,
+        "/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "a*": [target] } } }),
+      },
+      packages: "external",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(new Bun.Transpiler().scanImports(out).map(i => i.path)).toEqual(["a\0b"]);
+        expect(out).not.toContain("TARGET");
+      },
+    });
+  }
+  // `@import` and `composes` name a file, so `packages: "external"` asks tsconfig `paths` for a `#` alias.
+  itBundled("edgecase/PackagesExternalFollowsHashAliasFromCSS", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./entry.module.css";
+        console.log(styles.a.split(" ").length);
+      `,
+      "/entry.module.css": /* css */ `
+        @import "#base";
+        .a { composes: b from "#shared"; color: blue }
+      `,
+      "/base.css": `.base { color: red }`,
+      "/shared.module.css": `.b { background: green }`,
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { "#base": ["./base.css"], "#shared": ["./shared.module.css"] } },
+      }),
+    },
+    outdir: "/out",
+    packages: "external",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      expect(css).toContain(".base");
+      expect(css).not.toContain("@import");
+    },
+    run: { stdout: "2" },
+  });
+  // The file that the alias names is compiled with its own tsconfig.json and package.json.
+  const decoratorOutputs: [string, Partial<BundlerTestInput>][] = [
+    ["", {}],
+    ["/cjs", { format: "cjs" }],
+    ["/compile", { compile: true }],
+  ];
+  for (const [id, options] of decoratorOutputs) {
+    itBundled(`edgecase/PackagesExternalTSConfigPathsTargetKeepsDecoratorSettings${id}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { A } from "@/a";
+          new A("x").method();
+        `,
+        "/src/a.ts": /* ts */ `
+          (Reflect as any).metadata = (key: string) => () => console.log(key);
+          function dec(target: any, key?: any, index?: any) {
+            console.log(typeof target, typeof key, typeof index);
+          }
+          export class A {
+            constructor(@dec x: string) {}
+            @dec
+            method(x: string) {}
+          }
+        `,
+        "/tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: true,
+            paths: { "@/*": ["./src/*"] },
+          },
+        }),
+      },
+      packages: "external",
+      target: "bun",
+      ...options,
+      run: {
+        stdout:
+          "design:returntype\ndesign:paramtypes\ndesign:type\nobject string object\ndesign:paramtypes\nfunction undefined number",
+      },
+    });
+  }
+  itBundled("edgecase/PackagesExternalTSConfigPathsTargetKeepsClassFieldSettings", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { A } from "@/a";
+        console.log(Object.keys(new A()).length);
+      `,
+      "/src/a.ts": /* ts */ `
+        class Base {
+          set v(value: number) {
+            console.log("setter");
+          }
+        }
+        export class A extends Base {
+          v = 1;
+        }
+      `,
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: { useDefineForClassFields: false, paths: { "@/*": ["./src/*"] } },
+      }),
+    },
+    packages: "external",
+    target: "bun",
+    run: { stdout: "setter\n0" },
+  });
+  // A tsconfig.json nearer to the file than the one with the alias gives the JSX settings.
+  itBundled("edgecase/PackagesExternalTSConfigPathsTargetKeepsJSXSettings", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { el } from "@ui/b";
+        console.log(typeof el);
+      `,
+      "/packages/ui/src/b.tsx": `export const el = () => <div />;`,
+      "/packages/ui/tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "my-jsx" } }`,
+      "/tsconfig.json": `{ "compilerOptions": { "paths": { "@ui/*": ["./packages/ui/src/*"] } } }`,
+    },
+    packages: "external",
+    target: "bun",
+    backend: "cli",
+    onAfterBundle(api) {
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/out.js")).map(i => i.path);
+      expect(imports).toHaveLength(1);
+      expect(imports[0]).toStartWith("my-jsx/jsx-");
+    },
+  });
+  // The package.json above the file gives its "type": the default import of a CommonJS file is `module.exports`.
+  for (const packages of ["bundle", "external"] as const) {
+    itBundled(`edgecase/TSConfigPathsTargetKeepsModuleType/${packages}`, {
+      files: {
+        "/entry.ts": `import "@/a";`,
+        "/src/a.ts": /* ts */ `
+          import dep from "./cjs-dep.cjs";
+          console.log(typeof dep === "string" ? "exports.default" : "module.exports");
+        `,
+        "/src/cjs-dep.cjs": /* js */ `
+          exports.__esModule = true;
+          exports.default = "dep";
+        `,
+        "/package.json": `{ "name": "app", "type": "module" }`,
+        "/tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }`,
+      },
+      packages,
+      target: "bun",
+      run: { stdout: "module.exports" },
+    });
+  }
+  // An alias into node_modules is followed. The packages that its file imports stay imports.
+  itBundled("edgecase/PackagesExternalTSConfigPathsTargetInNodeModules", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import React from "react";
+        console.log(React.compat);
+      `,
+      "/node_modules/preact/compat/index.js": /* js */ `
+        import { name } from "preact";
+        import * as hooks from "preact/hooks";
+        export default { compat: name, hooks };
+      `,
+      "/tsconfig.json": `{ "compilerOptions": { "paths": { "react": ["./node_modules/preact/compat/"] } } }`,
+    },
+    packages: "external",
+    target: "bun",
+    onAfterBundle(api) {
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/out.js")).map(i => i.path);
+      expect(imports).toEqual(["preact", "preact/hooks"]);
+    },
+  });
+  // An alias under the name of a Node builtin is still an alias.
+  itBundled("edgecase/PackagesExternalTSConfigPathsUnderNodeBuiltinName", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { x } from "util/x";
+        import { inspect } from "util";
+        console.log(x, typeof inspect);
+      `,
+      "/src/util/x.ts": `export const x = "x";`,
+      "/tsconfig.json": `{ "compilerOptions": { "paths": { "util/*": ["./src/util/*"] } } }`,
+    },
+    packages: "external",
+    target: "node",
+    onAfterBundle(api) {
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/out.js"));
+      expect(imports.map(i => i.path)).toEqual(["util"]);
+    },
+    run: { stdout: "x function" },
+  });
+  // So is an alias under the name of a Node polyfill of the browser target.
+  itBundled("edgecase/PackagesExternalTSConfigPathsUnderPolyfillName", {
+    files: {
+      "/entry.js": /* js */ `
+        import path from "path";
+        console.log(path);
+      `,
+      "/my-path.js": `export default "my-path";`,
+      "/tsconfig.json": `{ "compilerOptions": { "paths": { "path": ["./my-path.js"] } } }`,
+    },
+    target: "browser",
+    packages: "external",
+    onAfterBundle(api) {
+      expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
+    },
+    run: { stdout: "my-path" },
+  });
   itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
     files: {
       "/src/entry.ts": /* ts */ `
@@ -1852,6 +2136,18 @@ describe("bundler", () => {
     },
     entryPointsRaw: ["pkg"],
     external: ["pkg"],
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out/node_modules/pkg/index.js").toContain("bundled pkg");
+    },
+  });
+  itBundled("edgecase/EntryPointIsPackageWithPackagesExternal", {
+    files: {
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "/node_modules/pkg/index.js": `console.log("bundled pkg");`,
+    },
+    entryPointsRaw: ["pkg"],
+    packages: "external",
     target: "bun",
     onAfterBundle(api) {
       api.expectFile("/out/node_modules/pkg/index.js").toContain("bundled pkg");

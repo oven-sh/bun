@@ -1011,16 +1011,45 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
-        if self.opts.packages == options::Packages::External && is_package_path(import_path) {
-            return true;
-        }
-        self.matches_user_external_pattern(import_path)
+    /// True iff `packages = external` decides `import_path` by its spelling: a package path, which stays an import unless tsconfig `paths` maps it to a file.
+    #[inline(always)]
+    fn is_external_package(&self, import_path: &[u8], kind: ast::ImportKind) -> bool {
+        self.opts.packages == options::Packages::External
+            && !kind.is_entry_point()
+            && is_package_path(import_path)
     }
 
-    /// True iff `import_path` matches a user-supplied `--external` wildcard
-    /// pattern. Does NOT consider `packages = external`; use
-    /// `isExternalPattern` for the combined check.
+    /// Ends a resolve: `import_path` stays in the output as written, as an import or as a URL.
+    #[inline]
+    fn implicitly_external<'r>(
+        &mut self,
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        original_order: options::ExtOrder,
+    ) -> ResultUnion<'r> {
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note(b"Marking this path as implicitly external".to_vec());
+        }
+        let _ = self.flush_debug_logs(FlushMode::Success);
+
+        self.extension_order = original_order;
+        ResultUnion::Success(Result {
+            import_kind: kind,
+            path_pair: PathPair {
+                primary: Fs::Path::init(import_path),
+                secondary: None,
+            },
+            module_type: if !kind.is_from_css() {
+                options::ModuleType::Esm
+            } else {
+                options::ModuleType::Unknown
+            },
+            flags: ResultFlags::IS_EXTERNAL,
+            ..Default::default()
+        })
+    }
+
+    /// True iff `import_path` matches a user-supplied `--external` wildcard pattern.
     pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
         for pattern in self.opts.external.patterns.iter() {
             if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
@@ -1045,12 +1074,6 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        if source_dir.is_empty() {
-            return MatchStatus::NotFound;
-        }
-        if !bun_paths::is_absolute(source_dir) {
-            return MatchStatus::NotFound;
-        }
         let Some(dir_info) = self.dir_info_cached(source_dir).ok().flatten() else {
             return MatchStatus::NotFound;
         };
@@ -1369,47 +1392,15 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // #29590: a tsconfig `paths` key can look bare (e.g. "@/*") and
-        // otherwise collide with `packages=external + isPackagePath`. Try
-        // the alias first, but only follow it when it actually resolves to
-        // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
-        // .d.ts stubs must still let real bare imports stay external.
-        if !kind.is_entry_point()
-            && self.opts.packages == options::Packages::External
-            && is_package_path(import_path)
-            && !self.matches_user_external_pattern(import_path)
-        {
-            let mut res = MatchResult::default();
-            if self
-                .resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res)
-                .is_success()
-            {
-                if let Some(debug) = self.debug_logs.as_mut() {
-                    debug.add_note(
-                        b"Resolved via tsconfig.json \"paths\" before applying packages=external"
-                            .to_vec(),
-                    );
-                }
-                let _ = self.flush_debug_logs(FlushMode::Success);
-                self.extension_order = original_order;
-                return ResultUnion::Success(Result {
-                    import_kind: kind,
-                    path_pair: res.path_pair,
-                    package_json: res.package_json,
-                    dirname_fd: res.dirname_fd,
-                    file_fd: res.file_fd,
-                    jsx: self.opts.jsx.clone(),
-                    ..Default::default()
-                });
-            }
-        }
-
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
         if !kind.is_entry_point()
-            && (self.is_external_pattern(import_path)
+            && (self.matches_user_external_pattern(import_path)
             // "fill: url(#filter);"
-            || (kind.is_from_css() && import_path.starts_with(b"#"))
+            || (import_path.starts_with(b"#")
+                && (kind == ast::ImportKind::Url
+                    // `@import "#x"` and `composes`. Under `packages = external`, tsconfig `paths` is asked first.
+                    || (kind.is_from_css() && self.opts.packages != options::Packages::External)))
             // "background: url(http://example.com/images/image.png);"
             || import_path.starts_with(b"http://")
             // "background: url(https://example.com/images/image.png);"
@@ -1417,29 +1408,15 @@ impl<'a> Resolver<'a> {
             // "background: url(//example.com/images/image.png);"
             || import_path.starts_with(b"//"))
         {
-            if let Some(debug) = self.debug_logs.as_mut() {
-                debug.add_note(b"Marking this path as implicitly external".to_vec());
-            }
-            let _ = self.flush_debug_logs(FlushMode::Success);
-
-            self.extension_order = original_order;
-            return ResultUnion::Success(Result {
-                import_kind: kind,
-                path_pair: PathPair {
-                    primary: Fs::Path::init(import_path),
-                    secondary: None,
-                },
-                module_type: if !kind.is_from_css() {
-                    options::ModuleType::Esm
-                } else {
-                    options::ModuleType::Unknown
-                },
-                flags: ResultFlags::IS_EXTERNAL,
-                ..Default::default()
-            });
+            return self.implicitly_external(import_path, kind, original_order);
         }
 
         match DataURL::parse(import_path) {
+            Ok(None) => {}
+            // `packages = external` decides a package path by its spelling, and a `data:` URL has that spelling.
+            _ if self.is_external_package(import_path, kind) => {
+                return self.implicitly_external(import_path, kind, original_order);
+            }
             Err(_) => {
                 // Malformed data URL (e.g. "data:" with no comma). For url()
                 // tokens pass it through as external like http:// above; for
@@ -1504,7 +1481,6 @@ impl<'a> Resolver<'a> {
                     ..Default::default()
                 });
             }
-            Ok(None) => {}
         }
 
         // When using `bun build --compile`, module resolution is never
@@ -1601,6 +1577,10 @@ impl<'a> Resolver<'a> {
 
             break 'brk match source_dir_resolver.resolve_cwd(source_dir) {
                 Ok(dir) => dir,
+                // Without an importer directory tsconfig `paths` has no answer, and `packages = external` decides by the spelling.
+                Err(_) if self.is_external_package(import_path, kind) => {
+                    return self.implicitly_external(import_path, kind, original_order);
+                }
                 // On Windows, adding the drive to a rooted directory can overflow a path buffer.
                 Err(::bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => {
                     let _ = self.flush_debug_logs(FlushMode::Fail);
@@ -1614,13 +1594,41 @@ impl<'a> Resolver<'a> {
         // A path with a null byte cannot exist on the filesystem. Continuing
         // anyways would cause assertion failures.
         if strings::index_of_char(import_path, 0).is_some() {
+            if self.is_external_package(import_path, kind) {
+                return self.implicitly_external(import_path, kind, original_order);
+            }
             let _ = self.flush_debug_logs(FlushMode::Fail);
             self.extension_order = original_order;
             return ResultUnion::NotFound;
         }
 
-        let mut tmp =
-            self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        // Under `packages = external` a package path stays an import, unless tsconfig `paths` maps it to a file (#29590).
+        let mut tmp = if self.is_external_package(import_path, kind) {
+            let mut res = MatchResult::default();
+            if !self
+                .resolve_via_tsconfig_paths(source_dir_normalized, import_path, kind, &mut res)
+                .is_success()
+            {
+                return self.implicitly_external(import_path, kind, original_order);
+            }
+            if let Some(debug) = self.debug_logs.as_mut() {
+                debug.add_note(
+                    b"Resolved via tsconfig.json \"paths\" before applying packages=external"
+                        .to_vec(),
+                );
+            }
+            ResultUnion::Success(Result {
+                path_pair: res.path_pair,
+                package_json: res.package_json,
+                dirname_fd: res.dirname_fd,
+                file_fd: res.file_fd,
+                module_type: res.module_type,
+                jsx: self.opts.jsx.clone(),
+                ..Default::default()
+            })
+        } else {
+            self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache)
+        };
         if matches!(tmp, ResultUnion::NotFound)
             && let Some(path) =
                 self.resolve_at_source_path(source_dir_normalized, import_path, kind)
@@ -1688,6 +1696,10 @@ impl<'a> Resolver<'a> {
                         result.module_type = options::ModuleType::Esm;
                         result.flags |= ResultFlags::IS_STANDALONE_MODULE;
                     }
+                }
+                if self.is_external_package(import_path, kind) {
+                    // The tsconfig `paths` route keeps the default until `sideEffects` is read by file, not by import route (#46911).
+                    result.primary_side_effects_data = SideEffects::HasSideEffects;
                 }
 
                 let _ = self.flush_debug_logs(FlushMode::Success);

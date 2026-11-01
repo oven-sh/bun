@@ -703,6 +703,137 @@ export default function Counter() {
     expect(foundCounterBundle).toBe(true);
   });
 
+  // Server chunks are loaded from memory, so the bundler must not print a
+  // require() of an ES module as a load of a sibling chunk file. One page per shape.
+  test.concurrent("server code can require() an ES module", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-require-esm", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+
+      // A CommonJS file requires it.
+      "pages/index.tsx": `import { text } from "../lib/read.mjs";
+export default function Page() {
+  return <p>{text}</p>;
+}`,
+      "lib/read.mjs": `import lib from "./index.cjs";
+export const text = "app: " + lib.version + " " + typeof lib.add;`,
+      "lib/index.cjs": `const esm = require("./esm.mjs"); module.exports = esm;`,
+      "lib/esm.mjs": `export const version = "1.2.3";
+export function add(a, b) { return a + b; }
+export default { version: "the default object" };`,
+
+      // The page requires it.
+      "pages/in-page.tsx": `const dep = require("../lib/in-page.ts");
+export default function Page() {
+  return <p>{"in-page: " + dep.version}</p>;
+}`,
+      "lib/in-page.ts": `export const version = "1.2.3";`,
+
+      // A function requires it, twice, during the render. It does not run before that.
+      "pages/lazy.tsx": `import { load } from "../lib/lazy.cjs";
+const before = typeof globalThis.lazyRuns;
+export default function Page() {
+  const first = load();
+  return <p>{"lazy: " + before + " " + first.version + " " + (first === load()) + " " + globalThis.lazyRuns}</p>;
+}`,
+      "lib/lazy.cjs": `exports.load = () => require("./lazy-dep.mjs");`,
+      "lib/lazy-dep.mjs": `globalThis.lazyRuns = (globalThis.lazyRuns ?? 0) + 1;
+export const version = "1.2.3";`,
+
+      // A client component requires it (the SSR graph).
+      "pages/client.tsx": `import Client from "../lib/Client";
+export default function Page() {
+  return <Client />;
+}`,
+      "lib/Client.tsx": `"use client";
+const dep = require("./client-dep.ts");
+export default function Client() {
+  return <p>{"client: " + dep.version}</p>;
+}`,
+      "lib/client-dep.ts": `export const version = "1.2.3";`,
+
+      // It renders a client component. The page must load the client code.
+      "pages/island.tsx": `const { Island } = require("../lib/island.tsx");
+export default function Page() {
+  return <Island />;
+}`,
+      "lib/island.tsx": `import Button from "./Button";
+export function Island() {
+  return <Button />;
+}`,
+      "lib/Button.tsx": `"use client";
+export default function Button() {
+  return <p>island: button</p>;
+}`,
+
+      // The require() is in a try block. The catch block must not run.
+      "pages/optional.tsx": `let dep;
+try {
+  dep = require("../lib/optional-dep.ts");
+} catch {
+  dep = { version: "missing" };
+}
+export default function Page() {
+  return <p>{"optional: " + dep.version}</p>;
+}`,
+      "lib/optional-dep.ts": `export const version = "1.2.3";`,
+
+      // require() and import() of one module give one instance.
+      "pages/both.tsx": `const required = require("../lib/both-dep.ts");
+export default async function Page() {
+  const imported = await import("../lib/both-dep.ts");
+  return <p>{"both: " + required.version + " " + (required.state === imported.state) + " " + globalThis.bothRuns}</p>;
+}`,
+      "lib/both-dep.ts": `globalThis.bothRuns = (globalThis.bothRuns ?? 0) + 1;
+export const version = "1.2.3";
+export const state = {};`,
+
+      // What already worked: require() of JSON, of CommonJS and of a builtin, a
+      // require() that never runs, and import().
+      "pages/controls.tsx": `import { never, text } from "../lib/controls.cjs";
+export default async function Page() {
+  const { name } = await import("../lib/dynamic.ts");
+  return <p>{"controls: " + text + " " + name + " " + typeof never + " " + typeof globalThis.neverRan}</p>;
+}`,
+      "lib/controls.cjs": `const json = require("./data.json");
+const cjs = require("./plain.cjs");
+const util = require("node:util");
+exports.never = () => require("./never.mjs");
+exports.text = [json.name, cjs.name, typeof util.inspect].join(" ");`,
+      "lib/data.json": `{ "name": "json" }`,
+      "lib/plain.cjs": `exports.name = "cjs";`,
+      "lib/never.mjs": `globalThis.neverRan = true;
+export const name = "never";`,
+      "lib/dynamic.ts": `export const name = "import";`,
+    });
+
+    const build = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+
+    expect(build.stderr.toString()).not.toContain("error:");
+
+    const rendered: Record<string, string | undefined> = {};
+    const withClientCode: string[] = [];
+    for (const file of new Bun.Glob("**/index.html").scanSync(path.join(dir, "dist"))) {
+      const html = await Bun.file(path.join(dir, "dist", file)).text();
+      rendered[normalizePath(file)] = html.match(/<p>(.*?)<\/p>/)?.[1];
+      if (html.includes('<script type="module"')) withClientCode.push(normalizePath(file));
+    }
+    expect(rendered).toEqual({
+      "index.html": "app: 1.2.3 function",
+      "in-page/index.html": "in-page: 1.2.3",
+      "lazy/index.html": "lazy: undefined 1.2.3 true 1",
+      "client/index.html": "client: 1.2.3",
+      "island/index.html": "island: button",
+      "optional/index.html": "optional: 1.2.3",
+      "both/index.html": "both: 1.2.3 true 1",
+      "controls/index.html": "controls: json cjs function import function undefined",
+    });
+    expect(withClientCode.sort()).toEqual(["client/index.html", "island/index.html"]);
+    expect(build.exitCode).toBe(0);
+  });
+
   test("inline flight data is escaped as a single unit across stream chunks", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-flight-escaping", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,

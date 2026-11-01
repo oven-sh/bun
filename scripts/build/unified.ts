@@ -25,9 +25,13 @@
  *     statics in an anonymous or `namespace FILENAME { }` block, or rename.
  *   - `using namespace X;` at file scope leaks into later includes in the
  *     same bundle.
- *   - A file may build only because an earlier sibling already pulled a
- *     header. When bundle composition shifts (file added/removed), the
- *     missing include surfaces. Fix the include; don't reorder bundles.
+ *   - A file may build only because another file of its bundle pulled a
+ *     header: an earlier one, or for a template body a later one too (clang
+ *     instantiates those at the end of the TU). Debug and Release bundles
+ *     differ in size and no CI lane compiles the Debug ones, so such a file
+ *     can pass CI and break `bun bd`. When bundle composition shifts (file
+ *     added/removed), the missing include surfaces. Fix the include; don't
+ *     reorder bundles.
  *
  * Incremental builds: editing one .cpp recompiles its whole bundle.
  * Acceptable — the bundle compile is still fast, and ccache handles the

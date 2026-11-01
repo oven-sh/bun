@@ -193,6 +193,42 @@ devTest("asset referenced in css", {
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
   },
 });
+devTest("an image that a stylesheet references and a script imports as text stays an asset on a save", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import text from "./bun.png" with { type: "text" };
+      console.log(typeof text);
+    `,
+    "styles.css": `
+      body {
+        background-image: url(./bun.png);
+      }
+    `,
+    "bun.png": imageFixtures.bun,
+  },
+  async test(dev) {
+    // The url that the served stylesheet has for the image.
+    const imageUrl = async () => {
+      const href = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+      const stylesheet = await (await dev.fetch(href)).text();
+      return stylesheet.match(/url\(["']?([^"')]+)["']?\)/)![1];
+    };
+    await dev.fetch("/").expect.toInclude("<script");
+
+    // The stylesheet asks for the file loader and the script for the text loader. The dev server keeps one module for the file.
+    for (const image of [imageFixtures.bun2, imageFixtures.bun, imageFixtures.bun2, imageFixtures.bun]) {
+      await dev.write("bun.png", image);
+      const url = await imageUrl();
+      // As a text module, the image is a "data:text/plain" url in the stylesheet.
+      expect(url.slice(0, 16)).not.toBe("data:text/plain;");
+      await dev.fetch(url).expectFile(image);
+    }
+  },
+});
 devTest("syntax error crash", {
   files: {
     "styles.css": `

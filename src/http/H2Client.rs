@@ -22,6 +22,10 @@ pub(crate) const LOCAL_INITIAL_WINDOW_SIZE: u32 = 1 << 24;
 /// cap is checked locally regardless of what the server honors.
 pub(crate) const LOCAL_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
 
+/// CONTINUATION frames allowed per header block. Matches nghttp2's
+/// `NGHTTP2_DEFAULT_MAX_CONTINUATIONS` (CVE-2024-28182).
+pub(crate) const LOCAL_MAX_CONTINUATIONS: u8 = 8;
+
 /// `write_buffer` high-water mark. `writeDataWindowed` stops queueing once the
 /// userland send buffer crosses this even if flow-control window remains, so a
 /// large grant doesn't duplicate the whole body in memory before the first
@@ -35,7 +39,7 @@ pub(crate) const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 
 /// Live-object counters for the leak test in fetch-http2-leak.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
-/// via TestingAPIs.liveCounts so they must be atomic.
+/// via `bun_http_jsc`'s `h2_live_counts` so they must be atomic.
 // Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
 // submodules share one identifier; SCREAMING_SNAKE alias preserved for the
 // existing internal reference.
@@ -66,15 +70,12 @@ pub use stream::Stream;
 // modules call. The real bodies live in lib.rs
 // (`register_abort_tracker` … `progress_update`) and HTTPContext.rs
 // (`register_h2` / `unregister_h2`); these now monomorphize the const-generic
-// `<IS_SSL>` callees to `<true>` (HTTP/2 is TLS-only) and erase the
-// `picohttp::Request<'_>` borrow back to `'static` so ClientSession can keep
-// using `client` after building the request. Kept as inherent methods so the
+// `<IS_SSL>` callees to `<true>` (HTTP/2 is TLS-only). Kept as inherent methods so the
 // many call sites in `h2_client/*.rs` need no churn.
 // ═══════════════════════════════════════════════════════════════════════
 mod bridge {
     use crate::http_context::HTTPSocket;
     use crate::{HTTPClient, NewHTTPContext};
-    use bun_picohttp as picohttp;
 
     impl HTTPClient<'_> {
         #[inline]
@@ -124,17 +125,6 @@ mod bridge {
         #[inline]
         pub(crate) fn h2_drain_response_body(&mut self, socket: HTTPSocket<true>) {
             self.drain_response_body::<true>(socket);
-        }
-        #[inline]
-        pub(crate) fn h2_build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
-            // SAFETY: `build_request` returns a `Request<'_>` whose borrowed
-            // slices point only at (a) the thread-local
-            // `SHARED_REQUEST_HEADERS_BUF` static and (b) `self.header_buf`,
-            // which is itself `&'static [u8]` — neither is tied to the `&mut
-            // self` borrow. Erasing to `'static` lets
-            // `ClientSession::attach` re-borrow `client` while the
-            // `Request` is still live. Same pattern as lib.rs `on_writable`.
-            unsafe { self.build_request(body_len).detach_lifetime() }
         }
     }
 

@@ -1,0 +1,36 @@
+function f() {
+  foo(  'a'  );
+  // prettier-ignore
+}
+x = {
+  a:   'b',
+  // prettier-ignore
+};
+x = [
+  a (  ),
+  // prettier-ignore
+];
+foo(
+  a (  ),
+  // prettier-ignore
+);
+class A {
+  m( ) { }
+  // prettier-ignore
+}
+interface I {
+  /** doc */
+  a:   'b'; // prettier-ignore
+  b:   'c';
+  // prettier-ignore
+}
+y = (z) => ({ a:   1 } // prettier-ignore
+);
+class B {
+  a   =   1; // prettier-ignore
+  b   =   2;
+}
+let d: Foo<A,B> = // prettier-ignore
+  foo( a,b );
+foo(  'a'  );
+// prettier-ignore

@@ -11,7 +11,6 @@ use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
 
-use crate::bake::dev_server_body::map_log;
 use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
@@ -20,7 +19,7 @@ use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
-pub struct Key(pub(crate) u64);
+pub(crate) struct Key(pub(crate) u64);
 impl Key {
     #[inline]
     pub(crate) const fn init(v: u64) -> Self {
@@ -62,7 +61,7 @@ const WEAK_REF_ENTRY_MAX: usize = 16;
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
 #[derive(Default)]
-pub struct Entry {
+pub(crate) struct Entry {
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
     /// - For route bundle client scripts, +1 until invalidation.
@@ -92,12 +91,7 @@ impl Entry {
     }
 
     /// `SourceMapStore.Entry.renderJSON`.
-    pub(crate) fn render_json(
-        &self,
-        dev: &mut DevServer,
-        kind: ChunkKind,
-        side: Side,
-    ) -> crate::Result<Vec<u8>> {
+    pub(crate) fn render_json(&self, kind: ChunkKind, side: Side) -> crate::Result<Vec<u8>> {
         let map_files = self.files.as_slice();
         let paths = &self.paths;
 
@@ -218,8 +212,6 @@ impl Entry {
         let json_bytes = j.done_with_end(b"\"}")?.into_vec();
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
 
-        let _ = dev;
-
         Ok(json_bytes)
     }
 
@@ -323,24 +315,10 @@ impl Entry {
         }
         Ok(())
     }
-
-    /// Drop handles `files` (each `Shared` decrements its `Rc<PackedMap>`)
-    /// and `paths` (both the outer box and the owned inner `Box<[u8]>` path
-    /// copies).
-    ///
-    /// Deliberately not `impl Drop` — the `ref_count == 0` assertion belongs
-    /// only on the explicit `unrefAtIndex` release path. Whole-store teardown and
-    /// `*out = Entry { .. }` overwrites legitimately drop entries with nonzero
-    /// counts, where a `Drop` assertion would diverge from spec and panic.
-    pub(crate) fn deinit(&mut self) {
-        debug_assert_eq!(self.ref_count, 0);
-        self.files.clear();
-        self.paths = Box::default();
-    }
 }
 
 #[derive(Debug)]
-pub enum EncodeSourceMapPathError {
+pub(crate) enum EncodeSourceMapPathError {
     OutOfMemory,
     IncompleteUTF8,
 }
@@ -354,7 +332,7 @@ impl From<bun_core::PercentEncodeError> for EncodeSourceMapPathError {
 }
 
 #[derive(Copy, Clone)]
-pub struct WeakRef {
+pub(crate) struct WeakRef {
     /// This encoding only supports route bundle scripts, which do not
     /// utilize the bottom 32 bits of their keys. This is because the bottom
     /// 32 bits are used for the index of the route bundle. While those bits
@@ -397,7 +375,7 @@ pub(crate) enum PutOrIncrementRefCount<'a> {
 /// Action for `SourceMapStore::remove_or_upgrade_weak_ref`.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum RemoveOrUpgradeMode {
+pub(crate) enum RemoveOrUpgradeMode {
     /// Remove the weak ref entirely
     Remove = 0,
     /// Convert the weak ref into a strong ref
@@ -413,7 +391,7 @@ pub(crate) struct GetResult<'a> {
     pub(crate) file_paths: &'a [Box<[u8]>],
     pub(crate) entry_files: &'a [packed_map::Shared],
 }
-pub struct SourceMapStore {
+pub(crate) struct SourceMapStore {
     pub(crate) entries: ArrayHashMap<Key, Entry>,
     /// When a HTML bundle is loaded, it places a "weak reference" to the
     /// script's source map. This reference is held until either:
@@ -591,7 +569,6 @@ impl SourceMapStore {
             key.get(),
             entry_ref_count
         );
-        let _ = entry_ref_count;
         true
     }
 
@@ -616,8 +593,6 @@ impl SourceMapStore {
     // `timer` is never dereferenced in Rust — `from_timer_ptr` only does
     // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
     // the deref is of that recovered parent pointer, not the parameter.
-    // not_unsafe_ptr_arg_deref is a false positive on this fieldParentPtr pattern.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,
@@ -633,10 +608,6 @@ impl SourceMapStore {
         // sign-correct without u64 wrap.
         let now: i64 = now_ts.sec.max(0);
 
-        // `emitMemoryVisualizerMessageIfNeeded` is inlined at both returns
-        // (a scopeguard cannot capture &mut store across the loop body
-        // without aliasing).
-
         while let Some(item) = store.weak_refs.read_item() {
             if item.expire <= now {
                 store.unref_count(item.key(), item.count);
@@ -650,15 +621,11 @@ impl SourceMapStore {
                         nsec: 0,
                     },
                 );
-                // SAFETY: invariant of `owner()`.
-                unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
                 return;
             }
         }
 
         store.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
-        // SAFETY: invariant of `owner()`.
-        unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
     }
 
     /// This is used in exactly one place: remapping errors.
@@ -679,7 +646,6 @@ impl SourceMapStore {
             &vlq_bytes,
             None,
             i32::try_from(entry.paths.len()).expect("int cast"),
-            0, // unused
             Default::default(),
         ) {
             Err(fail) => {

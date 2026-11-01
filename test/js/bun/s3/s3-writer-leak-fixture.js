@@ -4,10 +4,7 @@ let MAX_ALLOWED_MEMORY_USAGE = 0;
 let MAX_ALLOWED_MEMORY_USAGE_INCREMENT = 15;
 const dest = process.argv.at(-1);
 const { randomUUID } = require("crypto");
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 const payload = new Buffer(1024 * 256, "A".charCodeAt(0)).toString("utf-8");
 async function writeLargeFile() {
   const s3file = Bun.s3.file(randomUUID());

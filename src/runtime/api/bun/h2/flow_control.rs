@@ -13,7 +13,7 @@ use super::wire::{DEFAULT_WINDOW_SIZE, ErrorCode, MAX_WINDOW_SIZE};
 /// Outbound (send) window. Signed because a SETTINGS-driven INITIAL_WINDOW_SIZE decrease can push
 /// it negative (§6.9.2) — legal; we just stop sending until it recovers.
 #[derive(Clone, Copy, Debug)]
-pub struct SendWindow {
+pub(crate) struct SendWindow {
     pub remaining: i64,
 }
 
@@ -26,7 +26,7 @@ impl Default for SendWindow {
 }
 
 impl SendWindow {
-    pub fn new(initial: u32) -> Self {
+    pub(crate) fn new(initial: u32) -> Self {
         SendWindow {
             remaining: initial as i64,
         }
@@ -34,7 +34,7 @@ impl SendWindow {
 
     /// Bytes we may send right now (never negative for sizing).
     #[inline]
-    pub fn available(self) -> i64 {
+    pub(crate) fn available(self) -> i64 {
         if self.remaining > 0 {
             self.remaining
         } else {
@@ -43,13 +43,13 @@ impl SendWindow {
     }
 
     #[inline]
-    pub fn consume(&mut self, n: i64) {
+    pub(crate) fn consume(&mut self, n: i64) {
         self.remaining -= n;
     }
 
     /// Apply a WINDOW_UPDATE increment. §6.9.1: the window MUST NOT exceed 2^31-1; exceeding it is a
     /// FLOW_CONTROL_ERROR. A zero increment is rejected by the caller before reaching here.
-    pub fn increase(&mut self, increment: u32) -> Result<(), ErrorCode> {
+    pub(crate) fn increase(&mut self, increment: u32) -> Result<(), ErrorCode> {
         let next = self.remaining + increment as i64;
         if next > MAX_WINDOW_SIZE as i64 {
             return Err(ErrorCode::FlowControlError);
@@ -60,7 +60,7 @@ impl SendWindow {
 
     /// §6.9.2: shift by (new_initial - old_initial) on a peer INITIAL_WINDOW_SIZE change.
     #[inline]
-    pub fn apply_initial_delta(&mut self, delta: i64) {
+    pub(crate) fn apply_initial_delta(&mut self, delta: i64) {
         // 6.9.2: the result may legitimately go negative; cap the upper bound so repeated
         // positive deltas cannot push past the protocol maximum while outbound is legacy-driven.
         self.remaining = (self.remaining + delta).min(MAX_WINDOW_SIZE as i64);
@@ -70,7 +70,7 @@ impl SendWindow {
 /// Inbound (recv) window. We advertise `size` and track `consumed`; once enough is consumed we
 /// emit a WINDOW_UPDATE of the consumed amount and reset.
 #[derive(Clone, Copy, Debug)]
-pub struct RecvWindow {
+pub(crate) struct RecvWindow {
     pub size: i64,
     pub consumed: i64,
 }
@@ -85,7 +85,7 @@ impl Default for RecvWindow {
 }
 
 impl RecvWindow {
-    pub fn new(initial: u32) -> Self {
+    pub(crate) fn new(initial: u32) -> Self {
         RecvWindow {
             size: initial as i64,
             consumed: 0,
@@ -93,31 +93,31 @@ impl RecvWindow {
     }
 
     #[inline]
-    pub fn on_data(&mut self, n: i64) {
+    pub(crate) fn on_data(&mut self, n: i64) {
         self.consumed += n;
     }
 
     /// Whether the peer exceeded our advertised window (a FLOW_CONTROL_ERROR, §6.9.1).
     #[inline]
-    pub fn is_overflowed(&self) -> bool {
+    pub(crate) fn is_overflowed(&self) -> bool {
         self.consumed > self.size
     }
 
     /// Overflow check with an enforcement limit that may exceed the advertised size:
     /// until our SETTINGS shrinking the window is ACKed, the peer may legitimately send
     /// according to the previous (larger) value (RFC 9113 6.5.3).
-    pub fn is_overflowed_with(&self, limit: i64) -> bool {
+    pub(crate) fn is_overflowed_with(&self, limit: i64) -> bool {
         self.consumed > limit.max(self.size)
     }
 
     /// Replenish heuristic: update once at least half the window has been consumed.
     #[inline]
-    pub fn needs_update(&self) -> bool {
+    pub(crate) fn needs_update(&self) -> bool {
         self.consumed > 0 && self.consumed >= self.size / 2
     }
 
     /// Take the pending WINDOW_UPDATE increment and reset the consumed counter (0 if none).
-    pub fn take_update(&mut self) -> u32 {
+    pub(crate) fn take_update(&mut self) -> u32 {
         if self.consumed <= 0 {
             return 0;
         }
@@ -127,7 +127,7 @@ impl RecvWindow {
     }
 
     #[inline]
-    pub fn grow(&mut self, delta: i64) {
+    pub(crate) fn grow(&mut self, delta: i64) {
         self.size += delta;
     }
 }

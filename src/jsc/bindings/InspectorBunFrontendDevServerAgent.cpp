@@ -35,7 +35,7 @@ void InspectorBunFrontendDevServerAgent::didCreateFrontendAndBackend()
 
 void InspectorBunFrontendDevServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    disable();
+    (void)disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::enable()
@@ -143,12 +143,12 @@ void InspectorBunFrontendDevServerAgent__notifyBundleComplete(InspectorBunFronte
     agent->bundleComplete(devServerId, durationMs);
 }
 
-void InspectorBunFrontendDevServerAgent__notifyBundleFailed(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunString* buildErrorsPayloadBase64)
+void InspectorBunFrontendDevServerAgent__notifyBundleFailed(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunString buildErrorsPayloadBase64)
 {
-    agent->bundleFailed(devServerId, buildErrorsPayloadBase64->transferToWTFString());
+    agent->bundleFailed(devServerId, buildErrorsPayloadBase64.transferToWTFString());
 }
 
-void InspectorBunFrontendDevServerAgent__notifyClientNavigated(InspectorBunFrontendDevServerAgent* agent, int devServerId, int connectionId, BunString* url, int routeBundleId)
+void InspectorBunFrontendDevServerAgent__notifyClientNavigated(InspectorBunFrontendDevServerAgent* agent, int devServerId, int connectionId, const BunString* url, int routeBundleId)
 {
     std::optional<int> optionalRouteBundleId;
     if (routeBundleId > -1) {
@@ -158,7 +158,7 @@ void InspectorBunFrontendDevServerAgent__notifyClientNavigated(InspectorBunFront
     agent->clientNavigated(devServerId, connectionId, url->toWTFString(), optionalRouteBundleId);
 }
 
-void InspectorBunFrontendDevServerAgent__notifyConsoleLog(InspectorBunFrontendDevServerAgent* agent, int devServerId, char kind, BunString* data)
+void InspectorBunFrontendDevServerAgent__notifyConsoleLog(InspectorBunFrontendDevServerAgent* agent, int devServerId, char kind, const BunString* data)
 {
     agent->consoleLog(devServerId, kind, data->toWTFString());
 }

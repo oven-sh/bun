@@ -1,0 +1,33 @@
+# const above = Object.create(null), descriptor = Object.create(null); descriptor.get = getter; Object.defineProperty(above, "throwDeprecation", descriptor); Object.setPrototypeOf(Object.getPrototypeOf(process), above)
+# `throwDeprecation` is on `process` in some runs only, so the lookup of native code comes to `above` and runs the getter, with `process` as `this`. The getter is entered with operands nobody knows,
+# and the unknown object stands only for what has escaped
+# LIBRARY: own
+# RUN: valueflow-why escaped=f1 escaped-builtin=Process
+# CHECK: escaped=f1
+# CHECK-NEXT: n0 escaped
+# CHECK: escaped-builtin=Process
+# CHECK-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Null
+    v3 = Call v1, v0, v2
+    v4 = Call v1, v0, v2
+    v5 = NewClosure function=f1
+    PropSet v4, v5 key="get" mode=Strict
+    v7 = Builtin builtin=ObjectDefineProperty
+    v8 = String string="throwDeprecation"
+    v9 = Call v7, v0, v3, v8, v4
+    v10 = Builtin builtin=ObjectSetPrototypeOf
+    v11 = Builtin builtin=EventEmitterPrototype
+    v12 = Call v10, v0, v11, v3
+    Return
+}
+function f1 name="getter" results=[{type=anything}] {
+  b0():
+    Return
+}

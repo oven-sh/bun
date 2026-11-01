@@ -1,6 +1,6 @@
 use bun_ast::{Loc, Source};
 use bun_core::{MutableString, strings};
-use bun_paths::{PathBuffer, fs::FileSystem};
+use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
 
 use crate::{
@@ -25,12 +25,6 @@ pub struct Chunk {
     pub should_ignore: bool,
 }
 
-impl Default for Chunk {
-    fn default() -> Self {
-        Self::init_empty()
-    }
-}
-
 impl Chunk {
     pub fn init_empty() -> Chunk {
         Chunk {
@@ -43,15 +37,6 @@ impl Chunk {
 
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
-
-    /// # Safety
-    /// The returned `Chunk` aliases `self.buffer`'s allocation; at most one may be dropped.
-    #[inline]
-    pub unsafe fn alias(&self) -> Chunk {
-        // SAFETY: `self` is a valid aligned reference; caller upholds the at-most-one-drop
-        // contract above so the bitwise copy never causes a double free of `buffer`.
-        unsafe { core::ptr::read(self) }
-    }
 
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
     /// to a standard VLQ "mappings" string before emitting JSON.
@@ -81,7 +66,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     include_sources_contents: bool,
     mappings: &[u8],
 ) -> Result<(), crate::Error> {
-    let mut filename_buf = PathBuffer::uninit();
+    let mut filename_buf = bun_paths::path_buffer_pool::get();
     let mut filename: &[u8] = source.path.text;
     let top_level_dir: &[u8] =
         strings::without_trailing_slash(FileSystem::instance().top_level_dir());
@@ -386,8 +371,6 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub line_starts_with_mapping: bool,
     pub cover_lines_without_mappings: bool,
 
-    pub approximate_input_line_count: usize,
-
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
 }
@@ -408,7 +391,6 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             line_offset_table_first_non_ascii: RawSlice::EMPTY,
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
-            approximate_input_line_count: 0,
             prepend_count: false,
         }
     }
@@ -469,12 +451,10 @@ impl NewBuilder<'_, VLQSourceMap> {
         // `get_buffer`, to satisfy the borrow checker.
         if self.prepend_count {
             let count = self.source_map.get_count();
-            let approx = self.approximate_input_line_count;
             let buffer = self.source_map.get_buffer();
             let len = buffer.list.len();
             buffer.list[0..8].copy_from_slice(&(len as u64).to_ne_bytes());
             buffer.list[8..16].copy_from_slice(&(count as u64).to_ne_bytes());
-            buffer.list[16..24].copy_from_slice(&(approx as u64).to_ne_bytes());
         } else {
             // Finalize the internal builder eagerly; `take_buffer()` below
             // also finalizes, so the effect is preserved.
@@ -625,6 +605,13 @@ impl NewBuilder<'_, VLQSourceMap> {
             .expect("unreachable");
         self.prev_state = current_state;
         self.has_prev_state = true;
+    }
+
+    /// VLQ has nowhere to keep a mark.
+    pub fn mark_object_brace(&mut self) {
+        if let Some(internal) = &mut self.source_map.ctx.internal {
+            internal.mark_object_brace(&self.prev_state);
+        }
     }
 
     #[inline(never)]

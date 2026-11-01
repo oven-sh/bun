@@ -6,10 +6,10 @@
 // TOML type encoding asserted by these tests:
 //   - integer: number; values outside Number.MAX_SAFE_INTEGER throw (TOML
 //     requires lossless handling or an error — see the out-of-range block)
-//   - datetime, datetime-local, date-local, time-local: string (source text);
-//     compared after normalizing the date/time separator to "T", uppercasing
-//     "Z", padding omitted seconds to ":00", and trimming trailing zeros from
-//     fractional seconds
+//   - datetime: Temporal.Instant; datetime-local: Temporal.PlainDateTime;
+//     date-local: Temporal.PlainDate; time-local: Temporal.PlainTime,
+//     compared with plain toEqual (deepEquals compares Temporal objects by
+//     class and value)
 //   - invalid documents throw SyntaxError; the exact full message is asserted
 //     where the in-tree parser produced a SyntaxError at generation time
 //
@@ -18,76 +18,31 @@
 import { TOML } from "bun";
 import { describe, expect, test } from "bun:test";
 
-class TomlDateTime {
-  constructor(
-    public kind: "datetime" | "datetime-local" | "date-local" | "time-local",
-    public value: string,
-  ) {}
-}
-function dt(kind: TomlDateTime["kind"], value: string): TomlDateTime {
-  return new TomlDateTime(kind, value);
-}
+const TEMPORAL_CLASS = {
+  "datetime": "Instant",
+  "datetime-local": "PlainDateTime",
+  "date-local": "PlainDate",
+  "time-local": "PlainTime",
+} as const;
 
-function normalizeDateTime(s: string): string {
-  return s
-    .replace(/^(\d{4}-\d{2}-\d{2})[ tT]/, "$1T")
-    .replace(/[zZ]$/, "Z")
-    .replace(/(^|T)(\d{2}:\d{2})(?=[Z+-]|$)/, "$1$2:00")
-    .replace(/\.(\d+)/, (_, frac: string) => {
-      const trimmed = frac.replace(/0+$/, "");
-      return trimmed === "" ? "" : "." + trimmed;
-    });
-}
-
-// Datetime markers become normalized strings; everything else is unchanged.
-function normalizeExpected(expected: unknown): unknown {
-  if (expected instanceof TomlDateTime) return normalizeDateTime(expected.value);
-  if (Array.isArray(expected)) return expected.map(normalizeExpected);
-  if (expected !== null && typeof expected === "object") {
-    const out: Record<string, unknown> = Object.create(null);
-    for (const [k, v] of Object.entries(expected)) out[k] = normalizeExpected(v);
-    return out;
-  }
-  return expected;
-}
-
-// Normalize the positions of `actual` that `expected` marks as datetimes, in
-// lockstep, so a single toEqual compares everything else exactly.
-function normalizeActual(actual: unknown, expected: unknown): unknown {
-  if (expected instanceof TomlDateTime) {
-    return typeof actual === "string" ? normalizeDateTime(actual) : actual;
-  }
-  if (Array.isArray(expected) && Array.isArray(actual)) {
-    return actual.map((a, i) => normalizeActual(a, expected[i]));
-  }
-  if (
-    expected !== null &&
-    typeof expected === "object" &&
-    actual !== null &&
-    typeof actual === "object" &&
-    !Array.isArray(actual)
-  ) {
-    const out: Record<string, unknown> = Object.create(null);
-    for (const [k, v] of Object.entries(actual)) out[k] = normalizeActual(v, (expected as any)[k]);
-    return out;
-  }
-  return actual;
-}
-
-function expectTomlEqual(parsed: unknown, expected: unknown): void {
-  expect(normalizeActual(parsed, expected)).toEqual(normalizeExpected(expected) as any);
+// The corpus value is TOML source text; TOML.parse truncates fractional
+// seconds to Temporal's 9-digit limit (truncated, not rounded), and
+// Temporal.*.from accepts the rest of TOML's spellings (space separator,
+// lowercase t/z, omitted seconds) as is.
+function dt(kind: keyof typeof TEMPORAL_CLASS, value: string) {
+  return (Temporal as any)[TEMPORAL_CLASS[kind]].from(value.replace(/\.(\d{9})\d+/, ".$1"));
 }
 
 // Each case also asserts that parse(stringify(parse(input))) produces the same
 // value: stringify must never emit a document its own parse rejects or reads
-// back differently. The TOML text may change (date/times come back as quoted
-// strings), but the JS value is a fixed point after one lap.
+// back differently. The TOML text may change (layout, normalized date/time
+// spellings), but the JS value is a fixed point after one lap.
 describe("toml-test/valid", () => {
   test("valid/array/array-subtables", () => {
     const input: string = "[[arr]]\n[arr.subtab]\nval=1\n\n[[arr]]\n[arr.subtab]\nval=2\n";
     const expected: any = { arr: [{ subtab: { val: 1 } }, { subtab: { val: 2 } }] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/array", () => {
@@ -105,22 +60,22 @@ describe("toml-test/valid", () => {
       ints: [1, 2, 3],
       strings: ["a", "b", "c"],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/bool", () => {
     const input: string = "a = [true, false]\n";
     const expected: any = { a: [true, false] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/empty", () => {
     const input: string = "thevoid = [[[[[]]]]]\n";
     const expected: any = { thevoid: [[[[[]]]]] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/hetergeneous", () => {
@@ -132,29 +87,29 @@ describe("toml-test/valid", () => {
         [1.1, 2.1],
       ],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/mixed-int-array", () => {
     const input: string = 'arrays-and-ints =  [1, ["Arrays are not integers."]]\n';
     const expected: any = { "arrays-and-ints": [1, ["Arrays are not integers."]] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/mixed-int-float", () => {
     const input: string = "ints-and-floats = [1, 1.1]\n";
     const expected: any = { "ints-and-floats": [1, 1.1] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/mixed-int-string", () => {
     const input: string = 'strings-and-ints = ["hi", 42]\n';
     const expected: any = { "strings-and-ints": ["hi", 42] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/mixed-string-table", () => {
@@ -171,120 +126,120 @@ describe("toml-test/valid", () => {
       ],
       mixed: [{ k: "a" }, "b", 1],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/nested-double", () => {
     const input: string = 'nest = [\n\t[\n\t\t["a"],\n\t\t[1, 2, [3]]\n\t]\n]\n';
     const expected: any = { nest: [[["a"], [1, 2, [3]]]] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/nested-inline-table", () => {
     const input: string = "a = [ { b = {} } ]\n";
     const expected: any = { a: [{ b: {} }] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/nested", () => {
     const input: string = 'nest = [["a"], ["b"]]\n';
     const expected: any = { nest: [["a"], ["b"]] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/nospaces", () => {
     const input: string = "ints = [1,2,3]\n";
     const expected: any = { ints: [1, 2, 3] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/open-parent-table", () => {
     const input: string = "[[parent-table.arr]]\n[[parent-table.arr]]\n[parent-table]\nnot-arr = 1\n";
     const expected: any = { "parent-table": { "not-arr": 1, arr: [{}, {}] } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/string-quote-comma-01", () => {
     const input: string = 'title = [\n"Client: \\"XXXX\\", Job: XXXX",\n"Code: XXXX"\n]\n';
     const expected: any = { title: ['Client: "XXXX", Job: XXXX', "Code: XXXX"] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/string-quote-comma-02", () => {
     const input: string = 'title = [ " \\", ",]\n';
     const expected: any = { title: [' ", '] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/string-with-comma-01", () => {
     const input: string = 'title = [\n"Client: XXXX, Job: XXXX",\n"Code: XXXX"\n]\n';
     const expected: any = { title: ["Client: XXXX, Job: XXXX", "Code: XXXX"] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/string-with-comma-02", () => {
     const input: string = 'title = [\n"""Client: XXXX,\nJob: XXXX""",\n"Code: XXXX"\n]\n';
     const expected: any = { title: ["Client: XXXX,\nJob: XXXX", "Code: XXXX"] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/strings", () => {
     const input: string = "string_array = [ \"all\", 'strings', \"\"\"are the same\"\"\", '''type''']\n";
     const expected: any = { string_array: ["all", "strings", "are the same", "type"] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/table-array-string-backslash", () => {
     const input: string = 'foo = [ { bar="\\"{{baz}}\\""} ]\n';
     const expected: any = { foo: [{ bar: '"{{baz}}"' }] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/array/trailing-comma", () => {
     const input: string = "arr-1 = [1,]\n\narr-2 = [2,3,]\n\narr-3 = [4,\n]\n\narr-4 = [\n\t5,\n\t6,\n]\n";
     const expected: any = { "arr-1": [1], "arr-3": [4], "arr-2": [2, 3], "arr-4": [5, 6] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/bool/bool", () => {
     const input: string = "t = true\nf = false\n";
     const expected: any = { f: false, t: true };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/comment/after-literal-no-ws", () => {
     const input: string = "inf=inf#infinity\nnan=nan#not a number\ntrue=true#true\nfalse=false#false\n";
     const expected: any = { false: false, inf: Infinity, nan: NaN, true: true };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/comment/at-eof", () => {
     const input: string = '# This is a full-line comment\nkey = "value" # This is a comment at the end of a line\n';
     const expected: any = { key: "value" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/comment/at-eof2", () => {
     const input: string = '# This is a full-line comment\nkey = "value" # This is a comment at the end of a line\n';
     const expected: any = { key: "value" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/comment/everywhere", () => {
@@ -299,22 +254,22 @@ describe("toml-test/valid", () => {
         more: [42, 42],
       },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/comment/noeol", () => {
     const input: string = "# single comment without any eol characters";
     const expected: any = {};
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/comment/nonascii", () => {
     const input: string = "# ~ \u0080 ÿ ퟿  ￿ 𐀀 􏿿\n";
     const expected: any = {};
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/comment/tricky", () => {
@@ -340,8 +295,8 @@ describe("toml-test/valid", () => {
         two: "22#",
       },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/datetime", () => {
@@ -351,8 +306,8 @@ describe("toml-test/valid", () => {
       lower: dt("datetime", "1987-07-05T17:45:00Z"),
       space: dt("datetime", "1987-07-05T17:45:00Z"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/edge", () => {
@@ -366,15 +321,15 @@ describe("toml-test/valid", () => {
       "last-local": dt("datetime-local", "9999-12-31T23:59:59"),
       "last-offset": dt("datetime", "9999-12-31T23:59:59Z"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/invalid-date-in-string", () => {
     const input: string = "s = '2020-01-01x'\n";
     const expected: any = { s: "2020-01-01x" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/leap-year", () => {
@@ -388,15 +343,15 @@ describe("toml-test/valid", () => {
       "2024-datetime": dt("datetime", "2024-02-29T15:15:15Z"),
       "2024-datetime-local": dt("datetime-local", "2024-02-29T15:15:15"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/local-date", () => {
     const input: string = "bestdayever = 1987-07-05\n";
     const expected: any = { bestdayever: dt("date-local", "1987-07-05") };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/local-time", () => {
@@ -405,8 +360,8 @@ describe("toml-test/valid", () => {
       besttimeever: dt("time-local", "17:45:00"),
       milliseconds: dt("time-local", "10:32:00.555"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/local", () => {
@@ -416,8 +371,8 @@ describe("toml-test/valid", () => {
       milli: dt("datetime-local", "1977-12-21T10:32:00.555"),
       space: dt("datetime-local", "1987-07-05T17:45:00"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/milliseconds", () => {
@@ -429,8 +384,8 @@ describe("toml-test/valid", () => {
       wita1: dt("datetime", "1987-07-05T17:45:56.123+08:00"),
       wita2: dt("datetime", "1987-07-05T17:45:56.600+08:00"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/no-seconds", () => {
@@ -442,8 +397,8 @@ describe("toml-test/valid", () => {
       "without-seconds-3": dt("datetime", "1979-05-27T07:32:00-07:00"),
       "without-seconds-4": dt("datetime-local", "1979-05-27T07:32:00"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/datetime/timezone", () => {
@@ -455,43 +410,43 @@ describe("toml-test/valid", () => {
       pdt: dt("datetime", "1987-07-05T17:45:56-05:00"),
       utc: dt("datetime", "1987-07-05T17:45:56Z"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/empty-crlf", () => {
     const input: string = "\r\n";
     const expected: any = {};
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/empty-lf", () => {
     const input: string = "\n";
     const expected: any = {};
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/empty-nothing", () => {
     const input: string = "";
     const expected: any = {};
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/empty-space", () => {
     const input: string = " ";
     const expected: any = {};
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/empty-tab", () => {
     const input: string = "\t";
     const expected: any = {};
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/example", () => {
@@ -501,8 +456,8 @@ describe("toml-test/valid", () => {
       "best-day-ever": dt("datetime", "1987-07-05T17:45:00Z"),
       numtheory: { boring: false, perfection: [6, 28, 496] },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/float/exponent-upper", () => {
@@ -518,8 +473,8 @@ describe("toml-test/valid", () => {
       "zero-exp": 3,
       "zero-plus": 0,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/float/exponent", () => {
@@ -535,8 +490,8 @@ describe("toml-test/valid", () => {
       "zero-exp": 3,
       "zero-plus": 0,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/float/float", () => {
@@ -549,8 +504,8 @@ describe("toml-test/valid", () => {
       "zero-intpart": 0.123,
       "leading-zero-fractional": 0.0123,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/float/inf-and-nan", () => {
@@ -564,30 +519,30 @@ describe("toml-test/valid", () => {
       nan_neg: NaN,
       nan_plus: NaN,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/float/long", () => {
     const input: string = "longpi = 3.141592653589793\nneglongpi = -3.141592653589793\n";
     const expected: any = { longpi: 3.141592653589793, neglongpi: -3.141592653589793 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/float/max-int", () => {
     const input: string =
       "# Maximum and minimum safe natural numbers.\nmax_float =  9_007_199_254_740_991.0\nmin_float = -9_007_199_254_740_991.0\n";
     const expected: any = { max_float: 9007199254740991, min_float: -9007199254740991 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/float/underscore", () => {
     const input: string = "before = 3_141.5927\nafter = 3141.592_7\nexponent = 3e1_4\n";
     const expected: any = { after: 3141.5927, before: 3141.5927, exponent: 300000000000000 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/float/zero", () => {
@@ -602,29 +557,29 @@ describe("toml-test/valid", () => {
       "signed-pos": 0,
       zero: 0,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/implicit-and-explicit-after", () => {
     const input: string = "[a.b.c]\nanswer = 42\n\n[a]\nbetter = 43\n";
     const expected: any = { a: { better: 43, b: { c: { answer: 42 } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/implicit-and-explicit-before", () => {
     const input: string = "[a]\nbetter = 43\n\n[a.b.c]\nanswer = 42\n";
     const expected: any = { a: { better: 43, b: { c: { answer: 42 } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/implicit-groups", () => {
     const input: string = "[a.b.c]\nanswer = 42\n";
     const expected: any = { a: { b: { c: { answer: 42 } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/array-01", () => {
@@ -638,30 +593,30 @@ describe("toml-test/valid", () => {
         { first_name: "Bob", last_name: "Seger" },
       ],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/array-02", () => {
     const input: string =
       '# "No newlines are allowed between the curly braces unless they are valid within\n# a value"\n\na = { a = [\n]}\n';
     const expected: any = { a: { a: [] } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/array-03", () => {
     const input: string = "b = { a = [\n\t\t1,\n\t\t2,\n\t], b = [\n\t\t3,\n\t\t4,\n\t]}\n";
     const expected: any = { b: { a: [1, 2], b: [3, 4] } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/bool", () => {
     const input: string = "a = {a = true, b = false}\n";
     const expected: any = { a: { a: true, b: false } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/empty", () => {
@@ -676,15 +631,15 @@ describe("toml-test/valid", () => {
       many_empty: [{}, {}, {}],
       nested_empty: { empty: {} },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/end-in-bool", () => {
     const input: string = 'black = { python=">3.6", version=">=18.9b0", allow_prereleases=true }\n';
     const expected: any = { black: { allow_prereleases: true, python: ">3.6", version: ">=18.9b0" } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/inline-table", () => {
@@ -697,8 +652,8 @@ describe("toml-test/valid", () => {
       "str-key": { a: 1 },
       "table-array": [{ a: 1 }, { b: 2 }],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/key-dotted-01", () => {
@@ -711,8 +666,8 @@ describe("toml-test/valid", () => {
       d: { a: { b: 1 } },
       e: { a: { b: 1 } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/key-dotted-02", () => {
@@ -720,8 +675,8 @@ describe("toml-test/valid", () => {
     const expected: any = {
       many: { dots: { here: { dot: { dot: { dot: { a: { b: { c: 1, d: 2 } } } } } } } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/key-dotted-03", () => {
@@ -729,8 +684,8 @@ describe("toml-test/valid", () => {
     const expected: any = {
       tbl: { a: { b: { c: { d: { e: 1 } } } }, x: { a: { b: { c: { d: { e: 1 } } } } } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/key-dotted-04", () => {
@@ -741,8 +696,8 @@ describe("toml-test/valid", () => {
         { T: { a: { b: 2 } }, t: { a: { b: 2 } } },
       ],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/key-dotted-05", () => {
@@ -754,8 +709,8 @@ describe("toml-test/valid", () => {
       "arr-3": [{ a: { b: 1 } }, { a: { b: 2 } }],
       "arr-4": ["str", { a: { b: 1 } }, { a: { b: 2 } }],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/key-dotted-06", () => {
@@ -763,23 +718,23 @@ describe("toml-test/valid", () => {
     const expected: any = {
       top: { dot: { dot: [{ dot: { dot: { dot: 1 } } }, { dot: { dot: { dot: 2 } } }] } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/key-dotted-07", () => {
     const input: string = "arr = [\n\t{a.b = [{c.d = 1}]}\n]\n";
     const expected: any = { arr: [{ a: { b: [{ c: { d: 1 } }] } }] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/multiline", () => {
     const input: string =
       'tbl_multiline = { a = 1, b = """\nmultiline\n""", c = """and yet\nanother line""", d = 4 }\n';
     const expected: any = { tbl_multiline: { a: 1, b: "multiline\n", c: "and yet\nanother line", d: 4 } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/nest", () => {
@@ -794,8 +749,8 @@ describe("toml-test/valid", () => {
       tbl_tbl_empty: { tbl_0: {} },
       tbl_tbl_val: { tbl_1: { one: 1 } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/newline-comment", () => {
@@ -807,8 +762,8 @@ describe("toml-test/valid", () => {
       "trailing-comma-1": { c: 1 },
       "trailing-comma-2": { c: 1 },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/newline", () => {
@@ -822,8 +777,8 @@ describe("toml-test/valid", () => {
       "trailing-comma-1": { c: 1 },
       "trailing-comma-2": { c: 1 },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/inline-table/spaces", () => {
@@ -833,23 +788,23 @@ describe("toml-test/valid", () => {
       "clap-1": { version: "4", features: ["derive", "cargo"] },
       "clap-2": { version: "4", features: ["derive", "cargo"], nest: { a: "x", b: [1.5, 9] } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/integer/float64-max", () => {
     const input: string =
       "# Maximum and minimum safe float64 natural numbers. Mainly here for\n# -int-as-float.\nmax_int =  9_007_199_254_740_991\nmin_int = -9_007_199_254_740_991\n";
     const expected: any = { max_int: 9007199254740991, min_int: -9007199254740991 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/integer/integer", () => {
     const input: string = "answer = 42\nposanswer = +42\nneganswer = -42\nzero = 0\n";
     const expected: any = { answer: 42, neganswer: -42, posanswer: 42, zero: 0 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/integer/literals", () => {
@@ -866,15 +821,15 @@ describe("toml-test/valid", () => {
       oct2: 493,
       oct3: 501,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/integer/underscore", () => {
     const input: string = "kilo = 1_000\nx = 1_1_1_1\n";
     const expected: any = { kilo: 1000, x: 1111 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/integer/zero", () => {
@@ -894,8 +849,8 @@ describe("toml-test/valid", () => {
       h3: 0,
       o1: 0,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/alphanum", () => {
@@ -913,8 +868,8 @@ describe("toml-test/valid", () => {
       "2018_10": { "001": 1 },
       "a-a-a": { _: false },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/case-sensitive", () => {
@@ -930,8 +885,8 @@ describe("toml-test/valid", () => {
       },
       section: { NAME: "upper", Name: "capitalized", name: "lower" },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/dotted-01", () => {
@@ -940,8 +895,8 @@ describe("toml-test/valid", () => {
       many: { dots: { dot: { dot: { dot: 42 } } } },
       name: { first: "Arthur", last: "Dent" },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/dotted-02", () => {
@@ -950,8 +905,8 @@ describe("toml-test/valid", () => {
     const expected: any = {
       count: { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12 },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/dotted-03", () => {
@@ -962,8 +917,8 @@ describe("toml-test/valid", () => {
       tbl: { a: { b: { c: 42.666 } } },
       top: { key: 1 },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/dotted-04", () => {
@@ -972,8 +927,8 @@ describe("toml-test/valid", () => {
       arr: [{ a: { b: { c: 1, d: 2 } } }, { a: { b: { c: 3, d: 4 } } }],
       top: { key: 1 },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/dotted-empty", () => {
@@ -983,36 +938,36 @@ describe("toml-test/valid", () => {
       a: { "": { "": "empty.empty" } },
       x: { "": "x.empty" },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/empty-01", () => {
     const input: string = '"" = "blank"\n';
     const expected: any = { "": "blank" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/empty-02", () => {
     const input: string = "'' = \"blank\"\n";
     const expected: any = { "": "blank" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/empty-03", () => {
     const input: string = "''=0\n";
     const expected: any = { "": 0 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/equals-nospace", () => {
     const input: string = "answer=42\n";
     const expected: any = { answer: 42 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/escapes", () => {
@@ -1027,8 +982,8 @@ describe("toml-test/valid", () => {
       '"quoted"': { quote: true },
       "a.b": { "À": {} },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/like-date", () => {
@@ -1046,64 +1001,64 @@ describe("toml-test/valid", () => {
       "2002-01-02": { k: 10, "2024-01-03": { k: 11 } },
       a: { "2001-02-08": 7, "2001-02-09": { "2001-02-10": 8 } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/numeric-01", () => {
     const input: string = "1     = true\n";
     const expected: any = { "1": true };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/numeric-02", () => {
     const input: string = "1.2   = true\n";
     const expected: any = { "1": { "2": true } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/numeric-03", () => {
     const input: string = "0123  = true\n";
     const expected: any = { "0123": true };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/numeric-04", () => {
     const input: string = "01.23 = true\n";
     const expected: any = { "01": { "23": true } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/numeric-05", () => {
     const input: string = "23.01 = true\n";
     const expected: any = { "23": { "01": true } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/numeric-06", () => {
     const input: string = "-1    = true\n";
     const expected: any = { "-1": true };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/numeric-07", () => {
     const input: string = "-01   = true\n";
     const expected: any = { "-01": true };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/numeric-08", () => {
     const input: string = "1  = 'one'\n01 = 'zero one'\n";
     const expected: any = { "1": "one", "01": "zero one" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/quoted-dots", () => {
@@ -1115,8 +1070,8 @@ describe("toml-test/valid", () => {
       plain_table: { plain: 3, "with.dot": 4 },
       table: { withdot: { "escaped.dot": 7, "key.with.dots": 6, plain: 5 } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/quoted-unicode", () => {
@@ -1129,8 +1084,8 @@ describe("toml-test/valid", () => {
       "l ~ \u0080 ÿ ퟿  ￿ 𐀀 􏿿": "literal key",
       "~ \u0080 ÿ ퟿  ￿ 𐀀 􏿿": "basic key",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/space", () => {
@@ -1142,22 +1097,22 @@ describe("toml-test/valid", () => {
       "a b": 1,
       " tbl ": { "\ttab\ttab\t": "tab" },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/special-chars", () => {
     const input: string = '"=~!@$^&*()_+-`1234567890[]|/?><.,;:\'=" = 1\n';
     const expected: any = { "=~!@$^&*()_+-`1234567890[]|/?><.,;:'=": 1 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/special-word", () => {
     const input: string = 'false = false\ntrue = 1\ninf = 100000000\nnan = "ceci n\'est pas un nombre"\n\n';
     const expected: any = { false: false, inf: 100000000, nan: "ceci n'est pas un nombre", true: 1 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/start", () => {
@@ -1175,15 +1130,15 @@ describe("toml-test/valid", () => {
       _key: { _key: 2 },
       inline: { "---": { "111": 12, "---": 10, ___: 11 } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/key/zero", () => {
     const input: string = "0=0\n";
     const expected: any = { "0": 0 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/multibyte", () => {
@@ -1204,37 +1159,37 @@ describe("toml-test/valid", () => {
         },
       },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/newline-crlf", () => {
     const input: string = 'os = "DOS"\r\nnewline = "crlf"\r\n';
     const expected: any = { newline: "crlf", os: "DOS" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/newline-lf", () => {
     const input: string = 'os = "unix"\nnewline = "lf"\n';
     const expected: any = { newline: "lf", os: "unix" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-0", () => {
     const input: string =
       '# This is a full-line comment\nkey = "value"  # This is a comment at the end of a line\nanother = "# This is not a comment"\n';
     const expected: any = { another: "# This is not a comment", key: "value" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-1", () => {
     const input: string = 'key = "value"\n';
     const expected: any = { key: "value" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-10", () => {
@@ -1244,29 +1199,29 @@ describe("toml-test/valid", () => {
       apple: { color: "red", skin: "thin", type: "fruit" },
       orange: { color: "orange", skin: "thick", type: "fruit" },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-11", () => {
     const input: string = '3.14159 = "pi"\n';
     const expected: any = { "3": { "14159": "pi" } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-12", () => {
     const input: string = 'str = "I\'m a string. \\"You can quote me\\". Name\\tJos\\xE9\\nLocation\\tSF."\n';
     const expected: any = { str: 'I\'m a string. "You can quote me". Name\tJosé\nLocation\tSF.' };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-13", () => {
     const input: string = 'str1 = """\nRoses are red\nViolets are blue"""\n';
     const expected: any = { str1: "Roses are red\nViolets are blue" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-14", () => {
@@ -1276,8 +1231,8 @@ describe("toml-test/valid", () => {
       str2: "Roses are red\nViolets are blue",
       str3: "Roses are red\r\nViolets are blue",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-15", () => {
@@ -1288,8 +1243,8 @@ describe("toml-test/valid", () => {
       str2: "The quick brown fox jumps over the lazy dog.",
       str3: "The quick brown fox jumps over the lazy dog.",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-16", () => {
@@ -1301,8 +1256,8 @@ describe("toml-test/valid", () => {
       str6: 'Here are fifteen quotation marks: """"""""""""""".',
       str7: '"This," she said, "is just a pointless statement."',
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-17", () => {
@@ -1314,8 +1269,8 @@ describe("toml-test/valid", () => {
       winpath: "C:\\Users\\nodejs\\templates",
       winpath2: "\\\\ServerX\\admin$\\system32\\",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-18", () => {
@@ -1325,8 +1280,8 @@ describe("toml-test/valid", () => {
       lines: "The first newline is\ntrimmed in literal strings.\n   All other whitespace\n   is preserved.\n",
       regex2: "I [dw]on't need \\d{2} apples",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-19", () => {
@@ -1337,23 +1292,23 @@ describe("toml-test/valid", () => {
       quot15: 'Here are fifteen quotation marks: """""""""""""""',
       str: "'That,' she said, 'is still pointless.'",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-20", () => {
     const input: string = "int1 = +99\nint2 = 42\nint3 = 0\nint4 = -17\n";
     const expected: any = { int1: 99, int2: 42, int3: 0, int4: -17 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-21", () => {
     const input: string =
       "int5 = 1_000\nint6 = 5_349_221\nint7 = 53_49_221  # Indian number system grouping\nint8 = 1_2_3_4_5  # VALID but discouraged\n";
     const expected: any = { int5: 1000, int6: 5349221, int7: 5349221, int8: 12345 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-22", () => {
@@ -1367,8 +1322,8 @@ describe("toml-test/valid", () => {
       oct1: 342391,
       oct2: 493,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-23", () => {
@@ -1383,30 +1338,30 @@ describe("toml-test/valid", () => {
       flt6: -0.02,
       flt7: 6.626e-34,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-24", () => {
     const input: string = "flt8 = 224_617.445_991_228\n";
     const expected: any = { flt8: 224617.445991228 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-25", () => {
     const input: string =
       "# infinity\nsf1 = inf  # positive infinity\nsf2 = +inf # positive infinity\nsf3 = -inf # negative infinity\n\n# not a number\nsf4 = nan  # actual sNaN/qNaN encoding is implementation-specific\nsf5 = +nan # same as `nan`\nsf6 = -nan # valid, actual encoding is implementation-specific\n";
     const expected: any = { sf1: Infinity, sf2: Infinity, sf3: -Infinity, sf4: NaN, sf5: NaN, sf6: NaN };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-26", () => {
     const input: string = "bool1 = true\nbool2 = false\n";
     const expected: any = { bool1: true, bool2: false };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-27", () => {
@@ -1418,15 +1373,15 @@ describe("toml-test/valid", () => {
       odt3: dt("datetime", "1979-05-27T00:32:00.5-07:00"),
       odt4: dt("datetime", "1979-05-27T00:32:00.999-07:00"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-28", () => {
     const input: string = "odt4 = 1979-05-27 07:32:00Z\n";
     const expected: any = { odt4: dt("datetime", "1979-05-27T07:32:00Z") };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-29", () => {
@@ -1435,15 +1390,15 @@ describe("toml-test/valid", () => {
       odt5: dt("datetime", "1979-05-27T07:32:00Z"),
       odt6: dt("datetime", "1979-05-27T07:32:00-07:00"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-3", () => {
     const input: string = 'key = "value"\nbare_key = "value"\nbare-key = "value"\n1234 = "value"\n';
     const expected: any = { "1234": "value", "bare-key": "value", bare_key: "value", key: "value" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-30", () => {
@@ -1453,22 +1408,22 @@ describe("toml-test/valid", () => {
       ldt2: dt("datetime-local", "1979-05-27T07:32:00.5"),
       ldt3: dt("datetime-local", "1979-05-27T00:32:00.999"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-31", () => {
     const input: string = "ldt3 = 1979-05-27T07:32\n";
     const expected: any = { ldt3: dt("datetime-local", "1979-05-27T07:32:00") };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-32", () => {
     const input: string = "ld1 = 1979-05-27\n";
     const expected: any = { ld1: dt("date-local", "1979-05-27") };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-33", () => {
@@ -1478,15 +1433,15 @@ describe("toml-test/valid", () => {
       lt2: dt("time-local", "00:32:00.5"),
       lt3: dt("time-local", "00:32:00.999"),
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-34", () => {
     const input: string = "lt3 = 07:32\n";
     const expected: any = { lt3: dt("time-local", "07:32:00") };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-35", () => {
@@ -1514,22 +1469,22 @@ describe("toml-test/valid", () => {
       numbers: [0.1, 0.2, 0.5, 1, 2, 5],
       string_array: ["all", "strings", "are the same", "type"],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-36", () => {
     const input: string = "integers2 = [\n  1, 2, 3\n]\n\nintegers3 = [\n  1,\n  2, # this is ok\n]\n";
     const expected: any = { integers2: [1, 2, 3], integers3: [1, 2] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-37", () => {
     const input: string = "[table]\n";
     const expected: any = { table: {} };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-38", () => {
@@ -1539,15 +1494,15 @@ describe("toml-test/valid", () => {
       "table-1": { key1: "some string", key2: 123 },
       "table-2": { key1: "another string", key2: 456 },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-39", () => {
     const input: string = '[dog."tater.man"]\ntype.name = "pug"\n';
     const expected: any = { dog: { "tater.man": { type: { name: "pug" } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-4", () => {
@@ -1560,8 +1515,8 @@ describe("toml-test/valid", () => {
       'quoted "value"': "value",
       "ʎǝʞ": "value",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-40", () => {
@@ -1573,30 +1528,30 @@ describe("toml-test/valid", () => {
       g: { h: { i: {} } },
       j: { "ʞ": { l: {} } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-41", () => {
     const input: string =
       "# [x] you\n# [x.y] don't\n# [x.y.z] need these\n[x.y.z.w] # for this to work\n\n[x] # defining a super-table afterward is ok\n";
     const expected: any = { x: { y: { z: { w: {} } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-42", () => {
     const input: string = "# VALID BUT DISCOURAGED\n[fruit.apple]\n[animal]\n[fruit.orange]\n";
     const expected: any = { animal: {}, fruit: { apple: {}, orange: {} } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-43", () => {
     const input: string = "# RECOMMENDED\n[fruit.apple]\n[fruit.orange]\n[animal]\n";
     const expected: any = { animal: {}, fruit: { apple: {}, orange: {} } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-44", () => {
@@ -1607,16 +1562,16 @@ describe("toml-test/valid", () => {
       name: "Fido",
       owner: { member_since: dt("date-local", "1999-08-04"), name: "Regina Dogman" },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-45", () => {
     const input: string =
       'fruit.apple.color = "red"\n# Defines a table named fruit\n# Defines a table named fruit.apple\n\nfruit.apple.taste.sweet = true\n# Defines a table named fruit.apple.taste\n# fruit and fruit.apple were already created\n';
     const expected: any = { fruit: { apple: { color: "red", taste: { sweet: true } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-46", () => {
@@ -1625,8 +1580,8 @@ describe("toml-test/valid", () => {
     const expected: any = {
       fruit: { apple: { color: "red", taste: { sweet: true }, texture: { smooth: true } } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-47", () => {
@@ -1641,8 +1596,8 @@ describe("toml-test/valid", () => {
       name: { first: "Tom", last: "Preston-Werner" },
       point: { x: 1, y: 2 },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-48", () => {
@@ -1657,22 +1612,22 @@ describe("toml-test/valid", () => {
       name: { first: "Tom", last: "Preston-Werner" },
       point: { x: 1, y: 2 },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-49", () => {
     const input: string = '[product]\ntype = { name = "Nail" }\n# type.edible = false  # INVALID\n';
     const expected: any = { product: { type: { name: "Nail" } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-50", () => {
     const input: string = '[product]\ntype.name = "Nail"\n# type = { edible = false }  # INVALID\n';
     const expected: any = { product: { type: { name: "Nail" } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-51", () => {
@@ -1681,8 +1636,8 @@ describe("toml-test/valid", () => {
     const expected: any = {
       product: [{ name: "Hammer", sku: 738594937 }, {}, { color: "gray", name: "Nail", sku: 284758393 }],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-52", () => {
@@ -1698,8 +1653,8 @@ describe("toml-test/valid", () => {
         { name: "banana", varieties: [{ name: "plantain" }] },
       ],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-53", () => {
@@ -1712,8 +1667,8 @@ describe("toml-test/valid", () => {
         { x: 2, y: 4, z: 8 },
       ],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-6", () => {
@@ -1724,24 +1679,24 @@ describe("toml-test/valid", () => {
       physical: { color: "orange", shape: "round" },
       site: { "google.com": true },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-7", () => {
     const input: string =
       'fruit.name = "banana"       # this is best practice\nfruit. color = "yellow"     # same as fruit.color\nfruit . flavor = "banana"   # same as fruit.flavor\n';
     const expected: any = { fruit: { color: "yellow", flavor: "banana", name: "banana" } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-8", () => {
     const input: string =
       '# This makes the key "fruit" into a table.\nfruit.apple.smooth = true\n\n# So then you can add to the table "fruit" like so:\nfruit.orange = 2\n';
     const expected: any = { fruit: { orange: 2, apple: { smooth: true } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-1.1.0/common-9", () => {
@@ -1751,8 +1706,8 @@ describe("toml-test/valid", () => {
       apple: { color: "red", skin: "thin", type: "fruit" },
       orange: { color: "orange", skin: "thick", type: "fruit" },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-example-1-compact", () => {
@@ -1779,8 +1734,8 @@ describe("toml-test/valid", () => {
         beta: { dc: "eqdc10", ip: "10.0.0.2" },
       },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/spec-example-1", () => {
@@ -1807,50 +1762,50 @@ describe("toml-test/valid", () => {
         beta: { dc: "eqdc10", ip: "10.0.0.2" },
       },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/basic-escape-01", () => {
     const input: string = '# Escape "\ntest = "\\"one\\""\n';
     const expected: any = { test: '"one"' };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/basic-escape-02", () => {
     const input: string = '# Escape \\ and then "\ntest = "\\\\\\"one"\n';
     const expected: any = { test: '\\"one' };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/basic-escape-03", () => {
     const input: string = '# Escape \\ four times and then "\ntest = "\\\\\\\\\\\\\\\\\\"one"\n';
     const expected: any = { test: '\\\\\\\\"one' };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/empty", () => {
     const input: string = 'answer = ""\n';
     const expected: any = { answer: "" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/ends-in-whitespace-escape", () => {
     const input: string = 'beee = """\nheeee\ngeeee\\  \n\n\n      """\n';
     const expected: any = { beee: "heeee\ngeeee" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/escape-esc", () => {
     const input: string = 'esc = "\\e There is no escape! \\e"\n';
     const expected: any = { esc: "\u001b There is no escape! \u001b" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/escape-tricky", () => {
@@ -1865,15 +1820,15 @@ describe("toml-test/valid", () => {
       multiline_not_unicode: "\\u0041",
       multiline_unicode: " ",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/escaped-escape", () => {
     const input: string = 'answer = "\\\\x64"\n';
     const expected: any = { answer: "\\x64" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/escapes", () => {
@@ -1894,8 +1849,8 @@ describe("toml-test/valid", () => {
       tab: "|\t.",
       unitseparator: "|\u001f.",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/hex-escape", () => {
@@ -1911,8 +1866,8 @@ describe("toml-test/valid", () => {
       nul: "\u0000",
       whitespace: "  \t \u001b \r\n",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/multibyte-escape", () => {
@@ -1924,8 +1879,8 @@ describe("toml-test/valid", () => {
       "basic-2": "ɑ € 𐫱 ɑ€𐫱",
       "ml-basic-2": "ɑ € 𐫱 ɑ€𐫱",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/multibyte", () => {
@@ -1937,24 +1892,24 @@ describe("toml-test/valid", () => {
       "ml-raw": "ɑ € 𐫱 ɑ€𐫱",
       raw: "ɑ € 𐫱 ɑ€𐫱",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/multiline-empty", () => {
     const input: string =
       'empty-1 = """"""\n\n# A newline immediately following the opening delimiter will be trimmed.\nempty-2 = """\n"""\n\n# \\ at the end of line trims newlines as well; note that last \\ is followed by\n# two spaces, which are ignored.\nempty-3 = """\\\n    """\nempty-4 = """\\\n   \\\n   \\  \n   """\n\n';
     const expected: any = { "empty-1": "", "empty-2": "", "empty-3": "", "empty-4": "" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/multiline-escaped-crlf", () => {
     const input: string =
       '# The following line should be an unescaped backslash followed by a Windows\r\n# newline sequence ("\\r\\n")\r\n0="""\\\r\n"""\r\n';
     const expected: any = { "0": "" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/multiline-quotes", () => {
@@ -1975,8 +1930,8 @@ describe("toml-test/valid", () => {
       two: '""two quotes""',
       two_space: ' ""two quotes"" ',
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/multiline", () => {
@@ -1993,8 +1948,8 @@ describe("toml-test/valid", () => {
       "no-space": "ab",
       "whitespace-after-bs": "The quick brown fox jumps over the lazy dog.",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/nl", () => {
@@ -2007,8 +1962,8 @@ describe("toml-test/valid", () => {
       nl_end: "value\n",
       nl_mid: "val\nue",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/quoted-unicode", () => {
@@ -2021,15 +1976,15 @@ describe("toml-test/valid", () => {
       not_escaped_string:
         "\\u0000 \\u0008 \\u000c \\U00000041 \\u007f \\u0080 \\u00ff \\ud7ff \\ue000 \\uffff \\U00010000 \\U0010ffff",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/raw-empty", () => {
     const input: string = "empty = ''\n";
     const expected: any = { empty: "" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/raw-multiline", () => {
@@ -2042,8 +1997,8 @@ describe("toml-test/valid", () => {
       oneline: "This string has a ' quote character.",
       "this-str-has-apostrophes": "' there's one already\n'' two more\n''",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/raw", () => {
@@ -2059,23 +2014,23 @@ describe("toml-test/valid", () => {
       tab: "This string has a \\t tab character.",
       unescaped_tab: "This string has an \t unescaped tab character.",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/simple", () => {
     const input: string = 'answer = "You are not drinking enough whisky."\n';
     const expected: any = { answer: "You are not drinking enough whisky." };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/start-mb", () => {
     const input: string =
       '# Start first line with a multibyte character.\n#\n# https://github.com/marzer/tomlplusplus/issues/190\ns1 = "§"\ns2 = \'§\'\ns3 = """\\\n§"""\ns4 = """\n§"""\ns5 = """§"""\ns6 = \'\'\'\n§\'\'\'\ns7 = \'\'\'§\'\'\'\n';
     const expected: any = { s1: "§", s2: "§", s3: "§", s4: "§", s5: "§", s6: "§", s7: "§" };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/unicode-escape", () => {
@@ -2097,8 +2052,8 @@ describe("toml-test/valid", () => {
       "null-1": "\u0000",
       "null-2": "\u0000",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/string/with-pound", () => {
@@ -2108,36 +2063,36 @@ describe("toml-test/valid", () => {
       pound: "We see no # comments here.",
       poundcomment: "But there are # some comments here.",
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/array-empty-name", () => {
     const input: string = "# Silly thing to do, but valid.\n\n[['']]\na = 1\n[['']]\na = 2\n";
     const expected: any = { "": [{ a: 1 }, { a: 2 }] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/array-empty", () => {
     const input: string = "[[a]]\n";
     const expected: any = { a: [{}] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/array-implicit-and-explicit-after", () => {
     const input: string = "[[a.b]]\nx = 1\n\n[a]\ny = 2\n";
     const expected: any = { a: { b: [{ x: 1 }], y: 2 } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/array-implicit", () => {
     const input: string = '[[albums.songs]]\nname = "Glory Days"\n';
     const expected: any = { albums: { songs: [{ name: "Glory Days" }] } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/array-many", () => {
@@ -2150,8 +2105,8 @@ describe("toml-test/valid", () => {
         { first_name: "Bob", last_name: "Seger" },
       ],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/array-nest", () => {
@@ -2169,58 +2124,58 @@ describe("toml-test/valid", () => {
         },
       ],
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/array-one", () => {
     const input: string = '[[people]]\nfirst_name = "Bruce"\nlast_name = "Springsteen"\n';
     const expected: any = { people: [{ first_name: "Bruce", last_name: "Springsteen" }] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/array-table-array", () => {
     const input: string =
       '[[a]]\n    [[a.b]]\n        [a.b.c]\n            d = "val0"\n    [[a.b]]\n        [a.b.c]\n            d = "val1"\n';
     const expected: any = { a: [{ b: [{ c: { d: "val0" } }, { c: { d: "val1" } }] }] };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/array-within-dotted", () => {
     const input: string = '[fruit]\napple.color = "red"\n\n[[fruit.apple.seeds]]\nsize = 2\n';
     const expected: any = { fruit: { apple: { color: "red", seeds: [{ size: 2 }] } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/empty-name", () => {
     const input: string = "['']\nx = 1\n\n[\"\".a]\nx = 2\n\n[a.'']\nx = 3\n";
     const expected: any = { "": { x: 1, a: { x: 2 } }, a: { "": { x: 3 } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/empty", () => {
     const input: string = "[a]\n";
     const expected: any = { a: {} };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/keyword-with-values", () => {
     const input: string = "[true]\nk = 1\n\n[false]\nk = 2\n\n[inf]\nk = 3\n\n[nan]\nk = 4\n";
     const expected: any = { false: { k: 2 }, inf: { k: 3 }, nan: { k: 4 }, true: { k: 1 } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/keyword", () => {
     const input: string = "[true]\n\n[false]\n\n[inf]\n\n[nan]\n\n\n";
     const expected: any = { false: {}, inf: {}, nan: {}, true: {} };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/names-with-values", () => {
@@ -2238,8 +2193,8 @@ describe("toml-test/valid", () => {
       j: { "ʞ": { l: { key: 7 } } },
       x: { "1": { "2": { key: 8 } } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/names", () => {
@@ -2252,97 +2207,97 @@ describe("toml-test/valid", () => {
       j: { "ʞ": { l: {} } },
       x: { "1": { "2": {} } },
     };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/no-eol-01", () => {
     const input: string = "# No newline at end of file.\n[table]";
     const expected: any = { table: {} };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/no-eol-02", () => {
     const input: string = "# No newline at end of file.\n[table]\na=1";
     const expected: any = { table: { a: 1 } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/sub-empty", () => {
     const input: string = "[a]\n[a.b]\n";
     const expected: any = { a: { b: {} } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/sub", () => {
     const input: string =
       '[a]\nkey = 1\n\n# a.extend is a key inside the "a" table.\n[a.extend]\nkey = 2\n\n[a.extend.more]\nkey = 3\n';
     const expected: any = { a: { key: 1, extend: { key: 2, more: { key: 3 } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/whitespace", () => {
     const input: string = '["valid key"]\n';
     const expected: any = { "valid key": {} };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/with-literal-string", () => {
     const input: string = "['a']\n[a.'\"b\"']\n[a.'\"b\"'.c]\nanswer = 42 \n";
     const expected: any = { a: { '"b"': { c: { answer: 42 } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/with-pound", () => {
     const input: string = '["key#group"]\nanswer = 42\n';
     const expected: any = { "key#group": { answer: 42 } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/with-single-quotes", () => {
     const input: string = "['a']\n[a.'b']\n[a.'b'.c]\nanswer = 42 \n";
     const expected: any = { a: { b: { c: { answer: 42 } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/without-super-with-values", () => {
     const input: string =
       "# [x] you\n# [x.y] don't\n# [x.y.z] need these\n[x.y.z.w] # for this to work\na = 1\nb = 2\n[x] # defining a super-table afterwards is ok\nc = 3\nd = 4\n";
     const expected: any = { x: { c: 3, d: 4, y: { z: { w: { a: 1, b: 2 } } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/table/without-super", () => {
     const input: string =
       "# [x] you\n# [x.y] don't\n# [x.y.z] need these\n[x.y.z.w] # for this to work\n[x] # defining a super-table afterwards is ok\n";
     const expected: any = { x: { y: { z: { w: {} } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/utf8-bom-01", () => {
     const input: string =
       "\ufeff# This file starts with an UTF-8 BOM (\\xEF\\xBB\\xBF), which isn't recommended to use but valid.\na=1\n";
     const expected: any = { a: 1 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 
   test("valid/utf8-bom-02", () => {
     const input: string =
       "\ufeffa=1# This file starts with an UTF-8 BOM (\\xEF\\xBB\\xBF), which isn't recommended to use but valid.\n";
     const expected: any = { a: 1 };
-    expectTomlEqual(TOML.parse(input), expected);
-    expectTomlEqual(TOML.parse(TOML.stringify(TOML.parse(input))), expected);
+    expect(TOML.parse(input)).toEqual(expected);
+    expect(TOML.parse(TOML.stringify(TOML.parse(input)))).toEqual(expected);
   });
 });
 

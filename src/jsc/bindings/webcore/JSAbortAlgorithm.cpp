@@ -24,13 +24,14 @@
 #include "JSDOMConvertBase.h"
 #include "JSDOMExceptionHandling.h"
 #include "ScriptExecutionContext.h"
+#include "ModuleGraph.h"
 #include "DeleteCallbackDataTask.h"
 
 namespace WebCore {
 using namespace JSC;
 
 JSAbortAlgorithm::JSAbortAlgorithm(VM& vm, JSObject* callback)
-    : AbortAlgorithm(uncheckedDowncast<JSDOMGlobalObject>(callback->globalObject())->scriptExecutionContext())
+    : AbortAlgorithm(defaultGlobalObject(callback->globalObject())->currentScriptExecutionContext())
     , m_data(new JSCallbackData(vm, callback, this))
 {
 }
@@ -54,6 +55,8 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::hand
 {
     if (!canInvokeCallback())
         return CallbackResultType::UnableToExecute;
+
+    Bun::ModuleGraphContextScope moduleGraphContext(*scriptExecutionContext());
 
     Ref<JSAbortAlgorithm> protectedThis(*this);
 
@@ -89,14 +92,6 @@ void JSAbortAlgorithm::visitJSFunction(JSC::AbstractSlotVisitor& visitor)
 void JSAbortAlgorithm::visitJSFunction(JSC::SlotVisitor& visitor)
 {
     m_data->visitJSFunction(visitor);
-}
-
-JSC::JSValue toJS(AbortAlgorithm& impl)
-{
-    if (!static_cast<JSAbortAlgorithm&>(impl).callbackData())
-        return jsNull();
-
-    return static_cast<JSAbortAlgorithm&>(impl).callbackData()->callback();
 }
 
 } // namespace WebCore

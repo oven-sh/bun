@@ -20,7 +20,7 @@ mode: center
 
 ---
 
-To use it with `bun install`, add a `bunfig.toml` file to your project with the following contents. Replace `my-azure-devops-org` with the name of your Azure DevOps organization and `my-feed` with the name of your feed. If the feed is project-scoped, the URL also includes the project name: `https://pkgs.dev.azure.com/my-azure-devops-org/my-project/_packaging/my-feed/npm/registry/`. The `username` can be any non-empty string.
+To use Azure Artifacts with `bun install`, add a `bunfig.toml` file to your project with the following contents. Replace `my-azure-devops-org` with the name of your Azure DevOps organization and `my-feed` with the name of your feed. If the feed is project-scoped, the URL also includes the project name: `https://pkgs.dev.azure.com/my-azure-devops-org/my-project/_packaging/my-feed/npm/registry/`. The `username` can be any non-empty string.
 
 ```toml bunfig.toml icon="settings"
 [install.registry]
@@ -44,7 +44,7 @@ NPM_PASSWORD=<paste token here>
 
 ---
 
-To configure Azure Artifacts without `bunfig.toml`, set the `NPM_CONFIG_REGISTRY` environment variable. The URL should have `:username=<USERNAME>` and `:_password=<PASSWORD>` appended to it, as shown below. Replace `<USERNAME>` and `<PASSWORD>` with your own values.
+To configure Azure Artifacts without `bunfig.toml`, set the `NPM_CONFIG_REGISTRY` environment variable. Append `:username=<USERNAME>` and `:_password=<PASSWORD>` to the URL, as shown below. Replace `<USERNAME>` and `<PASSWORD>` with your own values.
 
 ```bash terminal icon="terminal"
 NPM_CONFIG_REGISTRY=https://pkgs.dev.azure.com/my-azure-devops-org/_packaging/my-feed/npm/registry/:username=<USERNAME>:_password=<PASSWORD>

@@ -11,7 +11,8 @@ test("stdin destroy after exit crash", async () => {
       stdin: "pipe",
     });
 
-    await Bun.sleep(80);
+    // The crash was in the first read of `child.stdin` after the exit.
+    await child.exited;
     await child.stdin.write("dylan\n");
     await child.stdin.write("999\n");
     await child.stdin.flush();

@@ -1,0 +1,20 @@
+// The last line of a file reads like a note that the compiler leaves for itself.
+const settled = () => new Promise(resolve => setTimeout(resolve, 1));
+console.log("# without-eval");
+await import("./without-eval/main.js");
+await settled();
+console.log("# without-eval-then-list-of-insertions");
+await import("./without-eval-then-list-of-insertions/main.js");
+await settled();
+console.log("# without-eval-then-word-on-encoding");
+await import("./without-eval-then-word-on-encoding/main.js");
+await settled();
+console.log("# with-eval");
+await import("./with-eval/main.js");
+await settled();
+console.log("# with-eval-then-list-of-insertions");
+await import("./with-eval-then-list-of-insertions/main.js");
+await settled();
+console.log("# with-eval-then-word-on-encoding");
+await import("./with-eval-then-word-on-encoding/main.js");
+await settled();

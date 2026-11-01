@@ -1,0 +1,6 @@
+# sabotage=WrittenOutTurnsAlwaysFit: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=DecidedComparisons sabotage=WrittenOutTurnsAlwaysFit
+# CHECK: AOT claim check: ComparisonIsDecided
+# PROGRAM-OF: views-of-every-length-are-filled-passes.ir

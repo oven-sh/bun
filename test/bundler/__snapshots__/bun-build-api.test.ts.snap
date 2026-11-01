@@ -27,8 +27,8 @@ function fn(a) {
 
 // test/bundler/fixtures/trivial/index.js
 var NS = Promise.resolve().then(() => exports_fn);
-NS.then(({ fn: fn2 }) => {
-  console.log(fn2(42));
+NS.then(({ fn }) => {
+  console.log(fn(42));
 });
 "
 `;
@@ -60,17 +60,17 @@ function fn(a) {
 
 // test/bundler/fixtures/trivial/index.js
 var NS = Promise.resolve().then(() => exports_fn);
-NS.then(({ fn: fn2 }) => {
-  console.log(fn2(42));
+NS.then(({ fn }) => {
+  console.log(fn(42));
 });
 "
 `;
 
-exports[`Bun.build BuildArtifact properties: hash 1`] = `"est79qzq"`;
+exports[`Bun.build BuildArtifact properties: hash 1`] = `"xccrrspv"`;
 
-exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"7gfnt0h6"`;
+exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"jvbamvbx"`;
 
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"est79qzq"`;
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"xccrrspv"`;
 
 exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"00000000"`;
 
@@ -101,8 +101,8 @@ function fn(a) {
 
 // test/bundler/fixtures/trivial/index.js
 var NS = Promise.resolve().then(() => exports_fn);
-NS.then(({ fn: fn2 }) => {
-  console.log(fn2(42));
+NS.then(({ fn }) => {
+  console.log(fn(42));
 });
 "
 `;

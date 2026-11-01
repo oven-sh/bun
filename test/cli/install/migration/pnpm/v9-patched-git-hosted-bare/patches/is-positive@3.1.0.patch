@@ -1,0 +1,9 @@
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -1,4 +1,5 @@
+ 'use strict';
++console.log('patched')
+ module.exports = function (n) {
+ 	return toString.call(n) === '[object Number]' && n > 0;
+ };

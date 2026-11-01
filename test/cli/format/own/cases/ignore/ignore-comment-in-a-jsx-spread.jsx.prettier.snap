@@ -1,0 +1,51 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = <a {/* prettier-ignore */ ...b   .c} />;
+
+const d = (
+  <a
+    {
+      // prettier-ignore
+      ...b
+  // 1
+  .c
+    }
+  />
+);
+
+const e = (
+  <a>
+    {
+      // prettier-ignore
+      ...b   (  c  )
+    }
+  </a>
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = <a {/* prettier-ignore */ ...b   .c} />;
+
+const d = (
+  <a
+    {
+      // prettier-ignore
+      ...b
+  // 1
+  .c
+    }
+  />
+);
+
+const e = (
+  <a>
+    {
+      // prettier-ignore
+      ...b   (  c  )
+    }
+  </a>
+);
+
+===================== End =====================

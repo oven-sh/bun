@@ -1,116 +1,43 @@
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
-use crate::event_loop::EventLoop;
-use crate::{JSGlobalObject, Task, VirtualMachineRef as VirtualMachine};
+use crate::JSGlobalObject;
+#[cfg(unix)]
+use crate::VirtualMachineRef as VirtualMachine;
+#[cfg(unix)]
+use crate::{Task, event_loop::EventLoop};
 use bun_event_loop::{Taskable, task_tag};
+#[cfg(unix)]
+use bun_threading::SignalRing;
 
-bun_core::declare_scope!(PosixSignalHandle, hidden);
+#[cfg(unix)]
+const BUFFER_SIZE: usize = 8192;
 
-const BUFFER_SIZE: u16 = 8192;
-
+/// Signal numbers queued by signal handlers on any thread for the main loop.
+#[cfg(unix)]
+#[derive(Default)]
 pub struct PosixSignalHandle {
-    #[allow(dead_code)]
-    signals: [AtomicU8; BUFFER_SIZE as usize],
-
-    /// Producer index (signal handler writes).
-    #[allow(dead_code)]
-    tail: AtomicU16,
-    /// Consumer index (main thread reads).
-    head: AtomicU16,
+    ring: SignalRing<BUFFER_SIZE>,
 }
 
-impl Default for PosixSignalHandle {
-    fn default() -> Self {
-        Self {
-            signals: [const { AtomicU8::new(0) }; BUFFER_SIZE as usize],
-            tail: AtomicU16::new(0),
-            head: AtomicU16::new(0),
-        }
-    }
-}
-
+#[cfg(unix)]
 impl PosixSignalHandle {
     // `pub const new = bun.TrivialNew(@This());`
-    #[allow(dead_code)]
     pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
 
-    /// Called by the signal handler (single producer).
-    /// Returns `true` if enqueued successfully, or `false` if the ring is full.
-    #[allow(dead_code)]
+    /// Returns `false` if the ring is full. The caller wakes the loop on `true`.
     pub(crate) fn enqueue(&self, signal: u8) -> bool {
-        // Read the current tail and head (Acquire to ensure we have up-to-date values).
-        let old_tail = self.tail.load(Ordering::Acquire);
-        let head_val = self.head.load(Ordering::Acquire);
-
-        // Compute the next tail (wrapping around BUFFER_SIZE).
-        let next_tail = old_tail.wrapping_add(1) % BUFFER_SIZE;
-
-        // Check if the ring is full.
-        if next_tail == (head_val % BUFFER_SIZE) {
-            // The ring buffer is full.
-            // We cannot block or wait here (since we're in a signal handler).
-            // So we just drop the signal or log if desired.
-            bun_core::scoped_log!(PosixSignalHandle, "signal queue is full; dropping");
-            return false;
-        }
-
-        // Store the signal into the ring buffer slot (Release to ensure data is visible).
-        self.signals[(old_tail % BUFFER_SIZE) as usize].store(signal, Ordering::Release);
-
-        // Publish the new tail (Release so that the consumer sees the updated tail).
-        self.tail.store(old_tail.wrapping_add(1), Ordering::Release);
-
-        if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
-            unsafe { (*(*vm).event_loop()).wakeup() };
-        }
-
-        true
-    }
-
-    /// Called by the main thread (the consumer); also by whichever thread is
-    /// about to execve, via `Bun__takeQueuedPosixSignal`. Returns `None` if the
-    /// ring is empty, or the next signal otherwise.
-    #[allow(dead_code)]
-    pub(crate) fn dequeue(&self) -> Option<u8> {
-        loop {
-            // Read the current head and tail.
-            let old_head = self.head.load(Ordering::Acquire);
-            let tail_val = self.tail.load(Ordering::Acquire);
-
-            // If head == tail, the ring is empty.
-            if old_head == tail_val {
-                return None; // No available items
-            }
-
-            let slot_index = (old_head % BUFFER_SIZE) as usize;
-            // Acquire load of the stored signal to get the item.
-            let signal = self.signals[slot_index].swap(0, Ordering::AcqRel);
-
-            // Publish the updated head (Release).
-            self.head.store(old_head.wrapping_add(1), Ordering::Release);
-
-            // A zeroed slot was taken by the exec-time consumer racing this one
-            // (or vice versa); signal numbers start at 1, so skip it.
-            if signal != 0 {
-                return Some(signal);
-            }
-        }
+        self.ring.enqueue(signal)
     }
 
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
-    /// Called by the main thread.
-    #[allow(dead_code)]
+    /// Called by the main thread, the ring's single consumer.
     pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
-        while let Some(signal) = self.dequeue() {
+        while let Some(signal) = self.ring.dequeue() {
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
-            let task = Task::new(
-                <PosixSignalTask as Taskable>::TAG,
-                signal as usize as *mut (),
-            );
+            let task = Task::init(signal as usize as *mut PosixSignalTask);
             event_loop.enqueue_task(task);
         }
     }
@@ -143,34 +70,19 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             // `BackRef::deref` is the centralised set-once-NonNull proof; the
             // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
             // async-signal context is sound.
-            let _ = handler.enqueue(u8::try_from(number).expect("int cast"));
+            // No panic path in a signal handler: drop a number outside 1..=255.
+            let Some(signal) = u8::try_from(number).ok().filter(|&s| s != 0) else {
+                return;
+            };
+            if handler.enqueue(signal) {
+                // SAFETY: same process-lifetime event loop as above; `wakeup`
+                // is one async-signal-safe write to the loop's wakeup fd.
+                unsafe { (*(*vm).event_loop()).wakeup() };
+            }
         }
     }
     #[cfg(not(unix))]
     let _ = number;
-}
-
-/// Called by `on_before_reload_process_posix` (from whichever thread is doing
-/// the reload) once every caught disposition is back to SIG_DFL: returns the
-/// next signal `Bun__onPosixSignal` queued for a JS listener, or 0 once the
-/// ring is empty. Nothing still queued at that point can reach JS before the
-/// execve discards it (the JS thread is running the pre-reload kill-signal
-/// handlers, is wedged, or is not the reloading thread), so the caller
-/// re-raises it and it takes its default action, like a signal arriving after
-/// the reset. Racing the main thread's `drain` is harmless: each signal ends
-/// up either dispatched to JS in the dying image or re-raised.
-#[cfg(unix)]
-#[unsafe(no_mangle)]
-extern "C" fn Bun__takeQueuedPosixSignal() -> i32 {
-    let Some(vm) = VirtualMachine::get_main_thread_vm() else {
-        return 0;
-    };
-    // SAFETY: same projection as `Bun__onPosixSignal`: the VM and its event
-    // loop live for the process and only the `signal_handler` slot is read.
-    let handler = unsafe { (*(*vm).event_loop()).signal_handler };
-    handler
-        .and_then(|handler| handler.dequeue())
-        .map_or(0, i32::from)
 }
 
 pub struct PosixSignalTask;
@@ -179,6 +91,10 @@ impl Taskable for PosixSignalTask {
     const TAG: bun_event_loop::TaskTag = task_tag::PosixSignalTask;
     /// `this` packs the signal number; nothing is owned.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// A signal is the process's: `process.on(<signal>)` listeners of the realm.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 unsafe extern "C" {
@@ -249,9 +165,7 @@ pub fn watch_kill_signal_has_listeners() -> bool {
 /// (exit 0; works even when SIGINT was inherited as SIG_IGN).
 #[cfg(unix)]
 pub fn enable_watch_mode_signals(kill_signal: bun_core::SignalCode) {
-    // Validated by Arguments.parse, so the platform number always exists.
-    let number = kill_signal.platform_number().unwrap_or(libc::SIGTERM);
-    WATCH_MODE_KILL_SIGNAL.store(number as u8, Ordering::Relaxed);
+    WATCH_MODE_KILL_SIGNAL.store(kill_signal as u8, Ordering::Relaxed);
     Bun__installWatchModeSignalHandler(libc::SIGINT);
 }
 
@@ -260,9 +174,14 @@ pub fn enable_watch_mode_signals(kill_signal: bun_core::SignalCode) {
 /// still runs the JS handlers before a watch restart, like unix.
 #[cfg(not(unix))]
 pub fn enable_watch_mode_signals(kill_signal: bun_core::SignalCode) {
-    const SIGTERM: i32 = 15;
-    let number = kill_signal.platform_number().unwrap_or(SIGTERM);
-    WATCH_MODE_KILL_SIGNAL.store(number as u8, Ordering::Relaxed);
+    WATCH_MODE_KILL_SIGNAL.store(kill_signal as u8, Ordering::Relaxed);
+}
+
+/// Records the signal whose JS handlers `emit_watch_kill_signal_before_reload` runs before a
+/// restart, without the watch-mode SIGINT handler: for a process that reloads in place and only
+/// sometimes starts again (`bun bake`).
+pub fn set_watch_kill_signal(kill_signal: bun_core::SignalCode) {
+    WATCH_MODE_KILL_SIGNAL.store(kill_signal as u8, Ordering::Relaxed);
 }
 
 pub fn is_emitting_watch_kill_signal() -> bool {

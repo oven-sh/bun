@@ -7,7 +7,7 @@ test("controller.desiredSize does not throw after stream cleanup", async () => {
   // This test exercises the scenario where the internal
   // controlledReadableStream property becomes null during stream cleanup
 
-  let capturedController: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let capturedController = null as ReadableStreamDefaultController<Uint8Array> | null;
   let desiredSizeAfterPipe: number | null | undefined;
   let didThrow = false;
 

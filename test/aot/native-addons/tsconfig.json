@@ -1,0 +1,6 @@
+{
+  // The builds of these tests take these files as entry points. Without this each would read every file of test/tsconfig.json.
+  "extends": "../../tsconfig.json",
+  "files": [],
+  "include": []
+}

@@ -1,0 +1,2 @@
+type A<T> = T extends /* a */ infer /* b */ U /* c */ ? U : never;
+type B<T> = T extends infer U /* d */ extends /* e */ string ? U : never;

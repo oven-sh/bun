@@ -37,7 +37,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSReadableStreamAsyncIteratorPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSReadableStreamAsyncIteratorPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamAsyncIteratorPrototype>(vm)) JSReadableStreamAsyncIteratorPrototype(vm, structure);
+        JSReadableStreamAsyncIteratorPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamAsyncIteratorPrototype))) JSReadableStreamAsyncIteratorPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -51,7 +51,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -76,7 +76,7 @@ const ClassInfo JSReadableStreamAsyncIteratorPrototype::s_info = { "ReadableStre
 void JSReadableStreamAsyncIteratorPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSReadableStreamAsyncIterator::info(), JSReadableStreamAsyncIteratorPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSReadableStreamAsyncIterator::info(), JSReadableStreamAsyncIteratorPrototypeTableValues, *this);
 }
 
 // JSReadableStreamAsyncIterator
@@ -103,7 +103,7 @@ JSReadableStreamAsyncIterator* JSReadableStreamAsyncIterator::create(VM& vm, Str
 
 Structure* JSReadableStreamAsyncIterator::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSReadableStreamAsyncIterator::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -120,12 +120,7 @@ JSObject* JSReadableStreamAsyncIterator::prototype(VM& vm, JSDOMGlobalObject& gl
 
 GCClient::IsoSubspace* JSReadableStreamAsyncIterator::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamAsyncIterator, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamAsyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamAsyncIterator = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamAsyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamAsyncIterator = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamAsyncIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamAsyncIterator, m_subspaceForReadableStreamAsyncIterator));
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamAsyncIterator);

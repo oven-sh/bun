@@ -31,6 +31,7 @@
 #include "CryptoAlgorithmAesCtrParams.h"
 #include "CryptoKeyAES.h"
 #include "OpenSSLCryptoUniquePtr.h"
+#include "OpenSSLUtilities.h"
 #include <openssl/evp.h>
 
 namespace WebCore {
@@ -78,7 +79,9 @@ static std::optional<Vector<uint8_t>> crypt(int operation, const Vector<uint8_t>
     if (capacity < blocks)
         headSize = capacity * blockSize;
 
-    Vector<uint8_t> outputText(inputText.size());
+    Vector<uint8_t> outputText;
+    if (!tryAllocateOutputBuffer(outputText, inputText.size())) [[unlikely]]
+        return std::nullopt;
     // First part
     {
         // Initialize the encryption(decryption) operation

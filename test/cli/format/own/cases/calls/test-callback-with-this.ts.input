@@ -1,0 +1,7 @@
+it("does something long enough to reach the width", function (this: Mocha.Context, done) {
+  done();
+}, 2000);
+
+it("does something long enough to reach the width", function (this: Mocha.Context) {
+  done();
+}, 2000);

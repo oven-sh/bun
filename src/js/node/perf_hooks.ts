@@ -16,22 +16,10 @@ const isHistogram = $bindgen("histogram.bind.ts", "isHistogram");
 const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const kInt64Max = 2n ** 63n - 1n;
 
-var {
-  Performance,
-  PerformanceEntry,
-  PerformanceMark,
-  PerformanceMeasure,
-  PerformanceObserver: NodePerformanceObserver,
-  PerformanceObserverEntryList,
-} = globalThis;
-
-// `extends PerformanceEntry` can't work (WebCore ctor throws); link here via
-// the captured global. Construction is gated by hasObserver() so this module
-// has loaded first. Guarded so a pre-require delete degrades, not throws.
-if (PerformanceEntry) {
-  Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
-  Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
-}
+// `extends PerformanceEntry` can't work (WebCore ctor throws); link here.
+// Construction is gated by hasObserver() so this module has loaded first.
+Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
+Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
 
 var constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_DNS: 4,
@@ -103,10 +91,8 @@ class PerformanceNodeTiming {
     };
   }
 }
-if (PerformanceEntry) {
-  Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
-  Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
-}
+Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
+Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
@@ -125,8 +111,6 @@ function eventLoopUtilization(_utilization1, _utilization2) {
   };
 }
 
-const { PerformanceResourceTiming } = globalThis;
-
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
 
@@ -134,26 +118,34 @@ const kObserverCallback = Symbol("kObserverCallback");
  * The native (WebCore) observer only understands mark/measure/resource.
  * Node-only entry types ('net', 'dns', ...) are routed to the JS-side
  * registry in internal/shared; everything else is delegated to the native
- * observer unchanged. (`NodePerformanceObserver` is the existing alias for
- * the native class destructured from globalThis above.)
+ * observer unchanged.
  */
-class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
-  constructor(callback) {
+type NodeEntryObserver = InstanceType<typeof NodeEntryObserver>;
+type ObserverCallback = (
+  list: PerformanceObserverEntryList | Parameters<NodeEntryObserver["callback"]>[0],
+  observer: unknown,
+) => void;
+
+class PerformanceObserverForNodeTypes extends PerformanceObserver {
+  declare [kNodeObserver]: NodeEntryObserver | undefined;
+  declare [kObserverCallback]: ObserverCallback;
+
+  constructor(callback: ObserverCallback) {
     super(callback);
     this[kObserverCallback] = callback;
   }
 
   /** The native list plus the Node-only types routed through the JS registry. */
   static get supportedEntryTypes() {
-    return [...new Set([...(NodePerformanceObserver.supportedEntryTypes ?? []), ...kNodeEntryTypes])].sort();
+    return [...new Set([...(PerformanceObserver.supportedEntryTypes ?? []), ...kNodeEntryTypes])].sort();
   }
 
-  observe(options) {
-    let requested;
+  observe(options?: PerformanceObserverInit) {
+    let requested: string[] | undefined;
     let isTypeMode = false;
     if (options != null && typeof options === "object") {
       const entryTypes = options.entryTypes;
-      let type;
+      let type: string | undefined;
       if (entryTypes !== undefined && Array.isArray(entryTypes)) {
         requested = entryTypes;
       } else if ((type = options.type) !== undefined) {
@@ -214,7 +206,14 @@ Object.defineProperty(PerformanceObserverForNodeTypes, "name", {
 
 // kEmptyObject (frozen, null-prototype) so the histogram read below cannot
 // pick up a polluted Object.prototype, matching node's default.
-function timerify(fn, options = kEmptyObject) {
+interface Histogram {
+  record(value: number | bigint): void;
+}
+
+function timerify(
+  fn: (this: unknown, ...args: unknown[]) => unknown,
+  options: { histogram?: Histogram } = kEmptyObject,
+) {
   validateFunction(fn, "fn");
   validateObject(options, "options");
   const { histogram } = options;
@@ -222,12 +221,12 @@ function timerify(fn, options = kEmptyObject) {
     throw $ERR_INVALID_ARG_TYPE("options.histogram", ["RecordableHistogram"], histogram);
   }
 
-  function timerified(...args) {
+  function timerified(this: unknown, ...args: unknown[]) {
     const isConstructorCall = new.target !== undefined;
     const start = performance.now();
     const result = isConstructorCall ? Reflect.construct(fn, args, fn) : fn.$apply(this, args);
-    if (!isConstructorCall && typeof result?.finally === "function") {
-      return result.finally(() => {
+    if (!isConstructorCall && typeof (result as Promise<unknown> | undefined)?.finally === "function") {
+      return (result as Promise<unknown>).finally(() => {
         processTimerifyComplete(fn.name, start, args, histogram);
       });
     }
@@ -253,7 +252,7 @@ function timerify(fn, options = kEmptyObject) {
   return timerified;
 }
 
-function processTimerifyComplete(name, start, args, histogram) {
+function processTimerifyComplete(name: string, start: number, args: unknown[], histogram: Histogram | undefined) {
   const duration = performance.now() - start;
   if (histogram !== undefined) {
     histogram.record(Math.ceil(duration * 1e6));
@@ -270,31 +269,29 @@ const nodeTiming = createPerformanceNodeTiming();
 // Node augments the real `performance` object (not a forwarding shim), so
 // timerify/eventLoopUtilization/nodeTiming go on Performance.prototype,
 // non-enumerable, per lib/internal/perf/performance.js.
-if (Performance) {
-  Object.defineProperties(Performance.prototype, {
-    nodeTiming: {
-      __proto__: null,
-      configurable: true,
-      enumerable: false,
-      writable: true,
-      value: nodeTiming,
-    },
-    timerify: {
-      __proto__: null,
-      configurable: true,
-      enumerable: false,
-      writable: true,
-      value: timerify,
-    },
-    eventLoopUtilization: {
-      __proto__: null,
-      configurable: true,
-      enumerable: false,
-      writable: true,
-      value: eventLoopUtilization,
-    },
-  });
-}
+Object.defineProperties(Performance.prototype, {
+  nodeTiming: {
+    __proto__: null,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: nodeTiming,
+  },
+  timerify: {
+    __proto__: null,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: timerify,
+  },
+  eventLoopUtilization: {
+    __proto__: null,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: eventLoopUtilization,
+  },
+});
 
 export default {
   timerify,

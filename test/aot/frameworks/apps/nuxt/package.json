@@ -1,0 +1,15 @@
+{
+  "name": "site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build"
+  },
+  "dependencies": {
+    "@types/node": "26.6.5",
+    "nuxt": "4.6.1",
+    "typescript": "7.0.2",
+    "vue": "3.5.44",
+    "vue-router": "5.4.0"
+  }
+}

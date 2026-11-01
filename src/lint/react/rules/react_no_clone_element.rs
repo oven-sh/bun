@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prevents the usage of `React.cloneElement`, which is considered an anti-pattern in React.
 pub struct NoCloneElement;
 
-const NO_CLONE_ELEMENT: Message = Message::new("", "`React.cloneElement` should not be used.");
+const NO_CLONE_ELEMENT: &Message = &Message::new("", "`React.cloneElement` should not be used.");
 
 impl Rule for NoCloneElement {
     const META: Meta = Meta::oxlint(Plugin::React, "no-clone-element", Kind::Suggestion);

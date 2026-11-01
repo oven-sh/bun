@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prevent the usage of the `<img>` element due to slower LCP and higher bandwidth.
 pub struct NoImgElement;
 
-const NO_IMG_ELEMENT: Message = Message::new("", "Using `<img>` could result in slower LCP and higher bandwidth.");
+const NO_IMG_ELEMENT: &Message = &Message::new("", "Using `<img>` could result in slower LCP and higher bandwidth.");
 
 impl Rule for NoImgElement {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-img-element", Kind::Problem);

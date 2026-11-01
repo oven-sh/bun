@@ -10,7 +10,7 @@ pub struct NoDeprecatedFunctions {
     version: usize,
 }
 
-const DEPRECATED_FUNCTION: Message = Message::new("", "\"{{deprecated}}\" has been deprecated in favor of \"{{new}}\"");
+const DEPRECATED_FUNCTION: &Message = &Message::new("", "\"{{deprecated}}\" has been deprecated in favor of \"{{new}}\"");
 
 /// (property, major version that deprecated it, object it belongs to, replacement)
 const DEPRECATED_FUNCTIONS: [(&str, usize, &str, &str); 6] = [

@@ -182,11 +182,7 @@ void InspectorTestReporterAgent::reportTestFound(int testId, const String& name,
 
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.
-            if (sourceURLForFrame.isEmpty()) {
-                auto* codeBlock = visitor->codeBlock();
-                ASSERT(codeBlock);
-
-                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
+            if (auto* codeBlock = sourceURLForFrame.isEmpty() ? visitor->codeBlock() : nullptr) {
                 const auto& source = codeBlock->source();
 
                 // source.isNull() is true when the SourceProvider is a null pointer.

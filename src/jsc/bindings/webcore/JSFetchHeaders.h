@@ -21,6 +21,7 @@
 #pragma once
 
 #include "FetchHeaders.h"
+#include "JSDOMIterator.h"
 #include "JSDOMWrapper.h"
 
 namespace WebCore {
@@ -81,5 +82,10 @@ template<> struct JSDOMWrapperConverterTraits<FetchHeaders> {
 };
 
 JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl);
+
+struct FetchHeadersIteratorTraits;
+using FetchHeadersIteratorBase = JSDOMIteratorBase<JSFetchHeaders, FetchHeadersIteratorTraits>;
+template<> const JSC::ClassInfo FetchHeadersIteratorBase::s_info;
+JSC::JSObject* fetchHeadersIteratorPrototype(JSDOMGlobalObject&);
 
 } // namespace WebCore

@@ -9,10 +9,16 @@ using Bun::Bindgen::Generated::JSBlob;
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebCore::Blob& impl)
 {
+    if (auto* wrapper = impl.wrapper())
+        return wrapper;
+
     BunString filename = Bun::toString(impl.fileName());
     Blob__setAsFile(impl.impl(), &filename);
 
-    return Bun::Bindgen::createWrapper<JSBlob>(lexicalGlobalObject, Blob__dupe(impl.impl()));
+    JSC::JSValue value = Bun::Bindgen::createWrapper<JSBlob>(lexicalGlobalObject, Blob__dupe(impl.impl()));
+    if (value && value.isObject())
+        impl.setWrapper(asObject(value));
+    return value;
 }
 
 size_t Blob::memoryCost() const

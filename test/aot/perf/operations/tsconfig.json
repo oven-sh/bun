@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "typeRoots": ["../../../../packages"],
+    "types": ["bun-types"],
+    "strict": true,
+    "noEmit": true
+  }
+}

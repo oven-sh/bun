@@ -1,0 +1,3 @@
+void class {
+  static ["prototype"]() {}
+};

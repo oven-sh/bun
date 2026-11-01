@@ -1,0 +1,330 @@
+# What a turn of each loop of the program takes: calls into the run time, and instructions by the counter of the hardware, where that can be read.
+# The shell hands in the name of the loop. It reads the counts where the program reads `turns`, in front of the loop, and where it reports, behind it.
+# -- source: constructor-calls-parent-before-a-setter-is-linked-above.js
+# function Parent(value) {
+#   this.value = value;
+# }
+# function Child(value) {
+#   Parent.apply(this, arguments);
+#   this.extra = 2;
+# }
+# Object.setPrototypeOf(Child.prototype, Parent.prototype);
+# function turn(round) {
+#   const made = new Child(round & 7);
+#   return made.value + made.extra;
+# }
+# function sumOf(rounds) {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) sum = (sum + turn(round)) | 0;
+#   return sum;
+# }
+# let warm = 0;
+# for (let call = 0; call < 3; call++) warm = (warm + sumOf(Number(short))) | 0;
+# report(warm, sumOf(Number(turns)));
+# let taken = 0;
+# Object.setPrototypeOf(Child.prototype, {
+#   set value(given) {
+#     taken += given;
+#   },
+# });
+# report(sumOf(Number(short)), taken, String(new Child(3).value), Object.keys(new Child(4)).join());
+# Object.setPrototypeOf(Child.prototype, {
+#   get value() {
+#     return 40;
+#   },
+#   set value(given) {
+#     taken -= given;
+#   },
+# });
+# report(sumOf(10), taken, new Child(5).value, Object.keys(new Child(6)).join());
+# -- end of source
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.short = "5000"; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= 8.9 ? "at most 8.9 instructions" : taken + " instructions"); callsBefore = undefined; };
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+# CHECK: 82500 550000
+# CHECK-NEXT: a turn: 0 calls into the run time, at most 8.9 instructions
+# CHECK-NEXT: 0 17500 undefined extra
+# CHECK-NEXT: 420 17478 40 extra
+# CHECK-NEXT: exited with 0
+
+module m0 path="constructor-calls-parent-before-a-setter-is-linked-above.js" displayPath="constructor-calls-parent-before-a-setter-is-linked-above.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Parent" module=m0 constructor=f1 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Child" module=m0 position=49 constructor=f2 fields=[{key="value" declared={type=anything}}, {key="extra" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L2 module=m0 position=597 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 position=787 fields=[{key="value" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="Parent" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Child" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="turn" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="taken" module=m0 declared={type=number|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Builtin builtin=Object @126
+    v3 = Builtin builtin=ObjectSetPrototypeOf @126
+    v4 = GetModuleVariable variable=g1 @148
+    v5 = PropGet v4 key="prototype" @148
+    v6 = GetModuleVariable variable=g0 @165
+    v7 = PropGet v6 key="prototype" @165
+    v8 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]} @165
+    v9 = Call v3, v2, v5, v8 calleeName="Object.setPrototypeOf" @133
+    v10 = Integer @425
+    v11 = Convert v10 declared={type=i32 flags=[IsExpected]} @425
+    v12 = Integer @444
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @444
+    Jump -> next b2(v11, v13) @437
+  b2(v14, v15):
+    LoopHint @437
+    v17 = Integer integer=3 @454
+    v18 = Less v15, v17 @447
+    Branch v18 -> taken b3(| 0), notTaken b6(| 0) @447
+  b3(v19):
+    Jump -> next b4() @447
+  b4():
+    v20 = Builtin builtin=Number @486
+    v21 = Builtin builtin=GlobalThis @498
+    v22 = PropGet v21 key="short" [isFreeName] @498
+    v23 = Call v20, -, v22 calleeName="Number" @486
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @486
+    v25 = Call v1, -, v24 calleeName="sumOf" @480
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @480
+    v27 = Add v14, v26 @473
+    v28 = Integer @504
+    v29 = BitOr v27, v28 @473
+    v30 = Convert v29 declared={type=i32 flags=[IsExpected]} @465
+    Jump -> next b5() @465
+  b5():
+    v31 = Increment v19 @473
+    v32 = Convert v31 declared={type=number flags=[IsExpected]} @457
+    Jump -> next b2(v30, v32) @457
+  b6(v33):
+    Jump -> next b7() @447
+  b7():
+    v34 = Builtin builtin=GlobalThis @507
+    v35 = PropGet v34 key="report" [isFreeName] @507
+    v36 = Builtin builtin=Number @526
+    v37 = Builtin builtin=GlobalThis @538
+    v38 = PropGet v37 key="turns" [isFreeName] @538
+    v39 = Call v36, -, v38 calleeName="Number" @526
+    v40 = Convert v39 declared={type=number flags=[IsExpected]} @526
+    v41 = Call v1, -, v40 calleeName="sumOf" @520
+    v42 = Convert v41 declared={type=number flags=[IsExpected]} @520
+    v43 = Call v35, -, v14, v42 calleeName="report" @507
+    v44 = Integer @555
+    v45 = Convert v44 declared={type=number flags=[IsExpected]} @555
+    PutModuleVariable v45 variable=g3 @547
+    v47 = Builtin builtin=Object @558
+    v48 = Builtin builtin=ObjectSetPrototypeOf @558
+    v49 = GetModuleVariable variable=g1 @580
+    v50 = PropGet v49 key="prototype" @580
+    v51 = NewObject layout=L2 @605
+    v52 = NewClosure function=f5 @605
+    DefineSetter v51, v52 key="value" @605
+    v54 = FinishObject v51 @597
+    v55 = Call v48, v47, v50, v54 calleeName="Object.setPrototypeOf" @565
+    v56 = Builtin builtin=GlobalThis @649
+    v57 = PropGet v56 key="report" [isFreeName] @649
+    v58 = Builtin builtin=Number @662
+    v59 = Builtin builtin=GlobalThis @674
+    v60 = PropGet v59 key="short" [isFreeName] @674
+    v61 = Call v58, -, v60 calleeName="Number" @662
+    v62 = Convert v61 declared={type=number flags=[IsExpected]} @662
+    v63 = Call v1, -, v62 calleeName="sumOf" @656
+    v64 = Convert v63 declared={type=number flags=[IsExpected]} @656
+    v65 = GetModuleVariable variable=g3 @678
+    v66 = CheckInitialized v65 name="taken" @678
+    v67 = Builtin builtin=String @685
+    v68 = GetModuleVariable variable=g1 @696
+    v69 = Integer integer=3 @702
+    v70 = Construct v68, -, v69 calleeName="Child" @696 constructs
+    v71 = Convert v70 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @692
+    v72 = PropGet v71 key="value" @703
+    v73 = Call v67, -, v72 calleeName="String" @685
+    v74 = Convert v73 declared={type=undefined|null|string flags=[IsExpected]} @685
+    v75 = Builtin builtin=Object @713
+    v76 = Builtin builtin=ObjectKeys @713
+    v77 = GetModuleVariable variable=g1 @729
+    v78 = Integer integer=4 @735
+    v79 = Construct v77, -, v78 calleeName="Child" @729 constructs
+    v80 = Call v76, v75, v79 calleeName="Object.keys" @720
+    v81 = Convert v80 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @713
+    v82 = PropGet v81 key="join" @737
+    v83 = Convert v82 declared={type=undefined|null|function flags=[IsExpected]} @713
+    v84 = Call v83, v81 calleeKey="join" calleeName="join" @739
+    v85 = Convert v84 declared={type=undefined|null|string flags=[IsExpected]} @713
+    v86 = Call v57, -, v64, v66, v74, v85 calleeName="report" @649
+    v87 = Builtin builtin=Object @748
+    v88 = Builtin builtin=ObjectSetPrototypeOf @748
+    v89 = GetModuleVariable variable=g1 @770
+    v90 = PropGet v89 key="prototype" @770
+    v91 = NewObject layout=L3 @795
+    v92 = NewClosure function=f6 @795
+    DefineGetter v91, v92 key="value" @795
+    v94 = NewClosure function=f7 @831
+    DefineSetter v91, v94 key="value" @831
+    v96 = FinishObject v91 @787
+    v97 = Call v88, v87, v90, v96 calleeName="Object.setPrototypeOf" @755
+    v98 = Builtin builtin=GlobalThis @875
+    v99 = PropGet v98 key="report" [isFreeName] @875
+    v100 = Integer integer=10 @888
+    v101 = Call v1, -, v100 calleeName="sumOf" @882
+    v102 = Convert v101 declared={type=number flags=[IsExpected]} @882
+    v103 = GetModuleVariable variable=g3 @893
+    v104 = CheckInitialized v103 name="taken" @893
+    v105 = GetModuleVariable variable=g1 @904
+    v106 = Integer integer=5 @910
+    v107 = Construct v105, -, v106 calleeName="Child" @904 constructs
+    v108 = Convert v107 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @900
+    v109 = PropGet v108 key="value" @911
+    v110 = Builtin builtin=Object @920
+    v111 = Builtin builtin=ObjectKeys @920
+    v112 = GetModuleVariable variable=g1 @936
+    v113 = Integer integer=6 @942
+    v114 = Construct v112, -, v113 calleeName="Child" @936 constructs
+    v115 = Call v111, v110, v114 calleeName="Object.keys" @927
+    v116 = Convert v115 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @920
+    v117 = PropGet v116 key="join" @944
+    v118 = Convert v117 declared={type=undefined|null|function flags=[IsExpected]} @920
+    v119 = Call v118, v116 calleeKey="join" calleeName="join" @946
+    v120 = Convert v119 declared={type=undefined|null|string flags=[IsExpected]} @920
+    v121 = Call v99, -, v102, v104, v109, v120 calleeName="report" @875
+    v122 = Undefined @875
+    Return v122 @875
+}
+function f1 name="Parent" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1() @0
+  b1():
+    v2 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @27
+    PropSet v2, v1 key="value" @27
+    v4 = Undefined @27
+    Return v4 @27
+}
+function f2 name="Child" module=m0 position=49 flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: int[0, 4294967295], v2: anything, v3: Array):
+    Jump -> next b1() @49
+  b1():
+    v4 = CreateUnmappedArguments v1, v3, v2 @49
+    v5 = GetModuleVariable variable=g0 @75
+    v6 = PropGet v5 key="apply" @75
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]} @75
+    v8 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @88
+    v9 = Call v7, v5, v8, v4 calleeKey="apply" calleeName="Parent.apply" @82
+    v10 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @108
+    v11 = Integer integer=2 @121
+    PropSet v10, v11 key="extra" @108
+    v13 = Undefined @108
+    Return v13 @108
+}
+function f3 name="turn" module=m0 position=184 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @184
+  b1():
+    v1 = GetModuleVariable variable=g1 @226
+    v2 = Integer integer=7 @240
+    v3 = BitAnd v0, v2 @232
+    v4 = Construct v1, -, v3 calleeName="Child" @226 constructs
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @222
+    v6 = PropGet v5 key="value" @253
+    v7 = PropGet v5 key="extra" @266
+    v8 = Add v6, v7 @253
+    Return v8 @253
+}
+function f4 name="sumOf" module=m0 position=280 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @280
+  b1():
+    v1 = Integer @317
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @317
+    v3 = Integer @339
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @339
+    Jump -> next b2(v2, v4) @331
+  b2(v5, v6):
+    LoopHint @331
+    v8 = Convert v0 declared={type=number flags=[IsExpected]} @350
+    v9 = Less v6, v8 @342
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @342
+  b3(v10, v11):
+    Jump -> next b4() @342
+  b4():
+    v12 = GetModuleVariable variable=g2 @380
+    v13 = Call v12, -, v10 calleeName="turn" @380
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @380
+    v15 = Add v5, v14 @374
+    v16 = Integer @395
+    v17 = BitOr v15, v16 @374
+    v18 = Convert v17 declared={type=i32 flags=[IsExpected]} @367
+    Jump -> next b5() @367
+  b5():
+    v19 = Increment v10 @374
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @358
+    Jump -> next b2(v18, v20) @358
+  b6(v21, v22):
+    Jump -> next b7() @342
+  b7():
+    v23 = Convert v5 declared={type=number flags=[IsExpected]} @407
+    Return v23 @407
+}
+function f5 name="value" module=m0 position=601 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @601
+  b1():
+    v1 = GetModuleVariable variable=g3 @624
+    v2 = CheckInitialized v1 name="taken" @624
+    v3 = Add v2, v0 @624
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @624
+    v5 = GetModuleVariable variable=g3 @624
+    v6 = CheckInitialized v5 name="taken" @624
+    PutModuleVariable v4 variable=g3 @624
+    v8 = Undefined @624
+    Return v8 @624
+}
+function f6 name="value" module=m0 position=791 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @791
+  b1():
+    v0 = Integer integer=40 @816
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @816
+    Return v1 @816
+}
+function f7 name="value" module=m0 position=827 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @827
+  b1():
+    v1 = GetModuleVariable variable=g3 @850
+    v2 = CheckInitialized v1 name="taken" @850
+    v3 = Sub v2, v0 @850
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @850
+    v5 = GetModuleVariable variable=g3 @850
+    v6 = CheckInitialized v5 name="taken" @850
+    PutModuleVariable v4 variable=g3 @850
+    v8 = Undefined @850
+    Return v8 @850
+}
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|function, v1: anything, v2: anything):
+    Jump -> next b1() @1161
+  b1():
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1239
+    Branch v4 -> taken b3(), notTaken b2() @1239
+  b2():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1239
+    Branch v6 -> taken b3(), notTaken b4() @1239
+  b3():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    Return v8 @1388
+  b4():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+runtimefunction id=FunctionPrototypeApply function=f10

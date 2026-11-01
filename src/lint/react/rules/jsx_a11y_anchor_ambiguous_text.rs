@@ -12,8 +12,8 @@ pub struct AnchorAmbiguousText {
     words: Vec<String>,
 }
 
-const ANCHOR_HAS_AMBIGUOUS_TEXT: Message =
-    Message::new("", "Ambiguous text within anchor, screen reader users rely on link text for context.");
+const ANCHOR_HAS_AMBIGUOUS_TEXT: &Message =
+    &Message::new("", "Ambiguous text within anchor, screen reader users rely on link text for context.");
 
 impl Rule for AnchorAmbiguousText {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "anchor-ambiguous-text", Kind::Suggestion);

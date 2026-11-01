@@ -8,19 +8,19 @@ pub struct FuncNameMatching {
     include_module_exports: bool,
 }
 
-const MATCH_PROPERTY: Message = Message::new(
+const MATCH_PROPERTY: &Message = &Message::new(
     "matchProperty",
     "Function name `{{funcName}}` should match property name `{{name}}`.",
 );
-const MATCH_VARIABLE: Message = Message::new(
+const MATCH_VARIABLE: &Message = &Message::new(
     "matchVariable",
     "Function name `{{funcName}}` should match variable name `{{name}}`.",
 );
-const NOT_MATCH_PROPERTY: Message = Message::new(
+const NOT_MATCH_PROPERTY: &Message = &Message::new(
     "notMatchProperty",
     "Function name `{{funcName}}` should not match property name `{{name}}`.",
 );
-const NOT_MATCH_VARIABLE: Message = Message::new(
+const NOT_MATCH_VARIABLE: &Message = &Message::new(
     "notMatchVariable",
     "Function name `{{funcName}}` should not match variable name `{{name}}`.",
 );

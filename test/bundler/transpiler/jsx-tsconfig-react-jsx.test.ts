@@ -69,8 +69,70 @@ describe("tsconfig compilerOptions.jsx", () => {
     }
   });
 
-  // The Solid.js JSX transform was removed in 88538b7c2c. The parser only knows
-  // the classic and automatic runtimes, so "solid-js" must not select anything else.
+  // "preserve" is selected with --jsx-runtime, Bun.build or bunfig, never from
+  // tsconfig: `bun run` executes the output, and tsconfigs written for other
+  // toolchains (Next.js) ask for it.
+  test.concurrent.each([
+    [undefined, "dev jsxDEV", "shim/jsx-dev-runtime"],
+    ["production", "prod jsx", "shim/jsx-runtime"],
+  ] as const)('"preserve" in tsconfig is ignored with NODE_ENV=%s', async (NODE_ENV, runStdout, importSource) => {
+    using dir = tempDir("jsx-tsconfig-preserve", {
+      ...shimFiles,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "preserve", jsxImportSource: "shim" } }),
+    });
+    const env = { ...bunEnv, NODE_ENV, BUN_ENV: undefined };
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "m.jsx"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: runStdout, stderr: "", exitCode: 0 });
+    }
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "m.jsx", "--external", "shim*"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain(JSON.stringify(importSource));
+      expect(stdout).not.toContain("<div");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  describe.each([
+    ["react-jsx", "shim/jsx-runtime"],
+    ["react-jsxdev", "shim/jsx-dev-runtime"],
+  ])("CLI runtime %s", (runtime, importSource) => {
+    test.concurrent("selects the matching automatic runtime", async () => {
+      using dir = tempDir("jsx-cli-runtime", shimFiles);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "m.jsx", `--jsx-runtime=${runtime}`, "--jsx-import-source=shim", "--external=shim*"],
+        env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain(`"${importSource}"`);
+      expect(stdout).not.toContain(importSource === "shim/jsx-runtime" ? "jsx-dev-runtime" : '"shim/jsx-runtime"');
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // The Solid.js JSX transform was removed in 88538b7c2c.
+  // jsxImportSource "solid-js" must not select a framework-specific runtime.
   test.concurrent('jsxImportSource "solid-js" uses the automatic runtime', async () => {
     using dir = tempDir("jsx-tsconfig-solid", {
       "tsconfig.json": JSON.stringify({
@@ -93,20 +155,34 @@ describe("tsconfig compilerOptions.jsx", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/3528
-  test.each(["react-jsx", "preserve"])(
-    'Bun.Transpiler with jsx "%s" and jsxImportSource "solid-js" uses the automatic runtime',
-    jsx => {
-      const transpiler = new Bun.Transpiler({
-        loader: "tsx",
-        autoImportJSX: true,
-        tsconfig: { compilerOptions: { jsx, jsxImportSource: "solid-js" } },
-      });
-      const out = transpiler.transformSync(`export default <div>hi</div>;`);
-      expect(out).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
-      expect(out).toMatch(/\nexport default jsx(DEV)?_\w+\("div"/);
-      expect(out).not.toContain("React.createElement");
-    },
-  );
+  test('Bun.Transpiler with jsx "react-jsx" and jsxImportSource "solid-js" uses the automatic runtime', () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "tsx",
+      autoImportJSX: true,
+      tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "solid-js" } },
+    });
+    const out = transpiler.transformSync(`export default <div>hi</div>;`);
+    expect(out).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
+    expect(out).toMatch(/\nexport default jsx(DEV)?_\w+\("div"/);
+    expect(out).not.toContain("React.createElement");
+  });
+
+  test('Bun.Transpiler ignores tsconfig jsx "preserve" and keeps JSX for the pragma', () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "tsx",
+      autoImportJSX: true,
+      tsconfig: { compilerOptions: { jsx: "preserve", jsxImportSource: "solid-js" } },
+    });
+    const out = transpiler.transformSync(`export default <div>hi</div>;`);
+    expect(out).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
+
+    const preserved = transpiler.transformSync(`/* @jsxRuntime preserve */\nexport default <div>hi</div>;`);
+    expect(preserved).toContain(`export default <div>hi</div>;`);
+    expect(preserved).not.toContain("jsx-runtime");
+    expect(transpiler.scanImports(`/* @jsxRuntime preserve */\nexport default <div>hi</div>;`)).toEqual([]);
+    const afterPragma = transpiler.transformSync(`export default <div>hi</div>;`);
+    expect(afterPragma).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
+  });
 });
 
 describe("removed solid jsx runtime", () => {
@@ -124,7 +200,9 @@ describe("removed solid jsx runtime", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
-    expect(stderr).toContain("Invalid jsx runtime, only 'react', 'react-jsx', and 'react-jsxDEV' are supported");
+    expect(stderr).toContain(
+      "Invalid jsx runtime, expected one of: 'automatic', 'classic', 'preserve', 'react', 'react-jsx', or 'react-jsxdev'",
+    );
     expect(exitCode).toBe(1);
   });
 
@@ -141,7 +219,9 @@ describe("removed solid jsx runtime", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
-    expect(stderr).toContain('Invalid --jsx-runtime: "solid", expected "automatic" or "classic"');
+    expect(stderr).toContain(
+      `Invalid --jsx-runtime: "solid", expected one of: 'automatic', 'classic', 'preserve', 'react', 'react-jsx', or 'react-jsxdev'`,
+    );
     expect(exitCode).toBe(1);
   });
 });

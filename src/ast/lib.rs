@@ -2676,7 +2676,9 @@ pub mod flags {
 
     #[derive(EnumSetType, Debug)]
     pub enum JSXElement {
+        HasBareKey,
         IsKeyAfterSpread,
+        IsSelfClosing,
     }
     pub type JSXElementBitset = EnumSet<JSXElement>;
 

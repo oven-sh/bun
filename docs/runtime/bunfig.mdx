@@ -47,6 +47,10 @@ jsxFragment = "Fragment"
 jsxImportSource = "react"
 ```
 
+Supported `jsx` values in `bunfig.toml` are `"automatic"`, `"classic"`, `"react"`, `"react-jsx"`, `"react-jsxdev"`, and `"preserve"`. Bun ignores `"preserve"` in `tsconfig.json`.
+
+`"preserve"` keeps JSX syntax in `bun build` output for another tool to transform. Bun rejects JSX preserve when compiling an executable with `--compile`. Files that `bun run` executes still need their JSX transformed, so set it in the `bunfig.toml` of a build step rather than one that also configures `bun run`.
+
 Refer to the tsconfig docs for more information on these fields.
 
 - [`jsx`](https://www.typescriptlang.org/tsconfig#jsx)

@@ -533,6 +533,8 @@ impl<'a> Transpiler<'a> {
         } else if is_production {
             self.options.set_production(true);
             self.resolver.opts.set_production(true);
+            self.options.force_node_env = options::ForceNodeEnv::Production;
+            self.resolver.opts.force_node_env = options::ForceNodeEnv::Production;
         }
         Ok(())
     }
@@ -1494,6 +1496,7 @@ impl<'a> Transpiler<'a> {
                     tree_shaking: self.options.tree_shaking,
                     bundle: false,
                     code_splitting: false,
+                    forbid_jsx_preserve: self.options.compile_mode.is_executable(),
                     package_version: b"",
                     macro_context: None,
                     warn_about_unbundled_modules: !target.is_bun(),

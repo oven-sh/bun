@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { transformSync } from "esbuild";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
+import { SourceMapConsumer } from "source-map";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -145,6 +148,727 @@ function itBundledDevAndProd(
 }
 
 describe("bundler", () => {
+  describe("jsx preserve", () => {
+    describe.each(["cli", "api"] as const)("defined JSX tags (%s)", backend => {
+      describe.each(["Comp", "Comp.Member"])("tag %s", tag => {
+        itBundled(`jsx/PreserveInvalidDefinedTag-${backend}-${tag}`, {
+          files: { "/in.jsx": `export default <${tag} />;` },
+          backend,
+          jsx: { runtime: "preserve" },
+          define: { Comp: "1" },
+          skipOnEsbuild: true,
+          bundleErrors: { "/in.jsx": ["Cannot preserve JSX tag after it resolves to an invalid JSX tag expression"] },
+        });
+      });
+
+      itBundled(`jsx/PreserveValidDefinedTags-${backend}`, {
+        files: {
+          "/in.jsx": `
+            const Other = { Component() {} };
+            export const member = <Comp />;
+            export const intrinsic = <Intrinsic />;
+            export class Container {
+              render() { return <this.Component />; }
+            }
+          `,
+        },
+        backend,
+        jsx: { runtime: "preserve" },
+        define: { Comp: "Other.Component", Intrinsic: '"section"' },
+        // The esbuild API harness does not forward defines.
+        skipOnEsbuild: true,
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          const { code } = transformSync(out, { loader: "jsx" });
+          expect(code).toContain("Other.Component");
+          expect(code).toContain('"section"');
+          expect(code).toContain("this.Component");
+        },
+      });
+    });
+
+    test.concurrent("Bun.Transpiler scanImports uses the effective JSX runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+      import { expect } from "bun:test";
+      const transpiler = new Bun.Transpiler({ loader: "tsx" });
+      expect(transpiler.scanImports("/* @jsxRuntime preserve */ export default <></>;")).toEqual([]);
+      expect(transpiler.scanImports("export default <></>;")).toEqual([
+        { kind: "require-call", path: "react/jsx-dev-runtime" },
+        { kind: "require-call", path: "react" },
+      ]);
+
+      // "preserve" in tsconfig is not applied: \`bun run\` executes the output.
+      const tsconfigPreserve = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: JSON.stringify({ compilerOptions: { jsx: "preserve" } }),
+      });
+      expect(tsconfigPreserve.scanImports("export default <></>;")).toEqual([
+        { kind: "require-call", path: "react/jsx-dev-runtime" },
+        { kind: "require-call", path: "react" },
+      ]);
+        `,
+        ],
+        env: { ...bunEnv, NODE_ENV: "development", BUN_ENV: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    test("Bun.Transpiler scanImports uses the jsxImportSource pragma", () => {
+      const transpiler = new Bun.Transpiler({ loader: "tsx", autoImportJSX: true });
+      for (const [runtime, path] of [
+        ["react-jsx", "custom/jsx-runtime"],
+        ["react-jsxdev", "custom/jsx-dev-runtime"],
+      ]) {
+        const source = `/** @jsxRuntime ${runtime} */ /** @jsxImportSource custom */ export default <div />;`;
+        expect(transpiler.scanImports(source)).toEqual([
+          { kind: "require-call", path },
+          { kind: "require-call", path: "custom" },
+        ]);
+        expect(transpiler.transformSync(source)).toContain(JSON.stringify(path));
+      }
+    });
+
+    describe.each([false, true])("string-named imports, external=%s", external => {
+      describe.each([false, true])("minifyIdentifiers=%s", minifyIdentifiers => {
+        itBundled(`jsx/PreserveStringNamedImport-${external}-${minifyIdentifiers}`, {
+          files: {
+            "/in.tsx": `
+              import { "some-component" as Component, "some-namespace" as Namespace, update } from "components";
+              function render(value = <Component />) { return value; }
+              async function renderAsync() { return <Component value={await Promise.resolve("async")} />; }
+              function* renderGenerator() { return <Component value={yield "pause"} />; }
+              async function main() {
+                console.log(render(), <Namespace.Component />);
+                update();
+                console.log(render(), await renderAsync());
+                const generator = renderGenerator();
+                console.log(generator.next().value, generator.next("generator").value);
+              }
+              main();
+            `,
+            "/node_modules/components/index.js": `
+              exports["some-component"] = () => "first";
+              exports["some-namespace"] = { Component: () => "member" };
+              exports.update = () => { exports["some-component"] = props => props.value || "second"; };
+            `,
+          },
+          jsx: { runtime: "preserve" },
+          target: "node",
+          format: "cjs",
+          external: external ? ["components"] : [],
+          minifyIdentifiers,
+          minifySyntax: minifyIdentifiers,
+          minifyWhitespace: minifyIdentifiers,
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.__jsxPreserveFactory" });
+            api.writeFile("/out.js", `globalThis.__jsxPreserveFactory = (type, props) => type(props || {});\n${code}`);
+          },
+          run: { stdout: "first member\nsecond async\npause generator" },
+        });
+      });
+    });
+
+    describe.each([
+      ["cli", "option"],
+      ["cli", "pragma"],
+      ["cli", "bunfig"],
+      ["api", "option"],
+      ["api", "pragma"],
+    ] as const)("compile (%s), preserve from %s", (backend, source) => {
+      itBundled(`jsx/PreserveCompileRejected-${backend}-${source}`, {
+        files: {
+          "/in.jsx": `${source === "pragma" ? "/** @jsxRuntime preserve */" : ""} console.log(<div />);`,
+          ...(source === "bunfig" ? { "/bunfig.toml": 'jsx = "preserve"' } : {}),
+        },
+        backend,
+        target: "bun",
+        compile: true,
+        // esbuild has no executable compilation mode.
+        skipOnEsbuild: backend === "cli",
+        ...(source === "option" ? { jsx: { runtime: "preserve" } } : {}),
+        bundleErrors: { "/in.jsx": ["Cannot preserve JSX when compiling an executable"] },
+      });
+    });
+
+    itBundled("jsx/PreserveCliRuntimeFlag", {
+      files: {
+        "/in.tsx": `console.log(<span>Hello</span>);`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      jsx: {
+        runtime: "preserve",
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("<span>Hello</span>");
+        expect(out).not.toContain("React.createElement");
+        expect(out).not.toContain("jsx-runtime");
+      },
+    });
+
+    itBundled("jsx/PreserveApiRuntimeOption", {
+      files: {
+        "/in.tsx": `export const element = <section data-kind="api">API</section>;`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "api",
+      jsx: {
+        runtime: "preserve",
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('<section data-kind="api">API</section>');
+        expect(out).not.toContain("jsx-runtime");
+      },
+    });
+
+    itBundled("jsx/TsconfigPreserveIsIgnored", {
+      files: {
+        "/in.tsx": `export const element = <><SolidLike /></>;`,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","jsxImportSource":"solid-js","target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      external: ["solid-js*"],
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('"solid-js/jsx-dev-runtime"');
+        expect(out).not.toContain("<>");
+      },
+    });
+
+    itBundled("jsx/PreserveBunfigRuntime", {
+      files: {
+        "/in.tsx": `export const element = <article data-source="bunfig">Bunfig</article>;`,
+        "/bunfig.toml": `jsx = "preserve"`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('<article data-source="bunfig">Bunfig</article>');
+        expect(out).not.toContain("React.createElement");
+        expect(out).not.toContain("jsx-runtime");
+      },
+    });
+
+    itBundled("jsx/PreserveAttributeQuotingEdgeCases", {
+      files: {
+        "/in.tsx": `
+          export const a = <div title='"' />;
+          export const b = <div title="'" />;
+          export const c = <div title={"'"} />;
+          export const d = <div title={'"'} />;
+          export const e = <div title="\`" />;
+          export const f = <div title={"'\\""} />;
+          export const g = <div title="&amp;" />;
+          export const h = <div title="&#55296;">&#55296;</div>;
+          export const i = <div title="&#x2028;">&#x2028;</div>;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      jsx: { runtime: "preserve" },
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`title='"'`);
+        expect(out).toContain(`title="'"`);
+        expect(out).toContain('title="`"');
+        expect(out).toContain(`title={"'\\""}`);
+        expect(out).toContain(`title={"&"}`);
+        expect(out).toContain(`title={"\\uD800"}>{"\\uD800"}</div>`);
+        expect(out).toContain(`title={"\\u2028"}>{"\\u2028"}</div>`);
+      },
+    });
+
+    describe.each(["cli", "api"] as const)("string shorthand attributes (%s)", backend => {
+      describe.each([false, true])("minify=%s", minify => {
+        itBundled(`jsx/PreserveStringShorthandAttributes-${backend}-${minify}`, {
+          files: {
+            "/in.jsx": `
+              const values = { "two words": "indexed" };
+              console.log(JSON.stringify(<div before="first" {"two words"} {""} {"1name"}
+                {"a:b:c"} {"a:"} {"-name"} {"quote\\\""} {"\\uD800"}
+                {"data-value"} {"ns:attr"} {"résumé"} {"𐐀"} {values["two words"]} after="last" />));
+            `,
+          },
+          backend,
+          jsx: { runtime: "preserve" },
+          minifyIdentifiers: minify,
+          minifySyntax: minify,
+          minifyWhitespace: minify,
+          // Braced shorthand attributes are a Bun syntax extension.
+          skipOnEsbuild: true,
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            expect(out).toContain('data-value="data-value"');
+            expect(out).toContain('ns:attr="ns:attr"');
+            const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h", charset: "utf8" });
+            api.writeFile("/out.js", `const h = (type, props) => props;\n${code}`);
+          },
+          run: {
+            stdout: JSON.stringify({
+              before: "first",
+              "two words": "indexed",
+              "": "",
+              "1name": "1name",
+              "a:b:c": "a:b:c",
+              "a:": "a:",
+              "-name": "-name",
+              'quote"': 'quote"',
+              "\uD800": "\uD800",
+              "data-value": "data-value",
+              "ns:attr": "ns:attr",
+              résumé: "résumé",
+              "𐐀": "𐐀",
+              after: "last",
+            }),
+          },
+        });
+      });
+    });
+
+    itBundled("jsx/PreserveUnicodeNames", {
+      files: {
+        "/in.tsx": `export const element = <x-étiquette résumé="😺">你好</x-étiquette>;`,
+      },
+      jsx: { runtime: "preserve" },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('<x-étiquette résumé="😺">');
+        expect(out).toContain("</x-étiquette>");
+        const { code } = transformSync(out, { loader: "jsx", charset: "utf8" });
+        expect(code).toContain('"x-étiquette"');
+        expect(code).toContain('résumé: "😺"');
+        expect(code).toContain('"你好"');
+      },
+    });
+
+    itBundled("jsx/PreserveUnicodeTextWithAsciiLowBytes", {
+      files: {
+        "/in.tsx": `
+          console.log(JSON.stringify([
+            <div title="ĦĢħļľŻŽ😦😢😧😼😾🙻🙽">ĦĢħļľŻŽ😦😢😧😼😾🙻🙽</div>,
+            <div title="&quot;Ģħ">&#x126;&#x13C;&#x13E;&#x17B;&#x17D;</div>,
+            <div title="'Ģħ">&#x1F626;&#x1F63C;&#x1F63E;&#x1F67B;&#x1F67D;</div>,
+          ]));
+        `,
+      },
+      jsx: { runtime: "preserve" },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('<div title="ĦĢħļľŻŽ😦😢😧😼😾🙻🙽">ĦĢħļľŻŽ😦😢😧😼😾🙻🙽</div>');
+        expect(out).toContain(`<div title='"Ģħ'>ĦļľŻŽ</div>`);
+        expect(out).toContain(`<div title="'Ģħ">😦😼😾🙻🙽</div>`);
+        const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h", charset: "utf8" });
+        api.writeFile("/out.js", `const h = (type, props, ...children) => ({ type, props, children });\n${code}`);
+      },
+      run: {
+        stdout: JSON.stringify([
+          { type: "div", props: { title: "ĦĢħļľŻŽ😦😢😧😼😾🙻🙽" }, children: ["ĦĢħļľŻŽ😦😢😧😼😾🙻🙽"] },
+          { type: "div", props: { title: '"Ģħ' }, children: ["ĦļľŻŽ"] },
+          { type: "div", props: { title: "'Ģħ" }, children: ["😦😼😾🙻🙽"] },
+        ]),
+      },
+    });
+
+    itBundled("jsx/PreserveCommaExpressions", {
+      files: {
+        "/in.tsx": `
+          declare function first(): Record<string, unknown>;
+          declare function second(): Record<string, unknown>;
+          export const element = <Component {...(first(), second())} value={(first(), second())}>{(first(), second())}</Component>;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      jsx: { runtime: "preserve" },
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("{...(first(), second())}");
+        expect(out).toContain("value={(first(), second())}");
+        expect(out).toContain(">{(first(), second())}</Component>");
+      },
+    });
+
+    itBundled("jsx/PreserveMultilineChildren", {
+      files: {
+        "/in.tsx": `
+          export const a = <div>&amp;</div>;
+          export const b = <div>&lt;</div>;
+          export const c = <div>&gt;</div>;
+          export const d = <div>&#123;</div>;
+          export const e = <div>&#125;</div>;
+          export const f =
+            <div>
+              Line 1
+              Line "2"
+              Line '3'
+              Line \`4\`
+            </div>;
+          export const adjacent = <div>{"a"}{"b"}</div>;
+          export const mixed = <div>b<span />d</div>;
+          export const fragment = <>x<span />z</>;
+          export const emptyExpression = <div>{""}</div>;
+          export const explicitClose = <div></div>;
+          export const selfClosing = <div />;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      jsx: { runtime: "preserve" },
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`<div>{"&"}</div>`);
+        expect(out).toContain(`<div>{"<"}</div>`);
+        expect(out).toContain(`<div>{">"}</div>`);
+        expect(out).toContain(`<div>{"{"}</div>`);
+        expect(out).toContain(`<div>{"}"}</div>`);
+        expect(out).toContain("Line 1");
+        expect(out).toContain('Line "2"');
+        expect(out).toContain("Line '3'");
+        expect(out).toContain("Line `4`");
+        expect(out).toContain(`<div>a{"b"}</div>`);
+        expect(out).toContain(`<div>b<span />d</div>`);
+        expect(out).toContain(`<>x<span />z</>`);
+        expect(out).toContain(`<div>{""}</div>`);
+        expect(out).toContain(`<div></div>`);
+        expect(out).toContain(`<div />`);
+      },
+    });
+
+    itBundled("jsx/PreserveMinifiedChildBoundaries", {
+      files: {
+        "/in.tsx": `
+          export const adjacent = <div>{"a"}{"b"}</div>;
+          export const mixed = <div>b<span />d</div>;
+          export const empty = <div>{""}</div>;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      jsx: { runtime: "preserve" },
+      target: "bun",
+      backend: "cli",
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`<div>a{"b"}</div>`);
+        expect(out).toContain(`<div>b<span/>d</div>`);
+        expect(out).toContain(`<div>{""}</div>`);
+      },
+    });
+
+    itBundled("jsx/PreserveSourcemapSimple", {
+      files: {
+        "/in.tsx": `export const A = <section id="x">hello</section>;
+          export const B = <>{...items}</>;`,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
+      },
+      outdir: "/out",
+      jsx: { runtime: "preserve" },
+      sourceMap: "external",
+      target: "bun",
+      backend: "cli",
+      async onAfterBundle(api) {
+        const source = api.readFile("/in.tsx");
+        const generated = api.readFile("/out/in.js");
+        expect(generated).toContain(`<section id="x">hello</section>`);
+
+        api.assertFileExists("/out/in.js.map");
+        const map = JSON.parse(api.readFile("/out/in.js.map"));
+
+        const lineColumn = (text: string, index: number) => {
+          expect(index).not.toBe(-1);
+          const before = text.slice(0, index);
+          return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+        };
+        const tokens = [
+          {
+            token: "opening tag",
+            generatedIndex: generated.indexOf("<section") + 1,
+            sourceIndex: source.indexOf("<section") + 1,
+          },
+          {
+            token: "attribute key",
+            generatedIndex: generated.indexOf("id="),
+            sourceIndex: source.indexOf("id="),
+          },
+          {
+            token: "attribute value",
+            generatedIndex: generated.indexOf('"x"'),
+            sourceIndex: source.indexOf('"x"'),
+          },
+          {
+            token: "child text",
+            generatedIndex: generated.indexOf("hello"),
+            sourceIndex: source.indexOf("hello"),
+          },
+          {
+            token: "spread child",
+            generatedIndex: generated.indexOf("...items"),
+            sourceIndex: source.indexOf("...items"),
+          },
+          {
+            token: "closing tag",
+            generatedIndex: generated.indexOf("</section>"),
+            sourceIndex: source.indexOf("</section>"),
+          },
+        ];
+
+        await SourceMapConsumer.with(map, null, consumer => {
+          const positions = tokens.map(({ token, generatedIndex }) => {
+            const mapped = consumer.originalPositionFor(lineColumn(generated, generatedIndex));
+            return {
+              token,
+              source: mapped.source?.split(/[\\/]/).pop(),
+              line: mapped.line,
+              column: mapped.column,
+            };
+          });
+          expect(positions).toEqual(
+            tokens.map(({ token, sourceIndex }) => ({
+              token,
+              source: "in.tsx",
+              ...lineColumn(source, sourceIndex),
+            })),
+          );
+        });
+      },
+    });
+
+    itBundled("jsx/PreserveMinifyIdentifiers", {
+      files: {
+        "/in.tsx": `
+          import { ImportedComponent } from "./component";
+          let greeting = "Hello";
+          let spreadProps = { title: greeting };
+          function VeryLongComponent(props) { return props.title + " local"; }
+          console.log(<>
+            <VeryLongComponent {...spreadProps} key="id" longAttributeName={greeting} data-long-name={greeting} />
+            <ImportedComponent />
+            <h3>{greeting}</h3>
+          </>);
+        `,
+        "/component.tsx": `export function ImportedComponent() { return "imported"; }`,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      jsx: { runtime: "preserve" },
+      target: "bun",
+      backend: "cli",
+      minifyIdentifiers: true,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("<>");
+        expect(out).toContain("{...");
+        expect(out).toContain("<h3>{");
+        expect(out).toContain("longAttributeName={");
+        expect(out).toContain("data-long-name={");
+        expect(out).toContain("</>");
+        expect(out).toMatch(/<[A-Z][\w$]* \{\.\.\./);
+        expect(out).toMatch(/<[A-Z][\w$]* \/>/);
+        expect(out).not.toContain("VeryLongComponent");
+        expect(out).not.toContain("ImportedComponent");
+        expect(out).not.toContain("spreadProps");
+        expect(out).not.toContain("jsx-runtime");
+        expect(out).not.toContain("greeting");
+        expect(out).not.toContain("createElement");
+        const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
+        api.writeFile(
+          "/out.js",
+          `const h = (type, props, ...children) => typeof type === "function" ? type(props) : children.join(" ");\nconst Fragment = "fragment";\n${code}`,
+        );
+      },
+      run: { stdout: "Hello local imported Hello" },
+    });
+
+    describe.each([false, true])("shared components, minifyIdentifiers=%s", minifyIdentifiers => {
+      itBundled(`jsx/PreserveSharedComponent-${minifyIdentifiers}`, {
+        files: {
+          "/a.tsx": `import { component as Component } from "./component"; console.log(<Component />);`,
+          "/b.tsx": `import { component as Component } from "./component"; console.log(<Component />);`,
+          "/component.ts": `export class component {}`,
+        },
+        entryPoints: ["/a.tsx", "/b.tsx"],
+        outdir: "/out",
+        splitting: true,
+        jsx: { runtime: "preserve" },
+        minifyIdentifiers,
+        onAfterBundle(api) {
+          for (const file of ["/out/a.js", "/out/b.js"]) {
+            const out = api.readFile(file);
+            expect(out).toMatch(/<[A-Z][\w$]* \/>/);
+            const { code } = transformSync(out, { loader: "jsx", jsxFactory: "typeOfComponent" });
+            api.writeFile(file, `const typeOfComponent = type => typeof type;\n${code}`);
+          }
+        },
+        run: [
+          { file: "/out/a.js", stdout: "function" },
+          { file: "/out/b.js", stdout: "function" },
+        ],
+      });
+    });
+
+    itBundled("jsx/PreserveKeyAfterSpreadDoesNotLower", {
+      files: {
+        "/in.tsx": `
+          /* @jsxRuntime preserve */
+          const props = { title: "ok" };
+          function Component() { return null; }
+          export const element = <Component {...props} key="id" />;
+          export const bareKey = <Component key />;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"automatic","target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`<Component {...props} key="id" />`);
+        expect(out).toContain(`<Component key />`);
+        expect(out).not.toContain("createElement");
+        expect(out).not.toContain("jsxDEV");
+        expect(out).not.toContain("jsx-runtime");
+      },
+    });
+
+    itBundled("jsx/PreserveDownstreamTransform", {
+      files: {
+        "/in.tsx": `
+          const props = { title: "spread", key: "spread-key" };
+          function Component() { return null; }
+          console.log(JSON.stringify(<>
+            <Component {...props} key="explicit" data-value={"'\\\"\`&"} />
+            <div title="&quot;'\`&amp;">first
+              second &lt;&amp;&gt;{'third'}{"fourth"}<span />last</div>
+            <div>{""}{" "}</div>
+            <div title="&#55296;A">&#55296;A</div>
+            <div title={"rope" + "value"}>{"rope" + "child"}</div>
+          </>));
+        `,
+      },
+      outfile: "/out.js",
+      jsx: { runtime: "preserve" },
+      target: "bun",
+      minifyIdentifiers: true,
+      minifyWhitespace: true,
+      minifySyntax: true,
+      bundleWarnings: {},
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("<>");
+        expect(out).not.toContain("jsx-runtime");
+        const { code } = transformSync(out, {
+          loader: "jsx",
+          jsxFactory: "h",
+          jsxFragment: "Fragment",
+        });
+        api.writeFile(
+          "/out.js",
+          `const h = (type, props, ...children) => ({ type, props, children });\nconst Fragment = "fragment";\n${code}`,
+        );
+      },
+      run: {
+        stdout: JSON.stringify({
+          type: "fragment",
+          props: null,
+          children: [
+            { props: { title: "spread", key: "explicit", "data-value": "'\"`&" }, children: [] },
+            {
+              type: "div",
+              props: { title: "\"'`&" },
+              children: ["first second <&>", "third", "fourth", { type: "span", props: null, children: [] }, "last"],
+            },
+            { type: "div", props: null, children: ["", " "] },
+            { type: "div", props: { title: "\uD800A" }, children: ["\uD800A"] },
+            { type: "div", props: { title: "ropevalue" }, children: ["ropechild"] },
+          ],
+        }),
+      },
+    });
+  });
+
+  describe.each(["cli", "api"] as const)("key after spread (%s)", backend => {
+    describe.each([
+      ["automatic", "classic", false],
+      ["classic", "automatic", true],
+      ["automatic", "preserve", false],
+      ["preserve", "automatic", true],
+      ["preserve", "classic", false],
+    ] as const)("configured %s, pragma %s", (runtime, pragma, warns) => {
+      describe.each(["before", "after"])("pragma %s JSX", position => {
+        const jsx = `export const el = <div {...first} key="k" {...last} />;`;
+        const comment = `/** @jsxRuntime ${pragma} */`;
+        itBundled(`jsx/KeyAfterSpread-${backend}-${runtime}-${pragma}-${position}`, {
+          files: { "/in.jsx": position === "before" ? `${comment}\n${jsx}` : `${jsx}\n${comment}` },
+          backend,
+          jsx: { runtime },
+          external: ["react", "react/*"],
+          bundleWarnings: warns
+            ? {
+                "/in.jsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
+              }
+            : {},
+          onAfterBundle(api) {
+            const warnings = api.warnings["/in.jsx"]?.map(({ error }) => error);
+            expect(warnings).toEqual(
+              warns
+                ? ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.']
+                : undefined,
+            );
+            const out = api.readFile("/out.js");
+            if (pragma === "preserve") {
+              expect(out).toContain('<div {...first} key="k" {...last} />');
+              expect(out).not.toContain("createElement");
+              return;
+            }
+            expect(out).toContain("createElement(");
+            expect(out).not.toContain("<div");
+            expect(out).toMatch(/\.\.\.first,\s*key: "k",\s*\.\.\.last/);
+          },
+        });
+      });
+    });
+  });
+
+  test("key after spread warns once at the original spread before the key", async () => {
+    const source = `export const el = <div {...first} key="k" {...last} />;
+      export const other = <div {...second} key="k" />;`;
+    using dir = tempDir("jsx-key-after-spread-location", { "index.jsx": source });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "index.jsx")],
+      external: ["react", "react/*"],
+    });
+    expect(build.logs.map(({ message, position }) => ({ message, offset: position?.offset }))).toEqual([
+      {
+        message: '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.',
+        offset: source.indexOf("first"),
+      },
+    ]);
+    expect(build.success).toBe(true);
+  });
+
   itBundledDevAndProd("jsx/Automatic", {
     files: {
       "index.jsx": /* js*/ `

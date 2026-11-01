@@ -1,6 +1,6 @@
 //! Implements the event loop part of libuv's API for N-API addons on POSIX:
 //! `uv_default_loop`, the `uv_async_t`, `uv_idle_t`, `uv_prepare_t`, `uv_check_t`
-//! and `uv_timer_t` handles, `uv_queue_work`, and the `uv_handle_t` functions.
+//! and `uv_timer_t` handles, `uv_poll_t`, `uv_queue_work`, and the `uv_handle_t` functions.
 //! Every other `uv_*` symbol is a crash stub (uv-posix-stubs.c) or a header-only
 //! polyfill (uv-posix-polyfills.c). Bun doesn't run a libuv loop on POSIX, so
 //! these functions run on the VM's event loop. They follow libuv's ABI and
@@ -18,6 +18,7 @@
 //!   check handles after. It doesn't block while an idle handle is started.
 //! - A timer is an [`EventLoopTimer`] in the VM's timer heap. It's too big for the
 //!   handle, so it's heap-allocated in a [`UvTimerNode`].
+//! - A poll handle watches its fd with a level-triggered [`FilePoll`] on the VM's epoll or kqueue.
 //! - `uv_queue_work` schedules a [`Job`] that runs `work_cb` on the thread pool and
 //!   `after_work_cb` when it completes.
 //! - A handle keeps the process alive while it is started and ref'd ([`RefState`]).
@@ -29,13 +30,14 @@ use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_event_loop::{ContextId, TaskTag, Taskable, task_tag};
-use bun_io::KeepAlive;
+use bun_io::{FilePoll, KeepAlive, Owner, PollFlag, PollKind, PollTag};
 use bun_jsc::event_loop::ConcurrentTaskItem as ConcurrentTask;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     Completion, JSGlobalObject, Job, JobContext, JsCell, JsError, JsPtr, JsResult, JsThread,
     LoopKind, Posted, VmHandle,
 };
+use bun_sys::Fd;
 
 use crate::jsc_hooks::{RuntimeState, timer_all_mut};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -86,14 +88,24 @@ impl Drop for CallbackScope<'_> {
 const UV_EINVAL: c_int = -libc::EINVAL;
 const UV_EBUSY: c_int = -libc::EBUSY;
 const UV_ECANCELED: c_int = -libc::ECANCELED;
+const UV_EBADF: c_int = -libc::EBADF;
+const UV_EEXIST: c_int = -libc::EEXIST;
+const UV_ENOTSUP: c_int = -libc::ENOTSUP;
 
 // Indexes into uv.h's `UV_HANDLE_TYPE_MAP` and `UV_REQ_TYPE_MAP`.
 const UV_ASYNC: c_uint = 1;
 const UV_CHECK: c_uint = 2;
 const UV_IDLE: c_uint = 6;
+const UV_POLL: c_uint = 8;
 const UV_PREPARE: c_uint = 9;
 const UV_TIMER: c_uint = 13;
 const UV_WORK: c_uint = 7;
+
+// uv.h's `enum uv_poll_event`.
+const UV_READABLE: c_int = 1;
+const UV_WRITABLE: c_int = 2;
+const UV_DISCONNECT: c_int = 4;
+const UV_PRIORITIZED: c_int = 8;
 
 // Same `flags` values as libuv (src/uv-common.h).
 const UV_HANDLE_CLOSING: c_uint = 0x01;
@@ -102,6 +114,8 @@ const UV_HANDLE_CLOSED: c_uint = 0x02;
 // `sizeof` each struct on 64-bit unix. The addon allocates them, so Bun's versions can't be bigger.
 const UV_ASYNC_T_SIZE: usize = 128;
 const UV_WATCHER_T_SIZE: usize = 120;
+// Linux. It's 168 where `uv__io_t` has the two kqueue counters.
+const UV_POLL_T_SIZE: usize = 160;
 const UV_TIMER_T_SIZE: usize = 152;
 const UV_WORK_T_SIZE: usize = 128;
 
@@ -109,6 +123,8 @@ type UvAsyncCb = unsafe extern "C" fn(*mut UvAsync);
 /// `uv_idle_cb`, `uv_prepare_cb` and `uv_check_cb` all have this signature.
 type UvWatcherCb = unsafe extern "C" fn(*mut UvWatcher);
 type UvTimerCb = unsafe extern "C" fn(*mut UvTimer);
+/// `uv_poll_cb(handle, status, events)`.
+type UvPollCb = unsafe extern "C" fn(*mut UvPoll, c_int, c_int);
 type UvCloseCb = unsafe extern "C" fn(*mut UvHandle);
 type UvWorkCb = unsafe extern "C" fn(*mut UvWork);
 type UvAfterWorkCb = unsafe extern "C" fn(*mut UvWork, c_int);
@@ -182,6 +198,8 @@ pub(crate) struct UvLoop {
     idles: WatcherList,
     prepares: WatcherList,
     checks: WatcherList,
+    /// One bit per fd that a started poll handle watches. A second handle for it gets `UV_EEXIST`.
+    poll_fds: JsCell<Vec<u64>>,
 }
 
 const _: () = assert!(core::mem::offset_of!(UvLoop, data) == 0);
@@ -277,6 +295,7 @@ impl UvLoop {
             idles: WatcherList::new(),
             prepares: WatcherList::new(),
             checks: WatcherList::new(),
+            poll_fds: JsCell::new(Vec::new()),
         }
     }
 
@@ -307,6 +326,30 @@ impl UvLoop {
         if vm.script_allowed() {
             self.checks.walk(vm);
         }
+    }
+
+    /// Returns true if a started poll handle watches `fd`.
+    fn watches_fd(&self, fd: c_int) -> bool {
+        let (word, bit) = (fd as usize / 64, fd as usize % 64);
+        self.poll_fds
+            .get()
+            .get(word)
+            .is_some_and(|bits| bits & (1 << bit) != 0)
+    }
+
+    /// Records whether a started poll handle watches `fd`.
+    fn set_watches_fd(&self, fd: c_int, watched: bool) {
+        let (word, bit) = (fd as usize / 64, fd as usize % 64);
+        self.poll_fds.with_mut(|fds| {
+            if watched {
+                if fds.len() <= word {
+                    fds.resize(word + 1, 0);
+                }
+                fds[word] |= 1 << bit;
+            } else if let Some(bits) = fds.get_mut(word) {
+                *bits &= !(1 << bit);
+            }
+        });
     }
 
     fn watchers(&self, type_: c_uint) -> &WatcherList {
@@ -1071,6 +1114,286 @@ pub(crate) extern "C" fn uv_now(_loop: *const UvLoop) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_update_time(_loop: *mut UvLoop) {}
 
+// ─── uv_poll_t ───
+
+/// Matches `struct uv_poll_s`. Owns a [`FilePoll`] from init to close, registered while the handle is started.
+#[repr(C)]
+pub(crate) struct UvPoll {
+    handle: UvHandle,
+    poll_cb: Option<UvPollCb>,
+    /// Null once the handle is closed.
+    file_poll: *mut FilePoll,
+    fd: c_int,
+    /// The `uv_poll_event` bits of the last `uv_poll_start`. 0 while stopped.
+    events: c_int,
+    /// The uws loop's iteration number at the last `uv_poll_start`.
+    start_iteration: u64,
+    ref_state: RefState,
+}
+
+const _: () = assert!(core::mem::offset_of!(UvPoll, handle) == 0);
+const _: () = assert!(core::mem::offset_of!(UvPoll, poll_cb) == 96);
+const _: () = assert!(core::mem::size_of::<UvPoll>() <= UV_POLL_T_SIZE);
+
+/// Converts a failed syscall to its `UV_E*` code.
+fn uv_error(err: &bun_sys::Error) -> c_int {
+    -c_int::from(err.errno)
+}
+
+impl UvPoll {
+    /// Whether `handle`, which is initialized, is a poll handle.
+    unsafe fn check(handle: *mut UvPoll) -> bool {
+        // SAFETY: fn contract.
+        unsafe { (*handle).handle.type_ == UV_POLL }
+    }
+
+    /// Like libuv's `uv_poll_init`: adds the fd and removes it to learn if the loop can watch it, then makes it non-blocking.
+    fn prepare_fd(poll: &mut FilePoll, uws_loop: &mut bun_io::Loop, fd: Fd) -> bun_sys::Result<()> {
+        poll.register(uws_loop, PollKind::Readable, false)?;
+        poll.unregister(uws_loop, false)?;
+        bun_sys::set_nonblocking(fd)
+    }
+
+    /// Replaces the registration of the open poll handle `handle` with one for `events`, like libuv. Returns 0 or a `UV_E*` code.
+    unsafe fn watch(handle: *mut UvPoll, events: c_int) -> c_int {
+        // SAFETY: the handle owns its `FilePoll` until it's closed, and the VM owns the loop.
+        let (poll, uws_loop) = unsafe {
+            (
+                &mut *(*handle).file_poll,
+                (*(*handle).handle.loop_).vm.as_ref().uws_loop_mut(),
+            )
+        };
+        let _ = poll.unregister(uws_loop, false);
+        let mut result = Ok(());
+        if events & UV_READABLE != 0 {
+            result = poll.register(uws_loop, PollKind::Readable, false);
+        }
+        if result.is_ok() && events & UV_WRITABLE != 0 {
+            result = poll.register(uws_loop, PollKind::Writable, false);
+        }
+        match result {
+            Ok(()) => 0,
+            Err(err) => {
+                let _ = poll.unregister(uws_loop, false);
+                uv_error(&err)
+            }
+        }
+    }
+
+    /// Implements `uv_poll_stop`, also for `uv_close`. `handle` is an initialized poll handle.
+    unsafe fn stop(handle: *mut UvPoll) {
+        // SAFETY: fn contract. A started handle isn't closed, so it owns its `FilePoll`.
+        unsafe {
+            if !(*handle).ref_state.active {
+                return;
+            }
+            let loop_ = &*(*handle).handle.loop_;
+            let _ = (*(*handle).file_poll).unregister(loop_.vm.as_ref().uws_loop_mut(), false);
+            loop_.set_watches_fd((*handle).fd, false);
+            (*handle).events = 0;
+            (*handle).ref_state.set_active(false);
+        }
+    }
+
+    /// For the first `uv_close` of `handle`: frees the `FilePoll`, so no event reaches a handle that `close_cb` freed.
+    unsafe fn close(handle: *mut UvPoll) {
+        // SAFETY: fn contract. `uv_poll_init` allocated `file_poll` from this thread's store.
+        unsafe {
+            UvPoll::stop(handle);
+            let poll = core::mem::replace(&mut (*handle).file_poll, core::ptr::null_mut());
+            (*poll).deinit_with_vm(bun_io::js_vm_ctx());
+        }
+    }
+
+    /// Reports a ready fd like libuv's `uv__poll_io`. `handle` is the open poll handle that owns `poll`.
+    pub(crate) unsafe fn on_poll(handle: *mut UvPoll, poll: *mut FilePoll) {
+        // SAFETY: fn contract.
+        let (flags, wanted, cb, loop_, active, start_iteration) = unsafe {
+            (
+                (*poll).flags,
+                (*handle).events,
+                (*handle).poll_cb,
+                (*handle).handle.loop_,
+                (*handle).ref_state.active,
+                (*handle).start_iteration,
+            )
+        };
+        // SAFETY: the VM owns the loop, so it outlives its handles.
+        let vm = unsafe { &*(*loop_).vm.as_ptr() };
+        // Like libuv, no event that the loop dequeued before the handle was stopped or started.
+        if !active || vm.uws_loop_mut().iteration_number() == start_iteration {
+            return;
+        }
+        // Don't run callbacks once the VM is stopping, like `before_poll`.
+        if !vm.script_allowed() {
+            return;
+        }
+        let mut events = 0;
+        if flags.contains(PollFlag::Readable) {
+            events |= UV_READABLE;
+        }
+        if flags.contains(PollFlag::Writable) {
+            events |= UV_WRITABLE;
+        }
+        events &= wanted;
+        let mut status = 0;
+        if flags.contains(PollFlag::Eof) {
+            // SAFETY: fn contract. On EPOLLERR libuv stops the handle and reports `UV_EBADF`.
+            unsafe { UvPoll::stop(handle) };
+            status = UV_EBADF;
+            events = 0;
+        } else if events == 0 {
+            if !flags.contains(PollFlag::Hup) {
+                return;
+            }
+            // Only a hangup: like libuv, report the watched directions, so the addon's read or write finds it.
+            events = wanted & (UV_READABLE | UV_WRITABLE);
+        }
+        bun_output::scoped_log!(
+            uv,
+            "uv_poll_t {:?}: poll_cb({}, {})",
+            handle,
+            status,
+            events
+        );
+        let global = vm.global();
+        if let Some(cb) = cb {
+            let _scope = vm.enter_event_loop_scope();
+            let _handles = CallbackScope::open(global);
+            // SAFETY: calls the addon's callback on the loop thread with a handle it started.
+            unsafe { cb(handle, status, events) };
+        }
+        if global.has_exception() {
+            // On `Err` the VM is terminating, and there's nothing else to run here.
+            let _ = bun_jsc::task::report_error_or_terminate(global, JsError::Thrown);
+        }
+    }
+}
+
+/// Implements `uv_poll_init`. Like libuv, fails for an fd that the loop can't watch or already watches, and makes it non-blocking.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_poll_init(
+    loop_: *mut UvLoop,
+    handle: *mut UvPoll,
+    fd: c_int,
+) -> c_int {
+    if loop_.is_null() || handle.is_null() {
+        return UV_EINVAL;
+    }
+    if fd < 0 {
+        return UV_EBADF;
+    }
+    bun_output::scoped_log!(uv, "uv_poll_t {:?}: uv_poll_init({})", handle, fd);
+    // SAFETY: the loop is alive (fn contract), and this is the JS thread.
+    let loop_ref = unsafe { &*loop_ };
+    if loop_ref.watches_fd(fd) {
+        return UV_EEXIST;
+    }
+    let ctx = bun_io::js_vm_ctx();
+    let poll = FilePoll::init(
+        ctx,
+        Fd::from_native(fd),
+        Default::default(),
+        Owner::new(PollTag::UvPoll, handle.cast::<()>()),
+    );
+    // SAFETY: `poll` was just allocated, and the VM owns the loop.
+    let prepared = unsafe {
+        UvPoll::prepare_fd(
+            &mut *poll,
+            loop_ref.vm.as_ref().uws_loop_mut(),
+            Fd::from_native(fd),
+        )
+    };
+    if let Err(err) = prepared {
+        // SAFETY: `poll` is live, and nothing else refers to it.
+        unsafe { (*poll).deinit_with_vm(ctx) };
+        return uv_error(&err);
+    }
+    UvHandle::init(handle.cast::<UvHandle>(), loop_, UV_POLL);
+    // SAFETY: fn contract. Write field by field because the addon's memory is uninitialized.
+    unsafe {
+        (&raw mut (*handle).poll_cb).write(None);
+        (&raw mut (*handle).file_poll).write(poll);
+        (&raw mut (*handle).fd).write(fd);
+        (&raw mut (*handle).events).write(0);
+        (&raw mut (*handle).start_iteration).write(0);
+        (&raw mut (*handle).ref_state).write(RefState::new());
+    }
+    0
+}
+
+/// Implements `uv_poll_init_socket`. A socket is an fd on Unix.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_poll_init_socket(
+    loop_: *mut UvLoop,
+    handle: *mut UvPoll,
+    socket: c_int,
+) -> c_int {
+    // SAFETY: fn contract.
+    unsafe { uv_poll_init(loop_, handle, socket) }
+}
+
+/// Implements `uv_poll_start`. `FilePoll` can't watch for `UV_PRIORITIZED` or `UV_DISCONNECT`, which libuv allows never reporting.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_poll_start(
+    handle: *mut UvPoll,
+    events: c_int,
+    cb: Option<UvPollCb>,
+) -> c_int {
+    // SAFETY: fn contract.
+    if !unsafe { UvPoll::check(handle) } {
+        return UV_EINVAL;
+    }
+    if events & !(UV_READABLE | UV_WRITABLE | UV_DISCONNECT | UV_PRIORITIZED) != 0 {
+        return UV_EINVAL;
+    }
+    // With only `UV_DISCONNECT` nothing would be registered, and the addon would wait forever.
+    if events & UV_PRIORITIZED != 0 || events == UV_DISCONNECT {
+        return UV_ENOTSUP;
+    }
+    // SAFETY: `handle` is a poll handle, and this is the loop thread.
+    unsafe {
+        if (*handle).handle.flags & UV_HANDLE_CLOSING != 0 {
+            return UV_EINVAL;
+        }
+        if events == 0 {
+            UvPoll::stop(handle);
+            return 0;
+        }
+        if cb.is_none() {
+            return UV_EINVAL;
+        }
+        let loop_ = &*(*handle).handle.loop_;
+        let fd = (*handle).fd;
+        if !(*handle).ref_state.active && loop_.watches_fd(fd) {
+            return UV_EEXIST;
+        }
+        let rc = UvPoll::watch(handle, events);
+        if rc != 0 {
+            UvPoll::stop(handle);
+            return rc;
+        }
+        loop_.set_watches_fd(fd, true);
+        (*handle).poll_cb = cb;
+        (*handle).events = events;
+        (*handle).start_iteration = loop_.vm.as_ref().uws_loop_mut().iteration_number();
+        (*handle).ref_state.set_active(true);
+    }
+    0
+}
+
+/// Implements `uv_poll_stop`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_poll_stop(handle: *mut UvPoll) -> c_int {
+    // SAFETY: fn contract.
+    if !unsafe { UvPoll::check(handle) } {
+        return UV_EINVAL;
+    }
+    // SAFETY: `handle` is a poll handle, and this is the loop thread.
+    unsafe { UvPoll::stop(handle) };
+    0
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // uv_handle_t (functions that accept any handle type)
 // ──────────────────────────────────────────────────────────────────────────
@@ -1083,7 +1406,7 @@ pub(crate) extern "C" fn uv_update_time(_loop: *mut UvLoop) {}
 unsafe fn handle_type(handle: *mut UvHandle, function: &'static CStr) -> c_uint {
     // SAFETY: fn contract.
     match unsafe { (*handle).type_ } {
-        type_ @ (UV_ASYNC | UV_IDLE | UV_PREPARE | UV_CHECK | UV_TIMER) => type_,
+        type_ @ (UV_ASYNC | UV_IDLE | UV_PREPARE | UV_CHECK | UV_TIMER | UV_POLL) => type_,
         _ => unsupported(function),
     }
 }
@@ -1099,6 +1422,7 @@ unsafe fn ref_state(handle: *mut UvHandle, function: &'static CStr) -> *mut RefS
         match handle_type(handle, function) {
             UV_ASYNC => &raw mut (*handle.cast::<UvAsync>()).ref_state,
             UV_TIMER => &raw mut (*handle.cast::<UvTimer>()).ref_state,
+            UV_POLL => &raw mut (*handle.cast::<UvPoll>()).ref_state,
             _ => &raw mut (*handle.cast::<UvWatcher>()).ref_state,
         }
     }
@@ -1178,6 +1502,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
                 (*async_.as_ptr()).ref_state.set_active(false);
             }
             UV_TIMER => UvTimer::close(handle.cast::<UvTimer>()),
+            UV_POLL => UvPoll::close(handle.cast::<UvPoll>()),
             _ => UvWatcher::stop(handle.cast::<UvWatcher>()),
         }
     }
@@ -1440,6 +1765,10 @@ pub(crate) fn fix_dead_code_elimination() {
         uv_is_active,
         uv_is_closing,
         uv_now,
+        uv_poll_init,
+        uv_poll_init_socket,
+        uv_poll_start,
+        uv_poll_stop,
         uv_prepare_init,
         uv_prepare_start,
         uv_prepare_stop,

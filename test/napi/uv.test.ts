@@ -897,6 +897,30 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(1);
   });
 
+  // uSockets frees a closed socket only if close_cb runs after its check callback, as in libuv.
+  test.concurrent.each([
+    ["the main script", `addon.closeOrderClose();`],
+    ["a microtask", `Promise.resolve().then(() => addon.closeOrderClose());`],
+    ["process.nextTick", `process.nextTick(() => addon.closeOrderClose());`],
+    ["a JS timer", `setTimeout(() => addon.closeOrderClose(), 1);`],
+  ])("close_cb runs after the check handles when uv_close is called from %s", async (_, close) => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      addon.testCloseOrder(report);
+      ${close}
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("closing 1 0\ncheck 0 0\nclose 1 0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("close_cb of a uv_poll_t sees what a check callback stored in the closing handle", async () => {
+    // uSockets closes a poll this way. See test_poll_close_order in uv_impl.c.
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testPollCloseOrder(report);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("close 1 0\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("uv_now advances", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testNow()));`);
     expect(stderr).toBe("");

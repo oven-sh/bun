@@ -19,6 +19,7 @@
 //! - A timer is an [`EventLoopTimer`] in the VM's timer heap. It's too big for the
 //!   handle, so it's heap-allocated in a [`UvTimerNode`].
 //! - A poll handle watches its fd with a level-triggered [`FilePoll`] on the VM's epoll or kqueue.
+//! - `close_cb` runs after the check handles that follow the `uv_close`, like libuv's closing phase.
 //! - `uv_queue_work` schedules a [`Job`] that runs `work_cb` on the thread pool and
 //!   `after_work_cb` when it completes.
 //! - A handle keeps the process alive while it is started and ref'd ([`RefState`]).
@@ -29,7 +30,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_event_loop::{ContextId, TaskTag, Taskable, task_tag};
+use bun_event_loop::{ContextId, Task, TaskTag, Taskable, task_tag};
 use bun_io::{FilePoll, KeepAlive, Owner, PollFlag, PollKind, PollTag};
 use bun_jsc::event_loop::ConcurrentTaskItem as ConcurrentTask;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -198,6 +199,8 @@ pub(crate) struct UvLoop {
     idles: WatcherList,
     prepares: WatcherList,
     checks: WatcherList,
+    /// Counts the walks of `checks`. `uv_close` records it, so `close_cb` can wait for the next walk.
+    check_passes: Cell<usize>,
     /// One bit per fd that a started poll handle watches. A second handle for it gets `UV_EEXIST`.
     poll_fds: JsCell<Vec<u64>>,
 }
@@ -239,9 +242,10 @@ impl WatcherList {
         self.started.get().is_empty()
     }
 
-    fn walk(&self, vm: &VirtualMachine) {
+    /// Returns false if it didn't run, because no handle is started or a walk is on the stack.
+    fn walk(&self, vm: &VirtualMachine) -> bool {
         if self.is_empty() || self.in_walk.replace(true) {
-            return;
+            return false;
         }
         self.started.with_mut(|started| {
             self.walking.with_mut(|walking| {
@@ -279,6 +283,7 @@ impl WatcherList {
             }
         });
         self.in_walk.set(false);
+        true
     }
 }
 
@@ -295,6 +300,7 @@ impl UvLoop {
             idles: WatcherList::new(),
             prepares: WatcherList::new(),
             checks: WatcherList::new(),
+            check_passes: Cell::new(0),
             poll_fds: JsCell::new(Vec::new()),
         }
     }
@@ -323,9 +329,17 @@ impl UvLoop {
         }
         // SAFETY: same as `before_poll`.
         let vm = unsafe { self.vm.as_ref() };
-        if vm.script_allowed() {
-            self.checks.walk(vm);
+        if vm.script_allowed() && self.checks.walk(vm) {
+            self.check_passes
+                .set(self.check_passes.get().wrapping_add(1));
         }
+    }
+
+    /// Whether the `close_cb` of a handle closed at `closed_at_pass` waits for the check handles, as uSockets needs and libuv does.
+    fn close_waits_for_checks(&self, closed_at_pass: usize) -> bool {
+        !self.checks.is_empty()
+            && !self.checks.in_walk.get()
+            && closed_at_pass == self.check_passes.get()
     }
 
     /// Returns true if a started poll handle watches `fd`.
@@ -554,7 +568,8 @@ pub(crate) struct UvHandle {
     close_cb: Option<UvCloseCb>,
     handle_queue: [*mut c_void; 2],
     u: [*mut c_void; 4],
-    next_closing: *mut c_void,
+    /// [`UvLoop::check_passes`] at `uv_close`. libuv links its closing handles through this word.
+    closed_at_pass: usize,
     flags: c_uint,
 }
 
@@ -576,7 +591,7 @@ impl UvHandle {
             (&raw mut (*this).close_cb).write(None);
             (&raw mut (*this).handle_queue).write([core::ptr::null_mut(); 2]);
             (&raw mut (*this).u).write([core::ptr::null_mut(); 4]);
-            (&raw mut (*this).next_closing).write(core::ptr::null_mut());
+            (&raw mut (*this).closed_at_pass).write(0);
             (&raw mut (*this).flags).write(0);
         }
     }
@@ -1436,7 +1451,7 @@ impl Taskable for UvHandle {
     unsafe fn release_unrun(this: *mut Self) {
         // On `Err` the exception is still pending, and the release dispatcher handles it.
         // SAFETY: fn contract.
-        let _ = unsafe { UvHandle::run_close(this) };
+        let _ = unsafe { UvHandle::finish_close(this) };
     }
     /// Not tied to one context, like [`UvLoop`]'s task.
     unsafe fn context(_: *const Self) -> ContextId {
@@ -1445,13 +1460,27 @@ impl Taskable for UvHandle {
 }
 
 impl UvHandle {
-    /// Runs `close_cb` one turn after `uv_close`. The callback usually frees the
-    /// handle, so don't read it afterwards.
+    /// Runs the task that `uv_close` posted. It yields to the next loop iteration until the check handles have run since `uv_close`.
     ///
     /// # Safety
     /// `uv_close` posted the task for `handle`, which the addon keeps alive until
     /// `close_cb` has run. This is the loop thread.
     pub(crate) unsafe fn run_close(handle: *mut UvHandle) -> JsResult<()> {
+        // SAFETY: fn contract. The VM owns the loop, so it outlives its handles.
+        let (loop_, closed_at_pass) = unsafe { (&*(*handle).loop_, (*handle).closed_at_pass) };
+        if loop_.close_waits_for_checks(closed_at_pass) {
+            // SAFETY: the VM owns the `RuntimeState` that contains the loop.
+            unsafe { loop_.vm.as_ref() }
+                .event_loop_mut()
+                .enqueue_task_after_yield(Task::init(handle));
+            return Ok(());
+        }
+        // SAFETY: fn contract.
+        unsafe { UvHandle::finish_close(handle) }
+    }
+
+    /// Runs `close_cb`, which usually frees the handle: don't read it afterwards. Same contract as [`Self::run_close`].
+    unsafe fn finish_close(handle: *mut UvHandle) -> JsResult<()> {
         // SAFETY: fn contract.
         let (close_cb, loop_) = unsafe {
             (*handle).flags |= UV_HANDLE_CLOSED;
@@ -1489,7 +1518,9 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
         (*handle).flags |= UV_HANDLE_CLOSING;
         (*handle).close_cb = close_cb;
         // The loop outlives its handles.
-        &*(*handle).loop_
+        let loop_ = &*(*handle).loop_;
+        (*handle).closed_at_pass = loop_.check_passes.get();
+        loop_
     };
     bun_output::scoped_log!(uv, "uv_handle_t {:?}: uv_close", handle);
     // SAFETY: `handle` was initialized as `type_` and wasn't closed before this call.

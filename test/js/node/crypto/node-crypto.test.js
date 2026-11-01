@@ -1726,6 +1726,7 @@ describe("the BoringSSL error queue", () => {
       },
     ],
     ["createHash", () => crypto.createHash("no-such-digest")],
+    ["a createHash that refuses a cSHAKE option", () => crypto.createHash("sha256", { customization: "x" })],
     ["createDiffieHellman", () => crypto.createDiffieHellman(1)],
     ["generateKeyPairSync", () => crypto.generateKeyPairSync("rsa", { modulusLength: 64 })],
     ["generateKeyPair", tinyRsaKeyPair],
@@ -1737,6 +1738,32 @@ describe("the BoringSSL error queue", () => {
     const expected = await outcome(fail);
     putBoringSSLErrorForTesting();
     expect(await outcome(fail)).toEqual(expected);
+  });
+
+  it("does not lend createHash a failure that an option getter leaves", async () => {
+    const leavesAFailure = outputLength => ({
+      get outputLength() {
+        putBoringSSLErrorForTesting();
+        return outputLength;
+      },
+    });
+    const refused = {
+      get customization() {
+        putBoringSSLErrorForTesting();
+        return "x";
+      },
+    };
+    takeBoringSSLErrorQueueForTesting();
+    expect({
+      lengthTheDigestCannotGive: await outcome(() => crypto.createHash("sha256", leavesAFailure(5))),
+      noSuchDigest: await outcome(() => crypto.createHash("no-such-digest", leavesAFailure(undefined))),
+      refused: await outcome(() => crypto.createHash("sha256", refused)),
+    }).toEqual({
+      lengthTheDigestCannotGive: await outcome(() => crypto.createHash("sha256", { outputLength: 5 })),
+      noSuchDigest: await outcome(() => crypto.createHash("no-such-digest")),
+      refused: await outcome(() => crypto.createHash("sha256", { customization: "x" })),
+    });
+    expect(takeBoringSSLErrorQueueForTesting()).toEqual([]);
   });
 
   it("does not lend a job's callback a failure from while the job ran", async () => {

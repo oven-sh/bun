@@ -2,6 +2,7 @@ import { CryptoHasher, MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_25
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import assert from "node:assert";
 import path from "path";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
@@ -218,6 +219,270 @@ describe("createHash outputLength", () => {
     } else {
       expect(proc.signalCode).toBe("SIGKILL");
     }
+  });
+});
+
+// The cSHAKE options of Node v26.9.0 (nodejs/node#65484). Node checks them and then fails the construction for
+// every digest unless its OpenSSL is 4.0 or later, and BoringSSL has no cSHAKE either. The block uses node:assert
+// so that it also runs on Node: every expected value is what the node v26.12.1 binary gives.
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L94-L147
+describe("createHash functionName and customization", () => {
+  const keys = ["functionName", "customization"] as const;
+  const unsupported = (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.deepStrictEqual(
+      { name: error.name, message: error.message, hasCode: "code" in error },
+      { name: "Error", message: "Digest method not supported", hasCode: false },
+    );
+    return true;
+  };
+  const invalidType = (key: string, received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `The "options.${key}" property must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received ${received}`,
+  });
+  const nulBytes = (key: string, received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: `The property 'options.${key}' must not contain NUL bytes. Received ${received}`,
+  });
+  const outOfRange = {
+    name: "RangeError",
+    code: "ERR_OUT_OF_RANGE",
+    message: 'The value of "options.outputLength" is out of range. It must be >= 0 && <= 4294967295. Received -1',
+  };
+  const logged = (target: object, log: string[]) =>
+    new Proxy(target, {
+      get(object, key, receiver) {
+        if (typeof key === "string") log.push(key);
+        return Reflect.get(object, key, receiver);
+      },
+    });
+  const sha256OfA = "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb";
+
+  for (const key of keys) {
+    it(`refuses a defined ${key} for every digest`, () => {
+      const values = ["x", "", Buffer.from("x"), new Uint8Array(0), new ArrayBuffer(0), new Uint16Array([0x0101])];
+      for (const algorithm of ["shake128", "shake256", "sha256", "sha3-256", "md5", "blake2b512", "ripemd160"]) {
+        for (const value of values) {
+          assert.throws(() => crypto.createHash(algorithm, { [key]: value }), unsupported);
+          assert.throws(() => crypto.createHash(algorithm, { outputLength: 16, [key]: value }), unsupported);
+        }
+      }
+      assert.throws(() => crypto.createHash("nope", { [key]: "x" }), unsupported);
+      assert.throws(() => crypto.createHash("", { [key]: "x" }), unsupported);
+      // An inherited key and a function as the options count too.
+      assert.throws(() => crypto.createHash("sha256", Object.create({ [key]: "x" })), unsupported);
+      assert.throws(
+        () =>
+          crypto.createHash(
+            "sha256",
+            Object.assign(() => {}, { [key]: "x" }),
+          ),
+        unsupported,
+      );
+    });
+
+    it(`ignores an undefined ${key}`, () => {
+      const expected = crypto.createHash("shake128", { outputLength: 16 }).update("a").digest("hex");
+      assert.strictEqual(expected, "85c8de88d28866bf0868090b3961162b");
+      assert.strictEqual(
+        crypto
+          .createHash("shake128", { outputLength: 16, [key]: undefined })
+          .update("a")
+          .digest("hex"),
+        expected,
+      );
+      assert.strictEqual(crypto.createHash("sha256", null).update("a").digest("hex"), sha256OfA);
+    });
+
+    it(`checks ${key} before it looks the digest up`, () => {
+      const invalid: [unknown, string][] = [
+        [null, "null"],
+        [5, "type number (5)"],
+        [false, "type boolean (false)"],
+        [{}, "an instance of Object"],
+        [[1], "an instance of Array"],
+      ];
+      for (const algorithm of ["shake128", "sha256", "nope"]) {
+        for (const [value, received] of invalid) {
+          assert.throws(() => crypto.createHash(algorithm, { [key]: value }), invalidType(key, received));
+        }
+        assert.throws(() => crypto.createHash(algorithm, { [key]: "a\0b" }), nulBytes(key, "<Buffer 61 00 62>"));
+        assert.throws(() => crypto.createHash(algorithm, { [key]: Buffer.from([0]) }), nulBytes(key, "<Buffer 00>"));
+        // The bytes are checked, not the elements.
+        assert.throws(
+          () => crypto.createHash(algorithm, { [key]: new Uint16Array([1]) }),
+          nulBytes(key, "Uint16Array(1) [ 1 ]"),
+        );
+      }
+    });
+
+    it(`Hash.prototype.copy() and createHmac() ignore ${key}`, () => {
+      for (const value of ["x", null, 5, "a\0b"]) {
+        assert.strictEqual(
+          crypto
+            .createHash("sha256")
+            .update("a")
+            .copy({ [key]: value })
+            .digest("hex"),
+          sha256OfA,
+        );
+        assert.strictEqual(
+          crypto
+            .createHmac("sha256", "k", { [key]: value })
+            .update("a")
+            .digest("hex"),
+          crypto.createHmac("sha256", "k").update("a").digest("hex"),
+        );
+      }
+    });
+
+    it(`every way to construct a Hash refuses ${key}`, () => {
+      const options = { [key]: "x" };
+      class Subclass extends crypto.Hash {}
+      assert.throws(() => new crypto.Hash("sha256", options), unsupported);
+      // @ts-expect-error crypto.Hash is callable without new (DEP0179)
+      assert.throws(() => crypto.Hash("sha256", options), unsupported);
+      assert.throws(() => new Subclass("sha256", options), unsupported);
+      assert.throws(() => Reflect.construct(crypto.Hash, ["sha256", options]), unsupported);
+    });
+  }
+
+  it("checks outputLength, then functionName, then customization, then looks the digest up", () => {
+    for (const algorithm of ["sha256", "nope"]) {
+      assert.throws(() => crypto.createHash(algorithm, { outputLength: -1, functionName: null }), outOfRange);
+      assert.throws(() => crypto.createHash(algorithm, { outputLength: -1, customization: "x" }), outOfRange);
+      assert.throws(
+        () => crypto.createHash(algorithm, { functionName: null, customization: 5 }),
+        invalidType("functionName", "null"),
+      );
+      assert.throws(
+        () => crypto.createHash(algorithm, { functionName: "a\0", customization: null }),
+        nulBytes("functionName", "<Buffer 61 00>"),
+      );
+      assert.throws(
+        () => crypto.createHash(algorithm, { functionName: "x", customization: "a\0" }),
+        nulBytes("customization", "<Buffer 61 00>"),
+      );
+    }
+    assert.throws(() => crypto.createHash("nope", { outputLength: -1 }), outOfRange);
+    assert.throws(() => crypto.createHash("nope", {}), unsupported);
+    assert.throws(() => crypto.createHash(5 as any, { customization: null }), {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "algorithm" argument must be of type string. Received type number (5)',
+    });
+    // The refusal comes before the digest is asked for an output length that it cannot give.
+    assert.throws(() => crypto.createHash("sha256", { outputLength: 5, customization: "x" }), unsupported);
+    assert.throws(() => crypto.createHash("shake128", { outputLength: 0, customization: "x" }), unsupported);
+  });
+
+  it("reads each option once, in Node's order, and stops at the first one that fails", () => {
+    const cases: [string, object, string[]][] = [
+      ["sha256", {}, ["outputLength", "functionName", "customization"]],
+      ["nope", {}, ["outputLength", "functionName", "customization"]],
+      ["sha256", { customization: "x" }, ["outputLength", "functionName", "customization"]],
+      ["sha256", { functionName: null, customization: null }, ["outputLength", "functionName"]],
+      ["nope", { outputLength: -1, functionName: null }, ["outputLength"]],
+      // typeof options is "function": Node does not read outputLength from it.
+      ["sha256", () => {}, ["functionName", "customization"]],
+    ];
+    for (const [algorithm, options, expected] of cases) {
+      const log: string[] = [];
+      try {
+        crypto.createHash(algorithm, logged(options, log));
+      } catch {}
+      assert.deepStrictEqual(log, expected);
+    }
+
+    const copyLog: string[] = [];
+    crypto
+      .createHash("sha256")
+      .update("a")
+      .copy(logged({ functionName: 5, customization: null }, copyLog));
+    assert.deepStrictEqual(copyLog, ["outputLength"]);
+
+    const copyOfFunctionLog: string[] = [];
+    crypto
+      .createHash("sha256")
+      .update("a")
+      .copy(logged(() => {}, copyOfFunctionLog) as any);
+    assert.deepStrictEqual(copyOfFunctionLog, []);
+
+    const hmacLog: string[] = [];
+    crypto.createHmac("sha256", "k", logged({ functionName: 5, customization: null }, hmacLog));
+    assert.deepStrictEqual(hmacLog, ["encoding"]);
+  });
+
+  it("a throwing getter propagates before the digest is looked up", () => {
+    const boom = new RangeError("boom");
+    for (const key of keys) {
+      const options = Object.defineProperty({}, key, {
+        get() {
+          throw boom;
+        },
+      });
+      assert.throws(
+        () => crypto.createHash("nope", options),
+        error => error === boom,
+      );
+      assert.throws(() => crypto.createHash("nope", Object.assign(options, { outputLength: -1 })), outOfRange);
+    }
+  });
+
+  it("reads the options of a primitive through its prototype, but not of undefined or null", () => {
+    try {
+      // @ts-expect-error
+      String.prototype.customization = "x";
+      // @ts-expect-error
+      Number.prototype.functionName = null;
+      assert.throws(() => crypto.createHash("sha256", "hex" as any), unsupported);
+      assert.throws(() => crypto.createHash("sha256", 5 as any), invalidType("functionName", "null"));
+      assert.strictEqual(crypto.createHash("sha256", undefined).update("a").digest("hex"), sha256OfA);
+      assert.strictEqual(
+        crypto
+          .createHash("sha256", null as any)
+          .update("a")
+          .digest("hex"),
+        sha256OfA,
+      );
+    } finally {
+      // @ts-expect-error
+      delete String.prototype.customization;
+      // @ts-expect-error
+      delete Number.prototype.functionName;
+    }
+  });
+
+  it("does not read outputLength from an options value that is a function", () => {
+    const options = Object.assign(() => {}, { outputLength: -1 });
+    assert.strictEqual(crypto.createHash("sha256", options).update("a").digest("hex"), sha256OfA);
+    assert.strictEqual(crypto.createHash("sha256").update("a").copy(options).digest("hex"), sha256OfA);
+  });
+
+  it("keeps the order of copy() and of the outputLength checks", () => {
+    const finalized = crypto.createHash("sha256");
+    finalized.digest();
+    assert.throws(() => finalized.copy({ outputLength: -1 }), { name: "Error", code: "ERR_CRYPTO_HASH_FINALIZED" });
+    assert.throws(() => crypto.createHash("shake128").copy({ outputLength: -1 }), outOfRange);
+    assert.strictEqual(
+      crypto.createHash("shake128", { outputLength: 8 }).update("abc").copy({ outputLength: 4 }).digest("hex"),
+      "5881092d",
+    );
+    assert.throws(() => crypto.createHash("sha256", { outputLength: 5 }), {
+      name: "Error",
+      code: "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH",
+    });
+  });
+
+  it("a refused construction leaves nothing behind", () => {
+    assert.throws(() => crypto.createHash("shake128", { customization: "x" }), unsupported);
+    assert.strictEqual(
+      crypto.createHash("shake128", { outputLength: 16 }).update("a").digest("hex"),
+      "85c8de88d28866bf0868090b3961162b",
+    );
+    assert.throws(() => crypto.createHash("nope"), unsupported);
   });
 });
 

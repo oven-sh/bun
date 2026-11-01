@@ -320,6 +320,55 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len }, encoding));
 }
 
+// `options.outputLength`, which Node reads only when `typeof options === "object"`.
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L111-L117
+static std::optional<unsigned int> readOutputLength(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue optionsValue)
+{
+    if (!optionsValue.isObject() || optionsValue.isCallable()) {
+        return std::nullopt;
+    }
+
+    auto& vm = globalObject->vm();
+    JSValue outputLengthValue = optionsValue.get(globalObject, WebCore::clientData(vm)->nodeCryptoOptionNames().outputLength(vm));
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (outputLengthValue.isUndefined()) {
+        return std::nullopt;
+    }
+
+    Bun::V::validateUint32(scope, globalObject, outputLengthValue, "options.outputLength"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    unsigned int outputLength = outputLengthValue.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return outputLength;
+}
+
+// Whether `options[key]` is set, after Node's checks on it: a string or a BufferSource with no NUL byte.
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L94-L103
+static bool readCShakeParameter(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue optionsValue, const JSC::Identifier& key, ASCIILiteral name)
+{
+    JSValue value = optionsValue.get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (value.isUndefined()) {
+        return false;
+    }
+
+    auto bytes = getArrayBufferOrView2(globalObject, scope, value, name, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, false);
+    if (WTF::find(bytes.data, static_cast<uint8_t>(0)) != WTF::notFound) {
+        ERR::INVALID_ARG_VALUE(scope, globalObject, name, bytes.owner, "must not contain NUL bytes"_s);
+        return false;
+    }
+    return true;
+}
+
+// An option getter is user code. A BoringSSL error that it leaves behind is not an error of this construction.
+static inline void dropErrorsOfOptionGetters()
+{
+    if (ERR_peek_error()) [[unlikely]] {
+        ERR_clear_error();
+    }
+}
+
 JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -343,6 +392,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     }
 
     JSValue algorithmOrHashInstanceValue = callFrame->argument(0);
+    JSValue optionsValue = callFrame->argument(1);
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     // Because we aren't checking if m_finalized true in Hash.prototype.copy, we need to check here
@@ -351,6 +401,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     JSHash* original = nullptr;
     const EVP_MD* md = nullptr;
     std::unique_ptr<ExternZigHash::Hasher, decltype(&ExternZigHash::destroy)> zigHasher(nullptr, ExternZigHash::destroy);
+    std::optional<unsigned int> xofLen = std::nullopt;
     if ((original = dynamicDowncast<JSHash>(algorithmOrHashInstanceValue))) {
         // m_digest alone: _flush took the digest. No live state to copy (Node returns an unusable copy).
         if (original->m_finalized || original->m_digest) {
@@ -362,9 +413,37 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
         } else {
             md = original->m_ctx.getDigest();
         }
+
+        // A copy reads outputLength only.
+        if (!optionsValue.isUndefinedOrNull()) {
+            xofLen = readOutputLength(globalObject, scope, optionsValue);
+            RETURN_IF_EXCEPTION(scope, {});
+            dropErrorsOfOptionGetters();
+        }
     } else {
         Bun::V::validateString(scope, globalObject, algorithmOrHashInstanceValue, "algorithm"_s);
         RETURN_IF_EXCEPTION(scope, {});
+
+        // Node checks the options before it looks the digest up.
+        // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L110-L147
+        if (!optionsValue.isUndefinedOrNull()) {
+            xofLen = readOutputLength(globalObject, scope, optionsValue);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            auto& names = WebCore::clientData(vm)->nodeCryptoOptionNames();
+            bool hasFunctionName = readCShakeParameter(globalObject, scope, optionsValue, names.functionName(vm), "options.functionName"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            bool hasCustomization = readCShakeParameter(globalObject, scope, optionsValue, names.customization(vm), "options.customization"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            dropErrorsOfOptionGetters();
+
+            // These are cSHAKE parameters. BoringSSL has no cSHAKE, so no digest can take them, as in Node on OpenSSL below 4.0.
+            // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_util.cc#L108-L137
+            if (hasFunctionName || hasCustomization) {
+                throwCryptoError(globalObject, scope, 0, "Digest method not supported"_s);
+                return {};
+            }
+        }
 
         WTF::String algorithm = algorithmOrHashInstanceValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -378,20 +457,6 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     if (md == nullptr && zigHasher == nullptr) [[unlikely]] {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
         return {};
-    }
-
-    std::optional<unsigned int> xofLen = std::nullopt;
-    JSValue optionsValue = callFrame->argument(1);
-    if (optionsValue.isObject()) {
-        JSValue outputLengthValue = optionsValue.get(globalObject, Identifier::fromString(vm, "outputLength"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (!outputLengthValue.isUndefined()) {
-            Bun::V::validateUint32(scope, globalObject, outputLengthValue, "options.outputLength"_s, jsUndefined());
-            RETURN_IF_EXCEPTION(scope, {});
-            xofLen = outputLengthValue.toUInt32(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
     }
 
     JSHash* hash = JSHash::create(vm, structure);

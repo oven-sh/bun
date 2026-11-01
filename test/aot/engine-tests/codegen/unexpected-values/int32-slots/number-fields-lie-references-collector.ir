@@ -1,5 +1,6 @@
 # Number fields that look like int32 alternate with fields that hold objects, strings and arrays, so that narrow slots lie beside references. The numbers are bit patterns of every kind:
 # small multiples of 8 and 16, which look like offsets of cells, all ones, the edges of int32. Some fields get a fraction by a hidden store and leave their slots. 30000 objects survive full and small collections.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f2 f3
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls

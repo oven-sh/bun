@@ -440,6 +440,8 @@ fn analyze<'s, 'r>(
         jsx,
         jsx_mode,
         declared_module_type,
+        type_where_imported: declared_module_type_of(context, path, true),
+        runs_inside_require: false,
         is_package_type_module: resolver.is_package_type_module(path),
         package: resolver.enclosing_package(path),
         side_effects: resolver.declared_side_effects(path),

@@ -1487,6 +1487,23 @@ impl<'a> Coordinator<'a> {
                 parts.print_messages_of_test_files(&messages);
                 continue;
             }
+            // As for a layer. It is said once.
+            if exit_code == Some(PART_HAS_NO_ROOM)
+                && PROGRAMS_CAN_WAIT_IN_MEMORY
+                && !part.is_in_memory
+            {
+                part.state = PartState::Waiting;
+                part.file = None;
+                if !core::mem::replace(&mut parts.temporary_directory_is_full, true) {
+                    self.break_dots();
+                    bun_core::pretty_error!(
+                        "<r><yellow>warn<r>: the temporary directory {} has no room for the test files, compiled. They are kept in memory\n",
+                        bstr::BStr::new(bun_resolver::fs::RealFS::tmpdir_path()),
+                    );
+                    Output::flush();
+                }
+                continue;
+            }
             let mut buf = [0u8; 32];
             let file_count = parts.list[index].range.len();
             if file_count > 1 {
@@ -1549,7 +1566,7 @@ impl<'a> Coordinator<'a> {
             let kind = parts.kind_of(index);
             let below = parts.programs_below(layer.unwrap_or(parts.layers.len()));
             let is_above_library = parts.stands_on_library_of_this_bun;
-            let in_memory = layer.is_some() && parts.temporary_directory_is_full;
+            let in_memory = parts.temporary_directory_is_full;
             let pipe = match layer {
                 Some(layer) if parts.begins_beside_build_below(layer) => {
                     let Ok(pipe) = bun_sys::pipe() else {
@@ -1654,9 +1671,17 @@ impl<'a> Coordinator<'a> {
                 }
             });
             let time_of = time_of.as_ref().map(|f| f as &dyn Fn(FileRange) -> u64);
+            let is_free = |w: &&Worker| {
+                !w.alive
+                    && w.process.is_none()
+                    && !w.reap_pending
+                    && w.exit_status.is_none()
+                    && w.startup_failures < MAX_STARTUP_FAILURES
+            };
+            let free_workers = self.workers.iter().filter(is_free).count() as u32;
             let next = match self.reporter.jest.test_options.parallel {
                 0 => parts.next_in_order(),
-                _ => parts.next_for_worker(&waiting, time_of),
+                _ => parts.next_for_worker(&waiting, free_workers, time_of),
             };
             let Some(index) = next else {
                 break;

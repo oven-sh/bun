@@ -115,7 +115,7 @@ export class Configured {
   constructor(options) { this.options = { threads: 1, ...options }; }
   ask() { return ask(new Worker(this.options.filename)); }
 }
-// What the package names itself is its own business: most programs never start it.
+// What the package names itself is its own business in one program: most programs never start it. A layer of a test run compiles it.
 export const startOwn = () => ask(new Worker(new URL("./own-worker.js", import.meta.url)));
 `,
   "node_modules/starts-workers/own-worker.js": `self.onmessage = event => { self.postMessage("own " + event.data); };\n`,
@@ -213,7 +213,10 @@ for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1", "T
     expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0, stderr: "" });
     expect(await see(["--aot"], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
     const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
-    expect(await see(["--aot"], env)).toEqual({ ...plain, taken: [count] });
+    // The layer that holds the package takes in the file that the package names itself, each time it loads.
+    const { taken, ...rest } = await see(["--aot"], env);
+    expect({ ...rest, taken: taken.slice(-1) }).toEqual({ ...plain, taken: [count] });
+    expect([...new Set(taken.slice(0, -1))]).toEqual(words === "TestRunLayers:0" ? [] : [1]);
   }, 240_000);
 }
 

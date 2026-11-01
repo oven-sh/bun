@@ -5666,7 +5666,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f134 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: 40 = Integer integer=40
 # CHECK-NEXT: v9: boolean = Less v6, v8
-# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b12()
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b11()
 # CHECK-NEXT: b2(v10: int[0, 39]):
 # CHECK-NEXT: v11: boolean = TypeTest v1 testedType=f8
 # CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4(| 0)
@@ -5680,73 +5680,76 @@ runtimefunction id=ArrayTraversalTraverseArray function=f134 visibility=Private
 # CHECK-NEXT: v18: env L2 = NewObject -, v17 layout=L2 fields=[0] allocationSite=36
 # CHECK-NEXT: PutEnvironmentField v18, v13 layout=L2 field=4
 # CHECK-NEXT: PutEnvironmentField v18, v10 layout=L2 field=5
-# CHECK-NEXT: v21: f25 = NewClosure v18 function=f25 allocationSite=39
-# CHECK-NEXT: PutEnvironmentField v18, v21 layout=L2 field=6
-# CHECK-NEXT: v23: f23 = NewClosure v18, v10 function=f23 allocationSite=37
-# CHECK-NEXT: Jump -> next b11(v23)
-# CHECK-NEXT: b4(v24: f9|f10):
-# CHECK-NEXT: v25: boolean = TypeTest v24 testedType=f9
-# CHECK-NEXT: Branch v25 -> taken b5(| 0), notTaken b10()
-# CHECK-NEXT: b5(v26: f9):
-# CHECK-NEXT: v27: int = GetCapture v26 function=f9
-# CHECK-NEXT: v28: L5 = NewObject -, v10 layout=L5 fields=[0] allocationSite=28 allocationClass=0
-# CHECK-NEXT: v29: L5 = FinishObject v28
-# CHECK-NEXT: v30: WeakRef = CallBuiltin -, v29 overload=WeakRef/1 accessSite=57
-# CHECK-NEXT: v31: WeakRef<pristine[Storage, Names]> = AssumeType v30 provenType=WeakRef<pristine[Storage, Names]>
-# CHECK-NEXT: v32: int[0, 4294967295] = CallBuiltin v3, v31 overload=ArrayPrototypePush/0 accessSite=58
-# CHECK-NEXT: v33: fact = Entered function=f18 @3841:2 tail
-# CHECK-NEXT: v34: 0 = Integer
-# CHECK-NEXT: v35: 3 = Integer integer=3
-# CHECK-NEXT: v36: env L3 = NewObject -, v34 layout=L3 fields=[0] allocationSite=41
-# CHECK-NEXT: v37: f28 = NewClosure v36, v29 function=f28 allocationSite=43
-# CHECK-NEXT: PutEnvironmentField v36, v29 layout=L3 field=3
-# CHECK-NEXT: v39: f29 = NewClosure v27, v37 function=f29 allocationSite=44
-# CHECK-NEXT: PutEnvironmentField v36, v37 layout=L3 field=1
-# CHECK-NEXT: PutEnvironmentField v36, v27 layout=L3 field=4
-# CHECK-NEXT: PutEnvironmentField v36, v37 layout=L3 field=5
-# CHECK-NEXT: v43: boolean = StrictEq v27, v35
-# CHECK-NEXT: Branch v43 -> taken b6(), notTaken b7()
+# CHECK-NEXT: ReleaseHint v13 @1825:3 tail
+# CHECK-NEXT: v22: f25 = NewClosure v18 function=f25 allocationSite=39
+# CHECK-NEXT: PutEnvironmentField v18, v22 layout=L2 field=6
+# CHECK-NEXT: v24: f23 = NewClosure v18, v10 function=f23 allocationSite=37
+# CHECK-NEXT: Jump -> next b10(v24)
+# CHECK-NEXT: b4(v25: f9|f10):
+# CHECK-NEXT: v26: boolean = TypeTest v25 testedType=f9
+# CHECK-NEXT: Branch v26 -> taken b5(| 0), notTaken b9()
+# CHECK-NEXT: b5(v27: f9):
+# CHECK-NEXT: v28: int = GetCapture v27 function=f9
+# CHECK-NEXT: v29: L5 = NewObject -, v10 layout=L5 fields=[0] allocationSite=28 allocationClass=0
+# CHECK-NEXT: v30: L5 = FinishObject v29
+# CHECK-NEXT: v31: WeakRef = CallBuiltin -, v30 overload=WeakRef/1 accessSite=57
+# CHECK-NEXT: v32: WeakRef<pristine[Storage, Names]> = AssumeType v31 provenType=WeakRef<pristine[Storage, Names]>
+# CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v3, v32 overload=ArrayPrototypePush/0 accessSite=58
+# CHECK-NEXT: v34: fact = Entered function=f18 @3841:2 tail
+# CHECK-NEXT: v35: 0 = Integer
+# CHECK-NEXT: ReleaseHint v30 @3841:2 tail
+# CHECK-NEXT: v37: 3 = Integer integer=3
+# CHECK-NEXT: v38: env L3 = NewObject -, v35 layout=L3 fields=[0] allocationSite=41
+# CHECK-NEXT: v39: f28 = NewClosure v38, v30 function=f28 allocationSite=43
+# CHECK-NEXT: PutEnvironmentField v38, v30 layout=L3 field=3
+# CHECK-NEXT: v41: f29 = NewClosure v28, v39 function=f29 allocationSite=44
+# CHECK-NEXT: PutEnvironmentField v38, v39 layout=L3 field=1
+# CHECK-NEXT: PutEnvironmentField v38, v28 layout=L3 field=4
+# CHECK-NEXT: PutEnvironmentField v38, v39 layout=L3 field=5
+# CHECK-NEXT: v45: boolean = StrictEq v28, v37
+# CHECK-NEXT: Branch v45 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v44: Array<f30, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v33 variable=g6
-# CHECK-NEXT: v45: f30 = NewClosure v37 function=f30 allocationSite=45
-# CHECK-NEXT: v46: int[0, 4294967295] = CallBuiltin v44, v45 overload=ArrayPrototypePush/0 accessSite=85
+# CHECK-NEXT: v46: Array<f30, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v34 variable=g6
+# CHECK-NEXT: v47: f30 = NewClosure v39 function=f30 allocationSite=45
+# CHECK-NEXT: v48: int[0, 4294967295] = CallBuiltin v46, v47 overload=ArrayPrototypePush/0 accessSite=85
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v47: 2 = Integer integer=2
-# CHECK-NEXT: v48: boolean = StrictEq v27, v47
-# CHECK-NEXT: Branch v48 -> taken b9(v39), notTaken b8()
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v49: f27 = NewClosure v36 function=f27 allocationSite=42
-# CHECK-NEXT: Jump -> next b9(v49)
-# CHECK-NEXT: b9(v50: f27|f29):
-# CHECK-NEXT: Jump -> next b11(v50)
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v51: L5 = NewObject -, v10 layout=L5 fields=[0] allocationSite=30 allocationClass=0
-# CHECK-NEXT: v52: L5 = FinishObject v51
-# CHECK-NEXT: v53: WeakRef = CallBuiltin -, v52 overload=WeakRef/1 accessSite=57
-# CHECK-NEXT: v54: WeakRef<pristine[Storage, Names]> = AssumeType v53 provenType=WeakRef<pristine[Storage, Names]>
-# CHECK-NEXT: v55: int[0, 4294967295] = CallBuiltin v3, v54 overload=ArrayPrototypePush/0 accessSite=58
-# CHECK-NEXT: v56: 0 = Integer
-# CHECK-NEXT: v57: env L4 = NewObject -, v56 layout=L4 fields=[1] allocationSite=46
-# CHECK-NEXT: v58: f31 = NewClosure v57, v52 function=f31 allocationSite=47
-# CHECK-NEXT: PutEnvironmentField v57, v52 layout=L4 field=3
-# CHECK-NEXT: v60: 0 = Integer
-# CHECK-NEXT: v61: env L0 = NewObject -, v60 layout=L0 fields=[1] allocationSite=16
-# CHECK-NEXT: PutEnvironmentField v61, v58 layout=L0 field=2
-# CHECK-NEXT: PutEnvironmentField v57, v61 layout=L4 field=4
-# CHECK-NEXT: v64: f32 = NewClosure v57 function=f32 allocationSite=48
-# CHECK-NEXT: Jump -> next b11(v64)
-# CHECK-NEXT: b11(v65: f23|f27|f29|f32):
-# CHECK-NEXT: v66: int[0, 4294967295] = CallBuiltin v5, v65 overload=ArrayPrototypePush/0 accessSite=38
-# CHECK-NEXT: v67: int[1, 40] = Increment v10
-# CHECK-NEXT: Jump -> next b1(v67)
+# CHECK-NEXT: v49: 2 = Integer integer=2
+# CHECK-NEXT: v50: boolean = StrictEq v28, v49
+# CHECK-NEXT: Branch v50 -> taken b8(v41), notTaken b12()
+# CHECK-NEXT: b8(v51: f27|f29):
+# CHECK-NEXT: Jump -> next b10(v51)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v52: L5 = NewObject -, v10 layout=L5 fields=[0] allocationSite=30 allocationClass=0
+# CHECK-NEXT: v53: L5 = FinishObject v52
+# CHECK-NEXT: v54: WeakRef = CallBuiltin -, v53 overload=WeakRef/1 accessSite=57
+# CHECK-NEXT: v55: WeakRef<pristine[Storage, Names]> = AssumeType v54 provenType=WeakRef<pristine[Storage, Names]>
+# CHECK-NEXT: v56: int[0, 4294967295] = CallBuiltin v3, v55 overload=ArrayPrototypePush/0 accessSite=58
+# CHECK-NEXT: v57: 0 = Integer
+# CHECK-NEXT: v58: env L4 = NewObject -, v57 layout=L4 fields=[1] allocationSite=46
+# CHECK-NEXT: v59: f31 = NewClosure v58, v53 function=f31 allocationSite=47
+# CHECK-NEXT: PutEnvironmentField v58, v53 layout=L4 field=3
+# CHECK-NEXT: ReleaseHint v53 @4898:1 tail
+# CHECK-NEXT: v62: 0 = Integer
+# CHECK-NEXT: v63: env L0 = NewObject -, v62 layout=L0 fields=[1] allocationSite=16
+# CHECK-NEXT: PutEnvironmentField v63, v59 layout=L0 field=2
+# CHECK-NEXT: PutEnvironmentField v58, v63 layout=L4 field=4
+# CHECK-NEXT: v66: f32 = NewClosure v58 function=f32 allocationSite=48
+# CHECK-NEXT: Jump -> next b10(v66)
+# CHECK-NEXT: b10(v67: f23|f27|f29|f32):
+# CHECK-NEXT: v68: int[0, 4294967295] = CallBuiltin v5, v67 overload=ArrayPrototypePush/0 accessSite=38
+# CHECK-NEXT: v69: int[1, 40] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v69)
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v70: Array<L6, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4
+# CHECK-NEXT: v71: L6 = NewObject -, v0, v3 layout=L6 fields=[0, 1] allocationSite=20 allocationClass=1
+# CHECK-NEXT: v72: L6 = FinishObject v71
+# CHECK-NEXT: v73: int[0, 4294967295] = CallBuiltin v70, v72 overload=ArrayPrototypePush/0 accessSite=41
+# CHECK-NEXT: v74: undefined = Undefined
+# CHECK-NEXT: Return v74
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v68: Array<L6, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4
-# CHECK-NEXT: v69: L6 = NewObject -, v0, v3 layout=L6 fields=[0, 1] allocationSite=20 allocationClass=1
-# CHECK-NEXT: v70: L6 = FinishObject v69
-# CHECK-NEXT: v71: int[0, 4294967295] = CallBuiltin v68, v70 overload=ArrayPrototypePush/0 accessSite=41
-# CHECK-NEXT: v72: undefined = Undefined
-# CHECK-NEXT: Return v72
+# CHECK-NEXT: v75: f27 = NewClosure v38 function=f27 allocationSite=42
+# CHECK-NEXT: Jump -> next b8(v75)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="inner"
 # CHECK: module=m0 position=3939 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f13}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f13} creator=Entrypoint{target=f13 arguments=Registers}

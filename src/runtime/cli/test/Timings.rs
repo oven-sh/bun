@@ -145,6 +145,11 @@ impl Timings {
         self.workers
     }
 
+    /// Only a compiled run says: what the table has stays through a plain one.
+    pub(crate) fn record_workers(&mut self, workers: u32) {
+        self.workers = workers;
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.map.count() == 0
     }
@@ -307,13 +312,8 @@ impl Timings {
     /// report. `only_measured` (set under `--shard`) writes just the files this
     /// run ran; otherwise everything read is carried through so a local partial
     /// run doesn't shrink the table.
-    /// `workers`: of this run.
-    pub(crate) fn write(&mut self, only_measured: bool, workers: u32) {
-        // Only a compiled run measures growth, and only such a run says more than plain `bun test` does.
-        let workers = match self.measured_growth.count() {
-            0 => self.workers,
-            _ => workers,
-        };
+    pub(crate) fn write(&mut self, only_measured: bool) {
+        let workers = self.workers;
         let (map, growth) = if only_measured {
             (&mut self.measured, &mut self.measured_growth)
         } else {

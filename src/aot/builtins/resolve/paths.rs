@@ -165,6 +165,13 @@ impl Resolver<'_, '_> {
         if let Some(child) = find_child_module(holder, key) {
             return ExprState::Held(child);
         }
+        if input.dialect == SourceDialect::Runtime
+            && holder.path.id == BuiltinId::GlobalThis
+            && let MemberKey::Name(name) = key
+            && let Some(intrinsic) = self.find_native(name, true)
+        {
+            return ExprState::Intrinsic(intrinsic);
+        }
         let module_object = find_module_object_in(holder);
         let is_held = held.is_some() || known.is_none() || module_object.is_some();
         let has_side_effects = holder.has_side_effects;

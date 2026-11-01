@@ -453,7 +453,7 @@ layout L0 kind=Instance name="C" module=m0 position=4850 constructor=f40 fields=
 layout L1 kind=Instance name="W1" module=m0 position=5592 constructor=f49 fields=[{key="next" declared={type=undefined|null|L1|L2 site=w145 flags=[OmitsUndefined]} flags=[IsRequired]}] supertypes=[L7] ownFieldCount=1
 layout L2 kind=Instance name="W2" module=m0 position=5740 constructor=f51 fields=[{key="next" declared={type=undefined|null|L1|L2 site=w150 flags=[OmitsUndefined]} flags=[IsRequired]}] supertypes=[L7] ownFieldCount=1
 layout L3 kind=Instance name="D" module=m0 position=5363 base=L0 constructor=f78 supertypes=[L0] flags=[HasHeritage]
-layout L4 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f103 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=number|absent site=w227}}] ownFieldCount=2
+layout L4 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f103 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="inner"}, {key=@"binding.1" declared={type=number|absent site=w227} variableName="count"}] ownFieldCount=2
 layout L5 module=m0 position=1563 fields=[{key="k" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
 layout L6 module=m0 position=5464 fields=[{key="k" declared={type=number} flags=[IsRequired]}, {key="m" declared={type=undefined|null|function|f80 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] ownFieldCount=2
 layout L7 name="Walker" module=m0 position=5551 fields=[{key="step" declared={type=undefined|null|function|f50|f52 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
@@ -2728,14 +2728,14 @@ function f103 name="inner" module=m0 position=2857 flags=[IsChecked, HasExplicit
     v19 = Call v16, -, v18 calleeName="inner" @2927
     ReturnCall v19 casts=[{declared={type=number site=w316}}, {declared={type=number site=w229}}] @2927
 }
-function f104 module=m0 position=3057 kind=Arrow flags=[IsChecked] captures=[{type=number site=w76}] thisType={type=anything} results=[{type=number site=w232}] functionTypes=[f114] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f104 module=m0 position=3057 kind=Arrow flags=[IsChecked] captures=[{type=number site=w76 variableName="n"}] thisType={type=anything} results=[{type=number site=w232}] functionTypes=[f114] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):
     Jump -> next b1() @3057
   b1():
     v1 = Convert v0 declared={type=number site=w232} @3063
     Return v1 @3063
 }
-function f105 module=m0 position=8127 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|function|f105|f110 site=w113 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=number site=w251}] results=[{type=number site=w252}] functionTypes=[f174] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f105 module=m0 position=8127 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|function|f105|f110 site=w113 flags=[OmitsNull, OmitsUndefined] variableName="k"}] thisType={type=anything} parameters=[{type=number site=w251}] results=[{type=number site=w252}] functionTypes=[f174] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f105|f110, v1: number):
     Jump -> next b1() @8127
   b1():
@@ -3560,7 +3560,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: ReturnCall v4 casts=[{declared={type=number site=w253 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w114 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}, {declared={type=number site=w253 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w114 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}, {declared={type=number site=w315 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w207 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f105 module=
-# CHECK: m0 position=8127 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=f105|f110 site=w113 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=i32 site=w251 flags=[IsExpected]}] results=[{type=int|whole site=w252}] functionTypes=[f174] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f190 fallback=f199} {
+# CHECK: m0 position=8127 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=f105|f110 site=w113 flags=[OmitsNull, OmitsUndefined] variableName="k"}] thisType={type=anything} parameters=[{type=i32 site=w251 flags=[IsExpected]}] results=[{type=int|whole site=w252}] functionTypes=[f174] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f190 fallback=f199} {
 # CHECK-NEXT: b0(v0: f105|f110, v1: anything ~ i32):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=i32
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()

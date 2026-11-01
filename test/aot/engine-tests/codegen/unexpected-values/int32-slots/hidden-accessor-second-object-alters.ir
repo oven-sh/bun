@@ -1,6 +1,7 @@
 # One function stores into three number fields of one object, and between the stores it reads a field of a second object: an innocent read of a slot, 3000 times over.
 # Then a definition that the build cannot attribute turns that field of one second object into an accessor, and the accessor freezes the first object, deletes or redefines the field that is stored next,
 # puts a fraction into the field that was stored before, or changes the prototype. What was tested before the read no longer holds behind it.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls

@@ -1,4 +1,5 @@
 use bun_sema::hir::MemberId;
+use bun_sort_by_number::SortByNumber;
 
 use crate::ir::PropertyKeyId;
 use crate::ir::generated::{Field, FieldFlags};
@@ -50,7 +51,9 @@ impl OwnFields {
         let mut by_key: Vec<u32> = (0..fields.len() as u32)
             .filter(|&index| fields[index as usize].key.is_some())
             .collect();
-        by_key.sort_unstable_by_key(|&index| fields[index as usize].key);
+        by_key.sort_by_u64(|&index| {
+            (fields[index as usize].key).map_or(0, |key| u64::from(key.to_word()) + 1)
+        });
         debug_assert!(
             by_key
                 .iter()

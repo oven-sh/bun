@@ -33,10 +33,10 @@
 
 module m0 path="merged-objects-read-name-source-hidden.js" displayPath="merged-objects-read-name-source-hidden.js" body=f0 namespaceLayout=L(m0)
 entry module=m0
-layout L0 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}] ownFieldCount=3
+layout L0 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="c" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
 layout L1 module=m0 position=680 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
 layout L2 module=m0 position=712 fields=[{key="c" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
-layout L3 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L3 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything} flags=[IsNeverWritten]}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
 data d0 root=Object{layout=L1 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=2}}]} module=m0
 data d1 root=Object{layout=L2 members=[{key="c" value=Number{value=3}}]} module=m0
 data d2 root=Object{layout=L0} module=m0
@@ -90,8 +90,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v39 = Undefined @987
     Return v39 @987
 }
-function f1 name="productsOf" module=m0 position=57 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+function f1 name="productsOf" module=m0 position=57 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
     Jump -> next b1() @57
   b1():
     v1 = Integer @99
@@ -130,8 +130,8 @@ function f1 name="productsOf" module=m0 position=57 flags=[HasExplicitName] leng
     v26 = Convert v5 declared={type=number flags=[IsExpected]} @202
     Return v26 @202
 }
-function f2 name="sumsOf" module=m0 position=209 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+function f2 name="sumsOf" module=m0 position=209 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
     Jump -> next b1() @209
   b1():
     v1 = Integer @247
@@ -148,25 +148,28 @@ function f2 name="sumsOf" module=m0 position=209 flags=[HasExplicitName] length=
     Jump -> next b4() @271
   b4():
     v11 = PropGet v0 key="a" @298
-    v12 = PropGet v0 key="b" @309
-    v13 = Add v11, v12 @298
-    v14 = PropGet v0 key="c" @320
-    v15 = Add v13, v14 @298
-    v16 = Add v5, v15 @298
-    v17 = Convert v16 declared={type=number flags=[IsExpected]} @291
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @298
+    v13 = PropGet v0 key="b" @309
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @309
+    v15 = Add v12, v14 @298
+    v16 = PropGet v0 key="c" @320
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @320
+    v18 = Add v15, v17 @298
+    v19 = Add v5, v18 @298
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @291
     Jump -> next b5() @291
   b5():
-    v18 = Increment v10 @298
-    v19 = Convert v18 declared={type=number flags=[IsExpected]} @283
-    Jump -> next b2(v17, v19) @283
-  b6(v20):
+    v21 = Increment v10 @298
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @283
+    Jump -> next b2(v20, v22) @283
+  b6(v23):
     Jump -> next b7() @271
   b7():
-    v21 = Convert v5 declared={type=number flags=[IsExpected]} @339
-    Return v21 @339
+    v24 = Convert v5 declared={type=number flags=[IsExpected]} @339
+    Return v24 @339
 }
-function f3 name="show" module=m0 position=346 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string, v1: undefined|null|object):
+function f3 name="show" module=m0 position=346 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|L0):
     Jump -> next b1() @346
   b1():
     v2 = Builtin builtin=GlobalThis @379
@@ -181,14 +184,17 @@ function f3 name="show" module=m0 position=346 flags=[HasExplicitName] length=2 
     v11 = Call v10, -, v1 calleeName="sumsOf" @418
     v12 = Convert v11 declared={type=number flags=[IsExpected]} @418
     v13 = PropGet v1 key="a" @434
-    v14 = PropGet v1 key="b" @444
-    v15 = PropGet v1 key="c" @454
-    v16 = PropHas v1 key="a" @471
-    v17 = PropHas v1 key="b" @486
-    v18 = PropHas v1 key="c" @501
-    v19 = Call v6, v4, v0, v9, v12, v13, v14, v15, v16, v17, v18 calleeKey="log" calleeName="console.log" @387
-    v20 = Undefined @379
-    Return v20 @379
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @434
+    v15 = PropGet v1 key="b" @444
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @444
+    v17 = PropGet v1 key="c" @454
+    v18 = Convert v17 declared={type=number flags=[IsExpected]} @454
+    v19 = PropHas v1 key="a" @471
+    v20 = PropHas v1 key="b" @486
+    v21 = PropHas v1 key="c" @501
+    v22 = Call v6, v4, v0, v9, v12, v14, v16, v18, v19, v20, v21 calleeKey="log" calleeName="console.log" @387
+    v23 = Undefined @379
+    Return v23 @379
 }
 function f4 name="list" module=m0 position=512 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
@@ -275,8 +281,8 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v10: int[-2147483643, 2147483647] = GetSlot v0 key="b" receivers=[L0] level=Proven accessSite=11
 # CHECK-NEXT: v11: int|whole = Mul v9, v10
 # CHECK-NEXT: v12: int|whole = Add v3, v11
-# CHECK-NEXT: v13: undefined|int = GetSlotOrUndefined v0 key="c" receivers=[L0] level=Proven accessSite=12
-# CHECK-NEXT: v14: undefined|int ~ int = Upcast v13 castType=anything
+# CHECK-NEXT: v13: anything ~ undefined|number = GetSlotOrUndefined v0 key="c" receivers=[L0] level=Proven accessSite=12
+# CHECK-NEXT: v14: undefined|int ~ int = AssumeType v13 provenType=undefined|int
 # CHECK-NEXT: v15: number ~ int|whole = Sub v12, v14
 # CHECK-NEXT: v16: int|whole = AssumeType v15 provenType=int|whole
 # CHECK-NEXT: v17: 0 = Integer
@@ -292,32 +298,35 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v3: int|whole, v4: int[0, 100]):
+# CHECK-NEXT: b1(v3: int|whole ~ 0, v4: int[0, 100] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v3, v4)
+# CHECK-NEXT: b2(v5: int|whole, v6: int[0, 100]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v6: 100 = Integer integer=100
-# CHECK-NEXT: v7: boolean = Less v4, v6
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v8: int[0, 99]):
-# CHECK-NEXT: v9: int[-2147483643, 2147483647] = GetSlot v0 key="a" receivers=[L0] level=Proven accessSite=13
-# CHECK-NEXT: v10: int[-2147483643, 2147483647] = GetSlot v0 key="b" receivers=[L0] level=Proven accessSite=14
-# CHECK-NEXT: v11: int[-4294967286, 4294967294] = Add v9, v10
-# CHECK-NEXT: v12: undefined|int = GetSlotOrUndefined v0 key="c" receivers=[L0] level=Proven accessSite=15
-# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=number
-# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: b4(v14: int):
-# CHECK-NEXT: v15: int|whole = Add v11, v14
-# CHECK-NEXT: Jump -> next b5(v15)
-# CHECK-NEXT: b5(v16: int|whole):
-# CHECK-NEXT: v17: int|whole = Add v3, v16
-# CHECK-NEXT: v18: int[1, 100] = Increment v8
-# CHECK-NEXT: Jump -> next b1(v17, v18)
-# CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v19: undefined = Undefined
-# CHECK-NEXT: v20: number = Add v11, v19
-# CHECK-NEXT: v21: int|whole = AssumeType v20 provenType=int|whole
-# CHECK-NEXT: Jump -> next b5(v21)
+# CHECK-NEXT: v8: 100 = Integer integer=100
+# CHECK-NEXT: v9: boolean = Less v6, v8
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b6()
+# CHECK-NEXT: b3(v10: int[0, 99]):
+# CHECK-NEXT: v11: int[-2147483643, 2147483647] = GetSlot v0 key="a" receivers=[L0] level=Proven accessSite=13
+# CHECK-NEXT: v12: int[-2147483643, 2147483647] = GetSlot v0 key="b" receivers=[L0] level=Proven accessSite=14
+# CHECK-NEXT: v13: int[-4294967286, 4294967294] = Add v11, v12
+# CHECK-NEXT: v14: anything ~ undefined|number = GetSlotOrUndefined v0 key="c" receivers=[L0] level=Proven accessSite=15
+# CHECK-NEXT: v15: undefined|int ~ int = AssumeType v14 provenType=undefined|int
+# CHECK-NEXT: v16: boolean = TypeTest v15 testedType=i32
+# CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v17: i32):
+# CHECK-NEXT: v18: int[-6442450934, 6442450941] = Add v13, v17
+# CHECK-NEXT: v19: int|whole = Add v5, v18
+# CHECK-NEXT: v20: int[1, 100] = Increment v10
+# CHECK-NEXT: Jump -> next b2(v19, v20)
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v21: number ~ int|whole = Add v13, v15
+# CHECK-NEXT: v22: int|whole = AssumeType v21 provenType=int|whole
+# CHECK-NEXT: v23: int|whole ~ int[-6442450934, 6442450941] = Upcast v22 castType=int|whole
+# CHECK-NEXT: v24: int|whole = Add v5, v23
+# CHECK-NEXT: v25: int[1, 100] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v24, v25)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=346 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="assigned"|"spread"}, {type=L0}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=418 module=m0}, {callee=f1 callPosition=398 module=m0}] {
@@ -335,8 +344,8 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v11: int[-2147483643, 2147483647] = GetSlot v1 key="b" receivers=[L0] level=Proven accessSite=11
 # CHECK-NEXT: v12: int|whole = Mul v10, v11
 # CHECK-NEXT: v13: int|whole = Add v4, v12
-# CHECK-NEXT: v14: undefined|int = GetSlotOrUndefined v1 key="c" receivers=[L0] level=Proven accessSite=12
-# CHECK-NEXT: v15: undefined|int ~ int = Upcast v14 castType=anything
+# CHECK-NEXT: v14: anything ~ undefined|number = GetSlotOrUndefined v1 key="c" receivers=[L0] level=Proven accessSite=12
+# CHECK-NEXT: v15: undefined|int ~ int = AssumeType v14 provenType=undefined|int
 # CHECK-NEXT: v16: number ~ int|whole = Sub v13, v15
 # CHECK-NEXT: v17: int|whole = AssumeType v16 provenType=int|whole
 # CHECK-NEXT: v18: 0 = Integer
@@ -347,40 +356,44 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v21: 0 = Integer
 # CHECK-NEXT: v22: 0 = Integer
 # CHECK-NEXT: Jump -> next b4(v21, v22)
-# CHECK-NEXT: b4(v23: int|whole, v24: int[0, 100]):
+# CHECK-NEXT: b4(v23: int|whole ~ 0, v24: int[0, 100] ~ 0):
+# CHECK-NEXT: Jump -> next b5(v23, v24)
+# CHECK-NEXT: b5(v25: int|whole, v26: int[0, 100]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v26: 100 = Integer integer=100
-# CHECK-NEXT: v27: boolean = Less v24, v26
-# CHECK-NEXT: Branch v27 -> taken b5(| 0), notTaken b9()
-# CHECK-NEXT: b5(v28: int[0, 99]):
-# CHECK-NEXT: v29: int[-2147483643, 2147483647] = GetSlot v1 key="a" receivers=[L0] level=Proven accessSite=13
-# CHECK-NEXT: v30: int[-2147483643, 2147483647] = GetSlot v1 key="b" receivers=[L0] level=Proven accessSite=14
-# CHECK-NEXT: v31: int[-4294967286, 4294967294] = Add v29, v30
-# CHECK-NEXT: v32: undefined|int = GetSlotOrUndefined v1 key="c" receivers=[L0] level=Proven accessSite=15
-# CHECK-NEXT: v33: boolean = TypeTest v32 testedType=number
-# CHECK-NEXT: Branch v33 -> taken b6(| 0), notTaken b7()
-# CHECK-NEXT: b6(v34: int):
-# CHECK-NEXT: v35: int|whole = Add v31, v34
-# CHECK-NEXT: Jump -> next b8(v35)
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v36: undefined = Undefined
-# CHECK-NEXT: v37: number = Add v31, v36
-# CHECK-NEXT: v38: int|whole = AssumeType v37 provenType=int|whole
-# CHECK-NEXT: Jump -> next b8(v38)
-# CHECK-NEXT: b8(v39: int|whole):
-# CHECK-NEXT: v40: int|whole = Add v23, v39
-# CHECK-NEXT: v41: int[1, 100] = Increment v28
-# CHECK-NEXT: Jump -> next b4(v40, v41)
+# CHECK-NEXT: v28: 100 = Integer integer=100
+# CHECK-NEXT: v29: boolean = Less v26, v28
+# CHECK-NEXT: Branch v29 -> taken b6(| 0), notTaken b9()
+# CHECK-NEXT: b6(v30: int[0, 99]):
+# CHECK-NEXT: v31: int[-2147483643, 2147483647] = GetSlot v1 key="a" receivers=[L0] level=Proven accessSite=13
+# CHECK-NEXT: v32: int[-2147483643, 2147483647] = GetSlot v1 key="b" receivers=[L0] level=Proven accessSite=14
+# CHECK-NEXT: v33: int[-4294967286, 4294967294] = Add v31, v32
+# CHECK-NEXT: v34: anything ~ undefined|number = GetSlotOrUndefined v1 key="c" receivers=[L0] level=Proven accessSite=15
+# CHECK-NEXT: v35: undefined|int ~ int = AssumeType v34 provenType=undefined|int
+# CHECK-NEXT: v36: boolean = TypeTest v35 testedType=i32
+# CHECK-NEXT: Branch v36 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v37: i32):
+# CHECK-NEXT: v38: int[-6442450934, 6442450941] = Add v33, v37
+# CHECK-NEXT: v39: int|whole = Add v25, v38
+# CHECK-NEXT: v40: int[1, 100] = Increment v30
+# CHECK-NEXT: Jump -> next b5(v39, v40)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v41: number ~ int|whole = Add v33, v35
+# CHECK-NEXT: v42: int|whole = AssumeType v41 provenType=int|whole
+# CHECK-NEXT: v43: int|whole ~ int[-6442450934, 6442450941] = Upcast v42 castType=int|whole
+# CHECK-NEXT: v44: int|whole = Add v25, v43
+# CHECK-NEXT: v45: int[1, 100] = Increment v30
+# CHECK-NEXT: Jump -> next b4(v44, v45)
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v42: int[-2147483643, 2147483647] = GetSlot v1 key="a" receivers=[L0] level=Proven accessSite=20
-# CHECK-NEXT: v43: int[-2147483643, 2147483647] = GetSlot v1 key="b" receivers=[L0] level=Proven accessSite=21
-# CHECK-NEXT: v44: undefined|int = GetSlotOrUndefined v1 key="c" receivers=[L0] level=Proven accessSite=22
-# CHECK-NEXT: v45: true = Boolean boolean=true
-# CHECK-NEXT: v46: true = Boolean boolean=true
-# CHECK-NEXT: v47: boolean = IsSlotFilled v1 key="c" receivers=[L0] level=Proven accessSite=25
-# CHECK-NEXT: v48: undefined = CallBuiltin -, v0, v4, v23, v42, v43, v44, v45, v46, v47 overload=ConsoleLog/0 accessSite=26
-# CHECK-NEXT: v49: undefined = Undefined
-# CHECK-NEXT: Return v49
+# CHECK-NEXT: v46: int[-2147483643, 2147483647] = GetSlot v1 key="a" receivers=[L0] level=Proven accessSite=20
+# CHECK-NEXT: v47: int[-2147483643, 2147483647] = GetSlot v1 key="b" receivers=[L0] level=Proven accessSite=21
+# CHECK-NEXT: v48: anything ~ undefined|number = GetSlotOrUndefined v1 key="c" receivers=[L0] level=Proven accessSite=22
+# CHECK-NEXT: v49: undefined|int ~ int = AssumeType v48 provenType=undefined|int
+# CHECK-NEXT: v50: true = Boolean boolean=true
+# CHECK-NEXT: v51: true = Boolean boolean=true
+# CHECK-NEXT: v52: boolean = IsSlotFilled v1 key="c" receivers=[L0] level=Proven accessSite=25
+# CHECK-NEXT: v53: undefined = CallBuiltin -, v0, v4, v25, v46, v47, v49, v50, v51, v52 overload=ConsoleLog/0 accessSite=26
+# CHECK-NEXT: v54: undefined = Undefined
+# CHECK-NEXT: Return v54
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spread"
 # CHECK: module=m0 position=722 flags=[HasExplicitName] thisType={type=anything} results=[{type=L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -398,15 +411,14 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b2(v8: guard):
 # CHECK-NEXT: v9: guard = AllGuards v6, v8
 # CHECK-NEXT: v10: undefined|null|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = GetSlot v3, v9 key="c" receivers=[L2] level=Expected
-# CHECK-NEXT: v11: undefined|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = AssumeType v10 provenType=undefined|int[-2147483643, 2147483647]
-# CHECK-NEXT: PutSlot v4, -, v11 key="c" receivers=[L0] level=Proven
+# CHECK-NEXT: PutSlot v4, -, v10 key="c" receivers=[L0] level=Proven
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: CopyDataProperties v4, v3
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v14: L0 = FinishObject v4
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v13: L0 = FinishObject v4
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="assign"
 # CHECK: module=m0 position=780 role=ResultWrapper flags=[HasExplicitName] thisType={type=anything} results=[{type=L0}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f11 layout=L0} {
@@ -416,7 +428,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v2: unspecified|L0 = ResultAt v0 index=1
 # CHECK-NEXT: v3: int[-2147483643, 2147483647]|unspecified = ResultAt v0 index=2
 # CHECK-NEXT: v4: int[-2147483643, 2147483647]|unspecified = ResultAt v0 index=3
-# CHECK-NEXT: v5: undefined|int|unspecified = ResultAt v0 index=4
+# CHECK-NEXT: v5: anything|unspecified = ResultAt v0 index=4
 # CHECK-NEXT: Switch v1 cases=[1] -> case b1(), otherwise b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v6: fact = Specified
@@ -426,53 +438,48 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v8: fact = Specified
 # CHECK-NEXT: v9: int[-2147483643, 2147483647] = AssumeType v3, v8 provenType=int[-2147483643, 2147483647]
 # CHECK-NEXT: v10: int[-2147483643, 2147483647] = AssumeType v4, v8 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v11: undefined|int = AssumeType v5, v8 provenType=undefined|int
+# CHECK-NEXT: v11: anything = AssumeType v5, v8 provenType=anything
 # CHECK-NEXT: v12: L0 = NewObject -, v9, v10, v11 layout=L0 fields=[0, 1, 2] allocationSite=8 allocationClass=0
 # CHECK-NEXT: Jump -> next b3(v12)
 # CHECK-NEXT: b3(v13: L0):
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="assign"
-# CHECK: module=m0 position=780 role=ResultWorker flags=[HasExplicitName] thisType={type=anything} results=[{type=i32}, {type=unspecified|L0}, {type=int[-2147483643, 2147483647]|unspecified}, {type=int[-2147483643, 2147483647]|unspecified}, {type=undefined|int|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6} creator=ResultWorker{origin=f6} {
+# CHECK: module=m0 position=780 role=ResultWorker flags=[HasExplicitName] thisType={type=anything} results=[{type=i32}, {type=unspecified|L0}, {type=int[-2147483643, 2147483647]|unspecified}, {type=int[-2147483643, 2147483647]|unspecified}, {type=anything|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6} creator=ResultWorker{origin=f6} {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L1 = GetModuleVariable variable=g2
 # CHECK-NEXT: v1: L2 = GetModuleVariable variable=g3
 # CHECK-NEXT: v2: int[-2147483643, 2147483647] = GetSlot v0 key="a" receivers=[L1] level=Proven @814 tail
 # CHECK-NEXT: v3: int[-2147483643, 2147483647] = GetSlot v0 key="b" receivers=[L1] level=Proven @814 tail
 # CHECK-NEXT: v4: boolean = HasKeyOrder v1 layout=L2 fields=[0] @814 tail
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b5() @814 tail
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3() @814 tail
 # CHECK-NEXT: b1(v5: guard):
 # CHECK-NEXT: v6: boolean = HasNoExtraProperties v1 @814 tail
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b5() @814 tail
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3() @814 tail
 # CHECK-NEXT: b2(v7: guard):
 # CHECK-NEXT: v8: guard = AllGuards v5, v7 @814 tail
 # CHECK-NEXT: v9: undefined|null|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = GetSlot v1, v8 key="c" receivers=[L2] level=Expected @814 tail
-# CHECK-NEXT: v10: boolean ~ true = TypeTest v9 testedType=undefined|int[-2147483643, 2147483647] @814 tail
-# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b4() @814 tail
-# CHECK-NEXT: b3(v11: undefined|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v12: int[-2147483643, 2147483647] = Upcast v2 castType=int[-2147483643, 2147483647]|unspecified
-# CHECK-NEXT: v13: int[-2147483643, 2147483647] = Upcast v3 castType=int[-2147483643, 2147483647]|unspecified
-# CHECK-NEXT: v14: undefined|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = Upcast v11 castType=undefined|int|unspecified
-# CHECK-NEXT: v15: 2 = Integer integer=2
-# CHECK-NEXT: v16: unspecified|L0 = Unspecified valueType=L0
-# CHECK-NEXT: v17: fact = Specified
-# CHECK-NEXT: v18: int[-2147483643, 2147483647] = AssumeType v12, v17 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v19: int[-2147483643, 2147483647] = AssumeType v13, v17 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v20: undefined|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = AssumeType v14, v17 provenType=undefined|int
-# CHECK-NEXT: v21: undefined = Results v15, v16, v18, v19, v20
-# CHECK-NEXT: Return v21
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: Unreachable @814 tail
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v22: L0 = NewObject -, v2, v3 layout=L0 fields=[0, 1] allocationSite=8 allocationClass=0
-# CHECK-NEXT: v23: L0 = CallBuiltin -, v22, v1 overload=ObjectAssign/0 accessSite=27 @814 tail
-# CHECK-NEXT: v24: L0 = Upcast v23 castType=unspecified|L0
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v27: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v28: undefined|int|unspecified = Unspecified valueType=undefined|int
-# CHECK-NEXT: v29: fact = Specified
-# CHECK-NEXT: v30: L0 = AssumeType v24, v29 provenType=L0
-# CHECK-NEXT: v31: undefined = Results v25, v30, v26, v27, v28
-# CHECK-NEXT: Return v31
+# CHECK-NEXT: v10: int[-2147483643, 2147483647] = Upcast v2 castType=int[-2147483643, 2147483647]|unspecified
+# CHECK-NEXT: v11: int[-2147483643, 2147483647] = Upcast v3 castType=int[-2147483643, 2147483647]|unspecified
+# CHECK-NEXT: v12: undefined|null|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = Upcast v9 castType=anything|unspecified
+# CHECK-NEXT: v13: 2 = Integer integer=2
+# CHECK-NEXT: v14: unspecified|L0 = Unspecified valueType=L0
+# CHECK-NEXT: v15: fact = Specified
+# CHECK-NEXT: v16: int[-2147483643, 2147483647] = AssumeType v10, v15 provenType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v17: int[-2147483643, 2147483647] = AssumeType v11, v15 provenType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v18: undefined|null|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = AssumeType v12, v15 provenType=anything
+# CHECK-NEXT: v19: undefined = Results v13, v14, v16, v17, v18
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v20: L0 = NewObject -, v2, v3 layout=L0 fields=[0, 1] allocationSite=8 allocationClass=0
+# CHECK-NEXT: v21: L0 = CallBuiltin -, v20, v1 overload=ObjectAssign/0 accessSite=27 @814 tail
+# CHECK-NEXT: v22: L0 = Upcast v21 castType=unspecified|L0
+# CHECK-NEXT: v23: 1 = Integer integer=1
+# CHECK-NEXT: v24: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v25: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v26: anything|unspecified = Unspecified valueType=anything
+# CHECK-NEXT: v27: fact = Specified
+# CHECK-NEXT: v28: L0 = AssumeType v22, v27 provenType=L0
+# CHECK-NEXT: v29: undefined = Results v23, v28, v24, v25, v26
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }

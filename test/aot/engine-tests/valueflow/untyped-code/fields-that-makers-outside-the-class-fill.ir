@@ -73,18 +73,19 @@
 module m0 path="fields-that-makers-outside-the-class-fill.js" displayPath="fields-that-makers-outside-the-class-fill.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 module m2 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
-module m3 path="/$bun/js/engine/JSIteratorConstructor.ts" displayPath="/$bun/js/engine/JSIteratorConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m3)
-module m4 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m4)
-module m5 path="/$bun/js/engine/MapIteratorPrototype.ts" displayPath="/$bun/js/engine/MapIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m5)
-module m6 path="/$bun/js/engine/SetIteratorPrototype.ts" displayPath="/$bun/js/engine/SetIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m6)
-module m7 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m7)
+module m3 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="/$bun/js/engine/MapIteratorPrototype.ts" displayPath="/$bun/js/engine/MapIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m4)
+module m5 path="/$bun/js/engine/SetIteratorPrototype.ts" displayPath="/$bun/js/engine/SetIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m5)
+module m6 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m6)
 entry module=m0
-typesite w0 module=m4 position=571 kind=Variable
-typesite w1 module=m4 position=1447 kind=Variable
+typesite w0 module=m2 position=302 kind=Variable
+typesite w1 module=m2 position=933 kind=Variable
+typesite w2 module=m3 position=571 kind=Variable
+typesite w3 module=m3 position=1447 kind=Variable
 layout L0 kind=Instance name="Node" module=m0 position=89 constructor=f1 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="flags" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
 layout L1 kind=Instance name="NodeObject" module=m0 position=6 constructor=f8 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="flags" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
 layout L2 module=m0 position=169 fields=[{key="getNodeConstructor" declared={type=undefined|null|function|f9|f10 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
-layout L3 module=m3 position=6451 fields=[{key="done" declared={type=undefined|boolean flags=[IsExpected]}}, {key="value" declared={type=anything}}] ownFieldCount=2
+layout L3 module=m6 position=3027 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
 data d0 root=Array{contents=anything} module=m0
 variable g0 name="Node" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="createBaseNode" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
@@ -452,9 +453,9 @@ function f7 name="describe" module=m0 position=1199 flags=[HasExplicitName] leng
     v126 = Call v125, v1 calleeKey="join" calleeName="out.join" @1762
     ReturnCall v126 @1762
 }
-function f8 name="NodeObject" module=m0 position=57 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+function f8 name="NodeObject" module=m0 position=32 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
   b0(v0: anything, v1: anything):
-    Jump -> next b1() @57
+    Jump -> next b1() @32
   b1():
     v2 = GetConstructPrototype v0 layout=L1 @57
     v3 = NewObject v2 layout=L1 @57
@@ -525,74 +526,62 @@ function f17 name="next" module=m2 position=25 kind=Method role=Library flags=[H
     Jump -> next b1() @25
   b1():
     v2 = StepGenerator v0, v1 check=IsGenerator @91
-    v3 = ResultAt v2 @188
-    v4 = ResultAt v2 index=1 @251
-    v5 = Integer integer=2 @315
-    v6 = StrictEq v4, v5 @304
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @304
-  b2(v7):
-    Jump -> next b3() @304
+    v3 = ResultAt v2 @186
+    v4 = ResultAt v2 index=1 @249
+    v5 = Integer integer=1 @320
+    v6 = StrictEq v4, v5 @309
+    v7 = Convert v6 declared={type=boolean site=w0} @309
+    v8 = Integer integer=2 @370
+    v9 = StrictEq v4, v8 @359
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @359
+  b2(v10):
+    Jump -> next b3() @359
   b3():
-    v8 = ResumeGenerator v0, v1 @362
-    Return v8 @362
-  b4(v9):
-    Jump -> next b5() @304
-  b5():
-    v10 = Integer integer=1 @460
-    v11 = StrictEq v9, v10 @449
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @421
-    v13 = CreateIteratorResult v3, v12 @421
-    Return v13 @421
+    v11 = ResumeGenerator v0, v1 @427
+    v12 = PropGet v11 key="value" @492
+    v13 = PropGet v11 key="done" @521
+    v14 = Boolean boolean=true @537
+    v15 = StrictEq v13, v14 @521
+    v16 = Convert v15 declared={type=boolean site=w0} @514
+    Jump -> next b5(v12, v16) @514
+  b4(v17):
+    Jump -> next b5(v3, v7) @359
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @560
+    v21 = CreateIteratorResult v18, v20 @560
+    Return v21 @560
 }
-function f18 name="return" module=m2 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f18 name="return" module=m2 position=651 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
-    Jump -> next b1() @548
+    Jump -> next b1() @651
   b1():
-    v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator @617
-    v3 = ResultAt v2 @716
-    v4 = ResultAt v2 index=1 @779
-    v5 = Integer integer=2 @843
-    v6 = StrictEq v4, v5 @832
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @832
-  b2(v7):
-    Jump -> next b3() @832
+    v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator @720
+    v3 = ResultAt v2 @817
+    v4 = ResultAt v2 index=1 @880
+    v5 = Integer integer=1 @951
+    v6 = StrictEq v4, v5 @940
+    v7 = Convert v6 declared={type=boolean site=w1} @940
+    v8 = Integer integer=2 @1001
+    v9 = StrictEq v4, v8 @990
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @990
+  b2(v10):
+    Jump -> next b3() @990
   b3():
-    v8 = ResumeGenerator v0, v1 resumeMode=Return @890
-    Return v8 @890
-  b4(v9):
-    Jump -> next b5() @832
-  b5():
-    v10 = Integer integer=1 @990
-    v11 = StrictEq v9, v10 @979
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @951
-    v13 = CreateIteratorResult v3, v12 @951
-    Return v13 @951
+    v11 = ResumeGenerator v0, v1 resumeMode=Return @1058
+    v12 = PropGet v11 key="value" @1125
+    v13 = PropGet v11 key="done" @1154
+    v14 = Boolean boolean=true @1170
+    v15 = StrictEq v13, v14 @1154
+    v16 = Convert v15 declared={type=boolean site=w1} @1147
+    Jump -> next b5(v12, v16) @1147
+  b4(v17):
+    Jump -> next b5(v3, v7) @990
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1193
+    v21 = CreateIteratorResult v18, v20 @1193
+    Return v21 @1193
 }
-function f19 name="throw" module=m2 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything, v1: anything):
-    Jump -> next b1() @1077
-  b1():
-    v2 = StepGenerator v0, v1 resumeMode=Throw check=IsGenerator @1149
-    v3 = ResultAt v2 @1251
-    v4 = ResultAt v2 index=1 @1314
-    v5 = Integer integer=2 @1378
-    v6 = StrictEq v4, v5 @1367
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @1367
-  b2(v7):
-    Jump -> next b3() @1367
-  b3():
-    v8 = ResumeGenerator v0, v1 resumeMode=Throw @1425
-    Return v8 @1425
-  b4(v9):
-    Jump -> next b5() @1367
-  b5():
-    v10 = Integer integer=1 @1528
-    v11 = StrictEq v9, v10 @1517
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1489
-    v13 = CreateIteratorResult v3, v12 @1489
-    Return v13 @1489
-}
-function f20 name="next" module=m4 position=99 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f19 name="next" module=m3 position=99 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @99
   b1():
@@ -610,7 +599,7 @@ function f20 name="next" module=m4 position=99 kind=Method role=Library flags=[H
     v9 = ResultAt v7 index=1 @518
     v10 = Integer integer=1 @589
     v11 = StrictEq v9, v10 @578
-    v12 = Convert v11 declared={type=boolean site=w0} @578
+    v12 = Convert v11 declared={type=boolean site=w2} @578
     v13 = Integer integer=2 @639
     v14 = StrictEq v9, v13 @628
     Branch v14 -> taken b4(| 0), notTaken b6(| 0) @628
@@ -623,7 +612,7 @@ function f20 name="next" module=m4 position=99 kind=Method role=Library flags=[H
     v19 = PropGet v17 key="done" @799
     v20 = Boolean boolean=true @815
     v21 = StrictEq v19, v20 @799
-    v22 = Convert v21 declared={type=boolean site=w0} @792
+    v22 = Convert v21 declared={type=boolean site=w2} @792
     Jump -> next b7(v18, v22) @792
   b6(v23):
     Jump -> next b7(v8, v12) @628
@@ -637,7 +626,7 @@ function f20 name="next" module=m4 position=99 kind=Method role=Library flags=[H
     v29 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @185
     Unreachable @185
 }
-function f21 name="return" module=m4 position=904 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f20 name="return" module=m3 position=904 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @904
   b1():
@@ -694,7 +683,7 @@ function f21 name="return" module=m4 position=904 kind=Method role=Library flags
     v32 = ResultAt v30 index=1 @1390
     v33 = Integer integer=1 @1465
     v34 = StrictEq v32, v33 @1454
-    v35 = Convert v34 declared={type=boolean site=w1} @1454
+    v35 = Convert v34 declared={type=boolean site=w3} @1454
     v36 = Integer integer=2 @1519
     v37 = StrictEq v32, v36 @1508
     Branch v37 -> taken b15(| 0), notTaken b17(| 0) @1508
@@ -707,7 +696,7 @@ function f21 name="return" module=m4 position=904 kind=Method role=Library flags
     v42 = PropGet v40 key="done" @1693
     v43 = Boolean boolean=true @1709
     v44 = StrictEq v42, v43 @1693
-    v45 = Convert v44 declared={type=boolean site=w1} @1686
+    v45 = Convert v44 declared={type=boolean site=w3} @1686
     Jump -> next b18(v41, v45) @1686
   b17(v46):
     Jump -> next b18(v31, v35) @1508
@@ -721,7 +710,7 @@ function f21 name="return" module=m4 position=904 kind=Method role=Library flags
     v52 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @993
     Unreachable @993
 }
-function f22 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=MapIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f21 name="next" module=m4 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=MapIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @25
   b1():
@@ -744,7 +733,7 @@ function f22 name="next" module=m5 position=25 kind=Method role=Library flags=[H
     v11 = ThrowNewError errorKind=TypeError message="%MapIteratorPrototype%.next requires that |this| be a Map Iterator instance" @108
     Unreachable @108
 }
-function f23 name="next" module=m6 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=SetIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f22 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=SetIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @25
   b1():
@@ -767,7 +756,7 @@ function f23 name="next" module=m6 position=25 kind=Method role=Library flags=[H
     v11 = ThrowNewError errorKind=TypeError message="%SetIteratorPrototype%.next requires that |this| be a Set Iterator instance" @108
     Unreachable @108
 }
-function f24 name="next" module=m7 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f23 name="next" module=m6 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @1421
   b1():
@@ -789,7 +778,7 @@ function f24 name="next" module=m7 position=1421 kind=Method role=Library flags=
     v10 = ThrowNewError errorKind=TypeError message="%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object" @1650
     Unreachable @1650
 }
-function f25 name="return" module=m7 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f24 name="return" module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @2171
   b1():
@@ -828,17 +817,16 @@ function f25 name="return" module=m7 position=2171 kind=Method role=Library flag
 }
 runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 runtimefunction id=GeneratorPrototypeNext function=f17 visibility=Private
-runtimefunction id=JSIteratorHelperPrototypeNext function=f20 visibility=Private
-runtimefunction id=WrapForValidIteratorPrototypeNext function=f24
+runtimefunction id=JSIteratorHelperPrototypeNext function=f19 visibility=Private
+runtimefunction id=WrapForValidIteratorPrototypeNext function=f23
 runtimefunction id=GeneratorPrototypeReturn function=f18 visibility=Private
-runtimefunction id=JSIteratorHelperPrototypeReturn function=f21
-runtimefunction id=WrapForValidIteratorPrototypeReturn function=f25
-runtimefunction id=GeneratorPrototypeThrow function=f19 visibility=Private
-runtimefunction id=MapIteratorPrototypeNext function=f22 visibility=Private
-runtimefunction id=SetIteratorPrototypeNext function=f23 visibility=Private
+runtimefunction id=JSIteratorHelperPrototypeReturn function=f20
+runtimefunction id=WrapForValidIteratorPrototypeReturn function=f24
+runtimefunction id=MapIteratorPrototypeNext function=f21 visibility=Private
+runtimefunction id=SetIteratorPrototypeNext function=f22 visibility=Private
 # -- generated: createBaseNode createBinary createLeaf sum describe
 # CHECK-LABEL: function {{*}}name="createBaseNode"
-# CHECK: module=m0 position=439 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f41 callPosition=552 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f39 callPosition=552 isConstruction=true callIsPartOfConstruction=true module=m0}] {
+# CHECK: module=m0 position=439 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f39 callPosition=552 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f37 callPosition=552 isConstruction=true callIsPartOfConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: int[1, 2]):
 # CHECK-NEXT: v1: anything ~ undefined|null|function = GetModuleVariable variable=g5
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=undefined|null|object

@@ -57,28 +57,25 @@ const prefixedBuiltins = [
   "Int8Array",
   "Promise",
   "RangeError",
+  "ReadableByteStreamController",
   "ReadableStream",
+  "ReadableStreamBYOBReader",
+  "ReadableStreamBYOBRequest",
+  "ReadableStreamDefaultController",
+  "ReadableStreamDefaultReader",
   "RegExp",
   "String",
+  "TransformStream",
+  "TransformStreamDefaultController",
   "TypeError",
   "Uint16Array",
   "Uint32Array",
   "Uint8Array",
   "Uint8ClampedArray",
-  "isFinite",
-];
-
-const prefixedPrivateGlobals = [
-  "ReadableByteStreamController",
-  "ReadableStreamBYOBReader",
-  "ReadableStreamBYOBRequest",
-  "ReadableStreamDefaultController",
-  "ReadableStreamDefaultReader",
-  "TransformStream",
-  "TransformStreamDefaultController",
   "WritableStream",
   "WritableStreamDefaultController",
   "WritableStreamDefaultWriter",
+  "isFinite",
 ];
 
 export default b.declarations(
@@ -155,7 +152,6 @@ export default b.declarations(
   directive("visibility", "Visibility"),
 
   prefixedBuiltins.flatMap(name => b.prefixedGlobal(name, builtin(name))),
-  prefixedPrivateGlobals.flatMap(name => b.prefixedGlobal(name, privateGlobal)),
   b.prefixedGlobal("undefined", { intrinsic: "Undefined" }),
   b.prefixedGlobal("Infinity", { intrinsic: "Double", value: Infinity }),
 );

@@ -527,9 +527,9 @@ function f4 name="make" module=m0 position=2783 flags=[HasExplicitName] length=1
     PropSet v2, v9 key="value" @2866
     Return v2 @2909
 }
-function f5 name="Point" module=m0 position=2367 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+function f5 name="Point" module=m0 position=2340 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything, v1: anything):
-    Jump -> next b1() @2367
+    Jump -> next b1() @2340
   b1():
     v2 = GetConstructPrototype v0 layout=L0 @2367
     v3 = NewObject v2 layout=L0 @2367
@@ -859,7 +859,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b2(v13)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Point"
-# CHECK: module=m0 position=2367 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="field"}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK: module=m0 position=2340 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="field"}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
 # CHECK-NEXT: b0(v0: anything, v1: "field"):
 # CHECK-NEXT: v2: f5 = AssumeType v0 provenType=f5
 # CHECK-NEXT: v3: object = GetConstructPrototype v2 layout=L0
@@ -875,14 +875,14 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Point"
-# CHECK: module=m0 position=2367 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f5}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers takesNewTarget=true} {
+# CHECK: module=m0 position=2340 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f5}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f5, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: "field" = AssumeType v3 provenType="field"
 # CHECK-NEXT: v5: L0 = CallDirect v2, v4 function=f5
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Point"
-# CHECK: module=m0 position=2367 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=L0} parameters=[{type="field"}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f5} constructedClass=L0
+# CHECK: module=m0 position=2340 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=L0} parameters=[{type="field"}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f5} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m0 position=873 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f6}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f6} creator=Entrypoint{target=f6 arguments=Registers} inlineFrames=[{}, {callee=f6 callPosition=873 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f6, v1: anything):

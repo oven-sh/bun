@@ -47,6 +47,8 @@ pub struct ModuleGraph {
     pub(super) record_files: Vec<FileId>,
     pub(super) left_out_files: Vec<FileId>,
     pub(super) files_brought_by_calls: Vec<FileId>,
+    /// `ReachedModules::requests_that_bind_nothing`
+    pub(super) requests_that_bind_nothing: Vec<(FileId, FileId)>,
     /// Those of `left_out_files` that keep a record without code.
     pub(super) placeholder_files: Vec<FileId>,
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
@@ -327,7 +329,7 @@ impl ModuleGraph {
         for row in &mut self.rows {
             row.has_no_side_effects = false;
         }
-        if files.is_empty() {
+        if files.is_empty() && self.files_brought_by_calls.is_empty() {
             return self.finish_plan(in_parallel);
         }
         self.plan.is_finished = false;
@@ -439,7 +441,12 @@ impl ModuleGraph {
         files.filter(is_on_cycle_with_file_that_runs).collect()
     }
 
-    pub fn set_files_brought_by_calls(&mut self, files: Vec<FileId>) {
+    pub fn set_files_brought_by_calls(
+        &mut self,
+        files: Vec<FileId>,
+        requests_that_bind_nothing: Vec<(FileId, FileId)>,
+    ) {
+        self.requests_that_bind_nothing = requests_that_bind_nothing;
         self.files_brought_by_calls = files;
     }
 
@@ -454,8 +461,14 @@ impl ModuleGraph {
         // With each request: whether the file has written it itself.
         let mut pending: Vec<(ModuleRequest, bool)> = Vec::new();
         let is_import = |request: &&ModuleRequest| request.kind == ModuleRequestKind::Import;
-        let of_files = self.rows.iter().map(|row| &row.requests);
-        for written in of_files.chain(&self.plan.inner_requests) {
+        let of_files = self.rows.iter().map(|row| (Some(row.file), &row.requests));
+        let of_inner_modules = self.plan.inner_requests.iter().map(|it| (None, it));
+        for (writer, written) in of_files.chain(of_inner_modules) {
+            // `import "./a"`: nothing can be read through it.
+            let binds_nothing = |target: FileId| {
+                let bare = &self.requests_that_bind_nothing;
+                writer.is_some_and(|writer| bare.binary_search(&(writer, target)).is_ok())
+            };
             let mut passed_on = Vec::with_capacity(written.len());
             seen.clear();
             pending.extend(written.iter().rev().map(|&request| (request, true)));
@@ -478,7 +491,7 @@ impl ModuleGraph {
                     }
                     // Only a call wants it, and it says that nothing is lost until then.
                     ModuleRef::File(target)
-                        if !is_written_here
+                        if (!is_written_here || binds_nothing(target))
                             && !request.is_dynamic_star_export
                             && self.files_brought_by_calls.binary_search(&target).is_ok() => {}
                     // It goes with its importer, as a file does that only a file asks for that is left out.

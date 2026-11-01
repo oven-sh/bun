@@ -275,10 +275,7 @@ fn resolve_file_loaded_another_way<'r>(
     resolution: CodeResolution<'r>,
 ) -> CodeResolution<'r> {
     let is_outside = matches!(resolution, CodeResolution::External { .. });
-    let hands_type_to_loader = matches!(
-        site.kind,
-        ImportSiteKind::Import(_) | ImportSiteKind::ImportCall(_)
-    );
+    let hands_type_to_loader = site.kind.hands_type_to_loader();
     if let (CodeResolution::File(file), Some(type_attribute)) =
         (resolution, loader_attribute(hir, site))
         && hands_type_to_loader

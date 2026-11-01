@@ -1,3 +1,4 @@
+use bun_sort_by_number::SortByNumber;
 use core::ops::Range;
 
 use crate::error::TrimInternalError;
@@ -56,7 +57,7 @@ fn plan_removal(
     let tombstoned_spans = merge_adjacent(tombstoned_items.iter().cloned());
     let (tombstones, mut dead_ranges) = table.find_tombstones(package, &tombstoned_spans)?;
     dead_ranges.extend(table.find_dead_ranges(package, &removed_spans)?);
-    dead_ranges.sort_unstable_by_key(|range| range.start);
+    dead_ranges.sort_by_u32(|range| range.start);
     let dead_names = table.find_dead_names(package, &removed_spans)?;
     Some(PlannedRemoval {
         table,

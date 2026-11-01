@@ -20,7 +20,7 @@ module m1 path="/$bun/js/builtins/CommonJS.ts" displayPath="/$bun/js/builtins/Co
 module m2 path="/$bun/js/prelude/array-search.ts" displayPath="/$bun/js/prelude/array-search.ts" flags=[IsLibrary] namespaceLayout=L(m2)
 module m3 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule syntheticExports=[{name="builtinModules" variable=g4 isKnownMember=true}]
 entry module=m0
-typesite w0 module=m1 position=9758 kind=Parameter
+typesite w0 module=m1 position=9760 kind=Parameter
 typesite w1 module=m2 position=427 kind=Parameter
 typesite w2 module=m2 position=458 kind=Parameter
 typesite w3 module=m2 position=399 kind=Result
@@ -155,65 +155,65 @@ function f3 name="isBuiltIn" module=m0 position=409 flags=[HasExplicitName] leng
 function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f7 module=m1 position=9686 kind=Method role=Library flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=CommonJSRequireESMFromHijackedExtension thisType={type=undefined|null|object flags=[IsExpected]} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f7 module=m1 position=9688 kind=Method role=Library flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=CommonJSRequireESMFromHijackedExtension thisType={type=undefined|null|object flags=[IsExpected]} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|object, v1: undefined|null|string):
-    Jump -> next b1() @9686
+    Jump -> next b1() @9688
   b1():
-    v2 = Undefined @9774
-    v3 = Builtin builtin=GlobalThis @9913
-    v4 = PropGet v3 key=@"requireESM" [isFreeName] @9913
-    v5 = Call v4, -, v1, v0 @9913
-    v6 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @9913
-    v7 = Undefined @10013
-    v8 = Undefined @10013
-    Jump -> next b2() @10044
+    v2 = Undefined @9776
+    v3 = Builtin builtin=GlobalThis @9915
+    v4 = PropGet v3 key=@"requireESM" [isFreeName] @9915
+    v5 = Call v4, -, v1, v0 @9915
+    v6 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @9915
+    v7 = Undefined @10015
+    v8 = Undefined @10015
+    Jump -> next b2() @10046
   b2() handler=b6(v7, v8):
-    v9 = PropGet v6 key="__esModule" @10065
-    v10 = Convert v9 declared={type=boolean flags=[IsExpected]} @10065
-    Jump -> next b3() @10054
+    v9 = PropGet v6 key="__esModule" @10067
+    v10 = Convert v9 declared={type=boolean flags=[IsExpected]} @10067
+    Jump -> next b3() @10056
   b3() handler=b6(v10, v8):
-    v11 = PropGet v6 key="module.exports" @10107
-    Jump -> next b4() @10091
+    v11 = PropGet v6 key="module.exports" @10109
+    Jump -> next b4() @10093
   b4() handler=b6(v10, v11):
-    Jump -> next b5() @10091
+    Jump -> next b5() @10093
   b5():
-    Jump -> next b7(v10, v11) @10091
+    Jump -> next b7(v10, v11) @10093
   b6(v12, v13) role=CatchHandler:
-    v14 = CatchValue @10146
-    Jump -> next b7(v12, v13) @10146
+    v14 = CatchValue @10148
+    Jump -> next b7(v12, v13) @10148
   b7(v15, v16):
-    v17 = TypeTest v15 testedType=undefined @10727
-    Branch v17 -> taken b8(| 0), notTaken b14(| 0) @10727
+    v17 = TypeTest v15 testedType=undefined @10729
+    Branch v17 -> taken b8(| 0), notTaken b14(| 0) @10729
   b8(v18):
-    Jump -> next b9() @10727
+    Jump -> next b9() @10729
   b9():
-    Jump -> next b10() @10757
+    Jump -> next b10() @10759
   b10() handler=b12():
-    v19 = Boolean boolean=true @10792
-    PropSet v6, v19 key="__esModule" @10769
-    Jump -> next b11() @10769
+    v19 = Boolean boolean=true @10794
+    PropSet v6, v19 key="__esModule" @10771
+    Jump -> next b11() @10771
   b11():
-    Jump -> next b13() @10769
+    Jump -> next b13() @10771
   b12() role=CatchHandler:
-    v21 = CatchValue @10810
-    Jump -> next b13() @10810
+    v21 = CatchValue @10812
+    Jump -> next b13() @10812
   b13():
-    Jump -> next b15() @10810
+    Jump -> next b15() @10812
   b14(v22):
-    Jump -> next b15() @10727
+    Jump -> next b15() @10729
   b15():
-    v23 = TypeTest v16 testedType=undefined|null @10893
-    Branch v23 -> taken b16(| 0), notTaken b18(| 0) @10893
+    v23 = TypeTest v16 testedType=undefined|null @10895
+    Branch v23 -> taken b16(| 0), notTaken b18(| 0) @10895
   b16(v24):
-    Jump -> next b17() @10893
+    Jump -> next b17() @10895
   b17():
-    Jump -> next b19(v6) @10910
+    Jump -> next b19(v6) @10912
   b18(v25):
-    Jump -> next b19(v25) @10893
+    Jump -> next b19(v25) @10895
   b19(v26):
-    PropSet v0, v26 key="exports" @10878
-    v28 = Undefined @10878
-    Return v28 @10878
+    PropSet v0, v26 key="exports" @10880
+    v28 = Undefined @10880
+    Return v28 @10880
 }
 function f8 name="firstSearchedIndex" module=m2 position=399 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|number site=w1}, {type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|number, v1: number):

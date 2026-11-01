@@ -15,6 +15,7 @@ use crate::util::{
     spread_of,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
+use bun_sort_by_number::SortByNumber;
 use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
@@ -2705,7 +2706,7 @@ windowed_by! {
 fn put_in_order(pairs: &mut [(TypeId, TypeId)]) -> usize {
     // The sort must be stable, so that which of two pairs for the same parameter is kept doesn't
     // depend on the other ids.
-    pairs.sort_by_key(|pair| pair.0.arrival_order());
+    pairs.sort_by_u32(|pair| pair.0.arrival_order());
     let mut kept = 0;
     for at in 0..pairs.len() {
         if kept == 0 || pairs[kept - 1].0 != pairs[at].0 {

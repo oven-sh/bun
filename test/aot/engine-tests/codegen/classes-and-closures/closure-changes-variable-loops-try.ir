@@ -737,7 +737,7 @@ typesite w241 module=m0 position=13016 kind=CallResult
 typesite w242 module=m0 position=13188 kind=Assertion
 layout L0 kind=Instance name="Box" module=m0 position=289 constructor=f11 fields=[{key="n" declared={type=number site=w14} flags=[IsRequired]}, {key="next" declared={type=undefined|null|L0 site=w15 flags=[OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
 layout L1 kind=Instance name="Blown" module=m0 position=405 constructor=f12 flags=[HasHeritage]
-layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w40}}] ownFieldCount=1
+layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w40} variableName="v87"}] ownFieldCount=1
 variable g0 name="tick" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="opaqueInt" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
 variable g2 name="fold" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
@@ -3754,7 +3754,7 @@ function f12 name="Blown" module=m0 position=405 kind=DerivedConstructor flags=[
     v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @405
     Return v5 @405
 }
-function f13 name="closure0" module=m0 position=6817 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}, {type=number site=w95}] thisType={type=anything} parameters=[{type=number site=w163}] results=[{type=number site=w164}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f13 name="closure0" module=m0 position=6817 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}, {type=number site=w95 variableName="v54"}] thisType={type=anything} parameters=[{type=number site=w163}] results=[{type=number site=w164}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L2, v1: number, v2: number):
     Jump -> next b1() @6817
   b1():
@@ -6116,7 +6116,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="closure0"
-# CHECK: module=m0 position=6817 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}, {type=int[0, 8191] site=w95}] thisType={type=anything} parameters=[{type=i32 site=w163}] results=[{type=i32 site=w164}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=6817 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}, {type=int[0, 8191] site=w95 variableName="v54"}] thisType={type=anything} parameters=[{type=i32 site=w163}] results=[{type=i32 site=w164}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Blown"
 # CHECK: module=m0 position=405 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f12}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f12} creator=Entrypoint{target=f12 takesNewTarget=true} inlineFrames=[{}, {callee=f12 callPosition=405 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f12, v1: anything):

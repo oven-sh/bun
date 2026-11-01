@@ -5,7 +5,8 @@
 // `flagsOfVeryLargeProgram`, its loop finds turn() at run time, and turn() is of ordinary size: ./everyday-idioms.ts says how.
 //
 // ./behind-the-jit-in-a-very-large-program.<os>-<arch>.json names the idioms that took more instructions than the JIT when they were last measured, with the ratio.
-// Each is a todo: `bun test --todo` runs them and tells which have come under the JIT.
+// Each is a todo, and the ratio is only its title: ./everyday-pins-in-a-very-large-program.<os>-<arch>.json holds what it takes (./pinned-everyday-idioms.ts), and that only goes down.
+// `bun test --todo` runs them and tells which have come under the JIT.
 // `bun test/aot/perf/idioms-against-the-jit.ts --in-a-very-large-program --write-behind` rewrites the file.
 // Every other idiom fails at over 1.35 times and 8 instructions. A run measures one idiom in twenty, others for each commit of Bun; AOT_SHARE=all measures all of them.
 import { afterAll, expect } from "bun:test";

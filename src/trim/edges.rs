@@ -1,11 +1,12 @@
 use bun_removable_features::Feature;
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 
 use crate::model::{EdgeStrength, FeatureEdge, FeatureEdges};
 
 impl FeatureEdges {
     pub fn new(mut edges: Vec<FeatureEdge>) -> FeatureEdges {
         edges.retain(|edge| edge.from != edge.to);
-        edges.sort_unstable_by_key(|edge| (edge.from, edge.to));
+        edges.sort_by_u64(|edge| number_of_pair(edge.from as u32, edge.to as u32));
         edges.dedup_by(|duplicate, merged| {
             let is_same_pair = (duplicate.from, duplicate.to) == (merged.from, merged.to);
             if is_same_pair {

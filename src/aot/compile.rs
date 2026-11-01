@@ -68,7 +68,8 @@ use crate::load::loaders::loader_by_path;
 use crate::load::plugin_modules::is_path_of_entry_text;
 use crate::load::replaced_builtins::ProductFiles;
 use crate::load::replaced_by_tests::{
-    ReadsLibrary, find_what_starting_worker_writes, scan_files_of_tests,
+    ReadsLibrary, find_what_adding_matchers_writes, find_what_starting_worker_writes,
+    scan_files_of_tests,
 };
 use crate::load::source_provider::SourceProvider;
 use crate::load::worker_files::{WorkerFile, may_start_workers};
@@ -188,6 +189,8 @@ pub(crate) struct StartedWorkers {
     pub files: Vec<WorkerFile>,
     /// `CodeThatStartsWorkers::names`
     pub names: Vec<EntryPointPaths>,
+    /// `CodeThatStartsWorkers::starts_of_files`
+    pub starts_of_files: Vec<(Vec<u8>, FileId, u32)>,
     /// What `find_embedded_code_files` found.
     pub copies: Vec<WorkerFile>,
     /// Files that a Worker may start from and that the build did not compile for it.
@@ -246,8 +249,8 @@ pub struct BuildFailed {
     pub left_to_loader: Vec<Vec<u8>>,
     /// `None`: the build ended before it had followed what its files load. A file that the loader cannot read either loads nothing.
     pub loads_below_files_left_to_loader: Option<Arc<LoadsBelowFilesLeftToLoader>>,
-    /// No failure: `LoadOptions::loaded_by_workers_alone`. See `compile`.
-    pub loaded_by_workers_alone: Vec<Vec<u8>>,
+    /// No failure: `LoadOptions::loaded_by_workers_too`. See `compile`.
+    pub loaded_by_workers_too: Vec<Vec<u8>>,
 }
 
 impl fmt::Debug for BuildFailed {
@@ -299,8 +302,8 @@ pub(crate) struct Build<'a> {
     pub(crate) is_one_program: bool,
     /// `BuildFailed::replaced_builtins`.
     pub(crate) replaced_builtins_spelled: Vec<u32>,
-    /// `BuildFailed::loaded_by_workers_alone`.
-    pub(crate) loaded_by_workers_alone: Vec<Vec<u8>>,
+    /// `BuildFailed::loaded_by_workers_too`.
+    pub(crate) loaded_by_workers_too: Vec<Vec<u8>>,
     /// `replaced_modules::packages_mock_modules_that_they_do_not_spell`.
     pub(crate) packages_mock_any_module: bool,
     /// Of a build of one program: `KnownWorkerFiles::splits` and `KnownWorkerFiles::left_out`.
@@ -1123,11 +1126,11 @@ fn find_load_options_to_compile_again_with(
             load.replaced_builtins.shared_sort_unstable();
             load.replaced_builtins.dedup();
         }
-        Err(failure) if !failure.loaded_by_workers_alone.is_empty() => {
-            load.loaded_by_workers_alone
-                .extend_from_slice(&failure.loaded_by_workers_alone);
-            load.loaded_by_workers_alone.shared_sort_unstable();
-            load.loaded_by_workers_alone.dedup();
+        Err(failure) if !failure.loaded_by_workers_too.is_empty() => {
+            load.loaded_by_workers_too
+                .extend_from_slice(&failure.loaded_by_workers_too);
+            load.loaded_by_workers_too.shared_sort_unstable();
+            load.loaded_by_workers_too.dedup();
         }
         // First: the types that the build brings are not to blame for a file that cannot be read.
         Err(failure)
@@ -1239,15 +1242,15 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
             left_to_loader[..left_to_loader.len().min(8)].join(" "),
         );
     }
-    let by_workers_alone: Vec<String> = (after.loaded_by_workers_alone.iter())
-        .filter(|file| !before.loaded_by_workers_alone.contains(file))
+    let by_workers_too: Vec<String> = (after.loaded_by_workers_too.iter())
+        .filter(|file| !before.loaded_by_workers_too.contains(file))
         .map(|file| BStr::new(file).to_string())
         .collect();
-    if !by_workers_alone.is_empty() {
+    if !by_workers_too.is_empty() {
         bun_core::print_errorln!(
-            "AOT build starts over | files that Workers alone load get no names of the test runner: {} | {}",
-            by_workers_alone.len(),
-            by_workers_alone[..by_workers_alone.len().min(8)].join(" "),
+            "AOT build starts over | files of the tests that Workers load read the names of the test runner by their realm: {} | {}",
+            by_workers_too.len(),
+            by_workers_too[..by_workers_too.len().min(8)].join(" "),
         );
     }
     let added = (after.replaced_exports.iter())
@@ -1282,7 +1285,7 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
     let names_reason = !(unlocked.is_empty()
         && opened.is_empty()
         && left_to_loader.is_empty()
-        && by_workers_alone.is_empty()
+        && by_workers_too.is_empty()
         && examples.is_empty()
         && changed.is_empty()
         && code(before) == code(after));
@@ -1316,8 +1319,25 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
         true => ProductFiles::ReplaceNothing,
         false => ProductFiles::AreReadAsTestsAre,
     };
-    let files = &options.entry_points;
-    let mut found = scan_files_of_tests(files, threads, ReadsLibrary::No, product, None);
+    // A layer of packages begins at files of packages. What the product imports replaces nothing.
+    let of_product = &options.load.package_files_that_product_imports;
+    let files = options.entry_points.iter();
+    let files = files.filter(|path| of_product.binary_search(path).is_err());
+    let is_test_file: FxHashSet<&[u8]> = (options.load.test_files.iter())
+        .map(Vec::as_slice)
+        .collect();
+    let (test_files, others): (Vec<Vec<u8>>, Vec<Vec<u8>>) = files
+        .cloned()
+        .partition(|path| is_test_file.contains(path.as_slice()));
+    let mut found = scan_files_of_tests(
+        &test_files,
+        &others,
+        &[],
+        threads,
+        ReadsLibrary::No,
+        product,
+        None,
+    );
     found
         .members
         .extend_from_slice(&options.load.replaced_builtins);
@@ -1377,6 +1397,23 @@ fn with_builtins_that_starting_worker_writes<'a>(options: &Options<'a>) -> Optio
     Some(options)
 }
 
+fn with_builtins_that_adding_matchers_writes<'a>(options: &Options<'a>) -> Option<Options<'a>> {
+    if !options.load.runs_tests || options.aot.checks_only {
+        return None;
+    }
+    let mut members = find_what_adding_matchers_writes();
+    members.extend_from_slice(&options.load.replaced_builtins);
+    members.shared_sort_unstable();
+    members.dedup();
+    if members == options.load.replaced_builtins {
+        return None;
+    }
+    let all: Vec<usize> = (0..options.entry_points.len()).collect();
+    let mut options = options_with_entry_points(options, &all);
+    options.load.replaced_builtins = members;
+    Some(options)
+}
+
 /// The entry points of the last test build of the process that started over, and what it started over with.
 static LEARNED_BY_TEST_BUILD: Guarded<Option<(Vec<Vec<u8>>, LoadOptions)>> = Guarded::new(None);
 
@@ -1410,10 +1447,10 @@ fn with_what_test_build_learned<'a>(options: &Options<'a>) -> Option<Options<'a>
         .extend_from_slice(&learned.left_to_loader);
     load.left_to_loader.shared_sort_unstable();
     load.left_to_loader.dedup();
-    load.loaded_by_workers_alone
-        .extend_from_slice(&learned.loaded_by_workers_alone);
-    load.loaded_by_workers_alone.shared_sort_unstable();
-    load.loaded_by_workers_alone.dedup();
+    load.loaded_by_workers_too
+        .extend_from_slice(&learned.loaded_by_workers_too);
+    load.loaded_by_workers_too.shared_sort_unstable();
+    load.loaded_by_workers_too.dedup();
     for below in &learned.loads_below_files_left_to_loader {
         let known = &mut load.loads_below_files_left_to_loader;
         if !known.iter().any(|known| Arc::ptr_eq(known, below)) {
@@ -1454,6 +1491,11 @@ pub fn compile(
     }
     if let Some(options) =
         with_builtins_that_starting_worker_writes(changed.as_ref().unwrap_or(options))
+    {
+        changed = Some(options);
+    }
+    if let Some(options) =
+        with_builtins_that_adding_matchers_writes(changed.as_ref().unwrap_or(options))
     {
         changed = Some(options);
     }
@@ -2301,10 +2343,10 @@ fn compile_programs<'a>(
             let (is_one_program, brought_bun_types) =
                 (build.is_one_program, build.brings_bun_types);
             let replaced_builtins = core::mem::take(&mut build.replaced_builtins_spelled);
-            let by_workers_alone = core::mem::take(&mut build.loaded_by_workers_alone);
+            let by_workers_too = core::mem::take(&mut build.loaded_by_workers_too);
             let mut failure = build.finish::<()>(Err(stage), log).unwrap_err();
             failure.replaced_builtins = replaced_builtins;
-            failure.loaded_by_workers_alone = by_workers_alone;
+            failure.loaded_by_workers_too = by_workers_too;
             failure.is_one_program = is_one_program;
             failure.brought_bun_types = brought_bun_types;
             return Err(failure);
@@ -2529,7 +2571,7 @@ fn compile_programs<'a>(
             replaced_builtins: Vec::new(),
             left_to_loader: Vec::new(),
             loads_below_files_left_to_loader: None,
-            loaded_by_workers_alone: Vec::new(),
+            loaded_by_workers_too: Vec::new(),
         }),
     }
 }
@@ -2604,7 +2646,7 @@ fn fail(
         replaced_builtins: Vec::new(),
         left_to_loader: Vec::new(),
         loads_below_files_left_to_loader: None,
-        loaded_by_workers_alone: Vec::new(),
+        loaded_by_workers_too: Vec::new(),
     }
 }
 
@@ -2652,7 +2694,7 @@ impl<'a> Build<'a> {
             is_preloading: false,
             is_one_program: false,
             replaced_builtins_spelled: Vec::new(),
-            loaded_by_workers_alone: Vec::new(),
+            loaded_by_workers_too: Vec::new(),
             packages_mock_any_module: false,
             known_worker_files: None,
             files_of_the_one_program: Vec::new(),

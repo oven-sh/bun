@@ -148,6 +148,43 @@ pub fn canonical_id(id: BuiltinId) -> BuiltinId {
     entry(id).same_object_as.unwrap_or(id)
 }
 
+/// `vi.resetModules()`, `jest.resetModules()`: every file that has loaded loads again, as behind a `delete` under each key of `require.cache`.
+pub fn resets_modules(id: BuiltinId) -> bool {
+    matches!(
+        canonical_id(id),
+        BuiltinId::BunTestJestResetModules
+            | BuiltinId::BunTestViResetModules
+            | BuiltinId::BunTestVitestJestResetModules
+            | BuiltinId::BunTestVitestViResetModules
+    )
+}
+
+/// `jest.useFakeTimers()`: the runner stores functions of its own in the place of the timers.
+pub fn fakes_timers(id: BuiltinId) -> bool {
+    matches!(
+        canonical_id(id),
+        BuiltinId::BunTestJestUseFakeTimers
+            | BuiltinId::BunTestViUseFakeTimers
+            | BuiltinId::BunTestVitestJestUseFakeTimers
+            | BuiltinId::BunTestVitestViUseFakeTimers
+    )
+}
+
+/// `vi.stubGlobal(name, value)` defines `globalThis[name]`.
+pub fn stubs_global(id: BuiltinId) -> bool {
+    matches!(
+        canonical_id(id),
+        BuiltinId::BunTestViStubGlobal | BuiltinId::BunTestVitestViStubGlobal
+    )
+}
+
+/// `expect.extend(matchers)` puts a function of its own under each name of `matchers` on all three: `Expect::extend()` in src/runtime/test_runner/expect.rs.
+pub const HOLDERS_OF_MATCHERS: [BuiltinId; 3] = [
+    BuiltinId::Expect,
+    BuiltinId::ExpectPrototype,
+    BuiltinId::ExpectStaticPrototype,
+];
+
 /// Start-up makes the place and every object on the way to it immutable.
 pub fn is_locked(id: BuiltinId) -> bool {
     let mut next = Some(id);

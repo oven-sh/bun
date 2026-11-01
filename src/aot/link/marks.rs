@@ -352,7 +352,10 @@ impl<'a> Marker<'a> {
         }
         match context.definitions.variables[index as usize] {
             None => self.undefined.variables.push((index, from)),
-            Some(VariableDefinition::SyntheticExport { .. }) => {
+            Some(
+                VariableDefinition::SyntheticExport { .. }
+                | VariableDefinition::MockOfRuntimeModule { .. },
+            ) => {
                 is_retained.store(true, Ordering::Relaxed);
             }
             Some(VariableDefinition::Unit(site)) => {

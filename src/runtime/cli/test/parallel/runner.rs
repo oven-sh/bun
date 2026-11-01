@@ -124,6 +124,12 @@ pub(crate) fn run_as_coordinator(
         });
     }
     let runs_compiled_code = splits_files || crate::cli::run_compiled::runs_compiled_code();
+    if runs_compiled_code
+        && ctx.test_options.parallel > 0
+        && let Some(timings) = reporter.timings.as_mut()
+    {
+        timings.record_workers(ctx.test_options.parallel);
+    }
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits
     // depend on which worker runs a file, not the order within the worker).
@@ -1014,7 +1020,7 @@ pub(crate) fn run_as_worker(
     ctx: Command::Context,
 ) -> ! {
     vm.test_isolation_enabled = ctx.test_options.isolate;
-    vm.test_isolation_state.shares_global = ctx.test_options.isolate_modules;
+    vm.test_isolation_state.shares_global = crate::cli::run_compiled::test_files_share_global(ctx);
     vm.auto_killer.enabled = ctx.test_options.isolate;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`

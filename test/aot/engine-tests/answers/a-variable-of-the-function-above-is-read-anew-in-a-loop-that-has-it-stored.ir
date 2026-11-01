@@ -40,7 +40,7 @@ typesite w17 module=m0 position=741 kind=Parameter
 typesite w18 module=m0 position=894 kind=Parameter
 typesite w19 module=m0 position=770 kind=Variable
 typesite w20 module=m0 position=785 kind=Variable
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L1|L2|L3 site=w13 flags=[OmitsNull, OmitsUndefined]}}] ownFieldCount=1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L1|L2|L3 site=w13 flags=[OmitsNull, OmitsUndefined]} variableName="held"}] ownFieldCount=1
 layout L1 module=m0 position=616 fields=[{key="value" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
 layout L2 module=m1 position=3027 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
 layout L3 name="PropertyDescriptor" fields=[{key="configurable" declared={type=undefined|boolean} flags=[IsNeverWritten]}, {key="enumerable" declared={type=undefined|boolean} flags=[IsNeverWritten]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean} flags=[IsNeverWritten]}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
@@ -257,7 +257,7 @@ function f8 name="poke" module=m0 position=653 flags=[IsChecked, HasExplicitName
     v15 = Undefined @687
     Return v15 @687
 }
-function f9 name="work" module=m0 position=740 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}, {type=f8 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number site=w17}] results=[{type=anything}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f9 name="work" module=m0 position=740 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}, {type=f8 flags=[IsFromCompiler] variableName="poke"}] thisType={type=anything} parameters=[{type=number site=w17}] results=[{type=anything}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L0, v1: f8, v2: number):
     Jump -> next b1() @740
   b1():
@@ -300,7 +300,7 @@ function f9 name="work" module=m0 position=740 kind=Arrow flags=[IsChecked] leng
     v30 = Undefined @867
     Return v30 @867
 }
-function f10 name="step" module=m0 position=893 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|function|f9 site=w14 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=number site=w18}] results=[{type=anything}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f10 name="step" module=m0 position=893 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|function|f9 site=w14 flags=[OmitsNull, OmitsUndefined] variableName="work"}] thisType={type=anything} parameters=[{type=number site=w18}] results=[{type=anything}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f9, v1: number):
     Jump -> next b1() @893
   b1():

@@ -264,6 +264,19 @@ fn find_call_site(
     {
         return Some(create_site(ImportSiteKind::MockModule(call), args));
     }
+    if [known::importActual, known::importMock].contains(&name)
+        && is_export_of_test_runner(hir, bound, object, &[known::vi, known::vitest])
+    {
+        return Some(create_site(ImportSiteKind::ImportByTestRunner(call), args));
+    }
+    let requires = [
+        known::requireActual,
+        known::requireMock,
+        known::createMockFromModule,
+    ];
+    if requires.contains(&name) && is_export_of_test_runner(hir, bound, object, &[known::jest]) {
+        return Some(create_site(ImportSiteKind::RequireByTestRunner(call), args));
+    }
     None
 }
 
@@ -305,12 +318,23 @@ fn is_module_of_plugin(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: 
 }
 
 // `object.name` is `mock.module`, `jest.mock` or `vi.mock`, where the object is imported from the test runner.
-fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, mut object: ExprId, name: Atom) -> bool {
+fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
     let holders: &[Atom] = match name {
         _ if name == known::module => &[known::mock],
-        _ if name == known::mock || name == known::doMock => &[known::jest, known::vi],
+        _ if name == known::mock || name == known::doMock => {
+            &[known::jest, known::vi, known::vitest]
+        }
         _ => return false,
     };
+    is_export_of_test_runner(hir, bound, object, holders)
+}
+
+fn is_export_of_test_runner(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mut object: ExprId,
+    holders: &[Atom],
+) -> bool {
     while let Some(ExprKind::Call(call)) = expr_kind(hir, object) {
         let callee = hir.skip_type_assertions(hir[call].callee);
         let Some((receiver, MemberKey::Name(_))) = hir.member_key(callee) else {

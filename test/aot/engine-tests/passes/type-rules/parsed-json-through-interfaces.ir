@@ -56,165 +56,162 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v2 = Builtin builtin=JSON @455
     v3 = PropGet v2 key="parse" @455
     v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]} @455
-    v5 = Call v4, v2, v1 calleeKey="parse" calleeName="JSON.parse" @460
-    v6 = Convert v5 declared={type=undefined|null|object flags=[IsExpected]} @455
-    v7 = Convert v6 declared={type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @489
-    v8 = Builtin builtin=GlobalThis @503
-    v9 = PropGet v8 key="console" [isFreeName] @503
-    v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]} @503
-    v11 = PropGet v10 key="log" @503
-    v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @503
-    v13 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]} @526
-    v14 = StrictEq v7, v13 @515
-    v15 = PropGet v7 key="address" @531
-    v16 = PropGet v13 key="address" @550
-    v17 = StrictEq v15, v16 @531
-    v18 = PropGet v7 key="tags" @563
-    v19 = PropGet v13 key="tags" @579
-    v20 = StrictEq v18, v19 @563
-    v21 = Builtin builtin=Object @589
-    v22 = Builtin builtin=ObjectKeys @589
-    v23 = Call v22, v21, v13 calleeName="Object.keys" @596
-    v24 = Convert v23 declared={type=undefined|null|Array<undefined|null|string> site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @589
-    v25 = PropGet v24 key="join" @604
-    v26 = Call v25, v24 calleeKey="join" calleeName="join" @606
-    v27 = Convert v26 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @589
-    v28 = Builtin builtin=Object @614
-    v29 = Builtin builtin=ObjectKeys @614
-    v30 = Call v29, v28, v7 calleeName="Object.keys" @621
-    v31 = Convert v30 declared={type=undefined|null|Array<undefined|null|string> site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @614
-    v32 = PropGet v31 key="join" @632
-    v33 = Call v32, v31 calleeKey="join" calleeName="join" @634
-    v34 = Convert v33 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @614
-    v35 = Call v12, v10, v14, v17, v20, v27, v34 calleeKey="log" calleeName="console.log" @511
-    v36 = Integer integer=5 @657
-    v37 = Convert v36 declared={type=undefined|number site=w5} @642
-    PropSet v7, v37 key="score" @642
-    v39 = PropGet v7 key="id" @660
-    v40 = Increment v39 @660
-    v41 = Convert v40 declared={type=number site=w6} @667
-    PropSet v7, v41 key="id" @667
-    v43 = Builtin builtin=GlobalThis @672
-    v44 = PropGet v43 key="console" [isFreeName] @672
-    v45 = Convert v44 declared={type=builtin(Console) flags=[IsExpected]} @672
-    v46 = PropGet v45 key="log" @672
-    v47 = Convert v46 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @672
-    v48 = Builtin builtin=JSON @684
-    v49 = PropGet v48 key="stringify" @684
-    v50 = Convert v49 declared={type=builtin(JSONStringify) flags=[IsExpected]} @684
-    v51 = Call v50, v48, v7 calleeKey="stringify" calleeName="JSON.stringify" @689
-    v52 = Convert v51 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @684
-    v53 = PropGet v13 key="id" @708
-    v54 = PropHas v13 key="score" @727
-    v55 = Call v47, v45, v52, v53, v54 calleeKey="log" calleeName="console.log" @680
-    v56 = Builtin builtin=JSON @747
-    v57 = PropGet v56 key="parse" @747
-    v58 = Convert v57 declared={type=builtin(JSONParse) flags=[IsExpected]} @747
-    v59 = String string="{\"__proto__\":{\"id\":9},\"id\":3,\"nick\":\"t\",\"active\":false,\"address\":{\"city\":\"c\"},\"tags\":[]}" @758
-    v60 = Call v58, v56, v59 calleeKey="parse" calleeName="JSON.parse" @752
-    v61 = Convert v60 declared={type=undefined|null|L0 flags=[IsExpected]} @747
-    v62 = Convert v61 declared={type=undefined|null|L0 site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @747
-    v63 = Builtin builtin=GlobalThis @860
-    v64 = PropGet v63 key="console" [isFreeName] @860
-    v65 = Convert v64 declared={type=builtin(Console) flags=[IsExpected]} @860
-    v66 = PropGet v65 key="log" @860
-    v67 = Convert v66 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @860
-    v68 = Builtin builtin=Object @872
-    v69 = Builtin builtin=ObjectKeys @872
-    v70 = Call v69, v68, v62 calleeName="Object.keys" @879
-    v71 = Convert v70 declared={type=undefined|null|Array<undefined|null|string> site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @872
-    v72 = PropGet v71 key="join" @890
-    v73 = Call v72, v71 calleeKey="join" calleeName="join" @892
-    v74 = Convert v73 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @872
-    v75 = PropGet v62 key="id" @900
-    v76 = Builtin builtin=Object @911
-    v77 = Builtin builtin=ObjectGetPrototypeOf @911
-    v78 = Call v77, v76, v62 calleeName="Object.getPrototypeOf" @918
-    v79 = Builtin builtin=ObjectPrototype @945
-    v80 = StrictEq v78, v79 @911
-    v81 = Call v67, v65, v74, v75, v80 calleeKey="log" calleeName="console.log" @868
-    v82 = Builtin builtin=JSON @979
-    v83 = PropGet v82 key="parse" @979
-    v84 = Convert v83 declared={type=builtin(JSONParse) flags=[IsExpected]} @979
-    v85 = String string="[" @990
-    v86 = Add v85, v1 @979
-    v87 = String string="]" @1005
-    v88 = Add v86, v87 @979
-    v89 = String string="[{\"nick\":\"ann\",\"id\":1,\"extra\":[1,2],\"active\":true,\"address\":{\"zip\":\"123\",\"city\":\"Oslo\"},\"tags\":[\"a\",\"b\"],\"boss\":null}]" @979
-    v90 = Call v84, v82, v89 calleeKey="parse" calleeName="JSON.parse" @984
-    v91 = Convert v90 declared={type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]} @979
-    v92 = Integer @1019
-    v93 = ElemGet v91, v92 @1019
-    v94 = Convert v93 declared={type=undefined|null|L0 flags=[IsExpected]} @1019
-    v95 = Convert v91 declared={type=undefined|null|Array<undefined|null|L0> site=w10 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1043
-    v96 = Builtin builtin=GlobalThis @1063
-    v97 = PropGet v96 key="console" [isFreeName] @1063
-    v98 = Convert v97 declared={type=builtin(Console) flags=[IsExpected]} @1063
-    v99 = PropGet v98 key="log" @1063
-    v100 = Convert v99 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1063
-    v101 = StrictEq v95, v95 @1075
-    v102 = Integer @1093
-    v103 = ElemGet v95, v102 @1093
-    v104 = Convert v103 declared={type=undefined|null|L0 site=w11 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1093
-    v105 = StrictEq v104, v94 @1093
-    v106 = Integer @1112
-    v107 = ElemGet v95, v106 @1112
-    v108 = Convert v107 declared={type=undefined|null|L0 flags=[IsExpected]} @1112
-    v109 = Integer @1127
-    v110 = ElemGet v95, v109 @1127
-    v111 = Convert v110 declared={type=undefined|null|L0 site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1127
-    v112 = StrictEq v108, v111 @1112
-    v113 = Call v100, v98, v101, v105, v112 calleeKey="log" calleeName="console.log" @1071
-    v114 = Integer @1174
-    v115 = ElemGet v95, v114 @1174
-    v116 = Convert v115 declared={type=undefined|null|L0 site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1174
-    v117 = Convert v116 declared={type=undefined|null|L0 site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @1174
-    v118 = TypeTest v117 testedType=undefined|null @1174
-    Branch v118 -> taken b2(| 0), notTaken b4(| 0) @1174
-  b2(v119):
+    v5 = String string="{\"nick\":\"ann\",\"id\":1,\"extra\":[1,2],\"active\":true,\"address\":{\"zip\":\"123\",\"city\":\"Oslo\"},\"tags\":[\"a\",\"b\"],\"boss\":null}" @466
+    v6 = Call v4, v2, v5 calleeKey="parse" calleeName="JSON.parse" @460
+    v7 = Convert v6 declared={type=undefined|null|object flags=[IsExpected]} @455
+    v8 = Convert v7 declared={type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @489
+    v9 = Builtin builtin=GlobalThis @503
+    v10 = PropGet v9 key="console" [isFreeName] @503
+    v11 = Convert v10 declared={type=builtin(Console) flags=[IsExpected]} @503
+    v12 = PropGet v11 key="log" @503
+    v13 = Convert v12 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @503
+    v14 = Convert v8 declared={type=undefined|null|object flags=[IsExpected]} @526
+    v15 = StrictEq v8, v14 @515
+    v16 = PropGet v8 key="address" @531
+    v17 = PropGet v14 key="address" @550
+    v18 = StrictEq v16, v17 @531
+    v19 = PropGet v8 key="tags" @563
+    v20 = PropGet v14 key="tags" @579
+    v21 = StrictEq v19, v20 @563
+    v22 = Builtin builtin=Object @589
+    v23 = Builtin builtin=ObjectKeys @589
+    v24 = Call v23, v22, v14 calleeName="Object.keys" @596
+    v25 = Convert v24 declared={type=undefined|null|Array<undefined|null|string> site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @589
+    v26 = PropGet v25 key="join" @604
+    v27 = Call v26, v25 calleeKey="join" calleeName="join" @606
+    v28 = Convert v27 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @589
+    v29 = Builtin builtin=Object @614
+    v30 = Builtin builtin=ObjectKeys @614
+    v31 = Call v30, v29, v8 calleeName="Object.keys" @621
+    v32 = Convert v31 declared={type=undefined|null|Array<undefined|null|string> site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @614
+    v33 = PropGet v32 key="join" @632
+    v34 = Call v33, v32 calleeKey="join" calleeName="join" @634
+    v35 = Convert v34 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @614
+    v36 = Call v13, v11, v15, v18, v21, v28, v35 calleeKey="log" calleeName="console.log" @511
+    v37 = Integer integer=5 @657
+    v38 = Convert v37 declared={type=undefined|number site=w5} @642
+    PropSet v8, v38 key="score" @642
+    v40 = PropGet v8 key="id" @660
+    v41 = Increment v40 @660
+    v42 = Convert v41 declared={type=number site=w6} @667
+    PropSet v8, v42 key="id" @667
+    v44 = Builtin builtin=GlobalThis @672
+    v45 = PropGet v44 key="console" [isFreeName] @672
+    v46 = Convert v45 declared={type=builtin(Console) flags=[IsExpected]} @672
+    v47 = PropGet v46 key="log" @672
+    v48 = Convert v47 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @672
+    v49 = Builtin builtin=JSON @684
+    v50 = PropGet v49 key="stringify" @684
+    v51 = Convert v50 declared={type=builtin(JSONStringify) flags=[IsExpected]} @684
+    v52 = Call v51, v49, v8 calleeKey="stringify" calleeName="JSON.stringify" @689
+    v53 = Convert v52 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @684
+    v54 = PropGet v14 key="id" @708
+    v55 = PropHas v14 key="score" @727
+    v56 = Call v48, v46, v53, v54, v55 calleeKey="log" calleeName="console.log" @680
+    v57 = Builtin builtin=JSON @747
+    v58 = PropGet v57 key="parse" @747
+    v59 = Convert v58 declared={type=builtin(JSONParse) flags=[IsExpected]} @747
+    v60 = String string="{\"__proto__\":{\"id\":9},\"id\":3,\"nick\":\"t\",\"active\":false,\"address\":{\"city\":\"c\"},\"tags\":[]}" @758
+    v61 = Call v59, v57, v60 calleeKey="parse" calleeName="JSON.parse" @752
+    v62 = Convert v61 declared={type=undefined|null|L0 flags=[IsExpected]} @747
+    v63 = Convert v62 declared={type=undefined|null|L0 site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @747
+    v64 = Builtin builtin=GlobalThis @860
+    v65 = PropGet v64 key="console" [isFreeName] @860
+    v66 = Convert v65 declared={type=builtin(Console) flags=[IsExpected]} @860
+    v67 = PropGet v66 key="log" @860
+    v68 = Convert v67 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @860
+    v69 = Builtin builtin=Object @872
+    v70 = Builtin builtin=ObjectKeys @872
+    v71 = Call v70, v69, v63 calleeName="Object.keys" @879
+    v72 = Convert v71 declared={type=undefined|null|Array<undefined|null|string> site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @872
+    v73 = PropGet v72 key="join" @890
+    v74 = Call v73, v72 calleeKey="join" calleeName="join" @892
+    v75 = Convert v74 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @872
+    v76 = PropGet v63 key="id" @900
+    v77 = Builtin builtin=Object @911
+    v78 = Builtin builtin=ObjectGetPrototypeOf @911
+    v79 = Call v78, v77, v63 calleeName="Object.getPrototypeOf" @918
+    v80 = Builtin builtin=ObjectPrototype @945
+    v81 = StrictEq v79, v80 @911
+    v82 = Call v68, v66, v75, v76, v81 calleeKey="log" calleeName="console.log" @868
+    v83 = Builtin builtin=JSON @979
+    v84 = PropGet v83 key="parse" @979
+    v85 = Convert v84 declared={type=builtin(JSONParse) flags=[IsExpected]} @979
+    v86 = String string="[{\"nick\":\"ann\",\"id\":1,\"extra\":[1,2],\"active\":true,\"address\":{\"zip\":\"123\",\"city\":\"Oslo\"},\"tags\":[\"a\",\"b\"],\"boss\":null}]" @990
+    v87 = Call v85, v83, v86 calleeKey="parse" calleeName="JSON.parse" @984
+    v88 = Convert v87 declared={type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]} @979
+    v89 = Integer @1019
+    v90 = ElemGet v88, v89 @1019
+    v91 = Convert v90 declared={type=undefined|null|L0 flags=[IsExpected]} @1019
+    v92 = Convert v88 declared={type=undefined|null|Array<undefined|null|L0> site=w10 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1043
+    v93 = Builtin builtin=GlobalThis @1063
+    v94 = PropGet v93 key="console" [isFreeName] @1063
+    v95 = Convert v94 declared={type=builtin(Console) flags=[IsExpected]} @1063
+    v96 = PropGet v95 key="log" @1063
+    v97 = Convert v96 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1063
+    v98 = StrictEq v92, v92 @1075
+    v99 = Integer @1093
+    v100 = ElemGet v92, v99 @1093
+    v101 = Convert v100 declared={type=undefined|null|L0 site=w11 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1093
+    v102 = StrictEq v101, v91 @1093
+    v103 = Integer @1112
+    v104 = ElemGet v92, v103 @1112
+    v105 = Convert v104 declared={type=undefined|null|L0 flags=[IsExpected]} @1112
+    v106 = Integer @1127
+    v107 = ElemGet v92, v106 @1127
+    v108 = Convert v107 declared={type=undefined|null|L0 site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1127
+    v109 = StrictEq v105, v108 @1112
+    v110 = Call v97, v95, v98, v102, v109 calleeKey="log" calleeName="console.log" @1071
+    v111 = Integer @1174
+    v112 = ElemGet v92, v111 @1174
+    v113 = Convert v112 declared={type=undefined|null|L0 site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1174
+    v114 = Convert v113 declared={type=undefined|null|L0 site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @1174
+    v115 = TypeTest v114 testedType=undefined|null @1174
+    Branch v115 -> taken b2(| 0), notTaken b4(| 0) @1174
+  b2(v116):
     Jump -> next b3() @1174
   b3() frequency=Unlikely:
-    v120 = NewRuntimeError runtimeError=NotDestructurable name="address" @1174
-    Throw v120 @1174
-  b4(v121):
-    v122 = PropGet v121 key="address" @1174 @1144
-    v123 = Convert v122 declared={type=undefined|null|L1} illTypedCause=Assertion @1144
-    v124 = PropGet v121 key="extra" @1174 @1153
-    v125 = Convert v124 declared={type=undefined|null|Array<number>} illTypedCause=Assertion @1153
-    v126 = NewObject layout=L2 @1136
-    CopyDataProperties v126, v121 excludedKeys=["address", "extra"] @1136
-    v128 = FinishObject v126 @1136
-    v129 = Convert v128 declared={type=undefined|null|L0|L2 site=w1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1163
-    v130 = Builtin builtin=GlobalThis @1214
-    v131 = PropGet v130 key="console" [isFreeName] @1214
-    v132 = Convert v131 declared={type=builtin(Console) flags=[IsExpected]} @1214
-    v133 = PropGet v132 key="log" @1214
-    v134 = Convert v133 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1214
-    v135 = PropGet v123 key="city" @1226
-    v136 = PropGet v125 key="length" @1240
-    v137 = Convert v136 declared={type=number site=w15} illTypedCause=Assertion @1240
-    v138 = Builtin builtin=JSON @1254
-    v139 = PropGet v138 key="stringify" @1254
-    v140 = Convert v139 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1254
-    v141 = Call v140, v138, v129 calleeKey="stringify" calleeName="JSON.stringify" @1259
-    v142 = Convert v141 declared={type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1254
-    v143 = Builtin builtin=JSON @1278
-    v144 = PropGet v143 key="stringify" @1278
-    v145 = Convert v144 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1278
-    v146 = Integer @1298
-    v147 = ElemGet v95, v146 @1298
-    v148 = Convert v147 declared={type=undefined|null|L0 site=w17 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1298
-    v149 = NewObject layout=L0 @1293
-    CopyDataProperties v149, v148 @1293
-    v151 = Integer integer=50 @1311
-    v152 = Convert v151 declared={type=number} @1311
-    PropDefine v149, v152 key="id" @1307
-    v154 = FinishObject v149 @1293
-    v155 = Call v145, v143, v154 calleeKey="stringify" calleeName="JSON.stringify" @1283
-    v156 = Convert v155 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1278
-    v157 = Call v134, v132, v135, v137, v142, v156 calleeKey="log" calleeName="console.log" @1222
-    v158 = Undefined @1214
-    Return v158 @1214
+    v117 = NewRuntimeError runtimeError=NotDestructurable name="address" @1174
+    Throw v117 @1174
+  b4(v118):
+    v119 = PropGet v118 key="address" @1174 @1144
+    v120 = Convert v119 declared={type=undefined|null|L1} illTypedCause=Assertion @1144
+    v121 = PropGet v118 key="extra" @1174 @1153
+    v122 = Convert v121 declared={type=undefined|null|Array<number>} illTypedCause=Assertion @1153
+    v123 = NewObject layout=L2 @1136
+    CopyDataProperties v123, v118 excludedKeys=["address", "extra"] @1136
+    v125 = FinishObject v123 @1136
+    v126 = Convert v125 declared={type=undefined|null|L0|L2 site=w1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1163
+    v127 = Builtin builtin=GlobalThis @1214
+    v128 = PropGet v127 key="console" [isFreeName] @1214
+    v129 = Convert v128 declared={type=builtin(Console) flags=[IsExpected]} @1214
+    v130 = PropGet v129 key="log" @1214
+    v131 = Convert v130 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1214
+    v132 = PropGet v120 key="city" @1226
+    v133 = PropGet v122 key="length" @1240
+    v134 = Convert v133 declared={type=number site=w15} illTypedCause=Assertion @1240
+    v135 = Builtin builtin=JSON @1254
+    v136 = PropGet v135 key="stringify" @1254
+    v137 = Convert v136 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1254
+    v138 = Call v137, v135, v126 calleeKey="stringify" calleeName="JSON.stringify" @1259
+    v139 = Convert v138 declared={type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1254
+    v140 = Builtin builtin=JSON @1278
+    v141 = PropGet v140 key="stringify" @1278
+    v142 = Convert v141 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1278
+    v143 = Integer @1298
+    v144 = ElemGet v92, v143 @1298
+    v145 = Convert v144 declared={type=undefined|null|L0 site=w17 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1298
+    v146 = NewObject layout=L0 @1293
+    CopyDataProperties v146, v145 @1293
+    v148 = Integer integer=50 @1311
+    v149 = Convert v148 declared={type=number} @1311
+    PropDefine v146, v149 key="id" @1307
+    v151 = FinishObject v146 @1293
+    v152 = Call v142, v140, v151 calleeKey="stringify" calleeName="JSON.stringify" @1283
+    v153 = Convert v152 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1278
+    v154 = Call v131, v129, v132, v134, v139, v153 calleeKey="log" calleeName="console.log" @1222
+    v155 = Undefined @1214
+    Return v155 @1214
 }
 function f1 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):

@@ -21,7 +21,7 @@ enum Listed {
     Entries,
 }
 
-pub(super) fn is_module_cache(id: BuiltinId) -> bool {
+pub fn is_module_cache(id: BuiltinId) -> bool {
     let tables = [
         BuiltinId::ModuleRequireCache,
         BuiltinId::ModuleRequirePrototypeCache,
@@ -30,7 +30,7 @@ pub(super) fn is_module_cache(id: BuiltinId) -> bool {
     (tables.map(table::canonical_id)).contains(&table::canonical_id(id))
 }
 
-pub(super) fn is_table_of_loaders(id: BuiltinId) -> bool {
+pub fn is_table_of_loaders(id: BuiltinId) -> bool {
     let tables = [
         BuiltinId::ModuleRequireExtensions,
         BuiltinId::ModuleRequirePrototypeExtensions,

@@ -43,6 +43,10 @@ pub(super) enum VariableDefinition {
         is_replaceable: bool,
         writer: ExportWriter,
     },
+    /// `VariableKey::MockOfRuntimeModule`
+    MockOfRuntimeModule {
+        module: u32,
+    },
 }
 
 pub(super) struct SupertypeEdges {

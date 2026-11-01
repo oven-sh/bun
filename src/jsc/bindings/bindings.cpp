@@ -700,6 +700,10 @@ static ALWAYS_INLINE bool mayHaveAsymmetricMatchMethod(JSGlobalObject* globalObj
     if (!value || !value.isCell())
         return false;
     JSCell* cell = value.asCell();
+#if ENABLE(AOT)
+    if (JSC::AOT::PropertyWalk::isCompiledObject(cell))
+        return true;
+#endif
     if (cell->type() != FinalObjectType && cell->type() != ObjectType)
         return false;
     Structure* structure = cell->structure();
@@ -725,6 +729,21 @@ static JSValue asymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value
     VM& vm = globalObject->vm();
     PropertyName name = WebCore::builtinNames(vm).asymmetricMatchPublicName();
     for (JSObject* object = asObject(value); object != globalObject->objectPrototype();) {
+#if ENABLE(AOT)
+        if (JSC::AOT::PropertyWalk::isCompiledObject(object)) {
+            unsigned attributes = 0;
+            if (JSValue method = JSC::AOT::PropertyWalk::getDirect(vm, object, name, &attributes)) {
+                bool isAccessor = attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue);
+                return !isAccessor && method.isCallable() ? method : JSValue();
+            }
+            JSValue prototype = object->getPrototypeDirect();
+            if (!prototype.isObject())
+                return {};
+            object = asObject(prototype);
+            continue;
+        }
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
+#endif
         if (object->type() != FinalObjectType && object->type() != ObjectType)
             return {};
         Structure* structure = object->structure();
@@ -764,6 +783,10 @@ static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObjec
 static ALWAYS_INLINE bool mayBeDOMNode(JSGlobalObject* globalObject, JSObject* object)
 {
     JSC::JSType type = object->type();
+#if ENABLE(AOT)
+    if (type == CompiledObjectType)
+        return object->getPrototypeDirect() != globalObject->objectPrototype();
+#endif
     return type == ProxyObjectType || (type == FinalObjectType && object->getPrototypeDirect() != globalObject->objectPrototype());
 }
 

@@ -738,7 +738,7 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f10 visibilit
 # CHECK-NEXT: b4(v11: undefined|Array<undefined|null|string>):
 # CHECK-NEXT: v12: undefined = Undefined
 # CHECK-NEXT: v13: builtin(Array) = Builtin builtin=Array
-# CHECK-NEXT: v14: anything = CallDirect v13, v11, v12 function=f25 accessSite=44
+# CHECK-NEXT: v14: anything = CallDirect v13, v11, v12 function=f27 accessSite=44
 # CHECK-NEXT: Jump -> next b7(v9, v14)
 # CHECK-NEXT: b5(v15: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
 # CHECK-NEXT: v16: string = Add v15, v6

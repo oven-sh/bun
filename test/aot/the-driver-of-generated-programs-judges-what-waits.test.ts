@@ -13,6 +13,8 @@
 //
 // A build can stop without naming a program, and then the driver looks for the program by halves. What the compiler says can depend on the company: of two programs that stop it,
 // one is reported among many and the other among few. A script stands in for such a compiler. The driver finds both, and the six programs beside them are judged.
+//
+// Some sources say that each of their programs needs a build of its own, because one of them changes what a build proves of the others. The driver draws such a program for a batch of one and for no other.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { chmodSync, readdirSync, readFileSync } from "node:fs";
@@ -322,4 +324,26 @@ describe("compile/aot/the driver of generated programs", () => {
     },
     300_000,
   );
+
+  test("draws a program that needs a build of its own for no batch of two", async () => {
+    using folder = tempDir("aot-the-driver-draws-what-is-built-alone", { "work/.keep": "" });
+    const within = (name: string) => join(String(folder), name);
+    const run = await slot(() =>
+      spawned(
+        [
+          bunExe(),
+          join(import.meta.dir, "fuzz", "fuzzilli", "run-batch.ts"),
+          ...["--bun", bunExe(), "--work", within("work"), "--finds", within("finds")],
+          ...["--draws", "js", "--families", "100", "--family", "two-roads"],
+          ...["--count", "2", "--group", "1", "--batches", "1"],
+          "--flags=--aot-threads=1",
+        ],
+        String(folder),
+        bunEnv,
+        240_000,
+      ),
+    );
+    expect(run.stderr).toContain("two-roads draws no .js program that can share a build");
+    expect(run.exitCode).not.toBe(0);
+  }, 300_000);
 });

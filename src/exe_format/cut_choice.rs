@@ -1,9 +1,8 @@
-use core::cmp::Reverse;
-
 use crate::cut_model::{
     CutCapacity, CutModel, CutPlan, Fill, NoCutReason, RemovableBytes, Uncut, UncutReason,
 };
 use crate::image::AddressRange;
+use bun_sort_by_number::{SortByNumber, wide_number_of_pair};
 
 pub(crate) fn choose_cuts(model: &CutModel, removable: &[RemovableBytes]) -> CutPlan {
     let runs = find_runs(removable);
@@ -30,7 +29,7 @@ pub(crate) fn choose_cuts(model: &CutModel, removable: &[RemovableBytes]) -> Cut
         .collect();
     let over_budget = match model.slot_costs {
         None => {
-            cuts.sort_by_key(|candidate| (Reverse(candidate.len()), candidate.start));
+            cuts.sort_by_u128(|candidate| wide_number_of_pair(!candidate.len(), candidate.start));
             cuts.split_off(max_cuts.min(cuts.len()))
         }
         Some(_) => take_what_slots_pay_for(model, &mut cuts),
@@ -39,7 +38,7 @@ pub(crate) fn choose_cuts(model: &CutModel, removable: &[RemovableBytes]) -> Cut
         reason: UncutReason::BudgetSpent,
         bytes: over_budget.iter().map(|candidate| candidate.len()).sum(),
     });
-    cuts.sort_by_key(|cut| cut.start);
+    cuts.sort_by_u64(|cut| cut.start);
     let fills = compute_fills(removable, &cuts);
     CutPlan { cuts, fills, uncut }
 }

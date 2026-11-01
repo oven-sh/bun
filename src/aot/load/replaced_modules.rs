@@ -87,7 +87,7 @@ fn gets_what_mocks_modules_from_bun_jest(
     analysis: &FileAnalysis<'_>,
     builtins: &ResolvedBuiltins,
 ) -> bool {
-    let mocks = |name: Atom| name == known::mock || name == known::jest || name == known::vi;
+    let mocks = |name: Atom| [known::mock, known::jest, known::vi, known::vitest].contains(&name);
     (0..hir.exprs.len() as u32).map(ExprId).any(|mention| {
         if builtins.builtin_of_expression(mention) != Some(BuiltinId::BunJest)
             || analysis.decisions.is_dead_expr(mention)
@@ -763,11 +763,7 @@ impl Look<'_, '_> {
 
     fn find_how_files_are_loaded(&mut self) {
         for site in self.analysis.import_sites {
-            // Those that hand the loader the type: `resolve_file_loaded_another_way`.
-            let written = match site.kind {
-                ImportSiteKind::Import(_) | ImportSiteKind::ImportCall(_) => site.attributes.some(),
-                _ => None,
-            };
+            let written = (site.attributes.some()).filter(|_| site.kind.hands_type_to_loader());
             let written = written.and_then(|it| self.hir.import_attribute(it, known::r#type));
             if written.is_some_and(|it| shares_place_in_loader(self.atoms.bytes(it))) {
                 let files = self.specifiers_of(&site.specifier).unwrap_or_default();

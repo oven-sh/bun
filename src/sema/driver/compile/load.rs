@@ -90,6 +90,7 @@ fn load<'u: 's, 's>(
             (project.files).retain(|path| !JAVASCRIPT.iter().any(|ending| path.ends_with(ending)));
         }
         project.options.no_resolve = true;
+        project.options.types = Some(Vec::new());
     }
     if request.code.transpiles_by_working_directory && request.code.tsconfig_override.is_none() {
         project
@@ -110,10 +111,13 @@ fn load<'u: 's, 's>(
     options
         .custom_conditions
         .extend_from_slice(&request.code.custom_conditions);
-    let has_bun_types_installed = choose_libraries(host, options, request.libs);
+    let has_bun_types_installed =
+        choose_libraries(host, options, request.libs, !types_stop_at_entry_points);
     let is_application = request.project_origin != FileOrigin::Runtime;
-    let brings_bun_types =
-        is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
+    let brings_bun_types = is_application
+        && !has_bun_types_installed
+        && !types_stop_at_entry_points
+        && take_bun_types_of_host(host, options);
     let has_bun_types = has_bun_types_installed || brings_bun_types;
     options.orders_files_as_listed = !is_application;
     if is_application && has_bun_types {
@@ -327,12 +331,25 @@ impl<'a> FileFinder<'a> {
 
     /// The file that an import leads to which `importer` writes so, whichever program holds the file. `None`: it leads to no file.
     pub fn find_import(&self, importer: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_loaded(importer, specifier, CodeImportKind::Import)
+    }
+
+    pub fn find_required(&self, importer: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_loaded(importer, specifier, CodeImportKind::Require)
+    }
+
+    fn find_loaded(
+        &self,
+        importer: &[u8],
+        specifier: &[u8],
+        kind: CodeImportKind,
+    ) -> Option<Vec<u8>> {
         // As for a macro: the file itself is looked for. A host leaves an import of another form to the loader as it is written.
         let resolution = self.resolver.resolve_code(&CodeRequest {
             specifier,
             importer,
             directory: &self.host.directory_of(importer),
-            kind: CodeImportKind::Import,
+            kind,
             form: CodeImportForm::Macro,
         });
         match resolution {
@@ -436,7 +453,7 @@ fn is_project_the_same_with(
     first_entry_point_of_largest_project(host, code, &all)
         == first_entry_point_of_largest_project(host, code, entry_paths)
         && further.iter().all(|path| {
-            config::find_config(host, &host.directory_of(path))
+            find_config_of_program(host, code, &host.directory_of(path))
                 .is_none_or(|nearest| nearest == config_path)
         })
 }
@@ -722,15 +739,21 @@ fn default_project(
     project
 }
 
-fn choose_libraries(host: &dyn Host, options: &mut Options, libs: Libs<'_>) -> bool {
+fn choose_libraries(
+    host: &dyn Host,
+    options: &mut Options,
+    libs: Libs<'_>,
+    reads_packages_of_types: bool,
+) -> bool {
     options.lib_dir = match libs {
         Libs::Bundled(_) => host::BUNDLED_LIBS.to_vec(),
         Libs::Directory(directory) => host::from_native(directory),
     };
-    let has_bun_types_installed = options
-        .effective_type_roots()
-        .iter()
-        .any(|root| host.is_file(&[&root[..], b"/bun/package.json"].concat()));
+    let has_bun_types_installed = reads_packages_of_types
+        && options
+            .effective_type_roots()
+            .iter()
+            .any(|root| host.is_file(&[&root[..], b"/bun/package.json"].concat()));
     if has_bun_types_installed {
         name_bun_types(options);
     }

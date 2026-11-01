@@ -63,6 +63,8 @@ pub enum ImportSiteKind {
     /// `mock.module(specifier, factory)` of the test runner, which also goes by `jest.mock` and `vi.mock`. It loads nothing.
     /// Also `build.module(specifier, factory)` in the `setup` of a plugin, which the loader keeps in the same table.
     MockModule(ExprId),
+    ImportByTestRunner(ExprId),
+    RequireByTestRunner(ExprId),
 }
 
 impl ImportSiteKind {
@@ -74,9 +76,21 @@ impl ImportSiteKind {
             | ImportSiteKind::ImportMetaRequire(call)
             | ImportSiteKind::ImportMetaResolve(call)
             | ImportSiteKind::GetBuiltinModule(call)
-            | ImportSiteKind::MockModule(call) => Some(call),
+            | ImportSiteKind::MockModule(call)
+            | ImportSiteKind::ImportByTestRunner(call)
+            | ImportSiteKind::RequireByTestRunner(call) => Some(call),
             _ => None,
         }
+    }
+
+    pub fn hands_type_to_loader(self) -> bool {
+        matches!(
+            self,
+            ImportSiteKind::Import(_)
+                | ImportSiteKind::ExportFrom(_)
+                | ImportSiteKind::ExportStar(_)
+                | ImportSiteKind::ImportCall(_)
+        )
     }
 }
 

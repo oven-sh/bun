@@ -33,151 +33,154 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v18 = Convert v17 declared={type=number}
     Jump -> next b1(v14, v18)
   b1(v19: undefined|null|L0, v20: number):
-    v21 = Integer
-    v22 = Convert v21 declared={type=number}
-    Jump -> next b2(v19, v22)
-  b2(v23: undefined|null|L0, v24: number):
     LoopHint
-    v26 = Integer integer=1500
-    v27 = Less v24, v26
-    Branch v27 -> taken b3(| 0), notTaken b4(| 0)
-  b3(v28):
-    v29 = Integer integer=1500
-    v30 = Mul v20, v29
-    v31 = Add v30, v28
-    v32 = Convert v31 declared={type=number}
-    v33 = Construct v5, -, v32, v23 calleeName="Holder"
-    v34 = Convert v33 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
-    v35 = PropGet v34 key="names"
-    v36 = PropGet v35 key="add"
-    v37 = String string="name "
-    v38 = Integer integer=13
-    v39 = Mod v32, v38
-    v40 = Add v37, v39
-    v41 = Call v36, v35, v40 calleeKey="add" calleeName="chain.names.add"
-    v42 = String string=""
-    v43 = Convert v42 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-    v44 = Integer
-    v45 = Convert v44 declared={type=number}
-    v46 = GetModuleVariable variable=g0
-    v47 = Call v46, -, v32 calleeName="leaf"
-    v48 = Convert v47 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
-    v49 = String string="extra "
-    v50 = Integer integer=3
-    v51 = Mod v32, v50
-    v52 = Add v49, v51
-    v53 = GetModuleVariable variable=g0
-    v54 = Integer integer=8
-    v55 = Add v32, v54
-    v56 = Call v53, -, v55 calleeName="leaf"
-    v57 = Convert v56 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
-    ElemSet v48, v52, v57
-    v59 = PropGet v16 key="push"
-    v60 = Call v59, v16, v48 calleeKey="push" calleeName="extended.push"
-    v61 = Increment v28
-    v62 = Convert v61 declared={type=number}
-    Jump -> next b2(v34, v62)
-  b4(v63):
-    v64 = Integer integer=4000
-    v65 = Call v1, -, v64 calleeName="garbage"
-    v66 = Convert v65 declared={type=number}
-    v67 = Integer integer=2
-    v68 = Mod v20, v67
-    v69 = Integer
-    v70 = Convert v69 declared={type=number}
-    v71 = Convert v70 declared={type=i32 flags=[IsExpected]}
-    v72 = Convert v23 declared={type=undefined|null|L0 flags=[OmitsNull]}
-    v73 = Integer
-    v74 = Convert v73 declared={type=number}
-    v75 = Convert v23 declared={type=undefined|null|L0 flags=[OmitsNull]}
-    Jump -> next b5(v66, v75)
-  b5(v76: number, v77: undefined|null|L0):
-    v78 = ToBoolean v77
-    Branch v78 -> taken b6(| 0), notTaken b12(| 0)
-  b6(v79):
-    v80 = GetModuleVariable variable=g1
-    v81 = PropGet v79 key="first"
-    v82 = Call v80, -, v81 calleeName="sumLeaf"
-    v83 = Convert v82 declared={type=number}
-    v84 = GetModuleVariable variable=g2
-    v85 = PropGet v79 key="list"
-    v86 = Call v84, -, v85 calleeName="sumList"
-    v87 = Convert v86 declared={type=number}
-    v88 = Add v83, v87
-    v89 = PropGet v79 key="read"
-    v90 = Call v89, v79 calleeKey="read" calleeName="holder.read"
-    v91 = Convert v90 declared={type=number}
-    v92 = Add v88, v91
-    v93 = PropGet v79 key="names"
-    v94 = PropGet v93 key="size"
-    v95 = Convert v94 declared={type=number} illTypedCause=Assertion
-    v96 = Add v92, v95
-    v97 = Add v76, v96
-    v98 = Convert v97 declared={type=number}
-    v99 = PropGet v79 key="names"
-    v100 = IteratorOpen v99
-    Jump -> next b7(v98)
-  b7(v101: number):
+    v22 = Integer
+    v23 = Convert v22 declared={type=number}
+    Jump -> next b2(v19, v23)
+  b2(v24: undefined|null|L0, v25: number):
     LoopHint
-    v103 = IteratorResume v100
-    v104 = ResultAt v103
-    v105 = ResultAt v103 index=1
-    Branch v104 -> taken b8(), notTaken b9()
+    v27 = Integer integer=1500
+    v28 = Less v25, v27
+    Branch v28 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v29):
+    v30 = Integer integer=1500
+    v31 = Mul v20, v30
+    v32 = Add v31, v29
+    v33 = Convert v32 declared={type=number}
+    v34 = Construct v5, -, v33, v24 calleeName="Holder"
+    v35 = Convert v34 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v36 = PropGet v35 key="names"
+    v37 = PropGet v36 key="add"
+    v38 = String string="name "
+    v39 = Integer integer=13
+    v40 = Mod v33, v39
+    v41 = Add v38, v40
+    v42 = Call v37, v36, v41 calleeKey="add" calleeName="chain.names.add"
+    v43 = String string=""
+    v44 = Convert v43 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v45 = Integer
+    v46 = Convert v45 declared={type=number}
+    v47 = GetModuleVariable variable=g0
+    v48 = Call v47, -, v33 calleeName="leaf"
+    v49 = Convert v48 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v50 = String string="extra "
+    v51 = Integer integer=3
+    v52 = Mod v33, v51
+    v53 = Add v50, v52
+    v54 = GetModuleVariable variable=g0
+    v55 = Integer integer=8
+    v56 = Add v33, v55
+    v57 = Call v54, -, v56 calleeName="leaf"
+    v58 = Convert v57 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    ElemSet v49, v53, v58
+    v60 = PropGet v16 key="push"
+    v61 = Call v60, v16, v49 calleeKey="push" calleeName="extended.push"
+    v62 = Increment v29
+    v63 = Convert v62 declared={type=number}
+    Jump -> next b2(v35, v63)
+  b4(v64):
+    v65 = Integer integer=4000
+    v66 = Call v1, -, v65 calleeName="garbage"
+    v67 = Convert v66 declared={type=number}
+    v68 = Integer integer=2
+    v69 = Mod v20, v68
+    v70 = Integer
+    v71 = Convert v70 declared={type=number}
+    v72 = Convert v71 declared={type=i32 flags=[IsExpected]}
+    v73 = Convert v24 declared={type=undefined|null|L0 flags=[OmitsNull]}
+    v74 = Integer
+    v75 = Convert v74 declared={type=number}
+    v76 = Convert v24 declared={type=undefined|null|L0 flags=[OmitsNull]}
+    Jump -> next b5(v67, v76)
+  b5(v77: number, v78: undefined|null|L0):
+    LoopHint
+    v80 = ToBoolean v78
+    Branch v80 -> taken b6(| 0), notTaken b12(| 0)
+  b6(v81):
+    v82 = GetModuleVariable variable=g1
+    v83 = PropGet v81 key="first"
+    v84 = Call v82, -, v83 calleeName="sumLeaf"
+    v85 = Convert v84 declared={type=number}
+    v86 = GetModuleVariable variable=g2
+    v87 = PropGet v81 key="list"
+    v88 = Call v86, -, v87 calleeName="sumList"
+    v89 = Convert v88 declared={type=number}
+    v90 = Add v85, v89
+    v91 = PropGet v81 key="read"
+    v92 = Call v91, v81 calleeKey="read" calleeName="holder.read"
+    v93 = Convert v92 declared={type=number}
+    v94 = Add v90, v93
+    v95 = PropGet v81 key="names"
+    v96 = PropGet v95 key="size"
+    v97 = Convert v96 declared={type=number} illTypedCause=Assertion
+    v98 = Add v94, v97
+    v99 = Add v77, v98
+    v100 = Convert v99 declared={type=number}
+    v101 = PropGet v81 key="names"
+    v102 = IteratorOpen v101
+    Jump -> next b7(v100)
+  b7(v103: number):
+    LoopHint
+    v105 = IteratorResume v102
+    v106 = ResultAt v105
+    v107 = ResultAt v105 index=1
+    Branch v106 -> taken b8(), notTaken b9()
   b8():
-    v106 = PropGet v79 key="next"
-    v107 = Convert v106 declared={type=undefined|null|L0 flags=[OmitsNull]}
-    Jump -> next b5(v101, v107)
+    v108 = PropGet v81 key="next"
+    v109 = Convert v108 declared={type=undefined|null|L0 flags=[OmitsNull]}
+    Jump -> next b5(v103, v109)
   b9():
     Jump -> next b10()
   b10() handler=b11():
-    v108 = Convert v105 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v109 = PropGet v108 key="length"
-    v110 = Convert v109 declared={type=number} illTypedCause=Assertion
-    v111 = Add v101, v110
-    v112 = Convert v111 declared={type=number}
-    Jump -> next b7(v112)
-  b11() role=IterationCleanup subject=v100:
-    v113 = CatchException
-    Rethrow v113
-  b12(v114):
-    v115 = IteratorOpen v16
-    Jump -> next b13(v76)
-  b13(v116: number):
-    v117 = IteratorResume v115
-    v118 = ResultAt v117
-    v119 = ResultAt v117 index=1
-    Branch v118 -> taken b14(), notTaken b15()
+    v110 = Convert v107 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v111 = PropGet v110 key="length"
+    v112 = Convert v111 declared={type=number} illTypedCause=Assertion
+    v113 = Add v103, v112
+    v114 = Convert v113 declared={type=number}
+    Jump -> next b7(v114)
+  b11() role=IterationCleanup subject=v102:
+    v115 = CatchException
+    Rethrow v115
+  b12(v116):
+    v117 = IteratorOpen v16
+    Jump -> next b13(v77)
+  b13(v118: number):
+    LoopHint
+    v120 = IteratorResume v117
+    v121 = ResultAt v120
+    v122 = ResultAt v120 index=1
+    Branch v121 -> taken b14(), notTaken b15()
   b14():
-    v120 = Increment v20
-    v121 = Convert v120 declared={type=number}
-    Jump -> next b1(v23, v121)
+    v123 = Increment v20
+    v124 = Convert v123 declared={type=number}
+    Jump -> next b1(v24, v124)
   b15():
     Jump -> next b16()
   b16() handler=b20():
-    v122 = Convert v119 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v123 = ForInOpen v122
-    Jump -> next b17(v116)
-  b17(v124: number) handler=b20():
+    v125 = Convert v122 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v126 = ForInOpen v125
+    Jump -> next b17(v118)
+  b17(v127: number) handler=b20():
     LoopHint
-    v126 = ForInStep v123, v122
-    v127 = ResultAt v126
-    v128 = ResultAt v126 index=1
-    Branch v127 -> taken b18(), notTaken b19()
+    v129 = ForInStep v126, v125
+    v130 = ResultAt v129
+    v131 = ResultAt v129 index=1
+    Branch v130 -> taken b18(), notTaken b19()
   b18() handler=b20():
-    Jump -> next b13(v124)
+    Jump -> next b13(v127)
   b19() handler=b20():
-    v129 = Convert v128 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v130 = PropGet v129 key="length"
-    v131 = Convert v130 declared={type=number} illTypedCause=Assertion
-    v132 = ElemGet v122, v129
-    v133 = Integer
-    v134 = Add v131, v133
-    v135 = Add v124, v134
-    v136 = Convert v135 declared={type=number}
-    Jump -> next b17(v136)
-  b20() role=IterationCleanup subject=v115:
-    v137 = CatchException
-    Rethrow v137
+    v132 = Convert v131 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v133 = PropGet v132 key="length"
+    v134 = Convert v133 declared={type=number} illTypedCause=Assertion
+    v135 = ElemGet v125, v132
+    v136 = Integer
+    v137 = Add v134, v136
+    v138 = Add v127, v137
+    v139 = Convert v138 declared={type=number}
+    Jump -> next b17(v139)
+  b20() role=IterationCleanup subject=v117:
+    v140 = CatchException
+    Rethrow v140
 }
 function f1 name="leaf" module=m0 position=1217 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):

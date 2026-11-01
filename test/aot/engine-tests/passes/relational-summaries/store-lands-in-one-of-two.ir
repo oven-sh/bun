@@ -1,4 +1,5 @@
 # `(first ? a : b).x = v` runs on every path and stores into one of the two. Whoever writes down "a.x is v when the call is over" for both has promised an object where a number stays. Every function here stores, deletes, freezes or appends through a name that stands for one of several objects; the callers read the other one.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls

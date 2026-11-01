@@ -135,9 +135,14 @@ test.each([
   expect(plain.printed).toContain(
     "one of the two leaves the name out, and both have a new one | both,extra,more,v,w |",
   );
-  // TODO(bun), rows 4100 and 4105: since `bun test` follows Vitest on module mocks, which names of a mocked module come through `export *` has changed in plain Bun. A compiled
-  // run still has the earlier behavior. It has to follow plain Bun: each `.not.toEqual(plain)` below is then `.toEqual(plain)` again, and goes red to say so.
+  // TODO(bun), row 4105: a compiled run follows plain Bun but for a name that the mock adds and a module behind a later `export *` really has: in plain Bun the first star wins,
+  // compiled the module that really has it. `.not.toEqual(plain)` goes red once they agree.
   const compiled = await printedBy(String(directory), words, "--aot");
   expect(compiled).not.toEqual(plain);
-  expect(compiled.printed).toContain("another module has the new name | v |");
+  expect(compiled.printed).toContain(
+    "one star | extra,own,v | v=mocked v:true:true extra=extra:true:true f=undefined:false:false",
+  );
+  expect(compiled.printed).toContain(
+    "another module has the new name | extra,v | v=mocked v:true:true extra=real extra:true:true",
+  );
 });

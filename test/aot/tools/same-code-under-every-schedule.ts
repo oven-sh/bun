@@ -34,11 +34,16 @@ export type Moved = { program: string; under: string[]; first: string };
 
 export const storedPrograms = resolve(import.meta.dir, "..", "parallel");
 
-/** The stored programs that are known to have the same code in every way, as paths from their folder. */
-export const listedPrograms = () =>
-  readFileSync(resolve(import.meta.dir, "..", "programs-with-the-same-code-under-every-schedule.txt"), "utf8")
+const programsListedIn = (file: string) =>
+  readFileSync(resolve(import.meta.dir, "..", file), "utf8")
     .split("\n")
     .filter(Boolean);
+
+/** The stored programs that are known to have the same code in every way, as paths from their folder. */
+export const listedPrograms = () => programsListedIn("programs-with-the-same-code-under-every-schedule.txt");
+
+export const programsAskedUnderNineSchedules = () =>
+  programsListedIn("programs-with-the-same-code-under-nine-schedules.txt");
 
 /** The usual schedule comes first: the others are compared with it. */
 export const schedules = (others: number): Way[] => [

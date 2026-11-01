@@ -282,6 +282,7 @@ pub(super) struct ResolverOutput {
     pub(super) stores_with_module_exports: Vec<ExprId>,
     pub(super) replaced_members: Vec<BuiltinId>,
     pub(super) names_added: Vec<(BuiltinId, Atom)>,
+    pub(super) names_added_in_executable: Vec<(BuiltinId, Atom)>,
     pub(super) names_holder_that_takes_spelled_names: bool,
     pub(super) holders_named_from_outside: Vec<BuiltinId>,
     pub(super) writes_on_parameters_under_any_name: bool,
@@ -794,7 +795,9 @@ impl<'a, 's> Resolver<'a, 's> {
         let reads_entries_of_module_cache =
             input.dialect == SourceDialect::Program && output.reads_entries_of_module_cache;
         let mut ids = mentioned.iter();
-        let names_plugin = ids.any(|&id| table::canonical_id(id) == BuiltinId::BunPlugin);
+        let names_plugin = ids.any(|&id| {
+            table::canonical_id(id) == BuiltinId::BunPlugin || table::resets_modules(id)
+        });
         let mut exprs = Vec::new();
         let mut expr_bits = vec![0u64; input.hir.exprs.len().div_ceil(64)];
         let mut exprs_with_side_effects = Vec::new();
@@ -836,6 +839,7 @@ impl<'a, 's> Resolver<'a, 's> {
             stores_with_module_exports: output.stores_with_module_exports.into_boxed_slice(),
             replaced_members: sorted_unique(output.replaced_members),
             names_added: output.names_added.into_boxed_slice(),
+            names_added_in_executable: output.names_added_in_executable.into_boxed_slice(),
             holders_named_from_outside: output.holders_named_from_outside.into_boxed_slice(),
             writes_on_parameters_under_any_name: output.writes_on_parameters_under_any_name,
             builtins_handed_out: output.builtins_handed_out.into_boxed_slice(),

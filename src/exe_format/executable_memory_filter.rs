@@ -4,6 +4,7 @@
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 
+use bun_sort_by_number::SortByNumber;
 use core::ops::Range;
 
 #[repr(C)]
@@ -175,7 +176,7 @@ fn few_ranges(ranges: &[Range<u64>]) -> Vec<Range<u64>> {
         .filter(|range| range.start < range.end)
         .cloned()
         .collect();
-    sorted.sort_by_key(|range| range.start);
+    sorted.sort_by_u64(|range| range.start);
     let mut merged: Vec<Range<u64>> = Vec::new();
     for range in sorted {
         match merged.last_mut() {

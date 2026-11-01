@@ -765,7 +765,9 @@ fn diagnostic_node(hir: &hir::File<'_>, site: &ImportSite) -> NodeData {
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
         | ImportSiteKind::GetBuiltinModule(call)
-        | ImportSiteKind::MockModule(call) => NodeData::Expr(call),
+        | ImportSiteKind::MockModule(call)
+        | ImportSiteKind::ImportByTestRunner(call)
+        | ImportSiteKind::RequireByTestRunner(call) => NodeData::Expr(call),
     }
 }
 

@@ -78,7 +78,7 @@ typesite w26 module=m0 position=1207 kind=CallResult
 typesite w27 module=m0 position=1240 kind=CallResult
 typesite w28 module=m0 position=1290 kind=CallResult
 layout L0 kind=Instance name="Holder" module=m0 position=559 constructor=f4 fields=[{key="kept" declared={type=undefined|null|"read"|"write" site=w9 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|"read"|"write" site=w20 flags=[OmitsNull, OmitsUndefined]}}] ownFieldCount=1
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|"read"|"write" site=w20 flags=[OmitsNull, OmitsUndefined]} variableName="restore"}] ownFieldCount=1
 data d0 root=Array{contents=undefined|null|"admin"|"off"|"read"|"write" elements=[String{value="off"}, String{value="read"}, String{value="write"}, String{value="admin"}]} module=m0
 variable g0 name="take" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="pick" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
@@ -309,11 +309,11 @@ function f4 name="Holder" module=m0 position=559 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @559
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @553
-    v2 = NewObject v1 layout=L0 @553
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @553
-    v4 = CallDirect v3 function=f6 @553
-    Return v3 @553
+    v1 = GetConstructPrototype v0 layout=L0 @559
+    v2 = NewObject v1 layout=L0 @559
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @559
+    v4 = CallDirect v3 function=f6 @559
+    Return v3 @559
 }
 function f5 name="later" module=m0 position=940 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|"read"|"write" site=w24 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1):
@@ -362,7 +362,7 @@ function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[Ha
 runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # -- generated: f0 take pick run Holder later f6
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=1479 module=m0}, {callee=f19 callPosition=1561 isConstruction=true module=m0}, {callee=f19 callPosition=1504 isConstruction=true module=m0}, {callee=f6 callPosition=553 parent=3 module=m0}, {callee=f6 callPosition=553 parent=2 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=1479 module=m0}, {callee=f19 callPosition=1561 isConstruction=true module=m0}, {callee=f19 callPosition=1504 isConstruction=true module=m0}, {callee=f6 callPosition=559 parent=3 module=m0}, {callee=f6 callPosition=559 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "off" = String string="off"
 # CHECK-NEXT: v1: "read" = String string="read"
@@ -459,7 +459,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: ReturnCall v6 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Holder"
-# CHECK: module=m0 position=559 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f6 callPosition=553 module=m0}] {
+# CHECK: module=m0 position=559 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f6 callPosition=559 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f4 = AssumeType v0 provenType=f4
 # CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]

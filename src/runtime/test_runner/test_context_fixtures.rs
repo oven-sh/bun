@@ -13,7 +13,7 @@ use bun_jsc::{
 use super::bun_test::{self, DescribeScope};
 use super::jest::Jest;
 use super::test_context::TestContext;
-use super::test_context_parameter::ContextParameter;
+use super::test_context_parameter::{ContextParameter, TEXT_LEFT_OUT};
 use crate::generated_bindgen::test_context as generated;
 
 /// Ordered by lifetime, so `>` catches a fixture that depends on a shorter-lived one.
@@ -261,6 +261,9 @@ impl TestFixtures {
                         "{signature}: the first parameter of fixture {} must be an object destructuring pattern",
                         quote(name),
                     )),
+                    ContextParameter::TextLeftOut => {
+                        errors.push(format!("{signature}: fixture {}: {TEXT_LEFT_OUT}", quote(name)));
+                    }
                 }
             }
             let index = definitions.len();
@@ -483,6 +486,7 @@ impl TestFixtures {
                     "The parameter that fixtures are destructured from must be an object destructuring pattern"
                 )));
             }
+            ContextParameter::TextLeftOut => return Err(global.throw(format_args!("{TEXT_LEFT_OUT}"))),
         };
         let test_context = TestContext::from_js(context);
         let definitions = this.definitions.get();

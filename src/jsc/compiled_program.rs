@@ -289,6 +289,12 @@ pub fn is_compiled_module(path: &[u8]) -> bool {
         && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
 }
 
+pub fn is_entry_point_beside_thread(path: &[u8]) -> bool {
+    bun_core::runs_no_compiled_program()
+        && (find_entry_point_by_module_path(path).is_some()
+            || find_entry_point_by_source_path(path).is_some())
+}
+
 // On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
 fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     if cfg!(windows) && bun_core::strings::contains_char(path, b'/') {
@@ -828,13 +834,14 @@ pub(crate) fn has_image_for_each_entry_point() -> bool {
 /// Whether a Worker that starts from text runs it apart from the compiled program. That takes the interpreter, the transpiler and the
 /// text of Bun's own modules. Where the program itself loads code that no build has seen, such a Worker is one more realm of the program.
 pub(crate) fn runs_worker_of_text_apart() -> bool {
-    let Some(program) = program_of_executable() else {
-        return false;
-    };
+    program_of_executable()
+        .is_some_and(|program| can_run_worker_apart(program) && !loads_code_outside_image(program))
+}
+
+fn can_run_worker_apart(program: &CompiledProgram) -> bool {
     let admits_inspector = admitted_code_of(program)
         .is_some_and(|admitted| admitted.contains(AdmittedCode::INSPECTOR));
     !admits_inspector
-        && !loads_code_outside_image(program)
         && bun_removable_features::can_run_uncompiled_code()
         && bun_core::code_generation_from_strings_by_flags()
             != bun_core::CodeGenerationFromStrings::Strict
@@ -842,8 +849,8 @@ pub(crate) fn runs_worker_of_text_apart() -> bool {
 
 /// Whether a Worker that starts from a file on disk runs it apart from the compiled program, as one that starts from text does.
 pub(crate) fn runs_worker_from_disk_apart() -> bool {
-    program_of_executable().is_some_and(|program| program.allows_code_from_disk)
-        && runs_worker_of_text_apart()
+    program_of_executable()
+        .is_some_and(|program| program.allows_code_from_disk && can_run_worker_apart(program))
 }
 
 /// BunCompiledModules.cpp. `path` is the text that the Worker of this thread starts from, and only what `--trim` removed keeps it from running: see `runs_worker_of_text_apart`.

@@ -8,7 +8,7 @@
 //   testaot run <file or folder>.. --show-output      IR tests: a .ir file says what is run on it and what must be printed
 //   testaot native <part of a name>                   tests written in C++
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isCI, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isCI, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { countsInstructions } from "../analysis-scaling/measure-check";
@@ -44,8 +44,15 @@ export const whyNoNativeTests =
   whyNoEngineTests ??
   (existsSync(join(dirname(testaot!), "jsc" + suffix)) ? undefined : "there is no jsc in the folder of testaot");
 
-export async function runTool(cmd: string[], cwd?: string) {
-  await using child = Bun.spawn({ cmd, cwd, env: toolEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+export async function runTool(cmd: string[], cwd?: string, env: Record<string, string | undefined> = {}) {
+  await using child = Bun.spawn({
+    cmd,
+    cwd,
+    env: { ...toolEnv, ...env },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   const everyLine = stdout.split(/\r?\n/);
   return { lines: everyLine.filter(line => line !== ""), everyLine, stderr, exitCode };
@@ -150,6 +157,59 @@ export function irTests(part: number, parts: number) {
       for (const paths of inCommandLines(mine)) await expectEveryTestPasses(["run", ...paths], folder);
     }, 600_000);
   }
+}
+
+/**
+ * A test that holds its program is what the front end made of the program one day. Here the front end makes it again, in a temporary
+ * folder, and the check lines that somebody wrote are asked of that. ../tools/update-ir-tests.ts says more, and writes a text anew.
+ * The texts were written on Linux on x64.
+ */
+export function irTestsWrittenAnew(part: number, parts: number) {
+  const whyNot = whyNoTestaot ?? (jsc ? undefined : "there is no jsc");
+  if (whyNot) return void skipOrFail(whyNot);
+  const whereTheTextsWereWritten = test.skipIf(!isLinux || isArm64 || isMusl || isASAN || isDebug);
+  const checkAnew = (...args: string[]) =>
+    runTool(
+      [bunExe(), join(import.meta.dir, "..", "tools", "update-ir-tests.ts"), "--check-anew", ...args],
+      undefined,
+      {
+        TESTAOT: testaot,
+        JSC: jsc,
+      },
+    );
+  if (part === 1)
+    whereTheTextsWereWritten(
+      "a text that passes as it is stored, and not on what its program gives, is named",
+      async () => {
+        const name = "an-object-filled-by-stores-has-the-key-order-of-the-text.ir";
+        const stored = readFileSync(join(testsOfBunsEntries, "place", name), "utf8");
+        const [two, three] = ['# filled.two = "2";\n', "# filled.three = kept;\n"];
+        expect(stored).toContain(two + three);
+        using folder = tempDir("aot-ir-anew", { [name]: stored.replace(two + three, three + two) });
+        expect(await run("run", join(String(folder), name))).toMatchObject({ exitCode: 0 });
+        const { lines, exitCode } = await checkAnew(String(folder));
+        expect({ lines, exitCode }).toEqual({
+          lines: [
+            expect.stringContaining(`${name}: it fails on what the front end makes today`),
+            expect.stringMatching(/^  FAIL .*L1 orders=1: \[0 2 1\]/),
+            "1 files with a source, 1 stale or failed",
+          ],
+          exitCode: 1,
+        });
+      },
+    );
+  whereTheTextsWereWritten(
+    "the IR tests of test/aot/engine-tests that hold their program pass on what the front end makes of it today",
+    async () => {
+      const { lines, stderr, exitCode } = await checkAnew(`--part=${part}/${parts}`, testsOfBunsEntries);
+      expect({ lines: lines.slice(-60), stderr, exitCode }).toEqual({
+        lines: [expect.stringMatching(/^[1-9][0-9]* files with a source, 0 stale or failed$/)],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    280_000,
+  );
 }
 
 /**

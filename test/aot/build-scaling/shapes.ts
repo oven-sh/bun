@@ -802,6 +802,7 @@ export const shapes: Shape[] = [
     counted: "functions",
     size: 2000,
     entry: "main.js",
+    counts: ["ParametersHandedOnRead"],
     // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
     flags: [],
     write: size => ({
@@ -938,6 +939,7 @@ export const shapes: Shape[] = [
     counted: "classes",
     size: 200,
     entry: "main.js",
+    counts: ["ValuesReadForClassesBelowCopies"],
     // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
     flags: [],
     write: size => ({
@@ -1181,6 +1183,7 @@ export const shapes: Shape[] = [
     counted: "classes",
     size: 125,
     entry: "main.js",
+    counts: ["ValuesReadForClassesBelowCopies", "MembersReadForTypesOfCopies"],
     isInSecondCombinedBuild: true,
     write: size => ({
       "main.js":
@@ -1241,19 +1244,20 @@ export const shapes: Shape[] = [
   // Each name asks whether the iterator has ended, and every way to that question knows the answer. The names taken so far are all read at the end.
   ...(
     [
-      ["names that a list pattern takes from a typed array or a list", 1000, (index: number) => `e${index}`, "", ""],
-      ["names with defaults that a list pattern takes from a typed array or a list", 1000, (index: number) => `e${index} = ${index}`, "", ""],
-      ["names that a list pattern takes from a typed array or a list, in front of a rest element", 1000, (index: number) => `e${index}`, ", ...more", " + more.length"],
+      ["names that a list pattern takes from a typed array or a list", 1000, (index: number) => `e${index}`, "", "", undefined],
+      ["names with defaults that a list pattern takes from a typed array or a list", 1000, (index: number) => `e${index} = ${index}`, "", "", ["LinksReadBetweenWebs"]],
+      ["names that a list pattern takes from a typed array or a list, in front of a rest element", 1000, (index: number) => `e${index}`, ", ...more", " + more.length", undefined],
       // What takes a step for each name at each name shows from here on.
-      ["very many names that a list pattern takes from a typed array or a list", 8000, (index: number) => `e${index}`, "", ""],
+      ["very many names that a list pattern takes from a typed array or a list", 8000, (index: number) => `e${index}`, "", "", ["LinksReadBetweenWebs"]],
     ] as const
   ).map(
-    ([name, smallerSize, element, rest, readsRest]): Shape => ({
+    ([name, smallerSize, element, rest, readsRest, counts]): Shape => ({
       name,
       counted: "names",
       size: smallerSize,
       entry: "main.js",
       isExcludedFromCombinedBuild: true,
+      counts: counts && [...counts],
       write: size => ({
         "main.js":
           `function apart(list) {\n  const [first, ${upTo(size, element).join(", ")}${rest}] = list;\n  return [first, ${upTo(size, index => `e${index}`).join(", ")}].join()${readsRest};\n}\n` +
@@ -2150,11 +2154,12 @@ console.log(typeof outmost.inner);
   {
     // As a validator does: a family of functions that call one another hand a description round, and each makes a pattern of a member of it. The walk that works a pattern's text out comes to
     // the end of its budget in the family; what it has learnt there for one call it knows for the next.
-    name: "functions that hand a description round and each make a regular expression of a member of it",
+    name: "validator patterns",
     counted: "functions",
-    size: 30,
+    size: 100,
     entry: "main.js",
     isExcludedFromCombinedBuild: true,
+    counts: ["FlowStatementRuns"],
     write: size => ({
       "main.js":
         lines(
@@ -2177,6 +2182,52 @@ console.log(typeof outmost.inner);
         "let root;\n" +
         lines(size, index => `root = make${index}({ pattern: process.argv[${50 + index}] ?? "p${index}+", id: ${index % 3 ? "undefined" : `"i${index}"`} }, root);`) +
         `console.log(root === undefined || visit(root, [], "p"));\n`,
+    }),
+  },
+  {
+    // The family above without its patterns, past 200 functions: each read of a member has every description as a receiver, they arrive one at a time, and each holds the member itself.
+    name: "validator family",
+    counted: "functions",
+    size: 110,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        lines(
+          size,
+          index =>
+            `function make${index}(options, inner) { return { ...options, kind: ${index}, inner, items: inner ? [inner] : [], pattern: options.pattern }; }`,
+        ) +
+        "function visit(schema, references, value) {\n  const next = schema.id === undefined ? references : [...references, schema];\n  switch (schema.kind) {\n" +
+        lines(size, index => `    case ${index}: return visit${index}(schema, next, value);`) +
+        "    default: return false;\n  }\n}\n" +
+        lines(
+          size,
+          index =>
+            `function visit${index}(schema, references, value) {\n` +
+            "  if (schema.inner !== undefined && !visit(schema.inner, references, value)) return false;\n" +
+            "  for (const item of schema.items) if (!visit(item, references, value)) return false;\n" +
+            `  for (const reference of references) if (reference.kind === ${(index + 1) % size} && !visit${(index + 1) % size}(reference, [], value)) return false;\n` +
+            "  return schema.pattern === undefined || schema.pattern.length > value.length;\n}",
+        ) +
+        "let root;\n" +
+        lines(size, index => `root = make${index}({ pattern: process.argv[${50 + index}] ?? "p${index}+", id: ${index % 3 ? "undefined" : `"i${index}"`} }, root);`) +
+        `console.log(root === undefined || visit(root, [], "p"));\n`,
+    }),
+  },
+  {
+    name: "closures in one variable that is written under many names",
+    counted: "closures",
+    size: 1500,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        "const all = [];\n" +
+        lines(size, index => `all.push(function f${index}() { return ${index}; });`) +
+        "const pick = all[process.argv.length] ?? function none() {};\n" +
+        lines(512, index => `pick.p${index} = ${index};`) +
+        "console.log(typeof pick);\n",
     }),
   },
   {
@@ -2409,6 +2460,53 @@ console.log(typeof outmost.inner);
         `const seed = process.argv.length;\nfunction mix(x, y) {\n  let a = x | 0, b = y | 0, t = 0;\n` +
         lines(size, () => `  t = a; a = b; b = t; a ^= b & a;`) +
         `  return a === 255;\n}\nlet sum = 0;\nfor (let i = 0; i < 1000; i++) sum += mix(seed + i, i * 7) ? 1 : 0;\nconsole.log(sum);\n`,
+    }),
+  },
+  // Every element of the list may be an instance of any class, and each statement calls another name on one. Who is passed as `this` was asked of every class under every
+  // name, by a lookup of its own, though all but one find nothing: 4000 statements made a million lookups and three million nodes.
+  {
+    name: "statements that each call a method of another name on an instance of any of a quarter as many classes",
+    counted: "statements",
+    size: 500,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    counts: ["FlowStatementRuns"],
+    write: size => ({
+      "main.js": size
+        ? lines(size / 4, index => `class T${index} { constructor() { this.size = ${index}; } m${index}(x) { return (x + this.size) & 7; } }`) +
+          `const things = [${upTo(size / 4, index => `new T${index}()`).join(", ")}];\nfunction all(k) {\n  let s = k;\n` +
+          lines(size, index => `  s += things[${index % (size / 4)}].m${index % (size / 4)}(s + ${index});`) +
+          `  return s;\n}\nconsole.log(all(1));\n`
+        : "console.log(0);\n",
+    }),
+  },
+  // Every block that may leave the loop, or go on to its next turn, was met with one near the loop's head by a walk up all the blocks between them.
+  {
+    name: "breaks in one loop",
+    counted: "statements",
+    size: 2000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    counts: ["StepsToCommonLikelyDominators"],
+    write: size => ({
+      "main.js":
+        `function big(x, n, o) {\n  let s = 0;\n  for (let i = 0; i < n; i++) {\n` +
+        lines(size, index => `    s = (s + x) | 0; if (s === -${(index + 1) * 7919}) break;`) +
+        `    x = (x + o.step) | 0;\n  }\n  return s + x;\n}\nconsole.log(big(5, 3, { step: 7 }), big(0, 3, { step: 7 }), big(-9, 2, { step: -1 }));\n`,
+    }),
+  },
+  {
+    name: "continues in one loop",
+    counted: "statements",
+    size: 2000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    counts: ["StepsToCommonLikelyDominators"],
+    write: size => ({
+      "main.js":
+        `function big(x, n, o) {\n  let s = 0;\n  for (let i = 0; i < n; i++) {\n` +
+        lines(size, index => `    s = (s + x) | 0; if (s === -${(index + 1) * 7919}) continue;`) +
+        `    x = (x + o.step) | 0;\n  }\n  return s + x;\n}\nconsole.log(big(5, 3, { step: 7 }), big(0, 3, { step: 7 }), big(-9, 2, { step: -1 }));\n`,
     }),
   },
 ];

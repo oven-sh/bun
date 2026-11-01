@@ -3,6 +3,7 @@
 # FORM: AsRead
 # DIAGNOSTIC: LockedBuiltinWriteIsIgnored
 # DIAGNOSTIC: LockedBuiltinWriteMayRun
+# DIAGNOSTIC: LockedBuiltinWriteUnderUnreadName
 # RUN: pipeline FinishBirths
 
 module m0 path="sloppy-code-told-builtin-cannot-changed.cjs" displayPath="sloppy-code-told-builtin-cannot-changed.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0

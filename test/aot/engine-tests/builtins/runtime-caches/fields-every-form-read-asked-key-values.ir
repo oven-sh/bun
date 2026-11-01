@@ -1,4 +1,5 @@
 # Objects whose names are all known when they are made keep their values in slots of many forms. Each is read and asked by the same key values again and again, while stores by name change the form of a value, take it away and bring it back, and while the objects above gain and lose the names.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # DIAGNOSTIC: LockedBuiltinWriteMayRun
 # RUN: lower-to-air size f0 f4 f5

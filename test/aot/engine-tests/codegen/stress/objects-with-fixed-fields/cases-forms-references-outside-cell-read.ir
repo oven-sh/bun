@@ -1,5 +1,6 @@
 # References that lie outside the cell of their object, read by code that knows nothing of the object: through `any` and through computed names.
 # Objects that hold them, that hold undefined or null there, that never got them, that lost them.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f5
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls

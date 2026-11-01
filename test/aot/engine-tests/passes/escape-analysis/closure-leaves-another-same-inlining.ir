@@ -1,4 +1,5 @@
 # a-closure-leaves-while-another-one-over-the-same-variable-is-still-used.js where every call stays a call and all code counts as hot: what a caller believes about a callee is only tested there, and only hot code keeps a closure that may leave in the frame. The output is that of plain Bun.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # OPTIONS: disable=pass:InlineCalls heat=EverythingIsHot
 # RUN: lower-to-air size f0 f5

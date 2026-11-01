@@ -338,14 +338,14 @@ function f14 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b24():
 # CHECK-NEXT: v102: "detached typed array" = String string="detached typed array"
 # CHECK-NEXT: v103: f5 = NewClosure function=f5 allocationSite=2 storage=Frame
-# CHECK-NEXT: v104: undefined = CallDirect v102, v103 function=f21 accessSite=0
+# CHECK-NEXT: v104: undefined = CallDirect v102, v103 function=f22 accessSite=0
 # CHECK-NEXT: v105: f6 = NewClosure function=f6 allocationSite=3
 # CHECK-NEXT: v106: L1 = NewObject -, v105 layout=L1 fields=[0] allocationSite=4 allocationClass=0
 # CHECK-NEXT: v107: L1 = FinishObject v106
 # CHECK-NEXT: PutModuleVariable v107 variable=g2
 # CHECK-NEXT: v109: "next throws" = String string="next throws"
 # CHECK-NEXT: v110: f7 = NewClosure function=f7 allocationSite=5 storage=Frame
-# CHECK-NEXT: v111: undefined = CallDirect v109, v110 function=f21 accessSite=2
+# CHECK-NEXT: v111: undefined = CallDirect v109, v110 function=f22 accessSite=2
 # CHECK-NEXT: v112: undefined = Undefined
 # CHECK-NEXT: Return v112
 # CHECK-NEXT: }

@@ -64,14 +64,18 @@ use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use commonjs_exports::{CommonJsInput, InnerCommonJs, scan_commonjs_modules};
 use core::cmp::Ordering;
-use evicted::{find_evicted_modules, find_library_modules_stored_in_cache};
+use evicted::{
+    find_evicted_modules, find_files_that_run_again, find_library_modules_stored_in_cache,
+};
 use exports::{
     ExportTables, Resolution, collect_export_entries, find_ambiguous_names, finish_exports,
     resolve_exports,
 };
 use failures::{PendingFailure, number_failures};
 use graph::{FileRow, find};
-use imports::{FileImports, bind_imports, finish_bindings, finish_named_members};
+use imports::{
+    FileImports, bind_imports, find_mocked_modules, finish_bindings, finish_named_members,
+};
 use module_set::{ModuleSet, collect_modules};
 use order::{SiteKey, SitePosition, compute_order};
 use plan::{Plan, StoredSite};
@@ -229,6 +233,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let mut newly_stored_markers = find_markers_stored_in_application(input, &modules);
     // What the build knows of the `__esModule` of a module counts until a store in another file is found.
     steps.end("modules stored in the cache, markers stored");
+    let mocked = find_mocked_modules(input, &scans, &modules);
     let (tables, imports) = loop {
         texts.forget_markers(&newly_stored_markers);
         stored_markers.extend(newly_stored_markers);
@@ -236,7 +241,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             .take()
             .unwrap_or_else(|| collect_export_entries(input, &scans, &modules));
         steps.end("export entries of this round");
-        let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
+        let tables = resolve_exports(input.files, &scans, &modules, entries, &texts, &mocked);
         steps.end("resolve_exports");
         sites.settle(input.files, &modules, &tables);
         steps.end("sites.settle");
@@ -312,6 +317,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     // that out behind a whole run of the flow analysis, and the program would be compiled again.
     let mocked_modules = imports.iter().flat_map(|file| &file.mocked_modules);
     let mut mocked_modules: FxHashSet<ModuleRef> = mocked_modules.copied().collect();
+    let mut named_by_mocks = mocked_modules.clone();
     mocked_modules.extend(replaced_without_table);
     // A test names an ES module of Bun's own as a module of the library. Its table stands here, with its file.
     for module in input.mocked_modules {
@@ -464,6 +470,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             if (input.modules_replaced_in_text.iter()).any(|it| ends_with_module_in_text(path, it))
             {
                 mocked_modules.insert(ModuleRef::File(file));
+                named_by_mocks.insert(ModuleRef::File(file));
             }
         }
     }
@@ -655,6 +662,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     for &module in &mocked_modules {
         plan.set_may_be_mocked(module);
     }
+    for &module in &named_by_mocks {
+        plan.set_is_named_by_mock(module);
+    }
     if mocks_any_module {
         plan.set_every_module_may_be_mocked();
     }
@@ -663,12 +673,14 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     }
     if input.only_tests_load_code_from_disk {
         for &file in input.files.compiled_files() {
-            if parsed_source(input.files, file).is_some_and(|source| !source.is_of_tests) {
+            let Some(source) = parsed_source(input.files, file) else {
+                continue;
+            };
+            if !source.is_of_tests() {
                 plan.set_loads_compiled_files_alone(ModuleRef::File(file));
-                // A package may be there to help the tests: nock and msw patch `fetch`, sinon whatever a test names.
-                if parsed_source(input.files, file).is_some_and(|source| !source.is_in_package) {
-                    plan.set_finds_builtins_read_only(ModuleRef::File(file));
-                }
+            }
+            if source.finds_builtins_read_only() {
+                plan.set_finds_builtins_read_only(ModuleRef::File(file));
             }
         }
     }
@@ -680,6 +692,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         for entry_point in input.sources.entry_points() {
             plan.set_runs_again(ModuleRef::File(entry_point.file));
         }
+    }
+    for module in find_files_that_run_again(input, &scans, &modules, &evicted) {
+        plan.set_runs_again(module);
     }
     plan.set_library_modules_stored_in_cache(stored_in_cache);
     for module in evicted.iter() {
@@ -714,6 +729,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         record_files: Vec::new(),
         left_out_files: Vec::new(),
         files_brought_by_calls: Vec::new(),
+        requests_that_bind_nothing: Vec::new(),
         placeholder_files: Vec::new(),
         left_out_inner_modules: Vec::new(),
         other_modules: modules.other_modules,

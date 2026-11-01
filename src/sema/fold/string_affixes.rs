@@ -698,7 +698,9 @@ fn is_module_request(
             | ImportSiteKind::ImportCall(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaResolve(_)
-            | ImportSiteKind::MockModule(_),
+            | ImportSiteKind::MockModule(_)
+            | ImportSiteKind::ImportByTestRunner(_)
+            | ImportSiteKind::RequireByTestRunner(_),
         )
         | None => false,
     };

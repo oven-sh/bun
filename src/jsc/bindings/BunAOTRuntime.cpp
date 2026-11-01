@@ -155,6 +155,15 @@ extern "C" void Bun__AOT__takePagesForTablesOfFirstThread()
     JSC::AOT::adoptPagesForNewThread(result.pages);
 }
 
+extern "C" bool mi_on_thread_idle_start(void) noexcept;
+extern "C" void mi_on_thread_idle_end(void) noexcept;
+
+extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
+{
+    if (mi_on_thread_idle_start())
+        mi_on_thread_idle_end();
+}
+
 extern "C" void Bun__ThreadPool__exitWithoutAnyThread();
 
 extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, BunAOTBytes allImages, const BunAOTImageFile* fileOrNull, const uint8_t identity[16])

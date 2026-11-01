@@ -66,7 +66,7 @@ typesite w40 module=m1 position=4142 kind=Variable
 typesite w41 module=m1 position=4344 kind=Variable
 layout L0 kind=Instance name="Box" module=m0 position=453 constructor=f6 fields=[{key="value" declared={type=number site=w12} flags=[IsRequired]}, {key="more" declared={type=number site=w13} flags=[IsRequired]}] ownFieldCount=2
 layout L1 kind=Instance name="Worker" module=m0 position=540 constructor=f7 fields=[{key="scale" declared={type=number site=w14} flags=[IsRequired]}] ownFieldCount=1
-layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w28}}] ownFieldCount=1
+layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w28} variableName="sum"}] ownFieldCount=1
 data d0 root=Array{contents=anything} module=m0
 data d1 root=Array{contents=number elements=[Number{value=3}, Number{value=4}]} module=m0
 variable g0 name="say" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
@@ -264,9 +264,9 @@ function f6 name="Box" module=m0 position=499 kind=BaseConstructor flags=[HasNew
   b0(v0: anything, v1: number, v2: number):
     Jump -> next b1() @499
   b1():
-    v3 = GetConstructPrototype v0 layout=L0 @447
-    v4 = NewObject v3 layout=L0 @447
-    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @447
+    v3 = GetConstructPrototype v0 layout=L0 @499
+    v4 = NewObject v3 layout=L0 @499
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @499
     v6 = CallDirect v5 function=f13 @499
     v7 = Undefined @515
     v8 = TypeTest v7 testedType=object @515
@@ -282,11 +282,11 @@ function f7 name="Worker" module=m0 position=540 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @540
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @534
-    v2 = NewObject v1 layout=L1 @534
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @534
-    v4 = CallDirect v3 function=f14 @534
-    Return v3 @534
+    v1 = GetConstructPrototype v0 layout=L1 @540
+    v2 = NewObject v1 layout=L1 @540
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @540
+    v4 = CallDirect v3 function=f14 @540
+    Return v3 @540
 }
 function f8 name="work" module=m0 position=560 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=L1 site=w17} parameters=[{type=undefined|null|L0 site=w15 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w16}] results=[{type=number site=w18}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L1, v1: undefined|null|L0, v2: number):
@@ -379,7 +379,7 @@ function f11 name="step" module=m0 position=831 kind=Arrow flags=[IsChecked] len
     v43 = Undefined @948
     Return v43 @948
 }
-function f12 module=m0 position=1043 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|function|f11 site=w29 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=number site=w31}] results=[{type=anything}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f12 module=m0 position=1043 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|function|f11 site=w29 flags=[OmitsNull, OmitsUndefined] variableName="step"}] thisType={type=anything} parameters=[{type=number site=w31}] results=[{type=anything}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f11, v1: number):
     Jump -> next b1() @1043
   b1():

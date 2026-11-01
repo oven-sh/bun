@@ -1814,6 +1814,14 @@ impl<'p, 's> Checker<'p, 's> {
         (types.iter()).fold(1, |size, &t| size.saturating_mul(self.parts(t).len()))
     }
 
+    fn leading_nullish_members(&self, union: TypeId) -> impl Iterator<Item = TypeId> + use<'p> {
+        let members = self.parts(union);
+        let is_nullish = |m: &TypeId| m.is_undefined() || m.is_null();
+        let leading = members.iter().take_while(|m| is_nullish(m)).count();
+        debug_assert!(!members[leading..].iter().any(is_nullish));
+        members[..leading].iter().copied()
+    }
+
     /// `getIntersectionType` for types some of which are unions. `actual`: the number of types in the request. Returns
     /// `None` if `checkCrossProductUnion` rejected the set.
     fn distribute_intersection(
@@ -1830,7 +1838,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `(A | undefined) & (B | undefined)` is `A & B | undefined`, and likewise for `null`.
         if set
             .iter()
-            .all(|&t| self.is_union(t) && self.contains_undefined(t))
+            .all(|&t| self.is_union(t) && self.leading_nullish_members(t).any(|m| m.is_undefined()))
         {
             let undefined = if set.iter().any(|&t| self.contains_missing_type(t)) {
                 TypeId::MISSING
@@ -1846,7 +1854,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if set
             .iter()
-            .all(|&t| self.is_union(t) && self.parts(t).iter().any(|m| m.is_null()))
+            .all(|&t| self.is_union(t) && self.leading_nullish_members(t).any(|m| m.is_null()))
         {
             for t in &mut set {
                 *t = self.filter(*t, |_, m| !m.is_null());

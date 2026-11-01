@@ -131,6 +131,10 @@ export const calls: Record<string, string[]> = {
   "TransformStream.prototype.readable > ReadableStream": ["new TransformStream().readable"],
   "TransformStream.prototype.writable > WritableStream": ["new TransformStream().writable"],
   "URL.prototype.searchParams > URLSearchParams": ['new URL("https://example.com/a?first=1").searchParams'],
+  "WebAssembly.instantiate": [
+    "WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))",
+    "WebAssembly.instantiate(new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])))",
+  ],
   "WebAssembly.Memory.prototype.buffer > ArrayBuffer SharedArrayBuffer": [
     "new WebAssembly.Memory({ initial: 1 }).buffer",
     "new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true }).buffer",

@@ -11,6 +11,7 @@ use super::bindings::{ExportBinding, ModuleExport, RequiredName};
 use super::commonjs_exports::{CommonJsImport, CommonJsTexts};
 use super::compare_code_units;
 use super::failures::{FailureOrder, ModuleFailureKind, PendingFailure};
+use super::imports::MockedModules;
 use super::interop::{ImportPhase, ModuleKind};
 use super::module_set::ModuleSet;
 use super::requests::{ScannedSite, Scans, phase_towards};
@@ -341,7 +342,14 @@ fn compute_star_exports(
     scans: &Scans,
     entries: &[ExportEntries],
     files: &[FileId],
+    mocked: &MockedModules,
 ) -> (Vec<u32>, Vec<StarExports>, Vec<Vec<u32>>) {
+    // A mock that stands in place of a file answers for every name, and a star hands on what it answers.
+    let targets_of_mock =
+        |module: &ExportEntries| match mocked.contains(ModuleRef::File(module.file)) {
+            true => DynamicStarTargets::Many,
+            false => DynamicStarTargets::Empty,
+        };
     let edges_of = |module: &ExportEntries| -> Vec<u32> {
         let tables = star_targets(scans, module).filter_map(|target| find_table(files, target));
         tables.map(|table| table as u32).collect()
@@ -361,7 +369,7 @@ fn compute_star_exports(
         {
             star_exports.push(StarExports {
                 names: Vec::new(),
-                dynamic_targets: DynamicStarTargets::Empty,
+                dynamic_targets: targets_of_mock(&entries[member]),
             });
             continue;
         }
@@ -371,6 +379,9 @@ fn compute_star_exports(
         let own_names = own_names.map(|&(name, _)| name);
         names.extend(own_names.filter(|&name| name != known::default && seen.insert(name)));
         let mut dynamic_targets = DynamicStarTargets::Empty;
+        for module in members.clone() {
+            dynamic_targets = dynamic_targets.join(targets_of_mock(module));
+        }
         for target in members.flat_map(|module| star_targets(scans, module)) {
             let Some(table) = find_table(files, target) else {
                 dynamic_targets = dynamic_targets.join(DynamicStarTargets::One(target));
@@ -397,6 +408,7 @@ struct FileTable {
     own_count: u32,
     dynamic_targets: DynamicStarTargets,
     follows_every_star: bool,
+    may_be_mocked: bool,
 }
 
 impl FileTable {
@@ -413,7 +425,12 @@ struct NameNodes {
 }
 
 impl NameNodes {
-    fn add_file(&mut self, module: &ExportEntries, star_exports: &StarExports) {
+    fn add_file(
+        &mut self,
+        module: &ExportEntries,
+        star_exports: &StarExports,
+        may_be_mocked: bool,
+    ) {
         let start = self.keys.len() as u32;
         let own_names = module.own.iter().map(|&(name, _)| name);
         // Without an `export *` the list holds the file's own names and no other.
@@ -432,6 +449,7 @@ impl NameNodes {
             own_count: module.own.len() as u32,
             dynamic_targets: star_exports.dynamic_targets,
             follows_every_star: false,
+            may_be_mocked,
         });
     }
 
@@ -705,6 +723,7 @@ pub(super) fn resolve_exports(
     modules: &ModuleSet,
     entries: CollectedEntries,
     commonjs: &CommonJsTexts,
+    mocked: &MockedModules,
 ) -> ExportTables {
     let CollectedEntries {
         tables: entries,
@@ -717,14 +736,15 @@ pub(super) fn resolve_exports(
     debug_assert!(table_files.iter().eq(files_with_table));
     let mut steps = StepClock::new(Stage::BindModules, "resolve_exports");
     let (component_of, star_exports, star_tables) =
-        compute_star_exports(scans, &entries, &table_files);
+        compute_star_exports(scans, &entries, &table_files, mocked);
     steps.end("compute_star_exports");
     let mut nodes = NameNodes::default();
     let own_names: usize = entries.iter().map(|module| module.own.len()).sum();
     nodes.keys.reserve(own_names);
     nodes.index.reserve(own_names);
     for (module, &component) in entries.iter().zip(&component_of) {
-        nodes.add_file(module, &star_exports[component as usize]);
+        let may_be_mocked = mocked.contains(ModuleRef::File(module.file));
+        nodes.add_file(module, &star_exports[component as usize], may_be_mocked);
     }
     steps.end("a node for each name");
     let mut graph = ResolutionGraph {
@@ -881,7 +901,7 @@ impl ExportTables {
         }
         let resolved = ResolvedName::new(match self.table_of(module) {
             None => captured_resolution(modules, ModuleRef::File(module), name),
-            Some(_) if name == known::default => Resolution::NotFound,
+            Some(table) if name == known::default && !table.may_be_mocked => Resolution::NotFound,
             Some(table) => table.dynamic_targets.for_name(modules, module, name),
         });
         self.follow(resolved)

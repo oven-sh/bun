@@ -289,8 +289,11 @@ fn import_kind(site: ImportSiteKind) -> Option<ModuleImportKind> {
         | ImportSiteKind::ExportStar(_) => ModuleImportKind::ImportStatement,
         ImportSiteKind::ImportEquals(_)
         | ImportSiteKind::Require(_)
-        | ImportSiteKind::ImportMetaRequire(_) => ModuleImportKind::RequireCall,
-        ImportSiteKind::ImportCall(_) => ModuleImportKind::DynamicImport,
+        | ImportSiteKind::ImportMetaRequire(_)
+        | ImportSiteKind::RequireByTestRunner(_) => ModuleImportKind::RequireCall,
+        ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportByTestRunner(_) => {
+            ModuleImportKind::DynamicImport
+        }
         ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_) => {
             ModuleImportKind::RequireResolve
         }

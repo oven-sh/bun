@@ -72,11 +72,20 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     graph.set_lets_process_out_of_sight(reached.lets_process_out_of_sight);
     graph.set_is_ready_for_loader_functions(reached.is_ready_for_loader_functions);
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
-    graph.set_files_brought_by_calls(reached.brought_by_calls.clone());
+    graph.set_files_brought_by_calls(
+        reached.brought_by_calls.clone(),
+        reached.requests_that_bind_nothing.clone(),
+    );
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
 }
 
 impl Build<'_> {
+    /// `BindInput::runner_starts_entry_points`
+    fn runner_starts_entry_points(&self) -> bool {
+        self.options.load.runs_tests
+            && (self.options.aot.is_part_of_test_files || !self.options.aot.shares_realms)
+    }
+
     pub(crate) fn bind_modules<'s>(
         &mut self,
         loaded: &LoadedBuild<'_, 's>,
@@ -201,8 +210,7 @@ impl Build<'_> {
             files_that_tests_load: &self.options.load.files_that_tests_load,
             runs_tests: self.options.load.runs_tests,
             runner_starts_entry_points: project == ProjectId::Application
-                && self.options.load.runs_tests
-                && (self.options.aot.is_part_of_test_files || !self.options.aot.shares_realms),
+                && self.runner_starts_entry_points(),
             stores_path_of_main_module: self.options.load.stores_path_of_main_module,
             entry_points_run_again: project == ProjectId::Application
                 && self.options.aot.entry_points_run_again,
@@ -273,6 +281,21 @@ impl Build<'_> {
                     && !self.options.aot.host_runs_files_from_disk
                     && (self.options.aot.loads_code_from_disk || self.options.aot.runs_in_place)
                     && !graph.importers_of_uncompiled_code().is_empty();
+                // A layer holds the preloads of the run beside the files of the library that the tests name.
+                let preloads = &self.options.load.paths_of_preloads;
+                let entry_points = view.files().entry_points().iter().copied();
+                let mut files_started_by_runner: Vec<_> = entry_points
+                    .filter(|&file| {
+                        let path = to_native(view.files().module(file).file_name());
+                        self.options.load.runs_tests
+                            && (self.runner_starts_entry_points()
+                                || preloads.iter().any(|it| it[..] == *path))
+                    })
+                    .collect();
+                files_started_by_runner.sort_unstable();
+                let starts_of_files = core::mem::take(&mut self.started_workers.starts_of_files);
+                let starts_of_workers: Vec<(bun_sema::program::FileId, u32)> =
+                    starts_of_files.iter().map(|it| (it.1, it.2)).collect();
                 let input = ProgramReachInput {
                     files: view.files(),
                     sources: view.sources,
@@ -294,6 +317,8 @@ impl Build<'_> {
                     code_on_disk_names_files,
                     mocks_any_module: self.mocks_any_module(),
                     host_runs_files_from_disk: self.options.aot.host_runs_files_from_disk,
+                    files_started_by_runner: &files_started_by_runner,
+                    starts_of_workers: &starts_of_workers,
                 };
                 self.started_workers.imports_file_with_query = self.options.load.runs_tests
                     && !self.options.aot.loads_code_from_disk
@@ -306,6 +331,21 @@ impl Build<'_> {
                 steps.end("before find_left_out_code");
                 let (left_out, reached) = find_left_out_code(&input, nobody_reads, &in_parallel);
                 steps.end("find_left_out_code");
+                // A file that a `new Worker(..)` names belongs to the build where that is reached. In doubt it belongs to it.
+                let is_reached = |path: &[u8]| {
+                    let mut starts = starts_of_files.iter().zip(0..);
+                    starts.any(|(start, number)| {
+                        start.0 == path && left_out.starts_of_workers_reached.contains(&number)
+                    })
+                };
+                let never_started: Vec<Vec<u8>> = (self.started_workers.files.iter())
+                    .filter(|file| file.is_named_by_path && !file.is_guess && file.text.is_none())
+                    .map(|file| &file.source_path)
+                    .filter(|&path| starts_of_files.iter().any(|start| &start.0 == path))
+                    .filter(|&path| !is_reached(path))
+                    .cloned()
+                    .collect();
+                self.started_workers.remove_sources(&never_started);
                 finish_modules(&mut graph, &reached);
                 let asks_loader_functions = self.options.load.runs_tests
                     && (reached.stores_loader_functions

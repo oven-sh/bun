@@ -99,12 +99,12 @@ typesite w0 module=m1 position=973 kind=Variable
 typesite w1 module=m1 position=270 kind=Variable
 typesite w2 module=m1 position=309 kind=Variable
 typesite w3 module=m1 position=1007 kind=Variable
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32|absent flags=[IsExpected]}}] ownFieldCount=1
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32|absent flags=[IsExpected]}}] ownFieldCount=1
-layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|i32 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
-layout L3 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32|absent flags=[IsExpected]}}] ownFieldCount=1
-layout L4 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32|absent flags=[IsExpected]}}] ownFieldCount=1
-layout L5 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32|absent flags=[IsExpected]} variableName="n"}] ownFieldCount=1
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32|absent flags=[IsExpected]} variableName="n"}] ownFieldCount=1
+layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|i32 flags=[IsExpected]} flags=[IsRequired] variableName="n"}] ownFieldCount=1
+layout L3 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32|absent flags=[IsExpected]} variableName="n"}] ownFieldCount=1
+layout L4 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32|absent flags=[IsExpected]} variableName="n"}] ownFieldCount=1
+layout L5 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32 flags=[IsExpected]} flags=[IsRequired] variableName="start"}] ownFieldCount=1
 layout L6 module=m0 position=408 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 layout L7 module=m0 position=558 fields=[{key="x" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 data d0 root=Object{layout=L6 members=[{key="a" value=Number{value=1}}]} module=m0

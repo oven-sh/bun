@@ -24,6 +24,8 @@ async function build(env: Record<string, string>) {
 test("with the stage log, and only with it", async () => {
   const lines = await build({ BUN_JSC_logAOTPhaseTimes: "1" });
   for (const step of [
+    // Three quarters of a build of 4,000 packages lay here, and the stage had no line of its own.
+    "Load | a round of the load | find_code_that_starts_workers",
     "BindModules | application | bind_modules, all of it",
     "BindModules | runtime | bind_modules, all of it",
     "BindModules | bind_modules | resolve_exports",
@@ -40,7 +42,9 @@ test("with the stage log, and only with it", async () => {
   ]) {
     expect(lines).toContainEqual(
       expect.stringMatching(
-        new RegExp(`^AOT stage step \\| ${step.replaceAll("|", "\\|")} \\| wall [0-9.]+ ms \\| cpu [0-9]+ ms$`),
+        new RegExp(
+          `^AOT stage step \\| ${step.replaceAll("|", "\\|")} \\| wall [0-9.]+ ms \\| cpu [0-9]+ ms( \\| instructions [0-9.]+ M)?$`,
+        ),
       ),
     );
   }

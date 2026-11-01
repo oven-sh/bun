@@ -47,9 +47,9 @@ function f1 name="f" module=m0 position=63 kind=BaseConstructor flags=[HasNewTar
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1() @63
   b1():
-    v3 = GetConstructPrototype v0 layout=L0 @42
-    v4 = NewObject v3 layout=L0 @42
-    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @42
+    v3 = GetConstructPrototype v0 layout=L0 @63
+    v4 = NewObject v3 layout=L0 @63
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @63
     v6 = Undefined @67
     v7 = TypeTest v6 testedType=object @67
     Branch v7 -> taken b2(| 0), notTaken b3(| 0) @67

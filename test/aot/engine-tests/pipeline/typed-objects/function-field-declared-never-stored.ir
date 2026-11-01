@@ -54,7 +54,7 @@ typesite w12 module=m0 position=680 kind=CallResult
 typesite w13 module=m1 position=4142 kind=Variable
 typesite w14 module=m1 position=4344 kind=Variable
 layout L0 kind=Instance name="Planet" module=m0 position=536 constructor=f4
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|string|absent site=w5 flags=[OmitsNull, OmitsUndefined]}}] ownFieldCount=1
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|string|absent site=w5 flags=[OmitsNull, OmitsUndefined]} variableName="out"}] ownFieldCount=1
 layout L2 module=m0 position=634 fields=[{key="held" declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
 data d0 root=Array{contents=number elements=[Number{}]} module=m0
 data d1 root=Array{contents=number elements=[Number{value=4}]} module=m0
@@ -204,7 +204,7 @@ function f4 name="Planet" module=m0 position=536 kind=BaseConstructor flags=[Has
     v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @536
     Return v3 @536
 }
-function f5 module=m0 position=661 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=undefined|null|L2 site=w6 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f5 module=m0 position=661 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=undefined|null|L2 site=w6 flags=[OmitsNull, OmitsUndefined] variableName="bag"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1, v1: undefined|null|L2):
     Jump -> next b1() @661
   b1():
@@ -343,7 +343,7 @@ runtimefunction id=ArrayPrototypeForEach function=f8
 # CHECK-LABEL: function {{*}}name="Planet"
 # CHECK: module=m0 position=536 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
 # CHECK-LABEL: function f5 module=
-# CHECK: m0 position=661 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=L2 site=w6 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: m0 position=661 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=L2 site=w6 flags=[OmitsNull, OmitsUndefined] variableName="bag"}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Planet"
 # CHECK: module=m0 position=536 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers takesNewTarget=true}
 # CHECK-LABEL: function {{*}}name="Planet"

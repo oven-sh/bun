@@ -3,6 +3,7 @@ use bun_sema::check::aot::{
     BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,
     BuiltinValuePath, Denotation,
 };
+use bun_sort_by_number::SortByNumber;
 use smallvec::SmallVec;
 use std::sync::OnceLock;
 
@@ -158,7 +159,7 @@ impl BuiltinValuePaths {
             paths.names.extend(reversed_names.iter().rev());
         }
         paths.add_members_under_second_names(platform);
-        paths.values.sort_by_key(|value| value.id.to_wire());
+        paths.values.sort_by_u32(|value| value.id.to_wire());
         paths
     }
 

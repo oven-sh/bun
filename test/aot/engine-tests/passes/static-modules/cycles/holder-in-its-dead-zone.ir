@@ -34,7 +34,7 @@ module m1 path="c.cjs" displayPath="c.cjs" kind=CommonJs exportRule=CommonJs req
 module m2 path="a.cjs" displayPath="a.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m0 kind=Require completes=true}, {target=m1 kind=Require completes=true}]
 module m3 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}]
 entry module=m3
-layout L0 kind=Environment module=m2 fields=[{key=@"binding.0" declared={type=anything|absent} flags=[IsImmutable]}, {key=@"binding.1" declared={type=anything} flags=[IsRequired, IsImmutable]}] ownFieldCount=2
+layout L0 kind=Environment module=m2 fields=[{key=@"binding.0" declared={type=anything|absent} flags=[IsImmutable] variableName="b"}, {key=@"binding.1" declared={type=anything} flags=[IsRequired, IsImmutable] variableName="c"}] ownFieldCount=2
 layout L1 module=m3
 variable g0 name="exports" module=m3 declared={type=anything} initialization=Undefined
 variable g1 name="sawConst" module=m0 declared={type=anything} initialization=Undefined

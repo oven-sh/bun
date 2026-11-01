@@ -16,7 +16,7 @@ array_literal_strings	{"alone":[22,1],"opened":[22,1]}
 array_literal_three_constants	{"alone":[7,0],"opened":[8,1]}
 array_literal_values	{"alone":[8,1],"opened":[8,1]}
 array_map	{"alone":[48.625,2],"opened":[66.5,3]}
-async_call_await	{"alone":[14,3],"opened":[14,3]}	handlers-at-own-calls 1 (10-28 10:52:04) fixed a wrong answer: entering any function may throw at the end of the stack. With that one line off the row reads its old number (overflow-cost, 10-30). The rejected promise has an await of its own since allocation-as-go own-await (10-29 08:13:39): executed 29 > 20, the old 19.8.
+async_call_await	{"alone":[14,3],"opened":[14,3]}	A wrong answer was fixed: entering any function may throw at the end of the stack. With that one line off the row reads its old number. The rejected promise has an await of its own: executed 29 > 20, the old 19.8.
 await_resolved	{"alone":[5,1],"opened":[6,1]}
 await_value	{"alone":[14,2],"opened":[14,2]}
 bound_call	{"alone":[2,1],"opened":[2,1]}
@@ -26,11 +26,11 @@ capture_string_char	{"alone":[22,7],"opened":[22,7]}
 closure_call	{"alone":[-23.25,-0.5],"opened":[-0.625,-0.5]}
 closure_call_array	{"alone":[16.625,5],"opened":[14,3]}
 closure_call_big	{"alone":[2,1],"opened":[2,1]}
-closure_call_fewer_arguments	{"alone":[8,4],"opened":[1,1]}	handlers-at-own-calls 1 (10-28 10:52:04) fixed a wrong answer: entering any function may throw at the end of the stack. With that one line off the row reads its old number (overflow-cost, 10-30). A shared body holds one call where it held two: each may be shown in a stack trace at its own position. Executed on x64: 8.2, the old 8.
+closure_call_fewer_arguments	{"alone":[8,4],"opened":[1,1]}	A wrong answer was fixed: entering any function may throw at the end of the stack. With that one line off the row reads its old number. A shared body holds one call where it held two: each may be shown in a stack trace at its own position. Executed on x64: 8.2, the old 8.
 closure_call_field	{"alone":[19,4],"opened":[13,1]}
-closure_call_many	{"alone":[7.75,2.5],"opened":[1,1]}	handlers-at-own-calls 1 (10-28 10:52:04) fixed a wrong answer: entering any function may throw at the end of the stack. With that one line off the row reads its old number (overflow-cost, 10-30). A shared body holds one call where it held two: each may be shown in a stack trace at its own position. Executed on x64: 7.4 > 6.8.
+closure_call_many	{"alone":[7.75,2.5],"opened":[1,1]}	A wrong answer was fixed: entering any function may throw at the end of the stack. With that one line off the row reads its old number. A shared body holds one call where it held two: each may be shown in a stack trace at its own position. Executed on x64: 7.4 > 6.8.
 closure_call_own_property	{"alone":[2.875,2.5],"opened":[1,1]}	The call is resolved to the four arrows where it was one call of the general stub: executed on x64 57.2 > 5.7.
-closure_call_six_arguments	{"alone":[10,4],"opened":[6,1]}	handlers-at-own-calls 1 (10-28 10:52:04) fixed a wrong answer: entering any function may throw at the end of the stack. With that one line off the row reads its old number (overflow-cost, 10-30). A shared body holds one call where it held two: each may be shown in a stack trace at its own position. Executed on x64: 9.4 > 9.3.
+closure_call_six_arguments	{"alone":[10,4],"opened":[6,1]}	A wrong answer was fixed: entering any function may throw at the end of the stack. With that one line off the row reads its old number. A shared body holds one call where it held two: each may be shown in a stack trace at its own position. Executed on x64: 9.4 > 9.3.
 closure_call_two	{"alone":[1.75,0.5],"opened":[1,1]}
 concat2	{"alone":[3,1],"opened":[7,2]}
 concat2_read	{"alone":[3,1],"opened":[7,2]}
@@ -105,11 +105,11 @@ optional_read	{"alone":[4,0],"opened":[7,0]}
 optional_store	{"alone":[0.5,0],"opened":[0.5,0]}
 private_define	{"alone":[4,1],"opened":[5,2]}
 private_read	{"alone":[2,0],"opened":[5,1]}
-private_read_builtin_parent	{"alone":[12,0],"opened":[26.125,1]}	The field is found in line where a stub was called: one patchpoint fewer. Executed on x64: 16 a site; the stub alone took 51 (loading-1 known, 10-29).
+private_read_builtin_parent	{"alone":[12,0],"opened":[26.125,1]}	The field is found in line where a stub was called: one patchpoint fewer. Executed on x64: 16 a site; the stub alone took 51.
 private_read_generic	{"alone":[22.5,5],"opened":[22.5,5]}
 private_read_generic_handed_out	{"alone":[4,1],"opened":[4.25,1]}
 private_store	{"alone":[0.5,0],"opened":[2.25,0]}
-private_store_builtin_parent	{"alone":[10,0],"opened":[26.375,1]}	The field is found in line where a stub was called: one patchpoint fewer. Executed on x64: 180 > 44 (loading-1 pset, 10-29 06:18:09) > 13.
+private_store_builtin_parent	{"alone":[10,0],"opened":[26.375,1]}	The field is found in line where a stub was called: one patchpoint fewer. Executed on x64: 180 > 44 > 13.
 push	{"alone":[10,0],"opened":[10,0]}
 record_get	{"alone":[5,1],"opened":[9,1]}
 regexp_exec	{"alone":[30,1],"opened":[31,1]}

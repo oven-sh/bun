@@ -21,15 +21,18 @@ use super::state::{
 };
 use super::unit::{KeyList, LinkUnit};
 use super::{LinkError, Projects, key_context};
+use crate::builtins::RuntimeModule;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{Layout, LayoutFlags, LayoutKind, Variable, VariableInitialization};
+use crate::ir::generated::{
+    Layout, LayoutFlags, LayoutKind, Variable, VariableFlags, VariableInitialization,
+};
 use crate::ir::{
     DeclaredType, FunctionId, FunctionKey, Id, InParallel, LayoutId, LayoutKey, ModuleId, StringId,
     TypeFlags, TypeTable, VariableKey, for_each_mut,
 };
 use crate::load::{ProgramFile, ProjectId};
 use crate::lower::ObjectTypeKey;
-use crate::modules::{ModuleKind, SyntheticExport, SyntheticExportId};
+use crate::modules::{ModuleKind, ModuleRef, SyntheticExport, SyntheticExportId};
 use core::mem::replace;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
@@ -98,6 +101,8 @@ pub(super) fn synthetic_export_keys(projects: &Projects<'_, '_>) -> KeyList<Prog
         });
         keys.extend(exports.map(|(id, _)| context.variable_key(VariableKey::Copy(id))));
     }
+    let named_by_mocks = runtime_modules_named_by_mocks(projects).into_iter();
+    keys.extend(named_by_mocks.map(ProgramVariableKey::MockOfRuntimeModule));
     KeyList::new(keys)
 }
 
@@ -322,7 +327,9 @@ fn choose_variables(
                     file,
                 })
             }
-            ProgramVariableKey::SyntheticExport { .. } | ProgramVariableKey::Copy { .. } => None,
+            ProgramVariableKey::SyntheticExport { .. }
+            | ProgramVariableKey::Copy { .. }
+            | ProgramVariableKey::MockOfRuntimeModule(_) => None,
         };
         let result = match home {
             Some(home) => try_define_at_home(input.units, home, site, &mut sites[merged]),
@@ -355,7 +362,8 @@ fn add_synthetic_exports(
                 is_replaceable,
                 ..
             }) => (is_known_member, is_replaceable),
-            Some(VariableDefinition::Unit(_)) | None => (true, false),
+            Some(VariableDefinition::MockOfRuntimeModule { .. } | VariableDefinition::Unit(_))
+            | None => (true, false),
         };
         *definition = Some(VariableDefinition::SyntheticExport {
             module,
@@ -394,7 +402,36 @@ fn add_synthetic_exports(
             define(key, face, export, writer);
         }
     }
+    let context = key_context(projects, ProjectId::Application);
+    for named in runtime_modules_named_by_mocks(projects) {
+        let merged = (input.variables).find(&ProgramVariableKey::MockOfRuntimeModule(named));
+        let merged = merged.expect("link declares the variable of every such module");
+        // The record that importers bind. The program may not reach the module.
+        let exporter = context.module(ModuleRef::Runtime(named));
+        if let Some(&module) = index_by_module.get(&exporter) {
+            variables[merged as usize] = Some(VariableDefinition::MockOfRuntimeModule { module });
+        }
+    }
     variables
+}
+
+fn runtime_modules_named_by_mocks(projects: &Projects<'_, '_>) -> Vec<RuntimeModule> {
+    let graph = projects.get(ProjectId::Application).graph;
+    graph.runtime_modules_named_by_mocks().to_vec()
+}
+
+/// `VariableKey::MockOf`, as `FileLowering::ensure_variable` makes it for a file.
+pub(super) fn variable_that_holds_mock(module: ModuleId) -> Variable {
+    let mut declared = DeclaredType::untyped();
+    declared.ty = TypeTable::ANYTHING_OR_ABSENT;
+    Variable {
+        name: None,
+        module,
+        declared,
+        initialization: VariableInitialization::Uninitialized,
+        flags: VariableFlags::IS_REPLACEABLE | VariableFlags::HOLDS_MOCK,
+        ..Variable::default()
+    }
 }
 
 fn create_supertype_edges(layout_count: usize, sorted_edges: &[(u32, u32)]) -> SupertypeEdges {

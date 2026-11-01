@@ -36,7 +36,6 @@ BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestVitestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestVitestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestVitestViSpyOn/0: it is not called: it reaches outside JavaScript
-BunTestVitestVitestSpyOn/0: it is not called: it reaches outside JavaScript
 BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it

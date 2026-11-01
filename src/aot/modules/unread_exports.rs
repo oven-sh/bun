@@ -41,7 +41,9 @@ fn links_names_alone(site: ImportSiteKind) -> bool {
         | ImportSiteKind::ImportMetaRequire(_)
         | ImportSiteKind::ImportMetaResolve(_)
         | ImportSiteKind::GetBuiltinModule(_)
-        | ImportSiteKind::MockModule(_) => false,
+        | ImportSiteKind::MockModule(_)
+        | ImportSiteKind::ImportByTestRunner(_)
+        | ImportSiteKind::RequireByTestRunner(_) => false,
     }
 }
 

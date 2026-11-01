@@ -14,6 +14,7 @@ test_support = ["bun_removable_features/test_support"]
 workspace = true
 
 [dependencies]
+bun_sort_by_number.workspace = true
 bun_removable_features.workspace = true
 bun_options_types.workspace = true
 bun_exe_format.workspace = true

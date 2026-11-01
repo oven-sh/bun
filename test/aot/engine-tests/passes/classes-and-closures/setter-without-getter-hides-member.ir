@@ -72,7 +72,7 @@ typesite w0 module=m1 position=973 kind=Variable
 typesite w1 module=m1 position=270 kind=Variable
 typesite w2 module=m1 position=309 kind=Variable
 typesite w3 module=m1 position=1007 kind=Variable
-layout L0 kind=Instance name="HidesToString" module=m0 position=342 constructor=f3 supertypes=[L9]
+layout L0 kind=Instance name="HidesToString" module=m0 position=342 constructor=f3
 layout L1 kind=Instance name="HidesValueOf" module=m0 position=389 constructor=f5
 layout L2 kind=Instance name="HidesHasOwnProperty" module=m0 position=434 constructor=f7
 layout L3 kind=Instance name="HidesIsPrototypeOf" module=m0 position=493 constructor=f9
@@ -81,13 +81,12 @@ layout L5 kind=Instance name="HidesToLocaleString" module=m0 position=621 constr
 layout L6 kind=Instance name="HasBoth" module=m0 position=1833 constructor=f15
 layout L7 kind=Instance name="SetterRuns" module=m0 position=2004 constructor=f18 fields=[{key="stored" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 layout L8 kind=Instance name="Below" module=m0 position=1640 base=L0 constructor=f29 supertypes=[L0] flags=[HasHeritage]
-layout L9 fields=[{key="toString" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
-layout L10 module=m0 position=777 fields=[{key="field" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
-layout L11 module=m0 position=1221
-layout L12 module=m0 position=1578
-data d0 root=Object{layout=L10 members=[{key="field" value=Number{value=9}}]} module=m0
-data d1 root=Object{layout=L11} module=m0
-data d2 root=Object{layout=L12} module=m0
+layout L9 module=m0 position=777 fields=[{key="field" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L10 module=m0 position=1221
+layout L11 module=m0 position=1578
+data d0 root=Object{layout=L9 members=[{key="field" value=Number{value=9}}]} module=m0
+data d1 root=Object{layout=L10} module=m0
+data d2 root=Object{layout=L11} module=m0
 data d3 root=Array{contents=anything} module=m1
 data d4 root=Array{contents=anything} module=m1
 variable g0 name="readToString" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
@@ -250,8 +249,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v133 = Undefined @2285
     Return v133 @2285
 }
-function f1 name="readToString" module=m0 position=1411 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0|L8 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|number|string|symbol|bigint|L0|L8):
+function f1 name="readToString" module=m0 position=1411 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
     Jump -> next b1() @1411
   b1():
     v1 = PropGet v0 key="toString" @1452
@@ -295,10 +294,10 @@ function f3 name="HidesToString" module=m0 position=342 kind=BaseConstructor fla
   b0(v0: anything):
     Jump -> next b1() @342
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @336
-    v2 = NewObject v1 layout=L0 @336
-    v3 = Convert v2 declared={type=L0|L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @336
-    Return v3 @336
+    v1 = GetConstructPrototype v0 layout=L0 @342
+    v2 = NewObject v1 layout=L0 @342
+    v3 = Convert v2 declared={type=L0|L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @342
+    Return v3 @342
 }
 function f4 name="toString" module=m0 position=358 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -311,10 +310,10 @@ function f5 name="HidesValueOf" module=m0 position=389 kind=BaseConstructor flag
   b0(v0: anything):
     Jump -> next b1() @389
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @383
-    v2 = NewObject v1 layout=L1 @383
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @383
-    Return v3 @383
+    v1 = GetConstructPrototype v0 layout=L1 @389
+    v2 = NewObject v1 layout=L1 @389
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @389
+    Return v3 @389
 }
 function f6 name="valueOf" module=m0 position=404 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -327,10 +326,10 @@ function f7 name="HidesHasOwnProperty" module=m0 position=434 kind=BaseConstruct
   b0(v0: anything):
     Jump -> next b1() @434
   b1():
-    v1 = GetConstructPrototype v0 layout=L2 @428
-    v2 = NewObject v1 layout=L2 @428
-    v3 = Convert v2 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @428
-    Return v3 @428
+    v1 = GetConstructPrototype v0 layout=L2 @434
+    v2 = NewObject v1 layout=L2 @434
+    v3 = Convert v2 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @434
+    Return v3 @434
 }
 function f8 name="hasOwnProperty" module=m0 position=456 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -343,10 +342,10 @@ function f9 name="HidesIsPrototypeOf" module=m0 position=493 kind=BaseConstructo
   b0(v0: anything):
     Jump -> next b1() @493
   b1():
-    v1 = GetConstructPrototype v0 layout=L3 @487
-    v2 = NewObject v1 layout=L3 @487
-    v3 = Convert v2 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @487
-    Return v3 @487
+    v1 = GetConstructPrototype v0 layout=L3 @493
+    v2 = NewObject v1 layout=L3 @493
+    v3 = Convert v2 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @493
+    Return v3 @493
 }
 function f10 name="isPrototypeOf" module=m0 position=514 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -359,10 +358,10 @@ function f11 name="HidesPropertyIsEnumerable" module=m0 position=550 kind=BaseCo
   b0(v0: anything):
     Jump -> next b1() @550
   b1():
-    v1 = GetConstructPrototype v0 layout=L4 @544
-    v2 = NewObject v1 layout=L4 @544
-    v3 = Convert v2 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @544
-    Return v3 @544
+    v1 = GetConstructPrototype v0 layout=L4 @550
+    v2 = NewObject v1 layout=L4 @550
+    v3 = Convert v2 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @550
+    Return v3 @550
 }
 function f12 name="propertyIsEnumerable" module=m0 position=578 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -375,10 +374,10 @@ function f13 name="HidesToLocaleString" module=m0 position=621 kind=BaseConstruc
   b0(v0: anything):
     Jump -> next b1() @621
   b1():
-    v1 = GetConstructPrototype v0 layout=L5 @615
-    v2 = NewObject v1 layout=L5 @615
-    v3 = Convert v2 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @615
-    Return v3 @615
+    v1 = GetConstructPrototype v0 layout=L5 @621
+    v2 = NewObject v1 layout=L5 @621
+    v3 = Convert v2 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @621
+    Return v3 @621
 }
 function f14 name="toLocaleString" module=m0 position=643 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -391,10 +390,10 @@ function f15 name="HasBoth" module=m0 position=1833 kind=BaseConstructor flags=[
   b0(v0: anything):
     Jump -> next b1() @1833
   b1():
-    v1 = GetConstructPrototype v0 layout=L6 @1827
-    v2 = NewObject v1 layout=L6 @1827
-    v3 = Convert v2 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1827
-    Return v3 @1827
+    v1 = GetConstructPrototype v0 layout=L6 @1833
+    v2 = NewObject v1 layout=L6 @1833
+    v3 = Convert v2 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1833
+    Return v3 @1833
 }
 function f16 name="toString" module=m0 position=1845 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f35 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -415,11 +414,11 @@ function f18 name="SetterRuns" module=m0 position=2004 kind=BaseConstructor flag
   b0(v0: anything):
     Jump -> next b1() @2004
   b1():
-    v1 = GetConstructPrototype v0 layout=L7 @1998
-    v2 = NewObject v1 layout=L7 @1998
-    v3 = Convert v2 declared={type=L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1998
-    v4 = CallDirect v3 function=f36 @1998
-    Return v3 @1998
+    v1 = GetConstructPrototype v0 layout=L7 @2004
+    v2 = NewObject v1 layout=L7 @2004
+    v3 = Convert v2 declared={type=L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2004
+    v4 = CallDirect v3 function=f36 @2004
+    Return v3 @2004
 }
 function f19 name="hasOwnProperty" module=m0 position=2041 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L7 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L7, v1: anything):
@@ -832,73 +831,73 @@ runtimefunction id=FunctionPrototypeCall function=f54
 runtimefunction id=ObjectsToLocaleString function=f56
 # -- generated: f0 readToString HidesToString HidesValueOf HidesHasOwnProperty HidesIsPrototypeOf HidesPropertyIsEnumerable HidesToLocaleString toString SetterRuns hasOwnProperty f20 f21 f22 f23 f24 f25 f26 f27 f28 f30 f31 f32 f33 f34 tell
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f19 callPosition=2137 module=m0}, {callee=f86 callPosition=2119 isConstruction=true module=m0}, {callee=f64 callPosition=697 isConstruction=true module=m0}, {callee=f36 callPosition=1998 parent=2 module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f19 callPosition=2137 module=m0}, {callee=f86 callPosition=2119 isConstruction=true module=m0}, {callee=f64 callPosition=697 isConstruction=true module=m0}, {callee=f36 callPosition=2004 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationClass=0 @697
-# CHECK-NEXT: PutModuleVariable v0 variable=g7 @681
-# CHECK-NEXT: v2: "toString applied" = String string="toString applied" @723
-# CHECK-NEXT: v3: f20 = NewClosure function=f20 allocationSite=18 storage=Frame @743
-# CHECK-NEXT: v4: undefined = CallDirect v2, v3 function=f63 accessSite=1 @718
-# CHECK-NEXT: v5: "toString called" = String string="toString called" @798
-# CHECK-NEXT: v6: f21 = NewClosure function=f21 allocationSite=19 storage=Frame @817
-# CHECK-NEXT: v7: undefined = CallDirect v5, v6 function=f63 accessSite=2 @793
-# CHECK-NEXT: v8: "toString read" = String string="toString read" @855
-# CHECK-NEXT: v9: f22 = NewClosure function=f22 allocationSite=20 storage=Frame @872
-# CHECK-NEXT: v10: undefined = CallDirect v8, v9 function=f63 accessSite=3 @850
-# CHECK-NEXT: v11: "valueOf called" = String string="valueOf called" @1001
-# CHECK-NEXT: v12: f23 = NewClosure function=f23 allocationSite=21 storage=Frame @1019
-# CHECK-NEXT: v13: undefined = CallDirect v11, v12 function=f63 accessSite=4 @996
-# CHECK-NEXT: v14: "hasOwnProperty called" = String string="hasOwnProperty called" @1068
-# CHECK-NEXT: v15: f24 = NewClosure function=f24 allocationSite=22 storage=Frame @1093
-# CHECK-NEXT: v16: undefined = CallDirect v14, v15 function=f63 accessSite=5 @1063
-# CHECK-NEXT: v17: "isPrototypeOf called" = String string="isPrototypeOf called" @1152
-# CHECK-NEXT: v18: f25 = NewClosure function=f25 allocationSite=23 storage=Frame @1176
-# CHECK-NEXT: v19: undefined = CallDirect v17, v18 function=f63 accessSite=6 @1147
-# CHECK-NEXT: v20: "propertyIsEnumerable called" = String string="propertyIsEnumerable called" @1232
-# CHECK-NEXT: v21: f26 = NewClosure function=f26 allocationSite=24 storage=Frame @1263
-# CHECK-NEXT: v22: undefined = CallDirect v20, v21 function=f63 accessSite=7 @1227
-# CHECK-NEXT: v23: "toLocaleString called" = String string="toLocaleString called" @1334
-# CHECK-NEXT: v24: f27 = NewClosure function=f27 allocationSite=25 storage=Frame @1359
-# CHECK-NEXT: v25: undefined = CallDirect v23, v24 function=f63 accessSite=8 @1329
-# CHECK-NEXT: v26: "one function reads both" = String string="one function reads both" @1476
-# CHECK-NEXT: v27: f28 = NewClosure function=f28 allocationSite=26 storage=Frame @1503
-# CHECK-NEXT: v28: undefined = CallDirect v26, v27 function=f63 accessSite=9 @1471
-# CHECK-NEXT: v29: "from a class below" = String string="from a class below" @1676
-# CHECK-NEXT: v30: f30 = NewClosure function=f30 allocationSite=28 storage=Frame @1698
-# CHECK-NEXT: v31: undefined = CallDirect v29, v30 function=f63 accessSite=10 @1671
-# CHECK-NEXT: v32: "off the prototype object of the class below" = String string="off the prototype object of the class below" @1739
-# CHECK-NEXT: v33: f31 = NewClosure function=f31 allocationSite=29 storage=Frame @1786
-# CHECK-NEXT: v34: undefined = CallDirect v32, v33 function=f63 accessSite=11 @1734
-# CHECK-NEXT: v35: "a getter beside the setter" = String string="a getter beside the setter" @1934
-# CHECK-NEXT: v36: f32 = NewClosure function=f32 allocationSite=30 storage=Frame @1964
-# CHECK-NEXT: v37: undefined = CallDirect v35, v36 function=f63 accessSite=12 @1929
-# CHECK-NEXT: v38: "nothing" = String string="nothing" @2028:4
-# CHECK-NEXT: v39: L7 = NewObject -, v38 layout=L7 fields=[0] allocationClass=7 [listsOnlyStoredValues] @2119
-# CHECK-NEXT: PutModuleVariable v39 variable=g10 @2106
-# CHECK-NEXT: v41: "stored through the setter" = String string="stored through the setter" @2165
-# CHECK-NEXT: PutSlot v39, -, v41 key="stored" receivers=[L7] level=Proven accessSite=28 @2073:1
-# CHECK-NEXT: v43: "the setter runs" = String string="the setter runs" @2199
-# CHECK-NEXT: v44: f33 = NewClosure function=f33 allocationSite=31 storage=Frame @2218
-# CHECK-NEXT: v45: undefined = CallDirect v43, v44 function=f63 accessSite=15 @2194
-# CHECK-NEXT: v46: "converted to a string" = String string="converted to a string" @2290
-# CHECK-NEXT: v47: f34 = NewClosure function=f34 allocationSite=32 storage=Frame @2315
-# CHECK-NEXT: v48: undefined = CallDirect v46, v47 function=f63 accessSite=16 @2285
-# CHECK-NEXT: v49: undefined = Undefined @2285
-# CHECK-NEXT: Return v49 @2285
+# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: PutModuleVariable v0 variable=g7
+# CHECK-NEXT: v2: "toString applied" = String string="toString applied"
+# CHECK-NEXT: v3: f20 = NewClosure function=f20 allocationSite=18 storage=Frame
+# CHECK-NEXT: v4: undefined = CallDirect v2, v3 function=f63 accessSite=1
+# CHECK-NEXT: v5: "toString called" = String string="toString called"
+# CHECK-NEXT: v6: f21 = NewClosure function=f21 allocationSite=19 storage=Frame
+# CHECK-NEXT: v7: undefined = CallDirect v5, v6 function=f63 accessSite=2
+# CHECK-NEXT: v8: "toString read" = String string="toString read"
+# CHECK-NEXT: v9: f22 = NewClosure function=f22 allocationSite=20 storage=Frame
+# CHECK-NEXT: v10: undefined = CallDirect v8, v9 function=f63 accessSite=3
+# CHECK-NEXT: v11: "valueOf called" = String string="valueOf called"
+# CHECK-NEXT: v12: f23 = NewClosure function=f23 allocationSite=21 storage=Frame
+# CHECK-NEXT: v13: undefined = CallDirect v11, v12 function=f63 accessSite=4
+# CHECK-NEXT: v14: "hasOwnProperty called" = String string="hasOwnProperty called"
+# CHECK-NEXT: v15: f24 = NewClosure function=f24 allocationSite=22 storage=Frame
+# CHECK-NEXT: v16: undefined = CallDirect v14, v15 function=f63 accessSite=5
+# CHECK-NEXT: v17: "isPrototypeOf called" = String string="isPrototypeOf called"
+# CHECK-NEXT: v18: f25 = NewClosure function=f25 allocationSite=23 storage=Frame
+# CHECK-NEXT: v19: undefined = CallDirect v17, v18 function=f63 accessSite=6
+# CHECK-NEXT: v20: "propertyIsEnumerable called" = String string="propertyIsEnumerable called"
+# CHECK-NEXT: v21: f26 = NewClosure function=f26 allocationSite=24 storage=Frame
+# CHECK-NEXT: v22: undefined = CallDirect v20, v21 function=f63 accessSite=7
+# CHECK-NEXT: v23: "toLocaleString called" = String string="toLocaleString called"
+# CHECK-NEXT: v24: f27 = NewClosure function=f27 allocationSite=25 storage=Frame
+# CHECK-NEXT: v25: undefined = CallDirect v23, v24 function=f63 accessSite=8
+# CHECK-NEXT: v26: "one function reads both" = String string="one function reads both"
+# CHECK-NEXT: v27: f28 = NewClosure function=f28 allocationSite=26 storage=Frame
+# CHECK-NEXT: v28: undefined = CallDirect v26, v27 function=f63 accessSite=9
+# CHECK-NEXT: v29: "from a class below" = String string="from a class below"
+# CHECK-NEXT: v30: f30 = NewClosure function=f30 allocationSite=28 storage=Frame
+# CHECK-NEXT: v31: undefined = CallDirect v29, v30 function=f63 accessSite=10
+# CHECK-NEXT: v32: "off the prototype object of the class below" = String string="off the prototype object of the class below"
+# CHECK-NEXT: v33: f31 = NewClosure function=f31 allocationSite=29 storage=Frame
+# CHECK-NEXT: v34: undefined = CallDirect v32, v33 function=f63 accessSite=11
+# CHECK-NEXT: v35: "a getter beside the setter" = String string="a getter beside the setter"
+# CHECK-NEXT: v36: f32 = NewClosure function=f32 allocationSite=30 storage=Frame
+# CHECK-NEXT: v37: undefined = CallDirect v35, v36 function=f63 accessSite=12
+# CHECK-NEXT: v38: "nothing" = String string="nothing"
+# CHECK-NEXT: v39: L7 = NewObject -, v38 layout=L7 fields=[0] allocationClass=7 [listsOnlyStoredValues]
+# CHECK-NEXT: PutModuleVariable v39 variable=g10
+# CHECK-NEXT: v41: "stored through the setter" = String string="stored through the setter"
+# CHECK-NEXT: PutSlot v39, -, v41 key="stored" receivers=[L7] level=Proven accessSite=28
+# CHECK-NEXT: v43: "the setter runs" = String string="the setter runs"
+# CHECK-NEXT: v44: f33 = NewClosure function=f33 allocationSite=31 storage=Frame
+# CHECK-NEXT: v45: undefined = CallDirect v43, v44 function=f63 accessSite=15
+# CHECK-NEXT: v46: "converted to a string" = String string="converted to a string"
+# CHECK-NEXT: v47: f34 = NewClosure function=f34 allocationSite=32 storage=Frame
+# CHECK-NEXT: v48: undefined = CallDirect v46, v47 function=f63 accessSite=16
+# CHECK-NEXT: v49: undefined = Undefined
+# CHECK-NEXT: Return v49
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readToString"
-# CHECK: module=m0 position=1411 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L12}] results=[{type=undefined|builtin(ObjectPrototypeToString)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L12):
-# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L0 @1452
-# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2() @1452
+# CHECK: module=m0 position=1411 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L11}] results=[{type=undefined|builtin(ObjectPrototypeToString)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0|L11):
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v2: undefined = Undefined @1452
-# CHECK-NEXT: Jump -> next b3(v2) @1452
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: Jump -> next b3(v2)
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v3: builtin(ObjectPrototypeToString) = Builtin builtin=ObjectPrototypeToString @1452
-# CHECK-NEXT: Jump -> next b3(v3) @1452
+# CHECK-NEXT: v3: builtin(ObjectPrototypeToString) = Builtin builtin=ObjectPrototypeToString
+# CHECK-NEXT: Jump -> next b3(v3)
 # CHECK-NEXT: b3(v4: undefined|builtin(ObjectPrototypeToString) ~ undefined):
-# CHECK-NEXT: Return v4 @1452
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tell"
 # CHECK: module=m0 position=192 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a getter beside the setter"|"converted to a string"|"from a class below"|"hasOwnProperty called"|"isPrototypeOf called"|"off the prototype object of the class below"|"one function reads both"|"propertyIsEnumerable called"|"the setter runs"|"toLocaleString called"|"toString applied"|"toString called"|"toString read"|"valueOf called"}, {type=f20|f21|f22|f23|f24|f25|f26|f27|f28|f30|f31|f32|f33|f34}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
@@ -906,10 +905,10 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK: module=m0 position=342 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L0|L8 flags=[IsFromCompiler]}] functionTypes=[f52] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f3|f29 = AssumeType v0 provenType=f3|f29
-# CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0 @336
-# CHECK-NEXT: v3: object ~ L0|L8 = NewObject v2 layout=L0 allocationSite=33 allocationClass=0 @336
-# CHECK-NEXT: v4: L0|L8 = AssumeType v3 provenType=L0|L8 @336
-# CHECK-NEXT: Return v4 @336
+# CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
+# CHECK-NEXT: v3: object ~ L0|L8 = NewObject v2 layout=L0 allocationSite=33 allocationClass=0
+# CHECK-NEXT: v4: L0|L8 = AssumeType v3 provenType=L0|L8
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="toString"
 # CHECK: module=m0 position=358 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
@@ -917,35 +916,35 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK: module=m0 position=389 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f5 = AssumeType v0 provenType=f5
-# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L1 side=Static key="prototype"}] @383
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3() @383
+# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L1 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: L1 = NewObject layout=L1 allocationSite=34 allocationClass=1 @383
-# CHECK-NEXT: Jump -> next b2(v3) @383
+# CHECK-NEXT: v3: L1 = NewObject layout=L1 allocationSite=34 allocationClass=1
+# CHECK-NEXT: Jump -> next b2(v3)
 # CHECK-NEXT: b2(v4: L1):
-# CHECK-NEXT: Return v4 @383
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L1 @383
-# CHECK-NEXT: v6: object ~ L1 = NewObject v5 layout=L1 allocationSite=34 allocationClass=1 @383
-# CHECK-NEXT: v7: L1 = AssumeType v6 provenType=L1 @383
-# CHECK-NEXT: Jump -> next b2(v7) @383
+# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L1
+# CHECK-NEXT: v6: object ~ L1 = NewObject v5 layout=L1 allocationSite=34 allocationClass=1
+# CHECK-NEXT: v7: L1 = AssumeType v6 provenType=L1
+# CHECK-NEXT: Jump -> next b2(v7)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesHasOwnProperty"
 # CHECK: module=m0 position=434 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L2 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f7 = AssumeType v0 provenType=f7
-# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}] @428
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3() @428
+# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: L2 = NewObject layout=L2 allocationSite=35 allocationClass=2 @428
-# CHECK-NEXT: Jump -> next b2(v3) @428
+# CHECK-NEXT: v3: L2 = NewObject layout=L2 allocationSite=35 allocationClass=2
+# CHECK-NEXT: Jump -> next b2(v3)
 # CHECK-NEXT: b2(v4: L2):
-# CHECK-NEXT: Return v4 @428
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L2 @428
-# CHECK-NEXT: v6: object ~ L2 = NewObject v5 layout=L2 allocationSite=35 allocationClass=2 @428
-# CHECK-NEXT: v7: L2 = AssumeType v6 provenType=L2 @428
-# CHECK-NEXT: Jump -> next b2(v7) @428
+# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L2
+# CHECK-NEXT: v6: object ~ L2 = NewObject v5 layout=L2 allocationSite=35 allocationClass=2
+# CHECK-NEXT: v7: L2 = AssumeType v6 provenType=L2
+# CHECK-NEXT: Jump -> next b2(v7)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="hasOwnProperty"
 # CHECK: module=m0 position=456 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
@@ -953,296 +952,296 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK: module=m0 position=493 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L3 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f9 = AssumeType v0 provenType=f9
-# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L3 side=Static key="prototype"}] @487
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3() @487
+# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L3 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: L3 = NewObject layout=L3 allocationSite=36 allocationClass=3 @487
-# CHECK-NEXT: Jump -> next b2(v3) @487
+# CHECK-NEXT: v3: L3 = NewObject layout=L3 allocationSite=36 allocationClass=3
+# CHECK-NEXT: Jump -> next b2(v3)
 # CHECK-NEXT: b2(v4: L3):
-# CHECK-NEXT: Return v4 @487
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L3 @487
-# CHECK-NEXT: v6: object ~ L3 = NewObject v5 layout=L3 allocationSite=36 allocationClass=3 @487
-# CHECK-NEXT: v7: L3 = AssumeType v6 provenType=L3 @487
-# CHECK-NEXT: Jump -> next b2(v7) @487
+# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L3
+# CHECK-NEXT: v6: object ~ L3 = NewObject v5 layout=L3 allocationSite=36 allocationClass=3
+# CHECK-NEXT: v7: L3 = AssumeType v6 provenType=L3
+# CHECK-NEXT: Jump -> next b2(v7)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesPropertyIsEnumerable"
 # CHECK: module=m0 position=550 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L4 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f11 = AssumeType v0 provenType=f11
-# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L4 side=Static key="prototype"}] @544
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3() @544
+# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L4 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: L4 = NewObject layout=L4 allocationSite=37 allocationClass=4 @544
-# CHECK-NEXT: Jump -> next b2(v3) @544
+# CHECK-NEXT: v3: L4 = NewObject layout=L4 allocationSite=37 allocationClass=4
+# CHECK-NEXT: Jump -> next b2(v3)
 # CHECK-NEXT: b2(v4: L4):
-# CHECK-NEXT: Return v4 @544
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L4 @544
-# CHECK-NEXT: v6: object ~ L4 = NewObject v5 layout=L4 allocationSite=37 allocationClass=4 @544
-# CHECK-NEXT: v7: L4 = AssumeType v6 provenType=L4 @544
-# CHECK-NEXT: Jump -> next b2(v7) @544
+# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L4
+# CHECK-NEXT: v6: object ~ L4 = NewObject v5 layout=L4 allocationSite=37 allocationClass=4
+# CHECK-NEXT: v7: L4 = AssumeType v6 provenType=L4
+# CHECK-NEXT: Jump -> next b2(v7)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesToLocaleString"
 # CHECK: module=m0 position=621 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L5 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f13 = AssumeType v0 provenType=f13
-# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L5 side=Static key="prototype"}] @615
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3() @615
+# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L5 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: L5 = NewObject layout=L5 allocationSite=38 allocationClass=5 @615
-# CHECK-NEXT: Jump -> next b2(v3) @615
+# CHECK-NEXT: v3: L5 = NewObject layout=L5 allocationSite=38 allocationClass=5
+# CHECK-NEXT: Jump -> next b2(v3)
 # CHECK-NEXT: b2(v4: L5):
-# CHECK-NEXT: Return v4 @615
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L5 @615
-# CHECK-NEXT: v6: object ~ L5 = NewObject v5 layout=L5 allocationSite=38 allocationClass=5 @615
-# CHECK-NEXT: v7: L5 = AssumeType v6 provenType=L5 @615
-# CHECK-NEXT: Jump -> next b2(v7) @615
+# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L5
+# CHECK-NEXT: v6: object ~ L5 = NewObject v5 layout=L5 allocationSite=38 allocationClass=5
+# CHECK-NEXT: v7: L5 = AssumeType v6 provenType=L5
+# CHECK-NEXT: Jump -> next b2(v7)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="toString"
 # CHECK: module=m0 position=1845 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=f35}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f35 = NewClosure function=f35 allocationSite=40 [isHeldByClosureTable] @1873
-# CHECK-NEXT: Return v0 @1873
+# CHECK-NEXT: v0: f35 = NewClosure function=f35 allocationSite=40 [isHeldByClosureTable]
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="toString"
 # CHECK: module=m0 position=1904 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function|f35 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="SetterRuns"
-# CHECK: module=m0 position=2004 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L7 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 inlineFrames=[{}, {callee=f36 callPosition=1998 module=m0}] {
+# CHECK: module=m0 position=2004 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L7 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 inlineFrames=[{}, {callee=f36 callPosition=2004 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f18 = AssumeType v0 provenType=f18
-# CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L7 @1998
-# CHECK-NEXT: v3: object ~ L7 = NewObject v2 layout=L7 allocationSite=41 allocationClass=7 @1998
-# CHECK-NEXT: v4: L7 = AssumeType v3 provenType=L7 @1998
-# CHECK-NEXT: v5: "nothing" = String string="nothing" @2028:1
-# CHECK-NEXT: PutSlot v4, -, v5 key="stored" receivers=[L7] level=Proven accessSite=69 @2019:1
-# CHECK-NEXT: Return v4 @1998
+# CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L7
+# CHECK-NEXT: v3: object ~ L7 = NewObject v2 layout=L7 allocationSite=41 allocationClass=7
+# CHECK-NEXT: v4: L7 = AssumeType v3 provenType=L7
+# CHECK-NEXT: v5: "nothing" = String string="nothing"
+# CHECK-NEXT: PutSlot v4, -, v5 key="stored" receivers=[L7] level=Proven accessSite=69
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="hasOwnProperty"
 # CHECK: module=m0 position=2041 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L7} parameters=[{type=undefined|"stored through the setter"}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L7, v1: undefined|"stored through the setter"):
-# CHECK-NEXT: PutSlot v0, -, v1 key="stored" receivers=[L7] level=Proven accessSite=28 @2073
-# CHECK-NEXT: v3: undefined = Undefined @2073
-# CHECK-NEXT: Return v3 @2073
+# CHECK-NEXT: PutSlot v0, -, v1 key="stored" receivers=[L7] level=Proven accessSite=28
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=
 # CHECK: m0 position=743 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = Undefined @749
-# CHECK-NEXT: v1: never = RequireObjectCoercible v0 name="call" @763
-# CHECK-NEXT: Unreachable @763
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: v1: never = RequireObjectCoercible v0 name="call"
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f21 module=
 # CHECK: m0 position=817 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L0 = GetModuleVariable variable=g7 @823
-# CHECK-NEXT: v1: undefined = Undefined @823
+# CHECK-NEXT: v0: L0 = GetModuleVariable variable=g7
+# CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: never = Call v1, v0 calleeKey="toString" calleeName="hidesToString.toString" accessSite=33 callees=[builtin(ObjectPrototypeToString)] @837 tail
-# CHECK-NEXT: Unreachable @837
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
 # CHECK: m0 position=872 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f3 = GetModuleVariable variable=g1 @923
-# CHECK-NEXT: v1: anything = PropGet v0 key="prototype" accessSite=35 @923
-# CHECK-NEXT: v2: object = AssumeType v1 provenType=object @923
-# CHECK-NEXT: v3: object ~ L0|L8 = Upcast v2 castType=anything @923
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=L0|L8 @937
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3() @937
+# CHECK-NEXT: v0: f3 = GetModuleVariable variable=g1
+# CHECK-NEXT: v1: anything = PropGet v0 key="prototype" accessSite=35
+# CHECK-NEXT: v2: object = AssumeType v1 provenType=object
+# CHECK-NEXT: v3: object ~ L0|L8 = Upcast v2 castType=anything
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=L0|L8
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: undefined = Undefined @937
-# CHECK-NEXT: Jump -> next b2(v5) @937
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Jump -> next b2(v5)
 # CHECK-NEXT: b2(v6: anything ~ undefined):
-# CHECK-NEXT: v7: string = TypeOf v6 @916
-# CHECK-NEXT: v8: " " = String string=" " @958
-# CHECK-NEXT: v9: true = Boolean boolean=true @979
-# CHECK-NEXT: v10: "undefined " = String string="undefined " @885
-# CHECK-NEXT: v11: string = Strcat v10, v7, v8, v9 @979
-# CHECK-NEXT: Return v11 @979
+# CHECK-NEXT: v7: string = TypeOf v6
+# CHECK-NEXT: v8: " " = String string=" "
+# CHECK-NEXT: v9: true = Boolean boolean=true
+# CHECK-NEXT: v10: "undefined " = String string="undefined "
+# CHECK-NEXT: v11: string = Strcat v10, v7, v8, v9
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v12: anything = PropGet v3 key="toString" accessSite=36 @937
-# CHECK-NEXT: Jump -> next b2(v12) @937
+# CHECK-NEXT: v12: anything = PropGet v3 key="toString" accessSite=36
+# CHECK-NEXT: Jump -> next b2(v12)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
 # CHECK: m0 position=1019 kind=Arrow thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f67 callPosition=1036 isConstruction=true callIsPartOfConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L1 = NewObject layout=L1 allocationClass=1 @1036 constructs
-# CHECK-NEXT: v1: undefined = Undefined @1049
-# CHECK-NEXT: v2: never = Call v1, v0 calleeKey="valueOf" calleeName="valueOf" accessSite=40 callees=[builtin(ObjectPrototypeValueOf)] @1051
-# CHECK-NEXT: Unreachable @1051
+# CHECK-NEXT: v0: L1 = NewObject layout=L1 allocationClass=1
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: never = Call v1, v0 calleeKey="valueOf" calleeName="valueOf" accessSite=40 callees=[builtin(ObjectPrototypeValueOf)]
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 module=
 # CHECK: m0 position=1093 kind=Arrow thisType={type=anything} results=[{type=boolean}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f70 callPosition=1103 isConstruction=true callIsPartOfConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L2 = NewObject layout=L2 allocationClass=2 @1103 constructs
-# CHECK-NEXT: v1: undefined = Undefined @1123
-# CHECK-NEXT: v2: "x" = String string="x" @1140
+# CHECK-NEXT: v0: L2 = NewObject layout=L2 allocationClass=2
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: "x" = String string="x"
 # CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="hasOwnProperty" calleeName="hasOwnProperty" accessSite=43 callees=[builtin(ObjectPrototypeHasOwnProperty)] @1125 tail
-# CHECK-NEXT: Unreachable @1125
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
 # CHECK: m0 position=1176 kind=Arrow thisType={type=anything} results=[{type=boolean}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f73 callPosition=1186 isConstruction=true callIsPartOfConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L3 = NewObject layout=L3 allocationClass=3 @1186 constructs
-# CHECK-NEXT: v1: undefined = Undefined @1205
-# CHECK-NEXT: v2: L11 = NewObject layout=L11 allocationSite=43 allocationClass=10 @1221
+# CHECK-NEXT: v0: L3 = NewObject layout=L3 allocationClass=3
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: L10 = NewObject layout=L10 allocationSite=43 allocationClass=10
 # CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="isPrototypeOf" calleeName="isPrototypeOf" accessSite=46 callees=[builtin(ObjectPrototypeIsPrototypeOf)] @1207 tail
-# CHECK-NEXT: Unreachable @1207
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f26 module=
 # CHECK: m0 position=1263 kind=Arrow thisType={type=anything} results=[{type=boolean}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f76 callPosition=1273 isConstruction=true callIsPartOfConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L4 = NewObject layout=L4 allocationClass=4 @1273 constructs
-# CHECK-NEXT: v1: undefined = Undefined @1299
-# CHECK-NEXT: v2: "x" = String string="x" @1322
+# CHECK-NEXT: v0: L4 = NewObject layout=L4 allocationClass=4
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: "x" = String string="x"
 # CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="propertyIsEnumerable" calleeName="propertyIsEnumerable" accessSite=49 callees=[builtin(ObjectPrototypePropertyIsEnumerable)] @1301 tail
-# CHECK-NEXT: Unreachable @1301
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 module=
 # CHECK: m0 position=1359 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f79 callPosition=1369 isConstruction=true callIsPartOfConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L5 = NewObject layout=L5 allocationClass=5 @1369 constructs
-# CHECK-NEXT: v1: undefined = Undefined @1389
+# CHECK-NEXT: v0: L5 = NewObject layout=L5 allocationClass=5
+# CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: never = Call v1, v0 calleeKey="toLocaleString" calleeName="toLocaleString" accessSite=52 callees=[builtin(ObjectPrototypeToLocaleString)] @1391 tail
-# CHECK-NEXT: Unreachable @1391
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
 # CHECK: m0 position=1503 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=1597 module=m0}, {callee=f64 callPosition=1610 isConstruction=true module=m0}, {callee=f1 callPosition=1565 module=m0}, {callee=f1 callPosition=1516 module=m0}, {callee=f64 callPosition=1529 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "undefined function undefined" = String string="undefined function undefined" @1597
-# CHECK-NEXT: Return v0 @1597
+# CHECK-NEXT: v0: "undefined function undefined" = String string="undefined function undefined"
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
 # CHECK: m0 position=1698 kind=Arrow thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f97 callPosition=1715 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f64 callPosition=1640 parent=1 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "undefined" = String string="undefined" @1704
-# CHECK-NEXT: Return v0 @1704
+# CHECK-NEXT: v0: "undefined" = String string="undefined"
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
 # CHECK: m0 position=1786 kind=Arrow thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f29 = GetModuleVariable variable=g8 @1799
-# CHECK-NEXT: v1: anything = PropGet v0 key="prototype" accessSite=61 @1799
-# CHECK-NEXT: v2: object = AssumeType v1 provenType=object @1799
-# CHECK-NEXT: v3: object ~ L8 = Upcast v2 castType=anything @1799
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=L8 @1805
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3() @1805
+# CHECK-NEXT: v0: f29 = GetModuleVariable variable=g8
+# CHECK-NEXT: v1: anything = PropGet v0 key="prototype" accessSite=61
+# CHECK-NEXT: v2: object = AssumeType v1 provenType=object
+# CHECK-NEXT: v3: object ~ L8 = Upcast v2 castType=anything
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=L8
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: undefined = Undefined @1805
-# CHECK-NEXT: Jump -> next b2(v5) @1805
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Jump -> next b2(v5)
 # CHECK-NEXT: b2(v6: anything ~ undefined):
-# CHECK-NEXT: v7: string = TypeOf v6 @1792
-# CHECK-NEXT: v8: string ~ "bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Upcast v7 castType=string @1792
-# CHECK-NEXT: Return v8 @1792
+# CHECK-NEXT: v7: string = TypeOf v6
+# CHECK-NEXT: v8: string ~ "bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Upcast v7 castType=string
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v9: anything = PropGet v3 key="toString" accessSite=62 @1805
-# CHECK-NEXT: Jump -> next b2(v9) @1805
+# CHECK-NEXT: v9: anything = PropGet v3 key="toString" accessSite=62
+# CHECK-NEXT: Jump -> next b2(v9)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
 # CHECK: m0 position=1964 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f49] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f35 callPosition=1984 isTailCall=true module=m0}, {callee=f82 callPosition=1974 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f16 callPosition=1982 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "from the getter" = String string="from the getter" @1879:1
-# CHECK-NEXT: Return v0 @1984
+# CHECK-NEXT: v0: "from the getter" = String string="from the getter"
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f33 module=
 # CHECK: m0 position=2218 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L7 = GetModuleVariable variable=g10 @2224
-# CHECK-NEXT: v1: undefined|"nothing"|"stored through the setter" = GetSlot v0 key="stored" receivers=[L7] level=Proven accessSite=66 @2224
-# CHECK-NEXT: v2: " undefined" = String string=" undefined" @0
-# CHECK-NEXT: v3: string = Strcat v1, v2 @2257
-# CHECK-NEXT: Return v3 @2257
+# CHECK-NEXT: v0: L7 = GetModuleVariable variable=g10
+# CHECK-NEXT: v1: undefined|"nothing"|"stored through the setter" = GetSlot v0 key="stored" receivers=[L7] level=Proven accessSite=66
+# CHECK-NEXT: v2: " undefined" = String string=" undefined"
+# CHECK-NEXT: v3: string = Strcat v1, v2
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f34 module=
 # CHECK: m0 position=2315 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0() handler=b1():
-# CHECK-NEXT: v0: "text " = String string="text " @2342
-# CHECK-NEXT: v1: L0 = GetModuleVariable variable=g7 @2352
-# CHECK-NEXT: v2: string = Add v0, v1 @2342
-# CHECK-NEXT: Return v2 @2342
+# CHECK-NEXT: v0: "text " = String string="text "
+# CHECK-NEXT: v1: L0 = GetModuleVariable variable=g7
+# CHECK-NEXT: v2: string = Add v0, v1
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: b1() role=CatchHandler:
-# CHECK-NEXT: v3: anything = CatchValue @2385
-# CHECK-NEXT: v4: "conversion threw " = String string="conversion threw " @2398
-# CHECK-NEXT: v5: anything = PropGet v3 key="name" accessSite=68 @2420
-# CHECK-NEXT: v6: string = Add v4, v5 @2398
-# CHECK-NEXT: Return v6 @2398
+# CHECK-NEXT: v3: anything = CatchValue
+# CHECK-NEXT: v4: "conversion threw " = String string="conversion threw "
+# CHECK-NEXT: v5: anything = PropGet v3 key="name" accessSite=68
+# CHECK-NEXT: v6: string = Add v4, v5
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesToString"
 # CHECK: module=m0 position=342 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L0|L8 = CallDirect v2 function=f3 @342
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed @342
+# CHECK-NEXT: v3: L0|L8 = CallDirect v2 function=f3
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tell"
 # CHECK: module=m0 position=192 role=CalleeVersion flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a getter beside the setter"|"converted to a string"|"from a class below"|"hasOwnProperty called"|"isPrototypeOf called"|"off the prototype object of the class below"|"one function reads both"|"propertyIsEnumerable called"|"the setter runs"|"toLocaleString called"|"toString applied"|"toString called"|"toString read"|"valueOf called"}, {type=f20|f21|f22|f23|f24|f25|f26|f27|f28|f30|f31|f32|f33|f34}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f2} {
 # CHECK-NEXT: b0(v0: "a getter beside the setter"|"converted to a string"|"from a class below"|"hasOwnProperty called"|"isPrototypeOf called"|"off the prototype object of the class below"|"one function reads both"|"propertyIsEnumerable called"|"the setter runs"|"toLocaleString called"|"toString applied"|"toString called"|"toString read"|"valueOf called", v1: f20|f21|f22|f23|f24|f25|f26|f27|f28|f30|f31|f32|f33|f34) handler=b1():
-# CHECK-NEXT: v2: anything = Call v1 calleeName="run" accessSite=20 callees=[f20, f21, f22, f23, f24, f25, f26, f27, f28, f30, f31, f32, f33, f34] @256
-# CHECK-NEXT: v3: string = CallBuiltin -, v2 overload=String/0 builtinCallForm=AnyReceiver accessSite=21 @249
-# CHECK-NEXT: v4: undefined = CallBuiltin -, v0, v3 overload=ConsoleLog/0 accessSite=22 @239
-# CHECK-NEXT: Jump -> next b2() @231
+# CHECK-NEXT: v2: anything = Call v1 calleeName="run" accessSite=20 callees=[f20, f21, f22, f23, f24, f25, f26, f27, f28, f30, f31, f32, f33, f34]
+# CHECK-NEXT: v3: string = CallBuiltin -, v2 overload=String/0 builtinCallForm=AnyReceiver accessSite=21
+# CHECK-NEXT: v4: undefined = CallBuiltin -, v0, v3 overload=ConsoleLog/0 accessSite=22
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b1() role=CatchHandler:
-# CHECK-NEXT: v5: anything = CatchValue @283
-# CHECK-NEXT: v6: builtin(Console) = Builtin builtin=Console @289
-# CHECK-NEXT: v7: "threw" = String string="threw" @307
-# CHECK-NEXT: v8: anything = PropGet v5 key="name" accessSite=25 @316
-# CHECK-NEXT: v9: undefined = CallBuiltin v6, v0, v7, v8 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26 @297
-# CHECK-NEXT: Jump -> next b2() @289
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: v6: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v7: "threw" = String string="threw"
+# CHECK-NEXT: v8: anything = PropGet v5 key="name" accessSite=25
+# CHECK-NEXT: v9: undefined = CallBuiltin v6, v0, v7, v8 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v10: undefined = Undefined @289
-# CHECK-NEXT: Return v10 @289
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesToString"
 # CHECK: module=m0 position=342 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L0|L8} results=[{type=undefined}] functionTypes=[f52] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f3} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="toString"
 # CHECK: module=m0 position=358 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'toString' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)" @358
-# CHECK-NEXT: Unreachable @358
+# CHECK-NEXT: v3: never = ThrowNewError message="'toString' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesValueOf"
 # CHECK: module=m0 position=389 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f5, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L1 = CallDirect v2 function=f5 @389
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed @389
+# CHECK-NEXT: v3: L1 = CallDirect v2 function=f5
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesValueOf"
 # CHECK: module=m0 position=389 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L1} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f5} constructedClass=L1
 # CHECK-LABEL: function {{*}}name="HidesHasOwnProperty"
 # CHECK: module=m0 position=434 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f7}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f7, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L2 = CallDirect v2 function=f7 @434
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed @434
+# CHECK-NEXT: v3: L2 = CallDirect v2 function=f7
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesHasOwnProperty"
 # CHECK: module=m0 position=434 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L2} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f7} constructedClass=L2
 # CHECK-LABEL: function {{*}}name="hasOwnProperty"
 # CHECK: module=m0 position=456 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f8}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f8, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'hasOwnProperty' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)" @456
-# CHECK-NEXT: Unreachable @456
+# CHECK-NEXT: v3: never = ThrowNewError message="'hasOwnProperty' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesIsPrototypeOf"
 # CHECK: module=m0 position=493 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f9}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f9, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L3 = CallDirect v2 function=f9 @493
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed @493
+# CHECK-NEXT: v3: L3 = CallDirect v2 function=f9
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesIsPrototypeOf"
 # CHECK: module=m0 position=493 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L3} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f9} constructedClass=L3
 # CHECK-LABEL: function {{*}}name="HidesPropertyIsEnumerable"
 # CHECK: module=m0 position=550 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f11}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f11, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L4 = CallDirect v2 function=f11 @550
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed @550
+# CHECK-NEXT: v3: L4 = CallDirect v2 function=f11
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesPropertyIsEnumerable"
 # CHECK: module=m0 position=550 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L4} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f11} constructedClass=L4
 # CHECK-LABEL: function {{*}}name="HidesToLocaleString"
 # CHECK: module=m0 position=621 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f13}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f13} creator=Entrypoint{target=f13 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f13, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L5 = CallDirect v2 function=f13 @621
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed @621
+# CHECK-NEXT: v3: L5 = CallDirect v2 function=f13
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesToLocaleString"
 # CHECK: module=m0 position=621 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L5} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f13 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f13} constructedClass=L5
@@ -1253,17 +1252,17 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-LABEL: function {{*}}name="SetterRuns"
 # CHECK: module=m0 position=2004 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f18}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f18} creator=Entrypoint{target=f18 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f18, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L7 = CallDirect v2 function=f18 @2004
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed @2004
+# CHECK-NEXT: v3: L7 = CallDirect v2 function=f18
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="SetterRuns"
 # CHECK: module=m0 position=2004 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L7} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f18 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f18} constructedClass=L7
 # CHECK-LABEL: function {{*}}name="hasOwnProperty"
 # CHECK: module=m0 position=2041 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f19}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f19} creator=Entrypoint{target=f19 arguments=Registers} inlineFrames=[{}, {callee=f19 callPosition=2041 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f19, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L7 = AssumeType v1 provenType=L7 @2041
-# CHECK-NEXT: v4: undefined|"stored through the setter" = AssumeType v2 provenType=undefined|"stored through the setter" @2041
-# CHECK-NEXT: PutSlot v3, -, v4 key="stored" receivers=[L7] level=Proven accessSite=28 @2073:1
-# CHECK-NEXT: v6: undefined = Undefined @2073:1
-# CHECK-NEXT: Return v6 @2041
+# CHECK-NEXT: v3: L7 = AssumeType v1 provenType=L7
+# CHECK-NEXT: v4: undefined|"stored through the setter" = AssumeType v2 provenType=undefined|"stored through the setter"
+# CHECK-NEXT: PutSlot v3, -, v4 key="stored" receivers=[L7] level=Proven accessSite=28
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }

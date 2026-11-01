@@ -150,7 +150,7 @@ function f2 name="make" module=m0 position=219 flags=[IsChecked, HasExplicitName
     v8 = Convert v7 declared={type=undefined|null|function|f3|builtin(MathAbs) site=w7 flags=[OmitsNull, OmitsUndefined]} @326
     Return v8 @326
 }
-function f3 module=m0 position=326 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number site=w5}] thisType={type=anything} parameters=[{type=number site=w13}] results=[{type=number site=w14}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 module=m0 position=326 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number site=w5 variableName="a"}] thisType={type=anything} parameters=[{type=number site=w13}] results=[{type=number site=w14}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number, v1: number):
     Jump -> next b1() @326
   b1():

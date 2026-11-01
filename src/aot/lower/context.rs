@@ -14,7 +14,7 @@ use bun_sema::check::aot::{
 use bun_sema::erasure::{TypeRanges, find_type_ranges, find_type_ranges_beside};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, NodeData, VarDeclId};
-use bun_sema::import_sites::ResolvedForm;
+use bun_sema::import_sites::{ImportSpecifier, ResolvedForm};
 use bun_sema::program::{CompiledModule, FileId, FileRole, Files};
 use bun_sema::resolve::TranspileSettings;
 use rustc_hash::FxHashMap;
@@ -34,8 +34,9 @@ use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
 use super::transpiled::{ParsedText, Rewrite, RuntimeTranspiler, TranspileRequest, TranspiledFile};
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
+use crate::builtins::resolve::{KeyOfModuleCache, is_module_cache, is_table_of_loaders};
 use crate::builtins::{
-    BuiltinClass, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
+    BuiltinClass, BuiltinId, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
 };
 use crate::compile::removable::Removable;
 use crate::diagnostic_codes::Code;
@@ -47,6 +48,7 @@ use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, 
 use crate::known_helpers::KnownHelpers;
 use crate::load::test_runner_names::written_name_of_local;
 use crate::load::{self, Sources};
+use crate::modules::evicted::{FileOfKey, find_file_of_key};
 use crate::modules::{CommonJsExports, DeferredData, ModuleGraph, ModuleRef};
 use crate::options::RemovableOptions;
 use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
@@ -489,6 +491,99 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 self.diagnostics
                     .report(Code::InvalidRegExp, span, &[&sentence]);
             }
+        }
+    }
+
+    pub(super) fn warn_where_modules_are_reset(&mut self) {
+        if !self.builtins.loses_sight_of_module_cache() {
+            return;
+        }
+        for index in 0..self.hir.exprs.len() {
+            let expression = ExprId(index as u32);
+            let named = self.builtins.builtin_of_expression(expression);
+            if named.is_some_and(table::resets_modules) {
+                let span = self.span_of(NodeData::Expr(expression));
+                self.diagnostics
+                    .report(Code::ModulesLoadAgainUncompiled, span, &[]);
+            }
+        }
+    }
+
+    /// `find_evicted_modules` has marked every file of the test run. Each place in this file that alone would do so is named, so that nobody has to guess why the run is compiled otherwise.
+    pub(super) fn warn_where_every_file_may_load_again(&mut self) {
+        let name = self.queries.files().module(self.file).file_name();
+        if !self.inputs.modules.may_evict_every_module() || load::is_written_by_test_runner(name) {
+            return;
+        }
+        let mut doors: Vec<(ExprId, &'static [u8])> = Vec::new();
+        let mut names_reset = false;
+        if self.builtins.loses_sight_of_module_cache() {
+            for expression in (0..self.hir.exprs.len() as u32).map(ExprId) {
+                let Some(named) = self.builtins.builtin_of_expression(expression) else {
+                    continue;
+                };
+                if table::canonical_id(named) == BuiltinId::BunPlugin {
+                    doors.push((expression, b"This names Bun.plugin"));
+                } else if is_module_cache(named) {
+                    doors.push((
+                        expression,
+                        b"This file hands the table of loaded modules on to code that may take anything out of it",
+                    ));
+                } else if is_table_of_loaders(named) {
+                    doors.push((
+                        expression,
+                        b"This file may store a loader for a kind of file",
+                    ));
+                } else if table::resets_modules(named) {
+                    names_reset = true;
+                }
+            }
+            // The table of a `require` that the file has made: no expression of the file is known for it.
+            if doors.is_empty() && !names_reset && !self.hir.exprs.is_empty() {
+                doors.push((
+                    ExprId(0),
+                    b"This file hands the table of loaded modules on to code that may take anything out of it",
+                ));
+            }
+        }
+        let analysis = self.queries.files().analysis(self.file);
+        for &key in self.builtins.keys_taken_out_of_module_cache() {
+            let KeyOfModuleCache::Computed(written) = key else {
+                continue;
+            };
+            let is_unknown = match find_file_of_key(self.hir, self.bound, analysis, key) {
+                FileOfKey::Unknown => true,
+                FileOfKey::Site(site) => {
+                    analysis.import_sites[site].specifier == ImportSpecifier::Unknown
+                }
+                FileOfKey::Path(_) => false,
+            };
+            if is_unknown {
+                doors.push((
+                    written,
+                    b"This takes a module out of the table of loaded modules under a key that the build can't tell",
+                ));
+            }
+        }
+        for site in analysis.import_sites {
+            let mut written = analysis.alternatives_of(&site.specifier).iter();
+            let has_query =
+                |text: Atom| bun_core::strings::contains_char(self.queries.atom_bytes(text), b'?');
+            let names_query = written.any(|specifier| match *specifier {
+                ImportSpecifier::Constant(text) => has_query(text),
+                ImportSpecifier::Pattern { prefix, suffix } => {
+                    has_query(prefix) || has_query(suffix)
+                }
+                ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => false,
+            });
+            if names_query && site.specifier_node.is_some() {
+                doors.push((site.specifier_node, b"This loads a file under a query"));
+            }
+        }
+        for (expression, why) in doors {
+            let span = self.span_of(NodeData::Expr(expression));
+            self.diagnostics
+                .report(Code::EveryFileMayLoadAgain, span, &[why]);
         }
     }
 

@@ -65,10 +65,53 @@ const noticedBy: Record<string, Row | Row[]> = {
     flags: ["--aot-validate"],
     programs: ["text-is-encoded-into-the-rest-of-a-view.ts"],
   },
+  // A loop that walks a view past its end: the fast version of the loop ends at the length of the view, and only the slow one answers undefined.
+  CountedIndexesStayInRange: {
+    folder: "loops-lists-changed",
+    flags: [],
+    programs: ["walk-past-the-end.js"],
+  },
+  // The typed body reads slots out of whatever it is handed.
+  EntryChecksAlwaysPass: {
+    folder: "mistyped-values",
+    flags: [],
+    programs: ["fake-in-hot-call.ts"],
+  },
+  // These three have their engine tests too. Here a program that came through the front end shows each.
+  CarriedVariablesAreWrittenByOthers: {
+    folder: "pass-conditions",
+    flags: [],
+    programs: ["carried-variable-do-while.ts"],
+  },
+  ProofsOutlastWritesToTheirSubject: {
+    folder: "pass-conditions",
+    flags: [],
+    programs: ["proof-frozen-callee.ts"],
+  },
+  ProofsOutlastWritesToEverything: {
+    folder: "pass-conditions",
+    flags: [],
+    programs: ["proof-method-replaced.ts"],
+  },
   ChangedClosuresFailEveryTest: {
     folder: "calls",
     flags: [],
     programs: ["closure-given-member-called-in-two-loops.mjs"],
+  },
+  WhatInitializersTakeNeverChanges: {
+    folder: "initializer-roads",
+    flags: [],
+    programs: ["store/main.mjs", "through-a-holder/main.mjs"],
+  },
+  AssignmentsPutOffAskNobodyAbove: {
+    folder: "lazy-initializers",
+    flags: [],
+    programs: ["frozen-later/main.mjs", "setter-above-functions/main.mjs"],
+  },
+  WordsCarriedAroundLoopsOutlastWrites: {
+    folder: "pass-conditions",
+    flags: [],
+    programs: ["a-word-held-over-the-turns-of-a-loop-sees-what-is-stored-under-another-name.js"],
   },
   // What the stack holds where the call reads it goes by what ran before: a crash, or another answer. The check says it at build time, every time.
   LiveRangesSplitTwiceHaveNoColdUses: {
@@ -109,14 +152,12 @@ const noticedByTheEngineTestsAlone: Record<string, string> = {
   ConversionsOfStorageEndNoProofs: "plan-array-capacities-a-conversion-that-ends-a-proof-is-refused",
   StridedIndexesStayInRange: "a-strided-index-said-to-stay-in-range-is-reported",
   VectorTurnsMeetNoOtherAccess: "a-load-moved-across-the-store-of-another-view-is-reported",
-  // The pass that keeps such a word in a register is switched on by nobody yet, so no program is compiled with it. testb3 shows it.
-  WordsCarriedAroundLoopsOutlastWrites: "testPromoteLoopMemoryOverlooksOtherWritesOnlyWhereToldTo",
 };
 /** What costs a build words alone, and what does nothing until a run is told where memory runs out: each with the test that holds it to that. */
 const heldByATestOfItsOwn: Record<string, string> = {
   ListsOfPiecesEndInAPiece: "a-faulty-list-of-printed-text-costs-one-file-its-quotes",
-  MemoryRunsOutWhenCounted: "memory-that-runs-out-when-counted",
-  MemoryRunsOutWhenCountedByRule: "memory-that-runs-out-when-counted",
+  MemoryRunsOutWhenCounted: "oom-injection",
+  MemoryRunsOutWhenCountedByRule: "oom-injection",
 };
 /** The names that a test under ./engine-tests/pipeline/sabotages is built with. */
 const pairs = join(import.meta.dir, "engine-tests", "pipeline", "sabotages");

@@ -1622,11 +1622,11 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       jest: {
-        args: { path: b.any.optional },
+        args: { path: b.any.optional, byWhoLoads: b.any.optional },
         returns: testModule,
         capability: "js",
         throws: true,
-        uses: { path: b.inspected },
+        uses: { path: b.inspected, byWhoLoads: b.inspected },
         implementation: b.hostCall,
       },
       listen: {

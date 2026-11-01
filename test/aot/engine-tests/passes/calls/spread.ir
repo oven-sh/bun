@@ -244,7 +244,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b6()
 # CHECK-NEXT: b5(v12: guard) frequency=Rare:
 # CHECK-NEXT: AppendElements v8, v10, v12
-# CHECK-NEXT: Jump -> next b33()
+# CHECK-NEXT: Jump -> next b36()
 # CHECK-NEXT: b6() frequency=Rare:
 # CHECK-NEXT: v14: undefined|null|int|"ab"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab"|Array<int|fractional, proven> = Upcast v1 castType=undefined|null|int|"ab"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>
 # CHECK-NEXT: v15: boolean = TypeTest v14 testedType=Array<int|fractional>
@@ -259,7 +259,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v21: int[0, 4294967295] = CallBuiltin v16 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v22: boolean = Less v19, v21
-# CHECK-NEXT: Branch v22 -> taken b10(| 0), notTaken b33()
+# CHECK-NEXT: Branch v22 -> taken b10(| 0), notTaken b36()
 # CHECK-NEXT: b10(v23: int[0, 4294967294]) frequency=Rare:
 # CHECK-NEXT: v24: undefined|int|fractional = ElemGet v16, v23 [keyIsIntegral]
 # CHECK-NEXT: v25: 1 = Integer integer=1
@@ -276,7 +276,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v34: 2 = Integer integer=2
 # CHECK-NEXT: v35: boolean = Less v32, v34
-# CHECK-NEXT: Branch v35 -> taken b14(| 0), notTaken b33()
+# CHECK-NEXT: Branch v35 -> taken b14(| 0), notTaken b36()
 # CHECK-NEXT: b14(v36: int[0, 1]) frequency=Rare:
 # CHECK-NEXT: v37: undefined|int[0, 1114111] = CallBuiltin v30, v36 overload=StringPrototypeCodePointAt/0
 # CHECK-NEXT: v38: 65535 = Integer integer=65535
@@ -315,7 +315,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b22() frequency=Rare:
 # CHECK-NEXT: v59: 1 = Integer integer=1
 # CHECK-NEXT: v60: boolean = StrictEq v54, v59
-# CHECK-NEXT: Branch v60 -> taken b33(), notTaken b23()
+# CHECK-NEXT: Branch v60 -> taken b36(), notTaken b23()
 # CHECK-NEXT: b23() frequency=Rare:
 # CHECK-NEXT: AppendElement v8, v53
 # CHECK-NEXT: Jump -> next b20()
@@ -333,7 +333,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v72: int[0, 2147483647] = ResultAt v70 index=1
 # CHECK-NEXT: v73: undefined|int = ResultAt v70 index=2
 # CHECK-NEXT: v74: undefined|int = ResultAt v70 index=3
-# CHECK-NEXT: Branch v71 -> taken b27(), notTaken b33()
+# CHECK-NEXT: Branch v71 -> taken b27(), notTaken b36()
 # CHECK-NEXT: b27() frequency=Rare:
 # CHECK-NEXT: v75: fact = Specified
 # CHECK-NEXT: v76: int = AssumeType v73, v75 provenType=int
@@ -351,36 +351,48 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v86: int|L0|L1|L2|f5|Array<int|fractional, proven>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ Array<int|fractional, proven> = RequireObjectCoercible v84 nullishAccess=Spread
 # CHECK-NEXT: v87: anything = PropGet v86 key=@@iterator
 # CHECK-NEXT: v88: boolean = TypeTest v87 testedType=function
-# CHECK-NEXT: Branch v88 -> taken b30(| 0), notTaken b36()
+# CHECK-NEXT: Branch v88 -> taken b30(| 0), notTaken b40()
 # CHECK-NEXT: b30(v89: function) frequency=Rare:
 # CHECK-NEXT: v90: anything = Call v89, v86
 # CHECK-NEXT: v91: boolean = TypeTest v90 testedType=object
-# CHECK-NEXT: Branch v91 -> taken b31(| 0), notTaken b35(| 0)
+# CHECK-NEXT: Branch v91 -> taken b31(| 0), notTaken b39(| 0)
 # CHECK-NEXT: b31(v92: object) frequency=Rare:
 # CHECK-NEXT: v93: anything = PropGet v92 key="next"
+# CHECK-NEXT: v94: boolean = TypeTest v93 testedType=builtin(ArrayIteratorPrototypeNext)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
 # CHECK-NEXT: Jump -> next b32()
 # CHECK-NEXT: b32() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v95: anything = Call v93, v92
-# CHECK-NEXT: v96: object = RequireObject v95 runtimeError=SpreadResultNotObject
-# CHECK-NEXT: v97: anything = PropGet v96 key="done"
-# CHECK-NEXT: v98: boolean = ToBoolean v97
-# CHECK-NEXT: Branch v98 -> taken b33(), notTaken b34()
+# CHECK-NEXT: Branch v94 -> taken b33(), notTaken b35()
 # CHECK-NEXT: b33() frequency=Rare:
-# CHECK-NEXT: v99: anything = CallList v2, -, v8 calleeName="f" accessSite=11 callees=[f3, f4, builtin(MathMax), ..]
-# CHECK-NEXT: ReturnCall v99 casts=[{declared={type=number} resolution=Assume}]
+# CHECK-NEXT: v96: undefined = CallDirect v92, v93 function=f14 [isNeverInlined]
+# CHECK-NEXT: v97: boolean = ResultAt v96
+# CHECK-NEXT: Branch v97 -> taken b36(), notTaken b34()
 # CHECK-NEXT: b34() frequency=Rare:
-# CHECK-NEXT: v100: anything = PropGet v96 key="value"
-# CHECK-NEXT: AppendElement v8, v100
-# CHECK-NEXT: Jump -> next b32()
-# CHECK-NEXT: b35(v102: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
-# CHECK-NEXT: v103: boolean|number|string|symbol|bigint = RequireObjectCoercible v102 name="next"
-# CHECK-NEXT: v104: anything = PropGet v103 key="next"
-# CHECK-NEXT: v105: anything = Call v104, v103
-# CHECK-NEXT: v106: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
-# CHECK-NEXT: Throw v106
+# CHECK-NEXT: v98: anything = ResultAt v96 index=1
+# CHECK-NEXT: Jump -> next b38(v98)
+# CHECK-NEXT: b35() frequency=Rare:
+# CHECK-NEXT: v99: anything = Call v93, v92
+# CHECK-NEXT: v100: object = RequireObject v99 runtimeError=SpreadResultNotObject
+# CHECK-NEXT: v101: anything = PropGet v100 key="done"
+# CHECK-NEXT: v102: boolean = ToBoolean v101
+# CHECK-NEXT: Branch v102 -> taken b36(), notTaken b37()
 # CHECK-NEXT: b36() frequency=Rare:
-# CHECK-NEXT: v107: never = ThrowNotIterable v86 [isSpread]
+# CHECK-NEXT: v103: anything = CallList v2, -, v8 calleeName="f" accessSite=11 callees=[f3, f4, builtin(MathMax), ..]
+# CHECK-NEXT: ReturnCall v103 casts=[{declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b37() frequency=Rare:
+# CHECK-NEXT: v104: anything = PropGet v100 key="value"
+# CHECK-NEXT: Jump -> next b38(v104)
+# CHECK-NEXT: b38(v105: anything) frequency=Rare:
+# CHECK-NEXT: AppendElement v8, v105
+# CHECK-NEXT: Jump -> next b32()
+# CHECK-NEXT: b39(v107: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
+# CHECK-NEXT: v108: boolean|number|string|symbol|bigint = RequireObjectCoercible v107 name="next"
+# CHECK-NEXT: v109: anything = PropGet v108 key="next"
+# CHECK-NEXT: v110: anything = Call v109, v108
+# CHECK-NEXT: v111: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
+# CHECK-NEXT: Throw v111
+# CHECK-NEXT: b40() frequency=Rare:
+# CHECK-NEXT: v112: never = ThrowNotIterable v86 [isSpread]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=

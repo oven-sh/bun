@@ -4,8 +4,8 @@ use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::engine::{ExecutableIdentity, TargetImageForm};
 use bun_aot::options::{
-    Externals, FilesThatTestsLoad, LoadOptions, OpenedName, Options, PathOptions, RemovableOptions,
-    ReplacedExport, ReplacedModule, WaysBetweenModuleObjects,
+    Externals, FilesThatTestsLoad, LoadOptions, OpenedName, Options, PathFilter, PathOptions,
+    RemovableOptions, ReplacedExport, ReplacedModule, WaysBetweenModuleObjects,
 };
 use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
@@ -59,6 +59,7 @@ pub(crate) fn options_from_bundler<'r>(
         return None;
     };
     let mut load = load_options(input);
+    load.test_files = follow_links(input, input.aot.test_files_of_run.clone());
     if input.aot.host_runs_files_from_disk {
         load.stand_in_for_files_from_disk = entry_points.last().cloned();
     }
@@ -66,6 +67,11 @@ pub(crate) fn options_from_bundler<'r>(
         let test_files = input.aot.main_modules_beside_entry_points.iter();
         let listed = test_files.chain(&input.aot.preloads_of_test_run);
         load.files_of_tests = listed.chain(entry_points.last()).cloned().collect();
+    }
+    for preload in &input.aot.preloads_of_test_run {
+        let absolute = absolute_path(input.working_directory, preload);
+        load.paths_of_preloads.extend(real_file_path(&absolute));
+        load.paths_of_preloads.push(absolute);
     }
     Some(Options {
         aot: input.aot,
@@ -291,6 +297,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         loaders,
         externals: externals(options),
         react_compiler: options.react_compiler,
+        react_compiler_filter: options.react_compiler_filter.map(PathFilter),
         runs_macros: !options.no_macros,
         in_memory_files: in_memory_files(input),
         in_memory_file_keys: in_memory_file_keys(input),
@@ -298,6 +305,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
         has_globals_of_vitest: input.aot.has_globals_of_vitest,
+        entry_point_imports_vitest: replaced.entry_point_imports_vitest,
         takes_runtime_as_any: false,
         errors_with_bun_types: None,
         library_code_lacked: Default::default(),
@@ -369,9 +377,12 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         left_to_loader: Vec::new(),
         loads_below_files_left_to_loader: Vec::new(),
         entry_points_added_by_build: Vec::new(),
-        loaded_by_workers_alone: Vec::new(),
+        loaded_by_workers_too: Vec::new(),
         stand_in_for_files_from_disk: None,
         files_of_tests: Vec::new(),
+        test_files: Vec::new(),
+        package_files_that_product_imports: replaced.package_files_that_product_imports.clone(),
+        paths_of_preloads: Vec::new(),
     }
 }
 

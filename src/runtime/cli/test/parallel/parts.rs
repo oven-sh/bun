@@ -227,16 +227,12 @@ impl Parts {
                 PartState::Ready | PartState::Finished => {}
             }
         }
-        // Builds follow the workers, so that few of them run beside the tests: a part for each worker that has none, one that
-        // waits for the next worker to end, and one behind it.
-        // A heavy part that waits for another to end is there for no worker.
-        let running = self.heavy_growth_running();
-        let is_on_its_way = |part: &&Part| {
-            (part.state == PartState::Building
-                || (part.state == PartState::Ready && part.is_free()))
-                && !self.is_held_back(part, running)
-        };
-        if self.list.iter().filter(is_on_its_way).count() as u32 >= free_workers + 2 {
+        // Few builds run beside the tests: one for each worker that has no part, and two more. Those two go on while parts are left,
+        // however many lie ready. The slow files come first, each a part that is soon built and runs long, and the quick ones last,
+        // in parts that take longer to build than to run: builds that only followed the workers idled through the first and then
+        // starved the workers, each of which called for one more build: twenty at once at the end of a large run.
+        let is_built = |part: &&Part| part.state == PartState::Building;
+        if self.list.iter().filter(is_built).count() as u32 >= free_workers + 2 {
             return None;
         }
         // The heavy parts run one after another, so they begin first: then none of them is the end of the run, and the workers beside
@@ -272,9 +268,11 @@ impl Parts {
             .then_some(next as u32)
     }
 
+    /// `free_workers`: how many have no part, the one that asks among them.
     pub(crate) fn next_for_worker(
         &self,
         waiting: &[u32],
+        free_workers: u32,
         time_of: Option<&dyn Fn(FileRange) -> u64>,
     ) -> Option<u32> {
         let running = self.heavy_growth_running();
@@ -301,12 +299,27 @@ impl Parts {
             |part: &Part| matches!(part.state, PartState::Waiting | PartState::Building);
         let is_heavy = |&(index, _): &(u32, FileRange)| self.list[index as usize].heavy_growth > 0;
         let heavy = first_of_the_largest(next_files(true).filter(is_heavy), time_of);
-        heavy
-            .or_else(|| first_of_the_largest(next_files(true), time_of))
-            .or_else(|| match self.list.iter().any(is_to_come) {
-                true => None,
-                false => first_of_the_largest(next_files(false), time_of),
-            })
+        let begins = heavy.or_else(|| first_of_the_largest(next_files(true), time_of));
+        // More parts are built at once than there are workers, and the largest test file, whose build ends last, tends to run
+        // longest. A worker runs a part to its end, so one that takes a lesser part meanwhile leaves the slow file waiting for that
+        // long, and then the slow file ends the run. Such a file is a part of its own: a worker is kept for it.
+        if let (None, Some(index), Some(time_of)) = (heavy, begins, time_of) {
+            let next = next_files(true).find(|&(part, _)| part == index);
+            let time = next.map_or(0, |(_, file)| time_of(file));
+            let is_slower_and_to_come = |part: &&Part| {
+                part.state == PartState::Building
+                    && part.range.len() == 1
+                    && part.heavy_growth == 0
+                    && time_of(part.range) > time
+            };
+            if self.list.iter().filter(is_slower_and_to_come).count() as u32 >= free_workers {
+                return None;
+            }
+        }
+        begins.or_else(|| match self.list.iter().any(is_to_come) {
+            true => None,
+            false => first_of_the_largest(next_files(false), time_of),
+        })
     }
 
     pub(crate) fn worker_ended(&mut self, index: u32) {

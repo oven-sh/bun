@@ -1,5 +1,6 @@
 # Arrays that lie in the cells of their objects exist, and then an index gets an accessor above them: on the prototype of all arrays or of all objects where the program may do that, on a prototype of their own in any case.
 # FORM: AsRead
+# DIAGNOSTIC: LockedBuiltinWriteMayRun
 # RUN: pipeline RemoveRedundantBarriers
 
 module m0 path="index-gets-accessor-arrays-lie-cells.js" displayPath="index-gets-accessor-arrays-lie-cells.js" body=f0 namespaceLayout=L(m0)

@@ -19,10 +19,6 @@ const differs = {
   "a compiled module stays loaded for the next test file": ["jest", "vi"].flatMap(api =>
     isolations.map(flags => `errors > a ${api}.mock() ${laterConst}: ${flags}`),
   ),
-  "a default import of what jest.mock() replaced": ["./mod", "node:os", "pkg"].map(
-    path => `hoisting > as in Jest, a default import of ${path} gets the object that a jest.mock() factory returns`,
-  ),
-  "the order of the keys of a mocked module": ["hoisting > every shape of import reads the mock"],
   "the transpiler's cache holds no compiled code": isolations.map(
     flags => `modes > a file restored from the transpiler cache: ${flags}`,
   ),
@@ -55,5 +51,5 @@ test("the specification of plain `bun test` holds compiled", async () => {
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[[\d.]+ms\])?$/gm)];
   const named = (result: string) => [...new Set(results.filter(it => it[1] === result).map(it => it[2]))].sort();
   expect(named("fail")).toEqual(Object.values(differs).flat().sort());
-  expect(named("pass")).toHaveLength(117);
+  expect(named("pass")).toHaveLength(121);
 });

@@ -64,8 +64,8 @@ typesite w20 module=m0 position=951 kind=PropertyRead
 typesite w21 module=m0 position=1005 kind=PropertyRead
 typesite w22 module=m0 position=545 kind=Element
 typesite w23 module=m0 position=545 kind=CallResult
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w10}}, {key=@"binding.1" declared={type=undefined|null|string|absent site=w11 flags=[OmitsNull, OmitsUndefined]}}] ownFieldCount=2
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|string|absent site=w15 flags=[OmitsNull, OmitsUndefined]}}] ownFieldCount=1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w10} variableName="position"}, {key=@"binding.1" declared={type=undefined|null|string|absent site=w11 flags=[OmitsNull, OmitsUndefined]} variableName="result"}] ownFieldCount=2
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|string|absent site=w15 flags=[OmitsNull, OmitsUndefined]} variableName="result"}] ownFieldCount=1
 data d0 root=Array{contents=undefined|null|string elements=[String{value="pre"}, String{value="post"}, String{value="none"}]} module=m0
 data d1 root=Array{contents=undefined|null|string elements=[String{value="pre"}, String{value="-mid-"}, String{value="post"}]} module=m0
 variable g0 name="throughItself" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
@@ -215,7 +215,7 @@ function f2 name="through" module=m0 position=344 flags=[IsChecked, HasExplicitN
     IteratorClose v8 completion=Throw @456
     Rethrow v18 @456
 }
-function f3 name="add" module=m0 position=847 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}, {type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="add" module=m0 position=847 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}, {type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined] variableName="source"}] thisType={type=anything} parameters=[{type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L0, v1: undefined|null|Array<undefined|null|string>, v2: undefined|null|string):
     Jump -> next b1() @847
   b1():
@@ -261,7 +261,7 @@ function f3 name="add" module=m0 position=847 flags=[IsChecked, HasExplicitName]
     v36 = Undefined @989
     Return v36 @989
 }
-function f4 name="add" module=m0 position=502 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=undefined|null|Array<undefined|null|string> site=w4 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 name="add" module=m0 position=502 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=undefined|null|Array<undefined|null|string> site=w4 flags=[OmitsNull, OmitsUndefined] variableName="source"}] thisType={type=anything} parameters=[{type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1, v1: undefined|null|Array<undefined|null|string>, v2: undefined|null|string):
     Jump -> next b1() @502
   b1():
@@ -729,7 +729,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: Return v114
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="add"
-# CHECK: module=m0 position=847 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}, {type=Array<undefined|null|string, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type="-mid-"|"post"|"pre" site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=847 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}, {type=Array<undefined|null|string, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined] variableName="source"}] thisType={type=anything} parameters=[{type="-mid-"|"post"|"pre" site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: env L0, v1: Array<undefined|null|string, pristine[Storage, Names, Dense]>, v2: "-mid-"|"post"|"pre"):
 # CHECK-NEXT: ValidateType v1 validatedType=Array<anything, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: ValidateType v2 validatedType="-mid-"|"post"|"pre"
@@ -796,7 +796,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: Return v58
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="add"
-# CHECK: module=m0 position=502 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=Array<undefined|null|string, pristine[Storage, Names, Dense]> site=w4 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type="none"|"post"|"pre" site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=502 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=Array<undefined|null|string, pristine[Storage, Names, Dense]> site=w4 flags=[OmitsNull, OmitsUndefined] variableName="source"}] thisType={type=anything} parameters=[{type="none"|"post"|"pre" site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: env L1, v1: Array<undefined|null|string, pristine[Storage, Names, Dense]>, v2: "none"|"post"|"pre"):
 # CHECK-NEXT: ValidateType v1 validatedType=Array<anything, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: ValidateType v2 validatedType="none"|"post"|"pre"

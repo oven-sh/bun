@@ -92,8 +92,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v46 = Undefined @1010
     Return v46 @1010
 }
-function f1 name="right" module=m0 position=311 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string|Array):
+function f1 name="right" module=m0 position=311 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
     Jump -> next b1() @311
   b1():
     v1 = String string="" @349
@@ -111,26 +111,28 @@ function f1 name="right" module=m0 position=311 flags=[HasExplicitName] length=1
     Jump -> next b4() @371
   b4():
     v12 = ElemGet v0, v11 @403
-    v13 = PropGet v12 key="trimRight" @408
-    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]} @403
-    v15 = Call v14, v12 calleeKey="trimRight" calleeName="list[i].trimRight" @411
-    v16 = String string="|" @425
-    v17 = Add v15, v16 @411
-    v18 = Add v5, v17 @411
-    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @393
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]} @403
+    v14 = PropGet v13 key="trimRight" @408
+    v15 = Convert v14 declared={type=undefined|null|function|f5 flags=[IsExpected]} @403
+    v16 = Call v15, v13 calleeKey="trimRight" calleeName="list[i].trimRight" @411
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]} @403
+    v18 = String string="|" @425
+    v19 = Add v17, v18 @411
+    v20 = Add v5, v19 @411
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @393
     Jump -> next b5() @393
   b5():
-    v20 = Increment v11 @411
-    v21 = Convert v20 declared={type=i32 flags=[IsExpected]} @388
-    Jump -> next b2(v19, v21) @388
-  b6(v22):
+    v22 = Increment v11 @411
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]} @388
+    Jump -> next b2(v21, v23) @388
+  b6(v24):
     Jump -> next b7() @371
   b7():
-    v23 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @439
-    Return v23 @439
+    v25 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @439
+    Return v25 @439
 }
-function f2 name="end" module=m0 position=449 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string|Array):
+function f2 name="end" module=m0 position=449 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
     Jump -> next b1() @449
   b1():
     v1 = String string="" @485
@@ -148,26 +150,28 @@ function f2 name="end" module=m0 position=449 flags=[HasExplicitName] length=1 t
     Jump -> next b4() @507
   b4():
     v12 = ElemGet v0, v11 @539
-    v13 = PropGet v12 key="trimEnd" @544
-    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]} @539
-    v15 = Call v14, v12 calleeKey="trimEnd" calleeName="list[i].trimEnd" @547
-    v16 = String string="|" @559
-    v17 = Add v15, v16 @547
-    v18 = Add v5, v17 @547
-    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @529
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]} @539
+    v14 = PropGet v13 key="trimEnd" @544
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]} @539
+    v16 = Call v15, v13 calleeKey="trimEnd" calleeName="list[i].trimEnd" @547
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]} @539
+    v18 = String string="|" @559
+    v19 = Add v17, v18 @547
+    v20 = Add v5, v19 @547
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @529
     Jump -> next b5() @529
   b5():
-    v20 = Increment v11 @547
-    v21 = Convert v20 declared={type=i32 flags=[IsExpected]} @524
-    Jump -> next b2(v19, v21) @524
-  b6(v22):
+    v22 = Increment v11 @547
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]} @524
+    Jump -> next b2(v21, v23) @524
+  b6(v24):
     Jump -> next b7() @507
   b7():
-    v23 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @573
-    Return v23 @573
+    v25 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @573
+    Return v25 @573
 }
-function f3 name="left" module=m0 position=583 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string|Array):
+function f3 name="left" module=m0 position=583 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
     Jump -> next b1() @583
   b1():
     v1 = String string="" @620
@@ -185,26 +189,28 @@ function f3 name="left" module=m0 position=583 flags=[HasExplicitName] length=1 
     Jump -> next b4() @642
   b4():
     v12 = ElemGet v0, v11 @674
-    v13 = PropGet v12 key="trimLeft" @679
-    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]} @674
-    v15 = Call v14, v12 calleeKey="trimLeft" calleeName="list[i].trimLeft" @682
-    v16 = String string="|" @695
-    v17 = Add v15, v16 @682
-    v18 = Add v5, v17 @682
-    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @664
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]} @674
+    v14 = PropGet v13 key="trimLeft" @679
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]} @674
+    v16 = Call v15, v13 calleeKey="trimLeft" calleeName="list[i].trimLeft" @682
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]} @674
+    v18 = String string="|" @695
+    v19 = Add v17, v18 @682
+    v20 = Add v5, v19 @682
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @664
     Jump -> next b5() @664
   b5():
-    v20 = Increment v11 @682
-    v21 = Convert v20 declared={type=i32 flags=[IsExpected]} @659
-    Jump -> next b2(v19, v21) @659
-  b6(v22):
+    v22 = Increment v11 @682
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]} @659
+    Jump -> next b2(v21, v23) @659
+  b6(v24):
     Jump -> next b7() @642
   b7():
-    v23 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @709
-    Return v23 @709
+    v25 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @709
+    Return v25 @709
 }
-function f4 name="start" module=m0 position=719 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string|Array):
+function f4 name="start" module=m0 position=719 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
     Jump -> next b1() @719
   b1():
     v1 = String string="" @757
@@ -222,23 +228,25 @@ function f4 name="start" module=m0 position=719 flags=[HasExplicitName] length=1
     Jump -> next b4() @779
   b4():
     v12 = ElemGet v0, v11 @811
-    v13 = PropGet v12 key="trimStart" @816
-    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]} @811
-    v15 = Call v14, v12 calleeKey="trimStart" calleeName="list[i].trimStart" @819
-    v16 = String string="|" @833
-    v17 = Add v15, v16 @819
-    v18 = Add v5, v17 @819
-    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @801
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]} @811
+    v14 = PropGet v13 key="trimStart" @816
+    v15 = Convert v14 declared={type=undefined|null|function|f6 flags=[IsExpected]} @811
+    v16 = Call v15, v13 calleeKey="trimStart" calleeName="list[i].trimStart" @819
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]} @811
+    v18 = String string="|" @833
+    v19 = Add v17, v18 @819
+    v20 = Add v5, v19 @819
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @801
     Jump -> next b5() @801
   b5():
-    v20 = Increment v11 @819
-    v21 = Convert v20 declared={type=i32 flags=[IsExpected]} @796
-    Jump -> next b2(v19, v21) @796
-  b6(v22):
+    v22 = Increment v11 @819
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]} @796
+    Jump -> next b2(v21, v23) @796
+  b6(v24):
     Jump -> next b7() @779
   b7():
-    v23 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @847
-    Return v23 @847
+    v25 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @847
+    Return v25 @847
 }
 function f5 module=m0 position=277 thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -256,10 +264,12 @@ function f6 module=m0 position=977 thisType={type=anything} results=[{type=undef
     v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]} @1000
     Return v1 @1000
 }
-function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
-function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f9]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 right end left start f5 f6
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {

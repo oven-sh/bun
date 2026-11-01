@@ -135,7 +135,7 @@ function f2 name="keep" module=m0 position=260 flags=[IsChecked, HasExplicitName
     v6 = Undefined @295
     Return v6 @295
 }
-function f3 module=m0 position=313 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number site=w4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 module=m0 position=313 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number site=w4 variableName="a"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number, v1: anything):
     Jump -> next b1() @313
   b1():

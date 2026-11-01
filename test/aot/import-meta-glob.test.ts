@@ -93,9 +93,7 @@ describe.concurrent.each(modes)("%s", mode => {
     ];
     const { said, build } = await runEntry("entry.test.ts", inTest(mode, code), mode);
     expect(said).toEqual([...messages.map(message => "SAID TypeError: " + message), "SAID ./dir/a.ts"]);
-    // TODO: a run that is built in layers shows no warning of any build.
-    if (mode !== "bun test --aot over two layers")
-      for (const message of messages) expect(build).toContain("warn: " + message);
+    for (const message of messages) expect(build).toContain("warn: " + message);
   });
 
   test("eager entries run before the file that asks for them, in order", async () => {

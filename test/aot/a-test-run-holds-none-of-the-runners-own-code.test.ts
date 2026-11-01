@@ -47,6 +47,22 @@ test.concurrent(
   120_000,
 );
 
+test.concurrent(
+  "nor does a run of one test that expects something",
+  async () => {
+    const { ofLibrary, seen } = await runTests(
+      {
+        "a.test.ts": `import { test, expect } from "bun:test";\ntest("runs", () => {\n  expect(1 + 2).toBe(3);\n});\n`,
+      },
+      undefined,
+      "--aot",
+    );
+    expect(seen).toEqual({ stdout: [], results: ["pass runs"], exitCode: 0 });
+    expect(ofLibrary).toEqual([]);
+  },
+  120_000,
+);
+
 const withFakeTimers = {
   "lib.ts": `export const later = (ms: number, seen: string[]) => { setTimeout(() => seen.push("lib " + ms), ms); };\n`,
   "a.test.ts": `import { test, jest, vi } from "bun:test";
@@ -93,12 +109,10 @@ test.concurrent(
   240_000,
 );
 
-// TODO: row 4121: compiled code takes `process.nextTick` for the function that the process began with, so it never meets the fake: "SEEN before faked".
-test.todo(
-  "a tick that is queued under fake timers, and one behind them",
-  async () => {
-    const files = {
-      "a.test.ts": `import { test, jest } from "bun:test";
+// Row 4121: compiled code took `process.nextTick` for the function that the process began with, so it never met the fake: "SEEN before faked".
+test("a tick that is queued under fake timers, and one behind them", async () => {
+  const files = {
+    "a.test.ts": `import { test, jest } from "bun:test";
 test("ticks", async () => {
   const seen: string[] = [];
   jest.useFakeTimers({ toFake: ["nextTick"] });
@@ -115,10 +129,8 @@ test("ticks", async () => {
   console.log("SEEN at the end", seen.join());
 });
 `,
-    };
-    const plain = await runTests(files, undefined);
-    expect(plain.seen.results).toEqual(["pass ticks"]);
-    expect((await runTests(files, undefined, "--aot")).seen).toEqual(plain.seen);
-  },
-  120_000,
-);
+  };
+  const plain = await runTests(files, undefined);
+  expect(plain.seen.results).toEqual(["pass ticks"]);
+  expect((await runTests(files, undefined, "--aot")).seen).toEqual(plain.seen);
+}, 120_000);

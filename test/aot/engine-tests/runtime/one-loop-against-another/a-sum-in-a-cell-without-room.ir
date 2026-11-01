@@ -169,11 +169,11 @@ function f2 name="Tally" module=m0 position=106 kind=BaseConstructor flags=[HasN
   b0(v0: anything):
     Jump -> next b1() @106
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @100
-    v2 = NewObject v1 layout=L0 @100
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @100
-    v4 = CallDirect v3 function=f3 @100
-    Return v3 @100
+    v1 = GetConstructPrototype v0 layout=L0 @106
+    v2 = NewObject v1 layout=L0 @106
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @106
+    v4 = CallDirect v3 function=f3 @106
+    Return v3 @106
 }
 function f3 module=m0 position=106 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0):

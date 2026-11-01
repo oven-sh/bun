@@ -3051,6 +3051,15 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     // A module mock's exports are read live from the object its factory returned, so spy on that object.
+#if ENABLE(AOT)
+    while (true) {
+        JSObject* exports = Bun::objectHoldingExportOfCompiledModuleMock(globalObject, object, propertyKey);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!exports)
+            break;
+        object = exports;
+    }
+#endif
     while (auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object)) {
         JSObject* exports = Bun::objectHoldingExportOfModuleMock(globalObject, moduleNamespaceObject, propertyKey);
         RETURN_IF_EXCEPTION(scope, {});

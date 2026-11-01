@@ -85,7 +85,7 @@ function f2 name="readSecond" module=m0 position=398 flags=[IsChecked, HasExplic
     v10 = Undefined @553
     Return v10 @553
 }
-function f3 name="readLater" module=m0 position=565 kind=Arrow flags=[IsChecked] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="readLater" module=m0 position=565 kind=Arrow flags=[IsChecked] captures=[{type=anything variableName="second"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @565
   b1():

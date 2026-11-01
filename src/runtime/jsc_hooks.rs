@@ -895,7 +895,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             // SAFETY: per fn contract.
             unsafe {
                 (*vm).preload_hash = bun_watcher::Watcher::get_hash(path_text);
-                (*vm).transpiler.options.test_file_imports_vitest = false;
+                (*vm).transpiler.options.test_file_imports_vitest =
+                    crate::test_runner::jest::compiled_entry_point_imports_vitest(path_text);
             }
             bun_core::StringView::from_bytes(path_text)
         };
@@ -4204,6 +4205,7 @@ fn __bun_fetch_builtin_module(
             .get(spec)
             .filter(|file| !graph.is_asset_of_compiled_program(spec, file))
             .filter(|_| !bun_jsc::compiled_program::is_compiled_module(spec))
+            .filter(|_| !bun_jsc::compiled_program::is_entry_point_beside_thread(spec))
     }) {
         use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 

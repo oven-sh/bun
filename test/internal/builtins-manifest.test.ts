@@ -145,10 +145,11 @@ describe("builtins-manifest.ts", () => {
 
   afterAll(() => fixture[Symbol.dispose]());
 
-  test("the manifest has format 6 and its ten record kinds", () => {
+  test("the manifest has format 6 and its eleven record kinds", () => {
     expect(records[0]).toEqual(["bun-builtins-manifest", "6"]);
     expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual([
       "define",
+      "native",
       "module",
       "functions",
       "function",
@@ -206,6 +207,16 @@ describe("builtins-manifest.ts", () => {
     const defines = records.filter(([kind]) => kind === "define");
     for (const [, , json] of defines) expect(() => JSON.parse(json)).not.toThrow();
     expect(readFileSync(fixture.file("debug.manifest"), "utf8")).toBe(readFileSync(fixture.manifest, "utf8"));
+  });
+
+  test("the names that mean what Bun began with are listed, the classes also as members of globalThis", () => {
+    expect(records).toContainEqual(["native", "setTimeout", "name"]);
+    expect(records).toContainEqual(["native", "queueMicrotask", "name"]);
+    expect(records).toContainEqual(["native", "Blob", "name-or-member"]);
+    expect(records).toContainEqual(["native", "URL", "name-or-member"]);
+    expect(records.filter(([kind, name]) => kind === "native" && ["Array", "Bun", "process"].includes(name))).toEqual(
+      [],
+    );
   });
 
   test("module ids ascend from 0 without a gap", () => {

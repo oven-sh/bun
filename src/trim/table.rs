@@ -1,4 +1,4 @@
-use core::cmp::Reverse;
+use bun_sort_by_number::{SortByNumber, number_of_signed, wide_number_of_pair};
 use std::borrow::Cow;
 
 use bun_exe_format::builtins::Image;
@@ -430,9 +430,11 @@ fn select_largest_ranges(ranges: &[RemovedRange], room: usize) -> Cow<'_, [Remov
         return Cow::Borrowed(ranges);
     }
     let mut largest = ranges.to_vec();
-    largest.sort_unstable_by_key(|range| (Reverse(range.size), range.start));
+    largest.sort_by_u128(|range| {
+        wide_number_of_pair(u64::from(!range.size), number_of_signed(range.start))
+    });
     largest.truncate(room);
-    largest.sort_unstable_by_key(|range| range.start);
+    largest.sort_by_u64(|range| number_of_signed(range.start));
     Cow::Owned(largest)
 }
 

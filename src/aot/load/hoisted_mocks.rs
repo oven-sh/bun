@@ -2,8 +2,9 @@ use bun_ast::import_record::is_test_module;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, Decl, SymbolId};
 use bun_sema::hir::{
-    BinOp, Chain, ExprId, ExprKind, FAR_IN_BRACKETS, File, FileBuilder, Flags, Import, ImportId,
-    PatKind, PropKind, Span, StmtId, StmtKind, TypeNodeId, UnOp, VarDecl, VarKind, rare,
+    BinOp, Chain, ExprFlags, ExprId, ExprKind, FAR_IN_BRACKETS, File, FileBuilder, Flags, Import,
+    ImportId, PatKind, PropKind, ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtId,
+    StmtKind, TypeNodeId, UnOp, VarDecl, VarKind, rare,
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::TransformRequest;
@@ -395,10 +396,10 @@ pub(crate) fn plan<'s>(
     if !hir.is_js {
         let is_removed = |import: ImportId| {
             let node = hir[import];
-            let has_clause = node.default != Atom::NONE
+            let has_names = node.default != Atom::NONE
                 || node.namespace != Atom::NONE
-                || node.has_named_imports;
-            has_clause && !uses.iter().any(|it| it.import == import)
+                || !node.named.is_empty();
+            has_names && !uses.iter().any(|it| it.import == import)
         };
         for (statement, place) in &mut places {
             if *place == Place::LoweredImport && import_of(*statement).is_some_and(is_removed) {
@@ -466,11 +467,25 @@ fn write_use(
         left: zero,
         right: read,
     };
+    if !file
+        .expr_flags(expression)
+        .contains(ExprFlags::PARENTHESIZED)
+    {
+        file.parens.push((expression, pos, end));
+        file.add_flags(expression, ExprFlags::PARENTHESIZED);
+    }
 }
 
 fn write_load(file: &mut FileBuilder, statement: StmtId, import: ImportId, local: Atom) -> StmtId {
     let (start, loc) = (file[statement].start, file[statement].loc);
     let path = file[import].spec;
+    // The parser lists every specifier for the type checker, by the kind of its use.
+    file.specifier_uses.push(SpecifierUse {
+        spec: path,
+        pos: start,
+        kind: SpecifierKind::ImportCall,
+        mode: ResolutionMode::None,
+    });
     let path = file.expr(ExprKind::String(path), start, loc.end);
     let args = file.list(&[path]);
     let load = file.expr(ExprKind::ImportCall { args }, start, loc.end);
@@ -534,10 +549,15 @@ impl Plan {
             _ => None,
         });
         let lowered: Vec<(StmtId, ImportId)> = lowered.collect();
+        let locals = lowered.iter().enumerate().map(|(position, it)| {
+            let local = atoms.intern(format!("{NAMESPACE_PREFIX}{position}").as_bytes());
+            (it.1, local)
+        });
+        let mut locals: Vec<(ImportId, Atom)> = locals.collect();
+        locals.sort_unstable_by_key(|it| it.0);
         let local_of = |import: ImportId| {
-            let position = lowered.iter().position(|it| it.1 == import);
-            let position = position.expect("a use names an import that is lowered");
-            atoms.intern(format!("{NAMESPACE_PREFIX}{position}").as_bytes())
+            let position = locals.binary_search_by_key(&import, |it| it.0);
+            locals[position.expect("a use names an import that is lowered")].1
         };
         let callees = find_callees(file);
         for it in &self.uses {
@@ -550,7 +570,13 @@ impl Plan {
                 is_callee,
             );
         }
-        let find_use = |expression: ExprId| self.uses.iter().find(|it| it.expression == expression);
+        file.parens.sort_by_key(|it| it.0);
+        let find_use = |expression: ExprId| {
+            let position = self
+                .uses
+                .binary_search_by_key(&expression, |it| it.expression);
+            position.ok().map(|position| &self.uses[position])
+        };
         for property in &mut file.props {
             if property.kind == PropKind::Shorthand && find_use(property.value).is_some() {
                 property.kind = PropKind::Init;
@@ -603,7 +629,7 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use bstr::BStr;
-    use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PatKind, StmtKind};
+    use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PatKind, StmtKind, is_parenthesized};
 
     use crate::compile::testing::{default_settings, with_loaded_test_run};
     use crate::load::ProjectId;
@@ -786,16 +812,19 @@ mod tests {
         let text = r#"import { vi } from "bun:test"; import { call } from "./mod"; vi.mock("./side", () => ({})); call(); console.log(call, { call });"#;
         with_tree("a.test.js", text, |hir, is_written, _| {
             assert!(!is_written(b"call"));
-            let without_receiver = hir.exprs.iter().filter(|it| {
+            let expressions = (0..).map(ExprId).zip(hir.exprs.iter());
+            let without_receiver = expressions.filter(|it| {
                 matches!(
-                    it.kind,
+                    it.1.kind,
                     ExprKind::Binary {
                         op: BinOp::Comma,
                         ..
                     }
                 )
             });
-            assert_eq!(without_receiver.count(), 1);
+            let without_receiver: Vec<ExprId> = without_receiver.map(|it| it.0).collect();
+            assert_eq!(without_receiver.len(), 1);
+            assert!(is_parenthesized(hir, without_receiver[0]));
         });
     }
 

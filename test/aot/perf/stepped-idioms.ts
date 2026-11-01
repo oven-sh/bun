@@ -17,10 +17,8 @@
 // the names were allocated: so by all that was allocated before, by the build of Bun and by what else the executable holds.
 // Two kinds of rows are held more loosely, and the pin says which:
 //   "wavers": 35     the idiom goes by addresses, by chance or by what else its executable holds: it may read that many percent over its pin, and its pin is not lowered
-//   "owed": {..}     a change, named in `why`, made the forms named in `forms` dearer and the pins stayed where they were. Until a form is back it is held as ./pinned-everyday-idioms.ts holds
-//                    its numbers; AOT_PERF=lower then takes it out of the list
-//   "todo": {..}     a change, named in `why`, made the forms that it names dearer, and its cure is on the way. A form is held to the number beside it, and the pins stay where they were.
-//                    Once every such form meets its pin again the row fails until the word is taken out
+//   "owed": {..}     a change, named in `why`, made the forms named in `forms` dearer and the pins stayed where they were. Until a form is back it is held within 10% and 20
+//                    instructions, or 25% and 4; AOT_PERF=lower then takes it out of the list
 // "raised": ".." says why a pin once went up: what the change was for. The row is held like any other. "note": ".." says what was seen before a row was let waver.
 //
 // "called-once": the idioms of ./everyday stand in the form of main(), run() and the body of a test: the function that holds the loop is called once (./everyday-idioms.ts).
@@ -45,18 +43,15 @@ import { steppedIdioms, whyNoSteps } from "./step-idioms";
 
 const mode = process.env.AOT_PERF;
 /** Without `turns`: one turn is too long to step through. */
-type Pin = Partial<Record<Form, number>> & { turns?: number; wavers?: number; owed?: { forms: Form[]; why: string }; todo?: Partial<Record<Form, number>> & { why: string }; raised?: string; note?: string };
+type Pin = Partial<Record<Form, number>> & { turns?: number; wavers?: number; owed?: { forms: Form[]; why: string }; raised?: string; note?: string };
 type Pins = Record<string, Pin>;
 const readPins = (path: string): Pins => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {});
 const writePins = (path: string, pins: Pins) =>
   writeFileSync(path, `{\n${Object.keys(pins).sort().map(name => `${JSON.stringify(name)}: ${JSON.stringify(pins[name])}`).join(",\n")}\n}\n`);
 /** As in ./pinned-everyday-idioms.ts. */
 const isFarWorse = (now: number, pin: number) => (now > pin * 1.1 && now > pin + 20) || (now > pin * 1.25 && now > pin + 4);
-const isOver = (now: number, bound: number, pin: Pin) => now > bound * (1 + Math.max(pin.wavers ?? 0, 2) / 100) && now > bound + 2;
 const isWorse = (now: number, pin: Pin, form: Form) =>
-  pin.owed?.forms.includes(form) ? isFarWorse(now, pin[form]!) : isOver(now, pin.todo?.[form] ?? pin[form]!, pin);
-const meetsPinsAgain = (now: Record<Form, number>, pin: Pin) =>
-  !!pin.todo && forms.every(form => pin.todo![form] === undefined || !isOver(now[form], pin[form]!, pin));
+  pin.owed?.forms.includes(form) ? isFarWorse(now, pin[form]!) : now > pin[form]! * (1 + Math.max(pin.wavers ?? 0, 2) / 100) && now > pin[form]! + 2;
 
 export function steppedIdiomsAgainstPins(part = 1, parts = 1, surroundings: Surroundings = "ordinary") {
   const suffix = surroundings === "ordinary" ? "" : `-${surroundings}`;
@@ -108,16 +103,15 @@ export function steppedIdiomsAgainstPins(part = 1, parts = 1, surroundings: Surr
               const again = await read(padding);
               for (const form of forms) now[form] = Math.min(now[form], again[form]);
             }
-            if (mode === "lower" && !pin.wavers && !pin.todo) {
+            if (mode === "lower" && !pin.wavers) {
               const { owed, ...paid } = pin;
               const stillOwed = owed?.forms.filter(form => now[form] > pin[form]!) ?? [];
               written[name] = { ...paid, typed: Math.min(pin.typed!, now.typed), untyped: Math.min(pin.untyped!, now.untyped) };
               if (stillOwed.length) written[name].owed = { forms: stillOwed, why: owed!.why };
             }
-            expect([
-              ...forms.filter(form => isWorse(now[form], pin, form)).map(form => `${name}, ${form}: ${now[form]} instructions of compiled code a turn, pinned at ${pin[form]}`),
-              ...(meetsPinsAgain(now, pin) ? [`${name}: the pins are met again: remove "todo"`] : []),
-            ]).toEqual([]);
+            expect(
+              forms.filter(form => isWorse(now[form], pin, form)).map(form => `${name}, ${form}: ${now[form]} instructions of compiled code a turn, pinned at ${pin[form]}`),
+            ).toEqual([]);
           }),
         900_000,
       );

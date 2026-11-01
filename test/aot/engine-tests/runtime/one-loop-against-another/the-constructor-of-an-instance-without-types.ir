@@ -231,9 +231,9 @@ function f3 name="Point" module=m0 position=394 kind=BaseConstructor flags=[HasN
   b0(v0: anything, v1: number):
     Jump -> next b1() @394
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @354
-    v3 = NewObject v2 layout=L0 @354
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @354
+    v2 = GetConstructPrototype v0 layout=L0 @394
+    v3 = NewObject v2 layout=L0 @394
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @394
     v5 = CallDirect v4 function=f8 @394
     v6 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]} @408
     v7 = Convert v1 declared={type=number flags=[IsExpected]} @408

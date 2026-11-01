@@ -491,6 +491,11 @@ known_atoms! {
     jest_globals = "@jest/globals",
     vitest = "vitest",
     doMock = "doMock",
+    importActual = "importActual",
+    importMock = "importMock",
+    requireActual = "requireActual",
+    requireMock = "requireMock",
+    createMockFromModule = "createMockFromModule",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

@@ -14,7 +14,7 @@ say("Reflect.set", () => vm.runInThisContext("Reflect.set(process, 'stderr', 5)"
 say("stdout", () => typeof process.stdout.write);
 say("stderr", () => typeof process.stderr.write);
 /* Output:
-a store | throws TypeError: Cannot assign to process.stdout because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+a store | throws TypeError: Cannot assign to process.stdout because built-in objects are read-only in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in process.stdout = value (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 Reflect.set | false
 stdout | function
 stderr | function

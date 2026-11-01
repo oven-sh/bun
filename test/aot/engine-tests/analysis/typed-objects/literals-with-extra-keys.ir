@@ -440,138 +440,139 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v283 = IteratorOpen v241
     Jump -> next b12(v280, v282)
   b12(v284: number, v285: undefined|null|string):
-    v286 = IteratorResume v283
-    v287 = ResultAt v286
-    v288 = ResultAt v286 index=1
-    Branch v287 -> taken b13(), notTaken b19()
+    LoopHint
+    v287 = IteratorResume v283
+    v288 = ResultAt v287
+    v289 = ResultAt v287 index=1
+    Branch v288 -> taken b13(), notTaken b19()
   b13():
-    v289 = String string="many"
-    v290 = Builtin builtin=Object
-    v291 = Builtin builtin=ObjectKeys
-    v292 = Integer integer=300
-    v293 = ElemGet v241, v292
-    v294 = Call v291, v290, v293 calleeName="Object.keys"
-    v295 = Convert v294 declared={type=undefined|null|Array<undefined|null|string> site=w90 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v296 = PropGet v295 key="join"
-    v297 = Call v296, v295 calleeKey="join" calleeName="join"
-    v298 = Convert v297 declared={type=undefined|null|string site=w90 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v299 = Builtin builtin=Object
-    v300 = Builtin builtin=ObjectKeys
-    v301 = Integer integer=301
-    v302 = ElemGet v241, v301
-    v303 = Call v300, v299, v302 calleeName="Object.keys"
-    v304 = Convert v303 declared={type=undefined|null|Array<undefined|null|string> site=w91 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v305 = PropGet v304 key="join"
-    v306 = Call v305, v304 calleeKey="join" calleeName="join"
-    v307 = Convert v306 declared={type=undefined|null|string site=w91 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v308 = Integer integer=302
-    v309 = ElemGet v241, v308
-    v310 = Convert v309 declared={type=undefined|null|object flags=[IsExpected]}
-    v311 = CopyObject v310
-    v312 = Builtin builtin=GlobalThis
-    v313 = PropGet v312 key="structuredClone" [isFreeName]
-    v314 = Convert v313 declared={type=builtin(StructuredClone) flags=[IsExpected]}
-    v315 = Integer integer=303
-    v316 = ElemGet v241, v315
-    v317 = Call v314, -, v316 calleeName="structuredClone"
-    v318 = NewArray v284, v285, v298, v307, v311, v317 contents=anything
-    v319 = Call v1, -, v289, v318 calleeName="show"
-    v320 = IteratorOpen v241
+    v290 = String string="many"
+    v291 = Builtin builtin=Object
+    v292 = Builtin builtin=ObjectKeys
+    v293 = Integer integer=300
+    v294 = ElemGet v241, v293
+    v295 = Call v292, v291, v294 calleeName="Object.keys"
+    v296 = Convert v295 declared={type=undefined|null|Array<undefined|null|string> site=w90 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v297 = PropGet v296 key="join"
+    v298 = Call v297, v296 calleeKey="join" calleeName="join"
+    v299 = Convert v298 declared={type=undefined|null|string site=w90 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v300 = Builtin builtin=Object
+    v301 = Builtin builtin=ObjectKeys
+    v302 = Integer integer=301
+    v303 = ElemGet v241, v302
+    v304 = Call v301, v300, v303 calleeName="Object.keys"
+    v305 = Convert v304 declared={type=undefined|null|Array<undefined|null|string> site=w91 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v306 = PropGet v305 key="join"
+    v307 = Call v306, v305 calleeKey="join" calleeName="join"
+    v308 = Convert v307 declared={type=undefined|null|string site=w91 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v309 = Integer integer=302
+    v310 = ElemGet v241, v309
+    v311 = Convert v310 declared={type=undefined|null|object flags=[IsExpected]}
+    v312 = CopyObject v311
+    v313 = Builtin builtin=GlobalThis
+    v314 = PropGet v313 key="structuredClone" [isFreeName]
+    v315 = Convert v314 declared={type=builtin(StructuredClone) flags=[IsExpected]}
+    v316 = Integer integer=303
+    v317 = ElemGet v241, v316
+    v318 = Call v315, -, v317 calleeName="structuredClone"
+    v319 = NewArray v284, v285, v299, v308, v312, v318 contents=anything
+    v320 = Call v1, -, v290, v319 calleeName="show"
+    v321 = IteratorOpen v241
     Jump -> next b14()
   b14():
     LoopHint
-    v322 = IteratorResume v320
-    v323 = ResultAt v322
-    v324 = ResultAt v322 index=1
-    Branch v323 -> taken b15(), notTaken b16()
+    v323 = IteratorResume v321
+    v324 = ResultAt v323
+    v325 = ResultAt v323 index=1
+    Branch v324 -> taken b15(), notTaken b16()
   b15():
-    v325 = String string="changed"
-    v326 = Builtin builtin=Object
-    v327 = Builtin builtin=ObjectKeys
-    v328 = Integer integer=300
-    v329 = ElemGet v241, v328
-    v330 = Call v327, v326, v329 calleeName="Object.keys"
-    v331 = Convert v330 declared={type=undefined|null|Array<undefined|null|string> site=w92 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v332 = PropGet v331 key="join"
-    v333 = Call v332, v331 calleeKey="join" calleeName="join"
-    v334 = Convert v333 declared={type=undefined|null|string site=w92 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v335 = Builtin builtin=Object
-    v336 = Builtin builtin=ObjectKeys
-    v337 = Integer integer=301
-    v338 = ElemGet v241, v337
-    v339 = Call v336, v335, v338 calleeName="Object.keys"
-    v340 = Convert v339 declared={type=undefined|null|Array<undefined|null|string> site=w93 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v341 = PropGet v340 key="join"
-    v342 = Call v341, v340 calleeKey="join" calleeName="join"
-    v343 = Convert v342 declared={type=undefined|null|string site=w93 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v344 = Builtin builtin=Object
-    v345 = Builtin builtin=ObjectKeys
-    v346 = Integer integer=302
-    v347 = ElemGet v241, v346
-    v348 = Call v345, v344, v347 calleeName="Object.keys"
-    v349 = Convert v348 declared={type=undefined|null|Array<undefined|null|string> site=w94 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v350 = PropGet v349 key="join"
-    v351 = Call v350, v349 calleeKey="join" calleeName="join"
-    v352 = Convert v351 declared={type=undefined|null|string site=w94 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v353 = PropGet v241 key="reduce"
-    v354 = NewClosure function=f13
-    v355 = Integer
-    v356 = Call v353, v241, v354, v355 calleeKey="reduce" calleeName="kept.reduce"
-    v357 = NewArray v334, v343, v352, v356 contents=anything
-    v358 = Call v1, -, v325, v357 calleeName="show"
-    v359 = Undefined
-    Return v359
+    v326 = String string="changed"
+    v327 = Builtin builtin=Object
+    v328 = Builtin builtin=ObjectKeys
+    v329 = Integer integer=300
+    v330 = ElemGet v241, v329
+    v331 = Call v328, v327, v330 calleeName="Object.keys"
+    v332 = Convert v331 declared={type=undefined|null|Array<undefined|null|string> site=w92 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v333 = PropGet v332 key="join"
+    v334 = Call v333, v332 calleeKey="join" calleeName="join"
+    v335 = Convert v334 declared={type=undefined|null|string site=w92 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v336 = Builtin builtin=Object
+    v337 = Builtin builtin=ObjectKeys
+    v338 = Integer integer=301
+    v339 = ElemGet v241, v338
+    v340 = Call v337, v336, v339 calleeName="Object.keys"
+    v341 = Convert v340 declared={type=undefined|null|Array<undefined|null|string> site=w93 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v342 = PropGet v341 key="join"
+    v343 = Call v342, v341 calleeKey="join" calleeName="join"
+    v344 = Convert v343 declared={type=undefined|null|string site=w93 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v345 = Builtin builtin=Object
+    v346 = Builtin builtin=ObjectKeys
+    v347 = Integer integer=302
+    v348 = ElemGet v241, v347
+    v349 = Call v346, v345, v348 calleeName="Object.keys"
+    v350 = Convert v349 declared={type=undefined|null|Array<undefined|null|string> site=w94 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v351 = PropGet v350 key="join"
+    v352 = Call v351, v350 calleeKey="join" calleeName="join"
+    v353 = Convert v352 declared={type=undefined|null|string site=w94 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v354 = PropGet v241 key="reduce"
+    v355 = NewClosure function=f13
+    v356 = Integer
+    v357 = Call v354, v241, v355, v356 calleeKey="reduce" calleeName="kept.reduce"
+    v358 = NewArray v335, v344, v353, v357 contents=anything
+    v359 = Call v1, -, v326, v358 calleeName="show"
+    v360 = Undefined
+    Return v360
   b16():
     Jump -> next b17()
   b17() handler=b18():
-    v360 = Convert v324 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v361 = Integer integer=1
-    PropSet v360, v361 key="extra"
-    v363 = PropDelete v360 key="x"
+    v361 = Convert v325 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v362 = Integer integer=1
+    PropSet v361, v362 key="extra"
+    v364 = PropDelete v361 key="x"
     Jump -> next b14()
-  b18() role=IterationCleanup subject=v320:
-    v364 = CatchException
-    IteratorClose v320 completion=Throw
-    Rethrow v364
+  b18() role=IterationCleanup subject=v321:
+    v365 = CatchException
+    IteratorClose v321 completion=Throw
+    Rethrow v365
   b19():
     Jump -> next b20()
   b20() handler=b27():
-    v366 = Convert v288 declared={type=undefined|null|object flags=[IsExpected]}
-    v367 = ForInOpen v366
+    v367 = Convert v289 declared={type=undefined|null|object flags=[IsExpected]}
+    v368 = ForInOpen v367
     Jump -> next b21(v284)
-  b21(v368: number) handler=b27():
+  b21(v369: number) handler=b27():
     LoopHint
-    v370 = ForInStep v367, v366
-    v371 = ResultAt v370
-    v372 = ResultAt v370 index=1
-    Branch v371 -> taken b22(), notTaken b23()
+    v371 = ForInStep v368, v367
+    v372 = ResultAt v371
+    v373 = ResultAt v371 index=1
+    Branch v372 -> taken b22(), notTaken b23()
   b22() handler=b27():
-    v373 = Builtin builtin=Object
-    v374 = Builtin builtin=ObjectKeys
-    v375 = Call v374, v373, v366 calleeName="Object.keys"
-    v376 = Convert v375 declared={type=undefined|null|Array<undefined|null|string> site=w89 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v377 = PropGet v376 key="join"
-    v378 = Call v377, v376 calleeKey="join" calleeName="join"
-    v379 = Convert v378 declared={type=undefined|null|string site=w89 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    Jump -> next b12(v368, v379)
+    v374 = Builtin builtin=Object
+    v375 = Builtin builtin=ObjectKeys
+    v376 = Call v375, v374, v367 calleeName="Object.keys"
+    v377 = Convert v376 declared={type=undefined|null|Array<undefined|null|string> site=w89 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v378 = PropGet v377 key="join"
+    v379 = Call v378, v377 calleeKey="join" calleeName="join"
+    v380 = Convert v379 declared={type=undefined|null|string site=w89 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    Jump -> next b12(v369, v380)
   b23() handler=b27():
-    v380 = Convert v372 declared={type=undefined|null|string site=w88 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v381 = ElemGet v366, v380
-    v382 = TypeTest v381 testedType=number
-    Branch v382 -> taken b24(| 0), notTaken b25(| 0)
-  b24(v383) handler=b27():
-    v384 = ElemGet v366, v380
-    Jump -> next b26(v384)
-  b25(v385) handler=b27():
-    v386 = Integer
-    Jump -> next b26(v386)
-  b26(v387) handler=b27():
-    v388 = Add v368, v387
-    v389 = Convert v388 declared={type=number site=w13}
-    Jump -> next b21(v389)
+    v381 = Convert v373 declared={type=undefined|null|string site=w88 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v382 = ElemGet v367, v381
+    v383 = TypeTest v382 testedType=number
+    Branch v383 -> taken b24(| 0), notTaken b25(| 0)
+  b24(v384) handler=b27():
+    v385 = ElemGet v367, v381
+    Jump -> next b26(v385)
+  b25(v386) handler=b27():
+    v387 = Integer
+    Jump -> next b26(v387)
+  b26(v388) handler=b27():
+    v389 = Add v369, v388
+    v390 = Convert v389 declared={type=number site=w13}
+    Jump -> next b21(v390)
   b27() role=IterationCleanup subject=v283:
-    v390 = CatchException
-    Rethrow v390
+    v391 = CatchException
+    Rethrow v391
 }
 function f1 name="show" module=m0 position=221 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: anything):

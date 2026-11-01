@@ -13,6 +13,7 @@ use crate::check::aot::{ClassRef, FunctionRef};
 use crate::hir::*;
 use crate::import_sites::is_free_common_js;
 use crate::program::{FileId, Sym};
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 use smallvec::SmallVec;
 use std::marker::PhantomData;
 
@@ -355,8 +356,8 @@ pub(super) fn index_member_stores<'s, C: ReferentContext<'s>>(
             _ => {}
         }
     }
-    (stores.assignments).sort_by_key(|it| (it.holder.idx(), it.name.0));
-    stores.copies.sort_by_key(|it| it.0.idx());
+    (stores.assignments).sort_by_u64(|it| number_of_pair(it.holder.0, it.name.0));
+    stores.copies.sort_by_u32(|it| it.0.0);
     stores
 }
 

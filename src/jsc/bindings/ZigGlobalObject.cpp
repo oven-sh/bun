@@ -3715,6 +3715,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
         RETURN_IF_EXCEPTION(scope, );
     }
+#if ENABLE(AOT)
+    if (isBunTest && Bun::hasCompiledModules()) {
+        consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
+        RETURN_IF_EXCEPTION(scope, );
+    }
+#endif
 }
 
 // ===================== start conditional builtin globals =====================
@@ -4162,7 +4168,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false) || (globalObject->onLoadPlugins.hasVirtualModules() && JSC::AOT::isResolvingImportCall(vm));
+#else
     const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false);
+#endif
 
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
@@ -4350,6 +4360,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+#if ENABLE(AOT)
+        if (imported && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
+            Bun::didStartDynamicImport(globalObject, imported, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+#endif
         if (imported)
             return imported;
     }

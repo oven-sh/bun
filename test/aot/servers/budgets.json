@@ -410,7 +410,7 @@
     }
   },
   "typescript": {
-    "codeBytes": 27639808,
+    "codeBytes": 21924804,
     "bytesAValue": 32.76,
     "engineRuns": 1,
     "tests": {

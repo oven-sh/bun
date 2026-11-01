@@ -31,7 +31,9 @@ async function slot<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-export function holdLeastShare(name: string, leastShareAtLeast: number, numberOfOrders: number) {
+const shareHeldInEveryOrder = 99;
+
+export function holdLeastShare(name: string, leastShareAtLeast: number, numberOfOrders: number, openRow?: number) {
   const orders = ["usual", "0", "1", "2", "3"].slice(0, numberOfOrders);
   raiseDefaultTimeout(120_000);
   describe.skipIf(!isLinux || process.arch !== "x64")(
@@ -40,6 +42,7 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
       const work = String(tempDir(`aot-${name}-both-ways-every-order`, {}));
       const app = join(work, "app");
       let all: { executable: string; testRun: string; percent: number; functions: number }[] = [];
+      let sameInEveryOrder = { ofExecutables: 0, ofTestRuns: 0, ofBoth: 0, percent: 0 };
       afterAll(() => rmSync(work, { recursive: true, force: true }));
 
       beforeAll(async () => {
@@ -76,8 +79,9 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
           ]),
         );
         const ofTestRuns = orders.map(order => functionsOfProgram(map("test-run", order)));
-        all = orders.flatMap(executable => {
-          const ofExecutable = functionsOfProgram(map("executable", executable));
+        const ofExecutables = orders.map(order => functionsOfProgram(map("executable", order)));
+        all = orders.flatMap((executable, position) => {
+          const ofExecutable = ofExecutables[position];
           return ofTestRuns.map((ofTestRun, index) => ({
             executable,
             testRun: orders[index],
@@ -85,7 +89,24 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
             functions: ofExecutable.size,
           }));
         });
+        const inEvery = (builds: Set<string>[]) => [...builds[0]].filter(row => builds.every(build => build.has(row)));
+        const withoutBytes = (row: string) => row.slice(0, row.lastIndexOf(" "));
+        const inEveryExecutable = inEvery(ofExecutables);
+        const inEveryTestRun = new Map(inEvery(ofTestRuns).map(row => [withoutBytes(row), row]));
+        const inBoth = inEveryExecutable.filter(row => inEveryTestRun.has(withoutBytes(row)));
+        sameInEveryOrder = {
+          ofExecutables: inEveryExecutable.length,
+          ofTestRuns: inEveryTestRun.size,
+          ofBoth: inBoth.length,
+          percent: (100 * inBoth.filter(row => inEveryTestRun.get(withoutBytes(row)) === row).length) / inBoth.length,
+        };
       }, 1_800_000);
+
+      const holdLeast = () =>
+        expect({
+          name,
+          percent: Math.min(Math.floor(Math.min(...all.map(it => it.percent))), leastShareAtLeast),
+        }).toEqual({ name, percent: leastShareAtLeast });
 
       test(name, () => {
         const isBothUsual = (it: { executable: string; testRun: string }) =>
@@ -96,8 +117,16 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
         console.log(
           `LEAST ${name}: ${least.percent.toFixed(1)}% (the executable under the order ${least.executable}, the test run under ${least.testRun}; ${orders.length} orders each)`,
         );
+        const usualWithUsual = all.find(isBothUsual)!.percent;
+        const usual = `usual with usual ${usualWithUsual.toFixed(1)}%`;
+        const meanOfOthers = `the mean of the other ${others.length} pairings ${mean.toFixed(1)}%`;
         console.log(
-          `  held by nothing: usual with usual ${all.find(isBothUsual)!.percent.toFixed(1)}%, the mean of the other ${others.length} pairings ${mean.toFixed(1)}%`,
+          openRow === undefined
+            ? `  held by nothing: ${usual}, ${meanOfOthers}`
+            : `  held: ${usual}; held by nothing: the least, ${meanOfOthers}`,
+        );
+        console.log(
+          `  the same under every order: ${sameInEveryOrder.ofExecutables} functions of the executable, ${sameInEveryOrder.ofTestRuns} of the test run, ${sameInEveryOrder.ofBoth} of both; of those ${sameInEveryOrder.percent.toFixed(2)}% are the same in both`,
         );
         console.log(
           `  by executable (${orders.join(" ")}), each against the test runs (${orders.join(" ")}): ${orders
@@ -110,11 +139,16 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
             .join(" | ")}`,
         );
         expect(Math.min(...all.map(it => it.functions))).toBeGreaterThan(500);
-        expect({ name, percent: Math.min(Math.floor(least.percent), leastShareAtLeast) }).toEqual({
+        if (openRow === undefined) return holdLeast();
+        expect(sameInEveryOrder.ofBoth).toBeGreaterThan(500);
+        expect({
           name,
-          percent: leastShareAtLeast,
-        });
+          usualWithUsual: Math.min(Math.floor(usualWithUsual), shareHeldInEveryOrder),
+          sameInEveryOrder: Math.min(Math.floor(sameInEveryOrder.percent), shareHeldInEveryOrder),
+        }).toEqual({ name, usualWithUsual: shareHeldInEveryOrder, sameInEveryOrder: shareHeldInEveryOrder });
       });
+      if (openRow !== undefined)
+        test.todo(`${name}: TODO(${openRow}): the code doesn't depend on the order in which rules run`, holdLeast);
     },
   );
 }

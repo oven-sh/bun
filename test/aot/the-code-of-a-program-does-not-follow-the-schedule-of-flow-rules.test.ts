@@ -12,14 +12,17 @@
 //   bun test/aot/tools/same-code-under-every-schedule.ts test/aot/parallel/<program>
 // shows it alone. The same tool with `--schedules 255 --same <file>` says which programs can join.
 import { expect } from "bun:test";
+import { existsSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { availableParallelism } from "os";
+import { join } from "path";
 import { test } from "./supported";
 import {
   checkerPasses,
   findMovedCode,
   listedPrograms,
   numberings,
+  programsAskedUnderNineSchedules,
   schedules,
   storedPrograms,
   threadCounts,
@@ -34,6 +37,11 @@ const jobs = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || Math.min(9, av
 // The library that a program brings along is another on each system, and a Bun that checks itself generates other code.
 // The list is what holds on Linux, on x64 and on arm64 alike.
 const onTheSystemOfTheList = test.skipIf(!isLinux || isASAN || isDebug);
+
+test("every listed program is there", () => {
+  const isGone = (program: string) => !existsSync(join(storedPrograms, program));
+  expect([...all, ...programsAskedUnderNineSchedules()].filter(isGone)).toEqual([]);
+});
 
 onTheSystemOfTheList.each([
   ["under nine schedules", schedules(8)],

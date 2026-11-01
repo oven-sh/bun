@@ -3144,8 +3144,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `IsPartOfParameterDeclaration`
-        if matches!(root_declaration(bound, pattern), PatParent::Param(_))
-            && hir.is_ambient(hir.node(pattern))
+        if let PatParent::Param(parameter) = root_declaration(bound, pattern)
+            && hir.is_ambient(hir.node(parameter))
         {
             return self.non_nullable(ty);
         }

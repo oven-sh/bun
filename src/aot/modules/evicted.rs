@@ -3,13 +3,15 @@
 //! So does an import statement of a test file, which may be linked behind the `delete` of an earlier one: `leave_imports_of_test_files_to_loader`.
 //! A file that the run itself writes, moves or removes is among them, though it may load only once: `bun test` reads what lies on disk when something first loads it.
 
+use super::imports::find_mocked_modules;
 use super::module_set::ModuleSet;
 use super::plan::ModuleRef;
 use super::requests::{ScannedSite, Scans};
 use super::{BindInput, ReplacedModules};
 use crate::builtins::{KeyOfModuleCache, ResolvedBuiltins, RuntimeModule, table};
+use crate::load::is_written_by_test_runner;
 use crate::load::loader_aliases::resolve_loader_alias;
-use crate::load::sources::{SourceKind, parsed_source};
+use crate::load::sources::{EntryPoint, EntryPointKind, SourceKind, parsed_source};
 use crate::options::ReplacedModule;
 use crate::statistics::logs_stages;
 use bun_ast::Target;
@@ -26,6 +28,7 @@ use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_made_require};
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, to_native};
+use std::collections::VecDeque;
 
 #[derive(Default)]
 pub(super) struct EvictedModules {
@@ -185,6 +188,246 @@ pub(crate) fn stands_where_a_throw_is_caught(
     }
 }
 
+/// When a call that loads a file runs, and whether somebody may catch what the file throws.
+#[derive(Copy, Clone, PartialEq)]
+enum LoadedWhen {
+    /// While the files are loaded one below the other from an entry point, with no handler around: a throw ends the process.
+    AtTheTop,
+    /// Then too, with a handler around it, or as a promise.
+    AtTheTopAndCaught,
+    /// When a function is called: a handler may stand around that call.
+    Later,
+}
+
+fn find_when_call_runs(
+    hir: &bun_sema::hir::File<'_>,
+    bound: &Bound<'_>,
+    call: ExprId,
+) -> LoadedWhen {
+    let mut when = LoadedWhen::AtTheTop;
+    let mut parent = bound.parent_of_expr(call);
+    loop {
+        let inner = match parent {
+            Parent::Expr(outer) => {
+                parent = bound.parent_of_expr(outer);
+                continue;
+            }
+            Parent::Stmt(statement) => statement.some(),
+            Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()].some(),
+            Parent::Case(case) => bound.case_stmt[case.idx()].some(),
+            Parent::File => return when,
+            _ => return LoadedWhen::Later,
+        };
+        let Some(inner) = inner else {
+            return LoadedWhen::Later;
+        };
+        parent = bound.parent_of_stmt(inner);
+        let Parent::Stmt(outer) = parent else {
+            continue;
+        };
+        let is_guarded = outer.some().is_some_and(|outer| {
+            matches!(hir[outer].kind, StmtKind::Try { block, handler, .. } if block == inner && handler.is_some())
+        });
+        if is_guarded {
+            when = LoadedWhen::AtTheTopAndCaught;
+        }
+    }
+}
+
+/// `await import("./a.ts")`: nobody but the `await` holds the promise, so what the file throws goes on from there as it does from an import statement.
+fn is_awaited_at_once(hir: &bun_sema::hir::File<'_>, bound: &Bound<'_>, call: ExprId) -> bool {
+    let mut inner = call;
+    while let Parent::Expr(outer) = bound.parent_of_expr(inner) {
+        match hir[outer].kind {
+            ExprKind::Await(_) => return true,
+            ExprKind::As { .. }
+            | ExprKind::Satisfies { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::NonNull(_) => inner = outer,
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn add_all_that_they_load(
+    files: &mut FxHashSet<FileId>,
+    loaded_by: &FxHashMap<FileId, Vec<FileId>>,
+    is_left_out: impl Fn(FileId) -> bool,
+) {
+    let mut to_follow: Vec<FileId> = files.iter().copied().collect();
+    while let Some(file) = to_follow.pop() {
+        for &target in loaded_by.get(&file).map_or(&[][..], |it| &it[..]) {
+            if !is_left_out(target) && files.insert(target) {
+                to_follow.push(target);
+            }
+        }
+    }
+}
+
+/// The first way from an entry point to one of `goals` that a search by levels finds, which passes none of `without`.
+fn find_way_to(
+    entry_points: &[FileId],
+    loaded_by: &FxHashMap<FileId, Vec<FileId>>,
+    goals: &FxHashSet<FileId>,
+    without: Option<FileId>,
+) -> Option<Vec<FileId>> {
+    let mut came_from: FxHashMap<FileId, Option<FileId>> = FxHashMap::default();
+    let mut found: VecDeque<FileId> = VecDeque::new();
+    for &entry_point in entry_points {
+        if Some(entry_point) != without && came_from.insert(entry_point, None).is_none() {
+            found.push_back(entry_point);
+        }
+    }
+    while let Some(file) = found.pop_front() {
+        if goals.contains(&file) {
+            let mut way = vec![file];
+            while let Some(&Some(before)) = came_from.get(way.last().unwrap()) {
+                way.push(before);
+            }
+            return Some(way);
+        }
+        for &target in loaded_by.get(&file).map_or(&[][..], |it| &it[..]) {
+            if Some(target) != without && !came_from.contains_key(&target) {
+                came_from.insert(target, Some(file));
+                found.push_back(target);
+            }
+        }
+    }
+    None
+}
+
+/// A call that may load any file stands in a file that has begun to run, and so has every file that all ways from the entry points to such a call
+/// lead through: the call is not the first to load one of those. A file that leads to all of them lies on any one way.
+fn find_files_on_every_way_to(
+    entry_points: &[FileId],
+    loaded_by: &FxHashMap<FileId, Vec<FileId>>,
+    goals: &FxHashSet<FileId>,
+) -> FxHashSet<FileId> {
+    let way = find_way_to(entry_points, loaded_by, goals, None).unwrap_or_default();
+    let is_on_every_way =
+        |&file: &FileId| find_way_to(entry_points, loaded_by, goals, Some(file)).is_none();
+    way.into_iter().filter(is_on_every_way).collect()
+}
+
+/// `require()` runs a CommonJS file again whose last run threw. That takes somebody who caught the throw. The files that are loaded at the top have run, or
+/// have ended the process, when a function is called later: a call in a function is taken to load none of them first.
+pub(super) fn find_files_that_run_again(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    evicted: &EvictedModules,
+) -> Vec<ModuleRef> {
+    let mut loaded_by: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
+    let mut loaded_at_the_top_by: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
+    let mut caught_at_the_top: FxHashSet<FileId> = FxHashSet::default();
+    let mut loaded_later: FxHashSet<FileId> = FxHashSet::default();
+    let mut catch_any_file_at_the_top: FxHashSet<FileId> = FxHashSet::default();
+    let mut is_any_file_loaded_later = false;
+    for &file in &modules.compiled_files {
+        if parsed_source(input.files, file).is_none() {
+            continue;
+        }
+        let (hir, bound) = (input.files.hir(file), input.files.bound(file));
+        let (analysis, scan) = (input.files.analysis(file), scans.of(file));
+        for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
+            let when = match site.kind {
+                ImportSiteKind::Require(call)
+                | ImportSiteKind::ImportMetaRequire(call)
+                | ImportSiteKind::RequireByTestRunner(call) => {
+                    find_when_call_runs(hir, bound, call)
+                }
+                ImportSiteKind::ImportCall(call) | ImportSiteKind::ImportByTestRunner(call) => {
+                    match find_when_call_runs(hir, bound, call) {
+                        LoadedWhen::Later => LoadedWhen::Later,
+                        LoadedWhen::AtTheTop if is_awaited_at_once(hir, bound, call) => {
+                            LoadedWhen::AtTheTop
+                        }
+                        LoadedWhen::AtTheTop | LoadedWhen::AtTheTopAndCaught => {
+                            LoadedWhen::AtTheTopAndCaught
+                        }
+                    }
+                }
+                ImportSiteKind::JsxRuntime
+                | ImportSiteKind::JsxPackage
+                | ImportSiteKind::Import(_)
+                | ImportSiteKind::ExportFrom(_)
+                | ImportSiteKind::ExportStar(_)
+                | ImportSiteKind::ImportEquals(_) => LoadedWhen::AtTheTop,
+                ImportSiteKind::RequireResolve(_)
+                | ImportSiteKind::ImportMetaResolve(_)
+                | ImportSiteKind::GetBuiltinModule(_)
+                | ImportSiteKind::MockModule(_) => continue,
+            };
+            let mut note = |target: ModuleRef| {
+                let ModuleRef::File(target) = target else {
+                    return;
+                };
+                loaded_by.entry(file).or_default().push(target);
+                match when {
+                    LoadedWhen::AtTheTop => {
+                        loaded_at_the_top_by.entry(file).or_default().push(target)
+                    }
+                    LoadedWhen::AtTheTopAndCaught => _ = caught_at_the_top.insert(target),
+                    LoadedWhen::Later => _ = loaded_later.insert(target),
+                }
+            };
+            match answer {
+                &ScannedSite::Module(target) => note(target),
+                ScannedSite::Candidates(range) => {
+                    let spelled = &scan.spellings[range.start as usize..range.end as usize];
+                    spelled.iter().for_each(|spelled| note(spelled.module));
+                }
+                ScannedSite::AllModules => match when {
+                    LoadedWhen::AtTheTop => {}
+                    LoadedWhen::AtTheTopAndCaught => _ = catch_any_file_at_the_top.insert(file),
+                    LoadedWhen::Later => is_any_file_loaded_later = true,
+                },
+                ScannedSite::Unresolved | ScannedSite::Erased => {}
+            }
+        }
+    }
+    let entry_points: Vec<FileId> = input
+        .sources
+        .entry_points()
+        .iter()
+        .map(|it| it.file)
+        .collect();
+    // A further entry point of an executable is there to be found by name.
+    let starts =
+        |it: &&EntryPoint| it.kind == EntryPointKind::Main || input.runner_starts_entry_points;
+    let started = input.sources.entry_points().iter().filter(starts);
+    let mut at_the_top: FxHashSet<FileId> = started.map(|it| it.file).collect();
+    add_all_that_they_load(&mut at_the_top, &loaded_at_the_top_by, |_| false);
+    if !catch_any_file_at_the_top.is_empty() {
+        let has_begun =
+            find_files_on_every_way_to(&entry_points, &loaded_by, &catch_any_file_at_the_top);
+        let files = modules.compiled_files.iter().copied();
+        caught_at_the_top.extend(files.filter(|file| !has_begun.contains(file)));
+    }
+    if is_any_file_loaded_later {
+        loaded_later.extend(modules.compiled_files.iter().copied());
+    }
+    loaded_later.retain(|file| !at_the_top.contains(file));
+    add_all_that_they_load(&mut caught_at_the_top, &loaded_by, |_| false);
+    add_all_that_they_load(&mut loaded_later, &loaded_by, |file| {
+        at_the_top.contains(&file)
+    });
+    caught_at_the_top.extend(loaded_later);
+    let run_again: Vec<ModuleRef> = caught_at_the_top
+        .into_iter()
+        .map(ModuleRef::File)
+        .filter(|&file| modules.find_commonjs_file(file).is_some() && !evicted.contains(file))
+        .collect();
+    if logs_stages() {
+        bun_core::print_errorln!(
+            "AOT modules | CommonJS files that may run again {}",
+            run_again.len(),
+        );
+    }
+    run_again
+}
+
 /// `import("./a.js?again")` loads the file once more, from disk. What stands in front of the `?` in each specifier that has one.
 /// `None`: the `?` follows a part that nobody knows.
 pub(crate) fn find_files_named_with_query<'a>(
@@ -317,8 +560,16 @@ fn find_files_at(
 // The stage log says why every file of a run may load again.
 fn say_why_every_file(input: &BindInput<'_, '_>, file: FileId, does: &str) {
     if logs_stages() {
+        // The runner has written that file: it stands for the files above this layer, and says nothing of the user's.
+        let whose = match is_written_by_test_runner(input.files.module(file).file_name()) {
+            true => {
+                "THE RUNNER's OWN STAND-IN for the files above this layer, not a file of the project: "
+            }
+            false => "",
+        };
         bun_core::print_errorln!(
-            "AOT test run | every file may load again: {} {}",
+            "AOT test run | every file may load again: {}{} {}",
+            whose,
             bstr::BStr::new(input.files.module(file).file_name()),
             does,
         );
@@ -427,7 +678,7 @@ pub(super) fn find_evicted_modules(
             say_why_every_file(
                 input,
                 file,
-                "hands require.cache on, names Bun.plugin, or stores a loader into Module._extensions",
+                "hands require.cache on, names Bun.plugin or resetModules of the test runner, or stores a loader into Module._extensions",
             );
             evicted.is_every_module = true;
         }
@@ -523,7 +774,13 @@ pub(super) fn find_evicted_modules(
         .collect();
     evicted.modules.extend(forms);
     add_importers(input, scans, modules, &mut evicted.modules);
-    for &module in &evicted.modules {
+    // The original beside its mock is a copy from disk too: `vi.importActual()`, `importOriginal()`, a mock without a factory.
+    let mocked = find_mocked_modules(input, scans, modules);
+    if mocked.is_every_module() {
+        evicted.is_every_export_asked_for = true;
+        evicted.copies_name_any_file = true;
+    }
+    for &module in evicted.modules.iter().chain(mocked.iter()) {
         let ModuleRef::File(file) = module else {
             continue;
         };
@@ -546,6 +803,13 @@ pub(super) fn find_evicted_modules(
                 ScannedSite::Unresolved | ScannedSite::Erased => {}
             }
         }
+    }
+    // `load::manual_mocks`: the test runner asks for the file by its path, and takes whatever it exports.
+    if mocked.is_every_module() || mocked.iter().next().is_some() {
+        let files = modules.compiled_files.iter().copied();
+        let in_folder =
+            files.filter(|&file| contains(input.files.module(file).file_name(), b"/__mocks__/"));
+        (evicted.named_by_copies).extend(in_folder.map(ModuleRef::File));
     }
     add_files_named_below_files_left_to_loader(input, modules, &mut evicted);
     let forms: Vec<ModuleRef> = (evicted.named_by_copies.iter())

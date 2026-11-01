@@ -2510,7 +2510,7 @@ pub mod parse_worker {
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
         opts.features.react_compiler = if topts.react_compiler.is_enabled()
-            && loader.is_jsx()
+            && (loader.is_jsx() || topts.react_compiler_filter.is_some())
             && !source.path.is_node_module()
         {
             topts.react_compiler

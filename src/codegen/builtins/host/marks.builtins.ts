@@ -56,7 +56,6 @@ export default b.declarations(
     "bun:test/vitest.spyOn",
     "bun:test/vitest.jest.spyOn",
     "bun:test/vitest.vi.spyOn",
-    "bun:test/vitest.vitest.spyOn",
   ]),
   marked("IsNotEnumerable", ["console._stdout", "console._stderr"]),
   marked("IsReplacedBySetter", ["self"]),

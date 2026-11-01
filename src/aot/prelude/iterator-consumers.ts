@@ -8,6 +8,7 @@ declare function $isConstructor(value: unknown): boolean;
 declare function $putByValDirect(array: unknown, index: number, value: unknown): void;
 declare function $arrayPush(array: unknown[], value: unknown): void;
 declare function $iteratorGenericClose(iterator: object): void;
+declare function $iteratorGenericNext(next: unknown, iterator: unknown): any;
 declare function $ifAbruptCloseIterator(iterator: object, value: unknown): void;
 
 $visibility = "Private";
@@ -17,8 +18,7 @@ export function toArray(this: unknown): unknown[] {
   const items: unknown[] = [];
   for (;;) {
     if (!$isCallable(next)) $throwTypeError("Type error");
-    const result = $call<any>(next, this);
-    if (!$isObject(result)) $throwTypeError("Iterator result interface is not an object.");
+    const result = $iteratorGenericNext(next, this);
     if ((result as any).done) return items;
     $arrayPush(items, (result as any).value);
   }
@@ -37,8 +37,7 @@ export function forEach(this: unknown, procedure: unknown): void {
   let counter = 0;
   for (;;) {
     if (!$isCallable(next)) $throwTypeError("Type error");
-    const result = $call<any>(next, this);
-    if (!$isObject(result)) $throwTypeError("Iterator result interface is not an object.");
+    const result = $iteratorGenericNext(next, this);
     if ((result as any).done) return;
     $ifAbruptCloseIterator(this, $call(procedure, undefined, (result as any).value, counter++));
   }

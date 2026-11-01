@@ -207,10 +207,10 @@ function f4 name="Counter" module=m0 position=183 kind=BaseConstructor flags=[Ha
   b0(v0: anything):
     Jump -> next b1() @183
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @177
-    v2 = NewObject v1 layout=L0 @177
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @177
-    Return v3 @177
+    v1 = GetConstructPrototype v0 layout=L0 @183
+    v2 = NewObject v1 layout=L0 @183
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @183
+    Return v3 @183
 }
 function f5 module=m0 position=183 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: function):

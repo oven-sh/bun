@@ -18,10 +18,11 @@ mod unnamed_holders;
 mod walked_texts;
 
 pub use self::imports::find_module_export;
-pub use self::module_cache::KeyOfModuleCache;
+pub use self::module_cache::{KeyOfModuleCache, is_module_cache, is_table_of_loaders};
 pub use self::module_values::commonjs_variable_builtin;
 pub use self::replaced_members::{find_member_written_behind, members_written_under_any_name};
 pub use self::resolver::FileFacts;
+pub use self::runtime_dialect::set_natives;
 use super::names::BuiltinNames;
 use super::runtime_uses::RuntimeUses;
 use super::table::{
@@ -240,6 +241,9 @@ pub enum ReplacedMembersSought {
     Written,
     /// And where it may: the object beside the name.
     WrittenOrNamed,
+    /// A file of the project outside the folders of the tests. Whether an executable holds it shows behind the load, so it is read both ways: as `WrittenOrNamed`,
+    /// and what `NamesAdded` finds is kept beside it.
+    WrittenOrNamedUnlessOfProduct,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -285,6 +289,7 @@ pub struct ResolvedBuiltins {
     stores_with_module_exports: Box<[ExprId]>,
     replaced_members: Box<[BuiltinId]>,
     names_added: Box<[(BuiltinId, Atom)]>,
+    names_added_in_executable: Box<[(BuiltinId, Atom)]>,
     holders_named_from_outside: Box<[BuiltinId]>,
     writes_on_parameters_under_any_name: bool,
     builtins_handed_out: Box<[BuiltinId]>,
@@ -414,6 +419,11 @@ impl ResolvedBuiltins {
     /// Of a file of a test run: the names of its own that it writes on built-in objects which take no new names. `Object.prototype.polluted = 1`.
     pub fn names_added(&self) -> &[(BuiltinId, Atom)] {
         &self.names_added
+    }
+
+    /// Of a file of a package in a test run, `ReplacedMembersSought::Written`: what `names_added` holds where the build of an executable reads the file.
+    pub fn names_added_in_executable(&self) -> &[(BuiltinId, Atom)] {
+        &self.names_added_in_executable
     }
 
     /// The objects that take no new names and that the file writes under a key which nothing in it spells: `export function plant(name) { Object.prototype[name] = 1; }`.

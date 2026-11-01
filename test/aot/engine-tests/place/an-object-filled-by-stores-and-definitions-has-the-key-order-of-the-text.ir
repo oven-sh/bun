@@ -66,7 +66,7 @@ function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anythi
     v39 = Undefined @388
     Return v39 @388
 }
-function f1 name="get" module=m0 position=327 flags=[IsSloppy] captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f2] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="get" module=m0 position=327 flags=[IsSloppy] captures=[{type=undefined|null|Array flags=[IsExpected] variableName="kept"}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f2] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
     Jump -> next b1() @327
   b1():

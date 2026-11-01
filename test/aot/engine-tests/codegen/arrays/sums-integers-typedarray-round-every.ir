@@ -1,5 +1,6 @@
 # A sum that starts as any number and takes in the elements of an integer typed array one by one. Each addition rounds by itself: what comes out depends on where the sum starts (a fraction, minus zero,
 # a number next to 2 ** 53, no number at all) and, once it has grown past 2 ** 53, on the order of the additions. Counters that go up, go down and meet.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f5
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls

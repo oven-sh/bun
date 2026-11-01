@@ -86,7 +86,9 @@ JSC::JSValue errorIfUnseenCodeIsRefused(JSC::JSGlobalObject*, ASCIILiteral built
 bool isDebuggerAdmitted();
 JSC::JSValue errorIfDebuggerIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);
 
+JSC::JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const WTF::String& key);
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
+void willResetModules(Zig::GlobalObject*, WTF::ASCIILiteral call, bool keepsPackages);
 bool requireCacheListsCompiledFiles();
 bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const WTF::String& key);
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::String& key);

@@ -265,10 +265,10 @@ typesite w115 module=m1 position=3350 kind=Variable
 typesite w116 module=m3 position=302 kind=Variable
 typesite w117 module=m3 position=933 kind=Variable
 typesite w118 module=m3 position=1571 kind=Variable
-typesite w119 module=m7 position=2942 kind=Result
-typesite w120 module=m7 position=2444 kind=Variable
-typesite w121 module=m7 position=3085 kind=Variable
-typesite w122 module=m7 position=3232 kind=Variable
+typesite w119 module=m7 position=2856 kind=Result
+typesite w120 module=m7 position=2358 kind=Variable
+typesite w121 module=m7 position=2999 kind=Variable
+typesite w122 module=m7 position=3146 kind=Variable
 layout L0 kind=Instance name="Countdown" module=m0 position=1244 constructor=f12 fields=[{key="from" declared={type=number site=w17} flags=[IsRequired]}] ownFieldCount=1
 layout L1 kind=Instance name="Liar" module=m0 position=1715 constructor=f14
 layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w85} variableName="current"}] ownFieldCount=1
@@ -2098,157 +2098,157 @@ function f72 name="next" module=m6 position=25 kind=Method role=Library flags=[H
     v11 = ThrowNewError errorKind=TypeError message="%SetIteratorPrototype%.next requires that |this| be a Set Iterator instance" @108
     Unreachable @108
 }
-function f73 name="from" module=m7 position=2163 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=IteratorConsumersFrom thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f73 name="from" module=m7 position=2077 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=IteratorConsumersFrom thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: undefined|null|string|Array, v2: anything, v3: anything):
-    Jump -> next b1() @2163
+    Jump -> next b1() @2077
   b1():
-    v4 = Builtin builtin=Array [isNotReadFromHolder] @2290
-    v5 = StrictEq v0, v4 @2281
-    Branch v5 -> taken b6(), notTaken b2() @2281
+    v4 = Builtin builtin=Array [isNotReadFromHolder] @2204
+    v5 = StrictEq v0, v4 @2195
+    Branch v5 -> taken b6(), notTaken b2() @2195
   b2():
-    v6 = IsConstructor v0 @2299
-    v7 = ToBoolean v6 @2299
-    Branch v7 -> taken b3(| 0), notTaken b5(| 0) @2299
+    v6 = IsConstructor v0 @2213
+    v7 = ToBoolean v6 @2213
+    Branch v7 -> taken b3(| 0), notTaken b5(| 0) @2213
   b3(v8):
-    Jump -> next b4() @2299
+    Jump -> next b4() @2213
   b4():
-    v9 = Convert v0 declared={type=undefined|null|function flags=[IsExpected]} @2326
-    v10 = Construct v9 calleeName="this" @2322
-    v11 = Convert v10 declared={type=undefined|null|object flags=[IsExpected]} @2322
-    Jump -> next b7(v11) @2322
+    v9 = Convert v0 declared={type=undefined|null|function flags=[IsExpected]} @2240
+    v10 = Construct v9 calleeName="this" @2236
+    v11 = Convert v10 declared={type=undefined|null|object flags=[IsExpected]} @2236
+    Jump -> next b7(v11) @2236
   b5(v12):
-    Jump -> next b6() @2299
+    Jump -> next b6() @2213
   b6():
-    v13 = Data data=d10 @2335
-    Jump -> next b7(v13) @2335
+    v13 = Data data=d10 @2249
+    Jump -> next b7(v13) @2249
   b7(v14):
-    v15 = Convert v14 declared={type=undefined|null|object flags=[IsExpected]} @2356
-    v16 = TypeTest v15 testedType=object @2346
-    Branch v16 -> taken b8(| 0), notTaken b23(| 0) @2346
+    v15 = Convert v14 declared={type=undefined|null|object flags=[IsExpected]} @2270
+    v16 = TypeTest v15 testedType=object @2260
+    Branch v16 -> taken b8(| 0), notTaken b23(| 0) @2260
   b8(v17):
-    Jump -> next b9() @2346
+    Jump -> next b9() @2260
   b9():
-    v18 = Integer @2448
-    v19 = Convert v18 declared={type=number site=w120} @2448
-    v20 = IteratorOpen v1 @2464
-    Jump -> next b10(v19) @2464
+    v18 = Integer @2362
+    v19 = Convert v18 declared={type=number site=w120} @2362
+    v20 = IteratorOpen v1 @2378
+    Jump -> next b10(v19) @2378
   b10(v21: number):
-    LoopHint @2464
-    v23 = IteratorResume v20 @2464
-    v24 = ResultAt v23 @2464
-    v25 = ResultAt v23 index=1 @2464
-    Branch v24 -> taken b11(), notTaken b12() @2464
+    LoopHint @2378
+    v23 = IteratorResume v20 @2378
+    v24 = ResultAt v23 @2378
+    v25 = ResultAt v23 index=1 @2378
+    Branch v24 -> taken b11(), notTaken b12() @2378
   b11():
-    v26 = Convert v17 declared={type=undefined|null|object} illTypedCause=Assertion @2610
-    PropSet v26, v21 key="length" @2610
-    Return v26 @2646
+    v26 = Convert v17 declared={type=undefined|null|object} illTypedCause=Assertion @2524
+    PropSet v26, v21 key="length" @2524
+    Return v26 @2560
   b12():
-    Jump -> next b13() @2464
+    Jump -> next b13() @2378
   b13() handler=b22():
-    v28 = Convert v17 declared={type=undefined|null|object} illTypedCause=Assertion @2502
-    Jump -> next b14() @2502
+    v28 = Convert v17 declared={type=undefined|null|object} illTypedCause=Assertion @2416
+    Jump -> next b14() @2416
   b14() handler=b22():
-    v29 = TypeTest v3 testedType=undefined @2513
-    Branch v29 -> taken b15(| 0), notTaken b18(| 0) @2513
+    v29 = TypeTest v3 testedType=undefined @2427
+    Branch v29 -> taken b15(| 0), notTaken b18(| 0) @2427
   b15(v30) handler=b22():
-    Jump -> next b16() @2513
+    Jump -> next b16() @2427
   b16() handler=b22():
-    v31 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]} @2537
-    Jump -> next b17() @2537
+    v31 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]} @2451
+    Jump -> next b17() @2451
   b17() handler=b22():
-    v32 = Call v31, -, v25, v21 calleeName="mapper" @2537
-    Jump -> next b20(v32) @2537
+    v32 = Call v31, -, v25, v21 calleeName="mapper" @2451
+    Jump -> next b20(v32) @2451
   b18(v33) handler=b22():
-    Jump -> next b19() @2513
+    Jump -> next b19() @2427
   b19() handler=b22():
-    v34 = Call v2, v33, v25, v21 @2556
-    Jump -> next b20(v34) @2556
+    v34 = Call v2, v33, v25, v21 @2470
+    Jump -> next b20(v34) @2470
   b20(v35) handler=b22():
-    v36 = Convert v28 declared={type=object flags=[IsFromCompiler, IsClaim]} @2486
-    ElemDefine v36, v21, v35 @2486
-    v38 = Integer integer=1 @2600
-    v39 = Add v21, v38 @2556
-    v40 = Convert v39 declared={type=number site=w120} @2595
-    Jump -> next b21() @2595
+    v36 = Convert v28 declared={type=object flags=[IsFromCompiler, IsClaim]} @2400
+    ElemDefine v36, v21, v35 @2400
+    v38 = Integer integer=1 @2514
+    v39 = Add v21, v38 @2470
+    v40 = Convert v39 declared={type=number site=w120} @2509
+    Jump -> next b21() @2509
   b21() handler=b22():
-    Jump -> next b10(v40) @2595
+    Jump -> next b10(v40) @2509
   b22() role=IterationCleanup subject=v20:
-    v41 = CatchException @2464
-    IteratorClose v20 completion=Throw @2464
-    Rethrow v41 @2464
+    v41 = CatchException @2378
+    IteratorClose v20 completion=Throw @2378
+    Rethrow v41 @2378
   b23(v43):
-    Jump -> next b24() @2346
+    Jump -> next b24() @2260
   b24():
-    v44 = ThrowNewError errorKind=TypeError message="Array.from requires that |this| constructs an object" @2365
-    Unreachable @2365
+    v44 = ThrowNewError errorKind=TypeError message="Array.from requires that |this| constructs an object" @2279
+    Unreachable @2279
 }
-function f74 name="fromIterable" module=m7 position=2942 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersFromIterable thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w119 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f74 name="fromIterable" module=m7 position=2856 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersFromIterable thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=w119 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: undefined|null|string|Array):
-    Jump -> next b1() @2942
+    Jump -> next b1() @2856
   b1():
-    v2 = TypeTest v1 testedType=string @3031
-    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @3031
+    v2 = TypeTest v1 testedType=string @2945
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @2945
   b2(v3):
-    Jump -> next b3() @3031
+    Jump -> next b3() @2945
   b3():
-    v4 = NewArray contents=anything @3065
-    v5 = Convert v3 declared={type=undefined|null|string} illTypedCause=Assertion @3069
-    AppendSpread v4, v5 @3069
-    v7 = Convert v4 declared={type=undefined|null|Array site=w119 flags=[OmitsNull, OmitsUndefined]} @3069
-    Return v7 @3069
+    v4 = NewArray contents=anything @2979
+    v5 = Convert v3 declared={type=undefined|null|string} illTypedCause=Assertion @2983
+    AppendSpread v4, v5 @2983
+    v7 = Convert v4 declared={type=undefined|null|Array site=w119 flags=[OmitsNull, OmitsUndefined]} @2983
+    Return v7 @2983
   b4(v8):
-    Jump -> next b5() @3031
+    Jump -> next b5() @2945
   b5():
-    v9 = Builtin builtin=LinkTimeConstantArrayFromFastWithoutMapFn [isNotReadFromHolder] @3094
-    v10 = Call v9, -, v0, v8 @3094
-    v11 = Convert v10 declared={type=undefined|null|Array site=w121 flags=[OmitsNull]} @3094
-    v12 = ToBoolean v11 @3141
-    Branch v12 -> taken b6(| 0), notTaken b8(| 0) @3141
+    v9 = Builtin builtin=LinkTimeConstantArrayFromFastWithoutMapFn [isNotReadFromHolder] @3008
+    v10 = Call v9, -, v0, v8 @3008
+    v11 = Convert v10 declared={type=undefined|null|Array site=w121 flags=[OmitsNull]} @3008
+    v12 = ToBoolean v11 @3055
+    Branch v12 -> taken b6(| 0), notTaken b8(| 0) @3055
   b6(v13):
-    Jump -> next b7() @3141
+    Jump -> next b7() @3055
   b7():
-    v14 = Convert v13 declared={type=undefined|null|Array site=w119 flags=[OmitsNull, OmitsUndefined]} @3156
-    Return v14 @3156
+    v14 = Convert v13 declared={type=undefined|null|Array site=w119 flags=[OmitsNull, OmitsUndefined]} @3070
+    Return v14 @3070
   b8(v15):
-    Jump -> next b9() @3141
+    Jump -> next b9() @3055
   b9():
-    v16 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @3171
-    v17 = PropGet v16 key="next" @3171
-    v18 = TypeTest v17 testedType=undefined @3170
-    Branch v18 -> taken b10(| 0), notTaken b12(| 0) @3170
+    v16 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @3085
+    v17 = PropGet v16 key="next" @3085
+    v18 = TypeTest v17 testedType=undefined @3084
+    Branch v18 -> taken b10(| 0), notTaken b12(| 0) @3084
   b10(v19):
-    Jump -> next b11() @3170
+    Jump -> next b11() @3084
   b11():
-    v20 = NewArray contents=anything @3212
-    AppendSpread v20, v16 @3216
-    v22 = Convert v20 declared={type=undefined|null|Array site=w119 flags=[OmitsNull, OmitsUndefined]} @3216
-    Return v22 @3216
+    v20 = NewArray contents=anything @3126
+    AppendSpread v20, v16 @3130
+    v22 = Convert v20 declared={type=undefined|null|Array site=w119 flags=[OmitsNull, OmitsUndefined]} @3130
+    Return v22 @3130
   b12(v23):
-    Jump -> next b13() @3170
+    Jump -> next b13() @3084
   b13():
-    v24 = Data data=d11 @3252
-    v25 = Convert v24 declared={type=undefined|null|Array site=w122 flags=[OmitsNull, OmitsUndefined]} @3252
-    v26 = IteratorOpen v16 @3269
-    Jump -> next b14() @3269
+    v24 = Data data=d11 @3166
+    v25 = Convert v24 declared={type=undefined|null|Array site=w122 flags=[OmitsNull, OmitsUndefined]} @3166
+    v26 = IteratorOpen v16 @3183
+    Jump -> next b14() @3183
   b14():
-    LoopHint @3269
-    v28 = IteratorResume v26 @3269
-    v29 = ResultAt v28 @3269
-    v30 = ResultAt v28 index=1 @3269
-    Branch v29 -> taken b15(), notTaken b16() @3269
+    LoopHint @3183
+    v28 = IteratorResume v26 @3183
+    v29 = ResultAt v28 @3183
+    v30 = ResultAt v28 index=1 @3183
+    Branch v29 -> taken b15(), notTaken b16() @3183
   b15():
-    Return v25 @3321
+    Return v25 @3235
   b16():
-    Jump -> next b17() @3269
+    Jump -> next b17() @3183
   b17() handler=b18():
-    v31 = Convert v25 declared={type=object flags=[IsFromCompiler, IsClaim]} @3285
-    v32 = PropGet v31 key="length" @3285
-    ElemDefine v31, v32, v30 @3285
-    Jump -> next b14() @3285
+    v31 = Convert v25 declared={type=object flags=[IsFromCompiler, IsClaim]} @3199
+    v32 = PropGet v31 key="length" @3199
+    ElemDefine v31, v32, v30 @3199
+    Jump -> next b14() @3199
   b18() role=IterationCleanup subject=v26:
-    v34 = CatchException @3269
-    IteratorClose v26 completion=Throw @3269
-    Rethrow v34 @3269
+    v34 = CatchException @3183
+    IteratorClose v26 completion=Throw @3183
+    Rethrow v34 @3183
 }
 runtimefunction id=ArrayConstructorFrom function=f66
 runtimefunction id=ArrayIteratorPrototypeNext function=f67 visibility=Private
@@ -2307,10 +2307,10 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 name=
-# CHECK: "[Symbol.iterator]" module=m0 position=1752 kind=Method role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=L1 site=w19 flags=[IsExpected]} results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f15 body=f129} {
+# CHECK: "[Symbol.iterator]" module=m0 position=1752 kind=Method role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=L1 site=w19 flags=[IsExpected]} results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f15 body=f131} {
 # CHECK-NEXT: b0(v0: anything ~ L1, v1: function):
-# CHECK-NEXT: v2: Generator = NewGenerator v1 function=f15
-# CHECK-NEXT: v5: anything = NewHeapFrame v2, v1 function=f129 numberOfWords=4
+# CHECK-NEXT: v2: Generator = NewGenerator v1 function=f15 [getsHeapFrame]
+# CHECK-NEXT: v5: anything = NewHeapFrame v2, v1 function=f131 numberOfWords=4
 # CHECK-NEXT: PutHeapFrameWord v5, v2
 # CHECK-NEXT: PutHeapFrameWord v5, v0 index=1
 # CHECK-NEXT: PutHeapFrameWord v5, v1 index=2
@@ -2327,9 +2327,9 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f17 module=
-# CHECK: m0 position=3381 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f130 layout=L0} {
+# CHECK: m0 position=3381 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f132 layout=L0} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 3 = CallDirect function=f130
+# CHECK-NEXT: v0: 3 = CallDirect function=f132
 # CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
@@ -2371,7 +2371,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v4: Array<int[0, 2]> = NewArray v1, v2, v3 contents=int[0, 2] allocationSite=53
 # CHECK-NEXT: v5: Array<int[0, 2], proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<int[0, 2], proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: v7: Generator = NewGenerator v0 function=f8
+# CHECK-NEXT: v7: Generator = NewGenerator v0 function=f8 [getsHeapFrame]
 # CHECK-NEXT: v8: anything = CallDirect v6, v0, v5, v7 function=f86
 # CHECK-NEXT: v9: Generator<number, pristine[Storage, Names]> = AssumeType v7 provenType=Generator<number, pristine[Storage, Names]>
 # CHECK-NEXT: Return v9
@@ -2385,15 +2385,15 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
-# CHECK: m0 position=3672 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L1 site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f131 layout=L1} {
+# CHECK: m0 position=3672 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L1 site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f133 layout=L1} {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L1 = NewObject layout=L1 allocationClass=1
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 module=
-# CHECK: m0 position=3716 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w38 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f52] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f132 layout=L0} {
+# CHECK: m0 position=3716 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w38 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f52] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f134 layout=L0} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 0 = CallDirect function=f132
+# CHECK-NEXT: v0: 0 = CallDirect function=f134
 # CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
@@ -2417,9 +2417,9 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: ReturnCall v5 casts=[{declared={type=number site=w100 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w43 flags=[IsExpected]} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 module=
-# CHECK: m0 position=3947 kind=Arrow role=ResultWrapper flags=[IsChecked] captures=[{type=f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w44 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f133} {
+# CHECK: m0 position=3947 kind=Arrow role=ResultWrapper flags=[IsChecked] captures=[{type=f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w44 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f135} {
 # CHECK-NEXT: b0(v0: f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f133
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f135
 # CHECK-NEXT: v2: anything = ResultAt v1
 # CHECK-NEXT: v3: anything = ResultAt v1 index=1
 # CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint, Contiguous> = NewArray v2, v3 contents=undefined|null|boolean|number|string|symbol|bigint allocationSite=38 arrayStorage=Contiguous [contentsAreProven]
@@ -2427,9 +2427,9 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
-# CHECK: m0 position=4009 kind=Arrow role=ResultWrapper flags=[IsChecked] captures=[{type=f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w45 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f134} {
+# CHECK: m0 position=4009 kind=Arrow role=ResultWrapper flags=[IsChecked] captures=[{type=f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w45 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f136} {
 # CHECK-NEXT: b0(v0: f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f134
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f136
 # CHECK-NEXT: v2: anything = ResultAt v1
 # CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = ResultAt v1 index=1
 # CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v2, v3 contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=40 arrayStorage=Contiguous [contentsAreProven]
@@ -2456,7 +2456,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: AppendElements v12, v5, v7
 # CHECK-NEXT: v14: fact = Specified
 # CHECK-NEXT: v15: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11, v14 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b33(v15)
+# CHECK-NEXT: Jump -> next b36(v15)
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: v16: boolean = TypeTest v3 testedType=Array<int>
 # CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b8(| 0)
@@ -2478,7 +2478,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v29: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24, v28 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v30: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24, v28 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v31: boolean = Less v25, v27
-# CHECK-NEXT: Branch v31 -> taken b7(| 0), notTaken b32(v30)
+# CHECK-NEXT: Branch v31 -> taken b7(| 0), notTaken b35(v30)
 # CHECK-NEXT: b7(v32: int[0, 4294967294]) frequency=Unlikely:
 # CHECK-NEXT: v33: anything ~ undefined|int = ElemGet v17, v32 [keyIsIntegral]
 # CHECK-NEXT: v34: 1 = Integer integer=1
@@ -2518,7 +2518,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v60: boolean = ToBoolean v57
 # CHECK-NEXT: Branch v60 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: Jump -> next b32(v59)
+# CHECK-NEXT: Jump -> next b35(v59)
 # CHECK-NEXT: b14() frequency=Rare:
 # CHECK-NEXT: v61: anything = PropGet v56 key="value"
 # CHECK-NEXT: Jump -> next b17(v61)
@@ -2527,7 +2527,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v63: fact = Specified
 # CHECK-NEXT: v64: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v53, v63 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v65: boolean = StrictEq v49, v62
-# CHECK-NEXT: Branch v65 -> taken b32(v64), notTaken b16()
+# CHECK-NEXT: Branch v65 -> taken b35(v64), notTaken b16()
 # CHECK-NEXT: b16() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b17(v48)
 # CHECK-NEXT: b17(v66: anything) frequency=Unlikely:
@@ -2559,7 +2559,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v88: fact = Specified
 # CHECK-NEXT: v89: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v80, v88 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v90: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v80, v88 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Branch v85 -> taken b22(), notTaken b32(v90)
+# CHECK-NEXT: Branch v85 -> taken b22(), notTaken b35(v90)
 # CHECK-NEXT: b22() frequency=Unlikely:
 # CHECK-NEXT: v91: anything = CollectionTable v72
 # CHECK-NEXT: v92: 1 = Integer integer=1
@@ -2593,7 +2593,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v115: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v109, v114 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v116: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v109, v114 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v117: boolean = Less v110, v113
-# CHECK-NEXT: Branch v117 -> taken b27(| 0), notTaken b32(v116)
+# CHECK-NEXT: Branch v117 -> taken b27(| 0), notTaken b35(v116)
 # CHECK-NEXT: b27(v118: int[0, 17179869183]) frequency=Unlikely:
 # CHECK-NEXT: v119: undefined|int[0, 255] = GetTypedArrayElement v99, v118 typedArrayType=2 [keyIsIntegral]
 # CHECK-NEXT: v120: 1 = Integer integer=1
@@ -2606,45 +2606,61 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: RequireLengthFitsList v3
 # CHECK-NEXT: v126: anything = PropGet v3 key=@@iterator
 # CHECK-NEXT: v127: boolean = TypeTest v126 testedType=function
-# CHECK-NEXT: Branch v127 -> taken b29(| 0), notTaken b36()
+# CHECK-NEXT: Branch v127 -> taken b29(| 0), notTaken b40()
 # CHECK-NEXT: b29(v128: function) frequency=Unlikely:
 # CHECK-NEXT: v129: anything = Call v128, v3
 # CHECK-NEXT: v130: boolean = TypeTest v129 testedType=object
-# CHECK-NEXT: Branch v130 -> taken b30(| 0), notTaken b35(| 0)
+# CHECK-NEXT: Branch v130 -> taken b30(| 0), notTaken b39(| 0)
 # CHECK-NEXT: b30(v131: object) frequency=Unlikely:
 # CHECK-NEXT: v132: anything = PropGet v131 key="next"
-# CHECK-NEXT: v133: Array<undefined|null|boolean|number|string|symbol|bigint, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint allocationSite=41 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v134: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v133 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v133: boolean = TypeTest v132 testedType=builtin(ArrayIteratorPrototypeNext)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
+# CHECK-NEXT: v134: Array<undefined|null|boolean|number|string|symbol|bigint, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint allocationSite=41 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v135: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v134 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b31() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v136: anything = Call v132, v131
-# CHECK-NEXT: v137: object = RequireObject v136 runtimeError=SpreadResultNotObject
-# CHECK-NEXT: v138: anything = PropGet v137 key="done"
-# CHECK-NEXT: v139: fact = Specified
-# CHECK-NEXT: v140: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v134, v139 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v141: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v134, v139 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v142: boolean = ToBoolean v138
-# CHECK-NEXT: Branch v142 -> taken b32(v140), notTaken b34()
-# CHECK-NEXT: b32(v143: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
-# CHECK-NEXT: v144: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v143 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b33(v144)
-# CHECK-NEXT: b33(v145: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: Return v145
+# CHECK-NEXT: v137: fact = Specified
+# CHECK-NEXT: v138: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v135, v137 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v139: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v135, v137 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Branch v133 -> taken b32(), notTaken b34()
+# CHECK-NEXT: b32() frequency=Unlikely:
+# CHECK-NEXT: v140: undefined = CallDirect v131, v132 function=f95 [isNeverInlined]
+# CHECK-NEXT: v141: boolean = ResultAt v140
+# CHECK-NEXT: v142: fact = Specified
+# CHECK-NEXT: v143: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v138, v142 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Branch v141 -> taken b35(v143), notTaken b33()
+# CHECK-NEXT: b33() frequency=Unlikely:
+# CHECK-NEXT: v144: anything = ResultAt v140 index=1
+# CHECK-NEXT: Jump -> next b38(v144)
 # CHECK-NEXT: b34() frequency=Unlikely:
-# CHECK-NEXT: v146: anything = PropGet v137 key="value"
-# CHECK-NEXT: v147: fact = Specified
-# CHECK-NEXT: v148: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v141, v147 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElement v148, v146
+# CHECK-NEXT: v145: anything = Call v132, v131
+# CHECK-NEXT: v146: object = RequireObject v145 runtimeError=SpreadResultNotObject
+# CHECK-NEXT: v147: anything = PropGet v146 key="done"
+# CHECK-NEXT: v148: fact = Specified
+# CHECK-NEXT: v149: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v139, v148 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v150: boolean = ToBoolean v147
+# CHECK-NEXT: Branch v150 -> taken b35(v149), notTaken b37()
+# CHECK-NEXT: b35(v151: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v152: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v151 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b36(v152)
+# CHECK-NEXT: b36(v153: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: Return v153
+# CHECK-NEXT: b37() frequency=Unlikely:
+# CHECK-NEXT: v154: anything = PropGet v146 key="value"
+# CHECK-NEXT: Jump -> next b38(v154)
+# CHECK-NEXT: b38(v155: anything) frequency=Unlikely:
+# CHECK-NEXT: v156: fact = Specified
+# CHECK-NEXT: v157: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v135, v156 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: AppendElement v157, v155
 # CHECK-NEXT: Jump -> next b31()
-# CHECK-NEXT: b35(v150: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
-# CHECK-NEXT: v151: boolean|number|string|symbol|bigint = RequireObjectCoercible v150 name="next"
-# CHECK-NEXT: v152: anything = PropGet v151 key="next"
-# CHECK-NEXT: v153: anything = Call v152, v151
-# CHECK-NEXT: v154: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
-# CHECK-NEXT: Throw v154
-# CHECK-NEXT: b36() frequency=Rare:
-# CHECK-NEXT: v155: never = ThrowNotIterable v3 [isSpread]
+# CHECK-NEXT: b39(v159: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
+# CHECK-NEXT: v160: boolean|number|string|symbol|bigint = RequireObjectCoercible v159 name="next"
+# CHECK-NEXT: v161: anything = PropGet v160 key="next"
+# CHECK-NEXT: v162: anything = Call v161, v160
+# CHECK-NEXT: v163: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
+# CHECK-NEXT: Throw v163
+# CHECK-NEXT: b40() frequency=Rare:
+# CHECK-NEXT: v164: never = ThrowNotIterable v3 [isSpread]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
@@ -2667,7 +2683,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: AppendElements v12, v5, v7
 # CHECK-NEXT: v14: fact = Specified
 # CHECK-NEXT: v15: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11, v14 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b33(v15)
+# CHECK-NEXT: Jump -> next b36(v15)
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: v16: boolean = TypeTest v3 testedType=Array<int>
 # CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b8(| 0)
@@ -2689,7 +2705,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v29: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24, v28 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v30: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24, v28 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v31: boolean = Less v25, v27
-# CHECK-NEXT: Branch v31 -> taken b7(| 0), notTaken b32(v30)
+# CHECK-NEXT: Branch v31 -> taken b7(| 0), notTaken b35(v30)
 # CHECK-NEXT: b7(v32: int[0, 4294967294]) frequency=Unlikely:
 # CHECK-NEXT: v33: anything ~ undefined|int = ElemGet v17, v32 [keyIsIntegral]
 # CHECK-NEXT: v34: 1 = Integer integer=1
@@ -2729,7 +2745,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v60: boolean = ToBoolean v57
 # CHECK-NEXT: Branch v60 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: Jump -> next b32(v59)
+# CHECK-NEXT: Jump -> next b35(v59)
 # CHECK-NEXT: b14() frequency=Rare:
 # CHECK-NEXT: v61: anything = PropGet v56 key="value"
 # CHECK-NEXT: Jump -> next b17(v61)
@@ -2738,7 +2754,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v63: fact = Specified
 # CHECK-NEXT: v64: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v53, v63 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v65: boolean = StrictEq v49, v62
-# CHECK-NEXT: Branch v65 -> taken b32(v64), notTaken b16()
+# CHECK-NEXT: Branch v65 -> taken b35(v64), notTaken b16()
 # CHECK-NEXT: b16() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b17(v48)
 # CHECK-NEXT: b17(v66: anything) frequency=Unlikely:
@@ -2770,7 +2786,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v88: fact = Specified
 # CHECK-NEXT: v89: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v80, v88 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v90: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v80, v88 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Branch v85 -> taken b22(), notTaken b32(v90)
+# CHECK-NEXT: Branch v85 -> taken b22(), notTaken b35(v90)
 # CHECK-NEXT: b22() frequency=Unlikely:
 # CHECK-NEXT: v91: anything = CollectionTable v72
 # CHECK-NEXT: v92: 1 = Integer integer=1
@@ -2804,7 +2820,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: v115: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v109, v114 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v116: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v109, v114 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v117: boolean = Less v110, v113
-# CHECK-NEXT: Branch v117 -> taken b27(| 0), notTaken b32(v116)
+# CHECK-NEXT: Branch v117 -> taken b27(| 0), notTaken b35(v116)
 # CHECK-NEXT: b27(v118: int[0, 17179869183]) frequency=Unlikely:
 # CHECK-NEXT: v119: undefined|int[0, 255] = GetTypedArrayElement v99, v118 typedArrayType=2 [keyIsIntegral]
 # CHECK-NEXT: v120: 1 = Integer integer=1
@@ -2817,46 +2833,62 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: RequireLengthFitsList v3
 # CHECK-NEXT: v126: anything = PropGet v3 key=@@iterator
 # CHECK-NEXT: v127: boolean = TypeTest v126 testedType=function
-# CHECK-NEXT: Branch v127 -> taken b29(| 0), notTaken b36()
+# CHECK-NEXT: Branch v127 -> taken b29(| 0), notTaken b40()
 # CHECK-NEXT: b29(v128: function) frequency=Unlikely:
 # CHECK-NEXT: v129: anything = Call v128, v3
 # CHECK-NEXT: v130: boolean = TypeTest v129 testedType=object
-# CHECK-NEXT: Branch v130 -> taken b30(| 0), notTaken b35(| 0)
+# CHECK-NEXT: Branch v130 -> taken b30(| 0), notTaken b39(| 0)
 # CHECK-NEXT: b30(v131: object) frequency=Unlikely:
 # CHECK-NEXT: v132: anything = PropGet v131 key="next"
-# CHECK-NEXT: v133: Array<undefined|null|boolean|number|string|symbol|bigint, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint allocationSite=42 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v134: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v133 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v133: boolean = TypeTest v132 testedType=builtin(ArrayIteratorPrototypeNext)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
+# CHECK-NEXT: v134: Array<undefined|null|boolean|number|string|symbol|bigint, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint allocationSite=42 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v135: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v134 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b31() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v136: anything = Call v132, v131
-# CHECK-NEXT: v137: object = RequireObject v136 runtimeError=SpreadResultNotObject
-# CHECK-NEXT: v138: anything = PropGet v137 key="done"
-# CHECK-NEXT: v139: fact = Specified
-# CHECK-NEXT: v140: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v134, v139 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v141: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v134, v139 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v142: boolean = ToBoolean v138
-# CHECK-NEXT: Branch v142 -> taken b32(v140), notTaken b34()
-# CHECK-NEXT: b32(v143: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
-# CHECK-NEXT: v144: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v143 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b33(v144)
-# CHECK-NEXT: b33(v145: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v146: number = CallBuiltin -, v145 overload=MathMax/0 builtinCallForm=List accessSite=61 @2582:1 tail
-# CHECK-NEXT: Return v146
+# CHECK-NEXT: v137: fact = Specified
+# CHECK-NEXT: v138: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v135, v137 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v139: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v135, v137 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Branch v133 -> taken b32(), notTaken b34()
+# CHECK-NEXT: b32() frequency=Unlikely:
+# CHECK-NEXT: v140: undefined = CallDirect v131, v132 function=f95 [isNeverInlined]
+# CHECK-NEXT: v141: boolean = ResultAt v140
+# CHECK-NEXT: v142: fact = Specified
+# CHECK-NEXT: v143: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v138, v142 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Branch v141 -> taken b35(v143), notTaken b33()
+# CHECK-NEXT: b33() frequency=Unlikely:
+# CHECK-NEXT: v144: anything = ResultAt v140 index=1
+# CHECK-NEXT: Jump -> next b38(v144)
 # CHECK-NEXT: b34() frequency=Unlikely:
-# CHECK-NEXT: v147: anything = PropGet v137 key="value"
+# CHECK-NEXT: v145: anything = Call v132, v131
+# CHECK-NEXT: v146: object = RequireObject v145 runtimeError=SpreadResultNotObject
+# CHECK-NEXT: v147: anything = PropGet v146 key="done"
 # CHECK-NEXT: v148: fact = Specified
-# CHECK-NEXT: v149: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v141, v148 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElement v149, v147
+# CHECK-NEXT: v149: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v139, v148 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v150: boolean = ToBoolean v147
+# CHECK-NEXT: Branch v150 -> taken b35(v149), notTaken b37()
+# CHECK-NEXT: b35(v151: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v152: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v151 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b36(v152)
+# CHECK-NEXT: b36(v153: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v154: number = CallBuiltin -, v153 overload=MathMax/0 builtinCallForm=List accessSite=61 @2582:1 tail
+# CHECK-NEXT: Return v154
+# CHECK-NEXT: b37() frequency=Unlikely:
+# CHECK-NEXT: v155: anything = PropGet v146 key="value"
+# CHECK-NEXT: Jump -> next b38(v155)
+# CHECK-NEXT: b38(v156: anything) frequency=Unlikely:
+# CHECK-NEXT: v157: fact = Specified
+# CHECK-NEXT: v158: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v135, v157 provenType=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: AppendElement v158, v156
 # CHECK-NEXT: Jump -> next b31()
-# CHECK-NEXT: b35(v151: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
-# CHECK-NEXT: v152: boolean|number|string|symbol|bigint = RequireObjectCoercible v151 name="next"
-# CHECK-NEXT: v153: anything = PropGet v152 key="next"
-# CHECK-NEXT: v154: anything = Call v153, v152
-# CHECK-NEXT: v155: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
-# CHECK-NEXT: Throw v155
-# CHECK-NEXT: b36() frequency=Rare:
-# CHECK-NEXT: v156: never = ThrowNotIterable v3 [isSpread]
+# CHECK-NEXT: b39(v160: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
+# CHECK-NEXT: v161: boolean|number|string|symbol|bigint = RequireObjectCoercible v160 name="next"
+# CHECK-NEXT: v162: anything = PropGet v161 key="next"
+# CHECK-NEXT: v163: anything = Call v162, v161
+# CHECK-NEXT: v164: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
+# CHECK-NEXT: Throw v164
+# CHECK-NEXT: b40() frequency=Rare:
+# CHECK-NEXT: v165: never = ThrowNotIterable v3 [isSpread]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
@@ -3022,9 +3054,9 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="return"
-# CHECK: module=m3 position=651 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f137 layout=L(IteratorResult)} {
+# CHECK: module=m3 position=651 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f139 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything, v1: anything):
-# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f137
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f139
 # CHECK-NEXT: v3: anything = ResultAt v2
 # CHECK-NEXT: v4: boolean = ResultAt v2 index=1
 # CHECK-NEXT: v5: L(IteratorResult) = NewObject -, v3, v4 layout=L(IteratorResult) fields=[0, 1]
@@ -3033,7 +3065,7 @@ runtimefunction id=IteratorConsumersFromIterable function=f74
 # CHECK-LABEL: function {{*}}name="return"
 # CHECK: module=m0 position=1601 kind=Arrow role=ResultWorker flags=[IsChecked] thisType={type=anything} results=[{type=true}, {type=undefined}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f38} creator=ResultWorker{origin=f38}
 # CHECK-LABEL: function {{*}}name="return"
-# CHECK: module=m3 position=651 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn captures=[{type=f69}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f69} creator=Entrypoint{target=f69 arguments=Registers} inlineFrames=[{}, {callee=f137 callPosition=651 isTailCall=true module=m3}] {
+# CHECK: module=m3 position=651 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn captures=[{type=f69}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f69} creator=Entrypoint{target=f69 arguments=Registers} inlineFrames=[{}, {callee=f139 callPosition=651 isTailCall=true module=m3}] {
 # CHECK-NEXT: b0(v0: f69, v1: anything, v2: anything):
 # CHECK-NEXT: v3: anything ~ Generator = Upcast v1 castType=anything @651 tail
 # CHECK-NEXT: v4: undefined = StepGenerator v3, v2 resumeMode=Return check=IsGenerator

@@ -123,22 +123,18 @@ for (const [way, words] of [
   ["as one program", "TestRunLayers:0"],
   ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
 ]) {
-  // TODO(4109): the namespace object of a mock reads and writes what the factory gave. A compiled run refuses the spy.
-  test.todo(
-    `a spy on a name that a mock in front of the load leaves out, ${way}`,
-    async () => {
-      using dir = tempDir("aot-a-spy-on-a-name-that-a-mock-leaves-out", {
-        "package.json": files["package.json"],
-        "src/m.mjs": files["src/m.mjs"],
-        "d.test.mjs": aNameThatAMockLeavesOut,
-      });
-      const plain = await runTests(String(dir), undefined);
-      expect(plain.exitCode).toBe(0);
-      expect(plain.stdout).toContain("spied: undefined true");
-      expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
-    },
-    180_000,
-  );
+  // The namespace object of a mock reads and writes what the factory gave: the spy is laid on that object.
+  test(`a spy on a name that a mock in front of the load leaves out, ${way}`, async () => {
+    using dir = tempDir("aot-a-spy-on-a-name-that-a-mock-leaves-out", {
+      "package.json": files["package.json"],
+      "src/m.mjs": files["src/m.mjs"],
+      "d.test.mjs": aNameThatAMockLeavesOut,
+    });
+    const plain = await runTests(String(dir), undefined);
+    expect(plain.exitCode).toBe(0);
+    expect(plain.stdout).toContain("spied: undefined true");
+    expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
+  }, 180_000);
 
   test(`a spy on a name that a module does not export leaves nothing behind, ${way}`, async () => {
     using dir = tempDir("aot-a-spy-on-a-name-that-is-not-exported", others);

@@ -49,7 +49,7 @@
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 entry module=m0
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} flags=[IsRequired] variableName="State"}] ownFieldCount=1
 layout L1 module=m0 fields=[{key="State" declared={type=anything}}] ownFieldCount=1
 layout L2 module=m0 position=430
 data d0 root=Object{layout=L2} module=m0

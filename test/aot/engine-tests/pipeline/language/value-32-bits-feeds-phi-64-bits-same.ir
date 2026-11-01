@@ -941,9 +941,9 @@ function f5 name="Box" module=m0 position=215 kind=BaseConstructor flags=[HasNew
   b0(v0: anything, v1: number, v2: undefined|null|L0):
     Jump -> next b1() @215
   b1():
-    v3 = GetConstructPrototype v0 layout=L0 @190
-    v4 = NewObject v3 layout=L0 @190
-    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @190
+    v3 = GetConstructPrototype v0 layout=L0 @215
+    v4 = NewObject v3 layout=L0 @215
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @215
     v6 = CallDirect v5 function=f6 @215
     PropSet v5, v1 key="n" @221
     PropSet v5, v2 key="next" @243

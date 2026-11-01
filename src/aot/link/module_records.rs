@@ -154,6 +154,7 @@ fn collect_synthetic_exports(input: &RecordInput<'_, '_>) -> Vec<Vec<MergedSynth
                     writer: ExportWriter::Body,
                     ..
                 }
+                | VariableDefinition::MockOfRuntimeModule { .. }
                 | VariableDefinition::Unit(_),
             )
             | None => {}
@@ -189,6 +190,43 @@ struct RecordBuilder<'b, 'a, 's> {
     synthetic_exports: Vec<Vec<MergedSyntheticExport>>,
     is_named_at_run_time: Vec<bool>,
     ambiguous_exports: Vec<generated::AmbiguousExport>,
+}
+fn mock_may_answer_ahead_of_declaration(
+    graph: &modules::ModuleGraph,
+    atoms: &Interner<'_>,
+    file: FileId,
+    asked: (Atom, FileId),
+    path: &mut Vec<FileId>,
+) -> bool {
+    let (name, declaring_file) = asked;
+    if path.contains(&file) {
+        return false;
+    }
+    path.push(file);
+    let mut answer = false;
+    for request in graph.requests(file) {
+        let ModuleRef::File(target) = request.target else {
+            continue;
+        };
+        if !request.is_dynamic_star_export {
+            continue;
+        }
+        // The mock of the file that declares the name answers for the variable wherever it is handed on.
+        if target == declaring_file {
+            break;
+        }
+        if graph.is_named_by_mock(request.target)
+            || mock_may_answer_ahead_of_declaration(graph, atoms, target, asked, path)
+        {
+            answer = true;
+            break;
+        }
+        if let ExportLookup::Found(_) = graph.find_export(request.target, name, atoms) {
+            break;
+        }
+    }
+    path.pop();
+    answer
 }
 
 impl RecordBuilder<'_, '_, '_> {
@@ -241,11 +279,12 @@ impl RecordBuilder<'_, '_, '_> {
         type_attribute: Option<Loader>,
     ) -> generated::Module {
         let graph = self.input.projects.get(importer.project).graph;
-        let kind = graph.external_kind(ModuleRef::External {
+        let own = ModuleRef::External {
             importer: importer.file,
             specifier,
             type_attribute,
-        });
+        };
+        let kind = graph.external_kind(own);
         let kind = kind.unwrap_or(ExternalKind::UncompiledCode);
         let path = self.intern_atom(specifier);
         let mut record = create_record(Interop::of_external(kind), path, path);
@@ -254,6 +293,9 @@ impl RecordBuilder<'_, '_, '_> {
         match kind {
             ExternalKind::UncompiledCode => {
                 record.external_kind = generated::ExternalKind::UncompiledCode;
+                if graph.is_imported_as_namespace(own) {
+                    record.flags |= ModuleFlags::IS_IMPORTED_AS_NAMESPACE;
+                }
                 record.type_attribute =
                     type_attribute.map(|it| self.strings.intern(type_attribute_of(it).as_bytes()));
             }
@@ -519,7 +561,24 @@ impl RecordBuilder<'_, '_, '_> {
             record.flags |= ModuleFlags::HAS_TOP_LEVEL_AWAIT;
         }
         record.requests = self.build_requests(project, ModuleRef::File(file));
-        record.exports = self.build_exports(project, graph.exports(file));
+        // Of several stars the first that has a name hands it on, and a mock that stands in place of a file has what its factory gave. A name that such a
+        // file may answer for ahead of the file that declares it is in no table: the run follows the stars, in their order.
+        let is_settled = |export: &&modules::ModuleExport| {
+            let mut path = Vec::new();
+            let ExportBinding::Variable(declared) = export.binding else {
+                return true;
+            };
+            let asked = (export.name, declared.file);
+            !export.is_from_star_export
+                || !mock_may_answer_ahead_of_declaration(graph, input.atoms, file, asked, &mut path)
+        };
+        let exports: Vec<modules::ModuleExport> = graph
+            .exports(file)
+            .iter()
+            .filter(is_settled)
+            .copied()
+            .collect();
+        record.exports = self.build_exports(project, &exports);
         for &name in graph.ambiguous_names(file) {
             let ambiguous = generated::AmbiguousExport {
                 module: input.id_of(project, ModuleRef::File(file)),

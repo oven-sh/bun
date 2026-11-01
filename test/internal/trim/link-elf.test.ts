@@ -127,7 +127,8 @@ const addedSectionName = new RegExp(`^${unnamedSectionPrefix}\\d+_\\d+$`);
 describeLink("a trimmable link", () => {
   const objectsWithBoth = ["feature_code", "both", "entry", "table", "embedder", "main"];
 
-  test("removes what only the entry point reaches, code and constants, and nothing retained", async () => {
+  // A compile of thousands of functions. Beside twenty others on a machine with few processors it gets a twentieth of them, and a minute is not enough.
+  test.serial("removes what only the entry point reaches, code and constants, and nothing retained", async () => {
     using dir = tempDir("trim-elf", cuttableSources);
     const folder = String(dir);
     const result = await linked(folder, { compilesFeatureCode: true });

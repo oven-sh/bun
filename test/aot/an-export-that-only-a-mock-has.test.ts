@@ -99,7 +99,10 @@ test.each(["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"])(
       });
       return {
         lines: stdout.split("\n").filter(line => line.startsWith("R=")),
-        failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic/.test(line)),
+        failed: stderr
+          .split("\n")
+          .filter(line => /^\(fail\)|^✗|^panic|^error: |^TypeError: /.test(line))
+          .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
         exitCode,
       };
     };
@@ -107,10 +110,7 @@ test.each(["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"])(
     expect(plain.lines).toContain("R=values mocked v extra 1 function alpha undefined undefined undefined zero dash");
     expect(plain.lines).toContain("R=in true true false false false true false");
     expect(plain.lines.length).toBe(29);
-    // TODO(bun), rows 4100 and 4105: since `bun test` follows Vitest on module mocks, what a mocked module has and shows has changed in plain Bun. A compiled
-    // run still has the earlier behavior. It has to follow plain Bun: each `.not.toEqual(plain)` below is then `.toEqual(plain)` again, and goes red to say so.
-    expect(compiled).not.toEqual(plain);
-    expect(compiled.lines.length).toBe(30);
+    expect(compiled).toEqual(plain);
   },
   120_000,
 );

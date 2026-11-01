@@ -134,8 +134,13 @@ export const manyFunctions = (prefix: string, count: number): string =>
     (_, index) =>
       `__attribute__((noinline)) int ${prefix}${index}(int x) { for (int i = 0; i < ${index + 3}; i++) x = x * ${index + 7} + i; return x ^ ${index}; }`,
   ).join("\n");
+// What clang takes for one basic block grows with the square of the calls in it: 9 of the 14 s for 8,000 functions went into the one that calls them.
+const callsInOneBlock = 1500;
 export const callAll = (prefix: string, count: number): string =>
-  Array.from({ length: count }, (_, index) => `x += ${prefix}${index}(x);`).join(" ");
+  Array.from({ length: count }, (_, index) => {
+    const endsBlock = index > 0 && index % callsInOneBlock === 0;
+    return `${endsBlock ? `if (x == ${index}) return x; ` : ""}x += ${prefix}${index}(x);`;
+  }).join(" ");
 
 const guardSource = String.raw`#ifdef __cplusplus
 extern "C" {

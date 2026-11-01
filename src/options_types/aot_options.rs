@@ -131,6 +131,7 @@ pub struct AotOptions {
     pub loads_code_from_disk: bool,
     pub only_tests_load_code_from_disk: bool,
     pub is_part_of_test_run: bool,
+    pub test_files_of_run: Vec<Vec<u8>>,
     pub preloads_of_test_run: Vec<Vec<u8>>,
     /// The host runs files with code that the build has not seen, though no load of the program names one: the test files of a run that compiles only what they import.
     /// The last entry point stands in for them.
@@ -267,6 +268,8 @@ pub struct ReplacedByTests {
     /// `Module._resolveFilename = f`, `Module.prototype.require = f`. It goes the other way too: the look through the test files reads no package, so the program that holds
     /// module-alias or require-in-the-middle says it to those that are built above it. From the store on every `require()` of theirs asks the function.
     pub stores_loader_functions: bool,
+    pub entry_point_imports_vitest: bool,
+    pub package_files_that_product_imports: Vec<Vec<u8>>,
 }
 
 impl ReplacedByTests {
@@ -286,7 +289,8 @@ impl ReplacedByTests {
                 | u8::from(self.spy_may_meet_module_that_no_file_spells) << 3
                 | u8::from(self.hands_on_any_module) << 4
                 | u8::from(self.names_file_with_query) << 5
-                | u8::from(self.stores_loader_functions) << 6,
+                | u8::from(self.stores_loader_functions) << 6
+                | u8::from(self.entry_point_imports_vitest) << 7,
         ];
         push_number(&mut bytes, self.builtins.len());
         for &member in &self.builtins {
@@ -365,6 +369,7 @@ impl ReplacedByTests {
             hands_on_any_module: answers & 16 != 0,
             names_file_with_query: answers & 32 != 0,
             stores_loader_functions: answers & 64 != 0,
+            entry_point_imports_vitest: answers & 128 != 0,
             builtins: take_list(&mut bytes, take_number)?,
             names_added_to_builtins: take_list(&mut bytes, |bytes| {
                 Some((take_number(bytes)?, take_text(bytes)?))
@@ -400,6 +405,7 @@ impl ReplacedByTests {
                     is_evaluated: answers & 2 != 0,
                 })
             })?,
+            package_files_that_product_imports: Vec::new(),
         };
         bytes.is_empty().then_some(replaced)
     }
@@ -431,6 +437,7 @@ impl Default for AotOptions {
             loads_code_from_disk: false,
             only_tests_load_code_from_disk: false,
             is_part_of_test_run: false,
+            test_files_of_run: Vec::new(),
             preloads_of_test_run: Vec::new(),
             host_runs_files_from_disk: false,
             main_modules_beside_entry_points: Vec::new(),
@@ -528,7 +535,9 @@ mod tests {
             evicts_any_module: true,
             names_file_with_query: true,
             stores_loader_functions: true,
+            entry_point_imports_vitest: true,
             spy_may_meet_module_that_no_file_spells: true,
+            package_files_that_product_imports: Vec::new(),
         };
         let bytes = replaced.to_bytes();
         assert_eq!(ReplacedByTests::from_bytes(&bytes), Some(replaced));
@@ -584,6 +593,7 @@ mod tests {
             loads_code_from_disk,
             only_tests_load_code_from_disk,
             is_part_of_test_run,
+            test_files_of_run,
             preloads_of_test_run,
             host_runs_files_from_disk,
             main_modules_beside_entry_points,
@@ -642,6 +652,7 @@ mod tests {
         assert!(!loads_code_from_disk);
         assert!(!only_tests_load_code_from_disk);
         assert!(!is_part_of_test_run);
+        assert!(test_files_of_run.is_empty());
         assert!(preloads_of_test_run.is_empty());
         assert!(!host_runs_files_from_disk);
         assert!(main_modules_beside_entry_points.is_empty());

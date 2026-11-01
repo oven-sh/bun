@@ -19,7 +19,7 @@
 module m0 path="stores-new-functions-sloppy-code-dropped.cjs" displayPath="stores-new-functions-sloppy-code-dropped.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 entry module=m0
 layout L0 module=m0
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.3" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable]}] ownFieldCount=4
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="asyncConstructor"}, {key=@"binding.1" declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="generatorConstructor"}, {key=@"binding.2" declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="plainConstructor"}, {key=@"binding.3" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="plainHasInstance"}] ownFieldCount=4
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -50,7 +50,7 @@ function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anythi
     v22 = Convert v21 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @888
     v23 = Call v17 calleeName="once" @900
     v24 = Convert v23 declared={type=undefined|null|function|f10 flags=[IsExpected]} @900
-    v25 = Call v24 calleeName="once()()" @905
+    v25 = Call v24 @905
     v26 = Convert v25 declared={type=undefined|null|Array<undefined|null|boolean|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> flags=[IsExpected]} @900
     v27 = PropGet v26 key="join" @907
     v28 = Convert v27 declared={type=undefined|null|function flags=[IsExpected]} @900
@@ -127,7 +127,7 @@ function f5 name="once" module=m0 position=505 flags=[IsSloppy, HasExplicitName]
     v16 = PropGet v15 key="log" @633
     v17 = Convert v16 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @633
     v18 = String string="behind the calls" @645
-    v19 = Call v17, v15, v18 calleeKey="log" calleeName="console.log(\"behind the calls\")" @641
+    v19 = Call v17, v15, v18 calleeKey="log" calleeName="console.log" @641
     v20 = NewClosure v3, v6, v9, v12 function=f10 @675
     v21 = Convert v20 declared={type=undefined|null|function|f10 flags=[IsExpected]} @675
     Return v21 @675
@@ -163,7 +163,7 @@ function f9 name="made" module=m0 position=444 flags=[IsSloppy] thisType={type=a
     v0 = Undefined @444
     Return v0 @444
 }
-function f10 module=m0 position=675 kind=Arrow flags=[IsSloppy] captures=[{type=undefined|null|function|f6 flags=[IsExpected]}, {type=undefined|null|function|f7 flags=[IsExpected]}, {type=undefined|null|function|f8 flags=[IsExpected]}, {type=undefined|null|function|f9 flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|boolean|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> flags=[IsExpected]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f10 module=m0 position=675 kind=Arrow flags=[IsSloppy] captures=[{type=undefined|null|function|f6 flags=[IsExpected] variableName="a"}, {type=undefined|null|function|f7 flags=[IsExpected] variableName="g"}, {type=undefined|null|function|f8 flags=[IsExpected] variableName="p"}, {type=undefined|null|function|f9 flags=[IsExpected] variableName="h"}] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|boolean|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> flags=[IsExpected]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f6, v1: undefined|null|function|f7, v2: undefined|null|function|f8, v3: undefined|null|function|f9):
     Jump -> next b1() @675
   b1():
@@ -260,44 +260,36 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: PutModuleVariable v0 variable=g5
 # CHECK-NEXT: v2: f7 = CallDirect function=f2 accessSite=12
 # CHECK-NEXT: PutModuleVariable v2 variable=g6
-# CHECK-NEXT: v4: f9 = CallDirect function=f4 accessSite=14
-# CHECK-NEXT: PutModuleVariable v4 variable=g8
-# CHECK-NEXT: v6: "behind the calls" = String string="behind the calls"
-# CHECK-NEXT: v7: undefined = CallBuiltin -, v6 overload=ConsoleLog/0 accessSite=17
-# CHECK-NEXT: v8: f10 = NewClosure function=f10 allocationSite=11 [isHeldByClosureTable]
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v4: f8 = CallDirect function=f3 accessSite=13
+# CHECK-NEXT: PutModuleVariable v4 variable=g7
+# CHECK-NEXT: v6: f9 = CallDirect function=f4 accessSite=14
+# CHECK-NEXT: PutModuleVariable v6 variable=g8
+# CHECK-NEXT: v8: "behind the calls" = String string="behind the calls"
+# CHECK-NEXT: v9: undefined = CallBuiltin -, v8 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: v10: f10 = NewClosure function=f10 allocationSite=11 [isHeldByClosureTable]
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f10 module=
 # CHECK: m0 position=675 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f6 = GetModuleVariable variable=g5
 # CHECK-NEXT: v1: f7 = GetModuleVariable variable=g6
-# CHECK-NEXT: v2: absent|f8 = GetModuleVariable variable=g7
-# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=absent
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v4: f8 = CallDirect function=f18
-# CHECK-NEXT: Jump -> next b3(v4)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v5: fact = Specified
-# CHECK-NEXT: v6: f8 = AssumeType v2, v5 provenType=f8
-# CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b3(v7: f8):
-# CHECK-NEXT: v8: f9 = GetModuleVariable variable=g8
-# CHECK-NEXT: v9: boolean = PropHasOwn v0 key="constructor" calledBuiltin=ObjectHasOwn accessSite=18
-# CHECK-NEXT: v10: boolean = PropHasOwn v1 key="constructor" calledBuiltin=ObjectHasOwn accessSite=19
-# CHECK-NEXT: v11: boolean = PropHasOwn v7 key="constructor" calledBuiltin=ObjectHasOwn accessSite=20
-# CHECK-NEXT: v12: boolean = PropHasOwn v8 key=@@hasInstance calledBuiltin=ObjectHasOwn accessSite=21
-# CHECK-NEXT: v13: anything = PropGet v0 key="constructor" accessSite=22
-# CHECK-NEXT: v14: anything ~ number = Upcast v13 castType=anything
-# CHECK-NEXT: v15: string = TypeOf v14
-# CHECK-NEXT: v16: anything = PropGet v1 key="constructor" accessSite=23
-# CHECK-NEXT: v17: anything ~ number = Upcast v16 castType=anything
-# CHECK-NEXT: v18: string = TypeOf v17
-# CHECK-NEXT: v19: anything = PropGet v7 key="constructor" accessSite=24
-# CHECK-NEXT: v20: anything ~ number = Upcast v19 castType=anything
-# CHECK-NEXT: v21: string = TypeOf v20
-# CHECK-NEXT: v22: Array<boolean|string, Contiguous> = NewArray v9, v10, v11, v12, v15, v18, v21 contents=boolean|string allocationSite=12 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v23: Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v23
+# CHECK-NEXT: v2: f8 = GetModuleVariable variable=g7
+# CHECK-NEXT: v3: f9 = GetModuleVariable variable=g8
+# CHECK-NEXT: v4: boolean = PropHasOwn v0 key="constructor" calledBuiltin=ObjectHasOwn accessSite=18
+# CHECK-NEXT: v5: boolean = PropHasOwn v1 key="constructor" calledBuiltin=ObjectHasOwn accessSite=19
+# CHECK-NEXT: v6: boolean = PropHasOwn v2 key="constructor" calledBuiltin=ObjectHasOwn accessSite=20
+# CHECK-NEXT: v7: boolean = PropHasOwn v3 key=@@hasInstance calledBuiltin=ObjectHasOwn accessSite=21
+# CHECK-NEXT: v8: anything = PropGet v0 key="constructor" accessSite=22
+# CHECK-NEXT: v9: anything ~ number = Upcast v8 castType=anything
+# CHECK-NEXT: v10: string = TypeOf v9
+# CHECK-NEXT: v11: anything = PropGet v1 key="constructor" accessSite=23
+# CHECK-NEXT: v12: anything ~ number = Upcast v11 castType=anything
+# CHECK-NEXT: v13: string = TypeOf v12
+# CHECK-NEXT: v14: anything = PropGet v2 key="constructor" accessSite=24
+# CHECK-NEXT: v15: anything ~ number = Upcast v14 castType=anything
+# CHECK-NEXT: v16: string = TypeOf v15
+# CHECK-NEXT: v17: Array<boolean|string, Contiguous> = NewArray v4, v5, v6, v7, v10, v13, v16 contents=boolean|string allocationSite=12 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v18: Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }

@@ -216,7 +216,11 @@ pub(super) struct OrderParts {
     pub may_be_imported_while_it_runs: Vec<bool>,
     /// By file: a data file whose values `bun run` makes when it loads the file.
     pub makes_values_at_load: Vec<bool>,
+    /// By file: `Files::is_es_module_to_imports`.
+    pub is_es_module_to_imports: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
+    /// Of those, what a `require` may name. Its loader reads all that is imported below them.
+    pub required_prefix_roots: Vec<FileId>,
     /// The files of the program that the host may ask for first.
     pub first_requests_of_host: Vec<FileId>,
 }
@@ -235,7 +239,9 @@ impl OrderParts {
             is_required_during_load: vec![false; file_count],
             may_be_imported_while_it_runs: vec![false; file_count],
             makes_values_at_load: vec![false; file_count],
+            is_es_module_to_imports: vec![false; file_count],
             prefix_roots: Vec::new(),
+            required_prefix_roots: Vec::new(),
             first_requests_of_host: Vec::new(),
         }
     }
@@ -1026,10 +1032,31 @@ pub(super) fn compute_order(
         &planned,
     );
     let mut makes_values_at_load = vec![false; file_count];
+    let mut is_es_module_to_imports = vec![false; file_count];
     for &file in &modules.compiled_files {
         makes_values_at_load[file.idx()] = scans.of(file).interop.kind == ModuleKind::Data
             && crate::module_keys::makes_values_at_load(input.sources.loader(file));
+        is_es_module_to_imports[file.idx()] = files.is_es_module_to_imports(file);
     }
+    let required = planned.iter().flat_map(|(_, file_sites)| {
+        let named = file_sites.sites.iter().map(|site| site.target);
+        named.chain(file_sites.required_candidates.iter().map(|load| load.1))
+    });
+    // The runner of a test run starts its entry points. Those of an executable are there to be found by name, by a `require` too.
+    let found_by_name = (input.sources.entry_points().iter())
+        .filter(|entry| !matches!(entry.kind, EntryPointKind::Main | EntryPointKind::Library))
+        .filter(|_| !input.runner_starts_entry_points)
+        .map(|entry| ModuleRef::File(entry.file));
+    let required = required.chain(found_by_name);
+    let mut is_required = vec![false; file_count];
+    for target in required.chain(exposed_in_application.iter().copied()) {
+        if let ModuleRef::File(target) = target {
+            is_required[target.idx()] = true;
+        }
+    }
+    let required_prefix_roots: Vec<FileId> = (prefix_roots.iter().copied())
+        .filter(|root| is_required[root.idx()])
+        .collect();
     let parts = OrderParts {
         numbers,
         is_code_of_program,
@@ -1041,7 +1068,9 @@ pub(super) fn compute_order(
         is_required_during_load: loads.is_required_during_load,
         may_be_imported_while_it_runs: loads.may_be_imported_while_it_runs,
         makes_values_at_load,
+        is_es_module_to_imports,
         prefix_roots,
+        required_prefix_roots,
         first_requests_of_host: (input.sources.entry_points().iter())
             .filter(|entry| entry.kind != EntryPointKind::Library)
             .map(|entry| entry.file)

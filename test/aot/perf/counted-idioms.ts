@@ -4,6 +4,11 @@
 // `B.prototype.area = ..` behind TypeScript's __extends lost its place among the members of B once: 0 > 3,000 arrivals, three times the instructions.
 // What they do not see: the same events in more instructions. A call that is no longer copied into its caller, a load that no longer stands in front of the loop.
 //
+// "in-a-very-large-program": the idioms of ./everyday once more, where turn() is a function of its own that its caller finds at run time, compiled as it would be inside a very large
+// program (./everyday-idioms.ts): most functions of a large application are compiled that way, and there a read that the other form resolves may look its name up, and a push that the
+// other form gives room may go into the run time at every call: ./stepped-idioms.ts counts compiled code alone and does not see what the run time then takes.
+// Their pins are ./idiom-counts-in-a-very-large-program.json: taken on Linux with glibc, x64 and arm64, and held there alone.
+//
 // A pin says "at most". It only goes down: a count that has to rise is a trade, and somebody decides it.
 //   AOT_PERF=lower bun test test/aot/perf/counted-idioms-     writes every number that got better into the file
 //   AOT_PERF=cover ..                                         raises each pin to what is counted here: the same sources on another platform, where lists of free cells and tables are of other sizes
@@ -12,20 +17,19 @@
 // Until that is fixed, the kind is held to the count written there. A higher count fails. So does meeting the pin again: then the mark should be removed.
 import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
-import { bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunExe, isArm64, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 import { slot } from "../harness/commands";
 import { describe, test } from "../supported";
-import { countedIdioms, forms, kinds, whatWasCounted, type Counted, type Counts, type Form } from "./count-idioms";
+import { countedIdioms, forms, kinds, whatWasCounted, type Counted, type Counts, type Form, type Surroundings } from "./count-idioms";
 
-const pinsPath = join(import.meta.dir, "idiom-counts.json");
 const mode = process.env.AOT_PERF;
 /** A kind that is left out is 0. */
 type Pins = Record<string, Record<Form, Partial<Counts>> & { owed?: Partial<Counts> & { why: string } }>;
-const readPins = (): Pins => JSON.parse(readFileSync(pinsPath, "utf8"));
+const readPins = (pinsPath: string): Pins => JSON.parse(readFileSync(pinsPath, "utf8"));
 
 /** An idiom a line. */
-function writePins(pins: Pins) {
+function writePins(pinsPath: string, pins: Pins) {
   const withoutZeros = (counts: Partial<Counts>) => Object.fromEntries(kinds.filter(kind => counts[kind]).map(kind => [kind, counts[kind]]));
   const lines = Object.keys(pins)
     .sort()
@@ -55,24 +59,38 @@ const kindsJudged = ({ lines }: Counted) =>
 const partOrWhole = (pin: Partial<Counts> | undefined) => (kind: (typeof kinds)[number]) =>
   pin?.allCells === undefined ? kind !== "allCells" && kind !== "allBytes" : kind !== "cells" && kind !== "bytes";
 
+/**
+ * All that is allocated is counted in lists of free cells, and comes out wrong by up to a list for each size of cell, either way. A block of 16 KB has 512 cells of 32 bytes.
+ * On Linux on arm64 a block has 64 KB and 2,048 of them: two cells a turn, where a pin is there to see one. So there the whole is neither held nor written.
+ * everyday-downleveled/async.awaiter-helper: compiled code and its stubs allocate 19,000 cells on both, and the whole is 19,164 on x64 and 21,550 or 18,864 there.
+ */
+const isCountedHere = (kind: (typeof kinds)[number]) => !(isLinux && isArm64) || (kind !== "allCells" && kind !== "allBytes");
+
 /** The most that the program can have done: what a pin holds. */
 const mostOf = ({ counts, refills }: Counted): Counts => ({ ...counts, operations: counts.operations + refills });
 
-export function countedIdiomsAgainstPins(part = 1, parts = 1) {
-  const skipped = isDebug || isASAN ? "a debug or ASAN build generates checks of its own, which branch and call" : undefined;
+export function countedIdiomsAgainstPins(part = 1, parts = 1, surroundings: Surroundings = "ordinary") {
+  const suffix = surroundings === "ordinary" ? "" : `-${surroundings}`;
+  const pinsPath = join(import.meta.dir, `idiom-counts${suffix}.json`);
+  const skipped =
+    isDebug || isASAN
+      ? "a debug or ASAN build generates checks of its own, which branch and call"
+      : suffix && (!isLinux || isMusl)
+        ? "these pins were taken on Linux with glibc alone"
+        : undefined;
   if (skipped) console.error(`SKIPPED: test/aot/perf/counted-idioms.ts: ${skipped}`);
 
-  describe.skipIf(!!skipped)("compile/aot/perf/counted-idioms", () => {
+  describe.skipIf(!!skipped)(`compile/aot/perf/counted-idioms${suffix}`, () => {
     if (skipped) return;
-    const pins = readPins();
+    const pins = readPins(pinsPath);
     const written: Pins = {};
     const folder = String(tempDir("aot-counted-idioms", {}));
     let all: string[] = [];
-    const { names, count, startBuilds } = countedIdioms(bunExe(), folder, every => (all = every).filter((_, index) => index % parts === part - 1));
+    const { names, count, startBuilds } = countedIdioms(bunExe(), folder, every => (all = every).filter((_, index) => index % parts === part - 1), [], surroundings);
     afterAll(() => {
       rmSync(folder, { recursive: true, force: true });
       // Another part may have written since this one read.
-      if (Object.keys(written).length) writePins({ ...readPins(), ...written });
+      if (Object.keys(written).length) writePins(pinsPath, { ...readPins(pinsPath), ...written });
     });
     startBuilds();
 
@@ -91,7 +109,7 @@ export function countedIdiomsAgainstPins(part = 1, parts = 1) {
             const merged = (choose: (pin: number, now: number) => number) =>
               ({
                 ...Object.fromEntries(
-                  forms.map(form => [form, Object.fromEntries(kinds.filter(partOrWhole(pin?.[form])).map(kind => [kind, choose(pin?.[form][kind] ?? 0, mostOf(now[form])[kind])]))]),
+                  forms.map(form => [form, Object.fromEntries(kinds.filter(partOrWhole(pin?.[form])).map(kind => [kind, isCountedHere(kind) ? choose(pin?.[form][kind] ?? 0, mostOf(now[form])[kind]) : (pin?.[form][kind] ?? 0)]))]),
                 ),
                 owed: pin?.owed,
               }) as Pins[string];
@@ -102,6 +120,7 @@ export function countedIdiomsAgainstPins(part = 1, parts = 1) {
             const over = forms.flatMap(form =>
               kindsJudged(now[form])
                 .filter(partOrWhole(pin[form]))
+                .filter(isCountedHere)
                 .filter(kind => now[form].counts[kind] > (pin.owed?.[kind] ?? pin[form][kind] ?? 0))
                 .map(kind => `${form}: ${now[form].counts[kind]} ${kind} in a thousand turns, pinned at ${pin[form][kind] ?? 0}`),
             );

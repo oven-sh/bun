@@ -128,10 +128,10 @@ function f2 name="Strict" module=m0 position=591 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @591
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @585
-    v2 = NewObject v1 layout=L1 @585
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @585
-    Return v3 @585
+    v1 = GetConstructPrototype v0 layout=L1 @591
+    v2 = NewObject v1 layout=L1 @591
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @591
+    Return v3 @591
 }
 function f3 module=m0 position=591 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: function, v1: function):

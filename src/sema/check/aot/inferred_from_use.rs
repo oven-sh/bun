@@ -15,6 +15,7 @@ use crate::types::{
     MapperId, Prop, PropFlags, PropSource, Shape, SigId, SigParam, TypeData, TypeId,
 };
 use crate::util::FxHashMap;
+use bun_sort_by_number::{SortByNumber, number_of_pair, wide_number_of_pair};
 use smallvec::SmallVec;
 use std::rc::Rc;
 
@@ -2204,11 +2205,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Some(Ok(_) | Err(_)) | None => {}
             }
         }
-        to_bindings
-            .sort_unstable_by_key(|&(symbol, reference)| (symbol, hir[reference].pos, reference));
-        to_this.sort_unstable_by_key(|&(function, reference)| {
-            (function, hir[reference].pos, reference)
-        });
+        let number_of = |owner: u32, reference: ExprId| {
+            wide_number_of_pair(
+                u64::from(owner),
+                number_of_pair(hir[reference].pos, reference.0),
+            )
+        };
+        to_bindings.sort_by_u128(|&(symbol, reference)| number_of(symbol.0, reference));
+        to_this.sort_by_u128(|&(function, reference)| number_of(function.0, reference));
         ReferenceIndex {
             to_bindings: self.list(&to_bindings),
             to_this: self.list(&to_this),

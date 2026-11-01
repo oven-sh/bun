@@ -1752,7 +1752,7 @@ runtimefunction id=SetIteratorPrototypeNext function=f55 visibility=Private
 # CHECK-NEXT: v9: fact = Specified
 # CHECK-NEXT: v10: Generator<undefined|null|string, pristine[Storage, Names]> = AssumeType v8, v9 provenType=Generator<undefined|null|string, pristine[Storage, Names]>
 # CHECK-NEXT: MarkGeneratorRunning v10
-# CHECK-NEXT: v32: anything = NewHeapFrame v8, v3 function=f96 numberOfWords=5
+# CHECK-NEXT: v32: anything = NewHeapFrame v8 function=f96 numberOfWords=5
 # CHECK-NEXT: PutHeapFrameWord v32, v8
 # CHECK-NEXT: PutHeapFrameWord v32, v3 index=1
 # CHECK-NEXT: PutHeapFrameWord v32, v7 index=2

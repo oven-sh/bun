@@ -22,7 +22,7 @@ use super::expect::Expect;
 use super::expect::expect_deferred::ExpectDeferred;
 use super::jest::FileColumns as _;
 use super::scope_functions::{CallbackMode, FunctionKind, ParseArgumentsCfg, parse_arguments};
-use super::test_context_parameter::ContextParameter;
+use super::test_context_parameter::{ContextParameter, TEXT_LEFT_OUT};
 use crate::generated_bindgen::scope_functions::{CallbackOrOptions, DescriptionOrCallback};
 use crate::generated_bindgen::test_context as generated;
 
@@ -647,6 +647,8 @@ pub(crate) fn suite_hook(
     };
     let error = match ContextParameter::of(callback, context_index) {
         ContextParameter::Absent => return Ok(callback),
+        ContextParameter::TextLeftOut if !has_fixtures => return Ok(callback),
+        ContextParameter::TextLeftOut => global.create_error_instance(format_args!("{name}(): {TEXT_LEFT_OUT}")),
         ContextParameter::Properties(names) if has_fixtures || names.is_empty() => return Ok(callback),
         ContextParameter::Properties(names) => {
             let names: Vec<_> = names.iter().map(|name| format!("\"{}\"", bstr::BStr::new(name))).collect();

@@ -358,11 +358,11 @@
     "megabytes": 99
   },
   "steps of a chain of calls that each add a class to one array, whose elements are read under many names": {
-    "millionInstructions": 4128,
-    "millionInstructionsWithMusl": 4495,
+    "millionInstructions": 3801,
+    "millionInstructionsWithMusl": 4139,
     "megabytes": 233,
     "growth": {
-      "instructions": 3.5
+      "instructions": 3.48
     }
   },
   "terms of one sum that name a constant": {
@@ -393,7 +393,12 @@
   "classes below one function that makes their base, each constructed for a class beside it, that store through this": {
     "millionInstructions": 4536,
     "millionInstructionsWithMusl": 5821,
-    "megabytes": 153
+    "megabytes": 153,
+    "growth": {
+      "counts": {
+        "MembersReadForTypesOfCopies": 3.98
+      }
+    }
   },
   "classes that each extend a class of their own, all stored on the global object under computed names": {
     "millionInstructions": 25297,
@@ -657,9 +662,17 @@
     "millionInstructions": 10531,
     "megabytes": 137
   },
-  "functions that hand a description round and each make a regular expression of a member of it": {
-    "millionInstructions": 3220,
-    "megabytes": 97
+  "validator patterns": {
+    "millionInstructions": 7962,
+    "megabytes": 112
+  },
+  "validator family": {
+    "millionInstructions": 8213,
+    "megabytes": 112
+  },
+  "closures in one variable that is written under many names": {
+    "millionInstructions": 5395,
+    "megabytes": 151
   },
   "calls of what nobody knows beside variables that each hold one of two object literals": {
     "millionInstructions": 10669,
@@ -802,7 +815,7 @@
     }
   },
   "packages that each load by a name that they are given": {
-    "millionInstructions": 12142,
+    "millionInstructions": 10784,
     "megabytes": 198
   },
   "texts that move up one place in every turn of a loop": {
@@ -816,5 +829,17 @@
   "statements that each mix two integers that have just changed places, in front of a comparison": {
     "millionInstructions": 438,
     "megabytes": 80
+  },
+  "statements that each call a method of another name on an instance of any of a quarter as many classes": {
+    "millionInstructions": 4300,
+    "megabytes": 106
+  },
+  "breaks in one loop": {
+    "millionInstructions": 3736,
+    "megabytes": 119
+  },
+  "continues in one loop": {
+    "millionInstructions": 5627,
+    "megabytes": 119
   }
 }

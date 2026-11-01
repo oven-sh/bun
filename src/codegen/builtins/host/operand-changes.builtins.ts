@@ -353,6 +353,15 @@ export default b.declarations(
     implementation: b.hostCall,
   }),
 
+  b.fn("%Expect%.extend", {
+    args: { matchers: b.any.optional, others: b.any.rest },
+    returns: b.undefined,
+    capability: "js",
+    throws: true,
+    uses: { this: [b.everything], matchers: [b.everything], others: b.inspected },
+    implementation: b.hostCall,
+  }),
+
   b.method("%Listener%.prototype.getsockname", {
     args: { out: b.any.optional },
     returns: b.undefined,

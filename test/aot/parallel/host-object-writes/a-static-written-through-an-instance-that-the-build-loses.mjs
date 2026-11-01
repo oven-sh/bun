@@ -40,5 +40,5 @@ attempt(
 URL.canParse: stored | mine
 Temporal.Instant.compare: TypeError: Cannot assign to Temporal.Instant.compare | 0
 AbortSignal.abort: stored | mine
-WebAssembly.Module.exports: TypeError: Cannot assign to WebAssembly.Module.exports | 0
+WebAssembly.Module.exports: stored | 4
 */

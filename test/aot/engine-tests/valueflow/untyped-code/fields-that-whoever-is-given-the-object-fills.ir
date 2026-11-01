@@ -111,9 +111,9 @@ function f2 name="Message" module=m0 position=29 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: anything):
     Jump -> next b1() @29
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @0
-    v3 = NewObject v2 layout=L0 @0
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = GetConstructPrototype v0 layout=L0 @52
+    v3 = NewObject v2 layout=L0 @52
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @52
     v5 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]} @41
     PropSet v5, v1 key="url" @41
     v7 = Undefined @41

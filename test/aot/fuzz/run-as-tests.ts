@@ -30,7 +30,7 @@ import {
   type Program,
   type Run,
 } from "./runners";
-import { allSources, multiFileSuffix, rewrittenSuffix } from "./sources";
+import { allSources, multiFileSuffix, neverTakenSuffix, rewrittenSuffix } from "./sources";
 
 const option = (name: string) => {
   const at = process.argv.indexOf("--" + name);
@@ -73,6 +73,7 @@ const wanted = (
     name =>
       name.endsWith(multiFileSuffix) === process.argv.includes("--multi-file") &&
       !name.endsWith(rewrittenSuffix) &&
+      !name.endsWith(neverTakenSuffix) &&
       // They run out of stack on purpose, and where the stack ends goes by the frames below: run.ts judges them, each alone.
       !/^(stack-overflow-points|work-during-stack-unwinding)(-|$)/.test(name),
   )

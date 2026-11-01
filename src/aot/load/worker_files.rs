@@ -133,8 +133,12 @@ pub(crate) struct WorkerSearch<'a> {
     pub parameters_below: &'a [ParameterThatStartsWorkers],
     /// The file that an import leads to, whichever program holds it: the file that imports, and what it writes. All in the format of the checker.
     pub resolve_import: &'a dyn Fn(&[u8], &[u8]) -> Option<Vec<u8>>,
+    /// The same for `require`: a package may name another file for it.
+    pub resolve_require: &'a dyn Fn(&[u8], &[u8]) -> Option<Vec<u8>>,
     /// Programs are built above this one. They do not read its files, so they are told which of its functions start Workers from what they are passed.
     pub is_built_upon: bool,
+    /// The program is a layer of a test run. It holds the file of a Worker that a package of its names, which would run in the interpreter else.
+    pub takes_words_of_packages: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -429,6 +433,7 @@ struct Walk<'a, 's> {
     names: Vec<EntryPointPaths>,
     /// A Worker may start from what was not followed to its end, so from a text that is not among `texts`.
     has_unseen_start: bool,
+    starts_of_files: Vec<(Vec<u8>, FileId, u32)>,
     constructs_node_workers: bool,
     /// The parameters that a start was followed to and that files out of sight may pass a value for: each way to get hold of the function, and the place.
     parameters: FxHashMap<Declaration, Vec<PlaceOfStart>>,
@@ -450,6 +455,16 @@ struct Walk<'a, 's> {
     reach_below: FxHashSet<FileId>,
     in_parallel: InParallel<'a>,
     names_below: &'a NamesBelow<'a>,
+    /// The start is a load and no Worker: the file that loads. A text that is reached is the name of a module, as that file would write it.
+    loads_for: Option<(FileId, bool)>,
+    /// The way back stands at the name that is loaded, which is a parameter.
+    is_at_name_loaded: bool,
+    shares_names_by_way: bool,
+    ways_to_load: Vec<(Declaration, usize, Rc<Vec<(FileId, ExprId)>>)>,
+    names_for_load: Vec<Vec<u8>>,
+    /// The names that reach a parameter through one way. They are the same for whoever loads.
+    names_through: FxHashMap<(Declaration, usize), Rc<Vec<Vec<u8>>>>,
+    modules_named_for_parameters: Vec<Vec<u8>>,
 }
 
 /// Where the files that get to a start call, extend and store. One look at all of them answers every question, however many parameters and properties a start leads through.
@@ -512,8 +527,9 @@ type KnownDeclarations = FxHashMap<(FileId, SymbolId), Option<Declaration>>;
 struct Calls {
     /// The ways to get hold of it. Of a class: of its heirs that have no constructor too.
     ways: Vec<Declaration>,
-    /// What the calls in this program pass for one parameter.
-    arguments: Vec<(FileId, ExprId)>,
+    /// What the calls in this program pass for one parameter, way by way, and behind them what `super(..)` in the constructors of heirs passes.
+    /// A list is shared by all the functions that are got hold of in that way.
+    arguments: Vec<Rc<Vec<(FileId, ExprId)>>>,
 }
 
 /// What a file puts into a property.
@@ -568,6 +584,8 @@ type IsSoughtBelow<'a> = dyn Fn(FileId, usize, Atom) -> bool + 'a;
 
 pub(crate) struct CodeThatStartsWorkers {
     pub files: Vec<WorkerFile>,
+    /// For each of `files` that is named by a path, by its `source_path`: the file with a `new Worker(..)` that may get it, and where that stands.
+    pub starts_of_files: Vec<(Vec<u8>, FileId, u32)>,
     /// The names that are written for `files` and are not the paths of their modules: the path that each would have as a file of the executable, and the file on disk that it leads to.
     pub names: Vec<EntryPointPaths>,
     pub code: CodeOfWorkers,
@@ -577,6 +595,8 @@ pub(crate) struct CodeThatStartsWorkers {
     pub files_with_starts: Vec<Vec<u8>>,
     /// Where `WorkerSearch::is_built_upon`: what the programs above are told, without `WorkerSearch::parameters_below`. Ascending.
     pub parameters: Vec<ParameterThatStartsWorkers>,
+    /// `load(name) { return require(name); }`: the files that the names lead to which the calls pass for `name`. In the format of the checker, ascending.
+    pub modules_named_for_parameters: Vec<Vec<u8>>,
 }
 
 // `import path from "./worker.js" with { type: "file" }; new Worker(path)`, `new Worker("./worker.js")` and `new Worker("data:text/javascript,..")`: the build has seen the code that the Worker runs, or finds it. What the constructor is given is followed back through variables, parameters and exports to the import, to the path or to the text. In the order of their paths.
@@ -688,6 +708,7 @@ pub(crate) fn find_code_that_starts_workers(
         texts: Vec::new(),
         names: Vec::new(),
         has_unseen_start: false,
+        starts_of_files: Vec::new(),
         constructs_node_workers: false,
         parameters: FxHashMap::default(),
         properties: FxHashMap::default(),
@@ -700,6 +721,13 @@ pub(crate) fn find_code_that_starts_workers(
         reach_below: FxHashSet::default(),
         in_parallel,
         names_below: &names_below,
+        loads_for: None,
+        is_at_name_loaded: false,
+        shares_names_by_way: false,
+        ways_to_load: Vec::new(),
+        names_for_load: Vec::new(),
+        names_through: FxHashMap::default(),
+        modules_named_for_parameters: Vec::new(),
     };
     let compiled = files.compiled_files();
     let (constructor, worker_threads) = (walk.constructor, walk.modules[0]);
@@ -709,6 +737,7 @@ pub(crate) fn find_code_that_starts_workers(
     };
     let may_start_workers = map_each(compiled.to_vec(), in_parallel, &|file| {
         may_start_workers(files, file, constructor, worker_threads)
+            || find_loads_under_parameters(files, file).next().is_some()
             || (reach_below.contains(&file)
                 && may_hand_file_to_program_below(files, file, &names_below))
     });
@@ -748,7 +777,11 @@ pub(crate) fn find_code_that_starts_workers(
         true => walk.find_exports_of_parameters(),
         false => Vec::new(),
     };
+    walk.modules_named_for_parameters.shared_sort_unstable();
+    walk.modules_named_for_parameters.dedup();
     CodeThatStartsWorkers {
+        starts_of_files: walk.starts_of_files,
+        modules_named_for_parameters: walk.modules_named_for_parameters,
         files: found,
         names: walk.names,
         code,
@@ -902,6 +935,28 @@ fn find_module_answered(
         }) => find_module_named(files.atoms().bytes(specifier)),
         _ => None,
     }
+}
+
+/// `require(name)`, `import(name)` and `import.meta.require(name)` where the build knows nothing of `name` but that it is a parameter: what stands for the name.
+fn find_loads_under_parameters<'a>(
+    files: &'a dyn CodeView<'_>,
+    file: FileId,
+) -> impl Iterator<Item = (ExprId, bool)> + 'a {
+    let bound = files.bound(file);
+    let sites = files.analysis(file).import_sites.iter();
+    sites.filter_map(move |site| {
+        let requires = matches!(
+            site.kind,
+            ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_)
+        );
+        let loads = requires || matches!(site.kind, ImportSiteKind::ImportCall(_));
+        let Binding::Symbol(name) = bound.binding(site.specifier_node) else {
+            return None;
+        };
+        let is_parameter = matches!(bound.symbol(name).decls, [Decl::Param(_)]);
+        (loads && site.specifier == ImportSpecifier::Unknown && is_parameter)
+            .then_some((site.specifier_node, requires))
+    })
 }
 
 pub(crate) fn may_start_workers(
@@ -1092,6 +1147,61 @@ impl Walk<'_, '_> {
         callees.shared_sort_unstable();
         self.has_unseen_start |= !self.names_constructors_only_as(file, &callees);
         self.visit_what_is_handed_below(file, followed_by_name);
+        self.visit_loads_under_parameters(file);
+    }
+
+    /// `class Manager { _load(name) { return require(name); } }` and, in an heir, `this._load("a-driver")`: the way back from the load is the way back from `new Worker(name)`.
+    /// A name that leads to no file of code from the file that loads counts for nothing, so what else goes by the name of the method adds nothing.
+    fn visit_loads_under_parameters(&mut self, file: FileId) {
+        let names: Vec<(ExprId, bool)> = find_loads_under_parameters(self.files, file).collect();
+        let had_unseen_start = self.has_unseen_start;
+        for (name, requires) in names {
+            self.has_options = false;
+            self.start = (file, name);
+            self.loads_for = Some((file, requires));
+            self.is_at_name_loaded = true;
+            self.follow(file, name);
+            self.is_at_name_loaded = false;
+            for (way, index, passed) in core::mem::take(&mut self.ways_to_load) {
+                let names = match self.names_through.get(&(way, index)) {
+                    Some(names) => Rc::clone(names),
+                    None => {
+                        let found_so_far = core::mem::take(&mut self.names_for_load);
+                        self.begin_way_back();
+                        self.parameters_left = self.parameters_left.saturating_sub(1);
+                        for &(caller, argument) in passed.iter() {
+                            self.push(caller, argument);
+                        }
+                        self.follow_pending();
+                        let mut names = core::mem::replace(&mut self.names_for_load, found_so_far);
+                        names.shared_sort_unstable();
+                        names.dedup();
+                        let names = Rc::new(names);
+                        (self.names_through).insert((way, index), Rc::clone(&names));
+                        names
+                    }
+                };
+                self.names_for_load.extend(names.iter().cloned());
+            }
+            let mut names = core::mem::take(&mut self.names_for_load);
+            names.shared_sort_unstable();
+            names.dedup();
+            for name in &names {
+                self.add_module_named((file, requires), name);
+            }
+        }
+        self.loads_for = None;
+        self.has_unseen_start = had_unseen_start;
+    }
+
+    fn add_module_named(&mut self, (loads, requires): (FileId, bool), name: &[u8]) {
+        let resolve = match requires {
+            true => self.search.resolve_require,
+            false => self.search.resolve_import,
+        };
+        if let Some(path) = resolve(self.files.file_name(loads), name) {
+            self.modules_named_for_parameters.push(path);
+        }
     }
 
     /// `spawn(new URL("./worker.ts", import.meta.url))`, where a program below says `export function spawn(entry) { return new Worker(entry); }`:
@@ -1178,7 +1288,8 @@ impl Walk<'_, '_> {
                             (place.has_options, place.is_evaluated);
                         self.note_parameter(&calls.ways, index);
                         self.is_evaluated = false;
-                        calls.arguments
+                        let arguments = calls.arguments.iter();
+                        arguments.flat_map(|it| it.iter().copied()).collect()
                     }
                 };
                 for argument in arguments {
@@ -1651,7 +1762,13 @@ impl Walk<'_, '_> {
     }
 
     fn follow(&mut self, file: FileId, argument: ExprId) {
-        let (files, limits) = (self.files, self.limits);
+        self.begin_way_back();
+        self.push(file, argument);
+        self.follow_pending();
+    }
+
+    fn begin_way_back(&mut self) {
+        let limits = self.limits;
         self.variables_left = limits.get(LimitId::MaxVariablesFollowedToLoader);
         self.parameters_left = limits.get(LimitId::MaxParametersFollowedToLoader);
         // A value is handed on by name thousands of times, and a set that held a long way once takes as long to clear each time.
@@ -1659,7 +1776,10 @@ impl Walk<'_, '_> {
         make_empty(&mut self.properties_followed);
         make_empty(&mut self.parameters_followed);
         self.is_behind_property = self.handed_by_name.is_some();
-        self.push(file, argument);
+    }
+
+    fn follow_pending(&mut self) {
+        let files = self.files;
         while let Some(next) = self.pending.pop() {
             let Pending {
                 file, expression, ..
@@ -1675,6 +1795,10 @@ impl Walk<'_, '_> {
             }
             let variables_left = self.variables_left;
             let text = self.find_text(file, expression);
+            if self.loads_for.is_some() && text.is_some() {
+                self.names_for_load.extend(text);
+                continue;
+            }
             if let Some(text) = &text
                 && (self.add_evaluated_text(text)
                     || self.add_url(text)
@@ -2296,7 +2420,9 @@ impl Walk<'_, '_> {
         };
         // A package names the file of a Worker that most programs never start, and the program of such a file is no small one.
         // What the project names and hands to a package is a file of the project, which it means to start.
-        let is_of_package = is_in_node_modules(self.files.file_name(written_in));
+        // A layer of a test run takes the file in. It is open to the programs above it anyway, and what no layer holds runs in the interpreter.
+        let is_of_package = !self.search.takes_words_of_packages
+            && is_in_node_modules(self.files.file_name(written_in));
         if is_of_package && !self.takes_word_of_package {
             return false;
         }
@@ -2397,7 +2523,8 @@ impl Walk<'_, '_> {
                 false => Some(text).filter(|path| is_absolute(path)),
             }
         };
-        let is_of_package = is_in_node_modules(self.files.file_name(file));
+        let is_of_package =
+            !self.search.takes_words_of_packages && is_in_node_modules(self.files.file_name(file));
         if runs_in_place || self.is_evaluated || (is_of_package && !self.takes_word_of_package) {
             return false;
         }
@@ -2432,7 +2559,7 @@ impl Walk<'_, '_> {
         let Some(specifier) = analysis.find_name_of_worker(argument) else {
             return false;
         };
-        if is_in_node_modules(written_in) {
+        if !self.search.takes_words_of_packages && is_in_node_modules(written_in) {
             return false;
         }
         let names: Option<Vec<(&[u8], Option<&[u8]>)>> =
@@ -2537,6 +2664,10 @@ impl Walk<'_, '_> {
             });
         }
         let started_at = Some(self.position_of_start());
+        let (starter, start) = self.start;
+        let position = self.files.hir(starter)[start].pos;
+        self.starts_of_files
+            .push((source_path_of(path), starter, position));
         self.texts.push(WorkerFile {
             source_path: source_path_of(path),
             embedded_path,
@@ -2581,6 +2712,7 @@ impl Walk<'_, '_> {
     }
 
     fn follow_name(&mut self, file: FileId, mention: ExprId) {
+        let is_name_loaded = core::mem::take(&mut self.is_at_name_loaded);
         let files = self.files;
         let bound = files.bound(file);
         let Binding::Symbol(symbol) = bound.binding(mention) else {
@@ -2621,7 +2753,11 @@ impl Walk<'_, '_> {
         }
         self.has_unseen_start = true;
         match bound.pat_parent[pattern.idx()] {
-            PatParent::Param(parameter) => self.follow_parameter(file, parameter),
+            PatParent::Param(parameter) => {
+                self.shares_names_by_way = is_name_loaded;
+                self.follow_parameter(file, parameter);
+                self.shares_names_by_way = false;
+            }
             // `({ entry }) => new Worker(entry)`
             PatParent::Prop(_, property) if !hir[property].is_rest => {
                 if hir[property].default.is_some() {
@@ -2666,8 +2802,17 @@ impl Walk<'_, '_> {
         {
             return;
         }
-        for &(caller, argument) in &calls.arguments {
-            self.push(caller, argument);
+        for (position, passed) in calls.arguments.iter().enumerate() {
+            match calls.ways.get(position) {
+                Some(&way) if self.shares_names_by_way => {
+                    (self.ways_to_load).push((way, index, Rc::clone(passed)));
+                }
+                _ => {
+                    for &(caller, argument) in passed.iter() {
+                        self.push(caller, argument);
+                    }
+                }
+            }
         }
     }
 
@@ -2956,7 +3101,7 @@ impl Walk<'_, '_> {
                     passed
                 }
             };
-            arguments.extend(passed.iter().copied());
+            arguments.push(passed);
         }
         let of_heirs = constructors_of_heirs
             .iter()
@@ -2964,9 +3109,9 @@ impl Walk<'_, '_> {
                 let calls = find_calls_of_super(files.hir(file), constructor).into_iter();
                 calls.map(move |call| (file, call))
             });
-        for (file, call) in of_heirs {
-            arguments.extend(find_argument(files.hir(file), call, index).map(|it| (file, it)));
-        }
+        let of_heirs = of_heirs
+            .filter_map(|(file, call)| Some((file, find_argument(files.hir(file), call, index)?)));
+        arguments.push(Rc::new(of_heirs.collect()));
         Calls { ways, arguments }
     }
 

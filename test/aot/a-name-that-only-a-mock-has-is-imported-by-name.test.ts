@@ -108,9 +108,5 @@ test.each([
   expect(plain.printed).toContain("a store TypeError extra\n");
   expect(plain.printed).toContain("a name that nobody gives threw SyntaxError");
   expect(plain.printed).toContain("a name that nobody gives undefined\n");
-  // TODO(bun), row 4100: since `bun test` follows Vitest on module mocks, a name that a mock leaves out no longer fails the link in plain Bun: it is undefined. A compiled
-  // run still has the earlier behavior. It has to follow plain Bun: each `.not.toEqual(plain)` below is then `.toEqual(plain)` again, and goes red to say so.
-  const compiled = await printedBy(String(directory), words, "--aot");
-  expect(compiled).not.toEqual(plain);
-  expect(compiled.printed).not.toContain("a name that nobody gives undefined\n");
+  expect(await printedBy(String(directory), words, "--aot")).toEqual(plain);
 });

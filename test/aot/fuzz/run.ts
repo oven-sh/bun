@@ -28,6 +28,8 @@
 //   --rewritten           also generate each source as <source>-rewritten: the program is transformed in one to seven ways that keep its output and hide
 //                         information from the compiler (values laundered through eval, loop bounds known only at run time, a GC inside calls, functions
 //                         the host could call, open-world global access, the whole file wrapped in a function, a try or a loop)
+//   --never-taken         also generate each source as <source>-never-taken: the program also holds code that this run never takes and that no build can
+//                         rule out, done to its own variables and fields (another kind of value stored, a field deleted, a prototype swapped, ...)
 //
 // How it is built and run
 //   --flags "<flags>"     added to every product build; --engine-flags is the same for the engine runner
@@ -152,6 +154,7 @@ if (replay) {
       isCountOnly: has("count-only"),
       alsoMultiFile: !has("single-file"),
       alsoRewritten: has("rewritten"),
+      alsoNeverTaken: has("never-taken"),
       known: [join(import.meta.dir, "accepted-differences.tsv"), ...options("known")],
       minFreeBytes: Number(option("min-free-gb") ?? 4) * 2 ** 30,
       reduceSeconds: Number(option("reduce-seconds") ?? 600),

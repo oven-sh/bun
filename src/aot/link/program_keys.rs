@@ -146,6 +146,17 @@ impl ProgramModule {
         })
     }
 
+    /// `VariableKey::MockOf`
+    pub fn mock_variable_key(self) -> Option<ProgramVariableKey> {
+        match self {
+            ProgramModule::File(file) => Some(ProgramVariableKey::Declared(InProject {
+                project: file.project,
+                key: VariableKey::MockOf(file.file),
+            })),
+            _ => None,
+        }
+    }
+
     /// What holds `module.exports` where the exports of the module are one value.
     pub fn exports_variable_key(self) -> Option<ProgramVariableKey> {
         let (file, key) = match self {
@@ -178,6 +189,8 @@ pub enum ProgramVariableKey {
         module: ProgramModule,
         name: Atom,
     },
+    /// `VariableKey::MockOfRuntimeModule`
+    MockOfRuntimeModule(RuntimeModule),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -278,8 +291,11 @@ impl Rehoming<'_> {
                 state: symbol,
                 part: _,
             } => *symbol = self.symbol(*symbol),
-            VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => {}
+            VariableKey::SyntheticExport(_)
+            | VariableKey::Copy(_)
+            | VariableKey::MockOfRuntimeModule(_) => {}
             VariableKey::ModuleExports(file)
+            | VariableKey::MockOf(file)
             | VariableKey::ClassSlot {
                 class: ClassRef { file, .. },
                 slot: _,
@@ -345,6 +361,9 @@ impl KeyContext<'_> {
                     module: self.module(export.module),
                     name: export.name,
                 }
+            }
+            VariableKey::MockOfRuntimeModule(module) => {
+                ProgramVariableKey::MockOfRuntimeModule(module)
             }
             _ => ProgramVariableKey::Declared(InProject {
                 project: self.project,

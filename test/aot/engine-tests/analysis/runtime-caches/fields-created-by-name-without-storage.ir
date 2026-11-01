@@ -1,5 +1,6 @@
 # Stores by name and by symbol that create fields for which the object has no storage yet, or too little: in ascending and descending order, with values of every kind,
 # on objects that are not extensible, sealed or frozen, and below a prototype that gets a setter or a read-only property of the name.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f2 f4
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls

@@ -160,9 +160,13 @@
     }
   },
   "collection/map-get-or-default-in-function": {
-    "typed": 5,
-    "untyped": 5.5,
-    "jit": 7
+    "typed": 6,
+    "untyped": 6,
+    "jit": 7,
+    "best": {
+      "typed": 5,
+      "untyped": 5.5
+    }
   },
   "collection/weak-map-cache-in-function": {
     "typed": 36.5,

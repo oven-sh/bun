@@ -9,7 +9,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::aot_options::HeapSize;
 use bun_options_types::aot_options::ReadListener;
 use bun_options_types::aot_options::ReplacedByTests;
-use bun_options_types::context::HotReload;
+use bun_options_types::context::{HotReload, TestGlobals};
 use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_standalone_graph::executable_request::{FirstProgramBelow, PlaceOfProgram};
@@ -25,9 +25,11 @@ use crate::cli::command::{Context, ContextData};
 use crate::cli::test::memory_of_job;
 
 static IS_FROM_DESCRIPTOR: AtomicBool = AtomicBool::new(false);
+static IS_ONE_PROGRAM: AtomicBool = AtomicBool::new(false);
 static GRAPH_DESCRIPTOR: OnceLock<Fd> = OnceLock::new();
 static IS_CHECKED: AtomicBool = AtomicBool::new(false);
-static REFUSED_FILES: OnceLock<Vec<Box<[u8]>>> = OnceLock::new();
+static REFUSED_FILES: OnceLock<Vec<(Box<[u8]>, Box<[u8]>)>> = OnceLock::new();
+const SAID_OF_REFUSED_FILE: u8 = 1;
 static FILES_OF_CHECK: OnceLock<Vec<Box<[u8]>>> = OnceLock::new();
 static CLEARS_TERMINAL: AtomicBool = AtomicBool::new(false);
 static RUNNING_TEST_FILE: Guarded<Vec<u8>> = Guarded::new(Vec::new());
@@ -103,9 +105,32 @@ pub(crate) fn set_stand_in(path: &[u8], text: &[u8]) {
         bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut key);
     }
     let mut files = FileMap::default();
+    if let Some(earlier) = *STAND_IN.lock() {
+        for (key, text) in earlier.map.iter() {
+            bun_core::handle_oom(files.map.put(key, text.clone()));
+        }
+    }
     bun_core::handle_oom(files.map.put(&key, Box::from(text)));
     // It lives as long as the build, which is the last thing the process does.
     *STAND_IN.lock() = Some(Box::leak(Box::new(files)));
+}
+
+fn make_stand_in_for_globals_of_vitest() -> Box<[u8]> {
+    use bun_js_parser::Jest;
+    let mut text = b"const value = process.argv.at(-1)!;\nif (value === \"\\0never\") {\n".to_vec();
+    for name in (Jest::GLOBALS.iter()).filter(|name| !Jest::is_of_bun_only(name)) {
+        text.extend_from_slice(b"  (globalThis as any).");
+        text.extend_from_slice(name.as_bytes());
+        text.extend_from_slice(b" = JSON.parse(value);\n");
+    }
+    text.extend_from_slice(b"}\n");
+    let path = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(
+        bun_resolver::fs::FileSystem::get().top_level_dir(),
+        &[b"node_modules/.cache/bun-test-globals-of-vitest.ts"],
+    )
+    .to_vec();
+    set_stand_in(&path, &text);
+    path.into_boxed_slice()
 }
 
 pub(crate) fn files_in_memory() -> Option<&'static FileMap> {
@@ -120,6 +145,10 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         .skip(1 + bun_core::bun_options_argc())
         .collect();
     let own_count = typed.len().saturating_sub(ctx.passthrough.len());
+    let has_globals_of_vitest = ctx.test_options.globals == Some(TestGlobals::Vitest);
+    if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+        aot.has_globals_of_vitest = has_globals_of_vitest;
+    }
     let checks_only = ctx
         .bundler_options
         .aot
@@ -139,6 +168,9 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
     unsafe { ctx.log_mut() }.append_to(&mut said_before_the_build);
 
     let mut entry_points = entry_points;
+    if has_globals_of_vitest {
+        entry_points.push(make_stand_in_for_globals_of_vitest());
+    }
     let mut independent_count = independent_count;
     let mut refused_files = Vec::new();
     let defines = ctx.args.define.clone();
@@ -206,8 +238,11 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             let refused = refused.iter().map(|&position| &*entry_points[position]);
             leave_out_of_stand_in(&entry_points[stand_in], &refused.collect::<Vec<_>>());
         }
+        let said = list_errors(ctx.log_ref());
         for &position in refused.iter().rev() {
             refused_files.extend_from_slice(&entry_points.remove(position));
+            refused_files.push(SAID_OF_REFUSED_FILE);
+            refused_files.extend_from_slice(&said);
             refused_files.push(0);
         }
         independent_count -= refused.len();
@@ -234,11 +269,14 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
     };
     // A part over the shared program reads none of the files it imports, so what it says about types is not true.
     let aot = ctx.bundler_options.aot.as_ref();
-    if !aot.is_some_and(|aot| aot.is_part_of_test_files)
-        || env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
+    if aot.is_some_and(|aot| aot.is_part_of_test_files)
+        && env_var::BUN_JSC_logAOTPhaseTimes.get() != Some(true)
     {
-        print_log(ctx.log_ref());
+        // SAFETY: nothing else borrows the log behind a build.
+        let messages = &mut unsafe { ctx.log_mut() }.msgs;
+        messages.retain(|message| !is_said_about_types(&message.data.text));
     }
+    print_log(ctx.log_ref());
     let names_added: &[(u32, Vec<u8>)] = match outcome.graph_bytes {
         Some(_) => &[],
         None => &outcome.replaced_builtins.names_added_to_builtins,
@@ -1249,7 +1287,6 @@ impl TestPartFile {
                 &list,
                 &[],
                 match kind {
-                    TestPartKind::TestFiles => ProgramFile::Memfd,
                     _ if in_memory => ProgramFile::Memfd,
                     // Every process of the run maps it, to the end of the run, and reads some of it. Of a file on disk the system
                     // drops the pages that nobody reads when memory is short. Memory that stands in for a file it cannot drop.
@@ -1257,6 +1294,7 @@ impl TestPartFile {
                     | TestPartKind::SharedLowest { .. }
                     | TestPartKind::SharedComputed
                     | TestPartKind::SharedPackages => ProgramFile::Deleted,
+                    TestPartKind::TestFiles => ProgramFile::Deleted,
                 },
             )?,
         });
@@ -1609,6 +1647,34 @@ fn exit_or_wait_for_change(watched: Option<&'static WatchedFiles>) -> ! {
     }
 }
 
+fn is_said_about_types(text: &[u8]) -> bool {
+    let Some(rest) = text.strip_prefix(b"TS") else {
+        return false;
+    };
+    let digits = rest.iter().take_while(|byte| byte.is_ascii_digit()).count();
+    let number = rest[..digits].iter().fold(0u32, |number, digit| {
+        number.saturating_mul(10) + u32::from(digit - b'0')
+    });
+    number < 100_000 || matches!(number, 100_009 | 100_010 | 100_066 | 100_075)
+}
+
+fn list_errors(log: &bun_ast::Log) -> Vec<u8> {
+    let mut said = Vec::new();
+    for message in log.msgs.iter().filter(|it| it.kind == bun_ast::Kind::Err) {
+        if said.is_empty() {
+            said.extend_from_slice(&message.data.text);
+        }
+        said.push(b'\n');
+        if let Some(location) = message.data.location.as_ref().filter(|it| it.line > 0) {
+            said.extend_from_slice(&location.file);
+            said.extend_from_slice(format!(":{}:{}: ", location.line, location.column).as_bytes());
+        }
+        said.extend_from_slice(&message.data.text);
+    }
+    said.retain(|&byte| byte != 0 && byte != SAID_OF_REFUSED_FILE);
+    said
+}
+
 fn write_check_result(
     refused_files: &[u8],
     watched: Option<&WatchedFiles>,
@@ -1683,6 +1749,13 @@ fn find_refused_files(
     refused.retain(|&position| Some(position) != stand_in);
     refused.sort_unstable();
     refused.dedup();
+    if may_refuse_all
+        && refused
+            .last()
+            .is_some_and(|&last| last >= independent_count)
+    {
+        return Some((0..independent_count).collect());
+    }
     let are_independent = refused.last().is_some_and(|&last| last < independent_count);
     (are_independent && (may_refuse_all || refused.len() < independent_count)).then_some(refused)
 }
@@ -2184,6 +2257,8 @@ pub(crate) fn use_graph_descriptor(text: &[u8]) {
     let failure = match loaded {
         Ok(Some(_)) => {
             IS_FROM_DESCRIPTOR.store(true, Ordering::Relaxed);
+            let is_one_program = descriptors.as_deref().is_some_and(|all| all.len() == 1);
+            IS_ONE_PROGRAM.store(is_one_program, Ordering::Relaxed);
             let _ = GRAPH_DESCRIPTOR.set(descriptor);
             // Behind each program: the refused files, an empty path, the files of the check.
             let (mut refused, mut checked) = (Vec::new(), Vec::new());
@@ -2242,6 +2317,10 @@ pub(crate) fn runs_compiled_code() -> bool {
     IS_FROM_DESCRIPTOR.load(Ordering::Relaxed)
 }
 
+pub(crate) fn test_files_share_global(ctx: &ContextData) -> bool {
+    ctx.test_options.isolate_modules && !IS_ONE_PROGRAM.load(Ordering::Relaxed)
+}
+
 #[cold]
 #[inline(never)]
 pub(crate) fn use_check_result(text: &[u8]) {
@@ -2266,7 +2345,15 @@ pub(crate) fn use_check_result(text: &[u8]) {
 fn remember_check_result(list: &[u8]) {
     let mut paths = bun_core::strings::split(list, b"\0");
     let refused = paths.by_ref().take_while(|path| !path.is_empty());
-    let _ = REFUSED_FILES.set(refused.map(Box::from).collect());
+    let refused = refused.map(|refused| {
+        let end = bun_core::strings::index_of_char_usize(refused, SAID_OF_REFUSED_FILE);
+        let (path, said) = refused.split_at(end.unwrap_or(refused.len()));
+        (
+            Box::from(path),
+            Box::from(said.get(1..).unwrap_or_default()),
+        )
+    });
+    let _ = REFUSED_FILES.set(refused.collect());
     let watched = paths.by_ref().take_while(|path| !path.is_empty());
     let _ = FILES_OF_CHECK.set(watched.map(Box::from).collect());
     for added in paths.filter(|added| !added.is_empty()) {
@@ -2302,9 +2389,15 @@ fn read_whole_file(descriptor: Fd) -> Maybe<Vec<u8>> {
 }
 
 pub(crate) fn is_refused(path: &[u8]) -> bool {
-    REFUSED_FILES
-        .get()
-        .is_some_and(|files| files.iter().any(|file| &**file == path))
+    find_what_build_said_of_refused_file(path).is_some()
+}
+
+pub(crate) fn find_what_build_said_of_refused_file(path: &[u8]) -> Option<&'static [u8]> {
+    let files = REFUSED_FILES.get()?.iter();
+    files
+        .into_iter()
+        .find(|file| &*file.0 == path)
+        .map(|file| &*file.1)
 }
 
 #[inline]

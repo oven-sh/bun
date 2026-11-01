@@ -208,6 +208,18 @@ pub(crate) fn with_loaded_test_run<R>(
     with_loaded_project(&project, then)
 }
 
+/// A test run in which a test file or a preload imports "vitest". The first file is the test file.
+pub(crate) fn with_loaded_test_run_of_vitest<R>(
+    files: &[(&str, &str)],
+    settings: &TranspileSettings,
+    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
+) -> R {
+    let mut project = TestProject::new(files, settings);
+    project.runs_tests = true;
+    project.entry_point_imports_vitest = true;
+    with_loaded_project(&project, then)
+}
+
 pub(crate) fn with_loaded_build_and_options<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -487,6 +499,7 @@ pub(super) struct TestProject {
     paths: PathOptions,
     react_compiler: ReactCompilerMode,
     runs_tests: bool,
+    entry_point_imports_vitest: bool,
     /// Most tests look at Bun's own code behind a program of one line.
     pub(super) keeps_library_code_without_names: bool,
 }
@@ -543,6 +556,7 @@ impl TestProject {
             },
             react_compiler: ReactCompilerMode::Disabled,
             runs_tests: false,
+            entry_point_imports_vitest: false,
             keeps_library_code_without_names: true,
         }
     }
@@ -576,6 +590,7 @@ impl TestProject {
             load: LoadOptions {
                 react_compiler: self.react_compiler,
                 runs_tests: self.runs_tests,
+                entry_point_imports_vitest: self.entry_point_imports_vitest,
                 in_memory_files: self.in_memory_files.clone(),
                 keeps_library_code_without_names: self.keeps_library_code_without_names,
                 ..LoadOptions::new(self.directory.clone())

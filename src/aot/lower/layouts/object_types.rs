@@ -1,3 +1,4 @@
+use bun_sort_by_number::SortByNumber;
 use core::cell::{Cell, RefCell};
 use core::cmp::Ordering;
 use std::rc::Rc;
@@ -18,7 +19,9 @@ use super::{
     DefinedObjectType, HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE,
     NamesOfObjectType, ObjectTypeKey, OwnFields, slot_of,
 };
+use crate::builtins::id::BuiltinId;
 use crate::builtins::resolve::SourceDialect;
+use crate::builtins::table;
 use crate::ir::generated::{
     Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
@@ -733,6 +736,17 @@ impl FileLowering<'_, '_, '_, '_> {
         can_be_field(self, key)
     }
 
+    /// An assignment under such a name to an object right below `Object.prototype` is no definition: `__proto__` has a setter there, and the others are refused
+    /// once the program has frozen it.
+    pub(in crate::lower) fn is_name_on_object_prototype(&self, name: Atom) -> bool {
+        self.inputs.builtin_names.get(name).is_some_and(|name| {
+            !matches!(
+                table::member(BuiltinId::ObjectPrototype, name),
+                table::MemberLookup::Absent
+            )
+        })
+    }
+
     fn collect_literal_members(&mut self, literal: ExprId) -> Members {
         let hir = self.hir;
         let mut members = Members::new();
@@ -982,7 +996,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
 fn find_declared_order(listed: &[SortedMember]) -> Vec<u32> {
     let mut order: Vec<u32> = (0..listed.len() as u32).collect();
-    order.sort_by_key(|&field| listed[field as usize].1.property_index);
+    order.sort_by_u32(|&field| listed[field as usize].1.property_index);
     match order.iter().zip(0..).all(|(&field, place)| field == place) {
         true => Vec::new(),
         false => order,

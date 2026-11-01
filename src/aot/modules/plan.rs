@@ -147,8 +147,11 @@ pub(super) struct Plan {
     /// A file stores `__esModule` on what `require` of the module answers.
     is_marker_stored: Vec<bool>,
     is_imported_as_namespace: Vec<bool>,
+    externals_imported_as_namespace: Vec<ModuleRef>,
     /// `mock.module` names the module.
     may_be_mocked: Vec<bool>,
+    is_named_by_mock: Vec<bool>,
+    runtime_modules_named_by_mocks: Vec<RuntimeModule>,
     /// The order numbers no module of the library.
     mocked_runtime_modules: Vec<RuntimeModule>,
     may_mock_every_module: bool,
@@ -204,7 +207,10 @@ impl Plan {
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
             is_imported_as_namespace: vec![false; order.numbers.len()],
+            externals_imported_as_namespace: Vec::new(),
             may_be_mocked: vec![false; order.numbers.len()],
+            is_named_by_mock: vec![false; order.numbers.len()],
+            runtime_modules_named_by_mocks: Vec::new(),
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
             runs_tests: false,
@@ -250,12 +256,26 @@ impl Plan {
 
     pub(super) fn set_is_imported_as_namespace(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.is_imported_as_namespace, module);
+        if matches!(module, ModuleRef::External { .. }) {
+            self.externals_imported_as_namespace.push(module);
+        }
     }
 
     pub(super) fn set_may_be_mocked(&mut self, module: ModuleRef) {
         match module {
             ModuleRef::Runtime(module) => self.mocked_runtime_modules.push(module),
             _ => self.add(|plan| &mut plan.may_be_mocked, module),
+        }
+    }
+
+    pub(super) fn set_is_named_by_mock(&mut self, module: ModuleRef) {
+        match module {
+            ModuleRef::Runtime(module) => {
+                if !self.runtime_modules_named_by_mocks.contains(&module) {
+                    self.runtime_modules_named_by_mocks.push(module);
+                }
+            }
+            _ => self.add(|plan| &mut plan.is_named_by_mock, module),
         }
     }
 
@@ -664,6 +684,7 @@ impl ModuleGraph {
     /// A file has `import * as` of the module.
     pub fn is_imported_as_namespace(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.is_imported_as_namespace, module)
+            || self.plan.externals_imported_as_namespace.contains(&module)
     }
 
     pub fn runs_tests(&self) -> bool {
@@ -723,10 +744,13 @@ impl ModuleGraph {
     }
 
     /// The body of the ES module runs each time the host loads it. Plain Bun makes a new module of the file each time, so each run has
-    /// variables of its own. It finds a CommonJS file in `require.cache` and does not run it again.
+    /// variables of its own. It finds a CommonJS file in `require.cache` and does not run it again, but for one whose last run threw: see
+    /// `find_files_that_run_again()`.
     pub fn runs_again(&self, file: FileId) -> bool {
-        self.kind(file) == ModuleKind::SourceText
-            && self.plan.has(&self.plan.runs_again, ModuleRef::File(file))
+        matches!(
+            self.kind(file),
+            ModuleKind::SourceText | ModuleKind::CommonJs
+        ) && self.plan.has(&self.plan.runs_again, ModuleRef::File(file))
     }
 
     /// A file that is taken out of `require.cache`, or loaded under a query, runs again from disk and imports what its text names, and an
@@ -750,6 +774,20 @@ impl ModuleGraph {
                 ModuleRef::Runtime(module) => plan.mocked_runtime_modules.contains(&module),
                 _ => plan.has(&plan.may_be_mocked, module),
             }
+    }
+
+    /// A mock may stand in place of the module. `may_be_mocked` also holds of a module whose object may meet a spy.
+    pub fn is_named_by_mock(&self, module: ModuleRef) -> bool {
+        let plan = &self.plan;
+        match module {
+            ModuleRef::Runtime(module) => plan.runtime_modules_named_by_mocks.contains(&module),
+            _ => plan.may_mock_every_module || plan.has(&plan.is_named_by_mock, module),
+        }
+    }
+
+    /// In no order that means anything. Where a mock's name is computed, none: such a mock is laid over the module as before.
+    pub fn runtime_modules_named_by_mocks(&self) -> &[RuntimeModule] {
+        &self.plan.runtime_modules_named_by_mocks
     }
 
     /// Whether the test runner may store another value into the variable, which an ES module exports.
@@ -1005,6 +1043,11 @@ impl ModuleGraph {
         if remaining.is_empty() {
             return prefix;
         }
+        // The loader behind `import` takes such a file for an ES module: it runs in its turn among the modules, unless a `require` has come to it first.
+        let order = &self.plan.order;
+        let is_read_by_require = order.required_prefix_roots.binary_search(&root).is_ok();
+        let runs_in_its_turn =
+            |file: FileId| !is_read_by_require && order.is_es_module_to_imports[file.idx()];
         let mut is_seen = vec![false; linked.by_importer.len()];
         is_seen[root.idx()] = true;
         let mut importers = vec![root];
@@ -1019,8 +1062,10 @@ impl ModuleGraph {
                         importers.push(target);
                     }
                 } else if remaining.take(below, target) {
-                    let target = ModuleRef::File(target);
-                    prefix.push(self.face(target).unwrap_or(target));
+                    if !runs_in_its_turn(target) {
+                        let target = ModuleRef::File(target);
+                        prefix.push(self.face(target).unwrap_or(target));
+                    }
                     if remaining.is_empty() {
                         return prefix;
                     }

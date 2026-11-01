@@ -28,9 +28,7 @@
 
 module m0 path="value-of-odd-object-is-used-to-end.js" displayPath="value-of-odd-object-is-used-to-end.js" body=f0 namespaceLayout=L(m0)
 entry module=m0
-layout L0 kind=Instance name="P" module=m0 position=239 constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L1, L2] ownFieldCount=2
-layout L1 fields=[{key="a" declared={type=undefined|number flags=[IsExpected]}}, {key="b" declared={type=undefined|i32 flags=[IsExpected]}}] flags=[IsNeverAllocated] ownFieldCount=2 flow={allocation=NeverAllocated}
-layout L2 fields=[{key="b" declared={type=undefined|number flags=[IsExpected]}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+layout L0 kind=Instance name="P" module=m0 position=239 constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 variable g0 name="note" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="calls" module=m0 declared={type=i32|absent flags=[IsExpected]}
 variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
@@ -54,7 +52,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v13 = Convert v12 declared={type=builtin(JSONParse) flags=[IsExpected]} @773
     v14 = String string="{\"b\":1,\"a\":2,\"c\":3}" @784
     v15 = Call v13, v11, v14 calleeKey="parse" calleeName="JSON.parse" @778
-    v16 = Convert v15 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]} @773
+    v16 = Convert v15 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @773
     v17 = Integer integer=3 @824
     v18 = Integer integer=4 @827
     v19 = Construct v7, -, v17, v18 calleeName="P" @822 constructs
@@ -133,8 +131,8 @@ function f1 name="note" module=m0 position=306 flags=[HasExplicitName] length=1 
     v24 = Undefined @368
     Return v24 @368
 }
-function f2 name="work" module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|number|string|symbol|bigint|L0, v1: undefined|null|number|string|symbol|bigint|L0):
+function f2 name="work" module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: undefined|null|L0):
     Jump -> next b1() @390
   b1():
     v2 = PropGet v0 key="a" @424
@@ -207,9 +205,9 @@ function f3 name="P" module=m0 position=254 kind=BaseConstructor flags=[HasNewTa
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1() @254
   b1():
-    v3 = GetConstructPrototype v0 layout=L0 @233
-    v4 = NewObject v3 layout=L0 @233
-    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @233
+    v3 = GetConstructPrototype v0 layout=L0 @272
+    v4 = NewObject v3 layout=L0 @272
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @272
     v6 = Convert v5 declared={type=undefined|null|L0 flags=[IsExpected]} @263
     PropSet v6, v1 key="a" @263
     v8 = Convert v5 declared={type=undefined|null|L0 flags=[IsExpected]} @275
@@ -233,7 +231,7 @@ function f3 name="P" module=m0 position=254 kind=BaseConstructor flags=[HasNewTa
 # CHECK-NEXT: v2: "{\"b\":1,\"a\":2,\"c\":3}" = String string="{\"b\":1,\"a\":2,\"c\":3}"
 # CHECK-NEXT: v3: undefined = Undefined
 # CHECK-NEXT: v4: null|boolean|number|string|object = CallBuiltin -, v2, v3 overload=JSONParse/0 accessSite=1
-# CHECK-NEXT: v5: null|boolean|number|string|object ~ null|number|string|L0 = Upcast v4 castType=anything
+# CHECK-NEXT: v5: null|boolean|number|string|object ~ null|number|string|object = Upcast v4 castType=anything
 # CHECK-NEXT: v6: 3 = Integer integer=3
 # CHECK-NEXT: v7: 4 = Integer integer=4
 # CHECK-NEXT: v8: 1 = Integer integer=1
@@ -280,9 +278,9 @@ function f3 name="P" module=m0 position=254 kind=BaseConstructor flags=[HasNewTa
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="work"
-# CHECK: module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}, {type=L0}] results=[{type=i32}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=730 module=m0}, {callee=f1 callPosition=684 module=m0}, {callee=f1 callPosition=638 module=m0}, {callee=f1 callPosition=592 module=m0}, {callee=f1 callPosition=546 module=m0}, {callee=f1 callPosition=500 module=m0}, {callee=f1 callPosition=454 module=m0}] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|number|string|symbol|bigint|L0, v1: L0):
-# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0
+# CHECK: module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}, {type=L0}] results=[{type=i32}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=730 module=m0}, {callee=f1 callPosition=684 module=m0}, {callee=f1 callPosition=638 module=m0}, {callee=f1 callPosition=592 module=m0}, {callee=f1 callPosition=546 module=m0}, {callee=f1 callPosition=500 module=m0}, {callee=f1 callPosition=454 module=m0}] {
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: L0):
+# CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: L0):
 # CHECK-NEXT: v4: int[-2147483643, 2147483647] = GetSlot v3 key="a" receivers=[L0] level=Expected accessSite=12

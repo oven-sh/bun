@@ -1,5 +1,6 @@
 # The neighbors of the number fields: fields declared as an object, a string, an array, a function or an instance, each `| null`, whose visible stores are references and null, so that a narrow slot for a reference looks enough.
 # Hidden stores put numbers of every kind, booleans, undefined, bigints, symbols and references of other types there. Whatever was stored must come back, in its place among the keys, also after collections,
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f3
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls

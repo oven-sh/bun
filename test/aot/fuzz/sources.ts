@@ -15,6 +15,7 @@
 //                         (declarations-split-into-files.ts). Some files become JavaScript, some get incomplete or invalid declaration files, some
 //                         become packages in node_modules, some are imported through a barrel file
 //   <source>-rewritten    the same program transformed so that it prints the same and the compiler knows less about it (see asRewritten below)
+//   <source>-never-taken  the same program with code that this run never takes and that no build can rule out (see asNeverTaken below)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
@@ -56,6 +57,7 @@ export type Source = (seed: number, runner: Runner) => Generated | undefined;
 
 export const multiFileSuffix = "-multi-file";
 export const rewrittenSuffix = "-rewritten";
+export const neverTakenSuffix = "-never-taken";
 
 // At the top level of a file with an `import`, `this` is null in plain Bun and undefined in an executable; without one
 // it is an object in both. The transpiler knows which `this` is at the top level: in a module it prints null instead.
@@ -488,6 +490,31 @@ const asRewritten =
     };
   };
 
+/**
+ * The never-taken variant of a source: each program also holds code that this run never takes and that no build can rule
+ * out, done to the program's own variables and fields (see what-this-run-never-takes.ts). Nothing else is changed: the
+ * rewritten variant hides what a compiler could know, and this one gives it more to consider.
+ */
+const asNeverTaken =
+  (source: Source): Source =>
+  (seed, runner) => {
+    if (runner.name !== "product") return;
+    const whole = source(seed, runner);
+    if (!whole || whole.files || (whole.extension !== "ts" && whole.extension !== "js")) return;
+    // This parses the program with the TypeScript package, which is only loaded when this variant is used.
+    const { withWhatNeverRuns } =
+      require("./what-this-run-never-takes") as typeof import("./what-this-run-never-takes");
+    const text = withWhatNeverRuns(
+      `main.${whole.extension}`,
+      whole.text,
+      new Random(new Random(seed).next() ^ 0x2f1b07),
+    );
+    if (!text) return;
+    const { alone, ...rest } = whole;
+    // What a compiler believes of a whole program is believed of everything built together.
+    return { ...rest, text, source: whole.source + neverTakenSuffix, needsOwnBuild: true };
+  };
+
 /** The stored single-file programs that print the same compiled and plain and have no files stored beside them. */
 function singleFilePrograms(root: string) {
   const found: string[] = [];
@@ -669,12 +696,20 @@ const generated =
   };
 
 // A program that starts itself as a Worker names its own file. One that loads code the build never saw changes what the
-// compiler may assume about everything built beside it.
+// compiler may assume about everything built beside it. And where a fault rests on what the compiler believes of a whole program (which
+// constructors make an object, which functions can be reached), other programs in the same build hide it: of the faults that the last two
+// once found alone, fifty programs to a build showed a sixth and two thirds.
 const standAlone = new Set([
   "workers-terminated-midway",
   "unseen-code-mutates-arguments",
   "number-arrays-through-map-filter",
   "first-iteration-decides-loop-test",
+  "engine-made-instances",
+  "copied-members",
+  "values-a-host-describes",
+  "two-roads",
+  "objects-of-several-constructors-met-at-a-choice",
+  "functions-put-away-read-back-and-called",
 ]);
 const flagsOfSource: Record<string, string[]> = {
   "unseen-code-mutates-arguments": ["--aot-allow-code-from-disk"],
@@ -715,8 +750,12 @@ export async function allSources(
   alsoMultiFile = false,
 ): Promise<Record<string, Source>> {
   const sources = await singleFileSources(programsRoot, rejected);
-  const written = Object.entries(sources).map(
-    ([name, source]) => [name + rewrittenSuffix, asRewritten(source)] as const,
+  const written = Object.entries(sources).flatMap(
+    ([name, source]) =>
+      [
+        [name + rewrittenSuffix, asRewritten(source)],
+        [name + neverTakenSuffix, asNeverTaken(source)],
+      ] as const,
   );
   if (alsoMultiFile)
     for (const [name, source] of Object.entries(sources)) sources[name + multiFileSuffix] = asMultiFile(source);
@@ -799,6 +838,11 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "iterators-stepped-by-hand",
     "counters-stepped-by-one",
     "pairs-taken-apart-where-ways-meet",
+    "loop-aliases",
+    "engine-made-instances",
+    "copied-members",
+    "values-a-host-describes",
+    "two-roads",
     "captured-objects-in-counted-loops",
     "captured-numbers-in-counted-loops",
     "numbers-carried-across-yields-and-awaits",
@@ -808,6 +852,10 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "objects-of-several-constructors-met-at-a-choice",
     "fractions-and-negative-zero-carried-through-counted-loops",
     "straight-loops-over-typed-arrays",
+    "what-never-happens",
+    "words-held-over-the-turns-of-a-loop",
+    "functions-put-away-read-back-and-called",
+    "tables-asked-and-then-read",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(
@@ -1016,6 +1064,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "lists-made-of-values-computed-for-them",
     "variables-let-go-behind-suspensions",
     "loop-tests-whose-answer-is-read-again",
+    "hidden-writes",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

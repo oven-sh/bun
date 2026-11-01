@@ -16,7 +16,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::aot_options::ReplacedByTests;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
-use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestGlobals};
+use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironment, TestGlobals};
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
@@ -490,6 +490,21 @@ fn find_files_of_packages_reached_from(
     vm: &mut VirtualMachine,
     test_files: Vec<Box<[u8]>>,
 ) -> (Vec<Box<[u8]>>, Vec<Box<[u8]>>) {
+    let reached = find_files_reached_from(vm, test_files, &[]);
+    (reached.of_packages, reached.others)
+}
+
+struct FilesReached {
+    of_packages: Vec<Box<[u8]>>,
+    others: Vec<Box<[u8]>>,
+    by_preloads_alone: Vec<Box<[u8]>>,
+}
+
+fn find_files_reached_from(
+    vm: &mut VirtualMachine,
+    test_files: Vec<Box<[u8]>>,
+    preloads: &[Box<[u8]>],
+) -> FilesReached {
     let mut seen = bun_collections::StringSet::new();
     let mut of_packages = Vec::new();
     let mut others = Vec::new();
@@ -516,7 +531,22 @@ fn find_files_of_packages_reached_from(
         others.append(&mut level);
         level = next;
     }
-    (of_packages, others)
+    let mut by_preloads_alone = Vec::new();
+    let mut level = preloads.to_vec();
+    while !level.is_empty() {
+        let mut next = find_files_imported_by(vm, &level);
+        next.retain(|path| !strings::contains(path, b"/node_modules/") && !seen.contains(path));
+        for path in &next {
+            let _ = seen.insert(path);
+        }
+        by_preloads_alone.extend_from_slice(&next);
+        level = next;
+    }
+    FilesReached {
+        of_packages,
+        others,
+        by_preloads_alone,
+    }
 }
 
 static FILES_TO_PLAN_LAYERS_FROM: bun_threading::Guarded<Option<Vec<Box<[u8]>>>> =
@@ -1450,8 +1480,32 @@ fn find_files_of_preloads(vm: &mut VirtualMachine, preloads: &[Box<[u8]>]) -> Ve
 fn find_what_tests_replace<Path: core::ops::Deref<Target = [u8]>>(
     vm: &mut VirtualMachine,
     test_files: &[Path],
+    files_reached_from_them: &[Box<[u8]>],
+    reached_by_preloads_alone: &[Box<[u8]>],
     preloads: &[Box<[u8]>],
     product_replaces_nothing: bool,
+    has_file_with_window: bool,
+) -> ReplacedByTests {
+    let test_files: Vec<Vec<u8>> = test_files.iter().map(|path| path.to_vec()).collect();
+    find_what_files_replace(
+        vm,
+        &test_files,
+        files_reached_from_them,
+        reached_by_preloads_alone,
+        preloads,
+        product_replaces_nothing,
+        has_file_with_window,
+    )
+}
+
+fn find_what_files_replace(
+    vm: &mut VirtualMachine,
+    test_files: &[Vec<u8>],
+    files_reached_from_them: &[Box<[u8]>],
+    reached_by_preloads_alone: &[Box<[u8]>],
+    preloads: &[Box<[u8]>],
+    product_replaces_nothing: bool,
+    has_file_with_window: bool,
 ) -> ReplacedByTests {
     let preloads = find_files_of_preloads(vm, preloads);
     // Every name that a test file or a helper imports is asked for, and whoever loads the file says what is wrong with one.
@@ -1463,9 +1517,10 @@ fn find_what_tests_replace<Path: core::ops::Deref<Target = [u8]>>(
             core::ptr::NonNull::from(&mut unread_log),
         )
     };
-    let files = test_files.iter().map(|path| path.to_vec());
-    let files: Vec<Vec<u8>> = files
-        .chain(preloads.iter().map(|path| path.to_vec()))
+    let others = files_reached_from_them.iter().chain(&preloads);
+    let others: Vec<Vec<u8>> = others.map(|path| path.to_vec()).collect();
+    let reached_by_preloads_alone: Vec<Vec<u8>> = (reached_by_preloads_alone.iter())
+        .map(|path| path.to_vec())
         .collect();
     let threads = usize::from(bun_core::get_thread_count());
     let resolve = &mut |importer: &[u8], specifier: &[u8], is_for_require: bool| {
@@ -1481,7 +1536,22 @@ fn find_what_tests_replace<Path: core::ops::Deref<Target = [u8]>>(
             .ok()?;
         Some(result.path_pair.primary.text().to_vec())
     };
-    bun_aot::builtins::find_what_tests_replace(&files, threads, product_replaces_nothing, resolve)
+    let mut replaced = bun_aot::builtins::find_what_tests_replace(
+        test_files,
+        &others,
+        &reached_by_preloads_alone,
+        threads,
+        product_replaces_nothing,
+        resolve,
+    );
+    if has_file_with_window {
+        replaced
+            .builtins
+            .extend(bun_aot::builtins::globals_that_a_window_replaces());
+        replaced.builtins.sort_unstable();
+        replaced.builtins.dedup();
+    }
+    replaced
 }
 
 // A trial. The build does not see the test files. This file stands in for what they do: it loads code under names that nothing says. The condition is one that flow cannot
@@ -2426,6 +2496,27 @@ fn add_files_named(named: &NamedByTests<'_>, files: &mut Vec<Box<[u8]>>) {
             files.push(Box::from(&**path));
         }
     }
+}
+
+fn has_file_with_window<'a>(
+    mut test_files: impl Iterator<Item = &'a [u8]>,
+    environment_of_project: Option<TestEnvironment>,
+) -> bool {
+    environment_of_project.is_some_and(|kind| kind != TestEnvironment::Node)
+        || test_files.any(|path| Environment::of_file(path, None).has_window())
+}
+
+fn make_stand_in_for_window() -> Box<[u8]> {
+    let text = b"const name = process.argv.at(-1)!;
+if (name === \"\\0never\") (globalThis as any)[name] = require(name);
+";
+    let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
+        FileSystem::get().top_level_dir(),
+        &[b"node_modules/.cache/bun-test-window.ts"],
+    )
+    .to_vec();
+    run_compiled::set_stand_in(&path, text);
+    path.into_boxed_slice()
 }
 
 fn append_quoted(text: &mut Vec<u8>, string: &[u8]) {
@@ -3560,7 +3651,7 @@ fn with_forward_slashes(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 }
 
 /// Leaked on purpose: every thread's transpiler calls it until the process exits.
-fn react_compiler_filter(
+pub(crate) fn react_compiler_filter(
     scope: &ReactCompilerScope,
     root: &'static [u8],
 ) -> &'static (dyn Fn(&[u8]) -> bool + Sync) {
@@ -4178,8 +4269,7 @@ impl CommandLineReporter {
             && self.worker_ipc_file_idx.is_none()
             && let Some(timings) = self.timings.as_mut()
         {
-            let options = &self.jest.test_options;
-            timings.write(options.shard.is_some(), options.parallel);
+            timings.write(self.jest.test_options.shard.is_some());
         }
     }
 
@@ -4576,7 +4666,8 @@ impl TestCommand {
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         jsc::initialize(jsc::InitializeOptions {
-            short_lived_globals: ctx.test_options.isolate && !ctx.test_options.isolate_modules,
+            short_lived_globals: ctx.test_options.isolate
+                && !run_compiled::test_files_share_global(ctx),
             runs_compiled_code: run_compiled::runs_compiled_code(),
             locks_builtins: run_compiled::is_checked(),
             ..Default::default()
@@ -4752,7 +4843,7 @@ impl TestCommand {
             vm.test_isolation_enabled = true;
             vm.auto_killer.enabled = true;
         }
-        vm.test_isolation_state.shares_global = ctx.test_options.isolate_modules;
+        vm.test_isolation_state.shares_global = run_compiled::test_files_share_global(ctx);
         crate::jsc_hooks::timer_all_mut().zero_delay_is_due_when_idle = true;
 
         if ctx.test_options.coverage.enabled {
@@ -4808,15 +4899,23 @@ impl TestCommand {
                 )
             };
             let mut entry_points = run_compiled::read_test_part();
+            let test_files = entry_points.clone();
+            if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                aot.test_files_of_run = test_files.iter().map(|path| path.to_vec()).collect();
+                aot.preloads_of_test_run = ctx.preloads.iter().map(|path| path.to_vec()).collect();
+            }
             let test_files_and_preloads: Vec<Box<[u8]>> =
                 (entry_points.iter().chain(&ctx.preloads).cloned()).collect();
+            let has_window = has_file_with_window(
+                entry_points.iter().map(|path| &**path),
+                ctx.test_options.environment,
+            );
             // What the test files share is a program of its own, which is built once. The build does not see the test files.
             let builds_what_is_shared = run_compiled::builds_what_test_parts_share();
             if let Some(aot) = (ctx.bundler_options.aot.as_mut()).filter(|_| builds_what_is_shared)
             {
                 aot.main_modules_beside_entry_points =
                     entry_points.iter().map(|path| path.to_vec()).collect();
-                aot.preloads_of_test_run = ctx.preloads.iter().map(|path| path.to_vec()).collect();
             }
             let is_above_what_is_shared = run_compiled::is_above_program_of_run();
             let builds_packages_alone = run_compiled::builds_packages_alone();
@@ -4826,9 +4925,13 @@ impl TestCommand {
                 !is_above_what_is_shared && !run_compiled::is_above_library_of_this_bun();
             // The files that the build does not see and that run beside it.
             let mut files_above = None;
+            let mut reached_by_preloads_alone = None;
             if builds_packages_alone {
                 entry_points.extend(ctx.preloads.iter().cloned());
-                let (of_packages, others) = find_files_of_packages_reached_from(vm, entry_points);
+                let preloads = find_files_of_preloads(vm, &ctx.preloads);
+                let reached = find_files_reached_from(vm, entry_points, &preloads);
+                let (of_packages, others) = (reached.of_packages, reached.others);
+                reached_by_preloads_alone = Some(reached.by_preloads_alone);
                 let only_imported = find_entry_points_only_imported(&of_packages);
                 let required = find_entry_points_required(&of_packages);
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
@@ -4850,11 +4953,27 @@ impl TestCommand {
                 }
             } else if builds_what_is_shared && !is_above_what_is_shared {
                 // The build is told what they replace. The builds above it take over what it ends with.
-                let files_above = files_above.as_ref().unwrap_or(&entry_points);
+                let files_above = files_above.as_deref().unwrap_or_default();
                 let closed = (ctx.bundler_options.aot.as_ref())
                     .is_some_and(|aot| aot.only_tests_load_code_from_disk);
-                let replaced_by_tests =
-                    find_what_tests_replace(vm, files_above, &ctx.preloads, closed);
+                let reached_by_preloads_alone = reached_by_preloads_alone.unwrap_or_else(|| {
+                    let preloads = find_files_of_preloads(vm, &ctx.preloads);
+                    let imported = find_files_imported_by(vm, &preloads);
+                    let mut imported = imported.iter();
+                    if !closed || imported.all(|path| strings::contains(path, b"/node_modules/")) {
+                        return Vec::new();
+                    }
+                    find_files_reached_from(vm, test_files.clone(), &preloads).by_preloads_alone
+                });
+                let replaced_by_tests = find_what_tests_replace(
+                    vm,
+                    &test_files,
+                    files_above,
+                    &reached_by_preloads_alone,
+                    &ctx.preloads,
+                    closed,
+                    has_window,
+                );
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
                     aot.replaced_by_tests = replaced_by_tests;
                 }
@@ -4952,6 +5071,9 @@ impl TestCommand {
                 entry_points.push(stand_in.unwrap_or_else(|| {
                     make_stand_in_for_files_from_disk(holds_library, spelled.as_ref())
                 }));
+            }
+            if has_window {
+                entry_points.push(make_stand_in_for_window());
             }
             drop(log_scope);
             run_compiled::start(ctx, entry_points, file_count);
@@ -5275,6 +5397,10 @@ impl TestCommand {
         if !splits_files && run_compiled::is_requested(ctx) && !test_files.is_empty() {
             let runs_files_from_disk = env_var::BUN_AOT_TEST_FILES_FROM_DISK.get() == Some(true)
                 && (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| !aot.checks_only);
+            if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                aot.test_files_of_run = test_files.iter().map(|path| path.to_vec()).collect();
+                aot.preloads_of_test_run = ctx.preloads.iter().map(|path| path.to_vec()).collect();
+            }
             let mut entry_points: Vec<Box<[u8]>> = match runs_files_from_disk {
                 true => find_files_imported_by(vm, test_files),
                 false => test_files.iter().map(|path| Box::from(&**path)).collect(),
@@ -5291,6 +5417,11 @@ impl TestCommand {
             });
             let file_count = entry_points.len();
             entry_points.extend(ctx.preloads.iter().cloned());
+            let files = test_files.iter().map(|path| &**path);
+            let has_window = has_file_with_window(files, ctx.test_options.environment);
+            if has_window {
+                entry_points.push(make_stand_in_for_window());
+            }
             if runs_files_from_disk {
                 entry_points.push(stand_in.unwrap_or_else(|| {
                     let files = test_files.iter().map(|path| Box::from(&**path));
@@ -5302,8 +5433,15 @@ impl TestCommand {
             if (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| !aot.checks_only) {
                 let closed = (ctx.bundler_options.aot.as_ref())
                     .is_some_and(|aot| aot.only_tests_load_code_from_disk);
-                let replaced_by_tests =
-                    find_what_tests_replace(vm, test_files, &ctx.preloads, closed);
+                let replaced_by_tests = find_what_tests_replace(
+                    vm,
+                    test_files,
+                    &[],
+                    &[],
+                    &ctx.preloads,
+                    closed,
+                    has_window,
+                );
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
                     aot.loads_code_from_disk |= runs_files_from_disk;
                     aot.host_runs_files_from_disk = names_what_tests_use;
@@ -5321,9 +5459,6 @@ impl TestCommand {
                 _ if aot.is_some_and(|aot| !aot.checks_only) => file_count,
                 _ => 0,
             };
-            if let Some(aot) = ctx.bundler_options.aot.as_mut() {
-                aot.has_globals_of_vitest = ctx.test_options.globals == Some(TestGlobals::Vitest);
-            }
             run_compiled::start(ctx, entry_points, independent_count);
         }
 
@@ -5715,6 +5850,9 @@ impl TestCommand {
             for refusal in &refused {
                 pretty_error!("  {}\n", bstr::BStr::new(refusal));
             }
+            pretty_error!(
+                "<d>Only the files of your tests can replace a built-in. To make a helper one of them, move it into a test file's folder or below it, import from \"bun:test\" in it, or name it as a preload.<r>\n",
+            );
         }
         Output::flush();
 
@@ -6105,6 +6243,18 @@ impl TestCommand {
                     Output::flush();
                     // As plain counts a file that does not load: an error between tests.
                     reporter.jest.unhandled_errors_between_tests += 1;
+                    let said = run_compiled::find_what_build_said_of_refused_file(file_path);
+                    let said = said.unwrap_or_default();
+                    let end = strings::index_of_char_usize(said, b'\n').unwrap_or(said.len());
+                    reporter.record_unhandled_error(
+                        file_id,
+                        TestFailure {
+                            name: b"BuildMessage".to_vec(),
+                            message: said[..end].to_vec(),
+                            body: said.get(end + 1..).unwrap_or_default().to_vec(),
+                            uncaught: false,
+                        },
+                    );
                 }
             }
 

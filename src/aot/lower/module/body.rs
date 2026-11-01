@@ -90,6 +90,10 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn lower_module_body(&mut self, function: FunctionId) {
+        // The file defines the variable, whether or not a file of the program imports it.
+        if super::imports::holds_mock_in_variable(self.inputs.modules, self.file) {
+            self.ensure_variable(VariableKey::MockOf(self.file));
+        }
         match self.inputs.modules.kind(self.file) {
             ModuleKind::SourceText | ModuleKind::Data => self.lower_es_module_body(function),
             ModuleKind::CommonJs => self.lower_commonjs_body(function),

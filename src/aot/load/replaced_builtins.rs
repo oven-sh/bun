@@ -76,6 +76,8 @@ pub struct FoundInFile {
     pub files_named: Vec<Vec<u8>>,
     /// What else it imports, as it writes it: packages, and modules of Bun.
     pub other_modules_named: Vec<Vec<u8>>,
+    /// `ReplacedMembersSought::NamesAddedByProduct`
+    pub is_of_product: bool,
     /// `ReplacedByTests::modules`, `exports` and `any_module`, each module as the file writes it.
     pub modules: Vec<Vec<u8>>,
     /// Those of `modules` that the `build.module(..)` of a plugin names.
@@ -213,6 +215,43 @@ pub fn look_at_files_of_run(
     });
 }
 
+/// Of a test file or a preload, for the run: a build asks the same of its files in `import_used_names`.
+pub fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let arena = session.arena();
+    let parse_options = CompileParseOptions {
+        path,
+        script_kind: None,
+        experimental_decorators: false,
+        every_file_is_a_module: false,
+        reads_jsdoc: false,
+        keeps_function_directives: false,
+    };
+    let mut hir = parse_for_compile(arena, &parse_options, text, &atoms);
+    if hir.has_errors || matches!(hir.kind, FileKind::Json | FileKind::Declaration) {
+        return false;
+    }
+    hir.text = Cow::Borrowed(text);
+    let fold = FoldInputs::new(FoldOptions::default(), arena);
+    let bind_options = BindOptions {
+        runtime: Some(RuntimeBindOptions::default()),
+        ..BindOptions::default()
+    };
+    let file = FileInputs {
+        declared_module_type: DeclaredModuleType::Unknown,
+        import_meta_main: None,
+        is_library: false,
+        host_values: &[],
+        jsx: JsxMode::Classic,
+        own_name: arena.alloc_slice_copy(bun_paths::resolve_path::basename(path)),
+    };
+    let (_, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
+    analysis.import_sites.iter().any(|site| {
+        matches!(site.specifier, ImportSpecifier::Constant(it) if atoms.bytes(it) == b"vitest")
+    })
+}
+
 struct Look<'s> {
     session: &'s Session,
     atoms: Interner<'s>,
@@ -291,7 +330,10 @@ impl<'s> Look<'s> {
             },
             import_meta_main: None,
         };
-        let file_of_run = FileOfTestRun::default();
+        let file_of_run = FileOfTestRun {
+            has_names_of_every_runner: true,
+            ..FileOfTestRun::default()
+        };
         if import_used_names(arena, atoms, &mut request, file_of_run) == TreeChange::Changed {
             (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
         }
@@ -379,6 +421,12 @@ impl<'s> Look<'s> {
             })
         });
         let loaded_files: Vec<BuiltinsOfLoadedFile> = loaded_files.collect();
+        let replaced_members_sought = members_sought_in_file_outside_packages(
+            &targets,
+            self.is_beside_test_files.get(),
+            self.product.get(),
+        );
+        found.is_of_product = replaced_members_sought == ReplacedMembersSought::NamesAddedByProduct;
         let resolved = resolve_file(&ResolveInput {
             hir: &hir,
             bound: &bound,
@@ -389,11 +437,7 @@ impl<'s> Look<'s> {
             platform: host_platform(),
             dialect: SourceDialect::Program,
             replaced: &[],
-            replaced_members_sought: members_sought_in_file_outside_packages(
-                &targets,
-                self.is_beside_test_files.get(),
-                self.product.get(),
-            ),
+            replaced_members_sought,
         });
         let imported = analysis
             .import_sites
@@ -702,6 +746,25 @@ impl<'s> Look<'s> {
         for expr in (0..hir.exprs.len() as u32).map(ExprId) {
             match hir[expr].kind {
                 ExprKind::String(text) => self.look_at_code_in_texts(&[text_of(text)], found),
+                // `JSON.parse('[["console", "debug"]]')`: a table, as one that is written.
+                ExprKind::Call(call)
+                    if resolved.builtin_of_expression(hir[call].callee)
+                        == Some(BuiltinId::JSONParse) =>
+                {
+                    let operand = hir.ids(hir[call].args).next();
+                    let operand = operand.map(|operand| hir.skip_type_assertions(operand));
+                    if let Some(FoldedValue::Constant(Constant::String(text))) =
+                        operand.map(|operand| analysis.decisions.constant(&hir, operand))
+                    {
+                        let literal = [b"(", text_of(text), b");"].concat();
+                        let mut inner = FoundInFile::default();
+                        if self.look_at_text(b"/text.ts", &literal, &mut inner)
+                            && !inner.has_syntax_error
+                        {
+                            found.members.extend(inner.members);
+                        }
+                    }
+                }
                 ExprKind::Template { exprs } => {
                     let texts = hir.ids(hir.template_texts(exprs));
                     let texts: Vec<&[u8]> = texts.map(text_of).collect();

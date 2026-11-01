@@ -24,7 +24,6 @@ use crate::load::is_in_node_modules;
 use crate::load::loader_aliases::{
     LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
 };
-use crate::load::replaced_by_tests::without_extension;
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::sources::{SourceKind, parsed_source};
 use crate::modules::evicted::find_whole_paths_changed_on_disk;
@@ -250,17 +249,19 @@ pub(crate) struct FilesOfTests {
 }
 
 impl FilesOfTests {
-    pub(crate) fn new(test_files_and_preloads: Vec<Vec<u8>>) -> Self {
-        let is_test_file = |path: &&Vec<u8>| {
-            const ENDS: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
-            (ENDS.iter()).any(|end| without_extension(path).ends_with(end))
-        };
-        let test_files = test_files_and_preloads.iter().filter(is_test_file);
-        let folders = test_files.map(|path| dirname::<platform::Posix>(path).to_vec());
+    /// `test_files`: what the runner runs as test files. Their names say nothing: `bun test ./checks/latest.ts`.
+    pub(crate) fn new(test_files_and_preloads: Vec<Vec<u8>>, test_files: &[Vec<u8>]) -> Self {
+        let folders = test_files.iter();
+        let folders = folders.map(|path| dirname::<platform::Posix>(path).to_vec());
         Self {
             folders: folders.collect(),
             files: test_files_and_preloads.into_iter().collect(),
         }
+    }
+
+    /// A test file or a preload itself.
+    pub(crate) fn lists(&self, path: &[u8]) -> bool {
+        self.files.contains(path)
     }
 
     pub(crate) fn holds(&self, path: &[u8]) -> bool {
@@ -285,17 +286,18 @@ impl FilesOfTests {
 }
 
 // A text that the file evaluates imports what it likes, and so does whoever gets a loader from the file.
+// The word `require` opens nothing: `require("node:path")` is as closed as an import of it. `loads_unknown_modules` says where a loader is handed about or anything else runs code
+// that nobody has seen, and `file_loads_by_unknown_path` where a loader is given a name that the build does not know.
 fn file_mentions_evaluator_or_loader(application: &Files<'_>, file: FileId) -> bool {
-    let opens = BuiltinFlags::EVALUATES_TEXT | BuiltinFlags::RUNS_UNSEEN_CODE;
     parsed_source(application, file).is_none_or(|source| {
         source.builtins.loads_unknown_modules()
             || (source.builtins.mentioned().iter())
-                .any(|&id| table::entry(id).flags.intersects(opens))
+                .any(|&id| table::entry(id).flags.contains(BuiltinFlags::EVALUATES_TEXT))
     })
 }
 
 fn is_of_tests(application: &Files<'_>, file: FileId) -> bool {
-    parsed_source(application, file).is_none_or(|source| source.is_of_tests)
+    parsed_source(application, file).is_none_or(|source| source.is_of_tests())
 }
 
 pub(crate) fn files_of_tests_load_by_unknown_path(application: &Files<'_>) -> bool {
@@ -973,11 +975,23 @@ mod tests {
     use crate::load::runtime_modules::RuntimeModules;
     use crate::load::runtime_roots::{FurtherLibraryCode, collect_runtime_roots};
 
-    fn files_of_tests(is_case_sensitive: bool, listed: &[&str]) -> FilesOfTests {
-        let paths = listed
-            .iter()
-            .map(|path| to_path(path.as_bytes(), is_case_sensitive));
-        FilesOfTests::new(paths.map(|path| path.into_owned()).collect())
+    fn files_of_tests(is_case_sensitive: bool, test_files: &[&str]) -> FilesOfTests {
+        files_of_tests_and_others(is_case_sensitive, test_files, &[])
+    }
+
+    fn files_of_tests_and_others(
+        is_case_sensitive: bool,
+        test_files: &[&str],
+        others: &[&str],
+    ) -> FilesOfTests {
+        let to_paths = |listed: &[&str]| -> Vec<Vec<u8>> {
+            let paths = listed.iter();
+            let paths = paths.map(|path| to_path(path.as_bytes(), is_case_sensitive));
+            paths.map(|path| path.into_owned()).collect()
+        };
+        let test_files = to_paths(test_files);
+        let listed = [&test_files[..], &to_paths(others)[..]].concat();
+        FilesOfTests::new(listed, &test_files)
     }
 
     fn holds(files: &FilesOfTests, is_case_sensitive: bool, path: &str) -> bool {
@@ -986,13 +1000,9 @@ mod tests {
 
     #[test]
     fn files_of_tests_are_the_listed_files_and_what_lies_in_or_below_the_folder_of_a_test_file() {
-        let listed = [
-            "/p/test/a.test.ts",
-            "/p/setup/preload.ts",
-            "/p/node_modules/.cache/stand-in.ts",
-        ];
-        let files = files_of_tests(true, &listed);
-        for path in listed {
+        let others = ["/p/setup/preload.ts", "/p/node_modules/.cache/stand-in.ts"];
+        let files = files_of_tests_and_others(true, &["/p/test/a.test.ts"], &others);
+        for path in ["/p/test/a.test.ts", others[0], others[1]] {
             assert!(holds(&files, true, path), "{path}");
         }
         assert!(holds(&files, true, "/p/test/helper.ts"));
@@ -1008,13 +1018,13 @@ mod tests {
     }
 
     #[test]
-    fn every_ending_that_names_a_test_file_makes_its_folder_one_of_the_tests() {
-        for name in ["a.test.ts", "a_test.js", "a.spec.mjs", "a_spec.tsx"] {
+    fn the_runner_says_what_a_test_file_is_and_its_name_says_nothing() {
+        for name in ["a.test.ts", "a_spec.tsx", "latest.ts", "App.Test.ts"] {
             let listed = format!("/p/checks/{name}");
             let files = files_of_tests(true, &[&listed]);
             assert!(holds(&files, true, "/p/checks/helper.ts"), "{name}");
         }
-        let files = files_of_tests(true, &["/p/checks/latest.ts"]);
+        let files = files_of_tests_and_others(true, &[], &["/p/checks/setup.test.ts"]);
         assert!(!holds(&files, true, "/p/checks/helper.ts"));
     }
 

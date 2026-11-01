@@ -1,241 +1,775 @@
 # The n-body benchmark, with classes.
+# -- source: n-body.ts
+# // The n-body benchmark, with classes.
+# class Body {
+#   x: number; y: number; z: number; vx: number; vy: number; vz: number; mass: number
+#   constructor(x: number, y: number, z: number, vx: number, vy: number, vz: number, mass: number) {
+#     this.x = x; this.y = y; this.z = z; this.vx = vx; this.vy = vy; this.vz = vz; this.mass = mass
+#   }
+# }
+# const PI = 3.141592653589793, SOLAR_MASS = 4 * PI * PI, DAYS = 365.24
+# function bodies(): Body[] {
+#   return [
+#     new Body(0, 0, 0, 0, 0, 0, SOLAR_MASS),
+#     new Body(4.84143144246472082945e+00, -1.16032004402742839362e+00, -1.03622044471123109494e-01, 1.66007664274403694959e-03 * DAYS, 7.69901118419740425080e-03 * DAYS, -6.90460016972063023554e-05 * DAYS, 9.54791938424326609124e-04 * SOLAR_MASS),
+#     new Body(8.34336671824457987790e+00, 4.12479856412430479268e+00, -4.03523417114321381293e-01, -2.76742510726862411004e-03 * DAYS, 4.99852801234917238954e-03 * DAYS, 2.30417297573763929463e-05 * DAYS, 2.85885980666130812119e-04 * SOLAR_MASS),
+#     new Body(1.28943695621391310164e+01, -1.51111514016986312525e+01, -2.23307578892655734398e-01, 2.96460137564761618652e-03 * DAYS, 2.37847173959480950187e-03 * DAYS, -2.96589568540237556131e-05 * DAYS, 4.36624404335156298062e-05 * SOLAR_MASS),
+#     new Body(1.53796971148509165498e+01, -2.59193146099879641146e+01, 1.79258772950371181757e-01, 2.68067772490389322511e-03 * DAYS, 1.62824170038242295431e-03 * DAYS, -9.51592254519715870971e-05 * DAYS, 5.15138902046611451304e-05 * SOLAR_MASS),
+#   ]
+# }
+# function offsetMomentum(b: Body[]): void {
+#   let px = 0, py = 0, pz = 0
+#   for (let i = 0; i < b.length; i++) { const o = b[i]!; px += o.vx * o.mass; py += o.vy * o.mass; pz += o.vz * o.mass }
+#   b[0]!.vx = -px / SOLAR_MASS; b[0]!.vy = -py / SOLAR_MASS; b[0]!.vz = -pz / SOLAR_MASS
+# }
+# function advance(b: Body[], dt: number): void {
+#   const n = b.length
+#   for (let i = 0; i < n; i++) {
+#     const bi = b[i]!
+#     for (let j = i + 1; j < n; j++) {
+#       const bj = b[j]!
+#       const dx = bi.x - bj.x, dy = bi.y - bj.y, dz = bi.z - bj.z
+#       const d2 = dx * dx + dy * dy + dz * dz
+#       const mag = dt / (d2 * Math.sqrt(d2))
+#       bi.vx -= dx * bj.mass * mag; bi.vy -= dy * bj.mass * mag; bi.vz -= dz * bj.mass * mag
+#       bj.vx += dx * bi.mass * mag; bj.vy += dy * bi.mass * mag; bj.vz += dz * bi.mass * mag
+#     }
+#   }
+#   for (let i = 0; i < n; i++) { const o = b[i]!; o.x += dt * o.vx; o.y += dt * o.vy; o.z += dt * o.vz }
+# }
+# function energy(b: Body[]): number {
+#   let e = 0
+#   for (let i = 0; i < b.length; i++) {
+#     const bi = b[i]!
+#     e += 0.5 * bi.mass * (bi.vx * bi.vx + bi.vy * bi.vy + bi.vz * bi.vz)
+#     for (let j = i + 1; j < b.length; j++) { const bj = b[j]!; const dx = bi.x - bj.x, dy = bi.y - bj.y, dz = bi.z - bj.z; e -= (bi.mass * bj.mass) / Math.sqrt(dx * dx + dy * dy + dz * dz) }
+#   }
+#   return e
+# }
+# const t0 = performance.now()
+# const sys = bodies(); offsetMomentum(sys)
+# for (let i = 0; i < 5000000; i++) advance(sys, 0.01)
+# console.log("nbody", energy(sys).toFixed(9), (performance.now() - t0).toFixed(0) + "ms")
+# -- end of source
 # FORM: AsRead
-# RUN: lower-to-air size f2 f3
+# RUN: lower-to-air size f3 f4
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
 module m0 path="n-body.ts" displayPath="n-body.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0
-layout L0 kind=Instance name="Body" module=m0 position=45 constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}, {key="vx" declared={type=number} flags=[IsRequired]}, {key="vy" declared={type=number} flags=[IsRequired]}, {key="vz" declared={type=number} flags=[IsRequired]}, {key="mass" declared={type=number} flags=[IsRequired]}] ownFieldCount=7
-variable g0 name="Body" module=m0 declared={type=absent|f4 flags=[IsFromCompiler]} flags=[IsImmutable]
-variable g1 name="SOLAR_MASS" module=m0 declared={type=number|absent} flags=[IsImmutable]
+typesite w0 module=m0 position=346 kind=Variable
+typesite w1 module=m0 position=370 kind=Variable
+typesite w2 module=m0 position=396 kind=Variable
+typesite w3 module=m0 position=410 kind=Result
+typesite w4 module=m0 position=1509 kind=Parameter
+typesite w5 module=m0 position=1784 kind=Parameter
+typesite w6 module=m0 position=1795 kind=Parameter
+typesite w7 module=m0 position=2420 kind=Parameter
+typesite w8 module=m0 position=2404 kind=Result
+typesite w9 module=m0 position=150 kind=Parameter
+typesite w10 module=m0 position=161 kind=Parameter
+typesite w11 module=m0 position=172 kind=Parameter
+typesite w12 module=m0 position=183 kind=Parameter
+typesite w13 module=m0 position=195 kind=Parameter
+typesite w14 module=m0 position=207 kind=Parameter
+typesite w15 module=m0 position=219 kind=Parameter
+typesite w16 module=m0 position=54 kind=Field
+typesite w17 module=m0 position=65 kind=Field
+typesite w18 module=m0 position=76 kind=Field
+typesite w19 module=m0 position=87 kind=Field
+typesite w20 module=m0 position=99 kind=Field
+typesite w21 module=m0 position=111 kind=Field
+typesite w22 module=m0 position=123 kind=Field
+typesite w23 module=m0 position=2805 kind=CallResult
+typesite w24 module=m0 position=2835 kind=CallResult
+typesite w25 module=m0 position=2874 kind=Variable
+typesite w26 module=m0 position=2939 kind=CallResult
+typesite w27 module=m0 position=2964 kind=CallResult
+typesite w28 module=m0 position=2963 kind=CallResult
+typesite w29 module=m0 position=453 kind=CallResult
+typesite w30 module=m0 position=497 kind=CallResult
+typesite w31 module=m0 position=744 kind=CallResult
+typesite w32 module=m0 position=990 kind=CallResult
+typesite w33 module=m0 position=1237 kind=CallResult
+typesite w34 module=m0 position=1534 kind=Variable
+typesite w35 module=m0 position=1542 kind=Variable
+typesite w36 module=m0 position=1550 kind=Variable
+typesite w37 module=m0 position=1568 kind=Variable
+typesite w38 module=m0 position=1579 kind=PropertyRead
+typesite w39 module=m0 position=1606 kind=Element
+typesite w40 module=m0 position=1679 kind=Element
+typesite w41 module=m0 position=1679 kind=Field
+typesite w42 module=m0 position=1708 kind=Element
+typesite w43 module=m0 position=1708 kind=Field
+typesite w44 module=m0 position=1737 kind=Element
+typesite w45 module=m0 position=1737 kind=Field
+typesite w46 module=m0 position=1827 kind=PropertyRead
+typesite w47 module=m0 position=1847 kind=Variable
+typesite w48 module=m0 position=1883 kind=Element
+typesite w49 module=m0 position=1902 kind=Variable
+typesite w50 module=m0 position=1962 kind=Variable
+typesite w51 module=m0 position=1980 kind=Variable
+typesite w52 module=m0 position=1998 kind=Variable
+typesite w53 module=m0 position=2027 kind=Variable
+typesite w54 module=m0 position=2072 kind=Variable
+typesite w55 module=m0 position=1944 kind=Element
+typesite w56 module=m0 position=2089 kind=CallResult
+typesite w57 module=m0 position=2110 kind=Field
+typesite w58 module=m0 position=2139 kind=Field
+typesite w59 module=m0 position=2168 kind=Field
+typesite w60 module=m0 position=2202 kind=Field
+typesite w61 module=m0 position=2231 kind=Field
+typesite w62 module=m0 position=2260 kind=Field
+typesite w63 module=m0 position=2309 kind=Variable
+typesite w64 module=m0 position=2340 kind=Element
+typesite w65 module=m0 position=2347 kind=Field
+typesite w66 module=m0 position=2365 kind=Field
+typesite w67 module=m0 position=2383 kind=Field
+typesite w68 module=m0 position=2447 kind=Variable
+typesite w69 module=m0 position=2464 kind=Variable
+typesite w70 module=m0 position=2475 kind=PropertyRead
+typesite w71 module=m0 position=2507 kind=Element
+typesite w72 module=m0 position=2599 kind=Variable
+typesite w73 module=m0 position=2614 kind=PropertyRead
+typesite w74 module=m0 position=2655 kind=Variable
+typesite w75 module=m0 position=2673 kind=Variable
+typesite w76 module=m0 position=2691 kind=Variable
+typesite w77 module=m0 position=2642 kind=Element
+typesite w78 module=m0 position=2736 kind=CallResult
+typesite w79 module=m0 position=239 kind=Field
+typesite w80 module=m0 position=251 kind=Field
+typesite w81 module=m0 position=263 kind=Field
+typesite w82 module=m0 position=275 kind=Field
+typesite w83 module=m0 position=289 kind=Field
+typesite w84 module=m0 position=303 kind=Field
+typesite w85 module=m0 position=317 kind=Field
+layout L0 kind=Instance name="Body" module=m0 position=45 constructor=f5 fields=[{key="x" declared={type=number site=w16} flags=[IsRequired]}, {key="y" declared={type=number site=w17} flags=[IsRequired]}, {key="z" declared={type=number site=w18} flags=[IsRequired]}, {key="vx" declared={type=number site=w19} flags=[IsRequired]}, {key="vy" declared={type=number site=w20} flags=[IsRequired]}, {key="vz" declared={type=number site=w21} flags=[IsRequired]}, {key="mass" declared={type=number site=w22} flags=[IsRequired]}] ownFieldCount=7
+variable g0 name="Body" module=m0 declared={type=absent|f5 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 name="SOLAR_MASS" module=m0 declared={type=number|absent site=w1} flags=[IsImmutable]
+variable g2 name="DAYS" module=m0 declared={type=number|absent site=w2} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f2
-    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f3
-    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = NewClosure function=f4
-    v7 = NewClass v6 layout=L0
-    v8 = FinishClass v7 layout=L0
-    v9 = Convert v8 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    PutModuleVariable v9 variable=g0
-    v11 = Double number=39.47841760435743
-    v12 = Convert v11 declared={type=number}
-    PutModuleVariable v12 variable=g1
-    v14 = Call v1 calleeName="bodies"
-    v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
-    v16 = Integer
-    v17 = Convert v16 declared={type=number}
-    Jump -> next b1(v17)
-  b1(v18: number):
-    LoopHint
-    v20 = Integer integer=5000000
-    v21 = Less v18, v20
-    Branch v21 -> taken b2(| 0), notTaken b3(| 0)
-  b2(v22):
-    v23 = Double number=0.01
-    v24 = Call v3, -, v15, v23 calleeName="advance"
-    v25 = Increment v22
-    v26 = Convert v25 declared={type=number}
-    Jump -> next b1(v26)
-  b3(v27):
-    v28 = Call v5, -, v15 calleeName="energy"
-    v29 = Undefined
-    Return v29
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f5 @39
+    v9 = NewClass v8 layout=L0 @39
+    PutModuleVariable v9 variable=g3 @39
+    v11 = FinishClass v9 layout=L0 @39
+    v12 = Convert v11 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @39
+    v13 = Convert v11 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @39
+    PutModuleVariable v13 variable=g0 @39
+    v15 = Double number=3.141592653589793 @351
+    v16 = Convert v15 declared={type=number site=w0} @351
+    v17 = Integer integer=4 @383
+    v18 = Mul v17, v16 @383
+    v19 = Double number=12.566370614359172 @383
+    v20 = Mul v19, v16 @383
+    v21 = Double number=39.47841760435743 @383
+    v22 = Convert v21 declared={type=number site=w1} @383
+    PutModuleVariable v22 variable=g1 @370
+    v24 = Double number=365.24 @403
+    v25 = Convert v24 declared={type=number site=w2} @403
+    PutModuleVariable v25 variable=g2 @396
+    v27 = Builtin builtin=GlobalThis @2805
+    v28 = PropGet v27 key="performance" [isFreeName] @2805
+    v29 = Convert v28 declared={type=builtin(GlobalThis_performance) flags=[IsExpected]} @2805
+    v30 = PropGet v29 key="now" @2805
+    v31 = Convert v30 declared={type=builtin(PerformanceNow) flags=[IsExpected]} @2805
+    v32 = Call v31, v29 calleeKey="now" calleeName="performance.now" @2817
+    v33 = Convert v32 declared={type=number site=w23} illTypedCause=DeclarationWithoutBody @2805
+    v34 = Call v1 calleeName="bodies" @2835
+    v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|L0> site=w24 flags=[OmitsNull, OmitsUndefined]} @2835
+    v36 = Call v3, -, v35 calleeName="offsetMomentum" @2845
+    v37 = Integer @2878
+    v38 = Convert v37 declared={type=number site=w25} @2878
+    Jump -> next b2(v38) @2874
+  b2(v39: number):
+    LoopHint @2874
+    v41 = Integer integer=5000000 @2885
+    v42 = Less v39, v41 @2881
+    Branch v42 -> taken b3(| 0), notTaken b6(| 0) @2881
+  b3(v43):
+    Jump -> next b4() @2881
+  b4():
+    v44 = Double number=0.01 @2912
+    v45 = Call v5, -, v35, v44 calleeName="advance" @2899
+    Jump -> next b5() @2899
+  b5():
+    v46 = Increment v43 @2899
+    v47 = Convert v46 declared={type=number site=w25} @2894
+    Jump -> next b2(v47) @2894
+  b6(v48):
+    Jump -> next b7() @2881
+  b7():
+    v49 = Builtin builtin=GlobalThis @2918
+    v50 = PropGet v49 key="console" [isFreeName] @2918
+    v51 = Convert v50 declared={type=builtin(Console) flags=[IsExpected]} @2918
+    v52 = PropGet v51 key="log" @2918
+    v53 = Convert v52 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @2918
+    v54 = String string="nbody" @2930
+    v55 = Call v7, -, v35 calleeName="energy" @2939
+    v56 = Convert v55 declared={type=number site=w26} @2939
+    v57 = PropGet v56 key="toFixed" @2949
+    v58 = Integer integer=9 @2959
+    v59 = Call v57, v56, v58 calleeKey="toFixed" calleeName="toFixed" @2951
+    v60 = Convert v59 declared={type=undefined|null|string site=w26 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2939
+    v61 = Builtin builtin=GlobalThis @2964
+    v62 = PropGet v61 key="performance" [isFreeName] @2964
+    v63 = Convert v62 declared={type=builtin(GlobalThis_performance) flags=[IsExpected]} @2964
+    v64 = PropGet v63 key="now" @2964
+    v65 = Convert v64 declared={type=builtin(PerformanceNow) flags=[IsExpected]} @2964
+    v66 = Call v65, v63 calleeKey="now" calleeName="performance.now" @2976
+    v67 = Convert v66 declared={type=number site=w27} illTypedCause=DeclarationWithoutBody @2964
+    v68 = Sub v67, v33 @2964
+    v69 = PropGet v68 key="toFixed" @2984
+    v70 = Integer @2996
+    v71 = Call v69, v68, v70 calleeKey="toFixed" calleeName="toFixed" @2988
+    v72 = Convert v71 declared={type=undefined|null|string site=w28 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2963
+    v73 = String string="ms" @3001
+    v74 = Add v72, v73 @2960
+    v75 = Call v53, v51, v54, v60, v74 calleeKey="log" calleeName="console.log" @2926
+    v76 = Undefined @2918
+    Return v76 @2918
 }
-function f1 name="bodies" module=m0 position=410 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="bodies" module=m0 position=410 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|L0> site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = GetModuleVariable variable=g0
-    v1 = CheckInitialized v0 name="Body"
-    v2 = Integer
-    v3 = Integer
-    v4 = Integer
-    v5 = Integer
-    v6 = Integer
-    v7 = Integer
-    v8 = GetModuleVariable variable=g1
-    v9 = CheckInitialized v8 name="SOLAR_MASS"
-    v10 = Construct v1, -, v2, v3, v4, v5, v6, v7, v9 calleeName="Body"
-    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
-    v12 = GetModuleVariable variable=g0
-    v13 = CheckInitialized v12 name="Body"
-    v14 = Double number=4.841431442464721
-    v15 = Double number=-1.1603200440274284
-    v16 = Double number=-0.10362204447112311
-    v17 = Double number=0.606326392995832
-    v18 = Double number=2.81198684491626
-    v19 = Double number=-0.02521836165988763
-    v20 = Double number=0.03769367487038949
-    v21 = Construct v13, -, v14, v15, v16, v17, v18, v19, v20 calleeName="Body"
-    v22 = Convert v21 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
-    v23 = GetModuleVariable variable=g0
-    v24 = CheckInitialized v23 name="Body"
-    v25 = Double number=8.34336671824458
-    v26 = Double number=4.124798564124305
-    v27 = Double number=-0.4035234171143214
-    v28 = Double number=-1.0107743461787924
-    v29 = Double number=1.8256623712304119
-    v30 = Double number=0.008415761376584154
-    v31 = Double number=0.011286326131968767
-    v32 = Construct v24, -, v25, v26, v27, v28, v29, v30, v31 calleeName="Body"
-    v33 = Convert v32 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
-    v34 = GetModuleVariable variable=g0
-    v35 = CheckInitialized v34 name="Body"
-    v36 = Double number=12.894369562139131
-    v37 = Double number=-15.111151401698631
-    v38 = Double number=-0.22330757889265573
-    v39 = Double number=1.0827910064415354
-    v40 = Double number=0.8687130181696082
-    v41 = Double number=-0.010832637401363636
-    v42 = Double number=0.0017237240570597112
-    v43 = Construct v35, -, v36, v37, v38, v39, v40, v41, v42 calleeName="Body"
-    v44 = Convert v43 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
-    v45 = GetModuleVariable variable=g0
-    v46 = CheckInitialized v45 name="Body"
-    v47 = Double number=15.379697114850917
-    v48 = Double number=-25.919314609987964
-    v49 = Double number=0.17925877295037118
-    v50 = Double number=0.979090732243898
-    v51 = Double number=0.5946989986476762
-    v52 = Double number=-0.034755955504078104
-    v53 = Double number=0.0020336868699246304
-    v54 = Construct v46, -, v47, v48, v49, v50, v51, v52, v53 calleeName="Body"
-    v55 = Convert v54 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
-    v56 = NewArray v11, v22, v33, v44, v55 contents=undefined|null|L0
-    v57 = Convert v56 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
-    Return v57
+    Jump -> next b1() @410
+  b1():
+    v0 = GetModuleVariable variable=g0 @457
+    v1 = CheckInitialized v0 name="Body" @457
+    v2 = Integer @462
+    v3 = Integer @465
+    v4 = Integer @468
+    v5 = Integer @471
+    v6 = Integer @474
+    v7 = Integer @477
+    v8 = GetModuleVariable variable=g1 @490 @480
+    v9 = CheckInitialized v8 name="SOLAR_MASS" @490 @480
+    v10 = Construct v1, -, v2, v3, v4, v5, v6, v7, v9 calleeName="Body" @457 constructs
+    v11 = Convert v10 declared={type=undefined|null|L0 site=w29 flags=[OmitsNull, OmitsUndefined]} @453
+    v12 = GetModuleVariable variable=g0 @501
+    v13 = CheckInitialized v12 name="Body" @501
+    v14 = Double number=4.841431442464721 @506
+    v15 = Double number=-1.1603200440274284 @534
+    v16 = Double number=-0.10362204447112311 @563
+    v17 = Double number=0.001660076642744037 @592
+    v18 = GetModuleVariable variable=g2 @621
+    v19 = CheckInitialized v18 name="DAYS" @621
+    v20 = Mul v17, v19 @592
+    v21 = Double number=0.606326392995832 @592
+    v22 = Double number=0.007699011184197404 @627
+    v23 = GetModuleVariable variable=g2 @656
+    v24 = CheckInitialized v23 name="DAYS" @656
+    v25 = Mul v22, v24 @627
+    v26 = Double number=2.81198684491626 @627
+    v27 = Double number=-0.0000690460016972063 @662
+    v28 = GetModuleVariable variable=g2 @692
+    v29 = CheckInitialized v28 name="DAYS" @692
+    v30 = Mul v27, v29 @662
+    v31 = Double number=-0.02521836165988763 @662
+    v32 = Double number=0.0009547919384243266 @698
+    v33 = GetModuleVariable variable=g1 @737 @727
+    v34 = CheckInitialized v33 name="SOLAR_MASS" @737 @727
+    v35 = Mul v32, v34 @698
+    v36 = Double number=0.03769367487038949 @698
+    v37 = Construct v13, -, v14, v15, v16, v21, v26, v31, v36 calleeName="Body" @501 constructs
+    v38 = Convert v37 declared={type=undefined|null|L0 site=w30 flags=[OmitsNull, OmitsUndefined]} @497
+    v39 = GetModuleVariable variable=g0 @748
+    v40 = CheckInitialized v39 name="Body" @748
+    v41 = Double number=8.34336671824458 @753
+    v42 = Double number=4.124798564124305 @781
+    v43 = Double number=-0.4035234171143214 @809
+    v44 = Double number=-0.002767425107268624 @838
+    v45 = GetModuleVariable variable=g2 @868
+    v46 = CheckInitialized v45 name="DAYS" @868
+    v47 = Mul v44, v46 @838
+    v48 = Double number=-1.0107743461787924 @838
+    v49 = Double number=0.004998528012349172 @874
+    v50 = GetModuleVariable variable=g2 @903
+    v51 = CheckInitialized v50 name="DAYS" @903
+    v52 = Mul v49, v51 @874
+    v53 = Double number=1.8256623712304119 @874
+    v54 = Double number=0.000023041729757376393 @909
+    v55 = GetModuleVariable variable=g2 @938
+    v56 = CheckInitialized v55 name="DAYS" @938
+    v57 = Mul v54, v56 @909
+    v58 = Double number=0.008415761376584154 @909
+    v59 = Double number=0.0002858859806661308 @944
+    v60 = GetModuleVariable variable=g1 @983 @973
+    v61 = CheckInitialized v60 name="SOLAR_MASS" @983 @973
+    v62 = Mul v59, v61 @944
+    v63 = Double number=0.011286326131968767 @944
+    v64 = Construct v40, -, v41, v42, v43, v48, v53, v58, v63 calleeName="Body" @748 constructs
+    v65 = Convert v64 declared={type=undefined|null|L0 site=w31 flags=[OmitsNull, OmitsUndefined]} @744
+    v66 = GetModuleVariable variable=g0 @994
+    v67 = CheckInitialized v66 name="Body" @994
+    v68 = Double number=12.894369562139131 @999
+    v69 = Double number=-15.111151401698631 @1027
+    v70 = Double number=-0.22330757889265573 @1056
+    v71 = Double number=0.002964601375647616 @1085
+    v72 = GetModuleVariable variable=g2 @1114
+    v73 = CheckInitialized v72 name="DAYS" @1114
+    v74 = Mul v71, v73 @1085
+    v75 = Double number=1.0827910064415354 @1085
+    v76 = Double number=0.0023784717395948095 @1120
+    v77 = GetModuleVariable variable=g2 @1149
+    v78 = CheckInitialized v77 name="DAYS" @1149
+    v79 = Mul v76, v78 @1120
+    v80 = Double number=0.8687130181696082 @1120
+    v81 = Double number=-0.000029658956854023756 @1155
+    v82 = GetModuleVariable variable=g2 @1185
+    v83 = CheckInitialized v82 name="DAYS" @1185
+    v84 = Mul v81, v83 @1155
+    v85 = Double number=-0.010832637401363636 @1155
+    v86 = Double number=0.00004366244043351563 @1191
+    v87 = GetModuleVariable variable=g1 @1230 @1220
+    v88 = CheckInitialized v87 name="SOLAR_MASS" @1230 @1220
+    v89 = Mul v86, v88 @1191
+    v90 = Double number=0.0017237240570597112 @1191
+    v91 = Construct v67, -, v68, v69, v70, v75, v80, v85, v90 calleeName="Body" @994 constructs
+    v92 = Convert v91 declared={type=undefined|null|L0 site=w32 flags=[OmitsNull, OmitsUndefined]} @990
+    v93 = GetModuleVariable variable=g0 @1241
+    v94 = CheckInitialized v93 name="Body" @1241
+    v95 = Double number=15.379697114850917 @1246
+    v96 = Double number=-25.919314609987964 @1274
+    v97 = Double number=0.17925877295037118 @1303
+    v98 = Double number=0.0026806777249038932 @1331
+    v99 = GetModuleVariable variable=g2 @1360
+    v100 = CheckInitialized v99 name="DAYS" @1360
+    v101 = Mul v98, v100 @1331
+    v102 = Double number=0.979090732243898 @1331
+    v103 = Double number=0.001628241700382423 @1366
+    v104 = GetModuleVariable variable=g2 @1395
+    v105 = CheckInitialized v104 name="DAYS" @1395
+    v106 = Mul v103, v105 @1366
+    v107 = Double number=0.5946989986476762 @1366
+    v108 = Double number=-0.00009515922545197159 @1401
+    v109 = GetModuleVariable variable=g2 @1431
+    v110 = CheckInitialized v109 name="DAYS" @1431
+    v111 = Mul v108, v110 @1401
+    v112 = Double number=-0.034755955504078104 @1401
+    v113 = Double number=0.000051513890204661145 @1437
+    v114 = GetModuleVariable variable=g1 @1476 @1466
+    v115 = CheckInitialized v114 name="SOLAR_MASS" @1476 @1466
+    v116 = Mul v113, v115 @1437
+    v117 = Double number=0.0020336868699246304 @1437
+    v118 = Construct v94, -, v95, v96, v97, v102, v107, v112, v117 calleeName="Body" @1241 constructs
+    v119 = Convert v118 declared={type=undefined|null|L0 site=w33 flags=[OmitsNull, OmitsUndefined]} @1237
+    v120 = NewArray v11, v38, v65, v92, v119 contents=undefined|null|L0 @447
+    v121 = Convert v120 declared={type=undefined|null|Array<undefined|null|L0> site=w3 flags=[OmitsNull, OmitsUndefined]} @447
+    Return v121 @447
 }
-function f2 name="advance" module=m0 position=1767 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|Array<undefined|null|L0>, v1: number):
-    v2 = PropGet v0 key="length"
-    v3 = Convert v2 declared={type=number} illTypedCause=Assertion
-    v4 = Integer
-    v5 = Convert v4 declared={type=number}
-    LoopHint
-    v7 = Convert v5 declared={type=i32 flags=[IsExpected]}
-    v8 = Convert v7 declared={type=i32 flags=[IsExpected]}
-    v9 = ElemGet v0, v8
-    v10 = Convert v9 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v11 = Integer integer=1
-    v12 = Add v8, v11
-    v13 = Convert v12 declared={type=number}
-    Jump -> next b1(v13)
-  b1(v14: number):
-    LoopHint
-    v16 = Convert v14 declared={type=i32 flags=[IsExpected]}
-    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
-    v18 = ElemGet v0, v17
-    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v20 = PropGet v10 key="y"
-    v21 = PropGet v19 key="y"
-    v22 = Increment v17
-    v23 = Convert v22 declared={type=number}
-    Jump -> next b1(v23)
-}
-function f3 name="energy" module=m0 position=2404 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="offsetMomentum" module=m0 position=1485 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|L0>):
-    v1 = Integer
-    v2 = Convert v1 declared={type=number}
-    v3 = Integer
-    v4 = Convert v3 declared={type=number}
-    Jump -> next b1(v2, v4)
-  b1(v5: number, v6: number):
-    LoopHint
-    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
-    v9 = PropGet v0 key="length"
-    v10 = Convert v9 declared={type=number} illTypedCause=Assertion
-    v11 = Less v8, v10
-    Branch v11 -> taken b2(| 0), notTaken b6(| 0)
-  b2(v12):
-    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
-    v14 = ElemGet v0, v13
-    v15 = Convert v14 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v16 = Double number=0.5
-    v17 = PropGet v15 key="mass"
-    v18 = Mul v16, v17
-    v19 = PropGet v15 key="vx"
-    v20 = PropGet v15 key="vx"
-    v21 = Mul v19, v20
-    v22 = PropGet v15 key="vy"
-    v23 = PropGet v15 key="vy"
-    v24 = Mul v22, v23
-    v25 = Add v21, v24
-    v26 = PropGet v15 key="vz"
-    v27 = PropGet v15 key="vz"
-    v28 = Mul v26, v27
-    v29 = Add v25, v28
-    v30 = Mul v18, v29
-    v31 = Add v5, v30
-    v32 = Convert v31 declared={type=number}
-    v33 = Integer integer=1
-    v34 = Add v13, v33
-    v35 = Convert v34 declared={type=number}
-    Jump -> next b3(v32, v35)
-  b3(v36: number, v37: number):
-    LoopHint
-    v39 = Convert v37 declared={type=i32 flags=[IsExpected]}
-    v40 = PropGet v0 key="length"
-    v41 = Convert v40 declared={type=number} illTypedCause=Assertion
-    v42 = Less v39, v41
-    Branch v42 -> taken b4(| 0), notTaken b5(| 0)
-  b4(v43):
-    v44 = Convert v43 declared={type=i32 flags=[IsExpected]}
-    v45 = ElemGet v0, v44
-    v46 = Convert v45 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v47 = PropGet v15 key="x"
-    v48 = PropGet v46 key="x"
-    v49 = Sub v47, v48
-    v50 = Convert v49 declared={type=number}
-    v51 = PropGet v15 key="y"
-    v52 = PropGet v46 key="y"
-    v53 = Sub v51, v52
-    v54 = Convert v53 declared={type=number}
-    v55 = PropGet v15 key="z"
-    v56 = PropGet v46 key="z"
-    v57 = Sub v55, v56
-    v58 = Convert v57 declared={type=number}
-    v59 = PropGet v15 key="mass"
-    v60 = PropGet v46 key="mass"
-    v61 = Mul v59, v60
-    v62 = Builtin builtin=Math
-    v63 = Builtin builtin=MathSqrt
-    v64 = Mul v50, v50
-    v65 = Mul v54, v54
-    v66 = Add v64, v65
-    v67 = Mul v58, v58
-    v68 = Add v66, v67
-    v69 = Call v63, v62, v68 calleeName="Math.sqrt"
-    v70 = Convert v69 declared={type=number} illTypedCause=DeclarationWithoutBody
-    v71 = Div v61, v70
-    v72 = Sub v36, v71
-    v73 = Convert v72 declared={type=number}
-    v74 = Increment v44
-    v75 = Convert v74 declared={type=number}
-    Jump -> next b3(v73, v75)
-  b5(v76):
-    v77 = Increment v13
-    v78 = Convert v77 declared={type=number}
-    Jump -> next b1(v36, v78)
-  b6(v79):
-    v80 = Convert v5 declared={type=number}
-    Return v80
+    Jump -> next b1() @1485
+  b1():
+    v1 = Integer @1539
+    v2 = Convert v1 declared={type=number site=w34} @1539
+    v3 = Integer @1547
+    v4 = Convert v3 declared={type=number site=w35} @1547
+    v5 = Integer @1555
+    v6 = Convert v5 declared={type=number site=w36} @1555
+    v7 = Integer @1572
+    v8 = Convert v7 declared={type=number site=w37} @1572
+    Jump -> next b2(v2, v4, v6, v8) @1568
+  b2(v9: number, v10: number, v11: number, v12: number):
+    LoopHint @1568
+    v14 = Convert v12 declared={type=i32 flags=[IsExpected]} @1575
+    v15 = PropGet v0 key="length" @1579
+    v16 = Convert v15 declared={type=number site=w38} illTypedCause=Assertion @1579
+    v17 = Less v14, v16 @1575
+    Branch v17 -> taken b3(| 0), notTaken b6(| 0) @1575
+  b3(v18):
+    Jump -> next b4() @1575
+  b4():
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]} @1608
+    v20 = ElemGet v0, v19 @1606
+    v21 = Convert v20 declared={type=undefined|null|L0 site=w39 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1606
+    v22 = PropGet v21 key="vx" @1619
+    v23 = PropGet v21 key="mass" @1626
+    v24 = Mul v22, v23 @1619
+    v25 = Add v9, v24 @1619
+    v26 = Convert v25 declared={type=number site=w34} @1613
+    v27 = PropGet v21 key="vy" @1640
+    v28 = PropGet v21 key="mass" @1647
+    v29 = Mul v27, v28 @1640
+    v30 = Add v10, v29 @1640
+    v31 = Convert v30 declared={type=number site=w35} @1634
+    v32 = PropGet v21 key="vz" @1661
+    v33 = PropGet v21 key="mass" @1668
+    v34 = Mul v32, v33 @1661
+    v35 = Add v11, v34 @1661
+    v36 = Convert v35 declared={type=number site=w36} @1655
+    Jump -> next b5() @1655
+  b5():
+    v37 = Increment v19 @1661
+    v38 = Convert v37 declared={type=number site=w37} @1589
+    Jump -> next b2(v26, v31, v36, v38) @1589
+  b6(v39):
+    Jump -> next b7() @1575
+  b7():
+    v40 = Integer @1679
+    v41 = ElemGet v0, v40 @1679
+    v42 = Convert v41 declared={type=undefined|null|L0 site=w40 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1679
+    v43 = Negate v9 @1690
+    v44 = GetModuleVariable variable=g1 @1696
+    v45 = CheckInitialized v44 name="SOLAR_MASS" @1696
+    v46 = Div v43, v45 @1690
+    v47 = Convert v46 declared={type=number site=w41} @1681
+    PropSet v42, v47 key="vx" @1681
+    v49 = Integer @1708
+    v50 = ElemGet v0, v49 @1708
+    v51 = Convert v50 declared={type=undefined|null|L0 site=w42 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1708
+    v52 = Negate v10 @1719
+    v53 = GetModuleVariable variable=g1 @1725
+    v54 = CheckInitialized v53 name="SOLAR_MASS" @1725
+    v55 = Div v52, v54 @1719
+    v56 = Convert v55 declared={type=number site=w43} @1710
+    PropSet v51, v56 key="vy" @1710
+    v58 = Integer @1737
+    v59 = ElemGet v0, v58 @1737
+    v60 = Convert v59 declared={type=undefined|null|L0 site=w44 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1737
+    v61 = Negate v11 @1748
+    v62 = GetModuleVariable variable=g1 @1754
+    v63 = CheckInitialized v62 name="SOLAR_MASS" @1754
+    v64 = Div v61, v63 @1748
+    v65 = Convert v64 declared={type=number site=w45} @1739
+    PropSet v60, v65 key="vz" @1739
+    v67 = Undefined @1739
+    Return v67 @1739
 }
-function f4 name="Body" module=m0 position=149 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=7 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+function f3 name="advance" module=m0 position=1767 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w6}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>, v1: number):
+    Jump -> next b1() @1767
+  b1():
+    v2 = PropGet v0 key="length" @1827
+    v3 = Convert v2 declared={type=number site=w46} illTypedCause=Assertion @1827
+    v4 = Integer @1851
+    v5 = Convert v4 declared={type=number site=w47} @1851
+    Jump -> next b2(v5) @1847
+  b2(v6: number):
+    LoopHint @1847
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]} @1854
+    v9 = Less v8, v3 @1854
+    Branch v9 -> taken b3(| 0, 1), notTaken b12(| 0, 1) @1854
+  b3(v10, v11):
+    Jump -> next b4() @1854
+  b4():
+    v12 = Convert v10 declared={type=i32 flags=[IsExpected]} @1885
+    v13 = ElemGet v0, v12 @1883
+    v14 = Convert v13 declared={type=undefined|null|L0 site=w48 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1883
+    v15 = Integer integer=1 @1910
+    v16 = Add v12, v15 @1906
+    v17 = Convert v16 declared={type=number site=w49} @1906
+    Jump -> next b5(v17) @1902
+  b5(v18: number):
+    LoopHint @1902
+    v20 = Convert v18 declared={type=i32 flags=[IsExpected]} @1913
+    v21 = Less v20, v11 @1913
+    Branch v21 -> taken b6(| 0, 1), notTaken b9(| 0, 1) @1913
+  b6(v22, v23):
+    Jump -> next b7() @1913
+  b7():
+    v24 = Convert v22 declared={type=i32 flags=[IsExpected]} @1946
+    v25 = ElemGet v0, v24 @1944
+    v26 = Convert v25 declared={type=undefined|null|L0 site=w55 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1944
+    v27 = PropGet v14 key="x" @1967
+    v28 = PropGet v26 key="x" @1974
+    v29 = Sub v27, v28 @1967
+    v30 = Convert v29 declared={type=number site=w50} @1967
+    v31 = PropGet v14 key="y" @1985
+    v32 = PropGet v26 key="y" @1992
+    v33 = Sub v31, v32 @1985
+    v34 = Convert v33 declared={type=number site=w51} @1985
+    v35 = PropGet v14 key="z" @2003
+    v36 = PropGet v26 key="z" @2010
+    v37 = Sub v35, v36 @2003
+    v38 = Convert v37 declared={type=number site=w52} @2003
+    v39 = Mul v30, v30 @2032
+    v40 = Mul v34, v34 @2032
+    v41 = Add v39, v40 @2032
+    v42 = Mul v38, v38 @2032
+    v43 = Add v41, v42 @2032
+    v44 = Convert v43 declared={type=number site=w53} @2032
+    v45 = Builtin builtin=Math @2089
+    v46 = Builtin builtin=MathSqrt @2089
+    v47 = Call v46, v45, v44 calleeName="Math.sqrt" @2094
+    v48 = Convert v47 declared={type=number site=w56} illTypedCause=DeclarationWithoutBody @2089
+    v49 = Mul v44, v48 @2084
+    v50 = Div v1, v49 @2078
+    v51 = Convert v50 declared={type=number site=w54} @2078
+    v52 = PropGet v14 key="vx" @2110
+    v53 = PropGet v26 key="mass" @2124
+    v54 = Mul v30, v53 @2119
+    v55 = Mul v54, v51 @2119
+    v56 = Sub v52, v55 @2119
+    v57 = Convert v56 declared={type=number site=w57} @2113
+    PropSet v14, v57 key="vx" @2113
+    v59 = PropGet v14 key="vy" @2139
+    v60 = PropGet v26 key="mass" @2153
+    v61 = Mul v34, v60 @2148
+    v62 = Mul v61, v51 @2148
+    v63 = Sub v59, v62 @2148
+    v64 = Convert v63 declared={type=number site=w58} @2142
+    PropSet v14, v64 key="vy" @2142
+    v66 = PropGet v14 key="vz" @2168
+    v67 = PropGet v26 key="mass" @2182
+    v68 = Mul v38, v67 @2177
+    v69 = Mul v68, v51 @2177
+    v70 = Sub v66, v69 @2177
+    v71 = Convert v70 declared={type=number site=w59} @2171
+    PropSet v14, v71 key="vz" @2171
+    v73 = PropGet v26 key="vx" @2202
+    v74 = PropGet v14 key="mass" @2216
+    v75 = Mul v30, v74 @2211
+    v76 = Mul v75, v51 @2211
+    v77 = Add v73, v76 @2211
+    v78 = Convert v77 declared={type=number site=w60} @2205
+    PropSet v26, v78 key="vx" @2205
+    v80 = PropGet v26 key="vy" @2231
+    v81 = PropGet v14 key="mass" @2245
+    v82 = Mul v34, v81 @2240
+    v83 = Mul v82, v51 @2240
+    v84 = Add v80, v83 @2240
+    v85 = Convert v84 declared={type=number site=w61} @2234
+    PropSet v26, v85 key="vy" @2234
+    v87 = PropGet v26 key="vz" @2260
+    v88 = PropGet v14 key="mass" @2274
+    v89 = Mul v38, v88 @2269
+    v90 = Mul v89, v51 @2269
+    v91 = Add v87, v90 @2269
+    v92 = Convert v91 declared={type=number site=w62} @2263
+    PropSet v26, v92 key="vz" @2263
+    Jump -> next b8() @2263
+  b8():
+    v94 = Increment v24 @2263
+    v95 = Convert v94 declared={type=number site=w49} @1920
+    Jump -> next b5(v95) @1920
+  b9(v96, v97):
+    Jump -> next b10() @1913
+  b10():
+    Jump -> next b11() @1920
+  b11():
+    v98 = Increment v12 @1913
+    v99 = Convert v98 declared={type=number site=w47} @1861
+    Jump -> next b2(v99) @1861
+  b12(v100, v101):
+    Jump -> next b13() @1854
+  b13():
+    v102 = Integer @2313
+    v103 = Convert v102 declared={type=number site=w63} @2313
+    Jump -> next b14(v103) @2309
+  b14(v104: number):
+    LoopHint @2309
+    v106 = Convert v104 declared={type=i32 flags=[IsExpected]} @2316
+    v107 = Less v106, v101 @2316
+    Branch v107 -> taken b15(| 0, 1), notTaken b18(| 0, 1) @2316
+  b15(v108, v109):
+    Jump -> next b16() @2316
+  b16():
+    v110 = Convert v108 declared={type=i32 flags=[IsExpected]} @2342
+    v111 = ElemGet v0, v110 @2340
+    v112 = Convert v111 declared={type=undefined|null|L0 site=w64 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @2340
+    v113 = PropGet v112 key="x" @2347
+    v114 = PropGet v112 key="vx" @2359
+    v115 = Mul v1, v114 @2354
+    v116 = Add v113, v115 @2354
+    v117 = Convert v116 declared={type=number site=w65} @2349
+    PropSet v112, v117 key="x" @2349
+    v119 = PropGet v112 key="y" @2365
+    v120 = PropGet v112 key="vy" @2377
+    v121 = Mul v1, v120 @2372
+    v122 = Add v119, v121 @2372
+    v123 = Convert v122 declared={type=number site=w66} @2367
+    PropSet v112, v123 key="y" @2367
+    v125 = PropGet v112 key="z" @2383
+    v126 = PropGet v112 key="vz" @2395
+    v127 = Mul v1, v126 @2390
+    v128 = Add v125, v127 @2390
+    v129 = Convert v128 declared={type=number site=w67} @2385
+    PropSet v112, v129 key="z" @2385
+    Jump -> next b17() @2385
+  b17():
+    v131 = Increment v110 @2385
+    v132 = Convert v131 declared={type=number site=w63} @2323
+    Jump -> next b14(v132) @2323
+  b18(v133, v134):
+    Jump -> next b19() @2316
+  b19():
+    v135 = Undefined @2323
+    Return v135 @2323
+}
+function f4 name="energy" module=m0 position=2404 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    Jump -> next b1() @2404
+  b1():
+    v1 = Integer @2451
+    v2 = Convert v1 declared={type=number site=w68} @2451
+    v3 = Integer @2468
+    v4 = Convert v3 declared={type=number site=w69} @2468
+    Jump -> next b2(v2, v4) @2464
+  b2(v5: number, v6: number):
+    LoopHint @2464
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]} @2471
+    v9 = PropGet v0 key="length" @2475
+    v10 = Convert v9 declared={type=number site=w70} illTypedCause=Assertion @2475
+    v11 = Less v8, v10 @2471
+    Branch v11 -> taken b3(| 0), notTaken b12(| 0) @2471
+  b3(v12):
+    Jump -> next b4() @2471
+  b4():
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]} @2509
+    v14 = ElemGet v0, v13 @2507
+    v15 = Convert v14 declared={type=undefined|null|L0 site=w71 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @2507
+    v16 = Double number=0.5 @2522
+    v17 = PropGet v15 key="mass" @2528
+    v18 = Mul v16, v17 @2522
+    v19 = PropGet v15 key="vx" @2539
+    v20 = PropGet v15 key="vx" @2547
+    v21 = Mul v19, v20 @2539
+    v22 = PropGet v15 key="vy" @2555
+    v23 = PropGet v15 key="vy" @2563
+    v24 = Mul v22, v23 @2539
+    v25 = Add v21, v24 @2539
+    v26 = PropGet v15 key="vz" @2571
+    v27 = PropGet v15 key="vz" @2579
+    v28 = Mul v26, v27 @2539
+    v29 = Add v25, v28 @2539
+    v30 = Mul v18, v29 @2522
+    v31 = Add v5, v30 @2522
+    v32 = Convert v31 declared={type=number site=w68} @2517
+    v33 = Integer integer=1 @2607
+    v34 = Add v13, v33 @2603
+    v35 = Convert v34 declared={type=number site=w72} @2603
+    Jump -> next b5(v32, v35) @2599
+  b5(v36: number, v37: number):
+    LoopHint @2599
+    v39 = Convert v37 declared={type=i32 flags=[IsExpected]} @2610
+    v40 = PropGet v0 key="length" @2614
+    v41 = Convert v40 declared={type=number site=w73} illTypedCause=Assertion @2614
+    v42 = Less v39, v41 @2610
+    Branch v42 -> taken b6(| 0), notTaken b9(| 0) @2610
+  b6(v43):
+    Jump -> next b7() @2610
+  b7():
+    v44 = Convert v43 declared={type=i32 flags=[IsExpected]} @2644
+    v45 = ElemGet v0, v44 @2642
+    v46 = Convert v45 declared={type=undefined|null|L0 site=w77 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @2642
+    v47 = PropGet v15 key="x" @2660
+    v48 = PropGet v46 key="x" @2667
+    v49 = Sub v47, v48 @2660
+    v50 = Convert v49 declared={type=number site=w74} @2660
+    v51 = PropGet v15 key="y" @2678
+    v52 = PropGet v46 key="y" @2685
+    v53 = Sub v51, v52 @2678
+    v54 = Convert v53 declared={type=number site=w75} @2678
+    v55 = PropGet v15 key="z" @2696
+    v56 = PropGet v46 key="z" @2703
+    v57 = Sub v55, v56 @2696
+    v58 = Convert v57 declared={type=number site=w76} @2696
+    v59 = PropGet v15 key="mass" @2715
+    v60 = PropGet v46 key="mass" @2725
+    v61 = Mul v59, v60 @2715
+    v62 = Builtin builtin=Math @2736
+    v63 = Builtin builtin=MathSqrt @2736
+    v64 = Mul v50, v50 @2746
+    v65 = Mul v54, v54 @2746
+    v66 = Add v64, v65 @2746
+    v67 = Mul v58, v58 @2746
+    v68 = Add v66, v67 @2746
+    v69 = Call v63, v62, v68 calleeName="Math.sqrt" @2741
+    v70 = Convert v69 declared={type=number site=w78} illTypedCause=DeclarationWithoutBody @2736
+    v71 = Div v61, v70 @2715
+    v72 = Sub v36, v71 @2715
+    v73 = Convert v72 declared={type=number site=w68} @2709
+    Jump -> next b8() @2709
+  b8():
+    v74 = Increment v44 @2715
+    v75 = Convert v74 declared={type=number site=w72} @2624
+    Jump -> next b5(v73, v75) @2624
+  b9(v76):
+    Jump -> next b10() @2610
+  b10():
+    Jump -> next b11() @2624
+  b11():
+    v77 = Increment v13 @2610
+    v78 = Convert v77 declared={type=number site=w69} @2485
+    Jump -> next b2(v36, v78) @2485
+  b12(v79):
+    Jump -> next b13() @2471
+  b13():
+    v80 = Convert v5 declared={type=number site=w8} @2790
+    Return v80 @2790
+}
+function f5 name="Body" module=m0 position=149 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=7 thisType={type=anything} parameters=[{type=number site=w9}, {type=number site=w10}, {type=number site=w11}, {type=number site=w12}, {type=number site=w13}, {type=number site=w14}, {type=number site=w15}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything, v1: number, v2: number, v3: number, v4: number, v5: number, v6: number, v7: number):
-    v8 = GetConstructPrototype v0 layout=L0
-    v9 = NewObject v8 layout=L0
-    v10 = Convert v9 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v11 = Undefined
-    Return v10
+    Jump -> next b1() @149
+  b1():
+    v8 = GetConstructPrototype v0 layout=L0 @149
+    v9 = NewObject v8 layout=L0 @149
+    v10 = Convert v9 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @149
+    v11 = CallDirect v10 function=f6 @149
+    v12 = Convert v1 declared={type=number site=w79} @239
+    PropSet v10, v12 key="x" @239
+    v14 = Convert v2 declared={type=number site=w80} @251
+    PropSet v10, v14 key="y" @251
+    v16 = Convert v3 declared={type=number site=w81} @263
+    PropSet v10, v16 key="z" @263
+    v18 = Convert v4 declared={type=number site=w82} @275
+    PropSet v10, v18 key="vx" @275
+    v20 = Convert v5 declared={type=number site=w83} @289
+    PropSet v10, v20 key="vy" @289
+    v22 = Convert v6 declared={type=number site=w84} @303
+    PropSet v10, v22 key="vz" @303
+    v24 = Convert v7 declared={type=number site=w85} @317
+    PropSet v10, v24 key="mass" @317
+    v26 = Undefined @317
+    v27 = TypeTest v26 testedType=object @317
+    Branch v27 -> taken b2(| 0), notTaken b3(| 0) @317
+  b2(v28):
+    Jump -> next b4(v28) @317
+  b3(v29):
+    Jump -> next b4(v10) @317
+  b4(v30):
+    Return v30 @317
+}
+function f6 module=m0 position=45 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @45
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @45
+    v2 = Undefined @45
+    PropDefine v1, v2 key="x" @54
+    v4 = Undefined @45
+    PropDefine v1, v4 key="y" @65
+    v6 = Undefined @45
+    PropDefine v1, v6 key="z" @76
+    v8 = Undefined @45
+    PropDefine v1, v8 key="vx" @87
+    v10 = Undefined @45
+    PropDefine v1, v10 key="vy" @99
+    v12 = Undefined @45
+    PropDefine v1, v12 key="vz" @111
+    v14 = Undefined @45
+    PropDefine v1, v14 key="mass" @123
+    v16 = Undefined @45
+    Return v16 @45
 }
 # -- generated: advance energy
 # CHECK-LABEL: function {{*}}name="advance"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 13, patchpoints: 1, rare instructions: 56
-# CHECK-NEXT: end of function f9
+# CHECK-NEXT: instructions: 126, patchpoints: 8, rare instructions: 131, polls: 1
+# CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="energy"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 23, patchpoints: 1, rare instructions: 22, polls: 1
-# CHECK-NEXT: end of function f3
+# CHECK-NEXT: instructions: 110, patchpoints: 7, rare instructions: 21, polls: 1
+# CHECK-NEXT: end of function f4

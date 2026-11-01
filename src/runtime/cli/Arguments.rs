@@ -770,6 +770,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-list <STR>"),
         parse_param!("--aot-verify-each-pass"),
         parse_param!("--aot-references <STR>"),
+        parse_param!("--aot-cpu <STR>"),
         parse_param!("--aot-threads <STR>"),
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),

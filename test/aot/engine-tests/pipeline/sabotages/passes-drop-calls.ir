@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls: behind the pass a call is gone. The pass answers for stores to and reads of the objects that it holds, not for a call: the build stops
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-left-alone.ir

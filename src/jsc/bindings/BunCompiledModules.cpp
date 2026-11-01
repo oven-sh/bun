@@ -11,6 +11,7 @@
 #include "ImportMetaObject.h"
 #include "JSCommonJSExtensions.h"
 #include "JSCommonJSModule.h"
+#include "JSMockFunction.h"
 #include "ModuleLoader.h"
 #include "PathInlines.h"
 #include "ScriptExecutionContext.h"
@@ -162,6 +163,7 @@ extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, co
 extern "C" bool Bun__AOT__isStartOfWorker(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isLoadedSynchronously(JSC::JSGlobalObject*, const BunString* path);
+extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__allowsCodeFromDisk();
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
 extern "C" bool isBunTest;
@@ -227,14 +229,29 @@ static bool replacesNativeModule(JSGlobalObject* globalObject, const String& pat
     return plugins.hasVirtualModules() && plugins.virtualModules->contains(path);
 }
 
+static bool loadsFileItself(JSGlobalObject* globalObject, const String& path)
+{
+    if (Bun__compiledProgramRunsInPlace())
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    String asked = path;
+    bool isLoadedByPlugin = uncheckedDowncast<Zig::GlobalObject>(globalObject)->onLoadPlugins.fileNamespace.find(globalObject, asked);
+    (void)scope.tryClearException();
+    return isLoadedByPlugin;
+}
+
 static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalObject, const String& path, AOT::LoadByName way)
 {
     auto module = moduleThatAnswersToPath(path);
     if (!module)
         return module;
+    if (!globalObject->aotInstance() && AOT::isOfLibrary(*module))
+        return std::nullopt;
     // What a mock has stored over an earlier require().
     if (way == AOT::LoadByName::Require && AOT::isInRequireCache(globalObject, *module))
         return module;
+    if (!AOT::isNativeModule(*module) && loadsFileItself(globalObject, path))
+        return std::nullopt;
     // A module of native code is the host's own, whoever asks.
     bool isReplaced = AOT::isNativeModule(*module) ? replacesNativeModule(globalObject, path) : AOT::hostAnswersInPlaceOf(globalObject, *module, way);
     return isReplaced ? std::nullopt : module;
@@ -395,6 +412,15 @@ static bool isReadAsCodeByRequire(Zig::GlobalObject* globalObject, AOT::ModuleID
     return Bun__getDefaultLoader(globalObject, &pathString, nullptr) == BunLoaderTypeJS && !AOT::isHeldForImport(globalObject, module);
 }
 
+JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto module = compiledModuleForPath(key);
+    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    if (!module || (virtualModules && virtualModules->contains(key)))
+        return {};
+    return AOT::requireModule(globalObject, *module);
+}
+
 bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool hasImportAttributes)
 {
     auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes, AOT::LoadByName::Require);
@@ -494,6 +520,39 @@ void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& k
     // `import("./a", { with: { type: "text" } })`: the image holds the file once for each type that is asked for, and the cache knows it by its path.
     for (AOT::ModuleID form : AOT::formsThatAttributesAskFor(globalObject, key)) {
         AOT::didDeleteRequireCacheEntry(globalObject, form);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+void willResetModules(Zig::GlobalObject* globalObject, ASCIILiteral call, bool keepsPackages)
+{
+    if (!hasCompiledModules() || !reloadsFilesFromDisk())
+        return;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String packages = makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP);
+    auto isKept = [&](const String& path) {
+        if (!keepsPackages || !path.contains(packages))
+            return false;
+        auto module = moduleThatAnswersToPath(path);
+        if (!module || !AOT::isESModule(*module))
+            return true;
+        BunString borrowedPath = Bun::toString(path);
+        return Bun__isESModuleByExtensionOrPackageType(globalObject, &borrowedPath);
+    };
+    Vector<String> files;
+    AOT::forEachEvaluatedFile(globalObject, [&](const String& path) {
+        if (!isKept(path))
+            files.append(path);
+    });
+    for (auto& file : files) {
+        auto module = moduleThatAnswersToPath(file);
+        if (!module || !AOT::refusesToLoadAgain(globalObject, *module))
+            continue;
+        throwException(globalObject, scope, createError(globalObject, makeString("Cannot load '"_s, file, "' again after "_s, call, ": the build found nothing that calls it, so the code that imports the file was compiled for a module that loads once. Call it in a file that the tests import."_s)));
+        return;
+    }
+    for (auto& file : files) {
+        didDeleteRequireCacheEntry(globalObject, file);
         RETURN_IF_EXCEPTION(scope, );
     }
 }
@@ -945,6 +1004,12 @@ static uint64_t stampOfFile(std::span<const char> path)
     return Bun__AOT__stampOfFile(path.data(), path.size());
 }
 
+static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, const String& path)
+{
+    if (isBunTest)
+        didStartDynamicImport(defaultGlobalObject(globalObject), import, path);
+}
+
 const AOT::ModuleHost compiledModuleHost = {
     &createModuleObject,
     &createRequirer,
@@ -971,6 +1036,8 @@ const AOT::ModuleHost compiledModuleHost = {
     &loadsSynchronously,
     &callInLaterTurn,
     &stampOfFile,
+    &loadsFileItself,
+    &didStartImport,
 };
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
@@ -1006,6 +1073,13 @@ JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode
         return {};
     if (isBunTest && compiledModulesRunInPlaceOfFiles() && isCompiledModule(path))
         return {};
+    if (isBunTest && compiledModulesRunInPlaceOfFiles()) {
+        size_t query = path.find('?');
+        if (query != notFound && (path.endsWith("actual"_s) || path.endsWith("actual&spy"_s)) && isCompiledModule(path.left(query))) {
+            AOT::willRunCopyFromDisk(globalObject);
+            return {};
+        }
+    }
     bool refusesCode = AOT::refusesCodeOutsideImage(globalObject, path);
     // An executable does not hold the text of a compiled module.
     if (isCompiledModule(path) && (refusesCode || !compiledModulesRunInPlaceOfFiles()))
@@ -1237,6 +1311,7 @@ std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> moduleThatMockReplaces(const String&) { return std::nullopt; }
 JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
+JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const String&) { return {}; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const String&, bool) { return nullptr; }
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return {}; }

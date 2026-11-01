@@ -215,6 +215,7 @@ struct ContextCheck {
     assigned: AssignedSignature,
     /// The number of parameters for which `assignParameterType` has returned.
     assigned_parameter_count: usize,
+    assigned_this: Option<TypeId>,
 }
 
 /// A stack in which no function is twice.
@@ -246,6 +247,7 @@ impl ContextChecks {
             function: (file, func),
             assigned,
             assigned_parameter_count: 0,
+            assigned_this: None,
         });
         position
     }
@@ -919,6 +921,8 @@ impl<'s> Program<'s> {
             cycles: 0,
             lowest_taint: usize::MAX,
             context_checked_under: Vec::new(),
+            this_parameters_in_progress: Default::default(),
+            this_parameters_without_context: Default::default(),
             initializers_resolved_by_nested_visit: Vec::new(),
             resolved_parameter_types: Default::default(),
             partial_sig_params: Default::default(),
@@ -939,6 +943,7 @@ impl<'s> Program<'s> {
             instantiation_count: 0,
             instantiations_computed: 0,
             recent_instantiations: Default::default(),
+            type_parameters_in: Default::default(),
             recent_composed: Default::default(),
             recent_with_this: Default::default(),
             recent_const_type_variables: Default::default(),
@@ -1981,6 +1986,7 @@ pub struct Checker<'p, 's> {
     context_checking: ContextChecks,
     /// The entries most recently read from or written to `Program::instantiations`.
     recent_instantiations: instantiate::Recent,
+    type_parameters_in: instantiate::TypeParametersIn,
     /// The entries most recently read from or written to `Program::composed`.
     recent_composed: instantiate::Recent,
     /// The references that `type_with_this_argument_ex` made most recently, keyed by the reference and the argument.
@@ -2262,7 +2268,15 @@ pub struct Checker<'p, 's> {
     /// The functions whose first check isn't published because a frame in progress is tainted, with the index and
     /// serial of the lowest such frame. tsgo sets `NodeCheckFlagsContextChecked` and assigns the parameter types no
     /// matter what's in progress. So until that frame is popped, the function counts as checked, with that signature.
-    context_checked_under: Vec<(usize, u64, (FileId, crate::hir::FnId), AssignedSignature)>,
+    context_checked_under: Vec<(
+        usize,
+        u64,
+        (FileId, crate::hir::FnId),
+        AssignedSignature,
+        Option<TypeId>,
+    )>,
+    this_parameters_in_progress: smallvec::SmallVec<[(FileId, crate::hir::FnId); 2]>,
+    this_parameters_without_context: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,
     /// `links.resolvedType` of an initializer that `checkExpressionCached` is checking, as assigned
     /// by a nested `checkExpressionCached` of the same initializer. Each entry is the index and
     /// serial of the outermost visit's frame, and the type. See `check_declaration_initializer`.

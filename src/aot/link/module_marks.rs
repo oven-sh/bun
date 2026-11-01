@@ -114,6 +114,12 @@ impl Marker<'_> {
                 self.follow(LocalReference { kind, index }, LayoutUse::Direct);
             }
         }
+        // The host stores there, whoever reads it.
+        if let Some(key) = ProgramModule::File(file).mock_variable_key()
+            && let Some(variable) = self.context.merged.variables.find(&key)
+        {
+            self.mark_variable(variable, file);
+        }
         let graph = self.context.keys.get(file.project).graph;
         let interop = graph.interop(ModuleRef::File(file.file));
         if graph.is_library(file.file) {

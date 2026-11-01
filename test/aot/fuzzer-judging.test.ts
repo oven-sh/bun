@@ -29,7 +29,7 @@ import {
   type Program,
   type Runner,
 } from "./fuzz/runners";
-import { allSources, multiFileSuffix, rewrittenSuffix } from "./fuzz/sources";
+import { allSources, multiFileSuffix, neverTakenSuffix, rewrittenSuffix } from "./fuzz/sources";
 import { bunTypesFolder, typeChecker } from "./fuzz/type-check";
 
 const options = { baseFlags: [], validate: false, threads: 1, buildSeconds: 60, runSeconds: 60 };
@@ -733,7 +733,11 @@ one.skipIf(isWindows)(
     const runner = { ...standIn(() => {}), supportsMultiFile: true };
     const startPython = ["by-python", "scripted-cases"];
     const asked = Object.keys(sources).filter(
-      name => !startPython.includes(name) && !name.endsWith(multiFileSuffix) && !name.endsWith(rewrittenSuffix),
+      name =>
+        !startPython.includes(name) &&
+        !name.endsWith(multiFileSuffix) &&
+        !name.endsWith(rewrittenSuffix) &&
+        !name.endsWith(neverTakenSuffix),
     );
     expect(asked.length).toBeGreaterThan(300);
     const seeds = Array.from({ length: 24 }, (_, seed) => seed);

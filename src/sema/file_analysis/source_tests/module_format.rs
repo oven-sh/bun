@@ -1108,6 +1108,8 @@ fn site_kind_name(kind: ImportSiteKind) -> &'static str {
         ImportSiteKind::ImportMetaResolve(_) => "ImportMetaResolve",
         ImportSiteKind::GetBuiltinModule(_) => "GetBuiltinModule",
         ImportSiteKind::MockModule(_) => "MockModule",
+        ImportSiteKind::ImportByTestRunner(_) => "ImportByTestRunner",
+        ImportSiteKind::RequireByTestRunner(_) => "RequireByTestRunner",
     }
 }
 
@@ -1119,7 +1121,9 @@ fn site_call(kind: ImportSiteKind) -> Option<ExprId> {
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
         | ImportSiteKind::GetBuiltinModule(call)
-        | ImportSiteKind::MockModule(call) => Some(call),
+        | ImportSiteKind::MockModule(call)
+        | ImportSiteKind::ImportByTestRunner(call)
+        | ImportSiteKind::RequireByTestRunner(call) => Some(call),
         _ => None,
     }
 }

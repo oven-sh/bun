@@ -286,6 +286,8 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) jsx: Option<JsxSettings>,
     pub(super) jsx_mode: JsxMode,
     pub(super) declared_module_type: DeclaredModuleType,
+    pub(super) type_where_imported: DeclaredModuleType,
+    pub(super) runs_inside_require: bool,
     pub(super) is_package_type_module: bool,
     pub(super) package: Option<EnclosingPackage<'r>>,
     pub(super) side_effects: DeclaredSideEffects<'r>,

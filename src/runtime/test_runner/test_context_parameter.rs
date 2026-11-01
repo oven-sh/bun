@@ -17,12 +17,19 @@ pub(crate) enum ContextParameter {
     RestProperty,
     /// Not an object pattern. Holds the name if it's a plain identifier.
     Other(Option<Box<[u8]>>),
+    TextLeftOut,
 }
+
+pub(crate) const TEXT_LEFT_OUT: &str = "fixtures are chosen by the properties that a callback destructures, and this build holds no function source to read them from (--no-compile-function-source)";
 
 unsafe extern "C" {
     safe fn Bun__JSFunction__sourceFromParameters(
         function: JSValue,
         is_arrow_function: &mut bool,
+    ) -> bun_core::String;
+    safe fn Bun__JSFunction__compiledSource(
+        function: JSValue,
+        is_text_left_out: &mut bool,
     ) -> bun_core::String;
 }
 
@@ -32,7 +39,7 @@ impl ContextParameter {
         let mut is_arrow_function = false;
         let from_parameters = Bun__JSFunction__sourceFromParameters(function, &mut is_arrow_function);
         if from_parameters.is_dead() {
-            return ContextParameter::Absent;
+            return Self::of_compiled(function, index);
         }
         let from_parameters = from_parameters.to_utf8();
         // An async generator or async arrow accepts any body, except that `super.x` and `this.#x` need a class.
@@ -45,17 +52,44 @@ impl ContextParameter {
         around
             .iter()
             .find_map(|(before, after)| {
-                Self::parse(&[before, from_parameters.slice(), after].concat(), is_arrow_function, index)
+                let text = [before, from_parameters.slice(), after].concat();
+                Self::parse(&text, bun_ast::Loader::Js, is_arrow_function, index)
             })
             .unwrap_or(ContextParameter::Other(None))
     }
 
-    fn parse(text: &[u8], is_arrow_function: bool, index: usize) -> Option<ContextParameter> {
+    #[cold]
+    fn of_compiled(function: JSValue, index: usize) -> ContextParameter {
+        let mut is_text_left_out = false;
+        let whole = Bun__JSFunction__compiledSource(function, &mut is_text_left_out);
+        if whole.is_dead() {
+            return match is_text_left_out {
+                true => ContextParameter::TextLeftOut,
+                false => ContextParameter::Absent,
+            };
+        }
+        let whole = whole.to_utf8();
+        let around: [(&[u8], &[u8], bool); 4] = [
+            (b"(", b")", false),
+            (b"({", b"})", false),
+            (b"(class{", b"})", false),
+            (b"(class{m(){(", b")}})", true),
+        ];
+        around
+            .iter()
+            .find_map(|&(before, after, is_arrow_in_method)| {
+                let text = [before, whole.slice(), after].concat();
+                Self::parse(&text, bun_ast::Loader::Jsx, is_arrow_in_method, index)
+            })
+            .unwrap_or(ContextParameter::Other(None))
+    }
+
+    fn parse(text: &[u8], loader: bun_ast::Loader, is_arrow_function: bool, index: usize) -> Option<ContextParameter> {
         let arena = bun_alloc::Arena::new();
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
         let source = bun_ast::Source::init_path_string(&b"function.js"[..], text);
-        let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
+        let mut options = bun_js_parser::ParserOptions::init(Default::default(), loader);
         options.features.no_macros = true;
         options.suppress_warnings_about_weird_code = true;
         let define = bun_js_parser::Define::default();
@@ -67,6 +101,11 @@ impl ContextParameter {
                         return ContextParameter::Absent;
                     };
                     let mut function = &only.value.data;
+                    if let Data::EObject(object) = function
+                        && let [G::Property { value: Some(method), .. }] = object.properties.as_slice()
+                    {
+                        function = &method.data;
+                    }
                     if let Data::EClass(class) = function
                         && let [G::Property { value: Some(method), .. }] = class.properties.slice()
                     {

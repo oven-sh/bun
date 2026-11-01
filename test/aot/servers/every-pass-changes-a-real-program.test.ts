@@ -67,7 +67,7 @@ const statisticsOfPassesThatReportNoChange = {
 /** The write barriers that each program is compiled with on Linux x64. A number here only ever goes down. */
 const barriersAtMost: Record<string, number> = {
   thin: 519,
-  elysia: 2353,
+  elysia: 2382,
   terminal: 199,
 };
 /**

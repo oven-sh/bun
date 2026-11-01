@@ -251,7 +251,8 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let names: FxHashSet<Atom> = members.iter().map(|member| member.name).collect();
-        let are_fields = names.iter().all(|&name| self.is_field_name(name));
+        let are_fields = (names.iter())
+            .all(|&name| self.is_field_name(name) && !self.is_name_on_object_prototype(name));
         (names.len() == members.len() && !members.is_empty() && are_fields).then_some(EmittedEnum {
             literal,
             stores,

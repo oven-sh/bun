@@ -103,7 +103,7 @@ module m0 path="the-fields-of-a-merged-object.cjs" displayPath="the-fields-of-a-
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 entry module=m0
 layout L0 module=m0
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L2|L3 flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=undefined|null|absent|L3 flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=undefined|null|number|string|symbol|bigint|absent|L3 flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.3" declared={type=undefined|null|number|string|symbol|bigint|absent|L3 flags=[IsExpected]} flags=[IsImmutable]}] ownFieldCount=4
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L2|L3 flags=[IsExpected]} flags=[IsImmutable] variableName="defaults"}, {key=@"binding.1" declared={type=undefined|null|absent|L3 flags=[IsExpected]} flags=[IsImmutable] variableName="written"}, {key=@"binding.2" declared={type=undefined|null|number|string|symbol|bigint|absent|L3 flags=[IsExpected]} flags=[IsImmutable] variableName="spreadOut"}, {key=@"binding.3" declared={type=undefined|null|number|string|symbol|bigint|absent|L3 flags=[IsExpected]} flags=[IsImmutable] variableName="assigned"}] ownFieldCount=4
 layout L2 module=m0 position=431 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
 layout L3 module=m0 position=610 fields=[{key="a" declared={type=undefined|number flags=[IsExpected]}}, {key="b" declared={type=undefined|number flags=[IsExpected]}}, {key="c" declared={type=undefined|number flags=[IsExpected]}}] ownFieldCount=3
 layout L4 module=m0 position=704 fields=[{key="c" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
@@ -154,7 +154,7 @@ function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anythi
     v28 = Convert v27 declared={type=undefined|null|Array<number> flags=[IsExpected]} @403
     Jump -> next b6(v28) @403
   b6(v29):
-    v30 = IteratorOpen v29 elementCount=3 [isDestructuring] @356
+    v30 = IteratorOpen v29 elementCount=3 [isDestructuring] @362 constructs
     Jump -> next b7() @356
   b7() handler=b25():
     v31 = IteratorResume v30 stepIndex=0 @356

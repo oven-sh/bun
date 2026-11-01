@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use bun_builtin_sources::Manifest;
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::ExprId;
+use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::node::NodeData;
 use bun_sema::program::{CodeAnswer, CompiledModule, FileId, Files};
 use bun_sema::util::{FxHashSet, SharedSort};
@@ -342,6 +343,28 @@ fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) ->
                     file,
                     kind: EntryPointKind::Additional,
                 }));
+            }
+            // `vi.importMock("./a")`: native code loads the file by its path, as the runner loads a test file.
+            let compiled_files = files.compiled_files().iter();
+            for compiled in compiled_files.filter_map(|&file| files.compiled(file)) {
+                let sites = compiled.analysis.import_sites.iter();
+                for (site, answer) in sites.zip(compiled.code_answers) {
+                    let is_loaded_by_runner = matches!(
+                        site.kind,
+                        ImportSiteKind::ImportByTestRunner(_)
+                            | ImportSiteKind::RequireByTestRunner(_)
+                    );
+                    if let &CodeAnswer::File(named) = answer
+                        && is_loaded_by_runner
+                        && entries[named.idx()].kind == SourceKind::Program
+                        && named_files.insert(named)
+                    {
+                        entry_points.push(EntryPoint {
+                            file: named,
+                            kind: EntryPointKind::LoadedByTestRunner,
+                        });
+                    }
+                }
             }
             entry_points
         }

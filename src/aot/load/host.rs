@@ -45,6 +45,7 @@ use crate::load::loaders::{
     to_host_loader_of_attribute, to_host_loader_of_query,
 };
 use crate::load::macros;
+use crate::load::manual_mocks::find_manual_mocks;
 use crate::load::modules_with_queries::ModulesWithQueries;
 use crate::load::named_loads::{
     FilesOfTests, find_library_modules_named_in_choices, find_loads_of_files_missing_at_build,
@@ -130,6 +131,8 @@ pub(crate) struct LoadHost<'a> {
     take_from_test_runner: Guarded<FxHashSet<Vec<u8>>>,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
+    /// As `entry_point_paths`, of `LoadOptions::entry_points_added_by_build`.
+    added_entry_point_paths: Vec<Vec<u8>>,
     files_of_tests: Option<FilesOfTests>,
     /// As `entry_point_paths`, of `begin_at`.
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
@@ -228,12 +231,17 @@ impl<'a> LoadHost<'a> {
         let options = input.options;
         let load = &options.load;
         let entry_point_paths = collect_entry_point_paths(disk, options, &options.entry_points);
+        let added = &options.load.entry_points_added_by_build;
+        let added_entry_point_paths = collect_entry_point_paths(disk, options, added);
         let files_of_tests = options.aot.only_tests_load_code_from_disk.then(|| {
             let listed = match load.files_of_tests.is_empty() {
                 true => &options.entry_points,
                 false => &load.files_of_tests,
             };
-            FilesOfTests::new(collect_entry_point_paths(disk, options, listed))
+            FilesOfTests::new(
+                collect_entry_point_paths(disk, options, listed),
+                &collect_entry_point_paths(disk, options, &load.test_files),
+            )
         });
         let is_binary = |path: &&Vec<u8>| {
             loader_named_by_path(&load.loaders, path).is_none()
@@ -261,10 +269,12 @@ impl<'a> LoadHost<'a> {
             modules_with_queries: ModulesWithQueries::default(),
             evaluated_texts: EvaluatedTexts::new(),
             take_from_test_runner: Guarded::new(FxHashSet::default()),
-            react_compiler: ReactCompiler::new(load.react_compiler, provider, messages),
+            react_compiler: ReactCompiler::new(load.react_compiler, provider, messages)
+                .with_filter(load.react_compiler_filter),
             binary_entry_point_paths: binary_entry_point_paths.collect(),
             entry_points_that_run_despite_their_names,
             entry_point_paths,
+            added_entry_point_paths,
             files_of_tests,
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
@@ -350,6 +360,13 @@ impl<'a> LoadHost<'a> {
                 && self.is_among(&self.found_entry_point_paths.lock(), path))
     }
 
+    /// A Worker starts from it, or data names it. The runner does not start it.
+    fn is_entry_point_added_by_build(&self, path: &[u8]) -> bool {
+        self.is_among(&self.added_entry_point_paths, path)
+            || (self.has_found_entry_points.load(Ordering::Relaxed)
+                && self.is_among(&self.found_entry_point_paths.lock(), path))
+    }
+
     fn runs_despite_its_name(&self, path: &[u8]) -> bool {
         is_declaration_file_name(path)
             && self.is_among(&self.entry_points_that_run_despite_their_names, path)
@@ -371,6 +388,19 @@ impl<'a> LoadHost<'a> {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
         (self.files_of_tests.as_ref()).is_some_and(|files| files.holds(&path))
+    }
+
+    /// The entry points of a layer below the test files are the files that those import.
+    fn is_test_file_or_preload(&self, path: &[u8]) -> bool {
+        let Some(files) = &self.files_of_tests else {
+            return !self.input.options.load.every_export_is_asked_for && self.is_entry_point(path);
+        };
+        let mut buffer = path_buffer_pool::get();
+        files.lists(&to_path_in(
+            path,
+            self.disk.is_case_sensitive(),
+            &mut buffer[..],
+        ))
     }
 
     fn is_among(&self, sorted_paths: &[Vec<u8>], path: &[u8]) -> bool {
@@ -678,11 +708,16 @@ impl LoadHost<'_> {
         source: &mut ParsedSource,
     ) -> TreeChange {
         // A file that gets the names keeps its components as they are written.
-        let load = &self.input.options.load;
-        let by_workers_alone = &load.loaded_by_workers_alone;
+        let (load, aot) = (&self.input.options.load, &self.input.options.aot);
+        let by_workers_too = &load.loaded_by_workers_too;
+        let may_load_in_worker = !self.is_test_file_or_preload(request.path)
+            || self.is_entry_point_added_by_build(request.path)
+            || (by_workers_too.binary_search_by(|path| path[..].cmp(request.path))).is_ok();
+        // The files above a layer load its entry points, the runner those of any other build.
+        let is_started_by_runner =
+            self.is_entry_point(request.path) && (!aot.shares_realms || aot.is_part_of_test_files);
         if load.runs_tests
             && source.kind == SourceKind::Program
-            && (by_workers_alone.binary_search_by(|path| path[..].cmp(request.path))).is_err()
             && test_runner_names::import_used_names(
                 arena,
                 atoms,
@@ -690,11 +725,18 @@ impl LoadHost<'_> {
                 test_runner_names::FileOfTestRun {
                     has_globals_of_vitest: load.has_globals_of_vitest,
                     is_entry_point: self.is_entry_point(request.path),
+                    may_load_below_vitest: load.entry_point_imports_vitest && !is_started_by_runner,
+                    may_load_in_worker,
+                    has_names_of_every_runner: false,
                 },
             ) == TreeChange::Changed
         {
-            source.has_names_of_test_runner = true;
+            source.binds_names_of_test_runner = !may_load_in_worker;
             return TreeChange::Changed;
+        }
+        // `bun test` leaves the test files and the preloads as they are written.
+        if load.runs_tests && self.is_test_file_or_preload(request.path) {
+            return TreeChange::Unchanged;
         }
         self.react_compiler.transform(arena, atoms, request, source)
     }
@@ -819,7 +861,25 @@ impl CodeHost for LoadHost<'_> {
         {
             return found;
         }
-        self.input.provider.find_file(self, search)
+        let found = self.input.provider.find_file(self, search);
+        let is_chai_of_test_run = options.load.runs_tests && search.specifier == b"chai";
+        if !is_chai_of_test_run || !matches!(found, FoundCode::NotFound(_)) {
+            return found;
+        }
+        // `NamesOfChai`. pnpm links chai next to vitest, not into the project's node_modules.
+        let vitest = FileSearch {
+            specifier: b"vitest/package.json",
+            ..*search
+        };
+        let FoundCode::File { path, .. } = self.input.provider.find_file(self, &vitest) else {
+            return found;
+        };
+        let path = self.disk.realpath(&path);
+        let next_to_vitest = FileSearch {
+            directory: dirname::<Posix>(&path),
+            ..*search
+        };
+        self.input.provider.find_file(self, &next_to_vitest)
     }
 
     fn resolve_runtime_module(&self, specifier: &[u8]) -> HostResolution {
@@ -1334,7 +1394,7 @@ impl CodeHost for LoadHost<'_> {
                 false => ReplacedMembersSought::NamesAdded,
                 true if is_in_package => ReplacedMembersSought::Written,
                 true if self.files_of_tests.is_some() && !is_of_tests => {
-                    ReplacedMembersSought::NamesAddedByProduct
+                    ReplacedMembersSought::WrittenOrNamedUnlessOfProduct
                 }
                 true => ReplacedMembersSought::WrittenOrNamed,
             },
@@ -1368,7 +1428,7 @@ impl CodeHost for LoadHost<'_> {
             source.library_modules_written_as_values = named.written_as_values;
         }
         source.loads_by_unknown_name = named.loads_by_unknown_name;
-        source.is_of_tests = is_of_tests;
+        source.is_of_tests = AtomicBool::new(is_of_tests);
         source.is_in_package = is_in_package;
         source.unknown_names_at = named.unknown_names_at;
         // Without the option the run time refuses code that is not in the program.
@@ -1384,6 +1444,11 @@ impl CodeHost for LoadHost<'_> {
             );
         }
         source.imports_given_unknown_names = named.imports_given_unknown_names;
+        if self.input.options.load.runs_tests {
+            let started_in = from_native(&self.input.options.code.working_directory);
+            let mocks = find_manual_mocks(request, &started_in, &|path| self.is_file(path));
+            answers.extend(mocks.into_iter().map(HostResolution::Path));
+        }
         answers
     }
 }

@@ -2901,10 +2901,24 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::ANY
             };
         }
-        if let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner
-            && let Some(this) = self.contextual_this_parameter_type(file, func, owner)
-        {
-            return this;
+        if let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner {
+            let is_without_context = self.this_parameters_without_context.contains(&(file, func));
+            match self.assigned_type_of_this_parameter(file, func) {
+                Some(assigned) if !is_without_context => return assigned,
+                Some(_) => {}
+                None => {
+                    if self.this_parameters_in_progress.contains(&(file, func)) {
+                        return TypeId::ANY;
+                    }
+                    self.this_parameters_in_progress.push((file, func));
+                    let contextual = self.contextual_this_parameter_type(file, func, owner);
+                    self.this_parameters_in_progress.pop();
+                    if let Some(this) = contextual {
+                        return this;
+                    }
+                    self.this_parameters_without_context.insert((file, func));
+                }
+            }
         }
         // `reportImplicitAny`. The binder doesn't bind the name, so `report_implicit_any_of_name`
         // doesn't handle it.
@@ -4308,10 +4322,13 @@ impl<'p, 's> Checker<'p, 's> {
             // `assignContextualParameterTypes` skips an annotated `this` parameter. An unannotated
             // one doesn't push a resolution here, because `type_of_this_parameter` computes it on
             // request.
-            if contextual_signature.is_none() && f.this_ty(hir).is_some() {
+            if contextual_signature.is_none() && f.this_param.is_some() {
                 self.assigned_parameters.push(self.stack.len());
-                self.type_of_this_parameter(file, func);
+                let this = self.type_of_this_parameter(file, func);
                 self.assigned_parameters.pop();
+                if f.this_ty(hir).is_none() && f.kind != FnKind::Setter {
+                    self.context_checking.checks[checking].assigned_this = Some(this);
+                }
             }
             for (i, p) in f.params.iter().enumerate() {
                 self.assigned_parameters.push(self.stack.len());
@@ -4375,12 +4392,18 @@ impl<'p, 's> Checker<'p, 's> {
         let outer = self.suspend_recheck();
         self.precheck_signature(file, func);
         self.end_recheck(outer);
+        let assigned_this = self.context_checking.checks[checking].assigned_this;
         self.context_checking.pop();
         if is_check_final {
             (self.p.context_checked).insert(&self.task, (file, func), assigned, Stored::new());
             self.context_checked_here.insert((file, func));
+            if let Some(this) = assigned_this {
+                let name = (file, self.hir(file)[f.this_param].pat);
+                (self.p.pat_types).insert(&self.task, name, (this, false), Stored::new());
+            }
         } else if let Some(at) = self.frames.iter().position(|frame| frame.marks.tainted()) {
-            let under = (at, self.frames[at].serial, (file, func), assigned);
+            let serial = self.frames[at].serial;
+            let under = (at, serial, (file, func), assigned, assigned_this);
             self.context_checked_under.push(under);
         }
     }
@@ -4428,6 +4451,18 @@ impl<'p, 's> Checker<'p, 's> {
             .retain(|&(at, serial, ..)| frames.get(at).is_some_and(|frame| frame.serial == serial));
         let mut under = self.context_checked_under.iter();
         under.find(|c| c.2 == (file, func)).map(|c| c.3)
+    }
+
+    fn assigned_type_of_this_parameter(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
+        if let Some(in_progress) = self.context_checking.get(file, func) {
+            return in_progress.assigned_this;
+        }
+        if self.context_checked_under_taint(file, func).is_some() {
+            let mut under = self.context_checked_under.iter();
+            return under.find(|c| c.2 == (file, func)).and_then(|c| c.4);
+        }
+        let name = (file, self.hir(file)[self.hir(file)[func].this_param].pat);
+        Some(self.p.pat_types.get(&self.task, &name)?.0)
     }
 
     /// `links.flags&NodeCheckFlagsContextChecked != 0`. The first contextual check of a function

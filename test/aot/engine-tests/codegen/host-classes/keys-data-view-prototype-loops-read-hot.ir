@@ -1,6 +1,7 @@
 # Six loops over a DataView. Each reads a method of DataView.prototype that nothing has read before: one loop makes no turn, one throws in its first turn in front of a second method,
 # one reads a method only from its fourth turn on, one leaves in front of the read, one stands in another loop, one reads in its test. Behind each loop another method is read, so that
 # the own keys of DataView.prototype tell which of the loops read what, and when.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot
 # RUN: lower-to-air size f0

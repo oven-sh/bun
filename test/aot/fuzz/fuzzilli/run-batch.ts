@@ -1193,7 +1193,8 @@ type Family = (
       text: string;
       extension: string;
       flags?: string[];
-      standsAlone?: true;
+      files?: Record<string, string>;
+      needsOwnBuild?: true;
       meant?: (plain: string, compiled: string) => string | undefined;
     }
   | undefined;
@@ -1228,7 +1229,14 @@ async function drawPrograms(extension: string) {
     try {
       drawn = family(seed % 2 ** 31, bedThatTakesEverything);
     } catch {}
-    if (!drawn || "." + drawn.extension !== extension || drawn.flags?.length || drawn.standsAlone) {
+    // Only the text of a program is laid out here: one that comes with other files would not find them.
+    if (
+      !drawn ||
+      "." + drawn.extension !== extension ||
+      drawn.flags?.length ||
+      drawn.files ||
+      (drawn.needsOwnBuild && count > 1)
+    ) {
       if (options.family && ++drawnInVain > 10_000)
         throw new Error(`${options.family} draws no ${extension} program that can share a build`);
       continue;

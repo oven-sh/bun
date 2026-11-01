@@ -91,9 +91,9 @@ function f2 name="Counter" module=m0 position=312 kind=BaseConstructor flags=[Ha
   b0(v0: anything, v1: number):
     Jump -> next b1() @312
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @274
-    v3 = NewObject v2 layout=L0 @274
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @274
+    v2 = GetConstructPrototype v0 layout=L0 @312
+    v3 = NewObject v2 layout=L0 @312
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @312
     v5 = CallDirect v4 function=f3 @312
     v6 = Convert v1 declared={type=number site=w8} @326
     PropSet v4, v6 key="n" @326

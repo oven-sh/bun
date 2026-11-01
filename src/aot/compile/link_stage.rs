@@ -57,6 +57,10 @@ pub(super) fn describe_link_error(loaded: &LoadedBuild<'_, '_>, error: &LinkErro
                 ProgramVariableKey::SyntheticExport { module, name } => {
                     format!("the export `{}` of {}", name_of(name), module_of(module))
                 }
+                ProgramVariableKey::MockOfRuntimeModule(module) => {
+                    let module = module_of(ProgramModule::Runtime(module));
+                    format!("the mock that stands in place of {module}")
+                }
                 ProgramVariableKey::Declared(declared) => match declared.key.home_file() {
                     Some(file) => {
                         let project = declared.project;
@@ -223,6 +227,7 @@ impl Build<'_> {
             let files = application.loaded.files();
             let sources = files.compiled_files().iter();
             let sources = sources.filter_map(|&file| parsed_source(files, file));
+            let sources = sources.filter(|it| !it.finds_builtins_read_only());
             replaced.extend(sources.flat_map(|source| source.builtins.replaced_members()));
         }
         replaced.shared_sort_unstable();
@@ -240,7 +245,10 @@ impl Build<'_> {
         let files = application.loaded.files();
         let sources = files.compiled_files().iter();
         let sources = sources.filter_map(|&file| parsed_source(files, file));
-        let spelled = sources.flat_map(|source| source.builtins.names_added().iter());
+        let spelled = sources.flat_map(|source| match source.finds_builtins_read_only() {
+            true => source.builtins.names_added_in_executable().iter(),
+            false => source.builtins.names_added().iter(),
+        });
         opened.extend(spelled.map(|&(holder, name)| (holder, files.atoms.bytes(name))));
         opened.shared_sort_unstable();
         opened.dedup();

@@ -188,13 +188,13 @@ function f4 name="Holder" module=m0 position=45 kind=BaseConstructor flags=[HasN
   b0(v0: anything):
     Jump -> next b1() @45
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @39
-    v2 = NewObject v1 layout=L0 @39
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @39
-    v4 = CallDirect v3 function=f6 @39
-    Return v3 @39
+    v1 = GetConstructPrototype v0 layout=L0 @45
+    v2 = NewObject v1 layout=L0 @45
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @45
+    v4 = CallDirect v3 function=f6 @45
+    Return v3 @45
 }
-function f5 module=m0 position=524 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number site=w7}] thisType={type=anything} parameters=[{type=number site=w19}] results=[{type=number site=w20}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f5 module=m0 position=524 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number site=w7 variableName="a"}] thisType={type=anything} parameters=[{type=number site=w19}] results=[{type=number site=w20}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number, v1: number):
     Jump -> next b1() @524
   b1():

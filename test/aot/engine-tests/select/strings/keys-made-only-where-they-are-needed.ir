@@ -858,7 +858,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f38 visibility=Private
 # CHECK-NEXT: v11: string @Cell = Strcat v7, v9, v10
 # CHECK-NEXT: v12: Array<Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray contents=Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=13 literalStorage=Profiled arrayStorage=Contiguous staticsOffset=16 [contentsAreProven]
 # CHECK-NEXT: v13: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v12 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v14: undefined @JSValue = CallDirect v13, v2 function=f42 [isNeverInlined]
+# CHECK-NEXT: v14: undefined @JSValue = CallDirect v13, v2 function=f43 [isNeverInlined]
 # CHECK-NEXT: v15: 0 @OptionalDouble = Integer
 # CHECK-NEXT: v16: 2 @OptionalDouble = Integer integer=2
 # CHECK-NEXT: TryCallInline v13, v15, v16 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 accessSite=40 -> done b6(), miss b7()

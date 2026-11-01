@@ -213,7 +213,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             // The type of `const zero = 0` is `number`, since TypeScript's `0` is also the type of `-0`. The read stays for
             // its dead zone.
             Binding::Symbol(symbol)
-                if read == BindingRead::Value && self.file.is_constant_zero(symbol) =>
+                if read == BindingRead::Value
+                    && self.file.is_constant_zero(symbol)
+                    && !self.file.may_be_answered_by_mock(symbol) =>
             {
                 self.read_binding(binding, name, read);
                 self.builder.integer(0)

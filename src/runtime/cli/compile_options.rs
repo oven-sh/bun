@@ -84,6 +84,7 @@ const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("report-detail", Form::One),
     developer_flag!("verify-each-pass", Form::Flag),
     developer_flag!("references", Form::One),
+    developer_flag!("cpu", Form::One),
     developer_flag!("threads", Form::One),
     developer_flag!("erase-types", Form::Flag),
     developer_flag!("refuse-code-from-disk", Form::Flag),
@@ -1033,6 +1034,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
         test_run_part_files: part_limit(b"TestRunPartFiles:").map(|files| files as u32),
         test_run_is_one_program: part_words.contains(&&b"TestRunLayers:0"[..]),
+        embeds_function_source: !part_words.contains(&&b"TestRunWithoutFunctionSource"[..]),
         source_that_fits_in_memory: (cmd == Tag::TestCommand && compiles)
             .then(|| run_compiled::source_that_fits_in_memory(ctx)),
         is_part_of_test_files,

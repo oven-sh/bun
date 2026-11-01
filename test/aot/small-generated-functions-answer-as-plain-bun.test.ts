@@ -1,17 +1,21 @@
-// Five generators in test/aot/fuzz write small, dense functions. Machines run them by the million. This is their small edition: a few
+// Eight generators in test/aot/fuzz write small, dense functions. Machines run them by the million. This is their small edition: a few
 // programs of each, built as executables and compared with plain Bun. In the first three lists all but the last seed once gave another
-// answer or ended in a trap. The programs of the last two lists never did: each of them answers something else when a condition that an
-// optimization rests on is switched off in the build, so it reaches that optimization.
+// answer or ended in a trap, and so did every seed of the last three lists, or it stopped the compiler. The programs of the fourth and fifth
+// lists never did: each of them answers something else when a condition that an optimization rests on is switched off in the build, so it
+// reaches that optimization.
 import { expect } from "bun:test";
 import { realpathSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { generate as countersPastInt32 } from "./fuzz/counters-past-int32-over-typed-arrays";
 import { generate as fractionsAndNegativeZero } from "./fuzz/fractions-and-negative-zero-carried-through-counted-loops";
+import { generate as functionsPutAway } from "./fuzz/functions-put-away-read-back-and-called";
 import { generate as objectsOfSeveralConstructors } from "./fuzz/objects-of-several-constructors-met-at-a-choice";
 import { Random } from "./fuzz/random";
 import { generate as straightLoops } from "./fuzz/straight-loops-over-typed-arrays";
+import { generate as whatNeverHappens } from "./fuzz/what-never-happens";
 import { generate as wholeNumbers } from "./fuzz/whole-numbers-carried-through-counted-loops";
+import { generate as wordsHeld } from "./fuzz/words-held-over-the-turns-of-a-loop";
 import { built, spawned } from "./harness/commands";
 import { test } from "./supported";
 
@@ -21,6 +25,9 @@ const editions = [
   ["objects of several constructors met at a choice", objectsOfSeveralConstructors, [2, 12, 48, 70, 196, 216, 1]],
   ["fractions and negative zero carried through counted loops", fractionsAndNegativeZero, [1, 3, 8, 10, 13]],
   ["straight loops over typed arrays", straightLoops, [1, 2, 5, 63, 100, 108]],
+  ["what never happens", whatNeverHappens, [8, 41, 76, 86, 104, 198]],
+  ["words held over the turns of a loop", wordsHeld, [2, 3, 6, 8, 9, 37]],
+  ["functions put away, read back and called", functionsPutAway, [2, 7, 17, 23, 45, 52, 57]],
 ] as const;
 
 for (const [family, generate, seeds] of editions)

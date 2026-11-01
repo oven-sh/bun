@@ -63,6 +63,10 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub mocks_any_module: bool,
     /// `AotOptions::host_runs_files_from_disk`
     pub host_runs_files_from_disk: bool,
+    /// The test files and the preloads of `bun test --aot`, in order: `BindInput::runner_starts_entry_points`.
+    pub files_started_by_runner: &'a [FileId],
+    /// Where a `new Worker(..)` stands that the build has followed to a file: `StartedWorkers::starts_of_files`.
+    pub starts_of_workers: &'a [(FileId, u32)],
 }
 
 impl<'a, 's> ProgramReachInput<'a, 's> {
@@ -117,6 +121,8 @@ enum Interest {
     ModuleObject(ModuleObjectOwner, ModuleObjectUse),
     // A loader is given a name that the build does not know.
     LoadByUnknownName,
+    // One of `ProgramReachInput::starts_of_workers`.
+    StartOfWorker(u32),
     // The same, where the answer of the load is read under this name and looked at no further.
     NameReadFromLoadByUnknownName(Atom),
     // A read of a member of an enum of another file whose value the build knows. The value stands for it unless something gets hold of the object.
@@ -1338,6 +1344,9 @@ impl<'a, 's> FileScan<'a, 's> {
     // A module that is evaluated evaluates what it imports, but for a file whose package says that nothing is lost without it.
     fn add_requests(&mut self) {
         let graph = self.input.graph;
+        // No executable holds a test file or a preload. What one of them imports runs, as under `bun test`.
+        let started_by_runner = self.input.files_started_by_runner;
+        let is_started_by_runner = started_by_runner.binary_search(&self.file).is_ok();
         for request in graph.requests(self.file) {
             // A call of `require` asks where it stands, if it is reached.
             if request.kind == ModuleRequestKind::Require {
@@ -1347,7 +1356,8 @@ impl<'a, 's> FileScan<'a, 's> {
             if request.phase == ImportPhase::Defer {
                 self.add_file_loaded_by_call(request.target);
             }
-            if runs_when_imported(graph, request.target) {
+            let is_file = matches!(request.target, ModuleRef::File(_) | ModuleRef::Face(_));
+            if (is_started_by_runner && is_file) || runs_when_imported(graph, request.target) {
                 self.units.interests[TOP_LEVEL as usize].push(Interest::Request(request.target));
             }
         }
@@ -1515,6 +1525,15 @@ impl<'a, 's> FileScan<'a, 's> {
         Some(names)
     }
 
+    fn add_starts_of_workers(&mut self) {
+        let starts = self.input.starts_of_workers.iter().zip(0..);
+        for (&(starter, position), number) in starts {
+            if starter == self.file {
+                self.add_interest(position, Interest::StartOfWorker(number));
+            }
+        }
+    }
+
     fn add_loads_by_unknown_names(&mut self) {
         let files = self.input.files;
         let source = parsed_source(files, self.file);
@@ -1593,7 +1612,9 @@ impl<'a, 's> FileScan<'a, 's> {
                 ImportSiteKind::ImportCall(call)
                 | ImportSiteKind::GetBuiltinModule(call)
                 | ImportSiteKind::RequireResolve(call)
-                | ImportSiteKind::ImportMetaResolve(call) => (Some(call), false),
+                | ImportSiteKind::ImportMetaResolve(call)
+                | ImportSiteKind::ImportByTestRunner(call)
+                | ImportSiteKind::RequireByTestRunner(call) => (Some(call), false),
                 ImportSiteKind::Require(call) | ImportSiteKind::ImportMetaRequire(call) => {
                     if let Some(Site::Evaluate { .. }) = graph.site(self.file, call) {
                         continue;
@@ -1857,6 +1878,7 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_holders();
         self.add_loads();
         self.add_loads_by_unknown_names();
+        self.add_starts_of_workers();
         self.add_loads_of_text_written_anew();
         self.add_module_objects();
         self.add_stores_of_loader_functions();
@@ -1970,6 +1992,7 @@ struct Walk<'a, 's> {
     // By a module: the modules that have a call of `require` for it. Made when something asks.
     requirers: Option<FxHashMap<ModuleRef, Vec<ModuleRef>>>,
     reaches_load_by_unknown_name: bool,
+    starts_of_workers_reached: Vec<u32>,
     // The folders of the packages in which a load by an unknown name is reached.
     packages_loading_by_unknown_name: FxHashSet<&'a [u8]>,
     files_named_at_run_time: Option<FilesNamedAtRunTime<'a>>,
@@ -2122,6 +2145,7 @@ impl<'a, 's> Walk<'a, 's> {
             required: FxHashSet::default(),
             requirers: None,
             reaches_load_by_unknown_name: false,
+            starts_of_workers_reached: Vec::new(),
             packages_loading_by_unknown_name: FxHashSet::default(),
             files_named_at_run_time: None,
             a_load_looks_at_every_export: false,
@@ -3038,6 +3062,7 @@ impl<'a, 's> Walk<'a, 's> {
                 self.reaches_load_by_unknown_name = true;
                 self.hand_on_files_found_by_name(file, None);
             }
+            Interest::StartOfWorker(number) => self.starts_of_workers_reached.push(number),
             Interest::NameReadFromLoadByUnknownName(name) => {
                 self.reaches_load_by_unknown_name = true;
                 self.hand_on_files_found_by_name(file, Some(name));
@@ -3088,6 +3113,10 @@ impl<'a, 's> Walk<'a, 's> {
                 self.evaluate(target);
             }
             Interest::Request(module) => {
+                // A test file or a preload asks for it: `add_requests`.
+                if !runs_when_imported(self.input.graph, module) {
+                    self.note_named_by_import(module);
+                }
                 if !self.is_request_waiting(file, module) {
                     self.evaluate(module);
                 }
@@ -3363,16 +3392,18 @@ pub(crate) fn find_root_folders_spelled(
 // The files with code that a load in the package may find under a name the build does not follow to it: any file where code comes from disk,
 // else those that a relative path spells which a file writes as a string. The path comes from the package, from a file that imports from it, or from a package that one of those imports.
 // The extension may differ, and a folder stands for its index file.
-// What does not go by the package is found once, for the first package that asks.
+// What does not go by the package is found once, for the first package that asks. Whoever asks keeps all that was found, so an answer holds only what no answer before it held.
 struct FilesNamedAtRunTime<'a> {
     files_by_spelling: FxHashMap<&'a [u8], SmallVec<[FileId; 2]>>,
     numbers_of_packages: FxHashMap<&'a [u8], u32>,
     // By package.
     code_files: Vec<Vec<FileId>>,
-    // By package: the packages of the files with code that are of it or import from it, and of what those files import.
-    neighbors: Vec<Vec<u32>>,
-    // By file: what the relative paths spell that it writes as strings, once somebody has asked.
-    spelled_by: FxHashMap<FileId, Vec<FileId>>,
+    // By package: the files with code that are of it or import from it, as numbers in `packages_beside`.
+    files_beside: Vec<Vec<u32>>,
+    // By such a file: its package and those of what it imports. Emptied once somebody has asked.
+    packages_beside: Vec<SmallVec<[u32; 8]>>,
+    // By package: somebody has asked what its files spell.
+    is_asked: Vec<bool>,
 }
 
 impl<'a> FilesNamedAtRunTime<'a> {
@@ -3401,10 +3432,10 @@ impl<'a> FilesNamedAtRunTime<'a> {
             *number
         };
         let mut code_files_of: Vec<Vec<FileId>> = Vec::new();
-        let mut neighbors: Vec<Vec<u32>> = Vec::new();
-        let mut touched: SmallVec<[u32; 8]> = SmallVec::new();
+        let mut files_beside: Vec<Vec<u32>> = Vec::new();
+        let mut packages_beside: Vec<SmallVec<[u32; 8]>> = Vec::new();
         for file in code_files() {
-            touched.clear();
+            let mut touched: SmallVec<[u32; 8]> = SmallVec::new();
             touched.push(number_of(file));
             for request in input.graph.requests(file) {
                 if let ModuleRef::File(target) | ModuleRef::Face(target) = request.target {
@@ -3415,40 +3446,41 @@ impl<'a> FilesNamedAtRunTime<'a> {
             touched.sort_unstable();
             touched.dedup();
             let count = *touched.last().expect("its own") as usize + 1;
-            if neighbors.len() < count {
-                neighbors.resize_with(count, Vec::new);
+            if files_beside.len() < count {
+                files_beside.resize_with(count, Vec::new);
                 code_files_of.resize_with(count, Vec::new);
             }
             code_files_of[own].push(file);
             for &package in &touched {
-                neighbors[package as usize].extend_from_slice(&touched);
+                files_beside[package as usize].push(packages_beside.len() as u32);
             }
-        }
-        for packages in &mut neighbors {
-            packages.sort_unstable();
-            packages.dedup();
+            packages_beside.push(touched);
         }
         FilesNamedAtRunTime {
             files_by_spelling,
             numbers_of_packages,
+            is_asked: vec![false; code_files_of.len()],
             code_files: code_files_of,
-            neighbors,
-            spelled_by: FxHashMap::default(),
+            files_beside,
+            packages_beside,
         }
     }
 
     fn find(&mut self, input: &ProgramReachInput<'_, '_>, package: &[u8]) -> Vec<FileId> {
         let number = self.numbers_of_packages.get(package);
-        let Some(neighbors) = number.and_then(|&number| self.neighbors.get(number as usize)) else {
+        let Some(beside) = number.and_then(|&number| self.files_beside.get_mut(number as usize))
+        else {
             return Vec::new();
         };
         let mut found = Vec::new();
-        for &neighbor in neighbors {
-            for &file in &self.code_files[neighbor as usize] {
-                let spelled = self.spelled_by.entry(file);
-                let spelled = spelled
-                    .or_insert_with(|| find_files_spelled_by(input, &self.files_by_spelling, file));
-                found.extend_from_slice(spelled);
+        for beside in take(beside) {
+            for neighbor in take(&mut self.packages_beside[beside as usize]) {
+                if replace(&mut self.is_asked[neighbor as usize], true) {
+                    continue;
+                }
+                for &file in &self.code_files[neighbor as usize] {
+                    found.extend(find_files_spelled_by(input, &self.files_by_spelling, file));
+                }
             }
         }
         found.sort_unstable();
@@ -3574,6 +3606,8 @@ pub(crate) struct LeftOutCode {
     bound_variables: FxHashSet<Sym>,
     // No code that stays gives a loader a name that the build does not know.
     pub holds_every_load_by_unknown_name: bool,
+    // Of `ProgramReachInput::starts_of_workers`, by their places in it.
+    pub starts_of_workers_reached: Vec<u32>,
 }
 
 impl LeftOutCode {
@@ -3616,6 +3650,7 @@ impl LeftOutCode {
                 })
                 .collect(),
             holds_every_load_by_unknown_name: self.holds_every_load_by_unknown_name,
+            starts_of_workers_reached: self.starts_of_workers_reached.clone(),
         }
     }
 
@@ -3668,6 +3703,8 @@ pub(crate) struct ReachedModules {
     pub data_found_by_name: Vec<ModuleRef>,
     // A file that does not run hands its imports to its importers, but not these. In order.
     pub brought_by_calls: Vec<FileId>,
+    // A file, and one of `brought_by_calls` that it names by `import "./a"` or `import {} from "./a"` and by no other statement. In order.
+    pub requests_that_bind_nothing: Vec<(FileId, FileId)>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
 }
 
@@ -3874,6 +3911,18 @@ fn find_left_out_code_following(
     }
     leave_out_texts_of_left_out_files(input.sources, &mut left_out.files);
     // Of the files that say nothing is lost without them, the ones in the program that no import takes a name of: a call has brought them.
+    // Whoever loads a file under a name that the build does not see may read any name through an `export .. from`.
+    let mut hands_names_on = vec![false; walk.files.len()];
+    for &exporter in input.files.compiled_files() {
+        for site in input.files.analysis(exporter).import_sites {
+            if let ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_) = site.kind
+                && let Some(SiteAnswer::Module(ModuleRef::File(target))) =
+                    input.graph.find_site_answer(exporter, site.kind)
+            {
+                hands_names_on[target.idx()] = true;
+            }
+        }
+    }
     reached_modules.brought_by_calls = (0..walk.files.len())
         .map(|index| FileId(index as u32))
         .filter(|&file| {
@@ -3881,10 +3930,50 @@ fn find_left_out_code_following(
                 && input.graph.has_no_side_effects(file)
                 && input.graph.shape(ModuleRef::File(file)) == Shape::EsModule
                 && !walk.is_named_by_import[file.idx()]
-                && walk.is_run_by_call[file.idx()]
+                && (walk.is_run_by_call[file.idx()]
+                    || (!hands_names_on[file.idx()]
+                        && walk.is_found_by_name.contains(&ModuleRef::File(file))))
                 && !has_names_found_at_run_time(input.graph, file)
         })
         .collect();
+    let brought_by_calls = &reached_modules.brought_by_calls;
+    let mut bind_nothing: Vec<(FileId, FileId)> = Vec::new();
+    for &writer in input.files.compiled_files() {
+        let hir = input.files.hir(writer);
+        let first = bind_nothing.len();
+        let mut named_otherwise: Vec<FileId> = Vec::new();
+        for site in input.files.analysis(writer).import_sites {
+            let Some(SiteAnswer::Module(ModuleRef::File(target))) =
+                input.graph.find_site_answer(writer, site.kind)
+            else {
+                continue;
+            };
+            if brought_by_calls.binary_search(&target).is_err() || site.kind.call().is_some() {
+                continue;
+            }
+            let binds_nothing = matches!(site.kind, ImportSiteKind::Import(import) if {
+                let node = hir[import];
+                node.default == Atom::NONE
+                    && node.namespace == Atom::NONE
+                    && node.named.iter().next().is_none()
+            });
+            match binds_nothing {
+                true => bind_nothing.push((writer, target)),
+                false => named_otherwise.push(target),
+            }
+        }
+        let mut kept = first;
+        for index in first..bind_nothing.len() {
+            if !named_otherwise.contains(&bind_nothing[index].1) {
+                bind_nothing.swap(kept, index);
+                kept += 1;
+            }
+        }
+        bind_nothing.truncate(kept);
+    }
+    bind_nothing.sort_unstable();
+    bind_nothing.dedup();
+    reached_modules.requests_that_bind_nothing = bind_nothing;
     let is_evaluated = |module: &ModuleRef| {
         walk.find_module(*module)
             .is_some_and(|found| walk.is_body_reached(found))
@@ -3937,6 +4026,7 @@ fn find_left_out_code_following(
     left_out.holds_every_load_by_unknown_name = !walk.reaches_load_by_unknown_name
         && !input.files.compiled_files().iter().any(loads_outside_units);
     left_out.names_read_from_objects = walk.names_read_from_objects;
+    left_out.starts_of_workers_reached = walk.starts_of_workers_reached;
     left_out.bound_variables = walk.bound_variables;
     steps.end("what is left out is listed");
     (left_out, reached_modules)

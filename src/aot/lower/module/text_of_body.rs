@@ -1,8 +1,7 @@
-use std::cmp::Reverse;
-
 use bun_core::strings::{contains_char, index_of, index_of_char_usize, last_index_of_char};
 use bun_sema::fold::FoldedValue;
 use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, PatKind, StmtId, StmtKind};
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 
 use crate::lower::FileLowering;
 
@@ -90,7 +89,7 @@ impl FileLowering<'_, '_, '_, '_> {
             .filter(|(function, _)| function.is_in_list)
             .filter_map(|(_, place)| place.map(|(start, end, _)| (start, end)))
             .collect();
-        in_lists.sort_unstable_by_key(|&(start, end)| (start, Reverse(end)));
+        in_lists.sort_by_u64(|&(start, end)| number_of_pair(start, !end));
         // One that lies in another.
         in_lists.dedup_by(|in_list, around| in_list.1 <= around.1);
         in_lists

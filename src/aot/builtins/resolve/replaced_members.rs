@@ -5,6 +5,7 @@
 //! A member too many costs a test where it is used. One that is missed here stays locked, and the test that writes it gets a TypeError.
 
 use super::imports::has_source;
+use super::mentions::mentioned_id;
 use super::resolver::{ExprState, Resolver};
 use super::{ObjectSpelled, ReplacedMembersSought, WriteOnImport};
 use crate::builtins::table::{
@@ -543,7 +544,61 @@ impl Resolver<'_, '_> {
         }
     }
 
+    /// `globalThis[holder]`: a member of the global object under a key that nobody can read.
+    fn is_some_member_of_global_object(&self, value: ExprId) -> bool {
+        let hir = self.input.hir;
+        let Some((object, MemberKey::Computed(key))) =
+            hir.member_key(hir.skip_type_assertions(value))
+        else {
+            return false;
+        };
+        self.find_builtin(object) == Some(BuiltinId::GlobalThis)
+            && self.find_keys_spelled_for(key).is_empty()
+    }
+
+    /// A table may name the objects too, `[["Error", "toString"], ["console", "debug"]]`, for a loop that reads `globalThis[holder]` or `globalThis[holder].prototype`.
+    /// And a helper may be handed such an object beside a name: `stub(globalThis[holder], "debug")`. Only a member that is there counts.
+    fn find_members_named_beside_names_of_holders(&self, values: &[ExprId], found: &mut Found) {
+        // Nearly every call and literal of a file ends here.
+        let names_object = |value: ExprId| {
+            let name = (self.constant_key(value)).and_then(|key| self.input.names.get(key));
+            name.and_then(table::global).is_some()
+        };
+        let holds_some_member =
+            (values.iter()).any(|&value| self.is_some_member_of_global_object(value));
+        if !holds_some_member && !values.iter().any(|&value| names_object(value)) {
+            return;
+        }
+        let names: Vec<BuiltinName> = (values.iter())
+            .flat_map(|&value| self.find_keys_spelled_for(value))
+            .filter_map(|key| self.input.names.get(key))
+            .collect();
+        let objects_of_global_object = || {
+            let members = table::members(BuiltinId::GlobalThis).iter();
+            members.map(|&member| table::canonical_id(member))
+        };
+        let holders: Vec<BuiltinId> = match holds_some_member {
+            true => objects_of_global_object().collect(),
+            false => (names.iter())
+                .filter_map(|&name| table::global(name).map(table::canonical_id))
+                .collect(),
+        };
+        let prototype = table::find_name(b"prototype");
+        for holder in holders {
+            let below = prototype.and_then(|name| match table::member(holder, name) {
+                MemberLookup::Found(member) => Some(table::canonical_id(member)),
+                MemberLookup::Unknown | MemberLookup::Absent => None,
+            });
+            for holder in [Some(holder), below].into_iter().flatten() {
+                let members = names.iter();
+                (found.members)
+                    .extend(members.filter_map(|&name| self.find_locked_member(holder, name)));
+            }
+        }
+    }
+
     fn find_members_named_beside_holders(&self, values: &[ExprId], found: &mut Found) {
+        self.find_members_named_beside_names_of_holders(values, found);
         let holders = values.iter();
         let holders: Vec<BuiltinId> = holders
             .flat_map(|&value| self.find_builtins_spelled_for(value))
@@ -640,6 +695,51 @@ impl Resolver<'_, '_> {
         (found.handed_on).extend(closed.filter(|&holder| Self::takes_no_names(holder)));
     }
 
+    /// `jest.useFakeTimers()` stores the runner's functions on the global object and on `process`, so the files of the run read them there, a function
+    /// that was kept before the call is the real one. Bun's own code has the real ones anyway: `find_native`.
+    /// `Api::NAMES` in src/runtime/test_runner/timers/FakeTimers.rs has more: the clocks answer for themselves. `toFake` is not read.
+    /// `vi.stubGlobal("fetch", f)` defines the name on the global object.
+    fn find_members_replaced_by_runner(&self, expr: ExprId, found: &mut Found) {
+        let hir = self.input.hir;
+        let ExprKind::Call(call) = hir[expr].kind else {
+            return;
+        };
+        let Some(callee) = self.value_of(hir[call].callee).map(|callee| callee.path.id) else {
+            return;
+        };
+        if table::fakes_timers(callee) {
+            const TIMERS: [&[u8]; 8] = [
+                b"setTimeout",
+                b"clearTimeout",
+                b"setInterval",
+                b"clearInterval",
+                b"setImmediate",
+                b"clearImmediate",
+                b"queueMicrotask",
+                b"performance",
+            ];
+            let member_of = |holder, name| find_locked_member_of(holder, table::find_name(name)?);
+            let timers = TIMERS.into_iter();
+            let timers = timers.filter_map(|name| member_of(BuiltinId::GlobalThis, name));
+            found.members.extend(timers);
+            let process = table::find_name(b"process").and_then(table::global);
+            let process = process.map(table::canonical_id);
+            let tick = process.and_then(|process| member_of(process, b"nextTick"));
+            found.members.extend(tick);
+        }
+        if table::stubs_global(callee)
+            && let Some(name) = hir.ids(hir[call].args).next()
+        {
+            let names = self.find_keys_spelled_for(name);
+            if names.is_empty() {
+                (found.members).extend(members_written_under_any_name(BuiltinId::GlobalThis));
+            }
+            for name in names {
+                self.note_write(BuiltinId::GlobalThis, name, found);
+            }
+        }
+    }
+
     // `Object.assign(Date, { now: () => 0 })`, `Object.defineProperties(Math, { random: d })`: the keys of the literals are written on the first operand.
     fn find_members_written_from_literals(&self, expr: ExprId, found: &mut Found) {
         let hir = self.input.hir;
@@ -674,6 +774,68 @@ impl Resolver<'_, '_> {
                     }
                 }
             }
+        }
+    }
+
+    /// `globalThis.__lookupSetter__("self").call({}, f)`, `Object.getOwnPropertyDescriptor(globalThis, "self").set`, `Object.getOwnPropertyDescriptors(globalThis)`:
+    /// a name under which the global object holds itself is replaced by its own setter, so whoever is handed that writes the member.
+    fn find_members_whose_setter_is_handed_out(&self, expr: ExprId, found: &mut Found) {
+        let hir = self.input.hir;
+        let ExprKind::Call(call) = hir[expr].kind else {
+            return;
+        };
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let builtin_behind = |value: ExprId| {
+            mentioned_id(self.state(hir.skip_type_assertions(value))).map(table::canonical_id)
+        };
+        let looks_up_setter = |value: ExprId| {
+            builtin_behind(value) == Some(BuiltinId::ObjectPrototype__lookupSetter__)
+        };
+        let name_of_lookup = table::entry(BuiltinId::ObjectPrototype__lookupSetter__).name;
+        let mut operands = hir.ids(hir[call].args);
+        let (object, key) = match (builtin_behind(callee), hir.member_key(callee)) {
+            (
+                Some(
+                    BuiltinId::ObjectGetOwnPropertyDescriptor
+                    | BuiltinId::ReflectGetOwnPropertyDescriptor,
+                ),
+                _,
+            ) => (operands.next(), operands.next()),
+            (Some(BuiltinId::ObjectGetOwnPropertyDescriptors), _) => (operands.next(), None),
+            (Some(BuiltinId::ObjectPrototype__lookupSetter__), Some((receiver, _))) => {
+                (Some(receiver), operands.next())
+            }
+            // `Object.prototype.__lookupSetter__.call(globalThis, "self")`
+            (_, Some((borrowed, MemberKey::Name(name))))
+                if name == known::call && looks_up_setter(borrowed) =>
+            {
+                (operands.next(), operands.next())
+            }
+            // The table does not say what stands above the global object. It has no such member of its own.
+            (None, Some((receiver, MemberKey::Name(name))))
+                if self.input.names.get(name) == Some(name_of_lookup)
+                    && self.find_builtin(receiver).is_some() =>
+            {
+                (Some(receiver), operands.next())
+            }
+            _ => return,
+        };
+        let Some(object) = object else {
+            return;
+        };
+        // No key, or one that nobody can read: any of them.
+        let keys = key.map_or(Vec::new(), |key| self.find_keys_spelled_for(key));
+        let names: Vec<BuiltinName> = (keys.iter())
+            .filter_map(|&key| self.input.names.get(key))
+            .collect();
+        for holder in self.find_builtins_spelled_for(object) {
+            let members = table::members(holder).iter().copied();
+            found.members.extend(members.filter(|&member| {
+                let name = table::entry(member).name;
+                table::has_flag(member, BuiltinFlags::IS_GLOBAL_OBJECT)
+                    && (keys.is_empty() || names.contains(&name))
+                    && self.find_locked_member(holder, name).is_some()
+            }));
         }
     }
 
@@ -713,7 +875,11 @@ impl Resolver<'_, '_> {
         let mut writes_on_imports = Vec::new();
         let mut writes_on_parameters_under_any_name = false;
         for expr in evaluated {
-            if sought == ReplacedMembersSought::WrittenOrNamed {
+            if matches!(
+                sought,
+                ReplacedMembersSought::WrittenOrNamed
+                    | ReplacedMembersSought::WrittenOrNamedUnlessOfProduct
+            ) {
                 self.find_members_named_by(expr, &mut found);
             } else if let ExprKind::Call(_) = self.input.hir[expr].kind {
                 // `registry.applyPatch(globalThis, "fetch", wrap)`
@@ -725,6 +891,8 @@ impl Resolver<'_, '_> {
                 (found.members).extend(named.members.into_iter().filter(is_cheap));
             }
             self.find_members_written_from_literals(expr, &mut found);
+            self.find_members_replaced_by_runner(expr, &mut found);
+            self.find_members_whose_setter_is_handed_out(expr, &mut found);
             let Some(write) = self.find_write(expr) else {
                 if let ExprKind::Assign { target, .. } = self.input.hir[expr].kind {
                     let target = self.input.hir.skip_type_assertions(target);
@@ -896,7 +1064,15 @@ impl Resolver<'_, '_> {
 
     /// `Function.prototype.call$0 = f` in an executable. A holder is an expression of the file that stands for the object, so a file without one adds nothing.
     pub(super) fn collect_names_added(&mut self) {
-        if !self.seeks_names_added_alone() || !self.output.names_holder_that_takes_spelled_names {
+        // Whether a package of a test run is the product's shows behind the load, so what an executable's build would find in it is kept beside what the tests' reading finds.
+        // So it is with a file of the project that lies outside the folders of the tests.
+        let is_read_both_ways = matches!(
+            self.input.replaced_members_sought,
+            ReplacedMembersSought::Written | ReplacedMembersSought::WrittenOrNamedUnlessOfProduct
+        );
+        if !(self.seeks_names_added_alone() || is_read_both_ways)
+            || !self.output.names_holder_that_takes_spelled_names
+        {
             return;
         }
         let evaluated = self.evaluated_ids().map(ExprId);
@@ -921,6 +1097,9 @@ impl Resolver<'_, '_> {
         }
         let mut seen = FxHashSet::default();
         (found.names).retain(|&name| name.0 != BuiltinId::ObjectPrototype && seen.insert(name));
-        self.output.names_added = found.names;
+        match is_read_both_ways {
+            true => self.output.names_added_in_executable = found.names,
+            false => self.output.names_added = found.names,
+        }
     }
 }

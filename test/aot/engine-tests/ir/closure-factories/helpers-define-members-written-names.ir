@@ -229,7 +229,7 @@ function f5 name="describe" module=m0 position=665 kind=Method flags=[HasThis, H
     v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @708
     Return v8 @708
 }
-function f6 module=m0 position=286 flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] thisType={type=undefined|null|object flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f6 module=m0 position=286 flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=undefined|null|string flags=[IsExpected] variableName="source"}, {type=undefined|null|string flags=[IsExpected] variableName="name"}] thisType={type=undefined|null|object flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: undefined|null|string, v2: undefined|null|object, v3: int[0, 4294967295], v4: Array):
     Jump -> next b1() @286
   b1():
@@ -243,7 +243,7 @@ function f6 module=m0 position=286 flags=[HasThis, HasArgumentCount, HasHiddenRe
     v12 = Call v10, v8, v11, v5 calleeKey="apply" calleeName="this[source][name].apply" @330
     ReturnCall v12 @330
 }
-function f7 module=m0 position=448 flags=[HasThis] captures=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] thisType={type=undefined|null|object flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f7 module=m0 position=448 flags=[HasThis] captures=[{type=undefined|null|string flags=[IsExpected] variableName="source"}, {type=undefined|null|string flags=[IsExpected] variableName="name"}] thisType={type=undefined|null|object flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: undefined|null|string, v2: undefined|null|object):
     Jump -> next b1() @448
   b1():
@@ -252,7 +252,7 @@ function f7 module=m0 position=448 flags=[HasThis] captures=[{type=undefined|nul
     v5 = ElemGet v4, v1 @478
     Return v5 @473
 }
-function f8 module=m0 position=580 flags=[HasThis] length=1 captures=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] thisType={type=undefined|null|object flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f8 module=m0 position=580 flags=[HasThis] length=1 captures=[{type=undefined|null|string flags=[IsExpected] variableName="source"}, {type=undefined|null|string flags=[IsExpected] variableName="name"}] thisType={type=undefined|null|object flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: undefined|null|string, v2: undefined|null|object, v3: anything):
     Jump -> next b1() @580
   b1():
@@ -310,7 +310,7 @@ function f14 name="apply" module=m1 position=1161 kind=Method role=Library flags
 runtimefunction id=FunctionPrototypeApply function=f14
 # -- generated: f0 describe f8 area shout forwardSetter
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f16 callPosition=1321 module=m0}, {callee=f8 callPosition=1308 module=m0}, {callee=f38 callPosition=1351 module=m0}, {callee=f18 callPosition=1360 module=m0}, {callee=f22 callPosition=1374 module=m0}, {callee=f39 callPosition=1406 module=m0}, {callee=f5 callPosition=1424 module=m0}, {callee=f4 callPosition=1279 module=m0}, {callee=f25 callPosition=915 module=m0}, {callee=f23 callPosition=877 module=m0}, {callee=f21 callPosition=841 module=m0}, {callee=f19 callPosition=803 module=m0}, {callee=f17 callPosition=729 module=m0}, {callee=f16 callPosition=689 parent=7 module=m0}, {callee=f18 callPosition=708 parent=7 module=m0}, {callee=f10 callPosition=330 parent=6 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f9 callPosition=330 parent=3 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f8 callPosition=1308 calleeIsPredicted=true module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f16 callPosition=1321 module=m0}, {callee=f8 callPosition=1308 module=m0}, {callee=f38 callPosition=1351 module=m0}, {callee=f18 callPosition=1360 module=m0}, {callee=f22 callPosition=1374 module=m0}, {callee=f39 callPosition=1406 module=m0}, {callee=f5 callPosition=1424 module=m0}, {callee=f4 callPosition=1279 module=m0}, {callee=f25 callPosition=915 module=m0}, {callee=f23 callPosition=877 module=m0}, {callee=f21 callPosition=841 module=m0}, {callee=f19 callPosition=803 module=m0}, {callee=f17 callPosition=729 module=m0}, {callee=f16 callPosition=689 parent=7 module=m0}, {callee=f18 callPosition=708 parent=7 module=m0}, {callee=f9 callPosition=330 parent=3 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f10 callPosition=330 parent=6 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f8 callPosition=1308 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f5 = NewClosure function=f5 allocationSite=4
 # CHECK-NEXT: v1: object = NewDictionary
@@ -546,7 +546,7 @@ runtimefunction id=FunctionPrototypeApply function=f14
 # CHECK-NEXT: v145: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}]
 # CHECK-NEXT: Branch v145 -> taken b53(), notTaken b67(v136)
 # CHECK-NEXT: b53() frequency=Unlikely:
-# CHECK-NEXT: v146: Array<undefined|"!"> = NewArray v137 contents=undefined|"!" storage=Frame
+# CHECK-NEXT: v146: Array<undefined|"!"> = NewArray v137 contents=undefined|"!" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v147: string = CallDirect v46, v146 function=f39 accessSite=16
 # CHECK-NEXT: Jump -> next b72(v147, v136)
 # CHECK-NEXT: b54() frequency=Rare:
@@ -590,7 +590,7 @@ runtimefunction id=FunctionPrototypeApply function=f14
 # CHECK-NEXT: Branch v169 -> taken b65(), notTaken b66()
 # CHECK-NEXT: b65() frequency=Unlikely:
 # CHECK-NEXT: v170: "!" = String string="!"
-# CHECK-NEXT: v171: Array<undefined|"!"> = NewArray v170 contents=undefined|"!" storage=Frame
+# CHECK-NEXT: v171: Array<undefined|"!"> = NewArray v170 contents=undefined|"!" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v172: string = CallDirect v46, v171 function=f39 accessSite=16
 # CHECK-NEXT: Jump -> next b71(v168, v172)
 # CHECK-NEXT: b66() frequency=Rare:
@@ -600,7 +600,7 @@ runtimefunction id=FunctionPrototypeApply function=f14
 # CHECK-NEXT: v175: boolean = AreMembersUnchanged conditions=[{layout=L3 key="shout"}, {kind=MemberNotHidden layout=L3 key="shout"}]
 # CHECK-NEXT: Branch v175 -> taken b68(), notTaken b69()
 # CHECK-NEXT: b68() frequency=Rare:
-# CHECK-NEXT: v176: Array<undefined|"!"> = NewArray v174 contents=undefined|"!" storage=Frame
+# CHECK-NEXT: v176: Array<undefined|"!"> = NewArray v174 contents=undefined|"!" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v177: string = CallDirect v46, v176 function=f39 accessSite=16
 # CHECK-NEXT: Jump -> next b71(v173, v177)
 # CHECK-NEXT: b69() frequency=Rare:
@@ -609,7 +609,7 @@ runtimefunction id=FunctionPrototypeApply function=f14
 # CHECK-NEXT: v180: boolean = TypeTest v179 testedType=f24
 # CHECK-NEXT: Branch v180 -> taken b70(), notTaken b105()
 # CHECK-NEXT: b70() frequency=Rare:
-# CHECK-NEXT: v181: Array<undefined|"!"> = NewArray v174 contents=undefined|"!" storage=Frame
+# CHECK-NEXT: v181: Array<undefined|"!"> = NewArray v174 contents=undefined|"!" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v182: string = CallDirect v46, v181 function=f39 accessSite=16
 # CHECK-NEXT: Jump -> next b71(v173, v182)
 # CHECK-NEXT: b71(v183: int|whole, v184: string) frequency=Unlikely:

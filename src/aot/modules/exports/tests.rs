@@ -1,6 +1,7 @@
 use super::*;
 use crate::load::runtime_modules::HOST_VALUE_MODULE;
 use crate::modules::commonjs_exports::{CommonJsInput, scan_commonjs_modules};
+use crate::modules::imports::find_mocked_modules;
 use crate::modules::module_set::collect_modules;
 use crate::modules::order::compute_order;
 use crate::modules::requests::scan_files;
@@ -86,7 +87,8 @@ fn with_export_tables(
             is_prefix_root: &|_| true,
         });
         let entries = collect_export_entries(input, &scans, &modules);
-        let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
+        let mocked = find_mocked_modules(input, &scans, &modules);
+        let tables = resolve_exports(input.files, &scans, &modules, entries, &texts, &mocked);
         check(&tables, &modules, input);
     });
 }
@@ -137,6 +139,60 @@ fn required(resolution: Resolution, (module, name): NodeKey) -> ResolvedName {
         resolution,
         required_name: Some(RequiredName::new(ModuleRef::File(module), name)),
     }
+}
+
+#[test]
+fn a_file_that_may_be_mocked_has_every_name() {
+    let files = [
+        (
+            "main.test.js",
+            "import { mock } from 'bun:test'; mock.module('./mocked.js', () => ({}));\n\
+             import './barrel.js'; import './hands_on.js'; import './other.js'",
+        ),
+        ("mocked.js", "export const has = 1"),
+        (
+            "barrel.js",
+            "export * from './mocked.js'; export const own = 1",
+        ),
+        ("hands_on.js", "export { lacks } from './mocked.js'"),
+        ("other.js", "export const has = 1"),
+    ];
+    with_export_tables(&files, |tables, modules, input| {
+        let name = |name: &str| input.files.atoms.intern(name.as_bytes());
+        let resolve = |file: &str, asked: Atom| {
+            let file = file_named(input, file);
+            tables.resolve(modules, file, asked).resolution
+        };
+        let open_name = |file: &str, name: Atom| Resolution::DynamicStar {
+            module: file_named(input, file),
+            name,
+        };
+        let lacks = name("lacks");
+        assert!(matches!(
+            resolve("mocked.js", name("has")),
+            Resolution::Variable(_)
+        ));
+        assert_eq!(resolve("mocked.js", lacks), open_name("mocked.js", lacks));
+        assert_eq!(
+            resolve("mocked.js", known::default),
+            open_name("mocked.js", known::default)
+        );
+        assert_eq!(resolve("barrel.js", lacks), open_name("barrel.js", lacks));
+        assert_eq!(resolve("barrel.js", known::default), Resolution::NotFound);
+        assert_eq!(
+            resolve("hands_on.js", lacks),
+            Resolution::LiveName {
+                module: ModuleRef::File(file_named(input, "mocked.js")),
+                name: lacks,
+            }
+        );
+        assert_eq!(resolve("other.js", lacks), Resolution::NotFound);
+        assert!(
+            tables
+                .failures_of(file_named(input, "hands_on.js"))
+                .is_empty()
+        );
+    });
 }
 
 #[test]

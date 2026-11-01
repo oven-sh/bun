@@ -370,6 +370,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     });
 
     // The copy is a no-op, so it does not open the file for writing. The mode option still applies.
+    // Not on Windows: a file has no POSIX mode bits there.
     it.skipIf(isWindows)("a file without write permission stays intact and gets the mode option", async () => {
       using dir = tempDir("bun-write-same-file-mode", { "file.txt": content });
       const file = join(String(dir), "file.txt");
@@ -418,6 +419,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
+    // `/dev/full` is a Linux device.
     it.skipIf(!isLinux)("one character device as the source and the destination is still copied", async () => {
       expect(fs.statSync("/dev/full").isCharacterDevice()).toBe(true);
       await expect(Bun.write("/dev/full", Bun.file("/dev/full"))).rejects.toThrow(
@@ -426,33 +428,31 @@ const IS_UV_FS_COPYFILE_DISABLED =
     });
   });
 
-  describe("Bun.write(dest, Bun.file(src)) with a source that cannot be copied", () => {
+  // POSIX only: these source checks are in the POSIX copy job. Windows copies in `CopyFileWindows`.
+  describe.skipIf(isWindows)("Bun.write(dest, Bun.file(src)) with a source that cannot be copied", () => {
     const content = Buffer.alloc(100_000, "0123456789").toString();
 
-    it.skipIf(isWindows).each(["path", "fd"])(
-      "a directory %s rejects and leaves the destination as it was",
-      async kind => {
-        using dir = tempDir("bun-write-directory-source", { "dest.txt": content });
-        const dest = join(String(dir), "dest.txt");
-        const missing = join(String(dir), "missing.txt");
-        const fd = kind === "fd" ? fs.openSync(String(dir), "r") : undefined;
-        try {
-          for (const destination of [dest, missing]) {
-            await expect(Bun.write(destination, Bun.file(fd ?? String(dir)))).rejects.toThrow(
-              "That doesn't work on folders",
-            );
-          }
-        } finally {
-          if (fd !== undefined) fs.closeSync(fd);
+    it.each(["path", "fd"])("a directory %s rejects and leaves the destination as it was", async kind => {
+      using dir = tempDir("bun-write-directory-source", { "dest.txt": content });
+      const dest = join(String(dir), "dest.txt");
+      const missing = join(String(dir), "missing.txt");
+      const fd = kind === "fd" ? fs.openSync(String(dir), "r") : undefined;
+      try {
+        for (const destination of [dest, missing]) {
+          await expect(Bun.write(destination, Bun.file(fd ?? String(dir)))).rejects.toThrow(
+            "That doesn't work on folders",
+          );
         }
-        expect({ intact: fs.readFileSync(dest, "utf8") === content, created: fs.existsSync(missing) }).toEqual({
-          intact: true,
-          created: false,
-        });
-      },
-    );
+      } finally {
+        if (fd !== undefined) fs.closeSync(fd);
+      }
+      expect({ intact: fs.readFileSync(dest, "utf8") === content, created: fs.existsSync(missing) }).toEqual({
+        intact: true,
+        created: false,
+      });
+    });
 
-    it.skipIf(isWindows)("a source fd that is not open rejects and leaves the destination as it was", async () => {
+    it("a source fd that is not open rejects and leaves the destination as it was", async () => {
       using dir = tempDir("bun-write-bad-source-fd", { "dest.txt": content, "open.txt": content });
       const dest = join(String(dir), "dest.txt");
       const open = join(String(dir), "open.txt");
@@ -489,12 +489,14 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect({ written, content: fs.readFileSync(dest, "utf8") }).toEqual({ written: 5, content: "short" });
     });
 
+    // `/dev/null` is a POSIX path.
     it.skipIf(isWindows)("a destination path that is not a regular file is written", async () => {
       expect(fs.statSync("/dev/null").isCharacterDevice()).toBe(true);
       using dir = tempDir("bun-write-dev-null", { "src.txt": "short" });
       expect(await Bun.write("/dev/null", Bun.file(join(String(dir), "src.txt")))).toBe(5);
     });
 
+    // Only Linux has `/proc/self/fd`, which names the file behind each open fd.
     it.skipIf(!isLinux)("a destination that cannot be opened does not leave the source open", async () => {
       using dir = tempDir("bun-write-dest-open-fails", { "src.txt": "short", "file.txt": "not a directory" });
       const src = fs.realpathSync(join(String(dir), "src.txt"));

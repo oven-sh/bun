@@ -2317,7 +2317,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Runs `attempt`. While it misses: check on disk what the miss read, and run it again if that was stale.
-    #[inline]
+    #[inline(always)]
     fn retry_while_stale<T>(
         &mut self,
         after_miss: AfterMiss,

@@ -1409,7 +1409,7 @@ impl<'a> Resolver<'a> {
         if !kind.is_entry_point()
             && (self.is_external_pattern(import_path)
             // "fill: url(#filter);"
-            || (kind.is_from_css() && import_path.starts_with(b"#"))
+            || (kind == ast::ImportKind::Url && import_path.starts_with(b"#"))
             // "background: url(http://example.com/images/image.png);"
             || import_path.starts_with(b"http://")
             // "background: url(https://example.com/images/image.png);"
@@ -5264,10 +5264,12 @@ impl<'a> Resolver<'a> {
         // the `ESModule` is constructed as a temporary whose
         // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
         let esm_resolution = ESModule {
+            // The same set as the "exports" lookup in `load_node_modules`.
             conditions: match kind {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
                     &self.opts.conditions.require
                 }
+                ast::ImportKind::At | ast::ImportKind::AtConditional => &self.opts.conditions.style,
                 _ => &self.opts.conditions.import,
             },
             debug_logs: self.debug_logs.as_mut(),

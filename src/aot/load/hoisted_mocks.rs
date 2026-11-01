@@ -278,6 +278,16 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
         if names.iter().any(|it| exported.contains(&it.1)) {
             return Place::InPlace;
         }
+        // The factory and the fragment of classic JSX, and a class that decorator metadata names: no expression spells the name, so there is none to rewrite.
+        let bound = self.request.bound;
+        let is_unwritten = |symbol: SymbolId| {
+            let mut unwritten = bound.runtime.implicit_references().iter();
+            unwritten.any(|it| it.binding == Binding::Symbol(symbol))
+        };
+        let mut symbols = names.iter().map(|it| bound.declared_symbol(it.0));
+        if symbols.any(is_unwritten) {
+            return Place::InPlace;
+        }
         Place::LoweredImport
     }
 

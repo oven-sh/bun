@@ -964,14 +964,26 @@ fn finalize_bundle_inner(
             // Send the JS chunk
             if dev.client_graph.current_chunk_len > 0 {
                 let script_id = 'h: {
-                    // Matches the bundler's `ContentHasher` hash (XxHash64).
+                    // Hash every field `Entry::render_json` emits, with a tag
+                    // byte per `Shared` variant.
                     let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
                     let keys = dev.client_graph.bundled_files.keys();
                     let values = dev.client_graph.bundled_files.values();
                     for part in &dev.client_graph.current_chunk_parts {
                         source_map_hash.update(&keys[part.get() as usize]);
-                        if let Some(map) = values[part.get() as usize].source_map.get() {
-                            source_map_hash.update(map.vlq());
+                        match &values[part.get() as usize].source_map {
+                            packed_map::Shared::Some(map) => {
+                                source_map_hash.update(&[0]);
+                                source_map_hash.update(map.vlq());
+                                source_map_hash.update(map.quoted_contents());
+                            }
+                            packed_map::Shared::LineCount(count) => {
+                                source_map_hash.update(&[1]);
+                                source_map_hash.update(&count.get().to_le_bytes());
+                            }
+                            packed_map::Shared::None => {
+                                source_map_hash.update(&[2]);
+                            }
                         }
                     }
                     // Set the bottom bit.

@@ -1936,6 +1936,16 @@ impl VirtualMachine {
             .is_some_and(|h| h.is_active() || h.has_active_io_handles())
     }
 
+    /// An unhandled error has ended this `bun run`. Watch mode counts errors too, and keeps going.
+    pub fn has_fatal_error(&self) -> bool {
+        self.has_fatal_error_since(0)
+    }
+
+    /// [`Self::has_fatal_error`], for errors counted after `unhandled_error_counter` was `count`.
+    pub fn has_fatal_error_since(&self, count: usize) -> bool {
+        self.unhandled_error_counter > count && !self.is_watcher_enabled()
+    }
+
     pub fn wakeup(&mut self) {
         self.event_loop_mut().wakeup();
     }
@@ -3692,6 +3702,15 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
+    /// Thin forwarder; body lives in [`crate::event_loop::EventLoop::wait_for_module_promise`].
+    #[inline]
+    pub fn wait_for_module_promise(
+        &mut self,
+        promise: *mut JSInternalPromise,
+    ) -> Result<(), jsc::Stopped> {
+        self.event_loop_mut().wait_for_module_promise(promise)
+    }
+
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
@@ -3936,7 +3955,7 @@ impl VirtualMachine {
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
-    /// returned promise settles.
+    /// returned promise settles or, outside watch mode, a fatal error ends the run.
     pub fn load_entry_point(
         &mut self,
         entry_path: Option<&[u8]>,
@@ -3967,7 +3986,7 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            let _ = self.wait_for_module_promise(promise);
         }
 
         Ok(self.pending_internal_promise().unwrap_or(promise))

@@ -1,4 +1,4 @@
-import { expect, vi, type AsymmetricMatcher } from "bun:test";
+import { expect, type AsymmetricMatcher } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
@@ -6,11 +6,8 @@ import { built, spawned } from "./harness/commands";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { test as testWhereSupported } from "./supported";
 
-// A hardened Bun runs only what was compiled.
+// A hardened Bun runs only what was compiled. No test waits for more than one build that holds all of Bun's own code, and they run side by side.
 const test = testWhereSupported.concurrent.skipIf(isHardened);
-// No test waits for more than one build that holds all of Bun's own code, and such a build keeps two processors busy. So two tests run at once, as many as a
-// file gets in a bucket of CI, and no more where the runner would start one for each processor: the test files beside this one keep their processors.
-vi.setConfig({ maxConcurrency: 2 });
 // A debug build of Bun takes four to seven minutes for one of these builds by itself: more than the harness gives a command of it, and a test.
 const limitOfABuild = isDebug ? 1_800_000 : undefined;
 if (limitOfABuild) raiseDefaultTimeout(limitOfABuild);

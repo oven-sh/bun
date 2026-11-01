@@ -82,6 +82,25 @@ When the package has no changes left, Bun removes it from `"patchedDependencies"
 
 You can also delete the entry from `"patchedDependencies"` and the patch file yourself, then run `bun install`.
 
+#### Unused patches
+
+Bun fails the install when a `patchedDependencies` entry matches no resolved package. This includes patches for an old version or a removed dependency. Remove the entry or regenerate the patch for the current version.
+
+For a pruned workspace checkout that retains patch declarations, allow unused patches explicitly:
+
+```bash terminal icon="terminal"
+bun install --allow-unused-patches
+```
+
+To keep the allowance in the project configuration:
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+allowUnusedPatches = true
+```
+
+The allowance warns about unused patches during ordinary and frozen installs. It does not suppress missing patch files or patch-application errors. Patch keys still use Bun's existing `package@resolution` syntax.
+
 #### A missing patch file
 
 `bun install` and `bun patch <pkg>` fail when a file in `"patchedDependencies"` does not exist, and leave `node_modules` alone. While the patched package is still in `node_modules`, `bun patch --commit <pkg>` writes the file again. To start over, delete the entry from `"patchedDependencies"` and run `bun install`.

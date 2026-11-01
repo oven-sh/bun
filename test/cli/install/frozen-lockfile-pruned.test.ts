@@ -644,12 +644,45 @@ describe.each(linkers)("linker: %s", linker => {
     await frozen(packageDir, linker, [prunedNote]);
     expect(await lockText(packageDir)).toBe(full);
 
-    // a tool that also prunes bun.lock leaves a key that names nothing: said, and not a reason to fail
     await write(join(packageDir, "bun.lock"), withoutOther(full));
-    await frozen(packageDir, linker, [
-      "warn: patches/left-pad@1.0.0.patch no longer applies (left-pad is no longer installed)",
+    await frozenFails(packageDir, linker, [
+      'error: patch "left-pad@1.0.0" was not used',
+      "note: Remove or regenerate unused patches, or use --allow-unused-patches to keep them",
     ]);
+    await passes(
+      packageDir,
+      linker,
+      [...frozenInstall, "--allow-unused-patches"],
+      ['warn: patch "left-pad@1.0.0" was not used'],
+    );
     expect(await installedPackages(packageDir, linker)).toEqual(survivorsInstalled(linker));
+  });
+
+  test.concurrent("pruning a patched version while another version survives requires an allowance", async () => {
+    const tree: Tree = {
+      ...withApp({ dependencies: { shared: "workspace:*", "a-dep": "1.0.1", "no-deps": "1.1.0" } }),
+      root: { ...rootPackageJson, patchedDependencies: { "no-deps@1.0.0": "patches/old.patch" } },
+      files: { ...monorepo.files, "patches/old.patch": aDepPatch },
+    };
+    const { packageDir, full } = await verbatimScenario(linker, tree, survivors);
+    const lock = Bun.JSONC.parse(withoutOther(full));
+    const oldVersions = Object.entries(lock.packages).filter(
+      ([, row]) => Array.isArray(row) && row[0] === "no-deps@1.0.0",
+    );
+    expect(oldVersions).toHaveLength(1);
+    delete lock.packages[oldVersions[0][0]];
+    await write(join(packageDir, "bun.lock"), JSON.stringify(lock));
+    await frozenFails(packageDir, linker, [
+      'error: patch "no-deps@1.0.0" was not used',
+      "note: Remove or regenerate unused patches, or use --allow-unused-patches to keep them",
+    ]);
+    await passes(
+      packageDir,
+      linker,
+      [...frozenInstall, "--allow-unused-patches"],
+      ['warn: patch "no-deps@1.0.0" was not used'],
+    );
+    expect((await file(installedPath(packageDir, linker, "no-deps", "1.1.0")).json()).version).toBe("1.1.0");
   });
 
   test.concurrent("overrides added after bun.lock was written still fail --frozen-lockfile", async () => {

@@ -966,6 +966,17 @@ The maximum number of concurrent lifecycle scripts to run at once. Defaults to t
 concurrentScripts = 5
 ```
 
+### `install.allowUnusedPatches`
+
+Allow `patchedDependencies` entries that match no resolved package. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+allowUnusedPatches = true
+```
+
+Unused patches produce warnings when this setting is `true`. The allowance applies to ordinary and frozen installs. Use it for pruned workspaces that retain unused patch declarations. The CLI flag `--allow-unused-patches` enables the same allowance for one command. Missing patch files and patch-application errors still fail the install.
+
 ### `install.saveTextLockfile`
 
 If `false`, `bun install` generates a binary `bun.lockb` instead of a text-based `bun.lock` file when no lockfile is present.

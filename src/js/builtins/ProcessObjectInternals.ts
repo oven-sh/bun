@@ -60,6 +60,28 @@ export function getStdioWriteStream(
 ) {
   $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
 
+  if (!isTTY && fdType === BunProcessStdinFdType.unknown) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L94-L103
+    const Writable = require("internal/streams/writable");
+    // A class of its own with everything on its prototype: no other Writable gets a property or an option from here.
+    class DiscardingStdio extends Writable {
+      _write(_chunk: unknown, _encoding: unknown, callback: () => void) {
+        callback();
+      }
+      _destroy(this: StdioWriteStream, err: Error | null, cb: $Node.ErrorCallback) {
+        cb(err);
+        this._undestroy();
+        if (!this._writableState.emitClose) process.nextTick(() => this.emit("close"));
+      }
+    }
+    const prototype: any = DiscardingStdio.prototype;
+    prototype.constructor = Writable;
+    prototype.destroySoon = prototype.destroy;
+    prototype._isStdio = true;
+    prototype.fd = fd;
+    return [new DiscardingStdio() as unknown as StdioWriteStream, undefined];
+  }
+
   let stream: StdioWriteStream;
   if (isTTY) {
     const tty = require("node:tty");
@@ -72,14 +94,6 @@ export function getStdioWriteStream(
       stream._refreshSize();
     });
     stream._type = "tty";
-  } else if (fdType === BunProcessStdinFdType.unknown) {
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L94-L103
-    const Writable = require("internal/streams/writable");
-    stream = new Writable({
-      write(_chunk, _encoding, callback) {
-        callback();
-      },
-    }) as StdioWriteStream;
   } else {
     const fs = require("node:fs");
     stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
@@ -121,12 +135,12 @@ export function getStdioWriteStream(
   stream.fd = fd;
 
   // Node's is a TTY, a Pipe or a TCP. Command-line tools call setBlocking(true) before native code writes to the descriptor.
-  if (isTTY || fdType === BunProcessStdinFdType.pipe || fdType === BunProcessStdinFdType.socket) {
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
     const setStdioBlocking = $bindgen("node_process.bind.ts", "setStdioBlocking");
     stream._handle = { fd, setBlocking: (blocking: boolean) => setStdioBlocking(fd, !!blocking) };
   }
 
-  // This is undefined if no FileSink was opened for the fd. The stream then writes through node:fs, or discards.
+  // This is undefined if a FileSink couldn't be opened for the fd. The stream then writes through node:fs.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
   return [stream, underlyingSink];
 }
@@ -151,9 +165,15 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   if (!isTTY && fdType === BunProcessStdinFdType.unknown) {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L239-L245
     const Readable = require("internal/streams/readable");
-    const stream = new Readable({ read() {} }) as StdinStream;
+    // A class of its own, as for the output streams above.
+    class EndedStdin extends Readable {
+      _read() {}
+    }
+    const prototype: any = EndedStdin.prototype;
+    prototype.constructor = Readable;
+    prototype.fd = fd;
+    const stream = new EndedStdin() as unknown as StdinStream;
     stream.push(null);
-    stream.fd = fd;
     return stream;
   }
 

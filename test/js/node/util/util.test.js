@@ -930,7 +930,7 @@ describe("util.debuglog", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
-    expect(stderr.replaceAll(String(proc.pid), "<pid>")).toBe("FOO \x1b[33m<pid>\x1b[39m: n \x1b[33m1\x1b[39m\n");
+    expect(stderr.replace(`\x1b[33m${proc.pid}\x1b[39m`, "<pid>")).toBe("FOO <pid>: n \x1b[33m1\x1b[39m\n");
     expect(exitCode).toBe(0);
   });
 

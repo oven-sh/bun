@@ -1289,11 +1289,7 @@ pub(crate) fn scan_imports_and_exports(
                     } else if kind == ImportKind::Stmt
                         && export_kind == ExportsKind::EsmWithDynamicFallback
                     {
-                        // This is an import of a module that has a dynamic export fallback
-                        // object. In that case we need to depend on that object in case
-                        // something ends up needing to use it later. This could potentially
-                        // be omitted in some cases with more advanced analysis if this
-                        // dynamic export fallback object doesn't end up being needed.
+                        // A read of a run-time name gets its dependency from `ImportTrackerStatus::DynamicFallback`, not from here.
                         this.graph.generate_symbol_import_and_use(
                             source_index,
                             part_index as u32,

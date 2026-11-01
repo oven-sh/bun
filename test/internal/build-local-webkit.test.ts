@@ -113,9 +113,6 @@ describe("which builds compile WebKit", () => {
       expect(icu.enabled!(linux({ webkit: mode }))).toBe(false);
       expect(linux({ webkit: mode }).localDeps.icu).toBeUndefined();
     }
-    const mac = resolveConfig({ os: "darwin", arch: "aarch64", macosSdk: "/fake/sdk" }, mockToolchain());
-    expect(icu.enabled!(mac)).toBe(false);
-    expect(mac.localDeps.icu).toBeUndefined();
   });
 
   test("with the prebuilt, jsc and testaot are the tarball's objects linked here, where the tarball has them", () => {
@@ -189,14 +186,19 @@ describe("which builds compile WebKit", () => {
     );
   });
 
-  test.skipIf(process.platform === "darwin")("for macOS on another host, Apple's migcom is built for that host", () => {
-    const mac = (partial: PartialConfig) =>
-      resolveConfig({ os: "darwin", arch: "aarch64", macosSdk: "/fake/sdk", ...partial }, mockToolchain());
-    expect(bootstrapCmds.enabled!(mac({}))).toBe(true);
-    expect(bootstrapCmds.enabled!(mac({ webkit: "local" }))).toBe(true);
-    expect(bootstrapCmds.enabled!(mac({ webkit: "prebuilt" }))).toBe(false);
-    expect(bootstrapCmds.enabled!(linux({}))).toBe(false);
-  });
+  test.skipIf(process.platform === "darwin")(
+    "for macOS on another host, Apple's migcom is built and ICU is not",
+    () => {
+      const mac = (partial: PartialConfig) =>
+        resolveConfig({ os: "darwin", arch: "aarch64", ...partial }, mockToolchain());
+      expect(icu.enabled!(mac({}))).toBe(false);
+      expect(mac({}).localDeps.icu).toBeUndefined();
+      expect(bootstrapCmds.enabled!(mac({}))).toBe(true);
+      expect(bootstrapCmds.enabled!(mac({ webkit: "local" }))).toBe(true);
+      expect(bootstrapCmds.enabled!(mac({ webkit: "prebuilt" }))).toBe(false);
+      expect(bootstrapCmds.enabled!(linux({}))).toBe(false);
+    },
+  );
 
   test.skipIf(isWindows)("a checkout is not compiled for Windows on another host", () => {
     const windows = (partial: PartialConfig) =>

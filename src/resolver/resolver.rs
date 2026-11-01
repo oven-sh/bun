@@ -507,6 +507,8 @@ pub struct Resolver<'a> {
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
     // pointer carries no aliasing guarantee.
     env_loader: NonNull<DotEnv::Loader>,
+    /// `NODE_PATH` as of the owning transpiler's `run_env_loader`: a resolve can run on a thread that does not own the loader. A later load by another transpiler on a shared loader does not change it.
+    node_path: Interned,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
@@ -634,6 +636,7 @@ impl<'a> Resolver<'a> {
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
+            node_path: from.node_path,
             store_fd: from.store_fd,
             // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
             // vtable layout is identical (only the borrow-checker tag differs);
@@ -927,28 +930,29 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Safe read-only accessor for the `DotEnv::Loader` back-reference.
-    ///
-    /// Single `unsafe` deref site for the `env_loader: NonNull<_>`
-    /// field. The pointee is the Transpiler-owned loader (set from
-    /// `transpiler.env`) and strictly outlives the resolver. Only called once
-    /// resolution has begun (after `run_env_loader()`), so no `&mut Loader` is
-    /// live concurrently — see the field comment for why this is *not* stored
-    /// as `&'a Loader`.
-    #[inline]
-    pub(crate) fn env_loader(&self) -> &'a DotEnv::Loader {
-        // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
-        // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
-        // never mutates the env, so no `&mut Loader` overlaps this shared
-        // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
-        // the env borrow across `&mut self` resolver calls.
-        unsafe { self.env_loader.as_ref() }
+    /// `Transpiler::run_env_loader` hands over the `NODE_PATH` of its loader.
+    pub fn set_node_path(&mut self, node_path: &[u8]) {
+        if *self.node_path != *node_path {
+            self.node_path = Self::intern_node_path(node_path);
+        }
     }
 
-    /// The pointer that [`init1`](Self::init1) received, for `Transpiler` to compare with its own copy.
-    #[inline]
-    pub fn env_loader_ptr(&self) -> NonNull<DotEnv::Loader> {
-        self.env_loader
+    /// Returns a `'static` copy of `node_path`. Copies of a resolver on other threads keep the slice, so a published one is never freed.
+    fn intern_node_path(node_path: &[u8]) -> Interned {
+        static CACHE: bun_core::Mutex<Option<bun_collections::HashMap<&'static [u8], ()>>> =
+            bun_core::Mutex::new(None);
+        if node_path.is_empty() {
+            return Interned::EMPTY;
+        }
+        let mut cache = CACHE.lock();
+        let cache = cache.get_or_insert_default();
+        if let Some((&interned, ())) = cache.get_key_value(node_path) {
+            return Interned::from_static(interned);
+        }
+        let interned =
+            bun_core::handle_oom(Fs::file_system::DirnameStore::instance().append(node_path));
+        cache.insert(interned, ());
+        Interned::from_static(interned)
     }
 
     #[inline]
@@ -975,7 +979,7 @@ impl<'a> Resolver<'a> {
         self.opts.global_cache.is_enabled()
     }
 
-    /// `env_loader` is the loader of the `Transpiler` that owns this resolver. It outlives the resolver.
+    /// `env_loader` is the loader of the `Transpiler` that owns this resolver. It outlives the resolver, and auto-install receives it.
     pub fn init1(
         log: NonNull<bun_ast::Log>,
         _fs: *mut Fs::FileSystem,
@@ -1007,6 +1011,7 @@ impl<'a> Resolver<'a> {
             package_manager: None,
             on_wake_package_manager: Default::default(),
             env_loader,
+            node_path: Interned::EMPTY,
             store_fd: false,
             standalone_module_graph: None,
             prefer_module_field: true,
@@ -3136,7 +3141,7 @@ impl<'a> Resolver<'a> {
 
         // try resolve from `NODE_PATH`
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let node_path: &[u8] = self.env_loader().get(b"NODE_PATH").unwrap_or(b"");
+        let node_path: &[u8] = self.node_path.as_bytes();
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
@@ -7225,5 +7230,29 @@ impl Dirname {
         }
 
         &path[0..end_index + 1]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bun_sema_standalone as _;
+
+    use super::*;
+
+    #[test]
+    fn a_node_path_value_is_interned_once() {
+        let value: &[u8] = b"/node-path-tests/a:/node-path-tests/b";
+        let first = Resolver::intern_node_path(&value.to_vec());
+        let again = Resolver::intern_node_path(&value.to_vec());
+        let on_a_thread = std::thread::spawn(move || Resolver::intern_node_path(value))
+            .join()
+            .unwrap();
+        assert_eq!(first.as_bytes(), value);
+        assert!(core::ptr::eq(first.as_bytes(), again.as_bytes()));
+        assert!(core::ptr::eq(first.as_bytes(), on_a_thread.as_bytes()));
+
+        let other = Resolver::intern_node_path(b"/node-path-tests/c");
+        assert_eq!(other.as_bytes(), b"/node-path-tests/c");
+        assert!(Resolver::intern_node_path(b"").is_empty());
     }
 }

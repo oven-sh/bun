@@ -145,21 +145,11 @@ impl<'a> Transpiler<'a> {
         unsafe { &mut *self.log }
     }
 
-    /// `resolver` reads the loader through its own copy of `env`, which `init` made.
-    #[inline]
-    fn debug_assert_resolver_shares_env(&self) {
-        debug_assert!(
-            core::ptr::eq(self.env, self.resolver.env_loader_ptr().as_ptr()),
-            "Transpiler.env was reassigned without the copy in its resolver"
-        );
-    }
-
     /// Shared read-only borrow of the `DotEnv::Loader`. Prefer this over
     /// [`Self::env_mut`] when only inspecting env vars (e.g. `.get()`), so
     /// call sites can overlap with other `&` borrows of the same loader.
     #[inline]
     pub fn env(&self) -> &'a dot_env::Loader {
-        self.debug_assert_resolver_shares_env();
         // SAFETY: `self.env` is non-null after `init` — set to either the
         // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
         // which live for at least `'a`. Shared access cannot conflict with the
@@ -169,12 +159,11 @@ impl<'a> Transpiler<'a> {
     }
 
     /// Reborrow the `DotEnv::Loader`. Returned lifetime is decoupled from
-    /// `&self` so call sites in `configure_defines` / `run_env_loader` can
+    /// `&self` so call sites in `configure_defines` / `load_env` can
     /// hold it across disjoint `&mut self.options` / `&mut self.resolver`
     /// borrows.
     #[inline]
     pub fn env_mut(&self) -> &'a mut dot_env::Loader {
-        self.debug_assert_resolver_shares_env();
         // SAFETY: `self.env` is non-null after `init` — set to either the
         // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
         // which live for at least `'a`. No other live `&mut Loader` exists at
@@ -636,6 +625,14 @@ impl<'a> Transpiler<'a> {
     /// Load `.env` files into the env loader according to
     /// `options.env.behavior`.
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> crate::Result<()> {
+        let loaded = self.load_env(skip_default_env);
+        // `load_env` also returns early with the process env loaded: an error, or a cwd that it cannot list.
+        let node_path = self.env().get(b"NODE_PATH").unwrap_or(b"");
+        self.resolver.set_node_path(node_path);
+        loaded
+    }
+
+    fn load_env(&mut self, skip_default_env: bool) -> crate::Result<()> {
         use bun_options_types::schema::api::DotEnvBehavior;
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call.

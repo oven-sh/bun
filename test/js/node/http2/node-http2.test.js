@@ -7386,3 +7386,28 @@ it("a session over TLS whose peer reset is first seen by a write ends without a 
     server.close();
   }
 });
+
+// node's initOriginSet runs `https://${servername}:${remotePort}` through the WHATWG origin
+// serializer, so the host is lowercased and a default port is dropped. http2-wrapper (got)
+// compares originSet[0] with `new URL(authority).origin` and rejects every request on a mismatch.
+it("originSet holds the serialized origin of the servername", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  try {
+    const authority = `https://localhost:${server.address().port}`;
+    const client = http2.connect(authority, { ...TLS_OPTIONS, servername: "LOCALHOST" });
+    const { promise: settings, resolve: onSettings, reject } = Promise.withResolvers();
+    client.on("error", reject);
+    client.once("remoteSettings", onSettings);
+    await settings;
+    try {
+      expect(client.originSet).toEqual([new URL(authority).origin]);
+    } finally {
+      client.destroy();
+    }
+  } finally {
+    server.close();
+  }
+});

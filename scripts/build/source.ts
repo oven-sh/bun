@@ -1,9 +1,8 @@
 /**
- * Source acquisition and build orchestration for vendored dependencies.
+ * Source acquisition and build emission for vendored dependencies.
  *
- * Per dep: a fetch edge (tarball → vendor/<name>/, output: .ref stamp) with
- * `restat = 1`, then the dep's compile edges in our own graph (direct),
- * a cargo edge, or a prebuilt download.
+ * Per dep: a fetch edge (tarball → vendor/<name>/, output: the .ref stamp,
+ * `restat = 1`), then the dep's own compile edges in our graph.
  *
  * restat means: if the output mtime is unchanged after the command (e.g. fetch
  * was a no-op because .ref already matches), ninja prunes downstream. This is
@@ -17,19 +16,18 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
-import { existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { ar, cc, cxx, link, nasm, pch } from "./compile.ts";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { ar, cc, cxx, link, nasm, pch, type PrecompiledHeader } from "./compile.ts";
 import type { Config } from "./config.ts";
-import { gitArchiveUrl, githubArchiveUrl } from "./download.ts";
 import { assert } from "./error.ts";
-import { assertManagedSource, fetchCliPath, sourceIsCurrent } from "./fetch-cli.ts";
-import { computeDepFlags, computeTargetLinkFlags } from "./flags.ts";
+import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
+import { computeDepFlags, computeTargetLinkFlags, safeStackFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
-import { emitShims } from "./shims.ts";
 import { streamPath } from "./stream.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 /**
  * If the source dir exists with a stale (or missing) identity stamp,
@@ -38,25 +36,36 @@ import { streamPath } from "./stream.ts";
  *
  * See emitFetch() comment for the full why.
  *
- * Only called for github deps (via emitFetch). Local-mode deps never go
- * through here — their source is user-managed. Identity is commit + sparse
- * set + patch-content, NOT disk content, so hand-edits to vendor/<dep>/*.c
- * are preserved (identity still matches, no wipe).
+ * Only called for github-archive deps (via emitFetch). Local-mode deps
+ * (WebKit) never go through here — their source is user-managed, we
+ * never touch vendor/WebKit/. Identity is commit + patch-content, NOT
+ * disk content, so hand-edits to vendor/<dep>/*.c are preserved (identity
+ * still matches, no wipe).
  */
-function invalidateStaleSource(
-  name: string,
-  srcDir: string,
-  refStamp: string,
-  ref: string,
-  sparse: string[],
-  patchPaths: string[],
-): void {
+function invalidateStaleSource(srcDir: string, refStamp: string, commit: string, patchPaths: string[]): void {
   if (!existsSync(srcDir)) return;
-  assertManagedSource(name, srcDir, refStamp);
-  // .ref missing counts as stale: can't verify what's there (previous commit,
-  // manual rm) — untrusted, wipe. A missing patch file also mismatches; the
-  // fetch then fails with the clearer "patch file not found".
-  if (!sourceIsCurrent(srcDir, ref, sparse, patchPaths)) {
+
+  const patchContents = patchPaths.map(p => {
+    try {
+      return readFileSync(p, "utf8");
+    } catch {
+      // Missing patch → identity won't match → wipe. The fetch will
+      // fail later with a clearer "patch file not found" error.
+      return "<missing>";
+    }
+  });
+  const expected = computeSourceIdentity(commit, patchContents);
+
+  let current = "";
+  try {
+    current = readFileSync(refStamp, "utf8").trim();
+  } catch {
+    // .ref missing but srcDir exists — can't verify what's there. Could
+    // be stale from a previous commit, could be a manual rm. Either way:
+    // untrusted, wipe.
+  }
+
+  if (current !== expected) {
     rmSync(srcDir, { recursive: true, force: true });
   }
 }
@@ -70,45 +79,16 @@ function invalidateStaleSource(
  */
 export type Source =
   | {
-      /**
-       * A commit of a GitHub repository, extracted into vendor/<name>/. Fetched
-       * as the `/archive/<commit>.tar.gz` tarball, or — when `sparse` is set —
-       * as a shallow, blobless, sparse `git fetch` of just those paths
-       * (download.ts gitArchive). Either way the result is a plain tree with a
-       * `.ref` identity stamp; no `.git`.
-       */
-      kind: "github";
+      kind: "github-archive";
       /** "owner/repo" */
       repo: string;
       /**
-       * Commit sha or tag. Prefer commit shas — tags can move, breaking the
-       * identity hash. If upstream only publishes tags (e.g. brotli
-       * `v1.1.0`), fine, but be aware a retag will silently change what we
-       * fetch.
+       * Commit sha or tag. Both work for github archive URLs
+       * (`/archive/<ref>.tar.gz`). Prefer commit shas — tags can move,
+       * breaking the identity hash. A tag works, but be aware a retag
+       * will silently change what we fetch.
        */
       commit: string;
-      /**
-       * git sparse-checkout patterns (non-cone: gitignore syntax, `/`-anchored
-       * to the repo root). Only these paths are downloaded and extracted. For
-       * repositories where the build wants a small part of a large tree —
-       * GitHub refuses archive tarballs for those anyway (WebKit: HTTP 422).
-       * Part of the source identity: changing the set re-fetches.
-       */
-      sparse?: string[];
-    }
-  | {
-      /**
-       * A source release tarball at a fixed URL (one top-level directory,
-       * stripped on extraction), for upstreams that publish generated files
-       * only in their release tarballs (ICU: the prebuilt data package).
-       * Fetched, cached, patched and stamped exactly like a github archive.
-       */
-      kind: "tarball";
-      url: string;
-      /** SHA-256 of the file at `url` (hex). Verified before extraction; also the identity the .ref stamp is derived from. */
-      sha256: string;
-      /** Reported in process.versions / bun_dependency_versions.h. */
-      version: string;
     }
   | {
       /**
@@ -188,93 +168,73 @@ export type BuildSpec =
 /** A source file with per-file additions to its group's settings. */
 export interface DirectSource {
   path: string;
-  /** Appended after the group's flags (SIMD `-mavx2`, a per-file -D, `-fobjc-arc`). */
+  /** Appended after the group's flags (e.g. SIMD `-mavx2`). */
   cflags?: string[];
-  /** Generated files this TU includes that its group does not wait on (LowLevelInterpreter.cpp → LLIntAssembly.h); relative to the dep's build dir, or absolute. */
+  /** Generated files this TU includes that its group does not wait on (LowLevelInterpreter.cpp → LLIntAssembly.h). Absolute. */
   implicitInputs?: string[];
   /** Compile without the group's PCH (a TU whose flags differ from the PCH's). */
   noPch?: boolean;
+  pch?: string;
+  /** The sources that this one includes, absolute: each gets an entry of its own in compile_commands.json, with these flags and no PCH. */
+  bundled?: string[];
   /** "cxx": a `.c` file compiled as C++ (bmalloc_SOURCES' libpas files). */
   lang?: "cxx";
 }
 
 /**
- * A set of sources compiled with one flag set — a cmake "target". A dep with
- * one library is one group (the top-level `sources`/`cflags`/... fields of
- * DirectBuild are that group); WebKit is bmalloc + WTF + JavaScriptCore + the
- * single-file groups its executables link.
+ * A set of sources compiled with one flag set: a cmake "target". A dep with
+ * one library needs none (the top-level `sources`/`cflags`/... fields of
+ * DirectBuild are its only group); WebKit is bmalloc + WTF + JavaScriptCore +
+ * the single-file groups its executables link.
  */
 export interface SourceGroup {
+  /** Also the group's ninja target. */
   name: string;
   /** Relative to srcDir, or absolute (generated sources in the build dir). */
   sources: Array<string | DirectSource>;
-  /** See DirectBuild.lang. */
-  lang?: "c" | "cxx";
-  /** See DirectBuild.pic. */
-  pic?: boolean;
   /** Include dirs: relative to srcDir, or absolute. In order. */
   includes?: string[];
-  defines?: Record<string, string | number | true>;
   /** Flags for C and C++ TUs, after the dep globals (computeDepFlags). */
   cflags?: string[];
-  /** C++-only / C-only additions, after `cflags`. */
+  /** C++-only additions, after `cflags`. */
   cxxflags?: string[];
-  conlyflags?: string[];
-  /**
-   * Header to precompile for this group's C++ TUs (absolute or relative to
-   * srcDir), built with the group's C++ flags. Two groups naming the same
-   * header share one PCH (the first group's flags build it).
-   */
+  /** Header to precompile for this group's C++ TUs (absolute or relative to srcDir), built with the group's C++ flags. */
   pch?: string;
-  /** Files every TU of the group waits for before its first compile — the generated headers it may include (relative to the dep's build dir, or absolute). The depfiles track the exact set afterwards. */
+  /** Each on top of `base`, which stands in front of it in the list or is `pch`. Without a base: a second header precompiled by itself. */
+  chainedPch?: Array<{ header: string; base?: string }>;
+  /** Generated files every TU of the group waits for before its first compile. The depfiles track the exact set afterwards. Absolute. */
   orderOnly?: string[];
-  /** Files whose change recompiles every TU of the group and its PCH (relative to the dep's build dir, or absolute). */
-  implicitInputs?: string[];
   /** false: the objects only feed `steps` executables that name this group; they are not part of bun's link. Default true. */
   link?: boolean;
 }
 
-/**
- * A generator run at build time: WebKit's ruby/python/perl scripts, ICU's
- * data repack, flex/bison for migcom, a host tool this dep built. One
- * `dep_codegen` edge (stream.ts runs `cmd` in `cwd` with `env`).
- */
+/** A generator run at build time (WebKit's ruby/python/perl scripts): one `dep_gen` edge, stream.ts runs `cmd` in `cwd` with `env`. */
 export interface GenStep {
   kind?: "gen";
-  /** Relative to the dep's build dir, or absolute. */
+  /** Absolute. */
   outputs: string[];
   implicitOutputs?: string[];
-  /** Files the command reads: scripts, templates, other steps' outputs (relative to srcDir, or absolute). */
-  inputs?: string[];
-  implicitInputs?: string[];
+  /** Files the command reads: scripts, templates, other steps' outputs. Absolute. */
+  inputs: string[];
   cmd: string[];
-  /** Default: the dep's build dir. */
-  cwd?: string;
+  cwd: string;
   env?: Record<string, string>;
   /** The generator prints its result: capture stdout into outputs[0] (written only when it changed). */
   stdout?: boolean;
-  desc?: string;
+  desc: string;
 }
 
 /**
- * An executable this dep builds. `exe`: for the TARGET, from source groups'
- * objects, linked with the toolchain half of bun's link flags (JSC's LLInt
- * extractors, which offlineasm parses). `host-exe`: for the
- * BUILD machine, from `sources` compiled with the host compiler and no target
- * flags (icupkg, migcom, tinycc's c2str) — generators run these.
+ * An executable for the TARGET, linked from source groups' objects with the
+ * toolchain half of bun's link flags (JSC's LLInt extractors, which offlineasm
+ * parses rather than runs).
  */
 export interface ExeStep {
-  kind: "exe" | "host-exe";
-  /** Relative to the dep's build dir, or absolute; the platform's executable suffix is appended. */
+  kind: "exe";
+  /** Absolute; the target's executable suffix is appended. Its basename is the ninja target. */
   output: string;
-  /** exe: source groups whose objects are linked in. */
-  objectsFrom?: string[];
-  /** host-exe: sources (relative to srcDir, or absolute), each compiled to an object under <build dir>/host-obj/. */
-  sources?: Array<string | DirectSource>;
-  /** host-exe: compile flags (complete — nothing from the target config is added). */
-  flags?: string[];
-  ldflags?: string[];
-  implicitInputs?: string[];
+  /** Source groups whose objects are linked in. */
+  objectsFrom: string[];
 }
 
 export type DirectStep = GenStep | ExeStep;
@@ -294,9 +254,9 @@ export interface HeaderSubst {
 /**
  * Compile sources directly into our ninja graph — no cmake/cargo sub-process.
  *
- * Each source becomes a `cc`/`cxx`/`nasm` build edge; outputs are archived
- * into `buildDir/deps/<name>/lib<name>.a`. Flags are the dep globals
- * (computeDepFlags) so ASAN/optimization/target stay consistent.
+ * Each source becomes a `cc`/`cxx`/`nasm` build edge; the objects go onto
+ * bun's link line. Flags start from the dep globals (computeDepFlags) so
+ * ASAN/optimization/target stay consistent.
  */
 export interface DirectBuild {
   kind: "direct";
@@ -315,8 +275,9 @@ export interface DirectBuild {
   lang?: "c" | "cxx";
   /**
    * true → -fPIC; false (default)
-   * → on darwin add -fno-pic -fno-pie to undo apple-clang's PIC default,
-   * elsewhere nothing. Windows is a no-op either way.
+   * → on unix add -fno-pic -fno-pie so the building clang's PIC/PIE default
+   * doesn't decide (Android always gets -fPIC: PIE-only platform). Windows
+   * is a no-op either way.
    */
   pic?: boolean;
   /**
@@ -347,20 +308,32 @@ export interface DirectBuild {
    *                is trivial.
    */
   headers?: Record<string, string | HeaderSubst>;
+  /**
+   * Build-time host tool that generates headers the library sources
+   * include. Compiled WITHOUT sanitizers — it runs once on the build
+   * machine and gets discarded, so sanitizer coverage is useless and
+   * risks compiler-rt/OS incompatibility (macOS 26.4 ASAN deadlock,
+   * Linux ASLR/shadow-map collision).
+   */
+  codegen?: DirectCodegen;
   /** Further source groups beside the top-level one (which may then be empty). */
   groups?: SourceGroup[];
   /** Generators and executables, in any order; ninja orders them by their inputs/outputs. */
   steps?: DirectStep[];
   /**
-   * Generated files a CONSUMER's compile must wait for (headers bun includes:
-   * JSC's DerivedSources, WTF's MIG stubs). The fetch stamp and `headers`
-   * entries are always included.
+   * Generated headers a CONSUMER's compile must wait for (JSC's DerivedSources,
+   * which bun includes). Order-only there: they are declared restat outputs,
+   * so the consumer's depfile tracks exactly the ones it reads. Absolute.
    */
   consumerOutputs?: string[];
-  /** Object files produced by `steps` that join the link as they are (ICU's data object, assembled by a step because clang-cl does not take `.S`). Relative to the dep's build dir, or absolute. */
-  linkObjects?: string[];
-  /** Files in the source tree that edges OUTSIDE this dep read (declared as outputs of the fetch so ninja knows where they come from). Relative to srcDir. */
-  treeFiles?: string[];
+  /** Libraries that join bun's link beside the objects: a step's outputs, or files outside the graph. Absolute. */
+  libs?: string[];
+  /**
+   * Files and directories of the source tree that `build()` read to describe
+   * this graph (WebKit's CMake lists and Sources.txt). Inputs of the
+   * reconfigure edge, so editing one and running ninja directly reconfigures.
+   */
+  configureInputs?: string[];
   /**
    * Fail the build if any object of this dep still has an undefined
    * reference to one of `symbols` (llvm-nm over the objects, once they
@@ -379,9 +352,9 @@ export interface ForbidUndefined {
 }
 
 /**
- * The C library's heap entry points, for `DirectBuild.forbidUndefined`. Only
- * Linux redirects these to mimalloc globally (deps/mimalloc.ts); on Windows
- * and macOS a dep reaches mimalloc only through its own allocator hooks, and
+ * The C library's heap entry points, for `DirectBuild.forbidUndefined`. Linux
+ * and macOS redirect these to mimalloc for the whole link (deps/mimalloc.ts);
+ * on Windows a dep reaches mimalloc only through its own allocator hooks, and
  * a stray malloc() lands on the C runtime heap without anything failing, so
  * the objects are the one place this is checkable.
  */
@@ -395,6 +368,20 @@ export const LIBC_ALLOCATION_SYMBOLS: readonly string[] = [
   "wcsdup",
   "_wcsdup",
 ];
+
+export interface DirectCodegen {
+  /** Tool source relative to srcDir. Compiled+linked to a host executable. */
+  tool: string;
+  /** Defines for the tool only. Same typing rules as DirectBuild.defines. */
+  toolDefines?: Record<string, string | number | true>;
+  /**
+   * Argv for the tool. "$out" is replaced with the output path; everything
+   * else is resolved relative to srcDir. Tool runs with srcDir as cwd.
+   */
+  args: string[];
+  /** Generated output relative to buildDir/deps/<name>/. */
+  output: string;
+}
 
 export interface CargoBuild {
   kind: "cargo";
@@ -438,12 +425,11 @@ export interface CargoBuild {
  */
 export interface Provides {
   /**
-   * Library outputs to link. Paths relative to the dep's BUILD directory
-   * (or its libSubdir if set). May be bare names ("mimalloc" → libmimalloc.a)
-   * or exact paths ("CMakeFiles/mimalloc-obj.dir/src/static.c.o").
+   * Libraries of a `prebuilt` tarball to link: full file names, relative to
+   * the extracted directory.
    *
-   * Ignored for `direct` builds — emitDirect names the archive
-   * `lib<dep.name>` and returns that path itself.
+   * Ignored for every other source — emitDirect and emitCargo name what they
+   * produce and return those paths themselves.
    */
   libs: string[];
   /** Include directories. Paths relative to the dep's SOURCE directory. */
@@ -460,15 +446,56 @@ export interface Provides {
    * a single-file dep with no build system (picohttpparser: one .c file).
    */
   sources?: string[];
+  /**
+   * Other files of a prebuilt tarball that an edge of the graph reads,
+   * relative to the extracted directory. Implicit outputs of the fetch edge,
+   * like `libs`. Only for a `prebuilt` source.
+   */
+  files?: string[];
+  /** The graph follows from what the tarball holds: ninja fetches it first and reconfigures, as for the Rust plans. */
+  contentsDecideGraph?: boolean;
+  /**
+   * Symbols that one of `libs` has to name: each stands for an option the tarball must have been compiled with, which
+   * nothing else in it tells. The build fails where one is missing. Only for a `prebuilt` source.
+   */
+  requireDefined?: { lib: string; symbols: string[] };
 }
+
+/**
+ * Every vendored dependency (scripts/build/deps/<name>.ts). A dependency refers to another by name (`fetchDeps`),
+ * and its ninja targets are built from its name (`<name>`, `clone-<name>`), so a misspelled
+ * one is a type error here rather than a missing target later.
+ */
+export type DepName =
+  | "WebKit"
+  | "boringssl"
+  | "brotli"
+  | "cares"
+  | "highway"
+  | "libdeflate"
+  | "libjpeg-turbo"
+  | "libuv"
+  | "libwebp"
+  | "lolhtml"
+  | "lshpack"
+  | "lsqpack"
+  | "lsquic"
+  | "mimalloc"
+  | "nodejs"
+  | "picohttpparser"
+  | "rust-argon2"
+  | "sqlite"
+  | "tinycc"
+  | "zlib"
+  | "zstd";
 
 /**
  * A vendored dependency definition. Lives in scripts/build/deps/<name>.ts.
  */
 export interface Dependency {
-  name: string;
+  name: DepName;
 
-  /** Where source comes from. Evaluated per-config (e.g. WebKit: prebuilt tarball or github tree by cfg.webkit). */
+  /** Where source comes from. Evaluated per-config so local mode can be dynamic. */
   source: (cfg: Config) => Source;
 
   /**
@@ -479,24 +506,17 @@ export interface Dependency {
    * Files ending in `.patch` are applied with `git apply`. Other files are
    * OVERLAYS — copied into the source root as-is. Useful for injecting a
    * CMakeLists.txt into a project that lacks one (tinycc).
-   *
-   * Function form allows conditional patches (e.g. zlib's arm64-windows
-   * machine-type fix is only needed on that target).
    */
-  patches?: string[] | ((cfg: Config) => string[]);
+  patches?: string[];
 
   /**
-   * Other deps that must be BUILT before this dep's configure runs.
-   * Used for header-level dependencies — e.g. libarchive needs zlib's
-   * headers at configure time (`check_include_file("zlib.h")`). zlib-ng
-   * generates `zlib.h` during its own cmake configure, so libarchive must
-   * wait for zlib's full build, not just its source fetch.
+   * Other deps whose headers this dep's sources include — e.g. a dep that
+   * needs zlib's `zlib.h`, which zlib's build generates.
    *
-   * Resolves to the named dep's build outputs (lib files for cargo,
-   * generated headers and `consumerOutputs` for direct, source stamp for header-only). Order-only on configure, implicit on
-   * build. Does NOT link the other dep's libs (that's `provides.libs`).
+   * Resolves to the named dep's `outputs` (generated headers + source stamp),
+   * order-only inputs of this dep's compiles. Does NOT link the other dep.
    */
-  fetchDeps?: string[] | ((cfg: Config) => string[]);
+  fetchDeps?: DepName[];
 
   /** How to build. */
   build: (cfg: Config) => BuildSpec;
@@ -513,7 +533,7 @@ export interface Dependency {
   /**
    * Macro name suffix for `bun_dependency_versions.h` — becomes
    * `BUN_VERSION_<macro>`. The value is derived from
-   * `source(cfg)`: `github.commit`, `prebuilt.identity`, etc.
+   * `source(cfg)`: `github-archive.commit`, `prebuilt.identity`, etc.
    *
    * Omit for deps that shouldn't appear in `process.versions` (e.g.
    * nodejs-headers — they're build-time only). The naming is constrained
@@ -527,17 +547,17 @@ export interface Dependency {
  * Resolved dependency — absolute paths ready for link()/cxx() calls.
  */
 export interface ResolvedDep {
-  name: string;
+  name: DepName;
   /**
    * Absolute paths to .a/.lib files for link(). Populated by cargo/prebuilt
-   * deps, and by `direct` deps when `cfg.archiveDeps` is on.
+   * deps, by `direct` deps when `cfg.archiveDeps` is on, and by DirectBuild.libs.
    */
   libs: string[];
   /**
    * Absolute paths to .o/.obj files for link(). Populated by `direct` deps
    * when `cfg.archiveDeps` is off (the default) — the dep's sources are
    * compiled in our graph and the resulting objects go straight into bun's
-   * link line / cpp-only archive instead of an intermediate `.a`.
+   * link line (or CI's object archive) instead of an intermediate `.a`.
    */
   objects: string[];
   /** Absolute include paths for -I flags. */
@@ -551,22 +571,17 @@ export interface ResolvedDep {
   /**
    * The final build output(s). Use these as implicit inputs on anything
    * downstream that needs this dep built first.
-   * For cargo deps, these ARE the libs. For header-only deps, this is
+   * For prebuilt deps, these ARE the libs. For header-only deps, this is
    * the source stamp (.ref).
    */
   outputs: string[];
-  /**
-   * A direct dep's generated headers (`headers` substitutions, the steps'
-   * `consumerOutputs`). Declared, restat outputs, so a consumer names them
-   * ORDER-ONLY — they exist before its first compile and its depfile tracks
-   * the ones it actually includes from then on — where `outputs` (fetch
-   * stamps, prebuilt/cargo libs: edges with undeclared header side effects)
-   * must be implicit. Empty for every other build kind.
-   */
+  /** DirectBuild.consumerOutputs: order-only inputs of consumers' compiles. */
   generatedHeaders: string[];
+  /** DirectBuild.configureInputs. */
+  configureInputs: string[];
   /**
    * Stamps of this dep's `forbidUndefined` checks (static `nm` scans of its
-   * objects). Ninja validations of whatever the objects go into next — the
+   * objects) and of `requireDefined`'s. Ninja validations of whatever the objects go into next — the
    * per-dep archive here when cfg.archiveDeps, otherwise bun.ts's archive or
    * link — so they run with every build of it and gate nothing.
    */
@@ -583,9 +598,7 @@ export interface ResolvedDep {
 export function registerDepRules(n: Ninja, cfg: Config): void {
   // Shell quoting: tool/script paths may contain spaces (e.g. cargo
   // in "C:\Program Files\Rust\..."). quote() passes through safe paths
-  // unchanged so there's no cost on the common case. Host shell syntax
-  // (dep rules don't run in rust-only cross-compile, so host == target,
-  // but use host.os for consistency with other modules).
+  // unchanged so there's no cost on the common case. Host shell syntax.
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
   const fetchCli = q(fetchCliPath);
@@ -599,13 +612,12 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // terminal directly. Deps run 4-at-a-time, every line streams live.
   const stream = `${cfg.jsRuntime} ${q(streamPath)} $name`;
 
-  // Fetch: downloads a source tree (archive tarball, release tarball, or
-  // sparse git fetch), extracts, patches, writes .ref. The command encodes:
-  // name, url, identity ref, dest path, cache path, and patch files. If any
-  // of those change, the ninja command string changes, and ninja re-runs
-  // fetch. The fetch script is also an implicit input.
+  // Fetch: downloads github archive tarball, extracts, patches, writes .ref.
+  // The command encodes: name, repo, commit, dest path, cache path, and patch
+  // files. If any of those change, the ninja command string changes, and ninja
+  // re-runs fetch. The fetch script is also an implicit input.
   n.rule("dep_fetch", {
-    command: `${stream} ${cfg.jsRuntime} ${fetchCli} dep $name $url $ref $dest $cache $patches`,
+    command: `${stream} ${cfg.jsRuntime} ${fetchCli} dep $name $repo $commit $dest $cache $patches`,
     description: "fetch $name",
     restat: true,
     pool: "dep",
@@ -665,43 +677,31 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     });
   }
 
-  // `host-exe` steps: tools that run on the BUILD machine (icupkg, migcom,
-  // tinycc's c2str). Plain clang/clang++ driver (cfg.hostCc/hostCxx — cfg.cc
-  // is clang-cl for a Windows target), no target triple, sysroot, sanitizer
-  // or CPU flags; one object per source so a large tool (icupkg: all of
-  // ICU common+i18n) rebuilds incrementally.
-  n.rule("host_cc", {
-    command: `${q(cfg.hostCc)} $flags -MMD -MT $out -MF $out.d -c $in -o $out`,
+  // DirectBuild host tool: compile+link in one clang invocation with NO
+  // cfg target/arch flags — the tool runs on the build host. cc()/link()
+  // would add --target which breaks cross-compiles. cfg.hostCc (not cfg.cc):
+  // when cross-compiling for windows, cc is clang-cl and defaults to a
+  // *-windows-msvc triple — host tools must stay plain clang.
+  n.rule("dep_host_cc", {
+    command: `${q(cfg.hostCc)} $flags -o $out $in`,
     description: "host-cc $out",
-    depfile: "$out.d",
-    deps: "gcc",
-  });
-  n.rule("host_cxx", {
-    command: `${q(cfg.hostCxx)} $flags -MMD -MT $out -MF $out.d -c $in -o $out`,
-    description: "host-cxx $out",
-    depfile: "$out.d",
-    deps: "gcc",
-  });
-  // The GNU clang driver tokenizes @file GNU-style (backslash = escape) even
-  // on Windows, where ninja writes the object paths with backslashes.
-  n.rule("host_link", {
-    command: `${q(cfg.hostCxx)}${hostWin ? " --rsp-quoting=windows" : ""} -o $out @$out.rsp $flags`,
-    description: "host-link $out",
-    rspfile: "$out.rsp",
-    rspfile_content: "$in_newline",
   });
 
-  // `gen` steps: every generator a dep runs (WebKit's offlineasm / ruby /
-  // python / perl scripts, ICU's data repack, migcom's flex/bison, a host
-  // tool this graph built).
-  // `$opts` are stream.ts's own: --cwd=DIR, --env=K=V, --stdout=PATH (for
-  // generators that print their output; written only when it changed) — so
-  // no `sh -c`/`cmd /c`, `cd`, `env` or `> $out` is spelled per host.
-  // restat: generators that leave an unchanged output alone prune their
-  // dependents.
+  // DirectBuild codegen: runs a host tool built by this graph to produce a
+  // header. cwd is the dep source dir so the tool sees its inputs; output
+  // path is absolute. restat: no-op if the header content is unchanged.
   n.rule("dep_codegen", {
+    command: `${stream} --cwd=$cwd $tool $args`,
+    description: "codegen $name",
+    restat: true,
+  });
+
+  // DirectBuild `gen` steps. `$opts` are stream.ts's own: --cwd=DIR, --env=K=V,
+  // --stdout=PATH (for generators that print their output), so no `sh -c`,
+  // `cd`, `env` or `> $out` is spelled per host.
+  n.rule("dep_gen", {
     command: `${stream} $opts $cmd`,
-    description: "$desc",
+    description: "gen $desc",
     restat: true,
   });
 
@@ -728,11 +728,17 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
-  // The `dep` pool: depth-4 balances two concerns. Each cargo
-  // build spawns its own -j parallelism; running them all at once would
-  // oversubscribe cores badly (15 × nproc jobs). Four-at-a-time keeps CPU
-  // saturated without thrashing. Output streams live via FD 3 regardless —
-  // the pool is purely about scheduling, not display.
+  // Provides.requireDefined. The stamp is only written when every symbol is
+  // there, and (restat) left alone when it already exists.
+  n.rule("dep_check_defined", {
+    command: `${cfg.jsRuntime} ${fetchCli} check-defined $name $in $out $symbols`,
+    description: "check $name was compiled as this build asks",
+    restat: true,
+  });
+
+  // The `dep` pool: a cargo build spawns its own -j parallelism, and fetches
+  // share one network. Output streams live via FD 3 regardless — the pool is
+  // purely about scheduling, not display.
   n.pool("dep", 4);
 }
 
@@ -744,72 +750,44 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
  * Path to a dep's source tree: its `--local-deps` checkout if redirected,
  * else vendor/<name>/. Cross-dep references (lsquic's -I into boringssl,
  * boringssl's nasm -I) go through here so they follow a redirect too. Does
- * NOT handle in-tree sources — use the per-dep
- * `srcDir` computed in resolveDep() for those.
+ * NOT handle in-tree sources — use the per-dep `srcDir` computed in
+ * resolveDep() for those.
  */
-export function depSourceDir(cfg: Config, name: string): string {
+export function depSourceDir(cfg: Config, name: DepName): string {
   return cfg.localDeps[name] ?? resolve(cfg.vendorDir, name);
 }
 
 /**
- * The stamp a dep's fetch edge writes (vendor/<name>/.ref), for an edge in
- * another dep that reads this dep's TREE rather than its build outputs.
- * undefined for a --local-deps checkout: it is on disk before ninja starts.
+ * Path to a dep's build output. Separate from source so multiple
+ * profiles (debug/release) don't clash.
  */
-export function depSourceStamp(cfg: Config, name: string): string | undefined {
-  return cfg.localDeps[name] !== undefined ? undefined : resolve(depSourceDir(cfg, name), ".ref");
-}
-
-/**
- * Path to a dep's build output. Separate from source so multiple profiles
- * (debug/release) don't clash.
- */
-export function depBuildDir(cfg: Config, name: string): string {
+export function depBuildDir(cfg: Config, name: DepName): string {
   return resolve(cfg.buildDir, "deps", name);
 }
 
 /**
  * The dep's source, with `--local-deps` applied: a dep named there is
- * redirected from its pinned github commit to the local checkout.
- * Only fetched (github/tarball) sources can be redirected.
+ * redirected from its pinned github-archive tarball to the local checkout.
+ * Only github-archive sources can be redirected.
  */
 export function depSource(cfg: Config, dep: Dependency): Source {
   const source = dep.source(cfg);
   const localPath = cfg.localDeps[dep.name];
   if (localPath === undefined) return source;
   assert(
-    source.kind === "github" || source.kind === "tarball",
-    `--local-deps: ${dep.name} has a ${source.kind} source; only fetched (github/tarball) deps can be redirected`,
-    dep.name === "WebKit" ? { hint: "drop --webkit=prebuilt: a prebuilt WebKit has no source tree to redirect" } : {},
+    source.kind === "github-archive",
+    `--local-deps: ${dep.name} has a ${source.kind} source; only github-archive deps can be redirected`,
+    dep.name === "WebKit" ? { hint: "Drop --webkit=prebuilt: a WebKit checkout is built with --webkit=local" } : {},
   );
   return {
     kind: "local",
     path: localPath,
-    hint: `--local-deps points ${dep.name} at ${localPath} — put ${source.kind === "github" ? `a clone of ${source.repo}` : `the extracted ${source.url}`} there`,
-  };
-}
-
-/** What the fetch machinery needs from a fetchable source: the URL to get and the identity seed. */
-function fetchSpec(source: Extract<Source, { kind: "github" | "tarball" }>): {
-  url: string;
-  ref: string;
-  sparse: string[];
-} {
-  if (source.kind === "tarball") return { url: source.url, ref: `sha256:${source.sha256}`, sparse: [] };
-  const sparse = source.sparse ?? [];
-  return {
-    url:
-      sparse.length > 0
-        ? gitArchiveUrl(source.repo, source.commit, sparse)
-        : githubArchiveUrl(source.repo, source.commit),
-    // The commit alone seeds github identities (so adding this field changed no stamp).
-    ref: source.commit,
-    sparse,
+    hint: `--local-deps points ${dep.name} at ${localPath} — clone ${source.repo} there`,
   };
 }
 
 /**
- * Resolve a dependency: emit ninja rules for fetch → configure → build,
+ * Resolve a dependency: emit ninja rules for fetch → build,
  * return absolute paths for linking.
  *
  * If the dep is disabled (enabled() returns false), returns null. Caller
@@ -819,7 +797,7 @@ export function resolveDep(
   n: Ninja,
   cfg: Config,
   dep: Dependency,
-  resolved: ReadonlyMap<string, ResolvedDep>,
+  resolved: ReadonlyMap<DepName, ResolvedDep>,
 ): ResolvedDep | null {
   if (dep.enabled && !dep.enabled(cfg)) {
     return null;
@@ -837,6 +815,7 @@ export function resolveDep(
   if (source.kind === "prebuilt") {
     return emitPrebuilt(n, cfg, dep.name, source, provides);
   }
+  assert(provides.files === undefined, `${dep.name}: Provides.files is for a prebuilt source`);
 
   // Source directory. For in-tree deps (sqlite), this points into the bun
   // repo instead of vendor/. Local deps can override via `path` to point
@@ -850,7 +829,7 @@ export function resolveDep(
 
   // Resolve conditional patches. Same list for the whole configure run —
   // we don't want patches changing between emitFetch and the hash check.
-  const patches = dep.patches === undefined ? [] : typeof dep.patches === "function" ? dep.patches(cfg) : dep.patches;
+  const patches = dep.patches ?? [];
 
   // Sources bun compiles directly (from Provides.sources). Resolved to
   // absolute paths for (a) the ResolvedDep return and (b) declaring as
@@ -863,48 +842,38 @@ export function resolveDep(
   // time from the fetched tree.
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
-    // Files under this dep's tree — or another dep's (lsquic compiles a file
-    // out of lsqpack's) — come out of a fetch; build-dir products and repo
-    // files do not.
-    const inSrcTree = (p: string): string[] => {
-      const abs = isAbsolute(p) ? p : resolve(srcDir, p);
-      const fetched =
-        abs.startsWith(srcDir + sep) || (abs.startsWith(cfg.vendorDir + sep) && !abs.startsWith(cfg.buildDir + sep));
-      return fetched ? [abs] : [];
-    };
-    const groupSources = (list: ReadonlyArray<string | DirectSource>) =>
-      list.flatMap(s => inSrcTree(typeof s === "string" ? s : s.path));
-    directSources.push(...groupSources(buildSpec.sources));
-    for (const g of buildSpec.groups ?? []) {
-      directSources.push(...groupSources(g.sources));
-      if (g.pch !== undefined) directSources.push(...inSrcTree(g.pch));
+    assert(
+      source.kind !== "github-archive" || (buildSpec.groups === undefined && buildSpec.steps === undefined),
+      `${dep.name}: groups/steps of a fetched dep are not declared as outputs of its fetch yet`,
+    );
+    for (const s of buildSpec.sources) {
+      directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
     }
     for (const h of Object.values(buildSpec.headers ?? {})) {
       if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
     }
-    for (const st of buildSpec.steps ?? []) {
-      if (st.kind === "exe" || st.kind === "host-exe")
-        directSources.push(...groupSources((st as ExeStep).sources ?? []));
-      else directSources.push(...((st as GenStep).inputs ?? []).flatMap(inSrcTree));
+    if (buildSpec.codegen !== undefined) {
+      directSources.push(resolve(srcDir, buildSpec.codegen.tool));
+      for (const a of buildSpec.codegen.args) {
+        if (a !== "$out") directSources.push(resolve(srcDir, a));
+      }
     }
-    directSources.push(...(buildSpec.treeFiles ?? []).flatMap(inSrcTree));
   }
 
   // ─── Step 1: source acquisition ───
   // Emits a ninja node producing the "source is ready" stamp.
-  // For github: this runs fetchCli which downloads/extracts/patches.
-  // For local/in-tree: source is already on disk; we use a sentinel file
-  //   (CMakeLists.txt) as the stamp. Editing it → reconfigure.
+  // For github-archive: this runs fetchCli which downloads/extracts/patches.
+  // For local/in-tree: source is already on disk.
   let sourceStamp: string | undefined;
-  if (source.kind === "github" || source.kind === "tarball") {
+  if (source.kind === "github-archive") {
     sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
-    // as the stamp — touching it triggers reconfigure/rebuild.
+    // as the stamp — touching it triggers a rebuild.
     //   cargo deps → Cargo.toml (in manifestDir)
-    //   direct/header-only → none: the sources are on disk before
-    //     ninja starts, so the compiler depfiles see edits directly. (Stamping
-    //     the directory would rebuild the PCH whenever a top-level entry moved.)
+    //   direct/header-only → none: the sources are on disk before ninja
+    //     starts, so the compiler depfiles see edits directly. (Stamping the
+    //     directory would rebuild the PCH whenever a top-level entry moved.)
     let stampDir: string;
     let stampFile: string;
     if (buildSpec.kind === "cargo") {
@@ -925,28 +894,22 @@ export function resolveDep(
     });
   }
 
-  // ─── Resolve fetchDeps → extra inputs on configure + build ───
-  // These are deps that must be BUILT before we configure (not link).
-  // E.g. libarchive's configure runs check_include_file("zlib.h"), and
-  // zlib-ng generates zlib.h during its own cmake configure — so we depend
-  // on zlib's lib output (which implies its configure ran).
-  //
-  // On BUILD: implicit. If the cross-dep rebuilds (commit bump), its
-  //   headers may have changed; our .o files track them via the inner
-  //   ninja's .d files. Restat prunes downstream when nothing changed.
-  const fetchDeps = typeof dep.fetchDeps === "function" ? dep.fetchDeps(cfg) : (dep.fetchDeps ?? []);
-  const fetchDepStamps = fetchDeps.flatMap(d => {
+  // ─── Resolve fetchDeps → order-only inputs of this dep's compiles ───
+  // Deps whose headers this one includes (a dep → zlib's generated
+  // zlib.h): they must exist first; the depfiles track their content.
+  const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
     const r = resolved.get(d);
     assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);
-    return [...r.outputs, ...r.generatedHeaders];
+    return r.outputs;
   });
 
   // ─── Step 2+3: build ───
   let libs: string[];
   let objects: string[] = [];
   let outputs: string[];
-  let generatedHeaders: string[] = [];
   let checks: string[] = [];
+  let generatedHeaders: string[] = [];
+  let configureInputs: string[] = [];
 
   if (buildSpec.kind === "cargo") {
     const result = emitCargo(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp: sourceStamp! }); // .ref or Cargo.toml
@@ -957,11 +920,12 @@ export function resolveDep(
     libs = result.libs;
     objects = result.objects;
     checks = result.checks;
-    // The "downstream needs me built" signal — for direct deps that's the
-    // source stamp and the generated headers, NOT the .o files (those are
-    // link inputs, not include-order dependencies).
-    outputs = result.stamps;
-    generatedHeaders = result.generatedHeaders;
+    // outputs is the "downstream needs me built" signal — for direct deps
+    // that's the generated headers + source stamp, NOT the .o files (those
+    // are link inputs, not include-order dependencies).
+    outputs = result.headerOutputs;
+    generatedHeaders = buildSpec.consumerOutputs ?? [];
+    configureInputs = buildSpec.configureInputs ?? [];
   } else {
     // No build step. The fetch stamp (if any) is the only output. For deps
     // with provides.sources (picohttpparser), emitBun adds a phony pointing
@@ -971,13 +935,11 @@ export function resolveDep(
   }
 
   // ─── Resolve include paths ───
-  // Includes are relative to the SOURCE dir (in-tree or vendor). Not the
-  // cmake subdir — e.g. zstd's headers are at vendor/zstd/lib/, not
-  // vendor/zstd/build/cmake/lib/.
+  // Includes are relative to the SOURCE dir (in-tree or vendor).
   //
-  // Includes CAN be absolute — for deps whose headers land in the BUILD dir
-  // (generated during configure), the `provides` function computes absolute
-  // paths itself using `depBuildDir()`. Relative paths resolve against srcDir.
+  // Includes CAN be absolute — for deps whose headers land in the BUILD dir,
+  // the `provides` function computes absolute paths itself using
+  // `depBuildDir()`. Relative paths resolve against srcDir.
   const includes = provides.includes.map(inc => {
     if (isAbsolute(inc)) return inc;
     return inc === "." ? srcDir : resolve(srcDir, inc);
@@ -992,56 +954,9 @@ export function resolveDep(
     sources: resolvedSources,
     outputs,
     generatedHeaders,
+    configureInputs,
     checks,
   };
-}
-
-/**
- * Compute the lib paths a dep produces WITHOUT emitting ninja rules.
- *
- * Used by link-only mode: artifacts (the .a/.lib files) are downloaded
- * from cpp-only's buildkite upload into the SAME paths this returns.
- * Ninja sees them as source files (no build rule) — errors cleanly if
- * download failed.
- *
- * Must stay in sync with the path computation inside emitCargo /
- * emitPrebuilt — that's the contract between cpp-only
- * (producer) and link-only (consumer). If those emit-side paths change,
- * change this too.
- */
-export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
-  if (dep.enabled && !dep.enabled(cfg)) {
-    return [];
-  }
-
-  const source = dep.source(cfg);
-
-  // Prebuilt: provides.libs are paths relative to destDir.
-  if (source.kind === "prebuilt") {
-    const destDir = source.destDir ?? depSourceDir(cfg, dep.name);
-    return dep.provides(cfg).libs.map(lib => resolve(destDir, lib));
-  }
-
-  const buildSpec = dep.build(cfg);
-
-  if (buildSpec.kind === "cargo") {
-    const targetDir = depBuildDir(cfg, dep.name);
-    const profile = cfg.release ? "release" : "debug";
-    const outSubdir = buildSpec.rustTarget ? join(buildSpec.rustTarget, profile) : profile;
-    return [resolve(targetDir, outSubdir, `${cfg.libPrefix}${buildSpec.libName}${cfg.libSuffix}`)];
-  }
-
-  // direct: single lib<name>.a when archiveDeps; otherwise the dep's .o
-  // files are folded into libbun.a in cpp-only and there's no separate
-  // artifact for link-only to fetch.
-  if (buildSpec.kind === "direct") {
-    if (!cfg.archiveDeps) return [];
-    const buildDir = depBuildDir(cfg, dep.name);
-    return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
-  }
-
-  // none: no libs (header-only or directly-compiled sources).
-  return [];
 }
 
 /**
@@ -1054,15 +969,14 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
 function emitFetch(
   n: Ninja,
   cfg: Config,
-  name: string,
-  source: Extract<Source, { kind: "github" | "tarball" }>,
+  name: DepName,
+  source: Extract<Source, { kind: "github-archive" }>,
   patches: string[],
   compiledSources: string[],
 ): string {
   const srcDir = depSourceDir(cfg, name);
   const refStamp = resolve(srcDir, ".ref");
   const patchPaths = patches.map(p => resolve(cfg.cwd, p));
-  const { url, ref, sparse } = fetchSpec(source);
 
   // ─── Preemptive stale-source cleanup ───
   // If vendor/<dep>/ exists but .ref is missing OR doesn't match the
@@ -1078,14 +992,14 @@ function emitFetch(
   //
   // Only deletes when identity is demonstrably wrong — normal no-op
   // builds skip it (identity matches, nothing touched).
-  invalidateStaleSource(name, srcDir, refStamp, ref, sparse, patchPaths);
+  invalidateStaleSource(srcDir, refStamp, source.commit, patchPaths);
 
   n.build({
     outputs: [refStamp],
     // Source files bun compiles directly (picohttpparser.c). Declaring
     // them as outputs tells ninja "fetch creates these" — otherwise ninja
     // errors "missing and no known rule to make it" on fresh checkouts.
-    ...(compiledSources.length > 0 && { implicitOutputs: [...new Set(compiledSources)] }),
+    ...(compiledSources.length > 0 && { implicitOutputs: compiledSources }),
     rule: "dep_fetch",
     inputs: [],
     // fetch-cli.ts (which has fetchDep) + patch files. Not this file —
@@ -1093,9 +1007,8 @@ function emitFetch(
     implicitInputs: [fetchCliPath, ...patchPaths],
     vars: {
       name,
-      // Quoted: a sparse git URL carries gitignore-syntax patterns (`*`, `!`).
-      url: quote(url, cfg.host.os === "windows"),
-      ref: quote(ref, cfg.host.os === "windows"),
+      repo: source.repo,
+      commit: source.commit,
       dest: srcDir,
       cache: resolve(cfg.cacheDir, "tarballs"),
       // Pass patches space-separated. Shell-safe because patch paths are
@@ -1114,13 +1027,13 @@ function emitFetch(
  * Emit a prebuilt fetch rule. Returns a complete ResolvedDep — no further
  * build steps needed, the tarball IS the output.
  *
- * `provides.libs` and `provides.includes` are paths relative to the
- * extracted directory (`destDir` or the default `vendor/<name>/`).
+ * `provides.libs`, `provides.files` and `provides.includes` are paths relative
+ * to the extracted directory (`destDir` or the default `vendor/<name>/`).
  */
 function emitPrebuilt(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   source: Extract<Source, { kind: "prebuilt" }>,
   provides: Provides,
 ): ResolvedDep {
@@ -1132,17 +1045,18 @@ function emitPrebuilt(
   // Libs: prebuilt tarballs ship full filenames — `provides.libs` entries
   // are taken as-is relative to destDir.
   const libs = provides.libs.map(lib => resolve(destDir, lib));
+  const files = (provides.files ?? []).map(f => resolve(destDir, f));
   const includes = provides.includes.map(inc => {
     if (isAbsolute(inc)) return inc;
     return inc === "." ? destDir : resolve(destDir, inc);
   });
 
-  // Outputs: stamp + all libs. Stamp is the explicit output; libs are
-  // implicit (so deleting them correctly retriggers fetch, and restat
+  // Outputs: stamp + all libs and files. Stamp is the explicit output; the
+  // rest are implicit (so deleting them correctly retriggers fetch, and restat
   // prunes downstream when fetch was a no-op).
   n.build({
     outputs: [stamp],
-    implicitOutputs: libs,
+    implicitOutputs: [...libs, ...files],
     rule: "dep_fetch_prebuilt",
     inputs: [],
     // Only fetch-cli.ts. download.ts has a lot of shared helpers — editing
@@ -1164,16 +1078,34 @@ function emitPrebuilt(
   const outputs = libs.length > 0 ? libs : [stamp];
   n.phony(name, outputs);
 
+  const checks: string[] = [];
+  if (provides.requireDefined !== undefined) {
+    const { lib, symbols } = provides.requireDefined;
+    assert(provides.libs.includes(lib), `${name}: requireDefined.lib ${lib} is not one of its libs`);
+    assert(symbols.length > 0, `${name}: requireDefined.symbols is empty`);
+    const buildDir = depBuildDir(cfg, name);
+    mkdirSync(buildDir, { recursive: true });
+    checks.push(resolve(buildDir, ".defined-symbols-checked"));
+    n.build({
+      outputs: checks,
+      rule: "dep_check_defined",
+      inputs: [resolve(destDir, lib)],
+      implicitInputs: [fetchCliPath],
+      vars: { name, symbols: symbols.join(",") },
+    });
+  }
+
   return {
     name,
     libs,
     objects: [],
-    checks: [],
+    checks,
+    generatedHeaders: [],
+    configureInputs: provides.contentsDecideGraph ? [stamp] : [],
     includes,
     defines: provides.defines ?? [],
     sources: [],
     outputs,
-    generatedHeaders: [],
   };
 }
 
@@ -1191,7 +1123,7 @@ interface EmitCargoInput {
  * everything. Its own incremental build is reliable, so restat=1 on the
  * rule keeps our downstream no-ops fast.
  */
-function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
+function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
   const hostWin = cfg.host.os === "windows";
   assert(cfg.cargo !== undefined, `dep "${name}" requires cargo but no rust toolchain was found`, {
     hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
@@ -1280,9 +1212,8 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   // Tier 3 targets (buildStd=true) have no prebuilt std, so target-add would
   // fail — they use plain dep_cargo with -Zbuild-std instead.
   const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined && !spec.buildStd;
-  n.build({
+  const node = {
     outputs: [lib],
-    rule: cross ? "dep_cargo_cross" : "dep_cargo",
     inputs: [],
     // Rebuild if source changed, cargo binary changed, or the pinned
     // toolchain changed. Cargo's own dependency tracking handles file-level
@@ -1292,19 +1223,20 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     // mismatched std hashes and both get pulled into the link, colliding on
     // unmangled symbols like `rust_eh_personality`.
     implicitInputs: [sourceStamp, cfg.cargo, resolve(cfg.cwd, "rust-toolchain.toml")],
-    vars: {
-      name,
-      manifestdir: manifestDir,
-      args: quoteArgs(args, hostWin),
-      ...(cross ? { rust_target: spec.rustTarget! } : {}),
-      // stream.ts's --env=K=V format. Values platform-quoted since ninja
-      // passes the command line through the host's argv parser; stream.ts
-      // receives them as proper argv entries.
-      env: Object.entries(env)
-        .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
-        .join(" "),
-    },
-  });
+  };
+  const vars = {
+    name,
+    manifestdir: manifestDir,
+    args: quoteArgs(args, hostWin),
+    // stream.ts's --env=K=V format. Values platform-quoted since ninja
+    // passes the command line through the host's argv parser; stream.ts
+    // receives them as proper argv entries.
+    env: Object.entries(env)
+      .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
+      .join(" "),
+  };
+  if (cross) n.build({ ...node, rule: "dep_cargo_cross", vars: { ...vars, rust_target: spec.rustTarget! } });
+  else n.build({ ...node, rule: "dep_cargo", vars });
   n.phony(name, [lib]);
 
   return { libs: [lib] };
@@ -1314,36 +1246,6 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
 // Direct — compile sources inline into our ninja graph
 // ---------------------------------------------------------------------------
 
-/**
- * The complete compile flags for a source group's C and C++ TUs: the dep
- * globals (computeDepFlags), bun's PIC policy, then the group's includes,
- * defines and flags. Also what an edge outside the dep uses to compile against
- * a dep the way the dep compiles itself (bun.ts's testFFI).
- */
-export function groupCompileFlags(
-  cfg: Config,
-  srcDir: string,
-  g: Omit<SourceGroup, "name" | "sources">,
-  depFlags: { cflags: string[]; cxxflags: string[] } = computeDepFlags(cfg),
-): { c: string[]; cxx: string[] } {
-  const q = (p: string) => quote(p, cfg.host.os === "windows");
-  const inSrc = (p: string) => (isAbsolute(p) ? p : resolve(srcDir, p));
-  // PIC: pic → -fPIC (Android needs it regardless: PIE-only platform);
-  // otherwise undo a PIC/PIE toolchain default to match bun's non-PIE link.
-  const pic =
-    g.pic || cfg.abi === "android" ? (cfg.windows ? [] : ["-fPIC"]) : cfg.unix ? ["-fno-pic", "-fno-pie"] : [];
-  const common = [
-    ...pic,
-    ...(g.includes ?? []).map(i => `-I${q(i === "." ? srcDir : inSrc(i))}`),
-    ...Object.entries(g.defines ?? {}).map(([k, v]) => defineFlag(k, v)),
-    ...(g.cflags ?? []),
-  ];
-  return {
-    c: [...depFlags.cflags, ...common, ...(g.conlyflags ?? [])],
-    cxx: [...depFlags.cxxflags, ...common, ...(g.cxxflags ?? [])],
-  };
-}
-
 interface EmitDirectInput {
   srcDir: string;
   /** Fetch `.ref` stamp; undefined for local/in-tree sources (already on disk). */
@@ -1351,254 +1253,325 @@ interface EmitDirectInput {
   fetchDepStamps: string[];
 }
 
-interface EmitDirectResult {
-  libs: string[];
-  objects: string[];
-  /** Fetch stamps (own `.ref`, fetchDeps') — plus the archive with cfg.archiveDeps. Implicit inputs of consumers. */
-  stamps: string[];
-  /** Declared generated headers a consumer may include. Order-only inputs of consumers. */
-  generatedHeaders: string[];
-  checks: string[];
+/**
+ * bun's PIC policy for a dep's objects, the same its own get in flags.ts.
+ * pic → -fPIC, and Android always (PIE-only platform); hardened → the -fPIE of
+ * `hardeningFlags` stands; otherwise on unix undo
+ * the building clang's PIC/PIE default to match the non-PIE final binary. Not
+ * only apple-clang has one: distro clangs (Arch, Fedora, Alpine, Homebrew)
+ * default to PIE, which made every dep PIC when built there (.data.rel.ro
+ * 541 KB instead of 109 KB, 4-7% more pages touched at startup) while CI's
+ * apt.llvm.org clang did not.
+ */
+function picFlags(cfg: Config, pic: boolean | undefined): string[] {
+  if (pic || cfg.abi === "android") return cfg.windows ? [] : ["-fPIC"];
+  if (cfg.hardened) return [];
+  return cfg.unix ? ["-fno-pic", "-fno-pie"] : [];
+}
+
+/**
+ * The complete compile flags for a source group's C and C++ TUs: the dep
+ * globals (computeDepFlags), bun's PIC policy, then the group's includes and
+ * flags. Also what an edge outside the dep uses to compile against a dep the
+ * way the dep compiles itself (bun.ts's jsc shell).
+ */
+export function groupCompileFlags(
+  cfg: Config,
+  srcDir: string,
+  g: Pick<SourceGroup, "includes" | "cflags" | "cxxflags">,
+): { c: string[]; cxx: string[] } {
+  const depFlags = computeDepFlags(cfg);
+  const common = [
+    ...picFlags(cfg, false),
+    ...(g.includes ?? []).map(i => `-I${quote(resolve(srcDir, i), cfg.host.os === "windows")}`),
+    ...(g.cflags ?? []),
+  ];
+  return { c: [...depFlags.cflags, ...common], cxx: [...depFlags.cxxflags, ...common, ...(g.cxxflags ?? [])] };
 }
 
 /**
  * Compile a dep's sources directly — no cmake/cargo sub-process.
  *
- * Every source group becomes `cc`/`cxx`/`nasm` edges with the dep globals
- * (computeDepFlags) underneath its own flags, so ASAN/opt/target stay
- * consistent with the rest of the build; objects land under obj/vendor/<name>/
- * (via objectPath) and go straight onto bun's link line. `steps` add the
- * dep's generators (`dep_codegen`) and executables (host tools with the host
- * compiler, target executables with bun's toolchain link flags); ninja orders
+ * Each source becomes a `cc`/`cxx`/`nasm` edge with the dep globals
+ * (computeDepFlags) underneath the dep's own flags, so ASAN/opt/target stay
+ * consistent with the rest of the build. Objects land under obj/vendor/<name>/
+ * (via objectPath) and go onto bun's link line. `groups` are further flag
+ * sets; `steps` add generators and target executables, and ninja orders
  * everything by the paths the steps and groups name.
+ *
+ * If spec.codegen is set, first compile+link the tool WITHOUT sanitizers,
+ * run it to produce the header, and make all library objects depend on it.
+ * The no-sanitize policy is the point of DirectBuild existing: host tools
+ * are disposable and inherit compiler-rt/OS incompatibilities for no gain.
  */
-function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, input: EmitDirectInput): EmitDirectResult {
+function emitDirect(
+  n: Ninja,
+  cfg: Config,
+  name: DepName,
+  spec: DirectBuild,
+  input: EmitDirectInput,
+): { libs: string[]; objects: string[]; headerOutputs: string[]; checks: string[] } {
   const { srcDir, sourceStamp, fetchDepStamps } = input;
   const buildDir = depBuildDir(cfg, name);
   const hostWin = cfg.host.os === "windows";
-  const inSrc = (p: string) => (isAbsolute(p) ? p : resolve(srcDir, p));
-  const inBuild = (p: string) => (isAbsolute(p) ? p : resolve(buildDir, p));
+  const q = (p: string) => quote(p, hostWin);
 
   n.comment(`─── ${name} (direct) ───`);
 
-  // Sources must exist before anything compiles or generates. The stamps are
-  // order-only: a bumped .ref mtime with unchanged files recompiles nothing —
-  // the depfiles know better.
-  const ready = [...(sourceStamp === undefined ? [] : [sourceStamp]), ...fetchDepStamps];
+  // Library flags: globals (includes ASAN when cfg.asan) + dep's own includes
+  // and defines. `lang` picks the flag set; the compile function is chosen
+  // per-file by extension below.
+  const depFlags = computeDepFlags(cfg);
+  const isCxx = spec.lang === "cxx";
+  const baseFlags = isCxx ? depFlags.cxxflags : depFlags.cflags;
 
-  // ─── Configure-time headers ───
-  // Literal strings are written now via writeIfChanged (mtime only moves when
-  // contents change): cmake-style config.h answers, forwarding stubs.
-  // HeaderSubst entries become ninja edges — their template lives in srcDir.
-  // Either way buildDir goes on the top-level group's -I and the outputs
-  // are implicit inputs of its objects.
+  const incFlags = (spec.includes ?? []).map(i => `-I${q(resolve(srcDir, i))}`);
+  const defFlags = Object.entries(spec.defines ?? {}).map(([k, v]) => defineFlag(k, v));
+  const libFlags = [
+    ...baseFlags,
+    ...picFlags(cfg, spec.pic),
+    ...incFlags,
+    ...defFlags,
+    ...(spec.cflags ?? []),
+    ...safeStackFlags(cfg, name),
+  ];
+
+  // Sources must exist before compile attempts. sourceStamp (or the fetch
+  // .ref) is order-only: we don't want every .o recompiling when the stamp
+  // mtime bumps but the .c files are unchanged — the depfile knows better.
+  const orderOnly = [...(sourceStamp === undefined ? [] : [sourceStamp]), ...fetchDepStamps];
+
+  // ─── Generated headers (optional) ───
+  // Literal-string headers are written at configure time via writeIfChanged
+  // (mtime only moves when contents change). HeaderSubst headers become
+  // ninja edges — their template lives in srcDir, which doesn't exist
+  // until fetch runs. Either way buildDir goes on -I and the outputs are
+  // implicit inputs to every cc edge.
   const headers = Object.entries(spec.headers ?? {});
-  const substHeaders: string[] = [];
-  for (const [h, body] of headers) {
-    const out = resolve(buildDir, h);
-    mkdirSync(dirname(out), { recursive: true });
-    if (typeof body === "string") {
-      // Whatever else sits at that path (an older build layout left symlinks
-      // into the source tree where WebKit's forwarding stubs now go) is
-      // replaced, never written through.
-      const existing = lstatSync(out, { throwIfNoEntry: false });
-      if (existing !== undefined && !existing.isFile()) rmSync(out, { recursive: true, force: true });
-      writeIfChanged(out, body === "" ? "/* stub — generated at configure */\n" : body);
-    } else {
-      n.build({
-        outputs: [out],
-        rule: "dep_subst",
-        inputs: [resolve(srcDir, body.from)],
-        implicitInputs: [fetchCliPath],
-        orderOnlyInputs: ready,
-        vars: { pairs: quoteArgs((body.replace ?? []).flat(), hostWin) },
-      });
-      substHeaders.push(out);
+  const needsBuildDirInc = headers.length > 0 || spec.codegen !== undefined;
+  const generated: string[] = [];
+  if (headers.length > 0) {
+    mkdirSync(buildDir, { recursive: true });
+    for (const [h, body] of headers) {
+      const out = resolve(buildDir, h);
+      if (typeof body === "string") {
+        writeIfChanged(out, body === "" ? "/* stub — generated at configure */\n" : body);
+      } else {
+        n.build({
+          outputs: [out],
+          rule: "dep_subst",
+          inputs: [resolve(srcDir, body.from)],
+          implicitInputs: [fetchCliPath],
+          orderOnlyInputs: orderOnly,
+          vars: { pairs: quoteArgs((body.replace ?? []).flat(), hostWin) },
+        });
+        generated.push(out);
+      }
     }
   }
 
-  // ─── Steps: generators and executables ───
-  const steps = spec.steps ?? [];
-  const isExe = (st: DirectStep): st is ExeStep => st.kind === "exe" || st.kind === "host-exe";
-  for (const step of steps) {
-    if (isExe(step)) continue;
-    const outputs = step.outputs.map(inBuild);
-    for (const o of outputs) mkdirSync(dirname(o), { recursive: true });
-    const streamOpts = [
-      `--cwd=${step.cwd ?? buildDir}`,
-      ...Object.entries(step.env ?? {}).map(([k, v]) => `--env=${k}=${v}`),
-      ...(step.stdout ? [`--stdout=${outputs[0]}`] : []),
-    ];
+  // ─── Codegen (optional) ───
+  let generatedHeader: string | undefined;
+  if (spec.codegen !== undefined) {
+    const cg = spec.codegen;
+    const toolSrc = resolve(srcDir, cg.tool);
+    // Host exe suffix: clang on Windows auto-appends .exe to `-o foo`, so
+    // the ninja output name must match or the edge is permanently dirty.
+    const toolOut = resolve(buildDir, `codegen-tool${cfg.host.exeSuffix}`);
+
+    // Host tool: runs at build time to generate headers, so it must target
+    // the BUILD host, not the bun target. cc()/link() add cfg's target/arch
+    // flags which break cross-compiles (musl CI: "file format not
+    // recognized"). Emit a bare clang invocation instead — no opt, no
+    // target triple, just the tool defines and -w. Compile+link in one go
+    // so host-arch objects never land in obj/ (which would dirty ccache
+    // for the target build).
+    const toolDefs = Object.entries(cg.toolDefines ?? {}).map(([k, v]) => defineFlag(k, v));
     n.build({
-      outputs,
-      ...(step.implicitOutputs !== undefined && { implicitOutputs: step.implicitOutputs.map(inBuild) }),
+      outputs: [toolOut],
+      rule: "dep_host_cc",
+      inputs: [toolSrc],
+      implicitInputs: [toolIdentityFile(cfg, "hostCc")],
+      orderOnlyInputs: orderOnly,
+      vars: { flags: ["-w", ...toolDefs].join(" ") },
+    });
+    const toolExe = toolOut;
+
+    // Run tool. "$out" in args expands to the generated header's absolute
+    // path; other args resolve against srcDir. Tool runs with srcDir as
+    // cwd so relative input paths it opens internally Just Work.
+    generatedHeader = resolve(buildDir, cg.output);
+    const argv = cg.args.map(a => (a === "$out" ? generatedHeader! : resolve(srcDir, a)));
+
+    n.build({
+      outputs: [generatedHeader],
       rule: "dep_codegen",
-      inputs: (step.inputs ?? []).map(inSrc),
-      ...(step.implicitInputs !== undefined && { implicitInputs: step.implicitInputs.map(inSrc) }),
-      orderOnlyInputs: ready,
+      inputs: [toolExe],
       vars: {
         name,
-        desc: `gen ${step.desc ?? outputs.map((o: string) => relative(buildDir, o)).join(" ")}`,
-        opts: quoteArgs(streamOpts, hostWin),
-        cmd: quoteArgs(step.cmd, hostWin),
+        cwd: srcDir,
+        tool: q(toolExe),
+        args: quoteArgs(argv, hostWin),
       },
     });
   }
 
-  // ─── Source groups ───
-  const depFlags = computeDepFlags(cfg);
-  const topGroup: SourceGroup = {
-    name,
-    sources: spec.sources,
-    ...(spec.lang !== undefined && { lang: spec.lang }),
-    ...(spec.pic !== undefined && { pic: spec.pic }),
-    // buildDir first so #include "foo.h" finds literal/subst headers.
-    includes: [...(headers.length > 0 ? [buildDir] : []), ...(spec.includes ?? [])],
-    ...(spec.defines !== undefined && { defines: spec.defines }),
-    ...(spec.cflags !== undefined && { cflags: spec.cflags }),
-    implicitInputs: substHeaders,
-  };
-  const groups = [topGroup, ...(spec.groups ?? [])];
-  const pchByHeader = new Map<string, { pch: string; wrapperHeader: string }>();
-  const objectsByGroup = new Map<string, string[]>();
-  const linkObjects: string[] = [];
-  for (const g of groups) {
-    assert(!objectsByGroup.has(g.name), `${name}: duplicate source group '${g.name}'`);
-    const isCxxGroup = g.lang === "cxx";
-    const { c: cFlags, cxx: cxxFlags } = groupCompileFlags(cfg, srcDir, g, depFlags);
-    // Generated files: relative names are this dep's build-dir outputs. One
-    // phony per group stands for the list, so each object names a single
-    // order-only input (JSC's groups wait on ~150 generated headers).
-    const groupReady = resolve(buildDir, `.${g.name}-ready`);
-    n.phony(groupReady, [...ready, ...(g.orderOnly ?? []).map(inBuild)]);
-    const orderOnly = [groupReady];
-    const implicit = (g.implicitInputs ?? []).map(inBuild);
+  // ─── Compile + archive ───
+  // Generated headers (codegen + subst) are implicit inputs to every .o —
+  // library sources include them. buildDir goes on -I so #include "foo.h"
+  // finds literal, subst, and codegen headers alike.
+  if (generatedHeader !== undefined) generated.push(generatedHeader);
+  const implicit = generated;
+  const genInc = needsBuildDirInc ? [`-I${q(buildDir)}`] : [];
 
-    let groupPch: { pch: string; wrapperHeader: string } | undefined;
-    if (g.pch !== undefined) {
-      const header = inSrc(g.pch);
-      groupPch = pchByHeader.get(header);
-      if (groupPch === undefined) {
-        groupPch = pch(n, cfg, header, { flags: cxxFlags, orderOnlyInputs: orderOnly, implicitInputs: implicit });
-        pchByHeader.set(header, groupPch);
-      }
+  const objects = spec.sources.map(s => {
+    const path = typeof s === "string" ? s : s.path;
+    const extra = typeof s === "string" ? [] : (s.cflags ?? []);
+    const abs = resolve(srcDir, path);
+    // .asm → nasm() (NASM syntax, x64). .c/.S → cc() (clang's
+    // integrated assembler handles .S), prepending `-x c++` when lang:"cxx"
+    // forces a C source through the C++ frontend (mimalloc). Everything
+    // else (.cc/.cpp/.cxx) → cxx().
+    if (path.endsWith(".asm")) {
+      return nasm(n, cfg, abs, { flags: [...(spec.nasmflags ?? []), ...extra], orderOnlyInputs: orderOnly });
+    }
+    const isC = path.endsWith(".c");
+    const isAsm = path.endsWith(".S");
+    const opts = {
+      flags: [...(isC && isCxx ? ["-x", "c++"] : []), ...libFlags, ...genInc, ...extra],
+      orderOnlyInputs: orderOnly,
+      implicitInputs: implicit,
+    };
+    return isC || isAsm ? cc(n, cfg, abs, opts) : cxx(n, cfg, abs, opts);
+  });
+
+  const checks = spec.forbidUndefined === undefined ? [] : emitForbidUndefined(n, cfg, name, spec, objects, buildDir);
+
+  // ─── Generators ───
+  const steps = spec.steps ?? [];
+  for (const step of steps) {
+    if (step.kind === "exe") continue;
+    const streamOpts = [
+      `--cwd=${step.cwd}`,
+      ...Object.entries(step.env ?? {}).map(([k, v]) => `--env=${k}=${v}`),
+      ...(step.stdout ? [`--stdout=${step.outputs[0]}`] : []),
+    ];
+    n.build({
+      outputs: step.outputs,
+      ...(step.implicitOutputs !== undefined && { implicitOutputs: step.implicitOutputs }),
+      rule: "dep_gen",
+      inputs: step.inputs,
+      orderOnlyInputs: orderOnly,
+      vars: { name, desc: step.desc, opts: quoteArgs(streamOpts, hostWin), cmd: quoteArgs(step.cmd, hostWin) },
+    });
+  }
+
+  // ─── Source groups ───
+  const objectsByGroup = new Map<string, string[]>();
+  for (const g of spec.groups ?? []) {
+    assert(!objectsByGroup.has(g.name), `${name}: duplicate source group '${g.name}'`);
+    const flags = groupCompileFlags(cfg, srcDir, g);
+    // One phony stands for the list, so each object names a single order-only
+    // input (JSC's TUs wait on ~150 generated headers).
+    const groupReady = resolve(buildDir, `.${g.name}-ready`);
+    n.phony(groupReady, [...orderOnly, ...(g.orderOnly ?? [])]);
+    const groupPch =
+      g.pch === undefined
+        ? undefined
+        : pch(n, cfg, resolve(srcDir, g.pch), { flags: flags.cxx, orderOnlyInputs: [groupReady] });
+    const pchByHeader = new Map<string, PrecompiledHeader>();
+    if (g.pch !== undefined && groupPch !== undefined) pchByHeader.set(g.pch, groupPch);
+    for (const { header, base } of g.chainedPch ?? []) {
+      const basePch = base === undefined ? undefined : pchByHeader.get(base);
+      assert(
+        base === undefined || basePch !== undefined,
+        `${name}: ${header} builds on ${base}, which ${g.name} has not precompiled before it`,
+      );
+      pchByHeader.set(
+        header,
+        pch(n, cfg, resolve(srcDir, header), {
+          flags: flags.cxx,
+          orderOnlyInputs: [groupReady],
+          ...(basePch !== undefined && { base: basePch }),
+        }),
+      );
     }
 
-    const objects = g.sources.map(s => {
+    const groupObjects = g.sources.map(s => {
       const src = typeof s === "string" ? { path: s } : s;
-      const abs = inSrc(src.path);
+      const abs = resolve(srcDir, src.path);
       const extra = src.cflags ?? [];
-      const opts = {
-        orderOnlyInputs: orderOnly,
-        implicitInputs: [...implicit, ...(src.implicitInputs ?? []).map(inBuild)],
-      };
-      // .asm → nasm (NASM syntax, x64). .c/.S → cc() (clang's integrated
-      // assembler handles .S), with `-x c++` first when lang:"cxx" forces a C
-      // source through the C++ frontend (mimalloc). .cc/.cpp/.cxx/.mm → cxx().
-      if (abs.endsWith(".asm")) {
-        return nasm(n, cfg, abs, { flags: [...(spec.nasmflags ?? []), ...extra], orderOnlyInputs: orderOnly });
-      }
-      if (abs.endsWith(".c") || abs.endsWith(".S")) {
-        const asCxx = (isCxxGroup || src.lang === "cxx") && abs.endsWith(".c");
+      const opts = { orderOnlyInputs: [groupReady], implicitInputs: src.implicitInputs ?? [] };
+      if (abs.endsWith(".c")) {
+        const asCxx = src.lang === "cxx";
         return cc(n, cfg, abs, {
           ...opts,
-          flags: asCxx ? ["-x", "c++", ...cxxFlags, ...extra] : [...cFlags, ...extra],
+          flags: asCxx ? ["-x", "c++", ...flags.cxx, ...extra] : [...flags.c, ...extra],
         });
       }
+      for (const file of src.bundled ?? []) {
+        n.addCompileCommand({
+          directory: cfg.buildDir,
+          file,
+          arguments: [cfg.cxx, ...flags.cxx, ...extra, "-c", file],
+        });
+      }
+      const sourcePch = src.noPch ? undefined : src.pch === undefined ? groupPch : pchByHeader.get(src.pch);
+      assert(
+        src.pch === undefined || sourcePch !== undefined,
+        `${name}: ${src.path} names a PCH ${g.name} does not have`,
+      );
       return cxx(n, cfg, abs, {
         ...opts,
-        flags: [...cxxFlags, ...extra],
-        ...(groupPch !== undefined && !src.noPch && { pch: groupPch.pch, pchHeader: groupPch.wrapperHeader }),
+        flags: [...flags.cxx, ...extra],
+        ...(sourcePch !== undefined && {
+          pch: sourcePch.pch,
+          pchHeader: sourcePch.wrapperHeader,
+          pchBases: sourcePch.bases,
+        }),
       });
     });
-    objectsByGroup.set(g.name, objects);
-    if (g.link !== false) linkObjects.push(...objects);
-    if (g !== topGroup && objects.length > 0) n.phony(g.name, objects);
+    objectsByGroup.set(g.name, groupObjects);
+    if (g.link !== false) objects.push(...groupObjects);
+    n.phony(g.name, groupObjects);
   }
-  linkObjects.push(...(spec.linkObjects ?? []).map(inBuild));
 
-  // ─── Executables ───
-  // Target executables link in the same environment bun does (shims.ts).
-  const shims = steps.some(st => st.kind === "exe") ? emitShims(n, cfg) : { ldflags: [], implicitInputs: [] };
+  // ─── Target executables ───
   for (const step of steps) {
-    if (!isExe(step)) continue;
-    let exe: string;
-    if (step.kind === "host-exe") {
-      // Host objects live under the dep's build dir, not obj/: they are for a
-      // different machine than everything ccache/objectPath tracks there.
-      const hostObjDir = resolve(buildDir, "host-obj");
-      const objects = (step.sources ?? []).map(s => {
-        const src = typeof s === "string" ? { path: s } : s;
-        const abs = inSrc(src.path);
-        const rel = abs.startsWith(buildDir) ? relative(buildDir, abs) : relative(srcDir, abs);
-        assert(!rel.startsWith(".."), `${name}: host-exe source ${abs} is outside the dep's source and build dirs`);
-        const obj = resolve(hostObjDir, `${rel}.o`);
-        const isC = abs.endsWith(".c");
-        n.build({
-          outputs: [obj],
-          rule: isC ? "host_cc" : "host_cxx",
-          inputs: [abs],
-          ...(step.implicitInputs !== undefined && { implicitInputs: step.implicitInputs.map(inBuild) }),
-          orderOnlyInputs: ready,
-          vars: { flags: quoteArgs([...(step.flags ?? []), ...(src.cflags ?? [])], hostWin) },
-        });
-        return obj;
-      });
-      exe = inBuild(step.output) + cfg.host.exeSuffix;
-      n.build({
-        outputs: [exe],
-        rule: "host_link",
-        inputs: objects,
-        vars: { flags: quoteArgs(step.ldflags ?? [], hostWin) },
-      });
-    } else {
-      const objects = (step.objectsFrom ?? []).flatMap(g => {
-        const o = objectsByGroup.get(g);
-        assert(o !== undefined, `${name}: exe ${step.output} names unknown source group '${g}'`);
-        return o;
-      });
-      // A real executable for the TARGET (offlineasm parses the extractors),
-      // so it links with the toolchain half of bun's link line — triple/
-      // sysroot, lld, C++ runtime, PIE policy, sanitizer runtime — and drops
-      // unreferenced sections (an extractor references a sliver of JSC). The
-      // shared `link` rule ends in bun's Mach-O post-link fixup on darwin
-      // cross links; its host tool is an input.
-      exe = link(n, cfg, inBuild(step.output), objects, {
-        libs: [],
-        flags: [
-          ...computeTargetLinkFlags(cfg),
-          ...(cfg.darwin ? ["-Wl,-dead_strip"] : cfg.windows ? [] : ["-Wl,--gc-sections"]),
-          ...shims.ldflags,
-          ...(step.ldflags ?? []),
-        ],
-        implicitInputs: [...shims.implicitInputs, ...(step.implicitInputs ?? []).map(inBuild)],
-      });
-    }
-    n.phony(basename(inBuild(step.output)), [exe]);
+    if (step.kind !== "exe") continue;
+    const exeObjects = step.objectsFrom.flatMap(g => {
+      const o = objectsByGroup.get(g);
+      assert(o !== undefined, `${name}: exe ${step.output} names unknown source group '${g}'`);
+      return o;
+    });
+    const exe = link(n, cfg, step.output, exeObjects, { libs: [], flags: computeTargetLinkFlags(cfg) });
+    n.phony(basename(step.output), [exe]);
   }
-
-  const checks =
-    spec.forbidUndefined === undefined
-      ? []
-      : emitForbidUndefined(n, cfg, name, spec, objectsByGroup.get(name)!, buildDir);
-
-  // What a consumer's compile waits on for HEADERS to be ready — the fetch
-  // stamps and the generated headers it may include, not the .o files.
-  const generatedHeaders = [...substHeaders, ...(spec.consumerOutputs ?? [])];
 
   // Default: hand the objects straight to bun's link line — no intermediate
   // archive. With cfg.archiveDeps the old per-dep .a is produced instead
   // (useful for bisecting duplicate-symbol issues, since a .a only
   // contributes members the linker actually pulls).
   if (cfg.archiveDeps) {
+    // ar's output dir + the per-source obj dirs both need pre-creating —
+    // configure.ts:mkdirAll only sees `output.objects`, which is empty
+    // in this branch.
     mkdirSync(buildDir, { recursive: true });
-    for (const o of linkObjects) mkdirSync(resolve(o, ".."), { recursive: true });
-    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), linkObjects, checks);
+    for (const o of objects) mkdirSync(resolve(o, ".."), { recursive: true });
+    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects, checks);
     n.phony(name, [lib]);
-    return { libs: [lib], objects: [], stamps: [...ready, lib], generatedHeaders, checks };
+    return { libs: [lib, ...(spec.libs ?? [])], objects: [], headerOutputs: [lib], checks };
   }
-  n.phony(name, [...linkObjects, ...checks]);
-  return { libs: [], objects: linkObjects, stamps: ready, generatedHeaders, checks };
+  n.phony(name, [...objects, ...checks]);
+  // headerOutputs: what downstream needs to wait on for HEADERS to be
+  // ready. For no-archive direct deps that's the generated header set
+  // (subst/literal/codegen) plus the fetch stamp — not the .o files.
+  return {
+    libs: spec.libs ?? [],
+    objects,
+    headerOutputs: sourceStamp === undefined ? generated : [...generated, sourceStamp],
+    checks,
+  };
 }
 
 /**
@@ -1610,7 +1583,7 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
 function emitForbidUndefined(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   spec: DirectBuild,
   objects: string[],
   buildDir: string,

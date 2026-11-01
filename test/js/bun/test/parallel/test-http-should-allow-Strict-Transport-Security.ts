@@ -1,6 +1,7 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 await using server = http.createServer((req, res) => {
@@ -9,6 +10,6 @@ await using server = http.createServer((req, res) => {
 });
 server.listen(0, "localhost");
 await once(server, "listening");
-const response = await fetch(`http://localhost:${server.address().port}`);
+const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`);
 expect(response.status).toBe(200);
 expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");

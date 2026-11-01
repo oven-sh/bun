@@ -1,0 +1,79 @@
+------------------
+{ printWidth: 80 }
+------------------
+export {
+
+  // Factory
+  create,
+
+  // Basic Types
+  URI,
+};
+import {
+
+  // a
+  b,
+} from "c";
+const x = {
+  // a
+  b,
+};
+const y = [
+  // a
+  b,
+];
+f(
+  // a
+  b,
+);
+export { create, URI };
+export {
+  a,
+
+  /* b */ c,
+  d, // e
+
+  // f
+  g,
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export {
+
+  // Factory
+  create,
+
+  // Basic Types
+  URI,
+};
+import {
+
+  // a
+  b,
+} from "c";
+const x = {
+  // a
+  b,
+};
+const y = [
+  // a
+  b,
+];
+f(
+  // a
+  b,
+);
+export { create, URI };
+export {
+  a,
+
+  /* b */ c,
+  d, // e
+
+  // f
+  g,
+};
+
+===================== End =====================

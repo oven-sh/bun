@@ -83,6 +83,7 @@ private:
 };
 static_assert(sizeof(JSSQLStatementConstructor) == sizeof(JSFunction), "Allocate JSSQLStatementConstructor in JSFunction IsoSubspace");
 Structure* createJSSQLStatementStructure(JSGlobalObject* globalObject);
+Structure* createJSSQLDatabaseStructure(JSGlobalObject* globalObject);
 
 JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject);
 

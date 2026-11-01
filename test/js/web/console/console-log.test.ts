@@ -50,6 +50,43 @@ it("long arrays get cutoff", () => {
   );
 });
 
+it("long arrays get cutoff at a nested indent", () => {
+  const row = "          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,\n";
+  expect(Bun.inspect([[[[Array(1000).fill(4)]]]], { depth: 5 })).toEqual(
+    "[\n  [\n    [\n      [\n        [\n" +
+      row +
+      row +
+      row +
+      row +
+      "          4, 4, 4, 4,\n" +
+      "          ... 900 more items\n" +
+      "        ]\n      ]\n    ]\n  ]\n]",
+  );
+});
+
+it("console.dir treats a BigInt depth like the same number", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let o = {}, c = o; for (let i = 0; i < 40; i++) { c.n = {}; c = c.n; }
+       for (const depth of [7n, 7, -1n, -1]) {
+         console.dir(o, { depth, colors: false });
+         console.log("--");
+       }`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [big7, num7, bigNegative, numNegative] = stdout.split("--\n");
+  expect(big7).toBe(num7);
+  expect(bigNegative).toBe(numNegative);
+  expect(exitCode).toBe(0);
+});
+
 it("console.group", async () => {
   const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({
@@ -141,6 +178,68 @@ NamedError: console.error a named error
 
   Error log"
 `);
+});
+
+it("console.groupCollapsed starts a group, as console.group does", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.groupCollapsed("Collapsed");
+       console.log("in collapsed");
+       console.warn("warn in collapsed");
+       console.groupCollapsed();
+       console.log("in collapsed with no label");
+       console.groupEnd();
+       console.group("Group in collapsed");
+       console.log("in group in collapsed");
+       console.groupEnd();
+       console.groupEnd();
+       console.group("Group");
+       console.groupCollapsed("Collapsed in group");
+       console.log("in collapsed in group");
+       console.error("error in collapsed in group");
+       console.groupEnd();
+       console.groupCollapsed(undefined);
+       console.log("in collapsed with an undefined label");
+       console.groupEnd();
+       console.log("back in group");
+       console.groupEnd();
+       console.groupCollapsed("%s has %d args", "label", 3);
+       console.groupEnd();
+       console.groupCollapsed();
+       console.groupEnd();
+       console.log("after");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: stdout.replaceAll("\r\n", "\n"),
+    stderr: stderr.replaceAll("\r\n", "\n"),
+    exitCode,
+  }).toEqual({
+    stdout: [
+      "Collapsed",
+      "  in collapsed",
+      "    in collapsed with no label",
+      "  Group in collapsed",
+      "    in group in collapsed",
+      "Group",
+      "  Collapsed in group",
+      "    in collapsed in group",
+      "  undefined",
+      "    in collapsed with an undefined label",
+      "  back in group",
+      "label has 3 args",
+      "after",
+      "",
+    ].join("\n"),
+    stderr: ["  warn in collapsed", "    error in collapsed in group", ""].join("\n"),
+    exitCode: 0,
+  });
 });
 
 it("console.log with SharedArrayBuffer", () => {

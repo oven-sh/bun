@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
@@ -7,7 +6,7 @@ use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_ptr::RawSlice;
 use bun_simdutf_sys::simdutf;
 
-use crate::webcore::sink::sink_handle_from_id;
+use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
@@ -16,7 +15,7 @@ bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 /// `extern "C"` fns below; no JS wrapper class. `scratch` is moved out via
 /// `.take()` before any call that could re-enter.
 #[derive(Default)]
-pub struct TextEncoderStreamEncoder {
+pub(crate) struct TextEncoderStreamEncoder {
     pending_lead_surrogate: Cell<Option<u16>>,
     /// Reusable output buffer for the native-sink path so a
     /// `ByteStream → TextEncoderStream → JSSink` chain allocates nothing per
@@ -73,10 +72,10 @@ impl TextEncoderStreamEncoder {
             let result = unsafe {
                 bun_core::vec::fill_spare(buffer, 0, |spare| {
                     let r = strings::copy_latin1_into_utf8(spare, remain);
-                    (r.written as usize, r)
+                    (r.written, r)
                 })
             };
-            remain = &remain[result.read as usize..];
+            remain = &remain[result.read..];
 
             if result.written == 0 && result.read == 0 {
                 buffer.try_reserve(2).map_err(|_| AllocError)?;
@@ -220,13 +219,15 @@ impl TextEncoderStreamEncoder {
 // wrapper cell, no prototype lookup) and drives it through these.
 
 #[unsafe(no_mangle)]
-pub extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncoderStreamEncoder {
+pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncoderStreamEncoder
+{
     Box::into_raw(Box::new(TextEncoderStreamEncoder::default()))
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__destroyForStream(this: *mut TextEncoderStreamEncoder) {
+pub(crate) extern "C" fn TextEncoderStreamEncoder__destroyForStream(
+    this: *mut TextEncoderStreamEncoder,
+) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `TextEncoderStreamEncoder__createForStream` and has not been
         // freed (the C++ cell clears its pointer before calling).
@@ -238,8 +239,7 @@ pub extern "C" fn TextEncoderStreamEncoder__destroyForStream(this: *mut TextEnco
 /// `chunk` (user JS — may throw), then encode. Returns a fresh `Uint8Array`
 /// on success, or `JSValue::zero` with the exception pending on `global`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
+pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     chunk: JSValue,
@@ -260,8 +260,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__flushForStream(
+pub(crate) extern "C" fn TextEncoderStreamEncoder__flushForStream(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
 ) -> JSValue {
@@ -281,13 +280,11 @@ const SCRATCH_CAP: usize = 64 * 1024;
 /// `undefined` for an empty output, or `JSValue::zero` with the exception
 /// pending on `global`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
+pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     chunk: JSValue,
-    sink_id: u8,
-    sink_ptr: *mut core::ffi::c_void,
+    controller: &ReadableSinkController,
 ) -> JSValue {
     let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
@@ -311,20 +308,15 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }
-    let Some(ptr) = NonNull::new(sink_ptr) else {
-        this.scratch.replace(buf);
-        return JSValue::UNDEFINED;
-    };
-    // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++ caller
-    // null-checks it before attaching); the sink copies what it needs.
-    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    // The sink copies what it needs.
+    let handle = controller.sink_handle();
     if handle.is_none() {
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }
     let wrote = handle
         .write(&streams::Result::Temporary(RawSlice::new(&buf)))
-        .to_js(global);
+        .to_js(&global.js_thread_of_caller());
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
     }
@@ -333,12 +325,10 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
 
 /// Native-sink flush step; see `TextEncoderStreamEncoder__encodeIntoSink` for the return contract.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
+pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
-    sink_id: u8,
-    sink_ptr: *mut core::ffi::c_void,
+    controller: &ReadableSinkController,
 ) -> JSValue {
     // SAFETY: as in `TextEncoderStreamEncoder__encodeForStream`.
     let this = unsafe { &*this };
@@ -346,15 +336,11 @@ pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
         return JSValue::UNDEFINED;
     }
     const REPLACEMENT: [u8; 3] = [0xef, 0xbf, 0xbd];
-    let Some(ptr) = NonNull::new(sink_ptr) else {
-        return JSValue::UNDEFINED;
-    };
-    // SAFETY: as in `TextEncoderStreamEncoder__encodeIntoSink`.
-    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    let handle = controller.sink_handle();
     if handle.is_none() {
         return JSValue::UNDEFINED;
     }
     handle
         .write(&streams::Result::Temporary(RawSlice::new(&REPLACEMENT)))
-        .to_js(global)
+        .to_js(&global.js_thread_of_caller())
 }

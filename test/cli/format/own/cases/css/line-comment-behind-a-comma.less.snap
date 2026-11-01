@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+@list:
+  #aaaaaa, // Start with A
+  #bbbbbb, // then some B
+  #cccccc; // and round it out with C
+
+-------------------
+{ printWidth: 100 }
+-------------------
+@list:
+  #aaaaaa, // Start with A
+  #bbbbbb, // then some B
+  #cccccc; // and round it out with C
+
+===================== End =====================

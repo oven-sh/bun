@@ -12,12 +12,10 @@
 use bun_alloc::AllocError;
 
 pub(crate) struct QuantizeResult {
-    /// `[colors][4]u8` RGBA palette.
+    /// `[colors][4]u8` RGBA palette, of at most the requested `colors`.
     pub palette: Box<[u8]>,
     /// One palette index per input pixel.
     pub indices: Box<[u8]>,
-    /// Actual palette length (≤ requested `colors`).
-    pub colors: u16,
     /// True if any palette entry has alpha < 255 — caller writes a tRNS chunk.
     pub has_alpha: bool,
 }
@@ -55,7 +53,7 @@ unsafe extern "C" {
 }
 
 #[derive(Clone, Copy)]
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) max_colors: u16,
     /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
     /// cost of grain on flat areas; off by default to match Sharp's
@@ -159,7 +157,6 @@ pub(crate) fn quantize(
     Ok(QuantizeResult {
         palette: palette.into_boxed_slice(),
         indices: indices.into_boxed_slice(),
-        colors: k,
         has_alpha,
     })
 }

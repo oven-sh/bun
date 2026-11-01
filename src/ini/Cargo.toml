@@ -12,12 +12,11 @@ workspace = true
 [dependencies]
 strum.workspace = true
 bstr.workspace = true
-bun_api.workspace = true
+bun_options_types.workspace = true
 bun_base64.workspace = true
 bun_dotenv.workspace = true
 bun_install_types.workspace = true
 bun_parsers.workspace = true
-bun_js_parser.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true

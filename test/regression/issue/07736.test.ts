@@ -13,7 +13,6 @@ describe("toEqual on a large Map", () => {
     class CustomMap extends Map {
       abc: number = 123;
 
-      // @ts-expect-error
       constructor(iterable) {
         // @ts-expect-error
         super(iterable);

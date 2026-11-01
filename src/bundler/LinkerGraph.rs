@@ -224,13 +224,8 @@ pub struct LinkerGraph<'a> {
     pub(crate) entry_points: entry_point::List,
     pub(crate) symbols: symbol::Map,
 
-    // Note: lifetime-erased. The
-    // arena is owned by `BundleV2` and outlives every `LinkerGraph` — kept as
-    // a raw pointer (matching `LinkerContext.parse_graph: *mut Graph`) so the
-    // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
-    // grow a `'bump` parameter; threading `'bump` would require `Chunk` and
-    // `html_import_manifest` to gain lifetimes first.
-    pub(crate) bump: bun_ptr::BackRef<Arena>,
+    /// The bundle's arena, `BundleV2.graph.heap`.
+    bump: &'a Arena,
 
     pub(crate) code_splitting: bool,
 
@@ -260,57 +255,32 @@ pub struct LinkerGraph<'a> {
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
 }
 
-// SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
-// linking. What makes `&LinkerGraph`
-// sound to hold concurrently:
-//
-// - `bump: *const Arena` is a backref into `BundleV2`; the arena is frozen
-//   (no new allocations) for the duration of any worker-pool fan-out that
-//   holds `&LinkerGraph`.
-// - `files_live` / `parts_live` / `is_scb_bitset` / `reachable_files` /
-//   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
-//   before fan-out and only read by workers.
-// - `ast` / `meta` / `files` columns that workers mutate are split out via
-//   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
-//   `compute_cross_chunk_dependencies`); workers never reach those columns
-//   through `&LinkerGraph`.
-// - `symbols: symbol::Map` IS written by workers
-//   (`Map::assign_chunk_index`), but the written field is
-//   `Symbol.chunk_index: AtomicU32` — interior-mutable, Relaxed store — so
-//   the write is sound through `&Map`. All other `Symbol` fields are
-//   read-only during worker fan-out.
-//
-// `Send` is required because `LinkerGraph` is moved into `LinkerContext`
-// which is itself sent to the link task; the only `!Send` constituent is the
-// raw `*const Arena`, whose pointee is `Sync` and outlives the graph.
-unsafe impl Send for LinkerGraph<'_> {}
-// SAFETY: see the block above — every field reachable through `&LinkerGraph`
-// during worker fan-out is either frozen before the pool runs, split out as a
-// disjoint `&mut [_]` column beforehand, or written only via
-// `Symbol.chunk_index: AtomicU32` (interior-mutable), so shared `&Self` is sound.
+// SAFETY: workers share `&LinkerGraph`. What is not `Sync` on its own:
+// - The `MultiArrayList`s. Workers write their columns through `split_raw()` and
+//   `items_raw()`, and each task writes only the rows of its own file or chunk.
+//   Nothing writes `Part.scopes` or the `symbols` column of `ast` while workers run.
+// - The `BitSet`s, which workers only read.
+// - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.
+//   `LinkerContext::link()` shortens them all with `follow_all()` before workers
+//   follow any. The dev server skips `link()`: its links come from the parser and
+//   stay within one file, and tasks that run at the same time work on different files.
+// Only the bundle thread allocates from the arena; workers use `worker.arena()`.
 unsafe impl Sync for LinkerGraph<'_> {}
 
 impl<'a> LinkerGraph<'a> {
-    /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
-    pub(crate) fn arena(&self) -> &Arena {
-        // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the
-        // lifetime of the link step that constructed this LinkerGraph.
-        self.bump.get()
+    pub(crate) fn arena(&self) -> &'a Arena {
+        self.bump
     }
-}
 
-impl Default for LinkerGraph<'_> {
-    fn default() -> Self {
+    pub(crate) fn new(bump: &'a Arena) -> Self {
         LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::default(),
             parts_live: Vec::new(),
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
-            // Note: `bump` is a backref assigned in `init`/`LinkerContext::load`;
-            // dangling sentinel (never read before assignment).
-            bump: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
+            bump,
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
@@ -808,8 +778,6 @@ impl<'a> LinkerGraph<'a> {
                 stable_source_indices[source_index.get() as usize] = Index::source(i as u32);
             }
 
-            let distances: &mut [u32] = files_cols.distance_from_entry_point;
-            distances.fill(File::default().distance_from_entry_point);
             // `Index` is `#[repr(transparent)]` over `u32`; the field stores
             // raw `u32` so unwrap via `.get()` (no slice reinterpret needed).
             self.stable_source_indices = stable_source_indices.iter().map(|i| i.get()).collect();
@@ -900,7 +868,8 @@ impl<'a> LinkerGraph<'a> {
     /// through whichever thread's `AstAlloc` state is active — `AstAlloc` is a
     /// ZST, so there is nothing to retag) and new symbols feed through
     /// `self.symbols: symbol::Map` (global).
-    pub(crate) fn take_ast_ownership(&mut self, heap: &'a Arena) {
+    pub(crate) fn take_ast_ownership(&mut self) {
+        let heap = self.bump;
         for v in self.ast.items_import_records_mut() {
             bun_alloc::transfer_arena(v, heap);
         }
@@ -999,10 +968,6 @@ pub struct File {
 
     pub(crate) input_file: Index,
 
-    /// The minimum number of links in the module graph to get from an entry point
-    /// to this file
-    pub(crate) distance_from_entry_point: u32,
-
     /// This file is an entry point if and only if this is not ".none".
     /// Note that dynamically-imported files are allowed to also be specified by
     /// the user as top-level entry points, so some dynamically-imported files
@@ -1027,7 +992,6 @@ impl Default for File {
             // Note: empty static-arm bitset; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             input_file: Index::source(0u32),
-            distance_from_entry_point: u32::MAX,
             entry_point_kind: EntryPoint::Kind::None,
             entry_point_chunk_index: u32::MAX,
             line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
@@ -1042,7 +1006,6 @@ bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
         entry_bits: AutoBitSet,
         input_file: Index,
-        distance_from_entry_point: u32,
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
         line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

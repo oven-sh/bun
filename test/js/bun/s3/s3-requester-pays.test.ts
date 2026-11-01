@@ -169,7 +169,7 @@ describe("s3 - Requester Pays", () => {
 
   it("should include x-amz-request-payer in HEAD requests (exists/size/stat)", async () => {
     let reqHeaders: Headers | undefined = undefined;
-    let reqMethod: string | undefined = undefined;
+    let reqMethod = undefined as string | undefined;
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -200,7 +200,7 @@ describe("s3 - Requester Pays", () => {
 
   it("should include x-amz-request-payer in DELETE requests", async () => {
     let reqHeaders: Headers | undefined = undefined;
-    let reqMethod: string | undefined = undefined;
+    let reqMethod = undefined as string | undefined;
     using server = Bun.serve({
       port: 0,
       async fetch(req) {

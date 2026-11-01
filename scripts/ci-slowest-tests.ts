@@ -22,7 +22,7 @@ import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
 // consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). See
-// scripts/ci-log-phase.mjs for the header shapes runner.node.mjs emits and why
+// scripts/ci-log-phase.mjs for the header shapes runner.node.ts emits and why
 // each one has to close the open span.
 export function parseLog(text: string): Map<string, number> {
   const out = new Map<string, number>();

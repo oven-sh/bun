@@ -1,0 +1,8 @@
+x = (
+  <span>
+    {" "}
+    x,
+    <Icon name="x" /> {foo.bar},{" "}
+    <Foo a={1} b={2} />
+  </span>
+);

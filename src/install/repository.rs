@@ -1,5 +1,4 @@
 use core::fmt;
-use std::sync::OnceLock;
 
 use bstr::BStr;
 use bun_alloc::AllocError;
@@ -9,122 +8,7 @@ use bun_semver::string::Buf as StringBuf;
 
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
-use crate::install::{self as Install};
 use crate::resolution::fmt_store_url;
-
-#[derive(Clone, Copy, Default)]
-struct SloppyGlobalGitConfig {
-    has_askpass: bool,
-    has_ssh_command: bool,
-}
-
-// Written exactly once on first `get()`, then read-only.
-static SLOPPY_HOLDER: OnceLock<SloppyGlobalGitConfig> = OnceLock::new();
-
-impl SloppyGlobalGitConfig {
-    fn get() -> SloppyGlobalGitConfig {
-        *SLOPPY_HOLDER.get_or_init(Self::load_and_parse)
-    }
-
-    fn load_and_parse() -> SloppyGlobalGitConfig {
-        let Some(home_dir) = bun_core::env_var::HOME.get() else {
-            return SloppyGlobalGitConfig::default();
-        };
-
-        let mut config_file_path_buf = bun_paths::path_buffer_pool::get();
-        let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
-            bun_paths::platform::Auto,
-        >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);
-        // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
-        let Ok(source) = bun_ast::to_source(
-            config_file_path,
-            bun_ast::ToSourceOptions { convert_bom: true },
-        ) else {
-            return SloppyGlobalGitConfig::default();
-        };
-        // `defer allocator.free(source.contents)` — handled by Drop on `source`.
-
-        let mut remaining = strings::split(source.contents(), b"\n");
-        let mut found_askpass = false;
-        let mut found_ssh_command = false;
-        let mut in_core = false;
-        while let Some(line_) = remaining.next() {
-            if found_askpass && found_ssh_command {
-                break;
-            }
-
-            let line = strings::trim(line_, b"\t \r");
-
-            if line.is_empty() {
-                continue;
-            }
-            // skip comments
-            if line[0] == b'#' {
-                continue;
-            }
-
-            if line[0] == b'[' {
-                if let Some(end_bracket) = strings::index_of_char(line, b']') {
-                    if &line[0..end_bracket as usize + 1] == b"[core]" {
-                        in_core = true;
-                        continue;
-                    }
-                }
-                in_core = false;
-                continue;
-            }
-
-            if in_core {
-                if !found_askpass {
-                    const K: &[u8] = b"askpass";
-                    if line.len() > K.len()
-                        && strings::eql_case_insensitive_ascii_ignore_length(&line[..K.len()], K)
-                        && matches!(line[K.len()], b' ' | b'\t' | b'=')
-                    {
-                        found_askpass = true;
-                        continue;
-                    }
-                }
-
-                if !found_ssh_command {
-                    const K: &[u8] = b"sshCommand";
-                    if line.len() > K.len()
-                        && strings::eql_case_insensitive_ascii_ignore_length(&line[..K.len()], K)
-                        && matches!(line[K.len()], b' ' | b'\t' | b'=')
-                    {
-                        found_ssh_command = true;
-                    }
-                }
-            } else {
-                if !found_askpass {
-                    const K: &[u8] = b"core.askpass";
-                    if line.len() > K.len()
-                        && strings::eql_case_insensitive_ascii_ignore_length(&line[..K.len()], K)
-                        && matches!(line[K.len()], b' ' | b'\t' | b'=')
-                    {
-                        found_askpass = true;
-                        continue;
-                    }
-                }
-
-                if !found_ssh_command {
-                    const K: &[u8] = b"core.sshCommand";
-                    if line.len() > K.len()
-                        && strings::eql_case_insensitive_ascii_ignore_length(&line[..K.len()], K)
-                        && matches!(line[K.len()], b' ' | b'\t' | b'=')
-                    {
-                        found_ssh_command = true;
-                    }
-                }
-            }
-        }
-
-        SloppyGlobalGitConfig {
-            has_askpass: found_askpass,
-            has_ssh_command: found_ssh_command,
-        }
-    }
-}
 
 // MOVE_DOWN: data struct + Default + buffer-relative `order`/`count`/`clone`/
 // `eql` now live in `bun_install_types::resolver_hooks` so the resolver and
@@ -135,44 +19,50 @@ impl SloppyGlobalGitConfig {
 // once `RepositoryExt` is in scope.
 pub use bun_install_types::resolver_hooks::Repository;
 
-/// The environment every `git` the install spawns runs with (see `GitEnv::get`).
+/// The environment of every `git` process that `bun install` spawns.
 pub(crate) struct GitEnv {
     /// `KEY=VALUE\0` array for spawn.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
     /// `git` resolved on the env's `PATH`. `None` when git is not installed.
     pub(crate) git: Option<ZBox>,
+    /// False for the provisional environment that only `CONFIG_QUERY` itself runs in.
+    pub(crate) is_settled: bool,
 }
 
-// Written once from the install thread (the only one that spawns git), then read-only.
-static GIT_ENV: bun_core::RacyCell<Option<GitEnv>> = bun_core::RacyCell::new(None);
-
 impl GitEnv {
-    pub(crate) fn get(loader: &mut bun_dotenv::Loader) -> &'static GitEnv {
-        let slot = GIT_ENV.get();
-        // SAFETY: only the install thread reaches this. The slot is written
-        // once, before any reference into it exists, and never reassigned.
-        unsafe {
-            if (*slot).is_none() {
-                *slot = Some(Self::init(loader));
-            }
-            (*slot).as_ref().unwrap()
-        }
-    }
+    /// Prints `core.askpass` and `core.sshcommand`, each only if a file, include, or variable that
+    /// git reads sets it. `--git-dir` excludes the project's own config, which no clone reads.
+    pub(crate) const CONFIG_QUERY: &'static [&'static [u8]] = &[
+        concat!("--git-dir=", bun_core::null_device!()).as_bytes(),
+        b"config",
+        b"--name-only",
+        b"--get-regexp",
+        br"^core\.(askpass|sshcommand)$",
+    ];
 
-    fn init(loader: &mut bun_dotenv::Loader) -> GitEnv {
-        // No prompts by default: the install's own output would hide them.
-        let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
+    /// `configured` is the output of `CONFIG_QUERY`, or `None` for the environment that runs it.
+    pub(crate) fn new(configured: Option<&[u8]>) -> GitEnv {
+        let mut map = bun_core::handle_oom(bun_dotenv::Map::for_git_child());
+        // `bunx` sets these for its own install only. Git runs the user's hooks, which must not
+        // inherit them.
+        map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
+        map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
+        // Git ignores `refs/replace`, so a commit hash always gives the content that it names.
+        bun_core::handle_oom(map.put(b"GIT_NO_REPLACE_OBJECTS", b"1"));
 
-        if map.get(b"GIT_ASKPASS").is_none() {
-            let config = SloppyGlobalGitConfig::get();
-            if !config.has_askpass {
+        if let Some(configured) = configured {
+            // Prompts are off by default, because the install's own output would hide them.
+            if map.get(b"GIT_ASKPASS").is_none() && !strings::contains(configured, b"core.askpass")
+            {
                 bun_core::handle_oom(map.put(b"GIT_ASKPASS", b"echo"));
             }
-        }
 
-        if map.get(b"GIT_SSH_COMMAND").is_none() {
-            let config = SloppyGlobalGitConfig::get();
-            if !config.has_ssh_command {
+            // `GIT_SSH_COMMAND` overrides `core.sshCommand` and `GIT_SSH`, so it is only set when
+            // the user has set neither.
+            if map.get(b"GIT_SSH_COMMAND").is_none()
+                && map.get(b"GIT_SSH").is_none()
+                && !strings::contains(configured, b"core.sshcommand")
+            {
                 bun_core::handle_oom(map.put(
                     b"GIT_SSH_COMMAND",
                     b"ssh -oStrictHostKeyChecking=accept-new",
@@ -188,25 +78,33 @@ impl GitEnv {
         GitEnv {
             envp: bun_core::handle_oom(map.create_null_delimited_env_map()),
             git,
+            is_settled: configured.is_some(),
         }
     }
 }
 
-bun_core::comptime_string_map! {
-    /// TLD appended to the shorthand git hosts. The length dispatch rejects
-    /// everything that isn't 6 or 9 bytes (the common case: real hostnames
-    /// like `git.company.io`) before any byte compare.
-    static HOST_TLDS: &'static [u8] = {
-        b"github" => b".com",
-        b"gitlab" => b".com",
-        b"bitbucket" => b".org",
-    };
+/// Returns the domain of a shorthand host, e.g. `gitlab.com` for the `gitlab` in
+/// `gitlab:user/repo`.
+fn shorthand_domain(host: &[u8]) -> Option<&'static [u8]> {
+    hosted_git_info::HostProvider::from_shortcut(host, false).map(|provider| provider.domain())
 }
 
-#[inline]
-fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
-    HOST_TLDS.get(host).copied()
+/// Returns the `repo` to record in the lockfile for `host:path`. That's `ssh://host:path`, which is
+/// what reading `git+ssh://host:path` from bun.lock gives back. A shorthand (`gitlab:user/repo`)
+/// becomes a URL.
+pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
+    if !Dependency::is_scp_like_path(repo) {
+        return None;
+    }
+    let host = &repo[..strings::index_of_char_usize(repo, b':').unwrap_or(0)];
+    Some(match shorthand_domain(host) {
+        Some(_) => scp_like_to_url(b"ssh://git@", repo),
+        None => [b"ssh://".as_slice(), repo].concat(),
+    })
 }
+
+/// The tag becomes part of a cache folder name that must fit in a path buffer.
+pub(crate) const MAX_RESOLVED_TAG_LEN: usize = 256;
 
 /// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
 /// `git`, or `<owner>-<repo>-<sha>` for `github`). It is concatenated into a cache
@@ -215,7 +113,7 @@ fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
 /// option.
 pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
     !resolved.is_empty()
-        && resolved.len() <= 256
+        && resolved.len() <= MAX_RESOLVED_TAG_LEN
         && resolved[0] != b'-'
         && resolved != b"."
         && resolved != b".."
@@ -224,20 +122,26 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
+/// The name of the root folder in GitHub's tarball of `commit`. A fresh install records that name
+/// as `resolved`.
+pub(crate) fn github_tarball_tag(owner: &[u8], repo: &[u8], commit: &[u8]) -> Option<Vec<u8>> {
+    let tag = [owner, b"-", repo, b"-", &commit[..commit.len().min(7)]].concat();
+    is_safe_resolved_tag(&tag).then_some(tag)
+}
+
 /// Install-tier `Repository` behaviour: parsing, formatting, clone URL forms.
 pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
     fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>)
     -> Result<Repository, AllocError>;
-    fn create_dependency_name_from_version_literal(
-        repository: &Repository,
-        string_buf: &[u8],
-        dep: &Install::Dependency,
-    ) -> Vec<u8>;
+    /// For a checkout whose package.json has no `name` (or no package.json at all).
+    fn fallback_package_name<'a>(&'a self, string_buf: &'a [u8]) -> &'a [u8];
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
     -> StorePathFormatter<'a>;
     fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
+    /// The commit in `resolved` (`<owner>-<repo>-<commit>` for GitHub).
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8];
     /// The ssh form of a git URL; `None` for an explicit `http(s)://` URL.
     fn try_ssh(url: &[u8]) -> Option<Vec<u8>>;
     /// The https form of a git URL, or `None` when it has none.
@@ -293,45 +197,12 @@ impl RepositoryExt for Repository {
         Ok(result)
     }
 
-    fn create_dependency_name_from_version_literal(
-        repository: &Repository,
-        string_buf: &[u8],
-        dep: &Install::Dependency,
-    ) -> Vec<u8> {
-        // Callers (`parse_with_json`) hold a split `StringBuilder`
-        // borrow on `string_bytes`, so accept the two pieces directly.
-        let buf = string_buf;
-        let repo_name = repository.repo;
-        let repo_name_str = repo_name.slice(buf);
-
-        let name = 'brk: {
-            let mut remain = repo_name_str;
-
-            if let Some(hash_index) = strings::index_of_char(remain, b'#') {
-                remain = &remain[..hash_index as usize];
-            }
-
-            if remain.is_empty() {
-                break 'brk remain;
-            }
-
-            if let Some(slash_index) = strings::last_index_of_char(remain, b'/') {
-                remain = &remain[slash_index + 1..];
-            }
-
-            remain
-        };
-
-        if name.is_empty() {
-            let version_literal = dep.version.literal.slice(buf);
-            let mut name_buf = [0u8; bun_sha::SHA1::DIGEST];
-            let mut sha1 = bun_sha::SHA1::init();
-            sha1.update(version_literal);
-            sha1.r#final(&mut name_buf);
-            return name_buf.to_vec();
+    fn fallback_package_name<'a>(&'a self, string_buf: &'a [u8]) -> &'a [u8] {
+        let mut repo = self.repo.slice(string_buf);
+        if let Some(hash_index) = strings::index_of_char(repo, b'#') {
+            repo = &repo[..hash_index as usize];
         }
-
-        name.to_vec()
+        Dependency::fallback_package_name(repo)
     }
 
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
@@ -363,38 +234,36 @@ impl RepositoryExt for Repository {
         }
     }
 
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
+        let resolved = self.resolved.slice(buf);
+        match strings::last_index_of_char(resolved, b'-') {
+            Some(i) => &resolved[i + 1..],
+            None => resolved,
+        }
+    }
+
     fn try_ssh(url: &[u8]) -> Option<Vec<u8>> {
         // Do not cast explicit http(s) URLs to SSH
         if url.starts_with(b"http") {
             return None;
         }
 
-        if url.starts_with(b"git@") {
+        // `git@host:path`. git reads `git@host/path` as a path on this machine.
+        if url.starts_with(b"git@")
+            && strings::index_of_any(url, b":/").is_some_and(|at| url[at] == b':')
+        {
             return Some(url.to_vec());
         }
 
-        if url.starts_with(b"ssh://") {
-            // Fix malformed ssh:// URLs with colons using hosted_git_info.correctUrl
-            // ssh://git@github.com:user/repo -> ssh://git@github.com/user/repo
-            let pair = hosted_git_info::UrlProtocolPair {
-                url: hosted_git_info::UrlProtocolPairUrl::Unmanaged(url),
-                protocol: hosted_git_info::UrlProtocol::WellFormed(
-                    hosted_git_info::WellDefinedProtocol::GitPlusSsh,
-                ),
-            };
-
-            return Some(match hosted_git_info::correct_url(&pair) {
-                Ok(corrected) => corrected.url_slice().to_vec(),
-                // If correction fails, return original
-                Err(_) => url.to_vec(),
-            });
+        if let Some(path) = scp_like_path(url) {
+            let host_end = strings::index_of_any(path, b":/").unwrap_or(path.len());
+            // A user that looks like a command-line option is kept behind `git@`.
+            let has_user = path[0] != b'-' && strings::contains_char(&path[..host_end], b'@');
+            let prefix: &[u8] = if has_user { b"ssh://" } else { b"ssh://git@" };
+            return Some(scp_like_to_url(prefix, path));
         }
 
-        if Dependency::is_scp_like_path(url) {
-            return Some(scp_like_to_url(b"ssh://git@", url));
-        }
-
-        None
+        url.starts_with(b"ssh://").then(|| url.to_vec())
     }
 
     fn try_https(url: &[u8]) -> Option<Vec<u8>> {
@@ -402,38 +271,43 @@ impl RepositoryExt for Repository {
             return Some(url.to_vec());
         }
 
-        if url.starts_with(b"ssh://") {
-            let mut out = Vec::with_capacity(url.len() + 2);
-            out.extend_from_slice(b"https");
-            out.extend_from_slice(&url[b"ssh".len()..]);
-            return Some(out);
+        if let Some(path) = scp_like_path(url) {
+            return Some(scp_like_to_url(b"https://", path));
         }
 
-        if Dependency::is_scp_like_path(url) {
-            return Some(scp_like_to_url(b"https://", url));
-        }
-
-        None
+        let rest = url.strip_prefix(b"ssh://")?;
+        // On the hosts that have a shorthand, `git@` is only the ssh account, so https drops it.
+        let hosted = rest.strip_prefix(b"git@").filter(|hosted| {
+            let host_end = strings::index_of_char_usize(hosted, b'/').unwrap_or(hosted.len());
+            hosted_git_info::HostProvider::from_domain(&hosted[..host_end]).is_some()
+        });
+        Some([b"https://".as_slice(), hosted.unwrap_or(rest)].concat())
     }
 }
 
-/// `host:path` → `<prefix>host/path`; a shorthand host gets its TLD (`github` → `github.com`).
+/// Returns the `host:path` in `url`, which bun.lock writes as `ssh://host:path`. An `ssh://` URL
+/// that parses is a real URL instead: its colon comes before a port.
+fn scp_like_path(url: &[u8]) -> Option<&[u8]> {
+    let path = match url.strip_prefix(b"ssh://") {
+        Some(_) if bun_url::whatwg::Parsed::from_utf8(url).is_some() => return None,
+        Some(path) => path,
+        None => url,
+    };
+    Dependency::is_scp_like_path(path).then_some(path)
+}
+
+/// Turns `host:path` into `<prefix>host/path`. A shorthand host like `github` becomes its domain.
 fn scp_like_to_url(prefix: &[u8], url: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(prefix.len() + url.len() + b".org".len());
-    out.extend_from_slice(prefix);
-    match strings::index_of_char(url, b':') {
-        Some(colon) => {
-            let colon = colon as usize;
-            out.extend_from_slice(&url[..colon]);
-            if let Some(tld) = host_tld(&url[..colon]) {
-                out.extend_from_slice(tld);
-            }
-            out.push(b'/');
-            out.extend_from_slice(&url[colon + 1..]);
-        }
-        None => out.extend_from_slice(url),
-    }
-    out
+    // The colons inside a bracketed host (`git@[::1]:path`) are part of the host.
+    let bracket = match strings::index_of_any(url, b"[:") {
+        Some(at) if url[at] == b'[' => strings::index_of_char_usize(url, b']').unwrap_or(0),
+        _ => 0,
+    };
+    let Some(colon) = strings::index_of_char_pos(url, b':', bracket) else {
+        return [prefix, url].concat();
+    };
+    let (host, path) = (&url[..colon], &url[colon + 1..]);
+    [prefix, shorthand_domain(host).unwrap_or(host), b"/", path].concat()
 }
 
 pub struct StorePathFormatter<'a> {
@@ -444,7 +318,11 @@ pub struct StorePathFormatter<'a> {
 
 impl<'a> fmt::Display for StorePathFormatter<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(writer, "{}", Install::fmt_store_path(self.label.as_bytes()))?;
+        write!(
+            writer,
+            "{}",
+            bun_semver::string::fmt_store_path(self.label.as_bytes())
+        )?;
 
         if !self.repo.owner.is_empty() {
             write!(
@@ -467,11 +345,8 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
 
         if !self.repo.resolved.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
-            let mut resolved = self.repo.resolved.slice(self.string_buf);
-            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
-                resolved = &resolved[i + 1..];
-            }
-            write!(writer, "{}", Install::fmt_store_path(resolved))?;
+            let resolved = self.repo.resolved_commit(self.string_buf);
+            write!(writer, "{}", bun_semver::string::fmt_store_path(resolved))?;
         } else if !self.repo.committish.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
             write!(
@@ -510,10 +385,7 @@ impl<'a> fmt::Display for Formatter<'a> {
 
         if !self.repository.resolved.is_empty() {
             writer.write_str("#")?;
-            let mut resolved = self.repository.resolved.slice(self.buf);
-            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
-                resolved = &resolved[i + 1..];
-            }
+            let resolved = self.repository.resolved_commit(self.buf);
             write!(writer, "{}", BStr::new(resolved))?;
         } else if !self.repository.committish.is_empty() {
             writer.write_str("#")?;

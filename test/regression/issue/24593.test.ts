@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 
 // Generate a realistic ~109KB JSON message similar to the original reproduction
 function generateLargeMessage(): string {
-  const items = [];
+  const items: object[] = [];
   for (let i = 0; i < 50; i++) {
     items.push({
       id: 6000 + i,

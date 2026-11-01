@@ -1,8 +1,10 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
+use crate::shared::Data;
 
-#[derive(Default)]
-pub struct CopyData {}
+pub struct CopyData {
+    pub data: Data,
+}
 
 impl CopyData {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
@@ -10,7 +12,8 @@ impl CopyData {
     ) -> Result<Self, AnyPostgresError> {
         let remaining = reader.body_length()?;
 
-        reader.read(remaining)?;
-        Ok(Self {})
+        Ok(Self {
+            data: reader.read(remaining)?,
+        })
     }
 }

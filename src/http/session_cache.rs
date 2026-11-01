@@ -110,8 +110,7 @@ impl SessionCache {
     }
 }
 
-/// Per-`SSL` sink. Box-allocated; the ex_data slot on the `SSL` holds the raw
-/// pointer and its free callback reclaims the Box on `SSL_free`.
+/// Per-`SSL` sink. Box-allocated; uSockets holds the raw pointer and frees the Box on `SSL_free`.
 pub(crate) struct SessionSink {
     ctx: *const crate::HttpsContext,
     hostname: Box<[u8]>,
@@ -133,15 +132,18 @@ impl Drop for SessionSink {
     }
 }
 
-extern "C" fn sink_on_new_session(owner: *mut c_void, session: *mut SSL_SESSION) {
+/// `us_dispatch_new_session` for an HTTP client socket. Runs inside `SSL_read`/`SSL_do_handshake`.
+pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSION) {
     let Some(session) = NonNull::new(session) else {
         return;
     };
+    // SAFETY: `socket` is live for this call.
+    let owner = unsafe { us_socket_session_sink(socket) };
     let Some(owner) = NonNull::new(owner.cast::<SessionSink>()) else {
-        // SAFETY: +1 reference received from C with no consumer.
-        unsafe { SSL_SESSION_free(session.as_ptr()) };
         return;
     };
+    // SAFETY: `session` is live for this call; the sink takes its own reference.
+    unsafe { SSL_SESSION_up_ref(session.as_ptr()) };
     // SAFETY: `owner` is the Box interior installed by [`install`]. Runs on
     // the HTTP thread inside `SSL_read`/`SSL_do_handshake`; nothing else
     // holds a borrow of the sink during that call.
@@ -170,19 +172,19 @@ extern "C" fn sink_on_free(owner: *mut c_void) {
     if owner.is_null() {
         return;
     }
-    // SAFETY: `owner` is the `heap::into_raw` from [`install`]; the ex_data
+    // SAFETY: `owner` is the `heap::into_raw` from [`install`]; uSockets'
     // free callback fires exactly once on `SSL_free`.
     unsafe { bun_core::heap::destroy(owner.cast::<SessionSink>()) };
 }
 
 unsafe extern "C" {
-    fn us_ssl_set_session_sink(
-        ssl: *mut SSL,
-        owner: *mut c_void,
-        on_new_session: Option<extern "C" fn(*mut c_void, *mut SSL_SESSION)>,
+    fn us_socket_set_session_sink(
+        s: *mut bun_uws::us_socket_t,
+        sink: *mut c_void,
         on_free: Option<extern "C" fn(*mut c_void)>,
     );
-    fn us_ssl_get_session_sink_owner(ssl: *mut SSL) -> *mut c_void;
+    fn us_socket_session_sink(s: *mut bun_uws::us_socket_t) -> *mut c_void;
+    fn SSL_SESSION_up_ref(session: *mut SSL_SESSION) -> core::ffi::c_int;
 }
 
 /// Whether this TLS client should read/write the cache. Lax verification and
@@ -199,8 +201,9 @@ pub(crate) fn eligible(client: &crate::HTTPClient<'_>) -> bool {
 /// Offer any cached session for this key and install an unarmed sink.
 ///
 /// # Safety
-/// `ssl` must be a live pre-handshake `SSL*`; `ctx` must outlive `ssl`.
+/// `socket` must be live and `ssl` its pre-handshake `SSL*`; `ctx` must outlive `ssl`.
 pub(crate) unsafe fn install(
+    socket: *mut bun_uws::us_socket_t,
     ssl: *mut SSL,
     ctx: *const crate::HttpsContext,
     hostname: &[u8],
@@ -229,12 +232,11 @@ pub(crate) unsafe fn install(
         armed: false,
         pending: None,
     });
-    // SAFETY: `ssl` is live; Box ownership moves to the ex_data slot.
+    // SAFETY: `socket` is live; Box ownership moves to uSockets.
     unsafe {
-        us_ssl_set_session_sink(
-            ssl,
+        us_socket_set_session_sink(
+            socket,
             bun_core::heap::into_raw(sink).cast::<c_void>(),
-            Some(sink_on_new_session),
             Some(sink_on_free),
         );
     }
@@ -243,13 +245,10 @@ pub(crate) unsafe fn install(
 /// Flush the parked TLS 1.2 session and admit later TLS 1.3 tickets.
 ///
 /// # Safety
-/// `ssl` must be a live `SSL*` on the HTTP thread.
-pub(crate) unsafe fn arm(ssl: *mut SSL) {
-    if ssl.is_null() {
-        return;
-    }
+/// `socket` must be a live socket on the HTTP thread.
+pub(crate) unsafe fn arm(socket: *mut bun_uws::us_socket_t) {
     // SAFETY: caller contract.
-    let owner = unsafe { us_ssl_get_session_sink_owner(ssl) };
+    let owner = unsafe { us_socket_session_sink(socket) };
     let Some(mut owner) = NonNull::new(owner.cast::<SessionSink>()) else {
         return;
     };

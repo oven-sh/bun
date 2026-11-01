@@ -1,8 +1,5 @@
 import { expect } from "bun:test";
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 let rssSample = 0;
 const url = process.env.SERVER_URL;
 const maxMemoryIncrease = parseInt(process.env.MAX_MEMORY_INCREASE || "0", 10);

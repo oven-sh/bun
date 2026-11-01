@@ -128,6 +128,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // gpe borrows self.module_scope while self.new_symbol needs &mut self.
             // Drop gpe, allocate, then re-insert.
             let new_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, name);
+            if self.options.features.inject_jest_globals {
+                self.jest.did_declare_unbound(name, new_ref);
+            }
 
             // SAFETY: as above.
             *unsafe {
@@ -147,7 +150,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // property on the target object of the "with" statement. We must not rename
         // it or we risk changing the behavior of the code.
         if is_inside_with_scope {
-            self.symbols[ref_.inner_index() as usize].set_must_not_be_renamed(true);
+            self.set_must_not_be_renamed_through_links(ref_);
         }
 
         // Track how many times we've referenced this symbol

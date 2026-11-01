@@ -17,7 +17,7 @@
 //   to refer to the private slot.
 // - Some magic macros (see replacements.ts) such as `$assert()` (which forcibly
 //   deletes the argument in a release build, unlike a define macro), and the
-//   magical `$cpp` and `$bindgenFn` bindgen stuff -- a story for another day.
+//   magical `$cpp` and `$bindgen` bindgen stuff -- a story for another day.
 //
 // Part of the transpilation process involves removing type annotations. And
 // that is done with Bun's bundler. But we need to construct an IIFE, and the
@@ -45,11 +45,14 @@
 import assert from "assert";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
+import { builtinFunctionIds, firstBuiltinFunctionId } from "./builtin-function-ids";
 import { sliceSourceCode } from "./builtin-parser";
+import type { SourceMap } from "./bundled-names";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
-import { applyGlobalReplacements, define } from "./replacements";
+import { beginGuardedBody, endGuardedBody, removableFeatures } from "./removable-entry-points.ts";
+import { applyGlobalReplacements, assertNoDestructuredGlobalThis, define } from "./replacements";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -85,6 +88,43 @@ interface BundledBuiltin {
   params: string[];
   visibility: string;
   sourceOffset: number;
+  /** What the bundler made, of which `source` is a part with pieces replaced, and its map. */
+  output: string;
+  sourceMap: SourceMap;
+  /** How many functions the file writes in front of it. */
+  numberInFile: number;
+}
+
+function builtinSourceMetadata(source: string): (number | boolean)[] {
+  const isAsyncFunction = source.startsWith("(async function (");
+  if (!isAsyncFunction && !source.startsWith("(function ("))
+    throw new Error(
+      `expected a built-in function to begin with "(function (" or "(async function (", but it begins with ${source.slice(0, 20)}`,
+    );
+  const parametersStart = "function (".length + (isAsyncFunction ? "async ".length : 0);
+  let commas = 0;
+  let insideCurlyBrackets = false;
+  let sawOneParameter = false;
+  let hasRestParameter = false;
+  for (let i = parametersStart + 1; source[i] !== ")"; i++) {
+    if (i >= source.length) throw new Error("the parameter list of a built-in function has no closing parenthesis");
+    if (source[i] === "}") insideCurlyBrackets = false;
+    else if (source[i] === "{" || insideCurlyBrackets) {
+      insideCurlyBrackets = true;
+      continue;
+    } else if (source[i] === ",") commas++;
+    else if (!" \t\v\f\xa0".includes(source[i]!)) sawOneParameter = true;
+    if (source.startsWith("...", i)) {
+      hasRestParameter = true;
+      i += 2;
+    }
+  }
+  const parameterCount = (commas ? commas + 1 : sawOneParameter ? 1 : 0) - (hasRestParameter ? 1 : 0);
+  let isInStrictContext = false;
+  for (let i = 0; i + 1 + "use strict".length < source.length && !isInStrictContext; i++)
+    isInStrictContext = (source[i] === '"' || source[i] === "'") && source.startsWith("use strict", i + 1);
+  const closeBraceOffsetFromEnd = source.length - source.lastIndexOf("}");
+  return [source.length, parametersStart, parameterCount, closeBraceOffsetFromEnd, isAsyncFunction, isInStrictContext];
 }
 
 /**
@@ -308,15 +348,20 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       define,
       target: "bun",
       minify: { syntax: true, whitespace: false, keepNames: true },
+      sourcemap: "external",
     });
     // TODO: Wait a few versions before removing this
     if (!build.success) {
       throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
     }
-    if (build.outputs.length !== 1) {
-      throw new Error("expected one output");
+    const [made, ...others] = build.outputs.filter(it => it.kind !== "sourcemap");
+    if (others.length !== 0 || !made?.sourcemap) {
+      throw new Error("expected one output and its source map");
     }
-    let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
+    const bundled = await made.text();
+    const sourceMap: SourceMap = await made.sourcemap.json();
+    let output = bundled.replaceAll("// @bun\n", "");
+    assertNoDestructuredGlobalThis(output, `${basename}.ts (${fn.name})`);
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
@@ -349,6 +394,9 @@ $$capture_start$$(${fn.async ? "async " : ""}${
 
       // Not known yet.
       sourceOffset: 0,
+      output: bundled,
+      sourceMap,
+      numberInFile: bundledFunctions.length,
 
       overriddenName: fn.directives.getter
         ? `"get ${fn.name}"_s`
@@ -359,7 +407,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
   }
 
   return {
-    functions: bundledFunctions.sort((a, b) => a.name.localeCompare(b.name)),
+    functions: bundledFunctions.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
     internal,
   };
 }
@@ -381,9 +429,11 @@ async function processFunctionFile(x: string) {
 
 interface BundleBuiltinFunctionsArgs {
   requireTransformer: (x: string, filename: string) => string;
+  /** Where WebCoreJSBuiltins.d.ts goes. */
+  typesDir: string;
 }
 
-export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuiltinFunctionsArgs) {
+export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: BundleBuiltinFunctionsArgs) {
   mkdirSync(TMP_DIR, { recursive: true });
   const filesToProcess = readdirSync(SRC_DIR)
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
@@ -423,6 +473,19 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     return "builtinNames." + name + "PrivateName()";
   }
 
+  const ids = builtinFunctionIds(SRC_DIR);
+  const idOf = (basename: string, name: string) => {
+    const id = ids.get(`${basename}.ts\t${name}`);
+    if (id === undefined) throw new Error(`${basename}.ts: no id was assigned to the built-in function ${name}`);
+    return id;
+  };
+  files
+    .flatMap(({ basename, functions }) => functions.map(fn => idOf(basename, fn.name)))
+    .forEach((id, index) => {
+      if (id !== firstBuiltinFunctionId + index)
+        throw new Error("The built-in functions must follow each other in the combined text in the order of their ids");
+    });
+
   // C++ codegen
   let bundledCPP = `// Generated by ${import.meta.path}
     namespace Zig { class GlobalObject; }
@@ -431,6 +494,7 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     #include "JSDOMGlobalObject.h"
     #include "WebCoreJSClientData.h"
     #include "WebCoreJSBuiltins.h"
+    #include <JavaScriptCore/AOTHost.h>
     #include <JavaScriptCore/JSObjectInlines.h>
     #include "BunBuiltinNames.h"
 
@@ -438,8 +502,14 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     // (see bundle-modules.ts / InternalModuleRegistryConstants.S).
     extern "C" const char bun_internal_modules_data[];
 
+    extern "C" const char* Bun__textOfBuiltinFunctions()
+    {
+        ${beginGuardedBody(removableFeatures(), "BuiltinSourceText", "ReturnDefault", "const char*")}
+        return WTF::opaque(static_cast<const char*>(bun_internal_modules_data));
+        ${endGuardedBody}
+    }
+
     namespace WebCore {
-        static const std::span<const Latin1Character> internalCombinedSource = { reinterpret_cast<const Latin1Character*>(bun_internal_modules_data), ${combinedSourceCodeLength} };
     `;
 
   for (const { basename, functions } of files) {
@@ -449,13 +519,22 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
 
     const lowerBasename = low(basename);
     for (const fn of functions) {
-      const name = `${basename}${cap(fn.name)}`;
+      const linkFromText = `link${cap(basename)}${cap(fn.name)}FromText`;
       bundledCPP += `
-JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
+static JSC::FunctionExecutable* ${linkFromText}(JSC::VM& vm)
 {
     auto &builtins = static_cast<JSVMClientData*>(vm.clientData)->builtinFunctions().${lowerBasename}Builtins();
     auto *executable = builtins.${lowerBasename}${cap(fn.name)}CodeExecutable();
     return executable->link(vm, nullptr, builtins.${lowerBasename}${cap(fn.name)}CodeSource(), std::nullopt, JSC::NoIntrinsic);
+}
+
+JSC::BuiltinCode ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
+{
+#if ENABLE(AOT)
+    if (JSC::AOT::hasBuiltinFunction(vm, ${idOf(basename, fn.name)}))
+        return { nullptr, ${idOf(basename, fn.name)}, ${linkFromText} };
+#endif
+    return { ${linkFromText}(vm), 0 };
 }
 `;
     }
@@ -463,7 +542,7 @@ JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& v
 
   const initializeSourceCodeFn = (fn: BundledBuiltin, basename: string) => {
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
-    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}, 1, 1))`;
+    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}))`;
   };
   for (const { basename, internal, functions } of files) {
     bundledCPP += `
@@ -480,8 +559,10 @@ ${basename}BuiltinsWrapper::${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::
   }
 
   bundledCPP += `
+static constexpr unsigned internalCombinedSourceStarts[] = { ${files.flatMap(({ functions }) => functions.map(fn => fn.sourceOffset)).join(", ")} };
+
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider() {
-    return JSC::StringSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), SourceOrigin(), String(), SourceTaintedOrigin());
+    return JSC::BuiltinsSourceProvider::create(StringImpl::createWithoutCopying(std::span { reinterpret_cast<const Latin1Character*>(Bun__textOfBuiltinFunctions()), ${combinedSourceCodeLength} }), internalCombinedSourceStarts, ${firstBuiltinFunctionId});
 }
 `;
 
@@ -612,6 +693,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     static constexpr JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${fn.directives.alwaysInline ? "Always" : "None"};
     static constexpr JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
     static constexpr JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
+    static constexpr JSC::BuiltinSourceMetadata s_${name}Metadata = { ${builtinSourceMetadata(fn.source).join(", ")} };
 
     `;
     }
@@ -632,7 +714,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     }
     bundledHeader += `
     #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\
-        JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+        JSC::BuiltinCode codeName##Generator(JSC::VM&);
 
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
     #undef DECLARE_BUILTIN_GENERATOR
@@ -671,7 +753,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
             JSC::Identifier executableName = functionName##PublicName();\\
             if (overriddenName)\\
                 executableName = JSC::Identifier::fromString(m_vm, overriddenName);\\
-            m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute), this, &m_##name##Executable);\\
+            m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, s_##name##Metadata, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute), this, &m_##name##Executable);\\
         }\\
         return m_##name##Executable.get();\\
     }
@@ -782,6 +864,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     } // namespace WebCore
     `;
   // Handle builtin names
+  let privateNames: string[];
   {
     const BunBuiltinNamesHeader = require("fs").readFileSync(
       path.join(import.meta.dir, "../js/builtins/BunBuiltinNames.h"),
@@ -827,6 +910,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 `;
 
     writeIfNotChanged(path.join(CODEGEN_DIR, "BunBuiltinNames+extras.h"), additionalPrivateNamesHeader);
+    privateNames = [...definedBuiltinNames, ...(additionalPrivateNames as Set<string>)];
   }
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.h"), bundledHeader);
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.cpp"), bundledCPP);
@@ -842,7 +926,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
       dts += `\n// ${basename}.ts\n`;
       for (const fn of functions) {
         dts += `declare const \$${fn.name}: RemoveThis<typeof import("${path.relative(
-          CODEGEN_DIR,
+          typesDir,
           path.join(SRC_DIR, basename),
         )}")[${JSON.stringify(fn.name)}]>;\n`;
       }
@@ -851,7 +935,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   dts += getJS2NativeDTS();
 
-  writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.d.ts"), dts);
+  writeIfNotChanged(path.join(typesDir, "WebCoreJSBuiltins.d.ts"), dts);
 
   const totalJSSize = files.reduce(
     (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),
@@ -868,6 +952,6 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
   // same linked blob carries both the builtin function sources and the internal
-  // module sources.
-  return { combinedSourceCode };
+  // module sources. `privateNames` lists every private name registered by BunBuiltinNames.
+  return { combinedSourceCode, privateNames, files };
 }

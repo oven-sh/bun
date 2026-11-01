@@ -43,7 +43,7 @@ Same as the `js` loader, but JSX syntax is supported. By default, Bun down-conve
 
 **TypeScript loader**. Default for `.ts`, `.mts`, and `.cts`.
 
-Strips out all TypeScript syntax, then behaves identically to the `js` loader. Bun does not perform typechecking.
+Strips out all TypeScript syntax, then behaves identically to the `js` loader. The loader does not check types. Use [`bun check`](/runtime/check) to type check your project.
 
 ### `tsx`
 
@@ -393,7 +393,7 @@ You can change this behavior with the `"embed"` attribute:
 import db from "./my.db" with { type: "sqlite", embed: "true" };
 ```
 
-With a [standalone executable](/bundler/executables), Bun embeds the database into the single-file executable.
+With a [standalone executable](/compiler/executables), Bun embeds the database into the single-file executable.
 
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
 
@@ -486,6 +486,16 @@ import "./styles.css";
 ```
 
 The import returns no value; it's only used for its side effects.
+
+Importing a [CSS module](/bundler/css#css-modules) (`.module.css`) returns an object that maps each class name to its unique identifier. This works in the bundler and at runtime (`bun run`, `bun test`).
+
+```ts
+import styles from "./styles.module.css";
+
+console.log(styles.button); // "button_123"
+```
+
+At runtime, CSS that the bundler would reject doesn't fail the import. Invalid rules and declarations are skipped, like in a browser.
 
 ### `sh` loader
 

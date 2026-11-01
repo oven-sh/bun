@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 // WebSocket should forward Basic Authentication credentials from URL to server
 
 test("WebSocket URL with embedded credentials sends Authorization header", async () => {
-  using server = Bun.serve({
+  using server = Bun.serve<{ authHeader: string | null }>({
     port: 0,
     fetch(req, server) {
       if (req.headers.get("upgrade") === "websocket") {
@@ -43,7 +43,7 @@ test("WebSocket URL with embedded credentials sends Authorization header", async
 });
 
 test("WebSocket URL with empty password sends Authorization header", async () => {
-  using server = Bun.serve({
+  using server = Bun.serve<{ authHeader: string | null }>({
     port: 0,
     fetch(req, server) {
       if (req.headers.get("upgrade") === "websocket") {
@@ -82,7 +82,7 @@ test("WebSocket URL with empty password sends Authorization header", async () =>
 });
 
 test("WebSocket URL without credentials does not send Authorization header", async () => {
-  using server = Bun.serve({
+  using server = Bun.serve<{ authHeader: string | null }>({
     port: 0,
     fetch(req, server) {
       if (req.headers.get("upgrade") === "websocket") {
@@ -120,7 +120,7 @@ test("WebSocket URL without credentials does not send Authorization header", asy
 });
 
 test("WebSocket custom Authorization header takes precedence over URL credentials", async () => {
-  using server = Bun.serve({
+  using server = Bun.serve<{ authHeader: string | null }>({
     port: 0,
     fetch(req, server) {
       if (req.headers.get("upgrade") === "websocket") {
@@ -162,7 +162,7 @@ test("WebSocket custom Authorization header takes precedence over URL credential
 });
 
 test("WebSocket URL with special characters in credentials sends Authorization header", async () => {
-  using server = Bun.serve({
+  using server = Bun.serve<{ authHeader: string | null }>({
     port: 0,
     fetch(req, server) {
       if (req.headers.get("upgrade") === "websocket") {

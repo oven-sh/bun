@@ -1,0 +1,22 @@
+function a /* prettier-ignore */ ( b,c ) {}
+function d
+// prettier-ignore
+( e,f ) {}
+const g = async /* prettier-ignore */ function* ( h ) {};
+const i = function /* prettier-ignore */ * ( j ) {};
+export default function /* prettier-ignore */ ( k ): void;
+class A {
+  l /* prettier-ignore */ ( m,n ) {}
+  o
+  // prettier-ignore
+  ( p,q ) {}
+  [r] /* prettier-ignore */ ( s ) {}
+  t<U> /* prettier-ignore */ ( v ) {}
+  constructor /* prettier-ignore */ ( w ) {}
+}
+const x = {
+  y /* prettier-ignore */ ( z ) {},
+  get a /* prettier-ignore */ ( ) {
+    return 1;
+  },
+};

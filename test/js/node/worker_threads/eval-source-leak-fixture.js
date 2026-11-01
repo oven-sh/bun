@@ -5,10 +5,7 @@ const { Worker } = require("node:worker_threads");
 
 const eachSizeMiB = 100;
 const iterations = 5;
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 function test() {
   const code = " ".repeat(eachSizeMiB * 1024 * 1024);

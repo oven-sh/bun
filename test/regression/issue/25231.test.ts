@@ -4,7 +4,7 @@
 import { expect, test } from "bun:test";
 
 test("Bun.FFI.CString is callable with new", () => {
-  const { CString, ptr } = Bun.FFI;
+  const { CString, ptr } = (Bun as any).FFI;
 
   // Create a buffer with a null-terminated string
   const buf = Buffer.from("hello\0");
@@ -18,7 +18,7 @@ test("Bun.FFI.CString is callable with new", () => {
 });
 
 test("Bun.FFI.CString can be called without new", () => {
-  const { CString, ptr } = Bun.FFI;
+  const { CString, ptr } = (Bun as any).FFI;
 
   // Create a buffer with a null-terminated string
   const buf = Buffer.from("hello\0");

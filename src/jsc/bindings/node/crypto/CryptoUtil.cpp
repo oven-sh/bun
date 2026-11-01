@@ -3,7 +3,6 @@
 #include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ncrypto.h"
-#include "BunString.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JSBufferEncodingType.h"
@@ -85,17 +84,20 @@ const EVP_PKEY_ALG* pqcNidToAlg(int nid)
 namespace ExternZigHash {
 struct Hasher;
 
-extern "C" Hasher* Bun__CryptoHasherExtern__getByName(Zig::GlobalObject* globalObject, const char* name, size_t nameLen);
-Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name)
+extern "C" Hasher* Bun__CryptoHasherExtern__getByName(const char* name, size_t nameLen);
+Hasher* getByName(const StringView& name)
 {
-    auto utf8 = name.utf8();
-    return Bun__CryptoHasherExtern__getByName(globalObject, utf8.data(), utf8.length());
+    auto utf8 = name.tryGetUTF8();
+    if (!utf8) [[unlikely]]
+        return nullptr;
+    auto bytes = byteCast<char>(utf8->span());
+    return Bun__CryptoHasherExtern__getByName(bytes.data(), bytes.size());
 }
 
-extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Zig::GlobalObject* global, Hasher* hasher);
-Hasher* getFromOther(Zig::GlobalObject* globalObject, Hasher* hasher)
+extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Hasher* hasher);
+Hasher* getFromOther(Hasher* hasher)
 {
-    return Bun__CryptoHasherExtern__getFromOther(globalObject, hasher);
+    return Bun__CryptoHasherExtern__getFromOther(hasher);
 }
 
 extern "C" void Bun__CryptoHasherExtern__destroy(Hasher* hasher);
@@ -110,10 +112,10 @@ bool update(Hasher* hasher, std::span<const uint8_t> data)
     return Bun__CryptoHasherExtern__update(hasher, data.data(), data.size());
 }
 
-extern "C" uint32_t Bun__CryptoHasherExtern__digest(Hasher* hasher, Zig::GlobalObject* globalObject, uint8_t* out, size_t outLen);
-uint32_t digest(Hasher* hasher, Zig::GlobalObject* globalObject, std::span<uint8_t> out)
+extern "C" uint32_t Bun__CryptoHasherExtern__digest(Hasher* hasher, uint8_t* out, size_t outLen);
+uint32_t digest(Hasher* hasher, std::span<uint8_t> out)
 {
-    return Bun__CryptoHasherExtern__digest(hasher, globalObject, out.data(), out.size());
+    return Bun__CryptoHasherExtern__digest(hasher, out.data(), out.size());
 }
 
 extern "C" uint32_t Bun__CryptoHasherExtern__getDigestSize(Hasher* hasher);
@@ -211,39 +213,6 @@ WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObjec
     return parseEnumerationFromView<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
 }
 
-std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView, JSValue passphraseValue)
-{
-    ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
-    config.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-
-    config.passphrase = passphraseFromBufferSource(lexicalGlobalObject, scope, passphraseValue);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-    UTF8View keyUtf8(keyView);
-
-    auto keySpan = keyUtf8.span();
-
-    ncrypto::Buffer<const unsigned char> ncryptoBuf {
-        .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
-        .len = keySpan.size(),
-    };
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-
-    auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
-    if (res) {
-        ncrypto::EVPKeyPointer keyPtr(WTF::move(res.value));
-        return keyPtr;
-    }
-
-    if (res.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
-        Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
-        return std::nullopt;
-    }
-
-    throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to read private key"_s);
-    return std::nullopt;
-}
-
 ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalObject, JSValue formatValue, WTF::ASCIILiteral optionName, std::optional<ncrypto::EVPKeyPointer::PKFormatType> defaultFormat)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -326,48 +295,6 @@ std::optional<ncrypto::EVPKeyPointer::PKEncodingType> parseKeyType(JSC::JSGlobal
     return std::nullopt;
 }
 
-std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue input)
-{
-    if (input.isUndefinedOrNull()) {
-        return std::nullopt;
-    }
-
-    if (input.isString()) {
-        WTF::String passphraseStr = input.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-        UTF8View utf8(passphraseStr);
-
-        auto span = utf8.span();
-        if (auto ptr = ncrypto::DataPointer::Alloc(span.size())) {
-            memcpy(ptr.get(), span.data(), span.size());
-            return WTF::move(ptr);
-        }
-
-        throwOutOfMemoryError(globalObject, scope);
-        return std::nullopt;
-    }
-
-    if (auto* array = dynamicDowncast<JSC::JSUint8Array>(input)) {
-        if (array->isDetached()) {
-            throwTypeError(globalObject, scope, "passphrase must not be detached"_s);
-            return std::nullopt;
-        }
-
-        auto length = array->byteLength();
-        if (auto ptr = ncrypto::DataPointer::Alloc(length)) {
-            memcpy(ptr.get(), array->vector(), length);
-            return WTF::move(ptr);
-        }
-
-        throwOutOfMemoryError(globalObject, scope);
-        return std::nullopt;
-    }
-
-    throwTypeError(globalObject, scope, "passphrase must be a Buffer or string"_s);
-    return std::nullopt;
-}
-
 JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, uint32_t err, const char* message)
 {
     JSC::VM& vm = globalObject->vm();
@@ -388,8 +315,26 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
     errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "message"_s), jsString(vm, errorMessage), messageSlot);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Without a code from the caller, the oldest entry describes the error, like Node's CryptoErrorStore::ToException.
+    if (err == 0)
+        err = ERR_peek_error();
+
+    // Captures (and drains) the queue on construction.
     ncrypto::CryptoErrorList errorStack;
-    errorStack.capture();
+
+    if (errorStack.size() > 0) {
+        PutPropertySlot stackSlot(errorObject, false);
+        auto arr = JSC::constructEmptyArray(globalObject, nullptr, errorStack.size());
+        RETURN_IF_EXCEPTION(scope, {});
+        // Most recent error first, like Node's CryptoErrorStore::Capture.
+        unsigned i = 0;
+        for (const WTF::String& error : errorStack) {
+            arr->putDirectIndex(globalObject, i++, jsString(vm, error));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "opensslErrorStack"_s), arr, stackSlot);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     // If there's an OpenSSL error code, decorate the error object with additional info
     if (err != 0) {
@@ -480,20 +425,6 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
         }
     }
 
-    // If there are multiple errors, add them to the error stack
-    if (errorStack.size() > 0) {
-        PutPropertySlot stackSlot(errorObject, false);
-        auto arr = JSC::constructEmptyArray(globalObject, nullptr, errorStack.size());
-        RETURN_IF_EXCEPTION(scope, {});
-        for (int32_t i = 0; i < errorStack.size(); i++) {
-            WTF::String error = errorStack.pop_back().value();
-            arr->putDirectIndex(globalObject, i, jsString(vm, error));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "opensslErrorStack"_s), arr, stackSlot);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
     return errorObject;
 }
 
@@ -547,7 +478,7 @@ std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::Thr
 
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)
 {
-    if (!options.isObject() || options.asCell()->type() != JSC::JSType::FinalObjectType) {
+    if (!options.isObject() || (options.asCell()->type() != JSC::JSType::FinalObjectType && options.asCell()->type() != JSC::JSType::CompiledObjectType)) {
         return DSASigEnc::DER;
     }
 
@@ -787,6 +718,16 @@ std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
     return std::nullopt;
 }
 
+std::optional<Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName)
+{
+    static_assert(WTF::isValidCapacityForVector<uint8_t>(INT32_MAX));
+    if (bytes.size() > INT32_MAX) [[unlikely]] {
+        throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, makeString(argName, " is too big"_s));
+        return std::nullopt;
+    }
+    return Vector<uint8_t>(bytes);
+}
+
 bool isStringOrBuffer(JSValue value)
 {
     if (value.isString()) {
@@ -994,6 +935,11 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     if (!passphraseValue.isUndefined()) {
         JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
         RETURN_IF_EXCEPTION(scope, );
+        // BoringSSL's length parameter is an `int`.
+        if (passphraseView->byteLength() > INT_MAX) {
+            ERR::OUT_OF_RANGE(scope, globalObject, "passphrase is too big"_s);
+            return;
+        }
         config.passphrase = DataPointer::FromSpan(passphraseView->span());
     }
 

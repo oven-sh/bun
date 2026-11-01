@@ -1,0 +1,22 @@
+{
+  "_id": "self-contained-peer-plugin",
+  "name": "self-contained-peer-plugin",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "self-contained-peer-plugin",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "self-contained-app": "1.0.0"
+      },
+      "_id": "self-contained-peer-plugin@1.0.0",
+      "dist": {
+        "integrity": "sha512-zQUEF11EUN8Wo6N7Hdy7NsiGwHdA0x7ZYpufqQ+97xfYUDoFEsuDB/ehX0w336zRVxBKx+XS9qsEBus8ujq8nw==",
+        "shasum": "babf222bc9264520210946c53120133b5dd26a7c",
+        "tarball": "http://localhost:4873/self-contained-peer-plugin/-/self-contained-peer-plugin-1.0.0.tgz"
+      }
+    }
+  }
+}

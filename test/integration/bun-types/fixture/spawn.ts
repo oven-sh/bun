@@ -226,3 +226,10 @@ tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.
   Bun.spawnSync({ cmd: ["echo", "hello"], stdout: "pipe", stderr: "pipe", lazy: true,
   });
 }
+
+{
+  const usage = Bun.spawn(["echo"]).resourceUsage()!;
+  tsd.expectType(usage.cpuTime.user).is<bigint>();
+  tsd.expectType(usage.cpuTime.system).is<bigint>();
+  tsd.expectType(usage.cpuTime.total).is<bigint>();
+}

@@ -4,7 +4,7 @@ use core::ffi::c_int;
 use core::fmt;
 
 use crate::SystemError;
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 
 use crate::{E, Fd, SystemErrno, Tag, coreutils_error_map, libuv_error_map};
 
@@ -118,6 +118,29 @@ impl Error {
     #[inline]
     pub fn is_retry(&self) -> bool {
         self.get_errno() == E::EAGAIN
+    }
+
+    #[inline]
+    pub fn is_directory(&self) -> bool {
+        self.get_errno() == E::EISDIR
+    }
+
+    /// Whether this error from reading `path` means the file exists but could not be read, as
+    /// opposed to not existing. A directory at `path` counts as not existing.
+    pub fn is_unreadable_file(&self, path: &[u8]) -> bool {
+        let is_there = || {
+            crate::lstat(&bun_core::ZBox::from_bytes(path)).is_ok_and(|stat| {
+                crate::kind_from_mode(stat.st_mode as crate::Mode) != crate::FileKind::Directory
+            })
+        };
+        match self.get_errno() {
+            E::ENOENT | E::ENOTDIR | E::ENAMETOOLONG | E::EISDIR => false,
+            // Also what a directory on the way gives when it cannot be searched, which says nothing about the file.
+            E::EACCES | E::EPERM => is_there(),
+            // Windows has many more error codes for a path that cannot exist, so there the file
+            // counts only if `lstat` finds it.
+            _ => cfg!(unix) || is_there(),
+        }
     }
 
     /// `bun.sys.Error.oom` — `ENOMEM` with no syscall context. (The `Box<[u8]>`
@@ -400,22 +423,15 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // We want to reuse the code from SystemError for formatting.
-        // But, we do not want to call String.createUTF8 on the path/dest strings
-        // because we're intending to pass them to writer.print()
-        // which will convert them back into UTF*.
-        let mut that = self.without_path().to_shell_system_error();
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-        that.path = BunString::borrow_utf8(&self.path);
-        that.dest = BunString::borrow_utf8(&self.dest);
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-
-        fmt::Display::fmt(&that, f)
+        // But, we do not want to call String.createUTF8 on the path
+        // because we're intending to pass it to writer.print()
+        // which will convert it back into UTF*.
+        let that = self.without_path().to_shell_system_error();
+        that.fmt_with_path(&StringView::borrow_utf8(&self.path), f)
     }
 }
 
-// `toJS` / `toJSWithAsyncStack` / `TestingAPIs` live as extension-trait
+// `toJS` / `toJSWithAsyncStack` live as extension-trait
 // methods in the `bun_sys_jsc` crate per PORTING.md.
 
 // ──────────────────────────────────────────────────────────────────────────

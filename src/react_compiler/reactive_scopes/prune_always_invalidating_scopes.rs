@@ -11,7 +11,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PruneAlwaysInvalidatingScopes.ts`.
 
-use std::collections::HashSet;
+use crate::collections::IdBitSet;
 
 use crate::hir::{
     IdentifierId, InstructionValue, PrunedReactiveScopeBlock, ReactiveFunction,
@@ -32,8 +32,8 @@ pub(crate) fn prune_always_invalidating_scopes(
 ) -> Result<(), crate::diagnostics::CompilerError> {
     let mut transform = Transform {
         env,
-        always_invalidating_values: HashSet::new(),
-        unmemoized_values: HashSet::new(),
+        always_invalidating_values: IdBitSet::new(),
+        unmemoized_values: IdBitSet::new(),
     };
     let mut state = false; // withinScope
     transform_reactive_function(func, &mut transform, &mut state)
@@ -41,8 +41,8 @@ pub(crate) fn prune_always_invalidating_scopes(
 
 struct Transform<'a> {
     env: &'a Environment,
-    always_invalidating_values: HashSet<IdentifierId>,
-    unmemoized_values: HashSet<IdentifierId>,
+    always_invalidating_values: IdBitSet<IdentifierId>,
+    unmemoized_values: IdBitSet<IdentifierId>,
 }
 
 impl<'a> ReactiveFunctionTransform for Transform<'a> {
@@ -82,21 +82,21 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
             }) => {
                 if self
                     .always_invalidating_values
-                    .contains(&store_value.identifier)
+                    .contains(store_value.identifier)
                 {
                     self.always_invalidating_values
                         .insert(store_lvalue.place.identifier);
                 }
-                if self.unmemoized_values.contains(&store_value.identifier) {
+                if self.unmemoized_values.contains(store_value.identifier) {
                     self.unmemoized_values.insert(store_lvalue.place.identifier);
                 }
             }
             ReactiveValue::Instruction(InstructionValue::LoadLocal { place, .. }) => {
                 if let Some(lv) = lvalue {
-                    if self.always_invalidating_values.contains(&place.identifier) {
+                    if self.always_invalidating_values.contains(place.identifier) {
                         self.always_invalidating_values.insert(lv.identifier);
                     }
-                    if self.unmemoized_values.contains(&place.identifier) {
+                    if self.unmemoized_values.contains(place.identifier) {
                         self.unmemoized_values.insert(lv.identifier);
                     }
                 }
@@ -118,7 +118,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         let scope_data = &self.env.scopes[scope_id.0 as usize];
 
         for dep in &scope_data.dependencies {
-            if self.unmemoized_values.contains(&dep.identifier) {
+            if self.unmemoized_values.contains(dep.identifier) {
                 // This scope depends on an always-invalidating value, prune it
                 // Propagate always-invalidating and unmemoized to declarations/reassignments
                 let decl_ids: Vec<IdentifierId> = scope_data
@@ -127,12 +127,12 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                     .map(|(_, decl)| decl.identifier)
                     .collect();
                 for id in &decl_ids {
-                    if self.always_invalidating_values.contains(id) {
+                    if self.always_invalidating_values.contains(*id) {
                         self.unmemoized_values.insert(*id);
                     }
                 }
                 for id in scope_data.reassignments.iter() {
-                    if self.always_invalidating_values.contains(id) {
+                    if self.always_invalidating_values.contains(*id) {
                         self.unmemoized_values.insert(*id);
                     }
                 }

@@ -5,28 +5,38 @@ use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer, wtf,
+    JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsError, JsResult,
+    MarkedArgumentBuffer, wtf,
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
-pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
-    jsc::create_host_function_object(
-        global_this,
-        &[
-            ("parse", __jsc_host_parse, 1),
-            ("stringify", __jsc_host_stringify, 3),
-        ],
-    )
+pub(crate) fn stringify<'a>(
+    cx: &mut JsScope<'a>,
+    value: JsLocal<'a>,
+    replacer: JsLocal<'a>,
+    space: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    MarkedArgumentBuffer::new(|roots| {
+        stringify_impl(
+            global,
+            value.to_js(),
+            replacer.to_js(),
+            space.to_js(),
+            roots,
+        )
+    })
 }
 
-#[bun_jsc::host_fn]
-fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
-
-    value.ensure_still_alive();
-
+fn stringify_impl(
+    global: &JSGlobalObject,
+    value: JSValue,
+    replacer: JSValue,
+    space_value: JSValue,
+    roots: &mut MarkedArgumentBuffer,
+) -> JsResult<JSValue> {
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -37,7 +47,7 @@ fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space_value)?;
+    let mut stringifier = Stringifier::init(global, space_value, roots)?;
 
     stringifier
         .find_anchors_and_aliases(global, value, ValueOrigin::Root)
@@ -50,12 +60,16 @@ fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
     stringifier.builder.to_string(global)
 }
 
-struct Stringifier {
+struct Stringifier<'a> {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
+    /// Columns added by the `- ` prefixes of the enclosing sequence items.
+    item_offset: usize,
 
+    /// Keyed by cell address. `known_collection_roots` keeps the keys alive so none gets reused.
     known_collections: HashMap<JSValue, AnchorAlias>,
+    known_collection_roots: &'a mut MarkedArgumentBuffer,
     array_item_counter: usize,
     prop_names: StringHashMap<usize>,
 
@@ -183,8 +197,12 @@ impl StringifyError {
 
 bun_core::oom_from_alloc!(StringifyError);
 
-impl Stringifier {
-    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+impl<'a> Stringifier<'a> {
+    fn init(
+        global: &JSGlobalObject,
+        space_value: JSValue,
+        known_collection_roots: &'a mut MarkedArgumentBuffer,
+    ) -> JsResult<Stringifier<'a>> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -194,7 +212,9 @@ impl Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
             indent: 0,
+            item_offset: 0,
             known_collections: HashMap::default(),
+            known_collection_roots,
             array_item_counter: 0,
             prop_names,
             space: Space::init(global, space_value)?,
@@ -278,6 +298,7 @@ impl Stringifier {
         }
 
         *object_entry.value_ptr = AnchorAlias::init(origin);
+        self.known_collection_roots.append(unwrapped);
 
         if unwrapped.is_array() {
             let mut iter = unwrapped.array_iterator(global)?;
@@ -314,17 +335,23 @@ impl Stringifier {
 
     fn stringify(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), StringifyError> {
         let unwrapped = value.unwrap_boxed_primitive(global)?;
-        self.stringify_unwrapped(global, unwrapped)
+        self.stringify_unwrapped(global, unwrapped, false)
     }
 
-    /// `unwrapped` has been through `unwrap_boxed_primitive`.
+    /// `unwrapped` has been through `unwrap_boxed_primitive`. With `after_key` the value
+    /// follows a block-style mapping key and writes its own separator after the `:`.
     fn stringify_unwrapped(
         &mut self,
         global: &JSGlobalObject,
         unwrapped: JSValue,
+        mut after_key: bool,
     ) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
+        }
+
+        if after_key && !unwrapped.is_object() {
+            self.builder.append_lchar(b' ');
         }
 
         if unwrapped.is_null() {
@@ -380,16 +407,21 @@ impl Stringifier {
 
         debug_assert!(unwrapped.is_object());
 
-        let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
-            let Some(anchor) = self.known_collections.get_mut(&unwrapped) else {
-                break 'has_anchor None;
-            };
+        let has_anchor = self
+            .known_collections
+            .get(&unwrapped)
+            .is_some_and(|anchor| anchor.used);
 
-            if !anchor.used {
-                break 'has_anchor None;
-            }
+        // An anchor or alias starts on the line after the key.
+        if has_anchor && after_key {
+            after_key = false;
+            self.newline();
+        }
 
-            Some(anchor)
+        let has_anchor: Option<&mut AnchorAlias> = if has_anchor {
+            self.known_collections.get_mut(&unwrapped)
+        } else {
+            None
         };
 
         if let Some(anchor) = has_anchor {
@@ -438,6 +470,9 @@ impl Stringifier {
             let mut iter = unwrapped.array_iterator(global)?;
 
             if iter.len == 0 {
+                if after_key {
+                    self.builder.append_lchar(b' ');
+                }
                 self.builder.append_latin1(b"[]");
                 return Ok(());
             }
@@ -469,7 +504,7 @@ impl Stringifier {
                             continue;
                         }
 
-                        if !first {
+                        if !first || after_key {
                             self.newline();
                         }
                         first = false;
@@ -478,9 +513,15 @@ impl Stringifier {
 
                         // don't need to print a newline here for any value
 
-                        self.indent += 1;
+                        self.item_offset += b"- ".len();
                         self.stringify(global, item)?;
-                        self.indent -= 1;
+                        self.item_offset -= b"- ".len();
+                    }
+                    if first {
+                        if after_key {
+                            self.builder.append_lchar(b' ');
+                        }
+                        self.builder.append_latin1(b"[]");
                     }
                 }
             }
@@ -500,6 +541,9 @@ impl Stringifier {
         )?;
 
         if iter.len == 0 {
+            if after_key {
+                self.builder.append_lchar(b' ');
+            }
             self.builder.append_latin1(b"{}");
             return Ok(());
         }
@@ -534,25 +578,23 @@ impl Stringifier {
                         continue;
                     }
 
-                    if !first {
+                    if !first || after_key {
                         self.newline();
                     }
                     first = false;
 
                     self.append_string(&prop_name);
-                    self.builder.append_latin1(b": ");
+                    self.builder.append_lchar(b':');
 
                     self.indent += 1;
-
                     let prop_value = value.unwrap_boxed_primitive(global)?;
-                    if prop_value_needs_newline(prop_value) {
-                        self.newline();
-                    }
-
-                    self.stringify_unwrapped(global, prop_value)?;
+                    self.stringify_unwrapped(global, prop_value, true)?;
                     self.indent -= 1;
                 }
                 if first {
+                    if after_key {
+                        self.builder.append_lchar(b' ');
+                    }
                     self.builder.append_latin1(b"{}");
                 }
             }
@@ -570,7 +612,7 @@ impl Stringifier {
                 let space_num = *space_num as usize;
                 self.builder.append_lchar(b'\n');
                 self.builder
-                    .ensure_unused_capacity(indent_count * space_num);
+                    .ensure_unused_capacity(indent_count * space_num + self.item_offset);
                 for _ in 0..indent_count * space_num {
                     self.builder.append_lchar(b' ');
                 }
@@ -581,10 +623,16 @@ impl Stringifier {
                 let clamped = space_str.trunc(10);
 
                 self.builder
-                    .ensure_unused_capacity(indent_count * clamped.length());
+                    .ensure_unused_capacity(indent_count * clamped.length() + self.item_offset);
                 for _ in 0..indent_count {
                     self.builder.append_string(&clamped);
                 }
+            }
+        }
+
+        if !matches!(self.space, Space::Minified) {
+            for _ in 0..self.item_offset {
+                self.builder.append_lchar(b' ');
             }
         }
     }
@@ -656,11 +704,6 @@ impl Stringifier {
         }
         self.builder.append_string(str);
     }
-}
-
-/// Does this (unwrapped) object property value need a newline? True for arrays and objects.
-fn prop_value_needs_newline(value: JSValue) -> bool {
-    !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
 }
 
 /// Can this property name be emitted verbatim as an anchor/alias name?
@@ -756,7 +799,9 @@ fn string_needs_quotes(str: &BunString) -> bool {
         | 0x20 /* ' ' */
         | 0x09 /* '\t' */
         | 0x0a /* '\n' */
-        | 0x0d /* '\r' */ => return true,
+        | 0x0d /* '\r' */
+        // the parser drops a leading byte order mark
+        | 0xfeff => return true,
 
         _ => {}
     }
@@ -1019,19 +1064,45 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
         || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
-    super::with_text_format_source(
-        global,
-        call_frame,
-        b"input.yaml",
-        super::BlobOrBufferInput::Bytes,
-        super::NullishInput::ToString,
-        |arena, log, source| {
-            // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
-            // once by pointer identity, so a cyclic graph is fine here.
-            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
+pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JSValue> {
+    MarkedArgumentBuffer::new(|roots| {
+        let mut pending = Vec::new();
+        // SAFETY: parsing runs no JavaScript. Nor does making the values: what would is left in `pending`. What throws
+        // returns without reading `input` again.
+        let global = unsafe { cx.heap.global() };
+        let result = parse_to_values(global, input.get(&cx.heap), roots, &mut pending)?;
+        let global = cx.global();
+        for PendingProperty {
+            mapping,
+            key,
+            value,
+        } in pending
+        {
+            mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
+        }
+        Ok(result)
+    })
+}
+
+/// A property that waits for the tree to be gone. Its key is a sequence or a mapping, or it comes after one that is.
+/// `ToString` of those is JavaScript, which can free the input that the tree points into.
+struct PendingProperty {
+    mapping: JSValue,
+    key: JSValue,
+    value: JSValue,
+}
+
+fn parse_to_values(
+    global: &JSGlobalObject,
+    input: &[u8],
+    roots: &mut MarkedArgumentBuffer,
+    pending: &mut Vec<PendingProperty>,
+) -> JsResult<JSValue> {
+    super::with_text_format_source(global, input, b"input.yaml", |arena, log, source| {
+        // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
+        // once by pointer identity, so a cyclic graph is fine here.
+        let root =
+            match YAML::parse(source, log, arena, CyclicAliases::Allow) {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
@@ -1049,19 +1120,19 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
                 }
             };
 
-            let mut ctx = ParserCtx {
-                seen_objects: HashMap::default(),
-                stack_check: StackCheck::init(),
-                global,
-                root,
-                result: JSValue::ZERO,
-            };
+        let mut ctx = ParserCtx {
+            seen_objects: HashMap::default(),
+            stack_check: StackCheck::init(),
+            global,
+            pending,
+        };
 
-            MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
-
-            Ok(ctx.result)
-        },
-    )
+        ctx.to_js(roots, root).map_err(|err| match err {
+            ToJsError::OutOfMemory => JsError::OutOfMemory,
+            ToJsError::JsError => JsError::Thrown,
+            ToJsError::StackOverflow => global.throw_stack_overflow(),
+        })
+    })
 }
 
 struct ParserCtx<'a> {
@@ -1069,9 +1140,8 @@ struct ParserCtx<'a> {
     stack_check: StackCheck,
 
     global: &'a JSGlobalObject,
-    root: Expr,
-
-    result: JSValue,
+    /// The `MarkedArgumentBuffer` holds what these do.
+    pending: &'a mut Vec<PendingProperty>,
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -1111,28 +1181,6 @@ impl From<bun_ast::ToJSError> for ToJsError {
 
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
-
-    extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
-        // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
-        let (ctx, args) = unsafe { (&mut *ctx, &mut *args) };
-        let root = ctx.root;
-        ctx.result = match ctx.to_js(args, root) {
-            Ok(v) => v,
-            Err(ToJsError::OutOfMemory) => {
-                ctx.result = ctx.global.throw_out_of_memory_value();
-                return;
-            }
-            Err(ToJsError::JsError) => {
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-            Err(ToJsError::StackOverflow) => {
-                let _ = ctx.global.throw_stack_overflow();
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-        };
-    }
 
     fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
@@ -1180,12 +1228,26 @@ impl<'a> ParserCtx<'a> {
                 args.append(obj);
                 self.seen_objects.put(key, obj)?;
 
+                // Those after the first that waits wait too, to be defined in the order they are written in.
+                let mut is_pending = false;
                 for prop in e_object.properties.slice() {
                     let key_expr = prop.key.expect("infallible: prop has key");
                     let value_expr = prop.value.expect("infallible: prop has value");
 
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;
+
+                    is_pending |= key.is_object();
+                    if is_pending {
+                        args.append(key);
+                        args.append(value);
+                        self.pending.push(PendingProperty {
+                            mapping: obj,
+                            key,
+                            value,
+                        });
+                        continue;
+                    }
 
                     let key_str = key.to_bun_string(self.global)?;
                     obj.put_may_be_index(self.global, &key_str, value)?;

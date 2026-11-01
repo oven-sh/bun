@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-#![allow(unexpected_cfgs)]
 #![feature(allocator_api)]
 
 pub mod error;

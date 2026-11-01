@@ -1,9 +1,9 @@
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
 use crate::diagnostics::{
-    CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
+    CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
 };
 use crate::hir::environment::Environment;
-use crate::hir::visitors::{each_instruction_value_lvalue, each_pattern_operand};
+use crate::hir::visitors::{pattern_operands, value_lvalues};
 use crate::hir::{FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, Place};
 
 /// Variable reference kind: local, context, or destructure.
@@ -24,7 +24,48 @@ impl std::fmt::Display for VarRefKind {
     }
 }
 
-type IdentifierKinds = IdMap<IdentifierId, (Place, VarRefKind)>;
+struct IdentifierKinds {
+    /// Where each identifier was referenced last, and as what.
+    last: IdMap<IdentifierId, (Option<SourceLocation>, VarRefKind)>,
+    /// The identifiers that are referenced as context variables anywhere. Only these can be
+    /// referenced inconsistently.
+    context: IdBitSet<IdentifierId>,
+    /// Whether `context` has them all.
+    is_context_complete: bool,
+}
+
+/// Returns whether all of the function was seen.
+fn collect_context_identifiers(
+    func: &HirFunction,
+    functions: &[HirFunction],
+    context: &mut IdBitSet<IdentifierId>,
+) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+    for block in func.body.blocks.values() {
+        for &instr_id in &block.instructions {
+            match &func.instructions[instr_id.0 as usize].value {
+                InstructionValue::DeclareContext { lvalue, .. }
+                | InstructionValue::StoreContext { lvalue, .. } => {
+                    context.insert(lvalue.place.identifier);
+                }
+                InstructionValue::LoadContext { place, .. } => {
+                    context.insert(place.identifier);
+                }
+                InstructionValue::FunctionExpression { lowered_func, .. }
+                | InstructionValue::ObjectMethod { lowered_func, .. } => {
+                    let inner = &functions[lowered_func.func.0 as usize];
+                    if !collect_context_identifiers(inner, functions, context) {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    true
+}
 
 /// Validates that context variable lvalues are used consistently.
 ///
@@ -50,7 +91,16 @@ pub(crate) fn validate_context_variable_lvalues_with_errors(
     identifiers: &[Identifier],
     errors: &mut CompilerError,
 ) -> Result<(), CompilerDiagnostic> {
-    let mut identifier_kinds: IdentifierKinds = IdMap::new();
+    let mut context = IdBitSet::default();
+    let is_context_complete = collect_context_identifiers(func, functions, &mut context);
+    if is_context_complete && context.is_empty() && !cfg!(debug_assertions) {
+        return Ok(());
+    }
+    let mut identifier_kinds = IdentifierKinds {
+        last: IdMap::new(),
+        context,
+        is_context_complete,
+    };
     validate_context_variable_lvalues_impl(
         func,
         &mut identifier_kinds,
@@ -67,6 +117,10 @@ fn validate_context_variable_lvalues_impl(
     identifiers: &[Identifier],
     errors: &mut CompilerError,
 ) -> Result<(), CompilerDiagnostic> {
+    if !crate::lowering::thread_has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+
     let mut inner_function_ids: Vec<FunctionId> = Vec::new();
 
     for (_block_id, block) in &func.body.blocks {
@@ -124,10 +178,10 @@ fn validate_context_variable_lvalues_impl(
                     )?;
                 }
                 InstructionValue::Destructure { lvalue, .. } => {
-                    for place in each_pattern_operand(&lvalue.pattern) {
+                    for place in pattern_operands(&lvalue.pattern) {
                         visit(
                             identifier_kinds,
-                            &place,
+                            place,
                             VarRefKind::Destructure,
                             identifiers,
                             errors,
@@ -138,24 +192,8 @@ fn validate_context_variable_lvalues_impl(
                 | InstructionValue::ObjectMethod { lowered_func, .. } => {
                     inner_function_ids.push(lowered_func.func);
                 }
-                _ => {
-                    for _ in each_instruction_value_lvalue(value) {
-                        errors.push_diagnostic(
-                            CompilerDiagnostic::new(
-                                ErrorCategory::Todo,
-                                "ValidateContextVariableLValues: unhandled instruction variant",
-                                None,
-                            )
-                            .with_detail(
-                                CompilerDiagnosticDetail::Error {
-                                    loc: value.loc().copied(),
-                                    message: None,
-                                    identifier_name: None,
-                                },
-                            ),
-                        );
-                    }
-                }
+                // Upstream has a Todo for an lvalue in any other value. There is none.
+                _ => debug_assert!(value_lvalues(value).next().is_none()),
             }
         }
     }
@@ -193,15 +231,20 @@ fn visit(
     env_identifiers: &[Identifier],
     errors: &mut CompilerError,
 ) -> Result<(), CompilerDiagnostic> {
-    if let Some((prev_place, prev_kind)) = identifiers.get(place.identifier) {
+    let is_ever_context = identifiers.context.contains(place.identifier);
+    if identifiers.is_context_complete && !is_ever_context && !cfg!(debug_assertions) {
+        return Ok(());
+    }
+    if let Some((prev_loc, prev_kind)) = identifiers.last.get_mut(place.identifier) {
         let was_context = *prev_kind == VarRefKind::Context;
         let is_context = kind == VarRefKind::Context;
         if was_context != is_context {
+            debug_assert!(is_ever_context || !identifiers.is_context_complete);
             if *prev_kind == VarRefKind::Destructure || kind == VarRefKind::Destructure {
                 let loc = if kind == VarRefKind::Destructure {
                     place.loc
                 } else {
-                    prev_place.loc
+                    *prev_loc
                 };
                 errors.push_diagnostic(
                     CompilerDiagnostic::new(
@@ -224,8 +267,10 @@ fn visit(
                 *prev_kind,
             ));
         }
+        (*prev_loc, *prev_kind) = (place.loc, kind);
+        return Ok(());
     }
-    identifiers.insert(place.identifier, (place.clone(), kind));
+    identifiers.last.insert(place.identifier, (place.loc, kind));
     Ok(())
 }
 

@@ -56,6 +56,7 @@ jobs:
   sign:
     name: Sign Release
     runs-on: ubuntu-latest
+    environment: release
     if: ${{ github.repository_owner == 'oven-sh' }}
     permissions:
       contents: write
@@ -75,7 +76,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.4"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
@@ -87,6 +88,7 @@ jobs:
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
     permissions:
@@ -104,7 +106,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.4"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -115,6 +117,7 @@ jobs:
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
     permissions:
@@ -135,7 +138,7 @@ jobs:
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.4"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -171,6 +174,7 @@ jobs:
   definitelytyped:
     name: Make pr to DefinitelyTyped to update `bun-types` version
     runs-on: ubuntu-latest
+    environment: release
     needs: npm-types
     if: ${{ github.event_name == 'release' || github.event.inputs.use-definitelytyped == 'true' }}
     permissions:
@@ -189,7 +193,7 @@ jobs:
       - name: Setup Bun
         uses: ./bun/.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.4"
       - id: bun-version
         run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Update bun-types version in package.json
@@ -219,6 +223,7 @@ jobs:
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker == 'true' }}
     permissions:
@@ -244,10 +249,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Docker emulator
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - id: buildx
         name: Setup Docker buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           platforms: linux/amd64,linux/arm64
       - id: metadata
@@ -269,7 +274,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Push to Docker
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./dockerhub/${{ matrix.dir || matrix.variant }}
           platforms: linux/amd64,linux/arm64
@@ -282,6 +287,7 @@ jobs:
   homebrew:
     name: Release to Homebrew
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     permissions:
       contents: read
@@ -302,9 +308,9 @@ jobs:
           git_committer_name: robobun
           git_committer_email: robobun@oven.sh
       - name: Setup Ruby
-        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
         with:
-          ruby-version: "2.6"
+          ruby-version: "3.4"
       - name: Update Tap
         run: ruby scripts/release.rb "$BUN_VERSION"
       - name: Commit Tap
@@ -318,6 +324,7 @@ jobs:
   s3:
     name: Upload to S3
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-s3 == 'true' }}
     permissions:
@@ -333,7 +340,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.4"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -348,6 +355,7 @@ jobs:
   notify-sentry:
     name: Notify Sentry
     runs-on: ubuntu-latest
+    environment: release
     needs: s3
     steps:
       - name: Notify Sentry

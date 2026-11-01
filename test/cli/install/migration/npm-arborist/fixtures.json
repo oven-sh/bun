@@ -335,7 +335,7 @@
     "lockfile": "package-lock.json",
     "lockfileVersion": 2,
     "workspaces": true,
-    "notes": "workspaces a/b whose package.json files have no `name` (Bun rejects nameless workspaces)"
+    "notes": "workspaces a/b whose package.json files have no `name` (Bun skips nameless workspaces, so only the root's deps migrate)"
   },
   {
     "name": "workspaces-non-simplistic",

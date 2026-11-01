@@ -32,7 +32,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         // Attempt to send command - should fail with connection error
         await client.set("key", "value");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Expect an error with connection closed message
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
       } finally {
@@ -56,7 +56,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await client.get("any-key");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
       }
@@ -64,7 +64,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await client.set("any-key", "value");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
       }
@@ -72,7 +72,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await client.del("any-key");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
       }
@@ -80,7 +80,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await client.incr("counter");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
       }
@@ -138,7 +138,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await commandPromise;
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with a connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
       }
@@ -158,7 +158,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         // Try to send command - should reject immediately
         await client.set("key", "value");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         expect(error.message).toMatch(/connection closed|offline queue is disabled/i);
       }
 
@@ -295,7 +295,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
   describe("Multiple Connection Attempts", () => {
     test("should handle rapid connection/disconnection", async () => {
       // Create and immediately disconnect many clients
-      const promises = [];
+      const promises: void[] = [];
 
       for (let i = 0; i < 10; i++) {
         const client = new RedisClient(DEFAULT_REDIS_URL, {
@@ -313,7 +313,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
 
     test("should not crash when connections fail", async () => {
       // Create multiple clients with invalid connections in parallel
-      const clients = [];
+      const clients: RedisClient[] = [];
 
       for (let i = 0; i < 5; i++) {
         clients.push(
@@ -400,7 +400,7 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
       sockets.push(socket);
       const state = { buffer: Buffer.alloc(0) };
       socket.on("data", chunk => {
-        state.buffer = Buffer.concat([state.buffer, chunk]);
+        state.buffer = Buffer.concat([state.buffer, chunk as Buffer]);
         for (const args of readCommands(state)) {
           const name = (args[0] ?? "").toUpperCase();
           if (name === "HELLO") {
@@ -446,6 +446,126 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
       for (const socket of sockets) {
         socket.destroy();
       }
+    }
+  });
+
+  const WRONG_VERSION_NUMBER = "EPROTO: error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER";
+  const codeAndMessage = (e: any) => `${e.code}: ${e.message}`;
+
+  // A rediss:// server whose connections answer a command with their own number. `breakSession` sends bytes that are
+  // not a TLS record and closes, which is also the answer to `GET lost`.
+  async function serverThatBreaksTls() {
+    const secureContext = tls.createSecureContext({ key: tlsCert.key, cert: tlsCert.cert });
+    const raws: net.Socket[] = [];
+    const breakSession = (raw: net.Socket) => raw.end("not a tls record at all\r\n");
+    const server = net.createServer(raw => {
+      const connection = raws.push(raw);
+      const socket = new tls.TLSSocket(raw, { isServer: true, secureContext });
+      for (const each of [raw, socket]) each.on("error", () => {});
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("data", chunk => {
+        state.buffer = Buffer.concat([state.buffer, chunk as Buffer]);
+        for (const [name, key] of readCommands(state)) {
+          if (key === "lost") breakSession(raw);
+          else socket.write(name.toUpperCase() === "HELLO" ? "+OK\r\n" : `$1\r\n${connection}\r\n`);
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return {
+      url: `rediss://localhost:${(server.address() as net.AddressInfo).port}`,
+      raws,
+      breakSession,
+      async [Symbol.asyncDispose]() {
+        for (const raw of raws) raw.destroy();
+        await new Promise(closed => server.close(closed));
+      },
+    };
+  }
+
+  test.each(["in place of a reply", "while the connection is idle"] as const)(
+    "reconnects when the TLS session of a rediss:// connection breaks %s",
+    async when => {
+      await using server = await serverThatBreaksTls();
+      const client = new RedisClient(server.url, { tls: { ca: tlsCert.cert } });
+      try {
+        const events: string[] = [];
+        const reconnected = Promise.withResolvers<void>();
+        // Only the idle row awaits it.
+        reconnected.promise.catch(() => {});
+        client.onconnect = () => void (events.push("connect") === 2 && reconnected.resolve());
+        client.onclose = error => void (events.push("close"), reconnected.reject(error));
+        const get = (key: string) => client.get(key).catch(codeAndMessage);
+        const replies = [await get("key")];
+        if (when === "in place of a reply") {
+          // The next GET follows at once: it waits for the new connection, as it does after a FIN.
+          replies.push(await get("lost"));
+        } else {
+          server.breakSession(server.raws[0]);
+          await reconnected.promise;
+        }
+        replies.push(await get("key"));
+        expect({ replies, events, connections: server.raws.length }).toEqual({
+          replies: ["1", ...(when === "in place of a reply" ? [WRONG_VERSION_NUMBER] : []), "2"],
+          events: ["connect", "connect"],
+          connections: 2,
+        });
+      } finally {
+        client.close();
+      }
+    },
+  );
+
+  test("with autoReconnect off, a TLS session that breaks fails the queued commands with the TLS reason too", async () => {
+    await using server = await serverThatBreaksTls();
+    const client = new RedisClient(server.url, { tls: { ca: tlsCert.cert }, autoReconnect: false });
+    try {
+      const onclose = mock();
+      client.onclose = onclose;
+      await client.connect();
+      // INFO is never pipelined: it waits in the queue for the reply to GET.
+      const pending = [client.get("lost"), client.send("INFO", [])];
+      expect({
+        outcomes: await Promise.all(pending.map(command => command.catch(codeAndMessage))),
+        closes: onclose.mock.calls.length,
+        connections: server.raws.length,
+      }).toEqual({ outcomes: [WRONG_VERSION_NUMBER, WRONG_VERSION_NUMBER], closes: 1, connections: 1 });
+    } finally {
+      client.close();
+    }
+  });
+
+  // A TLS 1.3 server answers the client's certificate after the client's side of the handshake is over.
+  test("a TLS 1.3 server that refuses the client's certificate fails the client instead of being dialed again", async () => {
+    let connections = 0;
+    const dialedAgain = Promise.withResolvers<string>();
+    const server = tls.createServer(
+      {
+        key: tlsCert.key,
+        cert: tlsCert.cert,
+        ca: tlsCert.cert,
+        requestCert: true,
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.3",
+      },
+      socket => void socket.on("error", () => {}),
+    );
+    server.on("connection", () => void (++connections === 2 && dialedAgain.resolve("dialed again")));
+    server.on("tlsClientError", () => {});
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    const client = new RedisClient(`rediss://localhost:${port}`, { tls: { ca: tlsCert.cert } });
+    try {
+      const outcome = await Promise.race([client.get("key").catch(codeAndMessage), dialedAgain.promise]);
+      expect({ outcome, connections }).toEqual({
+        outcome: "EPROTO: error:1000045c:SSL routines:OPENSSL_internal:TLSV1_ALERT_CERTIFICATE_REQUIRED",
+        connections: 1,
+      });
+    } finally {
+      client.close();
+      await new Promise(closed => server.close(closed));
     }
   });
 });
@@ -1456,7 +1576,7 @@ describe("Valkey: Recovering After fail()", () => {
     const port = await fake.listen();
     const client = new RedisClient(`redis://127.0.0.1:${port}`);
     const closes: string[] = [];
-    client.onclose = err => closes.push(`${err.code}: ${err.message}`);
+    client.onclose = err => closes.push(`${(err as any).code}: ${err.message}`);
     try {
       await dropAndAwaitRetryDelay(client);
       // Queued for the retry; only close() is left to settle it.
@@ -2157,7 +2277,7 @@ describe("Valkey: Offline Queue", () => {
       const state = { buffer: Buffer.alloc(0) };
       socket.on("data", chunk => {
         if (!answer) return;
-        state.buffer = Buffer.concat([state.buffer, chunk]);
+        state.buffer = Buffer.concat([state.buffer, chunk as Buffer]);
         const replies = readCommands(state).map(args =>
           (args[0] ?? "").toUpperCase() === "HELLO" ? "+OK\r\n" : "+PONG\r\n",
         );

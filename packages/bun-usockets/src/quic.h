@@ -55,7 +55,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
 void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx);
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx);
 
-/* Register an additional SSL_CTX for the given SNI hostname (exact or `*.`). */
+/* Register an additional SSL_CTX for the given SNI hostname. Names match as on a TCP listener. */
 int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     const char *hostname, struct us_bun_socket_context_options_t options);
 
@@ -144,7 +144,17 @@ void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
 void us_quic_stream_reset(us_quic_stream_t *s);
+void us_quic_stream_reset_internal_error(us_quic_stream_t *s);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
+/* RFC 9114 §8.1: the server did no application processing. */
+#define US_QUIC_H3_REQUEST_REJECTED 0x10B
+/* The code of the last RESET_STREAM or STOP_SENDING on the stream, 0 without one.
+ * on_stream_close can still read it. */
+uint64_t us_quic_stream_reset_code(us_quic_stream_t *s);
+/* The server did not process a request above the id in its GOAWAY (RFC 9114 §5.2).
+ * The RFC says the same of the request at the id, but servers on stock lsquic name
+ * the last request they accepted. on_stream_close can still read it. */
+int us_quic_stream_refused_by_goaway(us_quic_stream_t *s);
 
 void *us_quic_stream_ext(us_quic_stream_t *s);
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s);
@@ -160,6 +170,10 @@ void us_quic_loop_flush_if_pending(struct us_loop_t *loop);
 /* Incoming headers — valid from on_stream_headers until on_stream_close. */
 unsigned int us_quic_stream_header_count(us_quic_stream_t *s);
 const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsigned int i);
+/* Fields a request may have, pseudo-headers included. */
+#define US_QUIC_MAX_REQUEST_FIELDS 200
+/* The header set exceeds the size or the field count this endpoint accepts and is incomplete. */
+int us_quic_stream_headers_too_large(us_quic_stream_t *s);
 
 /* Connection accessors */
 void *us_quic_socket_ext(us_quic_socket_t *s);

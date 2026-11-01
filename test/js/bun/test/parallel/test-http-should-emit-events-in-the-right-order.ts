@@ -1,10 +1,17 @@
 import { bunEnv, bunExe } from "harness";
 import { createTest } from "node-harness";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 const { expect } = createTest(import.meta.path);
 
+const server = createServer((req, res) => res.end("hello")).listen(0, "127.0.0.1");
+await once(server, "listening");
+const { port } = server.address() as AddressInfo;
+
 const { stdout, exited } = Bun.spawn({
-  cmd: [bunExe(), "run", path.join(import.meta.dir, "../../../node/http/fixtures/log-events.mjs")],
+  cmd: [bunExe(), "run", path.join(import.meta.dir, "../../../node/http/fixtures/log-events.mjs"), String(port)],
   stdout: "pipe",
   stdin: "ignore",
   stderr: "inherit",
@@ -30,3 +37,4 @@ expect(
   ["res", "close"],
 ]);
 expect(await exited).toBe(0);
+server.close();

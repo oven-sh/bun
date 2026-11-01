@@ -2012,6 +2012,156 @@ describe("bundler", () => {
     run: { stdout: "gamma BETA_STAR_MARKER" },
   });
 
+  // --- Only a deferred record is un-deferred ---
+  // A request for every export of a file (`import * as`, `export * from`, an
+  // `import()` or `require()` whose namespace escapes) un-defers the records
+  // barrel optimization deferred in that file. The parser also marks records
+  // unused, for its own reasons. Those were never deferred, and the request
+  // must not resolve them and load their target.
+
+  // a.ts imports T only as a type, so TypeScript drops the import. types.ts has
+  // a syntax error: if it loads, the build fails.
+  for (const [name, entry, stdout] of [
+    [
+      "barrel/NamespaceImportSkipsUnusedTypeScriptImport",
+      `import * as ns from './a'; console.log(ns.value);`,
+      "a-value",
+    ],
+    ["barrel/ExportStarSkipsUnusedTypeScriptImport", `export * from './a';`, undefined],
+    [
+      "barrel/DynamicImportSkipsUnusedTypeScriptImport",
+      `const ns = await import('./a'); console.log(Object.keys(ns).join(), ns.value);`,
+      "value a-value",
+    ],
+    [
+      "barrel/RequireSkipsUnusedTypeScriptImport",
+      `const ns = require('./a'); console.log(Object.keys(ns).join(), ns.value);`,
+      "value a-value",
+    ],
+  ] as const) {
+    itBundled(name, {
+      files: {
+        "/entry.ts": entry,
+        "/a.ts": /* ts */ `
+          import { T } from './types';
+          export const value: T = "a-value";
+        `,
+        "/types.ts": /* ts */ `
+          export type T = <<<SYNTAX_ERROR>>>;
+        `,
+      },
+      target: "bun",
+      outdir: "/out",
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.js").toContain("a-value");
+      },
+      ...(stdout === undefined ? {} : { run: { stdout } }),
+    });
+  }
+
+  // A macro import runs at build time and its record stays unused. The macro
+  // module imports "bun", which the macro VM has and a browser bundle must not
+  // load.
+  itBundled("barrel/NamespaceImportSkipsMacroImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as ns from './a';
+        console.log(ns.value);
+      `,
+      "/a.ts": /* ts */ `
+        import { getValue } from './macro.ts' with { type: 'macro' };
+        export const value = getValue();
+      `,
+      "/macro.ts": /* ts */ `
+        import { version } from 'bun';
+        export function getValue() {
+          return 'macro-' + typeof version;
+        }
+      `,
+    },
+    target: "browser",
+    run: { stdout: "macro-string" },
+  });
+
+  // A large comment makes a file finish parsing after the small files of the
+  // build. A Buffer, because itBundled passes string contents through dedent(),
+  // which takes minutes on a 4 MB string in a debug build.
+  const slowToParse = (code: string) => Buffer.from("// " + Buffer.alloc(4_000_000, "x").toString() + "\n" + code);
+
+  // f2.ts fails to resolve "missing-pkg": the build fails, and nothing follows
+  // the imports of f2.ts. One of them is an import that TypeScript drops. It
+  // leads to f7.ts, which fails the same way. f0.ts finishes after f2.ts failed.
+  // Its `export *` request used to find the dropped import among the records
+  // f2.ts left behind, and loaded f5.ts and f7.ts. The build then reported the
+  // f7.ts error, once or twice. A build where f0.ts finished first did not.
+  for (const [name, entryPoints, bundleErrors] of [
+    [
+      "barrel/ExportStarOfFailedFileSkipsUnusedTypeScriptImport",
+      ["/e0.ts", "/e1.ts"],
+      { "/f2.ts": ['Could not resolve: "missing-pkg"'] },
+    ],
+    [
+      "barrel/ExportStarOfFailedFileReportsEachErrorOnce",
+      ["/e0.ts", "/e1.ts", "/e2.ts"],
+      { "/f2.ts": ['Could not resolve: "missing-pkg"'], "/f7.ts": ['Could not resolve: "missing-pkg"'] },
+    ],
+  ] as const) {
+    itBundled(name, {
+      files: {
+        "/e0.ts": `await import("./f0.ts");`,
+        "/e1.ts": `await import("./f2.ts");`,
+        "/e2.ts": `await import("./f7.ts");`,
+        "/f0.ts": slowToParse(`export * from "./f2.ts";`),
+        "/f2.ts": /* ts */ `
+          import { get5, C5 } from "./f5.ts";
+          import { fn } from "missing-pkg";
+          export const two = fn;
+        `,
+        "/f5.ts": `import "./f7.ts";`,
+        "/f7.ts": /* ts */ `
+          import { fn } from "missing-pkg";
+          export const seven = fn;
+        `,
+      },
+      entryPoints: [...entryPoints],
+      target: "bun",
+      outdir: "/out",
+      bundleErrors: { ...bundleErrors },
+    });
+  }
+
+  // The barrel fails: entry.js needs m, and "./missing.js" does not resolve.
+  // b.js was deferred by then, because big.js (slow to parse) had not asked for
+  // every export yet. A failed file's imports are not followed, and that holds
+  // for its deferred records too: when the request of big.js arrives, b.js (a
+  // syntax error) must stay unloaded, as it does when big.js finishes first.
+  itBundled("barrel/FailedBarrelKeepsDeferredRecordsDeferred", {
+    files: {
+      "/entry.js": /* js */ `
+        import { m } from 'faillib';
+        import { use } from './big.js';
+        console.log(m, use());
+      `,
+      "/big.js": slowToParse(`import * as ns from 'faillib'; export function use() { return ns; }`),
+      "/node_modules/faillib/package.json": JSON.stringify({
+        name: "faillib",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/faillib/index.js": /* js */ `
+        export { m } from './missing.js';
+        export { b } from './b.js';
+      `,
+      "/node_modules/faillib/b.js": /* js */ `
+        export const b = <<<SYNTAX_ERROR>>>;
+      `,
+    },
+    outdir: "/out",
+    bundleErrors: {
+      "/node_modules/faillib/index.js": ['Could not resolve: "./missing.js"'],
+    },
+  });
+
   // --- Entry points are never barrels ---
   // An entry point's exports are the public interface of the build. Nothing
   // imports an entry point, so a deferred record would never be un-deferred

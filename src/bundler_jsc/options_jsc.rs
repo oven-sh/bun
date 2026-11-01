@@ -3,20 +3,9 @@
 
 // `bun_bundler::options` re-exports `Target`/`Loader` but not `Format`; pull it
 // from the lower-tier source crate directly.
-use bun_jsc::ComptimeStringMapExt as _;
 use bun_options_types::compile_target::CompileTarget;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-
-pub fn target_from_js(
-    global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<bun_ast::Target>> {
-    if !value.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!("target must be a string")));
-    }
-    bun_ast::Target::MAP.from_js(global, value)
-}
 
 pub fn loader_from_js(
     global: &JSGlobalObject,

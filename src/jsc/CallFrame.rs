@@ -1,5 +1,5 @@
 use alloc::borrow::Cow;
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_uint;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue};
@@ -7,141 +7,12 @@ use crate::{JSGlobalObject, JSValue};
 use bun_core::ZStr;
 
 bun_opaque::opaque_ffi! {
-    /// Call Frame for JavaScript -> Native function calls. In Bun, it is
-    /// preferred to use the bindings generator instead of directly decoding
-    /// arguments. See `docs/project/bindgen.md`
+    /// Call Frame for JavaScript -> Native function calls. The bindings
+    /// generator decodes its arguments in C++: see `docs/project/bindgen.mdx`.
     pub struct CallFrame;
 }
 
 impl CallFrame {
-    /// A slice of all passed arguments to this function call.
-    pub fn arguments(&self) -> &[JSValue] {
-        // SAFETY: asUnsafeJSValueArray points at the JSC register file; offsets
-        // OFFSET_FIRST_ARGUMENT..+argumentsCount() are valid JSValue slots per
-        // JSC CallFrame layout (see asUnsafeJSValueArray doc comment). The base
-        // is derived from `&self` via pointer arithmetic, so it is provably
-        // non-null — use bare `from_raw_parts` to avoid a dead null-branch on
-        // the hottest per-JS-call path.
-        unsafe {
-            core::slice::from_raw_parts(
-                self.as_unsafe_js_value_array().add(OFFSET_FIRST_ARGUMENT),
-                self.arguments_count() as usize,
-            )
-        }
-    }
-
-    /// Usage: `let [arg1, arg2] = call_frame.arguments_as_array::<2>();`
-    pub fn arguments_as_array<const COUNT: usize>(&self) -> [JSValue; COUNT] {
-        let slice = self.arguments();
-        let mut value: [JSValue; COUNT] = [JSValue::UNDEFINED; COUNT];
-        let n = slice.len().min(COUNT);
-        value[0..n].copy_from_slice(&slice[0..n]);
-        value
-    }
-
-    /// This function protects out-of-bounds access by returning undefined
-    pub fn argument(&self, i: usize) -> JSValue {
-        if (self.arguments_count() as usize) > i {
-            self.arguments()[i]
-        } else {
-            JSValue::UNDEFINED
-        }
-    }
-
-    pub fn arguments_count(&self) -> u32 {
-        self.argument_count_including_this() - 1
-    }
-
-    /// When this CallFrame belongs to a constructor, this value is not the `this`
-    /// value, but instead the value of `new.target`.
-    pub fn this(&self) -> JSValue {
-        // SAFETY: OFFSET_THIS_ARGUMENT is a valid slot in the JSC register file.
-        unsafe { *self.as_unsafe_js_value_array().add(OFFSET_THIS_ARGUMENT) }
-    }
-
-    /// `JSValue` for the current function being called.
-    pub fn callee(&self) -> JSValue {
-        // SAFETY: OFFSET_CALLEE is a valid slot in the JSC register file.
-        unsafe { *self.as_unsafe_js_value_array().add(OFFSET_CALLEE) }
-    }
-
-    /// From JavaScriptCore/interpreter/CallFrame.h
-    ///
-    ///   |          ......            |   |
-    ///   +----------------------------+   |
-    ///   |           argN             |   v  lower address
-    ///   +----------------------------+
-    ///   |           arg1             |
-    ///   +----------------------------+
-    ///   |           arg0             |
-    ///   +----------------------------+
-    ///   |           this             |
-    ///   +----------------------------+
-    ///   | argumentCountIncludingThis |
-    ///   +----------------------------+
-    ///   |          callee            |
-    ///   +----------------------------+
-    ///   |        codeBlock           |
-    ///   +----------------------------+
-    ///   |      return-address        |
-    ///   +----------------------------+
-    ///   |       callerFrame          |
-    ///   +----------------------------+  <- callee's cfr is pointing this address
-    ///   |          local0            |
-    ///   +----------------------------+
-    ///   |          local1            |
-    ///   +----------------------------+
-    ///   |          localN            |
-    ///   +----------------------------+
-    ///   |          ......            |
-    ///
-    /// The proper return type of this should be []Register, but
-    #[inline]
-    fn as_unsafe_js_value_array(&self) -> *const JSValue {
-        // SAFETY: CallFrame is an opaque handle whose address IS the base of the
-        // JSC register array, so reinterpreting &self as *const JSValue is valid.
-        std::ptr::from_ref::<CallFrame>(self).cast::<JSValue>()
-    }
-
-    /// This function is manually ported from JSC's equivalent function in C++
-    /// See JavaScriptCore/interpreter/CallFrame.h
-    fn argument_count_including_this(&self) -> u32 {
-        // SAFETY: self points at the base of the JSC register array; the slot at
-        // OFFSET_ARGUMENT_COUNT_INCLUDING_THIS is a valid Register.
-        let registers: *const Register = std::ptr::from_ref::<CallFrame>(self).cast::<Register>();
-        // argumentCountIncludingThis takes the register at the defined offset, then
-        // calls 'ALWAYS_INLINE int32_t Register::unboxedInt32() const',
-        // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'
-        // which accesses `.encodedValue.asBits.payload`
-        // JSC stores and works with value as signed, but it is always 1 or more.
-        // SAFETY: `registers` is the JSC register-file base derived from `&self`;
-        // OFFSET_ARGUMENT_COUNT_INCLUDING_THIS is a valid in-bounds Register slot.
-        let payload: i32 = unsafe {
-            (*registers.add(OFFSET_ARGUMENT_COUNT_INCLUDING_THIS))
-                .encoded_value
-                .as_bits
-                .payload
-        };
-        debug_assert!(payload >= 1);
-        payload as u32
-    }
-
-    /// Do not use this function. Migration path:
-    /// arguments_as_array::<n>()
-    pub fn arguments_undef<const MAX: usize>(&self) -> Arguments<MAX> {
-        let slice = self.arguments();
-        debug_assert!(MAX <= 9);
-        let count = slice.len().min(MAX);
-        if count == 0 {
-            Arguments {
-                ptr: [JSValue::UNDEFINED; MAX],
-                len: 0,
-            }
-        } else {
-            Arguments::<MAX>::init_undef(count.min(MAX), slice)
-        }
-    }
-
     pub fn get_caller_src_loc(&self, global_this: &JSGlobalObject) -> CallerSrcLoc {
         let mut str = bun_core::String::default();
         let mut line: c_uint = 0;
@@ -161,67 +32,21 @@ impl CallFrame {
     }
 }
 
-// These constants are from JSC::CallFrameSlot in JavaScriptCore/interpreter/CallFrame.h
-const OFFSET_CODE_BLOCK: usize = 2;
-const OFFSET_CALLEE: usize = OFFSET_CODE_BLOCK + 1;
-const OFFSET_ARGUMENT_COUNT_INCLUDING_THIS: usize = OFFSET_CALLEE + 1;
-const OFFSET_THIS_ARGUMENT: usize = OFFSET_ARGUMENT_COUNT_INCLUDING_THIS + 1;
-const OFFSET_FIRST_ARGUMENT: usize = OFFSET_THIS_ARGUMENT + 1;
-
-// Register defined in JavaScriptCore/interpreter/Register.h
-#[repr(C)]
-union Register {
-    value: JSValue, // EncodedJSValue
-    call_frame: *mut CallFrame,
-    code_block: *mut c_void, // CodeBlock*
-    /// EncodedValueDescriptor defined in JavaScriptCore/runtime/JSCJSValue.h
-    encoded_value: EncodedValueDescriptor,
-    number: f64,  // double
-    integer: i64, // integer
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union EncodedValueDescriptor {
-    ptr: JSValue, // JSCell*
-    as_bits: AsBits,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct AsBits {
-    payload: i32,
-    tag: i32,
-}
-
-pub struct Arguments<const MAX: usize> {
-    pub ptr: [JSValue; MAX],
-    pub len: usize,
-}
-
-impl<const MAX: usize> Arguments<MAX> {
-    #[inline]
-    pub(crate) fn init_undef(i: usize, src: &[JSValue]) -> Self {
-        let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
-        args[0..i].copy_from_slice(&src[0..i]);
-        Self { ptr: args, len: i }
-    }
-
-    #[inline]
-    pub fn slice(&self) -> &[JSValue] {
-        &self.ptr[0..self.len]
-    }
-
-    #[inline]
-    pub fn mut_(&mut self) -> &mut [JSValue] {
-        &mut self.ptr[..]
-    }
-}
-
 pub struct CallerSrcLoc {
     pub str: bun_core::String,
     pub line: c_uint,
     pub column: c_uint,
+}
+
+impl JSGlobalObject {
+    /// [`CallFrame::get_caller_src_loc`] for the frame of the host function that is running.
+    pub fn get_caller_src_loc(&self) -> CallerSrcLoc {
+        let mut str = bun_core::String::default();
+        let mut line: c_uint = 0;
+        let mut column: c_uint = 0;
+        JSC__JSGlobalObject__getCallerSrcLoc(self, &mut str, &mut line, &mut column);
+        CallerSrcLoc { str, line, column }
+    }
 }
 
 /// This is an advanced iterator struct which is used by various APIs. In
@@ -255,11 +80,6 @@ impl<'a> ArgumentsSlice<'a> {
         }
     }
 
-    #[inline]
-    pub fn len(&self) -> u16 {
-        self.remaining().len() as u16
-    }
-
     pub fn eat(&mut self) {
         if self.remaining().is_empty() {
             return;
@@ -286,6 +106,12 @@ impl<'a> ArgumentsSlice<'a> {
 unsafe extern "C" {
     safe fn Bun__CallFrame__getCallerSrcLoc(
         cf: &CallFrame,
+        global: &JSGlobalObject,
+        out_str: &mut bun_core::String,
+        out_line: &mut c_uint,
+        out_column: &mut c_uint,
+    );
+    safe fn JSC__JSGlobalObject__getCallerSrcLoc(
         global: &JSGlobalObject,
         out_str: &mut bun_core::String,
         out_line: &mut c_uint,

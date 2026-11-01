@@ -5,15 +5,15 @@ use crate::mysql::StatusFlags;
 use crate::mysql::capabilities::MariaDBCapabilities;
 use crate::mysql::protocol::CharacterSet;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
-use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
+use crate::mysql::protocol::auth::{NONCE_LENGTH, Nonce};
+use crate::mysql::protocol::stack_reader::PacketReader;
 use crate::shared::Data;
 
 pub struct HandshakeV10 {
     pub(crate) protocol_version: u8,
     pub server_version: Data,
     pub connection_id: u32,
-    pub auth_plugin_data_part_1: [u8; 8],
-    pub auth_plugin_data_part_2: Box<[u8]>,
+    pub auth_plugin_data: Nonce,
     pub capability_flags: Capabilities,
     pub mariadb_capability_flags: MariaDBCapabilities,
     pub(crate) character_set: CharacterSet,
@@ -27,8 +27,7 @@ impl Default for HandshakeV10 {
             protocol_version: 10,
             server_version: Data::empty(),
             connection_id: 0,
-            auth_plugin_data_part_1: [0u8; 8],
-            auth_plugin_data_part_2: Box::default(),
+            auth_plugin_data: [0u8; NONCE_LENGTH],
             capability_flags: Capabilities::default(),
             mariadb_capability_flags: MariaDBCapabilities::default(),
             character_set: CharacterSet::default(),
@@ -39,10 +38,7 @@ impl Default for HandshakeV10 {
 }
 
 impl HandshakeV10 {
-    pub fn decode_internal<Context: ReaderContext>(
-        &mut self,
-        reader: NewReader<Context>,
-    ) -> Result<(), AnyMySQLError> {
+    pub fn decode_internal(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         // Protocol version
         self.protocol_version = reader.int::<u8>()?;
         if self.protocol_version != 10 {
@@ -57,8 +53,7 @@ impl HandshakeV10 {
 
         // Auth plugin data part 1 (8 bytes)
         let auth_data = reader.read(8)?;
-        self.auth_plugin_data_part_1
-            .copy_from_slice(auth_data.slice());
+        self.auth_plugin_data[..8].copy_from_slice(auth_data.slice());
 
         // Skip filler byte
         let _ = reader.int::<u8>()?;
@@ -93,10 +88,10 @@ impl HandshakeV10 {
             MariaDBCapabilities::from_int(mariadb_flags)
         };
 
-        // Auth plugin data part 2
+        // Auth plugin data part 2: the rest of the nonce, then its terminating NUL
         let remaining_auth_len = auth_plugin_data_len - 8;
         let auth_data_2 = reader.read(remaining_auth_len as usize)?;
-        self.auth_plugin_data_part_2 = Box::<[u8]>::from(auth_data_2.slice());
+        self.auth_plugin_data[8..].copy_from_slice(&auth_data_2.slice()[..NONCE_LENGTH - 8]);
 
         // Auth plugin name
         if self.capability_flags.CLIENT_PLUGIN_AUTH {

@@ -6102,6 +6102,7 @@ pub(crate) mod __gated_printer {
                         }
 
                         if !slice_of(s.items).is_empty() || s.default_name.is_some() {
+                            self.print_semicolon_if_needed();
                             self.print_indent();
                             self.print_space_before_identifier();
                             self.print_whitespacer(ws!(b"var {"));

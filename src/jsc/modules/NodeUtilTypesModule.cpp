@@ -446,6 +446,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     JSValue expectedKey, expectedValue;
     while (expectedIter->nextKeyValue(globalObject, expectedKey, expectedValue)) {
         bool consumed = false;
+        bool identityEntryDiffers = false;
         bool identityPresent = actualMap->has(globalObject, expectedKey);
         RETURN_IF_EXCEPTION(scope, false);
         bool expectedKeyAlreadyUsed = identityKeyUsed(expectedKey);
@@ -478,6 +479,8 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                     if (identityIndex != SIZE_MAX)
                         usedIndices[identityIndex] = true;
                     consumed = true;
+                } else {
+                    identityEntryDiffers = true;
                 }
             }
         }
@@ -493,6 +496,9 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
             if (usedIndices[i])
                 continue;
             JSValue candidateKey = gcBuffer.at(entriesStart + i * 2);
+            // The lookup above compared the value of this entry with `expectedValue`.
+            if (identityEntryDiffers && candidateKey == expectedKey)
+                continue;
             bool candidateIsUsedIdentity = identityKeyUsed(candidateKey);
             RETURN_IF_EXCEPTION(scope, false);
             if (candidateIsUsedIdentity)
@@ -560,55 +566,52 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     return true;
 }
 
-// Errors compare name/message/errors leniently: `undefined` (or an empty
-// expected message) on the expected side is ignored. An own `cause` on the
-// expected error (even undefined) must exist on the actual error as well.
+// node's isEnumerableOrIdentical for kPartial: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L232-L236
+static bool isEnumerableOrIdentical(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, const JSC::Identifier& key)
+{
+    JSC::PropertySlot expectedSlot(expectedObject, JSC::PropertySlot::InternalMethodType::Get);
+    bool expectedHasKey = expectedObject->getNonIndexPropertySlot(globalObject, key, expectedSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!expectedHasKey)
+        return true;
+    // objectSubset compares a key that `expected` owns as an enumerable property.
+    if (expectedSlot.slotBase() == expectedObject && !(expectedSlot.attributes() & JSC::PropertyAttribute::DontEnum))
+        return true;
+    JSValue expectedValue = expectedSlot.getValue(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (expectedValue.isUndefined())
+        return true;
+    if (key == globalObject->vm().propertyNames->message && expectedValue.isString() && !JSC::asString(expectedValue)->length())
+        return true;
+    JSValue actualValue = actualObject->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    return compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+}
+
+// node's Error arm for kPartial: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L405
 static bool errorSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSObject* actualObject = actual.getObject();
     JSC::JSObject* expectedObject = expected.getObject();
 
-    const JSC::Identifier keys[3] = {
-        vm.propertyNames->message,
-        vm.propertyNames->name,
-        JSC::Identifier::fromString(vm, "errors"_s),
-    };
-    for (const auto& key : keys) {
-        JSValue expectedValue = expectedObject->get(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (expectedValue.isUndefined())
-            continue;
-        if (key == vm.propertyNames->message && expectedValue.isString()) {
-            auto* str = JSC::asString(expectedValue);
-            if (!str->length())
-                continue;
-        }
-        JSValue actualValue = actualObject->get(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+    const JSC::Identifier* const keys[] = { &vm.propertyNames->message, &vm.propertyNames->name, &vm.propertyNames->cause, &vm.propertyNames->errors };
+    for (const auto* key : keys) {
+        bool equal = isEnumerableOrIdentical(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, *key);
         RETURN_IF_EXCEPTION(scope, false);
         if (!equal)
             return false;
     }
 
-    const JSC::Identifier causeIdentifier = JSC::Identifier::fromString(vm, "cause"_s);
+    // An own `cause` of `expected`, even an undefined one, must be an own property of `actual` as well.
     JSC::PropertySlot expectedCauseSlot(expectedObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-    bool expectedHasCause = expectedObject->methodTable()->getOwnPropertySlot(expectedObject, globalObject, causeIdentifier, expectedCauseSlot);
+    bool expectedHasCause = expectedObject->methodTable()->getOwnPropertySlot(expectedObject, globalObject, vm.propertyNames->cause, expectedCauseSlot);
     RETURN_IF_EXCEPTION(scope, false);
     if (expectedHasCause) {
         JSC::PropertySlot actualCauseSlot(actualObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-        bool actualHasCause = actualObject->methodTable()->getOwnPropertySlot(actualObject, globalObject, causeIdentifier, actualCauseSlot);
+        bool actualHasCause = actualObject->methodTable()->getOwnPropertySlot(actualObject, globalObject, vm.propertyNames->cause, actualCauseSlot);
         RETURN_IF_EXCEPTION(scope, false);
         if (!actualHasCause)
-            return false;
-        JSValue actualCause = actualObject->get(globalObject, causeIdentifier);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue expectedCause = expectedObject->get(globalObject, causeIdentifier);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualCause, expectedCause);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!equal)
             return false;
     }
     return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);

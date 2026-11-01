@@ -2785,7 +2785,7 @@
   },
   "fork": {
    "exit": 1,
-   "files": 18,
+   "files": 19,
    "diagnostics": {
     "arguments.jsx": [
      {

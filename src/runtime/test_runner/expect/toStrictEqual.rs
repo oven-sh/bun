@@ -27,7 +27,7 @@ impl Expect {
         }
 
         // handle failure
-        let diff_formatter = DiffFormatter::new(global, value, expected, not)?;
+        let diff_formatter = DiffFormatter::new_with_passed_matchers(global, value, expected, not)?;
 
         if not {
             let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", true);

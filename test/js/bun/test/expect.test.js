@@ -979,6 +979,310 @@ describe("expect()", () => {
     }
   });
 
+  if (isBun) {
+    describe.each(["toEqual", "toStrictEqual", "toHaveProperty"])("the diff of a failed %s()", matcher => {
+      const assert = (/** @type {any} */ received, /** @type {any} */ expected) =>
+        matcher === "toHaveProperty"
+          ? expect({ value: received }).toHaveProperty("value", expected)
+          : ANY(expect(received))[matcher](expected);
+
+      /** The diff of the failure, after the line that names the matcher. */
+      const diffOf = (/** @type {any} */ received, /** @type {any} */ expected) => {
+        let message = "";
+        try {
+          assert(received, expected);
+        } catch (e) {
+          message = Bun.stripANSI(ANY(e).message);
+        }
+        expect(message).toStartWith(`expect(received).${matcher}(`);
+        return message.slice(message.indexOf("\n\n") + 2).trimEnd();
+      };
+      /** The lines of that diff that differ between `received` and `expected`. */
+      const changedLines = (/** @type {any} */ received, /** @type {any} */ expected) =>
+        diffOf(received, expected)
+          .split("\n")
+          .filter(line => /^[-+] {3}/.test(line));
+
+      test("prints a matcher that passed as an unchanged line", () => {
+        const expected = () => ({ a: expect.any(Date), b: expect.any(Date), c: "hello" });
+        expect(diffOf({ a: "foobar", b: new Date(0), c: "hello" }, expected())).toBe(
+          [
+            "  {",
+            '-   "a": Any<Date>,',
+            '+   "a": "foobar",',
+            '    "b": Any<Date>,',
+            '    "c": "hello",',
+            "  }",
+            "",
+            "- Expected  - 1",
+            "+ Received  + 1",
+          ].join("\n"),
+        );
+        // The comparison stops at `a`. In this order it ran the matcher of `b` before that.
+        expect(changedLines({ b: new Date(0), a: "foobar", c: "hello" }, expected())).toEqual([
+          '-   "a": Any<Date>,',
+          '+   "a": "foobar",',
+        ]);
+      });
+
+      test("in an array, a nested object and under an index or a symbol key", () => {
+        const key = Symbol("key");
+        const received = { list: [1, "two", { id: 3 }], 1001: { n: 1 }, [key]: 1n, last: 1 };
+        const expected = {
+          list: [expect.any(Number), expect.any(String), { id: expect.any(Number) }],
+          1001: { n: expect.any(Number) },
+          [key]: expect.any(BigInt),
+          last: 2,
+        };
+        expect(changedLines(received, expected)).toEqual(['-   "last": 2,', '+   "last": 1,']);
+      });
+
+      test("when the matcher is in the received value", () => {
+        expect(changedLines({ a: expect.any(Number), b: expect.any(Number) }, { a: 1, b: "x" })).toEqual([
+          '-   "b": "x",',
+          '+   "b": Any<Number>,',
+        ]);
+      });
+
+      test("for each kind of matcher that calls no user code", () => {
+        class Point {}
+        const received = {
+          anything: 0,
+          number: 1,
+          instance: new Point(),
+          array: [],
+          object: {},
+          close: 0.1 + 0.2,
+          containing: "hello world",
+          matching: "hello world",
+          pattern: "hello world",
+          not: 1,
+          last: 1,
+        };
+        const expected = {
+          anything: expect.anything(),
+          number: expect.any(Number),
+          instance: expect.any(Point),
+          array: expect.any(Array),
+          object: expect.any(Object),
+          close: expect.closeTo(0.3),
+          containing: expect.stringContaining("world"),
+          matching: expect.stringMatching("hello"),
+          pattern: expect.stringMatching(/^hello/),
+          not: expect.not.any(String),
+          last: 2,
+        };
+        expect(changedLines(received, expected)).toEqual(['-   "last": 2,', '+   "last": 1,']);
+      });
+
+      test("next to a key, an element or a class that only one value has", () => {
+        expect(changedLines({ a: 1, extra: true }, { a: expect.any(Number) })).toEqual(['+   "extra": true,']);
+        expect(changedLines({ a: 1 }, { a: expect.any(Number), missing: 1 })).toEqual(['-   "missing": 1,']);
+        expect(changedLines([1, 2, 3], [expect.any(Number), expect.any(Number)])).toEqual(["+   3,"]);
+        class Point {
+          x = 1;
+          y = "y";
+        }
+        expect(diffOf(new Point(), { x: expect.any(Number), y: expect.any(Number) })).toStartWith(
+          ["- {", "+ Point {", '    "x": Any<Number>,', '-   "y": Any<Number>,', '+   "y": "y",', "  }"].join("\n"),
+        );
+      });
+
+      test("but not where the comparison did not run the matcher on that value", () => {
+        const passesOnUndefined = () => expect.not.any(Number);
+        // The received value has no such key, inherits it, or does not list it.
+        for (const received of [
+          { last: 1 },
+          Object.assign(Object.create({ a: "a" }), { last: 1 }),
+          Object.defineProperty({ last: 1 }, "a", { value: "a" }),
+        ])
+          expect(changedLines(received, { a: passesOnUndefined(), last: 2 })).toContain('-   "a": NotAny<Number>,');
+        expect(changedLines([1, , 3], [1, passesOnUndefined(), 4])).toContain("-   NotAny<Number>,");
+
+        // One object at two places prints one text, and the matcher passed at one of them.
+        const shared = { b: new Date(0) };
+        expect(changedLines({ p: shared, q: shared }, { p: { b: expect.any(Date) }, q: { b: 5 } })).toEqual([
+          '-     "b": Any<Date>,',
+          '+     "b": 1970-01-01T00:00:00.000Z,',
+          '-     "b": 5,',
+          '+     "b": 1970-01-01T00:00:00.000Z,',
+        ]);
+        // The same holds for an object that both values hold.
+        const both = { k: 1 };
+        expect(changedLines({ a: both, b: both, last: 1 }, { a: both, b: { k: expect.any(Number) }, last: 2 })).toEqual(
+          ['-     "k": Any<Number>,', '+     "k": 1,', '-   "last": 2,', '+   "last": 1,'],
+        );
+
+        // The elements of a Set have no place.
+        expect(changedLines(new Set([1, "x"]), new Set([expect.any(Number), expect.any(Number)]))).toEqual([
+          "-   Any<Number>,",
+          "-   Any<Number>,",
+          "+   1,",
+          '+   "x",',
+        ]);
+      });
+
+      test("and calls no user code to find it", () => {
+        const calls = { matcher: 0, getter: 0, hasInstance: 0, getPrototypeOf: 0, then: 0, toString: 0 };
+        expect.extend({
+          toBeCounted() {
+            calls.matcher++;
+            return { pass: true, message: () => "" };
+          },
+        });
+        class Counted {
+          static [Symbol.hasInstance]() {
+            calls.hasInstance++;
+            return true;
+          }
+        }
+        const global = /o/g;
+        const sample = new String("o");
+        sample.toString = () => {
+          calls.toString++;
+          return "o";
+        };
+        const received = {
+          a: 1, // The comparison stops here, so it ran none of the matchers below.
+          sample: "foo",
+          custom: 1,
+          get getter() {
+            calls.getter++;
+            return 1;
+          },
+          instance: 1,
+          proxy: new Proxy(
+            {},
+            {
+              getPrototypeOf() {
+                calls.getPrototypeOf++;
+                return Date.prototype;
+              },
+            },
+          ),
+          global: "foo",
+          pending: Promise.resolve().then(() => calls.then++),
+          contained: { k: 1 },
+          list: [1],
+        };
+        const expected = {
+          a: 2,
+          sample: expect.stringContaining(ANY(sample)),
+          custom: ANY(expect).toBeCounted(),
+          getter: expect.any(Number),
+          instance: expect.any(Counted),
+          proxy: expect.any(Date),
+          global: expect.stringMatching(global),
+          pending: expect.resolvesTo.anything(),
+          contained: expect.objectContaining({ k: 1 }),
+          list: expect.arrayContaining([1]),
+        };
+        // Each of them could pass. The diff does not run them to find out, and prints them as differences.
+        const flagged = changedLines(received, expected).filter(line => line.startsWith('-   "'));
+        expect(flagged.map(line => line.slice(5, line.indexOf('":')))).toEqual(Object.keys(expected).sort());
+        // Printing the sample calls its toString once.
+        calls.toString--;
+        expect({ ...calls, lastIndex: global.lastIndex }).toEqual({
+          matcher: 0,
+          getter: 0,
+          hasInstance: 0,
+          getPrototypeOf: 0,
+          then: 0,
+          toString: 0,
+          lastIndex: 0,
+        });
+      });
+
+      test("and leaves both values as they were", () => {
+        const matcher = expect.any(Number);
+        const received = Object.freeze({ id: 7, tags: ["a", "b"], matcher, name: "alice" });
+        const expected = { id: expect.any(Number), tags: [expect.any(String), "b"], matcher: 5, name: "bob" };
+        expect(changedLines(received, expected)).toEqual(['-   "name": "bob",', '+   "name": "alice",']);
+        // toEqual accepts a matcher on either side, so these compare with toBe.
+        expect(received.id).toBe(7);
+        expect(received.tags[0]).toBe("a");
+        expect(expected.matcher).toBe(5);
+        expect(Object.isFrozen(received)).toBe(true);
+        expect(Object.keys(received)).toEqual(["id", "tags", "matcher", "name"]);
+      });
+
+      test.each([
+        ["throws", "thrown by the trap"],
+        ["is stopped by a node:vm timeout", "Script execution timed out after 50ms"],
+      ])("also when printing the diff %s", (how, error) => {
+        /** @type {string[]} */
+        let whilePrinting = [];
+        const received = {
+          a: 1,
+          id: 7,
+          tags: ["a"],
+          proxy: new Proxy(
+            {},
+            {
+              ownKeys() {
+                whilePrinting = [typeof received.id, typeof received.tags[0]];
+                if (how === "throws") throw new Error("thrown by the trap");
+                for (;;);
+              },
+            },
+          ),
+        };
+        const expected = { a: 2, id: expect.any(Number), tags: [expect.any(String)], proxy: {} };
+        expect(() =>
+          require("node:vm").runInNewContext("run()", { run: () => assert(received, expected) }, { timeout: 50 }),
+        ).toThrow(error);
+        expect(whilePrinting).toEqual(["object", "object"]);
+        expect(received.id).toBe(7);
+        expect(received.tags[0]).toBe("a");
+      });
+
+      test("but prints the values as they are if no other line differs", () => {
+        // Two symbols with one description print the same text.
+        expect(changedLines({ id: 1, symbol: Symbol("s") }, { id: expect.any(Number), symbol: Symbol("s") })).toEqual([
+          '-   "id": Any<Number>,',
+          '+   "id": 1,',
+        ]);
+      });
+
+      // toHaveProperty prints no diff under .not.
+      if (matcher !== "toHaveProperty")
+        test("and prints only the expected value under .not", () => {
+          // These two are equal, and the Maps print their entries in another order.
+          const received = {
+            matcher: expect.any(Number),
+            map: new Map([
+              ["a", 1],
+              ["b", 2],
+            ]),
+          };
+          const expected = {
+            matcher: 1,
+            map: new Map([
+              ["b", 2],
+              ["a", 1],
+            ]),
+          };
+          expect(() => ANY(expect(received).not)[matcher](expected)).toThrow('"matcher": 1,');
+        });
+    });
+
+    test("the diff of a failed toEqual() prints the one row that differs", () => {
+      const rows = Array.from({ length: 200 }, (_, id) => ({ id, createdAt: new Date(id) }));
+      const expected = rows.map(({ id }) => ({ id: id === 137 ? -1 : id, createdAt: expect.any(Date) }));
+      let message = "";
+      try {
+        expect(rows).toEqual(expected);
+      } catch (e) {
+        message = Bun.stripANSI(ANY(e).message);
+      }
+      expect(message.split("\n").filter(line => /^[-+] {3}/.test(line))).toEqual([
+        '-     "id": -1,',
+        '+     "id": 137,',
+      ]);
+      expect(message.split("\n").length).toBeLessThan(30);
+    });
+  }
+
   test("toThrow asymmetric matchers", () => {
     expect(() => {
       const err = new Error("foo");

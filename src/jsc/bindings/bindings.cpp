@@ -180,6 +180,7 @@
 #include "JSDOMFormData.h"
 #include "GeneratedBlob.h"
 #include "GeneratedExpect.h"
+#include "JestPassedMatchers.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
 #include <JavaScriptCore/JSWeakMap.h>
@@ -685,11 +686,6 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     if (s->hasUnderscoreProtoPropertyExcludingOriginalProto())
         return false;
     return true;
-}
-
-static bool mayBeAsymmetricMatcher(JSValue value)
-{
-    return value.isCell() && !value.isEmpty() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
 }
 
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
@@ -2450,6 +2446,32 @@ void Bun::DeferredMatcherWrites::undo(JSGlobalObject* globalObject, ThrowScope& 
         scope.throwException(globalObject, failure);
 }
 
+// Runs `format` with `matcherWrites` applied, and undoes them after.
+static void formatWithMatcherWrites(JSC::JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeferredMatcherWrites& matcherWrites, void* ctx, bool matched, void (*format)(void* ctx, bool matched))
+{
+    matcherWrites.apply(globalObject, scope);
+    if (!scope.exception()) [[likely]]
+        format(ctx, matched);
+
+    // A termination cannot be cleared, and after a `node:vm` timeout the caller goes on. This holds it until the end of the function.
+    DeferTermination deferTermination(scope.vm());
+    // `undo` calls into JSC, which returns early while an exception is pending.
+    JSC::Exception* exception = scope.exception();
+    if (exception && !scope.tryClearException()) [[unlikely]]
+        exception = nullptr;
+    matcherWrites.undo(globalObject, scope);
+    if (exception && !scope.exception()) [[unlikely]]
+        scope.throwException(globalObject, exception);
+}
+
+void Bun::formatWithPassedMatchers(JSC::JSGlobalObject* globalObject, ThrowScope& scope, std::span<const Identifier> keys, const MarkedArgumentBuffer& targetsAndMatchers, void* ctx, void (*format)(void* ctx, bool))
+{
+    Bun::DeferredMatcherWrites matcherWrites;
+    for (size_t i = 0; i < keys.size(); i++)
+        matcherWrites.append(asObject(targetsAndMatchers.at(i * 2)), keys[i], targetsAndMatchers.at(i * 2 + 1));
+    formatWithMatcherWrites(globalObject, scope, matcherWrites, ctx, false, format);
+}
+
 // anonymous namespace to avoid name collision
 namespace {
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
@@ -3425,21 +3447,7 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     RETURN_IF_EXCEPTION(scope, false);
     if (!(matched ? formatIfMatched : formatIfNotMatched)) return matched;
 
-    matcherWrites.apply(globalObject, scope);
-    if (!scope.exception()) [[likely]]
-        format(ctx, matched);
-
-    {
-        // A termination cannot be cleared, and after a `node:vm` timeout the caller goes on. This holds it until the end of the block.
-        DeferTermination deferTermination(scope.vm());
-        // `undo` calls into JSC, which returns early while an exception is pending.
-        JSC::Exception* exception = scope.exception();
-        if (exception && !scope.tryClearException()) [[unlikely]]
-            exception = nullptr;
-        matcherWrites.undo(globalObject, scope);
-        if (exception && !scope.exception()) [[unlikely]]
-            scope.throwException(globalObject, exception);
-    }
+    formatWithMatcherWrites(globalObject, scope, matcherWrites, ctx, matched, format);
     return matched;
 }
 

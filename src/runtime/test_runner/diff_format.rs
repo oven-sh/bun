@@ -54,6 +54,26 @@ impl<'a> DiffFormatter<'a> {
         })
     }
 
+    /// [`DiffFormatter::new`] for a failed `toEqual`, `toStrictEqual` or `toHaveProperty`: an asymmetric
+    /// matcher that passed prints as that matcher on both sides, so its line is not a difference.
+    pub(crate) fn new_with_passed_matchers(
+        global_this: &JSGlobalObject,
+        received: JSValue,
+        expected: JSValue,
+        not: bool,
+    ) -> JsResult<DiffFormatter<'static>> {
+        if !not {
+            let diff = received.jest_format_with_passed_matchers(expected, global_this, || {
+                Self::new(global_this, received, expected, false)
+            })?;
+            // With those matchers in place the two texts can be the same, and a failed assertion has to show a difference.
+            if let Some(diff) = diff.filter(|diff| diff.received_string != diff.expected_string) {
+                return Ok(diff);
+            }
+        }
+        Self::new(global_this, received, expected, not)
+    }
+
     pub(crate) fn from_strings(received: &'a [u8], expected: &'a [u8], not: bool) -> Self {
         DiffFormatter {
             received_string: Cow::Borrowed(received),

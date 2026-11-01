@@ -616,6 +616,19 @@ impl Expect {
         }
     }
 
+    /// Called by C++ to learn whether matching with `instance_value` waits for a promise first (`expect.resolvesTo`, `expect.rejectsTo`).
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect_asymmetricMatcherSettlesPromise(
+        instance_value: JSValue,
+        global_this: &JSGlobalObject,
+    ) -> bool {
+        let mut flags: FlagsCppType = 0;
+        // `undefined` is no promise, so this reads the flags and waits for nothing.
+        let mut no_promise = JSValue::UNDEFINED;
+        Self::Expect_readFlagsAndProcessPromise(instance_value, global_this, &mut flags, &mut no_promise, &mut 0);
+        Flags(flags).promise() != Promise::None
+    }
+
     pub(crate) fn get_snapshot_name(&self, hint: &[u8]) -> crate::Result<Vec<u8>> {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
@@ -2806,7 +2819,8 @@ unsafe extern "C" {
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:
-//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, Expect_asymmetricMatcherSettlesPromise,
+//   ExpectCustomAsymmetricMatcher__execute
 
 #[cfg(test)]
 mod tests {

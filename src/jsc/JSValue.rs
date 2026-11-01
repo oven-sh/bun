@@ -2735,32 +2735,60 @@ impl JSValue {
         format_if: Option<bool>,
         format: F,
     ) -> JsResult<Option<R>> {
-        struct Context<R, F> {
-            format: Option<F>,
-            result: Option<JsResult<R>>,
-        }
-        extern "C" fn call<R, F: FnOnce(bool) -> JsResult<R>>(ctx: *mut c_void, matched: bool) {
-            // SAFETY: `ctx` is the `Context<R, F>` below, which outlives the call and is not otherwise borrowed during it.
-            let ctx = unsafe { &mut *ctx.cast::<Context<R, F>>() };
-            if let Some(format) = ctx.format.take() {
-                ctx.result = Some(format(matched));
-            }
-        }
-        let mut ctx = Context {
-            format: Some(format),
-            result: None,
-        };
-        host_fn::from_js_host_call_generic(global, || {
+        Self::call_with_format(global, format, |ctx, call| {
             JSC__JSValue__jestDeepMatch(
                 self,
                 subset,
                 global,
                 format_if != Some(false),
                 format_if != Some(true),
-                (&raw mut ctx).cast(),
-                call::<R, F>,
-            )
-        })?;
+                ctx,
+                call,
+            );
+        })
+    }
+
+    /// `JSValue.jestFormatWithPassedMatchers` — for the failure diff of `expect(self).toEqual(expected)`,
+    /// `toStrictEqual` and `toHaveProperty`.
+    /// Runs `format` with each asymmetric matcher that passed put over the value it passed on, in both values, then puts the values back.
+    /// `None`, and `format` does not run, if no matcher passed.
+    pub fn jest_format_with_passed_matchers<R>(
+        self,
+        expected: JSValue,
+        global: &JSGlobalObject,
+        format: impl FnOnce() -> JsResult<R>,
+    ) -> JsResult<Option<R>> {
+        Self::call_with_format(
+            global,
+            |_| format(),
+            |ctx, call| {
+                JSC__JSValue__jestFormatWithPassedMatchers(self, expected, global, ctx, call)
+            },
+        )
+    }
+
+    /// Runs `entry` with the `ctx` and the callback that call `format`, at most once. Returns what `format` returned.
+    fn call_with_format<R, F: FnOnce(bool) -> JsResult<R>>(
+        global: &JSGlobalObject,
+        format: F,
+        entry: impl FnOnce(*mut c_void, extern "C" fn(*mut c_void, bool)),
+    ) -> JsResult<Option<R>> {
+        struct Context<R, F> {
+            format: Option<F>,
+            result: Option<JsResult<R>>,
+        }
+        extern "C" fn call<R, F: FnOnce(bool) -> JsResult<R>>(ctx: *mut c_void, arg: bool) {
+            // SAFETY: `ctx` is the `Context<R, F>` below, which outlives the call and is not otherwise borrowed during it.
+            let ctx = unsafe { &mut *ctx.cast::<Context<R, F>>() };
+            if let Some(format) = ctx.format.take() {
+                ctx.result = Some(format(arg));
+            }
+        }
+        let mut ctx = Context {
+            format: Some(format),
+            result: None,
+        };
+        host_fn::from_js_host_call_generic(global, || entry((&raw mut ctx).cast(), call::<R, F>))?;
         ctx.result.transpose()
     }
 
@@ -2877,6 +2905,13 @@ unsafe extern "C" {
         ctx: *mut c_void,
         format: extern "C" fn(ctx: *mut c_void, matched: bool),
     ) -> bool;
+    safe fn JSC__JSValue__jestFormatWithPassedMatchers(
+        received: JSValue,
+        expected: JSValue,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        format: extern "C" fn(ctx: *mut c_void, unused: bool),
+    );
     safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__values(global: &JSGlobalObject, value: JSValue) -> JSValue;

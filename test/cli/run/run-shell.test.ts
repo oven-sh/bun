@@ -21,6 +21,21 @@ describe.concurrent("run-shell", () => {
     expect(stdout).toEqual("wah\n");
   });
 
+  test("a backtick substitution after text stays in its word", async () => {
+    using dir = tempDir("run-shell-backtick", {
+      "script.sh": 'FOO=`echo hi`\necho "[$FOO]"\necho pre`echo m`post\n',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "script.sh"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[hi]\nprempost\n", stderr: "", exitCode: 0 });
+  });
+
   test("invalid syntax reports the error correctly", async () => {
     const dir = tmpdirSync("bun-shell-test-error");
     mkdirSync(dir, { recursive: true });

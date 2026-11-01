@@ -597,7 +597,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
   }
 
   async next(): Promise<void> {
-    await this.send("Debugger.stepNext");
+    await this.send("Debugger.stepOver");
     this.#stopped = "step";
   }
 

@@ -88,18 +88,13 @@ impl Expansion {
     pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Atom,
+        node: &ast::Atom,
         parent: NodeId,
         assign_ctx: bool,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
             base: Base::new(parent, shell),
-            // SAFETY: `node` is non-null and points into the AST arena
-            // (`ShellArgs::__arena`), which the interpreter holds for its
-            // entire lifetime — strictly outliving every state node (the
-            // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
+            node: bun_ptr::BackRef::new(node),
             state: ExpansionState::Idle,
             word_idx: 0,
             out: ExpansionOut::default(),
@@ -123,15 +118,8 @@ impl Expansion {
     /// `child_done` advances `word_idx`.
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
-            // Split-borrow: `me` from `nodes`, `vm_args_utf8` from its own
-            // field, so `expand_simple_no_io` can expand `$N` without aliasing.
-            // R-2: both are `JsCell`-backed; `as_ptr()`/`node_mut()` project
-            // disjoint `&mut` from `&Interpreter`.
             let event_loop = interp.event_loop;
             let command_ctx = interp.command_ctx;
-            // SAFETY: single-JS-thread; `vm_args_utf8` and `nodes` are
-            // disjoint `JsCell` fields (no aliasing between the two borrows).
-            let vm_args_utf8 = unsafe { &mut *interp.vm_args_utf8.as_ptr() };
             let me = interp.as_expansion_mut(this);
             match me.state {
                 ExpansionState::Idle => {
@@ -169,24 +157,25 @@ impl Expansion {
                 me.word_idx = 1;
             }
 
-            let shell_ptr: *mut ShellExecEnv = me.base.shell;
             while me.word_idx < atoms_len {
                 let simple: &ast::SimpleAtom = match atom {
                     ast::Atom::Simple(s) => s,
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
                 let shell = me.base.shell();
-                let is_cmd_subst = Self::expand_simple_no_io(
-                    shell,
-                    simple,
-                    &mut me.current_out,
-                    &mut me.meta_offsets,
-                    &mut me.has_quoted_empty,
-                    true,
-                    event_loop,
-                    command_ctx,
-                    vm_args_utf8,
-                );
+                let is_cmd_subst = interp.vm_args_utf8.with_mut(|vm_args_utf8| {
+                    Self::expand_simple_no_io(
+                        shell,
+                        simple,
+                        &mut me.current_out,
+                        &mut me.meta_offsets,
+                        &mut me.has_quoted_empty,
+                        true,
+                        event_loop,
+                        command_ctx,
+                        vm_args_utf8,
+                    )
+                });
                 if !is_cmd_subst {
                     me.word_idx += 1;
                     continue;
@@ -197,7 +186,6 @@ impl Expansion {
                     unreachable!()
                 };
                 let quoted = sub.quoted;
-                let script_ast: *const ast::Script = &raw const sub.script;
                 me.state = ExpansionState::CmdSubst;
                 me.cmd_subst_quoted = quoted;
 
@@ -206,9 +194,9 @@ impl Expansion {
                     stdout: OutKind::Pipe,
                     stderr: interp.root_io().stderr.clone(),
                 };
-                // SAFETY: `shell_ptr` is a live env owned by the parent state
-                // node and outlives this expansion.
-                let duped = match unsafe { &mut *shell_ptr }
+                let duped = match me
+                    .base
+                    .shell_mut()
                     .dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst)
                 {
                     Ok(d) => d,
@@ -218,7 +206,7 @@ impl Expansion {
                         return Yield::Failed(this);
                     }
                 };
-                let script = Script::init(interp, duped, script_ast, this, io);
+                let script = Script::init(interp, duped, &sub.script, this, io);
                 interp.as_expansion_mut(this).child_script = Some(script);
                 return Script::start(interp, script);
             }
@@ -327,14 +315,16 @@ impl Expansion {
                 &mut expanded[..],
                 lexer_output.contains_nested,
             ) {
-                if matches!(e, braces::ParserError::TooManyBraces) {
-                    let msg = "too many braces in brace expansion".to_string();
-                    me.state =
-                        ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-                    return;
-                }
-                // An unexpected token from brace expansion is a parser bug.
-                panic!("unexpected error from Braces.expand: {e:?}");
+                let msg = match e {
+                    braces::ParserError::TooManyBraces => "too many braces in brace expansion",
+                    // The word has more than `u16::MAX` brace tokens.
+                    braces::ParserError::UnexpectedToken => {
+                        "unexpected token while expanding braces"
+                    }
+                    braces::ParserError::OutOfMemory => bun_core::out_of_memory(),
+                };
+                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().into())));
+                return;
             }
             drop(arena);
             expanded
@@ -621,7 +611,7 @@ impl Expansion {
         }
         // SAFETY: single trampoline frame; the child script's env (and its
         // parent buffer in the `Borrowed` case) has no other live borrow.
-        let stdout = unsafe {
+        let mut stdout = unsafe {
             interp
                 .as_script_mut(child)
                 .base
@@ -629,6 +619,11 @@ impl Expansion {
                 .buffered_stdout_mut()
         }
         .clone();
+        // Like bash and dash, drop NUL bytes before trimming and field splitting.
+        let had_nul = bun_core::strings::contains_char(&stdout, 0);
+        if had_nul {
+            stdout.retain(|&b| b != 0);
+        }
 
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command).
@@ -652,6 +647,10 @@ impl Expansion {
                     hi -= 1;
                 }
                 me.current_out.extend_from_slice(&stdout[..hi]);
+                // A quoted substitution that printed only NUL bytes expands to one empty word.
+                if had_nul && me.cmd_subst_quoted {
+                    me.has_quoted_empty = true;
+                }
             } else {
                 Self::post_subshell_expansion(me, stdout);
             }

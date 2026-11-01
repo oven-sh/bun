@@ -14,6 +14,23 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  /**
+   * A whole number from -2147483648 to 2147483647.
+   *
+   * To TypeScript, and under `bun run`, this is a `number`. With `--aot`, a variable, field, parameter
+   * or return value of this type takes four bytes, and arithmetic on it skips the checks for fractions.
+   * The build must prove that every value stored in an `int32` is one, and reports an error where it
+   * can't. `| 0` turns any number into an int32.
+   *
+   * ```ts
+   * import type { int32 } from "bun";
+   * class Cursor { line: int32 = 0; column: int32 = 0; }
+   * function advance(cursor: Cursor, by: int32) {
+   *   cursor.column = (cursor.column + by) | 0; // without `| 0` the sum could overflow: error TS100031
+   * }
+   * ```
+   */
+  type int32 = number & { readonly "bun.int32"?: true };
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
@@ -3176,6 +3193,86 @@ declare module "bun" {
       | `bun-linux-${Architecture}-${SIMD}-${Libc}`
       | `bun-windows-${Architecture}`
       | `bun-windows-x64-${SIMD}`;
+    /**
+     * The name of a feature of Bun that `compile.trim.allow` keeps in an executable and
+     * `compile.trim.remove` takes out of it.
+     *
+     * @see https://bun.com/docs/compiler/size#feature-names
+     */
+    type TrimFeature =
+      | "cli"
+      | "lint"
+      | "fmt"
+      | "check"
+      | "install"
+      | "aot"
+      | "repl"
+      | "create"
+      | "upgrade"
+      | "run"
+      | "spawn"
+      | "process-kill"
+      | "process-report"
+      | "dialogs"
+      | "ipc"
+      | "native-code"
+      | "jit"
+      | "interpreter"
+      | "bundler"
+      | "test"
+      | "inspector"
+      | "profiler"
+      | "source-maps"
+      | "image"
+      | "archive"
+      | "sqlite"
+      | "sql"
+      | "redis"
+      | "s3"
+      | "html-rewriter"
+      | "ffi"
+      | "native-addons"
+      | "webassembly"
+      | "shell"
+      | "webview"
+      | "fetch"
+      | "serve"
+      | "sockets"
+      | "dns"
+      | "http2"
+      | "http3"
+      | "websocket"
+      | "udp"
+      | "worker"
+      | "node-vm"
+      | "node-crypto"
+      | "web-crypto"
+      | "password"
+      | "brotli"
+      | "intl"
+      | "intl-segmenter"
+      | "temporal"
+      | "bun-jsc"
+      | "plugin"
+      | "fs-router"
+      | "terminal"
+      | "cron"
+      | "secrets"
+      | "markdown"
+      | "yaml"
+      | "toml"
+      | "json5"
+      | "jsonc"
+      | "jsonl"
+      | "xml"
+      | "glob"
+      | "semver"
+      | "color"
+      | "cookie"
+      | "csrf"
+      | "hash"
+      | "crypto-hasher"
+      | "url-pattern";
   }
 
   /**
@@ -3535,6 +3632,34 @@ declare module "bun" {
     check?: boolean;
 
     /**
+     * Write a TypeScript declaration file (`.d.ts`) for each source file, and each
+     * JavaScript output file once more with its types kept (`index.js` and `index.aot.ts`).
+     * The entrypoints and everything they import are type checked first, as with `check`.
+     * Equivalent to `--dts` in the CLI.
+     *
+     * `bun compile` compiles a package from its `.aot.ts` files where the `"aot"`
+     * condition in the `"exports"` of its `package.json` names them. Every other tool reads
+     * `index.js` and `index.d.ts`. `"compilerOptions"` in the `package.json` says how strict they
+     * are. Without it they are checked as `strict`.
+     *
+     * The files are in `outputs` with `kind: "asset"`. They are written to `outdir` if there is one.
+     * Can't be used with `compile`.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   dts: true,
+     * });
+     * // dist/index.js, dist/index.d.ts, dist/index.aot.ts
+     * ```
+     */
+    dts?: boolean;
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -3734,10 +3859,88 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
+  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "missed-optimizations" | "allocations";
+
+  type AotHeat = "everything-is-hot" | "everything-is-cold" | "only-loops-are-hot" | "nothing-is-hottest" | "shuffled";
+
+  interface TrimOptions {
+    /**
+     * Features to keep even if your code never uses them, along with the features they need.
+     *
+     * Use it when something the compiler can't see uses an API: a string passed to `eval()`, a
+     * native addon, or a module loaded at run time.
+     */
+    allow?: Bun.Build.TrimFeature[];
+    /**
+     * Features to remove even if your code uses them.
+     *
+     * Every import, global and property is still there, so `typeof` and `in` answer as before. A
+     * call throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`. Use it to make sure that an
+     * executable can't do something, such as load native code: `remove: ["native-code"]`.
+     *
+     * A name can't be in both `allow` and `remove`.
+     */
+    remove?: Bun.Build.TrimFeature[];
+    /**
+     * The only locales to keep, such as `"en"` or `"de-AT"`.
+     *
+     * Without it, Bun keeps the locales your code passes to `Intl` as constants, and every locale
+     * if one of them isn't a constant. If the program asks for a locale that was removed, the
+     * process exits with code 70. It has no effect on macOS, where Bun uses the system's ICU.
+     *
+     * Equivalent CLI flag: `--trim-locales`, which implies `--trim`
+     */
+    locales?: string[];
+    /**
+     * Add notes to `BuildOutput.logs` that list what was removed and how much smaller the executable is.
+     *
+     * @default false
+     */
+    log?: boolean;
+  }
+
   interface CompileBuildOptions {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
+    /**
+     * In the executable, `eval()` and the `Function` constructors throw an
+     * `EvalError`, as with Node.js's `--disallow-code-generation-from-strings`.
+     * `"strict"` also blocks every other way to run code from a string.
+     *
+     * Equivalent CLI flag: `--disallow-code-generation-from-strings`
+     */
+    disallowCodeGenerationFromStrings?: boolean | "strict";
     executablePath?: string;
+    /**
+     * Remove the Bun and Node.js APIs your code never calls from the executable.
+     *
+     * With `aot`, the compiler knows which APIs the program uses, and Bun removes every other
+     * feature. Without `aot`, Bun only removes the command-line tools. An object does what `true`
+     * does, with the options in {@link TrimOptions}.
+     *
+     * Removing a feature removes its code, not its names: every global, constructor, prototype,
+     * property and constant is still there. A call, a `new`, a getter or a setter of a removed
+     * feature throws an `Error` whose message has the API's name and whose `code` is
+     * `"ERR_FEATURE_REMOVED"`. Importing a removed built-in module, such as `bun:sqlite`, throws an
+     * `Error` whose `code` is `"ERR_MODULE_NOT_FOUND"`. If code reaches a removed feature any other
+     * way, the process prints the feature and exits with code 70.
+     *
+     * The build fails if `allow` has an unknown name, or `locales` has a locale that Bun has no
+     * data for.
+     *
+     * Equivalent CLI flag: `--trim`
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ["./server.ts"],
+     *   compile: { outfile: "./server", aot: true, trim: { allow: ["sqlite"], locales: ["en"] } },
+     * });
+     * ```
+     *
+     * @default false
+     */
+    trim?: boolean | TrimOptions;
     outfile?: string;
     /**
      * Files or directories to embed into the executable under their original
@@ -3747,6 +3950,32 @@ declare module "bun" {
      * Equivalent CLI flag: `--asset` (repeatable)
      */
     assets?: string[];
+    /**
+     * With `aot`: embed each function's source code in the executable.
+     *
+     * With `false`, `fn.toString()` returns `function name() { [native code] }` and the executable
+     * is smaller. `--preload` in `BUN_OPTIONS` is an error at startup, with `inspector` too.
+     * `obfuscate` implies `false`.
+     *
+     * Equivalent CLI flag: `--no-compile-function-source`
+     *
+     * @default true
+     */
+    functionSource?: boolean;
+    /**
+     * With `aot`: let a dynamic `import()` or `require()` load code that isn't in the executable
+     * from disk when the program runs, such as a plugin or a config file. Bun interprets that code.
+     *
+     * Without it, the executable only runs code that was compiled into it, and such a load throws.
+     * The option keeps Bun's transpiler and the source code of Bun's built-in modules in the
+     * executable, and the compiler can prove less about the program, so the executable is larger
+     * and can run slower.
+     *
+     * Equivalent CLI flag: `--aot-allow-code-from-disk`
+     *
+     * @default false
+     */
+    allowCodeFromDisk?: boolean;
     /**
      * Whether the standalone executable loads .env files when it runs
      *
@@ -3760,7 +3989,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
      *
-     * @default true
+     * @default true, or false with `trim`
      */
     autoloadBunfig?: boolean;
     /**
@@ -3780,6 +4009,106 @@ declare module "bun" {
      */
     autoloadPackageJson?: boolean;
     /**
+     * Compile the program's JavaScript and TypeScript to machine code at build time.
+     * `bytecode` has no effect with it.
+     *
+     * The executable has no JIT. Code that only exists at run time, such as a string passed to
+     * `eval()` or `new Function()`, runs in the interpreter.
+     *
+     * Built-in objects such as `Object.prototype`, `Array.prototype` and `Promise` are read-only in
+     * the executable. Assigning to one throws a `TypeError` in strict mode and does nothing in
+     * sloppy mode. Breakpoints aren't available.
+     *
+     * Requires `format: "esm"` (the default with `aot`) and a `target` that matches the platform
+     * and Bun version running the build.
+     *
+     * Equivalent CLI flag: `--aot`
+     *
+     * @default false
+     */
+    aot?: boolean;
+    /**
+     * With `aot`: strip function names and file names from the executable and write a source map
+     * next to it. `sourcemap: "external"` does the same.
+     *
+     * Equivalent CLI flag: `--obfuscate`
+     *
+     * @default false
+     */
+    obfuscate?: boolean;
+    /**
+     * With `aot`: let a debugger attach to the executable through `BUN_INSPECT`, or `--inspect`,
+     * `--inspect-wait` and `--inspect-brk` in `BUN_OPTIONS`.
+     *
+     * A debugger can run any code in any scope, so the compiler can prove less about the program.
+     * The executable is larger and slower.
+     *
+     * Equivalent CLI flag: `--compile-inspector`
+     *
+     * @default false
+     */
+    inspector?: boolean;
+    /**
+     * With `aot`: log every value that doesn't match its declared type.
+     *
+     * A mismatch never changes what the program does: the function falls back to its slow path and
+     * behaves as it does under `bun run`. Each log line has the location, the expected type and the
+     * kind of value it got, never the value itself. Lines go to stderr, or to the file in the
+     * `BUN_AOT_TYPE_MISMATCH_LOG` environment variable.
+     *
+     * Equivalent CLI flag: `--aot-log-type-mismatches`
+     *
+     * @default false
+     */
+    aotLogTypeMismatches?: boolean;
+    /**
+     * With `aot`: reports to add to `BuildOutput.logs`, at level `"verbose"`.
+     *
+     * - `"text"`: the code that compiled to a slow path, one entry per cause with a fix, worst first
+     * - `"json"`: the same, one JSON object per line
+     * - `"guards"`: every type guard that can fail at run time, why the compiler couldn't remove it,
+     *   and how to fix it
+     * - `"guards-json"`: the same, one JSON object per line
+     * - `"trim"`: which Bun and Node.js APIs the program uses, and why `trim` kept or removed each feature
+     * - `"missed-optimizations"`: calls that weren't inlined, loops that weren't optimized, and why
+     * - `"allocations"`: where each object is allocated (stack, heap or removed), and why
+     *
+     * Equivalent CLI flag: `--explain`
+     */
+    aotExplain?: AotReport | AotReport[];
+    /**
+     * With `aot`: build without some steps of the compiler. The program behaves the same. The
+     * executable can be larger and slower.
+     *
+     * When the compiler can't finish a build, the error names the step to list here, such as
+     * `"pass:PlaceTypeTests"`. Apart from that, the option is for working on the compiler.
+     *
+     * - `"pass:<name>"`: one optimization pass
+     * - `"flow:<name>"`: one kind of result of the whole-program analysis
+     * - `"flow-results"`: the whole-program analysis and all its results
+     *
+     * Takes a list of names, or one string with commas between the names. `Bun.build` throws if
+     * the compiler doesn't know a name.
+     *
+     * Equivalent CLI flag: `--aot-disable`
+     */
+    aotDisable?: string | string[];
+    /**
+     * With `aot`: replace the compiler's estimate of how often each part of the program runs. The
+     * program behaves the same. The option is for working on the compiler.
+     *
+     * The compiler makes code that it expects to run often fast, and the rest small.
+     *
+     * - `"everything-is-hot"`: all code runs often
+     * - `"everything-is-cold"`: all code runs rarely
+     * - `"only-loops-are-hot"`: every function is entered equally often, so only loops run often
+     * - `"nothing-is-hottest"`: the estimate, without its list of the hottest functions
+     * - `"shuffled"`: each function gets an estimate at random, the same one in every build
+     *
+     * Equivalent CLI flag: `--aot-heat`
+     */
+    aotHeat?: AotHeat;
+    /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *
      * Run an executable built with `bytecode: true` with `BUN_BYTECODE_ORDER_OUT=<path>`
@@ -3792,7 +4121,7 @@ declare module "bun" {
      *
      * Equivalent CLI flag: `--bytecode-order <file>[,<file>...]`
      *
-     * @see https://bun.com/docs/bundler/executables#profile-guided-bytecode-layout
+     * @see https://bun.com/docs/compiler/executables#profile-guided-bytecode-layout
      */
     bytecodeOrder?: string | string[] | false | null;
     /**
@@ -6343,6 +6672,7 @@ declare module "bun" {
     | "tsx"
     | "json"
     | "jsonc"
+    | "json5"
     | "toml"
     | "yaml"
     | "xml"
@@ -6350,6 +6680,7 @@ declare module "bun" {
     | "napi"
     | "wasm"
     | "text"
+    | "md"
     | "css"
     | "html";
 
@@ -6445,7 +6776,12 @@ declare module "bun" {
     defer: () => Promise<void>;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
+  /**
+   * Return `undefined` or `null` to skip the module. The next matching `onLoad`
+   * callback runs instead. If every callback skips it, the module is loaded as
+   * if no plugin had matched it.
+   */
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | null | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
   type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
@@ -6457,7 +6793,8 @@ declare module "bun" {
 
   interface OnResolveArgs {
     /**
-     * The import specifier of the module being loaded
+     * The import specifier of the module being loaded, exactly as written:
+     * `"react"`, `"@/utils"`, `"./file"`, `"./file.ts"`
      */
     path: string;
     /**
@@ -9433,12 +9770,18 @@ declare module "bun" {
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
-     *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a
+     *   path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
-     *   Blocks with no data come back flat grey.
+     *   Blocks with no data come back flat grey. A PNG with a wrong CRC or
+     *   Adler-32 does not reject either: Bun verifies neither. A PNG that ends
+     *   before its last row, or inside the data of the `IDAT` chunk that holds
+     *   it, rejects.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
+     *   that its decode or encode needs.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
@@ -9450,6 +9793,7 @@ declare module "bun" {
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_OUT_OF_MEMORY"
       | "ERR_INVALID_STATE";
 
     /**
@@ -9476,6 +9820,10 @@ declare module "bun" {
        * Reject inputs whose `width × height` exceeds this many pixels. The
        * check runs after the header is read but before any pixel buffer is
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
+       * A decoded image takes 4 bytes per pixel, which is 1 GiB at the default.
+       * A PNG of 32 KiB can decode to that size. Decoding a PNG that is one very
+       * wide row needs up to 20 bytes of memory per pixel, 5 GiB at the default.
+       * For untrusted input, set this to the largest image you accept.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */
       maxPixels?: number;
@@ -9514,9 +9862,9 @@ declare module "bun" {
   }
 
   /**
-   * Decode, transform and re-encode images. Ships JPEG, PNG and WebP via
-   * statically-linked libjpeg-turbo / libspng / libwebp; resize and rotate
-   * are SIMD kernels — no native module install, no `sharp`.
+   * Decode, transform and re-encode images. Ships JPEG and WebP via
+   * statically-linked libjpeg-turbo / libwebp, and its own PNG codec; resize
+   * and rotate are SIMD kernels — no native module install, no `sharp`.
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
@@ -9528,7 +9876,8 @@ declare module "bun" {
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
    * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
-   * images don't shift colour.
+   * images don't shift colour. Bun leaves out the profile of a PNG if it is
+   * damaged or inflates to more than a JPEG has room for (16,707,345 bytes).
    *
    * @example
    * ```ts
@@ -10421,6 +10770,10 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files are overwritten.
      *
+     * On Linux and macOS, nothing is written through a symlink in the target directory that is absolute or leads out of it.
+     * The promise rejects when a file entry needs such a symlink, unless `options.glob` is set, which skips the entry.
+     * The `code` of the error is `"EXDEV"`, and its `path` is the path of the entry relative to the target directory.
+     *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
      * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)
@@ -10512,6 +10865,8 @@ declare module "bun" {
      *
      * Only regular files are included; directories are not returned.
      * File contents are loaded into memory, so for large archives consider using `extract()` instead.
+     * The promise rejects once the holes read from the archive's sparse files add up to more than 1,024 times
+     * the size of the archive. Up to 64 MiB are always read, and never more than 1 GiB.
      *
      * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
      *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized

@@ -1,8 +1,8 @@
-//! The options of a rule: what follows the severity in `"rule": ["error", ..]`.
+//! A rule's options: the array elements after the severity in `"rule": ["error", ..]`.
 
 pub use bun_sema::json::Json;
 
-/// The options of a rule, as the array that ESLint's `context.options` is.
+/// A rule's options, as an array like ESLint's `context.options`.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Options<'o> {
     values: &'o [Json],
@@ -29,30 +29,31 @@ impl<'o> Options<'o> {
         self.values.get(i)
     }
 
-    /// The option at `i`, if it is a string.
-    #[inline]
+    /// The option at `i`, if it's a string.
+    #[inline(never)]
     pub fn str(&self, i: usize) -> Option<&'o str> {
         as_str(self.get(i)?)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn bool(&self, i: usize) -> Option<bool> {
         self.get(i)?.as_bool()
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn number(&self, i: usize) -> Option<f64> {
         as_number(self.get(i)?)
     }
 
-    /// The option at `i` as an object. Empty if it is missing or something else, so that every
-    /// lookup yields the default.
-    #[inline]
+    /// The option at `i` as an object. Empty if it's missing or not an object, so that every lookup returns the
+    /// default.
+    #[inline(never)]
     pub fn object(&self, i: usize) -> Object<'o> {
         Object::of(self.get(i))
     }
 
-    /// The first option that is an object.
+    /// The first option that's an object.
+    #[inline(never)]
     pub fn first_object(&self) -> Object<'o> {
         Object::of(self.values.iter().find(|it| it.as_object().is_some()))
     }
@@ -69,7 +70,7 @@ fn as_number(value: &Json) -> Option<f64> {
     }
 }
 
-/// An object among the options.
+/// An object in a rule's options.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Object<'o> {
     entries: &'o [(Vec<u8>, Json)],
@@ -88,59 +89,61 @@ impl<'o> Object<'o> {
         self.entries
     }
 
+    #[inline(never)]
     pub fn get(&self, key: &str) -> Option<&'o Json> {
         let mut entries = self.entries.iter();
         entries.find(|it| it.0 == key.as_bytes()).map(|it| &it.1)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn has(&self, key: &str) -> bool {
         self.get(key).is_some()
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn bool(&self, key: &str) -> Option<bool> {
         self.get(key)?.as_bool()
     }
 
-    /// `default` if the key is missing.
-    #[inline]
+    /// Returns `default` if the key is missing.
+    #[inline(never)]
     pub fn bool_or(&self, key: &str, default: bool) -> bool {
         self.bool(key).unwrap_or(default)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn str(&self, key: &str) -> Option<&'o str> {
         as_str(self.get(key)?)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn number(&self, key: &str) -> Option<f64> {
         as_number(self.get(key)?)
     }
 
+    #[inline(never)]
     pub fn usize(&self, key: &str) -> Option<usize> {
         self.number(key).filter(|n| *n >= 0.0).map(|n| n as usize)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn array(&self, key: &str) -> &'o [Json] {
         self.get(key).and_then(Json::as_array).unwrap_or_default()
     }
 
     /// The strings in the array at `key`.
+    #[inline(never)]
     pub fn strings(&self, key: &str) -> Vec<&'o str> {
         self.array(key).iter().filter_map(as_str).collect()
     }
 
-    /// Empty if it is missing.
-    #[inline]
+    /// Empty if the key is missing.
+    #[inline(never)]
     pub fn object(&self, key: &str) -> Object<'o> {
         Object::of(self.get(key))
     }
 
-    /// The regular expression `new RegExp(value, flags)` for the string at `key`. `None` if it is
-    /// missing or invalid.
+    /// `new RegExp(value, flags)` for the string at `key`. `None` if it's missing or invalid.
     pub fn regex(&self, key: &str, flags: &str) -> Option<crate::regex::Regex> {
         crate::regex::Regex::new(self.str(key)?, flags).ok()
     }

@@ -127,7 +127,6 @@ enum {
 /* SNI tree leaf — stored as the void* user in sni_tree.cpp. */
 struct sni_node_t {
   SSL_CTX *ctx;
-  void *user;
 };
 
 static _Atomic long ssl_ctx_live = 0;
@@ -140,7 +139,6 @@ long us_ssl_ctx_live_count(void) {
  *   - us_ctx_ex_idx (SSL_CTX): packed reneg {limit:u32,window:u32}; its
  *     free_func also decrements ssl_ctx_live so the counter tracks ACTUAL
  *     destruction (refcount→0), not every SSL_CTX_free.
- *   - us_sni_ex_idx (SSL_CTX): per-domain userdata (uWS HttpRouter*).
  *   - us_ssl_rare_ex_idx (SSL): us_ssl_rare_t.
  *   - us_ssl_wrapper_ex_idx (SSL): the owner of an SSL that no us_socket_t drives.
  *
@@ -151,7 +149,6 @@ long us_ssl_ctx_live_count(void) {
  * internal-only, so use the platform primitive directly; root_certs.cpp does
  * the same via std::call_once.) */
 static int us_ctx_ex_idx = -1;
-static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
 /* Marks an SSL_CTX whose verification store holds user-provided CAs (the
  * ca/caFile options or a later addCACert): the per-socket client attach must
@@ -373,7 +370,6 @@ extern void bun_ssl_ctx_cache_on_free(void *parent, void *ptr, CRYPTO_EX_DATA *a
 
 static void us_ex_idx_init(void) {
   us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
-  us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
@@ -1173,6 +1169,118 @@ enum {
   US_IDENTITY_UNCHECKED = 2,
 };
 
+/* The syntax check of OpenSSL's cn2dnsid: whether a common name reads as a host name of two or more labels.
+ * https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/x509/v3_ncons.c#L341 */
+static int us_looks_like_dns_name(const unsigned char *in, int len) {
+  int is_dns_name = 0;
+  for (int i = 0; i < len; i++) {
+    unsigned char c = in[i];
+    if (OPENSSL_isalnum(c) || c == '_') continue;
+    if (i == 0 || i == len - 1) return 0;
+    if (c == '-') continue;
+    if (c != '.' || in[i + 1] == '.' || in[i - 1] == '-' || in[i + 1] == '-') return 0;
+    is_dns_name = 1;
+  }
+  return is_dns_name;
+}
+
+/* OpenSSL's nc_dns. */
+static int us_dns_name_is_within(const unsigned char *name, int len, const ASN1_IA5STRING *base) {
+  if (base->length == 0) return 1;
+  if (len < base->length) return 0;
+  name += len - base->length;
+  if (len > base->length && base->data[0] != '.' && name[-1] != '.') return 0;
+  return OPENSSL_strncasecmp((const char *)name, (const char *)base->data, base->length) == 0;
+}
+
+/* OpenSSL's nc_match for a DNS name. BoringSSL's strips a trailing dot and refuses an explicit minimum of 0. */
+static int us_name_constraints_check_dns_name(const NAME_CONSTRAINTS *nc, const unsigned char *name, int len) {
+  enum { UNCONSTRAINED, NOT_PERMITTED, PERMITTED } match = UNCONSTRAINED;
+  for (size_t i = 0; i < sk_GENERAL_SUBTREE_num(nc->permittedSubtrees); i++) {
+    const GENERAL_SUBTREE *sub = sk_GENERAL_SUBTREE_value(nc->permittedSubtrees, i);
+    if (sub->base->type != GEN_DNS) continue;
+    if (sub->maximum || ASN1_INTEGER_get(sub->minimum) != 0) return X509_V_ERR_SUBTREE_MINMAX;
+    if (match != PERMITTED) match = us_dns_name_is_within(name, len, sub->base->d.dNSName) ? PERMITTED : NOT_PERMITTED;
+  }
+  if (match == NOT_PERMITTED) return X509_V_ERR_PERMITTED_VIOLATION;
+  for (size_t i = 0; i < sk_GENERAL_SUBTREE_num(nc->excludedSubtrees); i++) {
+    const GENERAL_SUBTREE *sub = sk_GENERAL_SUBTREE_value(nc->excludedSubtrees, i);
+    if (sub->base->type != GEN_DNS) continue;
+    if (sub->maximum || ASN1_INTEGER_get(sub->minimum) != 0) return X509_V_ERR_SUBTREE_MINMAX;
+    if (us_dns_name_is_within(name, len, sub->base->d.dNSName)) return X509_V_ERR_EXCLUDED_VIOLATION;
+  }
+  return X509_V_OK;
+}
+
+/* OpenSSL's NAME_CONSTRAINTS_check_CN. BoringSSL looks at common names only when there is no subjectAltName at all. */
+static int us_name_constraints_check_cn(X509 *leaf, const NAME_CONSTRAINTS *nc) {
+  const X509_NAME *subject = X509_get_subject_name(leaf);
+  int error = X509_V_OK;
+  for (int i = -1; error == X509_V_OK && (i = X509_NAME_get_index_by_NID(subject, NID_commonName, i)) >= 0;) {
+    unsigned char *common_name = NULL;
+    int len = ASN1_STRING_to_UTF8(&common_name, X509_NAME_ENTRY_get_data(X509_NAME_get_entry(subject, i)));
+    /* OpenSSL's check_name_constraints gives up here, which its X509_verify_cert reports as unspecified. */
+    if (len < 0) return X509_V_ERR_UNSPECIFIED;
+    while (len > 0 && common_name[len - 1] == '\0') len--;
+    if (len > 0 && memchr(common_name, 0, len)) {
+      error = X509_V_ERR_UNSUPPORTED_NAME_SYNTAX;
+    } else if (us_looks_like_dns_name(common_name, len)) {
+      error = us_name_constraints_check_dns_name(nc, common_name, len);
+    }
+    OPENSSL_free(common_name);
+  }
+  return error;
+}
+
+/* OpenSSL's has_san_id(cert, GEN_DNS). */
+static int us_x509_has_dns_name(X509 *cert) {
+  GENERAL_NAMES *names = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
+  int has_dns_name = 0;
+  for (size_t i = 0; i < sk_GENERAL_NAME_num(names) && !has_dns_name; i++) {
+    has_dns_name = sk_GENERAL_NAME_value(names, i)->type == GEN_DNS;
+  }
+  GENERAL_NAMES_free(names);
+  return has_dns_name;
+}
+
+/* When the leaf's subjectAltName lists no DNS name, its common names are checked against the chain's constraints on DNS
+ * names, as in OpenSSL's check_name_constraints. The nearest failing CA decides the error, as with node's callback. */
+static int us_x509_store_ctx_common_name_error(X509_STORE_CTX *ctx) {
+  STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(ctx);
+  X509 *leaf = sk_X509_value(chain, 0);
+  int error = X509_V_OK;
+  for (size_t i = 1; i < sk_X509_num(chain) && error == X509_V_OK; i++) {
+    NAME_CONSTRAINTS *nc = X509_get_ext_d2i(sk_X509_value(chain, i), NID_name_constraints, NULL, NULL);
+    if (nc && !us_x509_has_dns_name(leaf)) error = us_name_constraints_check_cn(leaf, nc);
+    NAME_CONSTRAINTS_free(nc);
+  }
+  return error;
+}
+
+/* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and
+ * us_x509_store_ctx_common_name_error, is reported the way it reports its own errors: to the SSL's verify callback,
+ * which says whether to go on. Without one, as in quic.c and node:quic, this returns 0 as it would. */
+static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
+  int ok = X509_verify_cert(ctx);
+  int error = us_x509_store_ctx_blocked_key_error(ctx);
+  if (error == X509_V_OK && ok) error = us_x509_store_ctx_common_name_error(ctx);
+  if (error == X509_V_OK) return ok;
+  X509_STORE_CTX_set_error(ctx, error);
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  int (*verify_callback)(int, X509_STORE_CTX *) = ssl ? SSL_get_verify_callback(ssl) : NULL;
+  return verify_callback ? verify_callback(0, ctx) : 0;
+}
+
+static int us_x509_verify_chain_cb(X509_STORE_CTX *ctx, void *arg) {
+  (void)arg;
+  return us_x509_verify_chain(ctx);
+}
+
+/* For node:quic, which builds its own SSL_CTX. */
+void us_ssl_ctx_reject_blocked_keys(SSL_CTX *ctx) {
+  SSL_CTX_set_cert_verify_callback(ctx, us_x509_verify_chain_cb, NULL);
+}
+
 /* A self-issued leaf that may not sign certificates is its own anchor when the store holds that very certificate (#44365). */
 int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
   X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
@@ -1187,7 +1295,7 @@ int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
     }
     sk_X509_pop_free(same_subject, X509_free);
   }
-  return X509_verify_cert(ctx);
+  return us_x509_verify_chain(ctx);
 }
 
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */
@@ -3394,7 +3502,7 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
 
 void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
                                       const char *hostname_pattern,
-                                      SSL_CTX *ctx, void *user) {
+                                      SSL_CTX *ctx) {
   SSL_CTX *default_ctx = ls->ssl_ctx;
   if (!default_ctx) return;
 
@@ -3406,22 +3514,11 @@ void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     SSL_CTX_set_tlsext_servername_callback(default_ctx, sni_cb);
   }
 
-  struct sni_node_t *node = us_malloc(sizeof(struct sni_node_t));
+  struct sni_node_t *node = us_xmalloc(sizeof(struct sni_node_t));
   node->ctx = ctx;
-  node->user = user;
   SSL_CTX_up_ref(ctx);
-  /* Stash userdata on the SSL_CTX too so per-socket lookup via
-   * SSL_get_SSL_CTX works regardless of which ctx the SNI cb selected. */
-  us_ex_idx_ensure();
-  SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);
 
   sni_node_destructor(sni_add(names->tree, hostname_pattern, node));
-}
-
-void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
-                                                 const char *hostname_pattern) {
-  struct sni_node_t *node = us_server_names_find(ls->server_names, hostname_pattern);
-  return node ? node->user : NULL;
 }
 
 /* Returns the SSL_CTX registered for `hostname_pattern` via
@@ -3479,11 +3576,6 @@ void us_socket_on_server_name(struct us_socket_t *s) {
    * stay a no-op on any SSL carrying neither resolver. */
   SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
   if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
-}
-
-void *us_socket_server_name_userdata(struct us_socket_t *s) {
-  if (!s->ssl || !s_ssl(s) || us_sni_ex_idx < 0) return NULL;
-  return SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s_ssl(s)), us_sni_ex_idx);
 }
 
 const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {

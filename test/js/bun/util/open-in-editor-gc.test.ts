@@ -198,9 +198,8 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
     "run.js": `
       const a = ${JSON.stringify(sleep)};
       const b = process.argv[2];
-      // Alternate absolute editor paths so the cached editor name_storage is
-      // replaced each call while a detached editor thread may still be
-      // reading the previous one.
+      // Alternate absolute editor paths so the cached editor name is replaced
+      // on each call. A thread that borrowed the old one would read freed memory.
       for (let i = 0; i < 8; i++) {
         try { Bun.openInEditor("0.3", { editor: i % 2 ? b : a }); } catch {}
       }
@@ -212,7 +211,7 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
     `,
   });
   // Second absolute path to the same binary so alternating calls take the
-  // `!eql_long(prev_name, ...)` branch in open_in_editor. Keep the basename
+  // name-changed branch in open_in_editor. Keep the basename
   // `sleep` so BusyBox (Alpine) resolves the multi-call applet from argv[0].
   const sleep2 = join(String(dir), "sleep");
   symlinkSync(sleep!, sleep2);
@@ -235,4 +234,45 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
   });
 
   await Promise.all(runs);
+});
+
+test.skipIf(!isLinux)("signal handlers installed before a burst of Bun.openInEditor calls still work", async () => {
+  const sleep = ["/usr/bin/sleep", "/bin/sleep"].find(p => existsSync(p));
+  expect(sleep).toBeDefined();
+
+  using dir = tempDir("open-in-editor-signal-table", {
+    "run.js": `
+      let fired = false;
+      process.on("SIGUSR2", () => { fired = true; });
+
+      let spawned = 0;
+      for (let i = 0; i < 64; i++) {
+        try { Bun.openInEditor("0.1", { editor: ${JSON.stringify(sleep)} }); spawned++; } catch {}
+      }
+      if (spawned === 0) { console.log("no editor threads spawned"); process.exit(2); }
+
+      // The listener's handler is restored once the last editor thread unregisters.
+      const deadline = Date.now() + 3000;
+      while (!fired && Date.now() < deadline) {
+        await Bun.sleep(20);
+        process.kill(process.pid, "SIGUSR2");
+      }
+      console.log(fired ? "ok" : "handler lost");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
 });

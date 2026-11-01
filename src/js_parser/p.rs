@@ -16,6 +16,7 @@ use bun_wyhash::Wyhash;
 
 use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
+use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
 use crate::renamer;
 use crate::{
@@ -49,7 +50,7 @@ pub(crate) trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
     fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log>;
     fn bump(&self) -> &'a Bump;
-    fn source(&self) -> &'a bun_ast::Source;
+    fn source(&self) -> &'a bun_ast::Source<'a>;
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
     fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref;
 }
@@ -69,7 +70,7 @@ impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
         self.arena
     }
     #[inline]
-    fn source(&self) -> &'a bun_ast::Source {
+    fn source(&self) -> &'a bun_ast::Source<'a> {
         self.source
     }
     #[inline]
@@ -86,43 +87,44 @@ impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
 // Rust const generics cannot select a type, so we
 // store both variants behind an enum and gate access in methods.
 pub enum ImportRecordList<'a> {
-    Owned(BumpVec<'a, ImportRecord>),
-    Borrowed(&'a mut Vec<ImportRecord>),
+    Owned(BumpVec<'a, ImportRecord<'a>>),
+    /// The list of a [`crate::ScanPassResult`], which gets it back after the scan.
+    Scan(Vec<ImportRecord<'a>>),
 }
 impl<'a> ImportRecordList<'a> {
     #[inline]
-    pub(crate) fn items(&self) -> &[ImportRecord] {
+    pub(crate) fn items(&self) -> &[ImportRecord<'a>] {
         match self {
             Self::Owned(v) => v.as_slice(),
-            Self::Borrowed(v) => v.as_slice(),
+            Self::Scan(v) => v.as_slice(),
         }
     }
     #[inline]
-    pub(crate) fn items_mut(&mut self) -> &mut [ImportRecord] {
+    pub(crate) fn items_mut(&mut self) -> &mut [ImportRecord<'a>] {
         match self {
             Self::Owned(v) => v.as_mut_slice(),
-            Self::Borrowed(v) => v.as_mut_slice(),
+            Self::Scan(v) => v.as_mut_slice(),
         }
     }
     #[inline]
-    fn push(&mut self, record: ImportRecord) {
+    fn push(&mut self, record: ImportRecord<'a>) {
         match self {
             Self::Owned(v) => v.push(record),
-            Self::Borrowed(v) => v.push(record),
+            Self::Scan(v) => v.push(record),
         }
     }
     #[inline]
     pub(crate) fn len(&self) -> usize {
         match self {
             Self::Owned(v) => v.len(),
-            Self::Borrowed(v) => v.len(),
+            Self::Scan(v) => v.len(),
         }
     }
     #[inline]
     fn truncate(&mut self, len: usize) {
         match self {
             Self::Owned(v) => v.truncate(len),
-            Self::Borrowed(v) => v.truncate(len),
+            Self::Scan(v) => v.truncate(len),
         }
     }
 
@@ -132,34 +134,20 @@ impl<'a> ImportRecordList<'a> {
     /// printer now own). Move-and-zero semantics: if `to_ast` merely borrowed
     /// the live BumpVec slice, the BumpVec's Drop would then run element
     /// destructors on records the returned `Ast` still points at.
-    pub(crate) fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
+    pub(crate) fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord<'a>> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
             Self::Owned(v) => v,
-            // SCAN_ONLY path never reaches `to_ast`, so `Borrowed` never hits
+            // SCAN_ONLY path never reaches `to_ast`, so `Scan` never hits
             // this arm at runtime; the copy keeps the type checker happy.
-            Self::Borrowed(v) => bun_alloc::vec_from_iter_in(v.drain(..), arena),
+            Self::Scan(v) => bun_alloc::vec_from_iter_in(v, arena),
         }
     }
-}
 
-pub enum NamedImportsType<'a> {
-    Owned(bun_ast::ast_result::NamedImports),
-    Borrowed(&'a mut bun_ast::ast_result::NamedImports),
-}
-impl<'a> core::ops::Deref for NamedImportsType<'a> {
-    type Target = bun_ast::ast_result::NamedImports;
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Owned(v) => v,
-            Self::Borrowed(v) => *v,
-        }
-    }
-}
-impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Owned(v) => v,
-            Self::Borrowed(v) => *v,
+    /// The list a scan was given, to hand back.
+    pub(crate) fn take_scan(&mut self, arena: &'a Bump) -> Vec<ImportRecord<'a>> {
+        match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
+            Self::Owned(v) => v.into_iter().collect(),
+            Self::Scan(v) => v,
         }
     }
 }
@@ -193,7 +181,7 @@ pub(crate) struct ParserSnapshot<'a> {
 }
 
 pub(crate) type NeedsJSXType = bool;
-pub(crate) type ParsePassSymbolUsageType<'a> = Option<&'a mut crate::ParsePassSymbolUsageMap>;
+pub(crate) type ParsePassSymbolUsageType = Option<crate::ParsePassSymbolUsageMap>;
 pub(crate) type MacroCallCountType = u32;
 
 // ─── Re-exports of sibling-module impls ───
@@ -254,7 +242,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// via `P::log()`. The pointee outlives `'a` (enforced by `Parser::init`).
     pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
     pub(crate) define: &'a Define,
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
     pub lexer: js_lexer::Lexer<'a>,
     pub(crate) allow_in: bool,
     pub(crate) allow_private_identifiers: bool,
@@ -361,7 +349,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// How many `this` expressions the visit pass has seen.
     pub(crate) this_expr_count: u32,
 
-    pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
+    pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType,
 
     /// Used by commonjs_at_runtime
     pub(crate) has_commonjs_export_names: bool,
@@ -456,12 +444,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// populated before visit pass starts; `take()`n at each post-visit
     /// hook site so a `ReactCompilerHost(&mut P)` can borrow alongside it.
     pub(crate) react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
-    /// Binding name from the `S::Function` / `S::Local` / `S::ExportDefault`
-    /// statement currently being visited. Set in `visit_stmt`, consumed by
-    /// `visit_func` / arrow-visit one frame down.
+    /// The name that the `S::Function` / `S::Local` / `S::ExportDefault` statement being visited gives to the function
+    /// visited next. Consumed by `enter_react_compiler_candidate` one frame down.
     pub(crate) react_compiler_candidate_name: Option<js_ast::Ref>,
-    /// Set alongside `react_compiler_candidate_name` when the candidate
-    /// expression is a `memo(...)` / `forwardRef(...)` call.
+    /// The function visited next is the argument of a `memo(...)` / `forwardRef(...)` call.
     pub(crate) react_compiler_in_react_hoc: bool,
     /// See [`bun_react_compiler::PendingCompile`]. Set by `visit_func` /
     /// arrow-visit, consumed inside `visit_stmts` between visit and mangle.
@@ -471,12 +457,27 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
+    /// Functions the compiler outlined from a function that isn't at the top level. `visit_stmts` puts them after the
+    /// statement it is visiting.
+    pub(crate) react_compiler_outlined_from_nested: Vec<Stmt>,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
     pub(crate) server_components_wrap_ref: Ref,
 
     pub(crate) jest: Jest,
+    pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
+    /// `assert` and `should` imported from "vitest", which re-exports them from chai. Bun imports them from the project's chai.
+    pub(crate) chai_imports: crate::parser::ChaiImports,
+    /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
+    pub(crate) did_apply_test_feature: bool,
+    /// Also computed outside `bun test`, for `uses_test_api()`.
+    pub(crate) has_hoisted_mock_stmt: bool,
+
+    pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,
+    pub(crate) import_meta_glob_imports: List<'a, Stmt>,
+    /// The `(() => ({ ... }))()` wrappers that `reject_eager_import_meta_globs` makes throw in a CommonJS module.
+    pub(crate) import_meta_glob_eager_calls: List<'a, Expr>,
 
     // Imports (both ES6 and CommonJS) are tracked at the top level
     pub(crate) import_records: ImportRecordList<'a>,
@@ -493,7 +494,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_import_item: RefMap,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
-    pub(crate) named_imports: NamedImportsType<'a>,
+    pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
     // When we're only scanning the imports
@@ -572,6 +573,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_inside_single_stmt_body: bool,
 
     /// We must be careful to avoid revisiting nodes that have scopes.
+    /// A revisited node can be part of a `define` value, which is shared with other parses.
     pub(crate) is_revisit_for_substitution: bool,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
@@ -646,6 +648,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Temporary variables used for lowering
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
+
+    /// `(inner_class_ref, class name)` of each enclosing class whose body
+    /// reads the class through `inner_class_ref`. A write to the name targets
+    /// the class's own binding, which throws as the immutable binding does.
+    pub(crate) decorated_class_names: List<'a, (Ref, Ref)>,
 
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
@@ -1001,84 +1008,58 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `&mut P` — avoids the aliased-`&mut` that arises when a transposer
     // *field* holds `&mut self` while a `&mut P` is materialised inside the
     // visitor (PORTING.md §Forbidden).
-    pub(crate) fn maybe_transpose_if_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if_import(ex.yes, state),
-                    no: self.maybe_transpose_if_import(ex.no, state),
-                    test: ex.test,
-                },
-                arg.loc,
-            ),
-            _ => self.transpose_import(arg, state),
+    /// Applies `leaf` to every branch of a nested ternary. Loops over the `no` branches and only
+    /// recurses into `yes`. Returns `None` after logging a stack overflow.
+    fn transpose_each_branch(
+        &mut self,
+        arg: Expr,
+        leaf: &mut impl FnMut(&mut Self, Expr) -> Expr,
+    ) -> Option<Expr> {
+        let js_ast::ExprData::EIf(first) = arg.data else {
+            return Some(leaf(self, arg));
+        };
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(arg.loc);
+            return None;
+        }
+        let root = Expr::init(E::If { ..*first }, arg.loc);
+        let mut link = root.data.e_if().expect("infallible: variant checked");
+        loop {
+            link.yes = self.transpose_each_branch(link.yes, leaf)?;
+            let no = link.no;
+            let js_ast::ExprData::EIf(next) = no.data else {
+                link.no = leaf(self, no);
+                return Some(root);
+            };
+            link.no = Expr::init(E::If { ..*next }, no.loc);
+            link = link.no.data.e_if().expect("infallible: variant checked");
         }
     }
 
-    pub(crate) fn maybe_transpose_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if_require(ex.yes, state),
-                    no: self.maybe_transpose_if_require(ex.no, state),
-                    test: ex.test,
-                },
-                arg.loc,
-            ),
-            _ => self.transpose_require(arg, state),
-        }
-    }
-
-    pub(crate) fn transpose_known_to_be_if_require(
+    pub(crate) fn maybe_transpose_if_import(
         &mut self,
         arg: Expr,
         state: &TransposeState,
-    ) -> Expr {
-        // Caller guarantees `arg.data` is `EIf`.
-        let js_ast::ExprData::EIf(ex) = arg.data else {
-            unreachable!()
-        };
-        Expr::init(
-            E::If {
-                yes: self.maybe_transpose_if_require(ex.yes, state),
-                no: self.maybe_transpose_if_require(ex.no, state),
-                test: ex.test,
-            },
-            arg.loc,
-        )
+    ) -> Option<Expr> {
+        self.transpose_each_branch(arg, &mut |p, branch| p.transpose_import(branch, state))
     }
 
-    pub(crate) fn maybe_transpose_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
-                    no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                    test: ex.test,
-                },
-                arg.loc,
-            ),
-            _ => self.transpose_require_resolve(arg, state),
-        }
+    pub(crate) fn maybe_transpose_if_require(
+        &mut self,
+        arg: Expr,
+        state: &TransposeState,
+    ) -> Option<Expr> {
+        self.transpose_each_branch(arg, &mut |p, branch| p.transpose_require(branch, state))
     }
 
-    pub(crate) fn transpose_known_to_be_if_require_resolve(
+    pub(crate) fn maybe_transpose_if_require_resolve(
         &mut self,
         arg: Expr,
         state: Expr,
-    ) -> Expr {
-        // Caller guarantees `arg.data` is `EIf`.
-        let js_ast::ExprData::EIf(ex) = arg.data else {
-            unreachable!()
-        };
-        Expr::init(
-            E::If {
-                yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
-                no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                test: ex.test,
-            },
-            arg.loc,
-        )
+    ) -> Option<Expr> {
+        self.transpose_each_branch(arg, &mut |p, branch| {
+            p.transpose_require_resolve(branch, state)
+        })
     }
 
     /// Record the destructured property names of an `await import()` /
@@ -1300,14 +1281,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// something else.
     pub(crate) fn conditional_namespace_records(
         &mut self,
-        expr: Expr,
+        mut expr: Expr,
         out: &mut Vec<u32>,
     ) -> Option<()> {
-        match expr.data {
-            js_ast::ExprData::EIf(e) => {
-                self.conditional_namespace_records(e.yes, out)?;
-                self.conditional_namespace_records(e.no, out)
+        while let js_ast::ExprData::EIf(e) = expr.data {
+            if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+                self.report_stack_overflow(expr.loc);
+                return None;
             }
+            self.conditional_namespace_records(e.yes, out)?;
+            expr = e.no;
+        }
+        match expr.data {
             js_ast::ExprData::ERequireString(req)
                 if self.options.bundle && req.unwrapped_id.get().is_none() =>
             {
@@ -2137,15 +2122,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// returns. A block `var n` hoisted onto a parameter `n` is a linked ref
     /// of the same variable.
     pub(crate) fn record_assignment(&mut self, ref_: Ref) {
-        let mut ref_ = ref_;
-        loop {
-            let symbol = &mut self.symbols[ref_.inner_index() as usize];
-            if !symbol.has_link() {
-                symbol.set_has_been_assigned_to(true);
-                return;
-            }
-            ref_ = symbol.link.get();
-        }
+        let root = js_ast::symbol::follow_symbols(&self.symbols, ref_);
+        self.symbols[root.inner_index() as usize].set_has_been_assigned_to(true);
     }
 
     /// See `Symbol::import_used_as_value`.
@@ -2394,23 +2372,101 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn generate_import_stmt<I, Sym>(
+    /// `var { a, b } = require("bun:wrap")`. An import statement can't stand in the function that wraps a CommonJS module.
+    #[optimize(size)]
+    #[inline(never)]
+    pub(crate) fn generate_runtime_require_stmt(
+        &mut self,
+        imports: &[u8],
+        parts: &mut ListManaged<'a, js_ast::Part>,
+    ) -> Result<(), crate::Error> {
+        let import_record_id = self.add_import_record(
+            ImportKind::Require,
+            bun_ast::Loc::EMPTY,
+            RuntimeImports::NAME,
+        );
+        {
+            let record = &mut self.import_records.items_mut()[import_record_id as usize];
+            record.path.namespace = b"runtime";
+            record.flags.insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
+        }
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+        declared_symbols.ensure_total_capacity(imports.len())?;
+        let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), self.arena);
+        for &import in imports {
+            let r = self
+                .runtime_imports
+                .get(import as usize)
+                .expect("unreachable");
+            let key = self.new_expr(
+                E::String {
+                    data: RuntimeImports::ALL[import as usize].into(),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            let value = self.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
+            properties.push(B::Property {
+                flags: bun_ast::flags::PROPERTY_NONE,
+                key,
+                value,
+                default_value: None,
+            });
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_: r,
+                is_top_level: true,
+            });
+        }
+        let binding = self.b(
+            B::Object {
+                properties: bun_ast::StoreSlice::from_bump(properties),
+                is_single_line: true,
+                close_brace_loc: bun_ast::Loc::EMPTY,
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let value = self.new_expr(
+            E::RequireString {
+                import_record_index: import_record_id,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let mut decls = G::DeclList::init_capacity(1);
+        decls.append_assume_capacity(G::Decl {
+            binding,
+            value: Some(value),
+        });
+        let stmt = self.s(
+            S::Local {
+                kind: js_ast::LocalKind::KVar,
+                decls,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        parts.push(js_ast::Part {
+            stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
+            declared_symbols,
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_id),
+            tag: bun_ast::PartTag::Runtime,
+            ..Default::default()
+        });
+        Ok(())
+    }
+
+    /// `imports` holds the name of each export and the symbol it is bound to.
+    pub(crate) fn generate_import_stmt(
         &mut self,
         import_path: &'a [u8],
-        imports: I,
+        imports: &[(&'static [u8], Ref)],
         parts: &mut ListManaged<'a, js_ast::Part>,
-        symbols: &Sym,
         additional_stmt: Option<Stmt>,
         prefix: &'static [u8],
         is_internal: bool,
         tag: bun_ast::PartTag,
-    ) -> Result<(), crate::Error>
-    where
-        I: AsRef<[<Sym as GenerateImportSymbols>::Key]>,
-        Sym: GenerateImportSymbols,
-    {
+    ) -> Result<(), crate::Error> {
         let arena = self.arena;
-        let imports = imports.as_ref();
         let import_record_i =
             self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
         {
@@ -2459,9 +2515,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
-        for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
-            let ref_ = symbols.get(alias).expect("unreachable");
-            let alias_name: &'static [u8] = symbols.alias_name(alias);
+        for (&(alias_name, ref_), clause_item) in imports.iter().zip(clause_items.iter_mut()) {
             *clause_item = js_ast::ClauseItem {
                 alias: js_ast::StoreStr::new(alias_name),
                 original_name: js_ast::StoreStr::new(alias_name),
@@ -2651,6 +2705,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 B::Object {
                     properties: bun_ast::StoreSlice::from_bump(items_hmr),
                     is_single_line: false,
+                    close_brace_loc: bun_ast::Loc::EMPTY,
                 },
                 bun_ast::Loc::EMPTY,
             );
@@ -3373,34 +3428,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.filename_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__filename")?;
 
-        if self.options.features.inject_jest_globals {
-            self.jest.test =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"test")?;
-            self.jest.it = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"it")?;
-            self.jest.describe =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"describe")?;
-            self.jest.expect =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"expect")?;
-            self.jest.expect_type_of =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"expectTypeOf")?;
-            self.jest.before_all =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"beforeAll")?;
-            self.jest.before_each =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"beforeEach")?;
-            self.jest.after_each =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"afterEach")?;
-            self.jest.after_all =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"afterAll")?;
-            self.jest.jest =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"jest")?;
-            self.jest.vi = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"vi")?;
-            self.jest.xit = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xit")?;
-            self.jest.xtest =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xtest")?;
-            self.jest.xdescribe =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xdescribe")?;
-        }
-
         if self.options.features.react_fast_refresh {
             self.react_refresh.create_signature_ref =
                 self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshSig$");
@@ -4020,6 +4047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     B::Object {
                         properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                         is_single_line: ex.is_single_line,
+                        close_brace_loc: ex.close_brace_loc,
                     },
                     expr.loc,
                 ));
@@ -4390,11 +4418,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let items_slice: &mut [js_ast::ClauseItem] = stmt.items.slice_mut();
         for i in 0..items_slice.len() {
-            // `ClauseItem` does not derive `Copy`; bit-copy via `ptr::read` —
-            // all fields are POD (`StoreStr`/`Loc`/`LocRef`).
-            // SAFETY: items_slice[i] is a live initialised `ClauseItem`; the
-            // original slot is overwritten or compacted below before any drop.
-            let mut item = unsafe { core::ptr::read(&raw const items_slice[i]) };
+            let mut item = items_slice[i];
             let name = self.load_name_from_ref(item.name.ref_);
             let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, item.name.loc, name)?;
             item.name.ref_ = r#ref;
@@ -4403,6 +4427,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+
+            if self.options.features.inject_jest_globals
+                && path.text == b"vitest"
+                && let Some(name) = crate::parser::ChaiImports::name(alias)
+            {
+                self.chai_imports.0.push((name, r#ref));
+                self.did_apply_test_feature = true;
+                continue;
+            }
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -4498,6 +4531,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.validate_and_set_import_type(&path, &mut stmt)?;
         }
 
+        if self.options.features.inject_jest_globals && is_test_module(path.text) {
+            for item in stmt.items.iter() {
+                if let Some(api) = MockApi::from_export_name(item.alias.slice()) {
+                    self.imported_mock_apis.insert(item.name.ref_, api);
+                }
+            }
+        }
+
         // Track the items for this namespace
         self.import_items_for_namespace
             .insert(stmt.namespace_ref, item_refs);
@@ -4582,44 +4623,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.source.index.0 as js_ast::base::RefInt,
             js_ast::base::RefTag::Symbol,
         )
-    }
-
-    pub(crate) fn default_name_for_expr(&mut self, expr: Expr, loc: bun_ast::Loc) -> LocRef {
-        match &expr.data {
-            js_ast::ExprData::EFunction(func_container) => {
-                if let Some(_name) = &func_container.func.name {
-                    if let Some(r#ref) = _name.ref_.to_nullable() {
-                        return LocRef { loc, ref_: r#ref };
-                    }
-                }
-            }
-            js_ast::ExprData::EIdentifier(ident) => {
-                return LocRef {
-                    loc,
-                    ref_: ident.ref_,
-                };
-            }
-            js_ast::ExprData::EImportIdentifier(ident) => {
-                if !Self::ALLOW_MACROS
-                    || (Self::ALLOW_MACROS && !self.macro_.refs.contains(&ident.ref_))
-                {
-                    return LocRef {
-                        loc,
-                        ref_: ident.ref_,
-                    };
-                }
-            }
-            js_ast::ExprData::EClass(class) => {
-                if let Some(_name) = &class.class_name {
-                    if let Some(r#ref) = _name.ref_.to_nullable() {
-                        return LocRef { loc, ref_: r#ref };
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        self.create_default_name(loc)
     }
 
     pub(crate) fn discard_scopes_up_to(&mut self, scope_index: usize) {
@@ -5287,13 +5290,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> u32 {
         let path = *path;
         let index = self.import_records.len();
-        // `ImportRecord.path` is `fs::Path<'static>` (PORTING.md: no struct
-        // lifetime params yet). The parser-supplied path borrows arena-owned 'a bytes
-        // which outlive the import_records list (both dropped with the parser arena),
-        // so the lifetime extension is sound here. Removing the erasure requires
-        // threading `'a` through `bun_ast::ImportRecord`.
-        // SAFETY: see above — arena 'a outlives every ImportRecord stored in self.import_records.
-        let path: fs::Path<'static> = unsafe { path.into_static() };
         // No `impl Default for ImportRecord` (range/path/kind have no defaults) —
         // spell out the optional fields explicitly.
         self.import_records.push(ImportRecord {
@@ -5514,11 +5510,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Returns `false` if visiting removed every statement and no part was pushed.
     pub(crate) fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
-    ) -> Result<(), crate::Error> {
+    ) -> Result<bool, crate::Error> {
         // Uses recorded outside a part's visit (the parse pass resolving
         // decorator-metadata types) belong to no part.
         self.part_uses.clear();
@@ -5543,12 +5540,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for i in 0..self.relocated_top_level_vars.len() {
                 // Follow links because "var" declarations may be merged due to hoisting
                 let mut local = self.relocated_top_level_vars[i];
-                while !local.ref_.is_empty() {
-                    let symbol = &self.symbols[local.ref_.inner_index() as usize];
-                    if !symbol.has_link() {
-                        break;
-                    }
-                    local.ref_ = symbol.link.get();
+                if !local.ref_.is_empty() {
+                    local.ref_ = js_ast::symbol::follow_symbols(&self.symbols, local.ref_);
                 }
                 self.relocated_top_level_vars[i] = local;
                 let Some(ref_) = local.ref_.to_nullable() else {
@@ -5580,7 +5573,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.relocated_top_level_vars.clear();
         }
 
-        if !part_stmts.is_empty() {
+        let appended = !part_stmts.is_empty();
+        if appended {
             // SAFETY: `into_bump_slice_mut` leaks the BumpVec into the arena and
             // returns the unique `&'a mut [T]` for that allocation. We compute
             // `can_be_removed_if_unused` while the `&mut` is live (reborrowed as
@@ -5639,7 +5633,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.declared_symbols.clear_retaining_capacity();
             self.import_records_for_current_part.clear();
         }
-        Ok(())
+        Ok(appended)
     }
 
     /// A pattern runs getters or the iterator on its value, so only a literal value is side-effect free.
@@ -6576,6 +6570,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    pub(crate) fn should_remove_dead_statements(&self) -> bool {
+        let features = &self.options.features;
+        features.minify_syntax || (features.is_library && features.dead_code_elimination)
+    }
+
     pub(crate) fn select_local_kind(&self, kind: js_ast::s::Kind) -> js_ast::s::Kind {
         // Use "var" instead of "let" and "const" if the variable declaration may
         // need to be separated from the initializer. This allows us to safely move
@@ -6584,6 +6583,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             && self.current_scope().parent.is_none()
             && !kind.is_using()
+            && !(kind == js_ast::s::Kind::KConst
+                && self.options.features.is_library
+                && !self.will_wrap_module_in_try_catch_for_using)
         {
             return js_ast::s::Kind::KVar;
         }
@@ -6593,6 +6595,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.bundle
             && kind == js_ast::s::Kind::KConst
             && self.options.features.minify_syntax
+            && !self.options.features.is_library
         {
             return js_ast::s::Kind::KLet;
         }
@@ -6730,6 +6733,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("unreachable");
                 count != stmts.len()
             }
+            crate::parser::Runtime::ReplaceableExport::Inject { value, .. }
+                if replacement.injects_default() =>
+            {
+                self.inject_default_export(stmts, *value, loc)
+            }
             crate::parser::Runtime::ReplaceableExport::Inject { name, value } => {
                 let count = stmts.len();
                 // `ReplaceableExport::Inject` boxes the name, so copy into the bump
@@ -6757,6 +6765,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    pub(crate) fn inject_default_export(
+        &mut self,
+        stmts: &mut crate::parser::StmtList<'a>,
+        value: Expr,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        let count = stmts.len();
+        let mut export_default = self.s(
+            S::ExportDefault {
+                default_name: js_ast::LocRef::default(),
+                value: js_ast::StmtOrExpr::Expr(value),
+            },
+            loc,
+        );
+        // Hide `replace_exports` from the visitor so it doesn't replace the export generated here.
+        let replace_exports = core::mem::take(&mut self.options.features.replace_exports);
+        // The export that this one replaces is visited as dead code.
+        let was_dead = core::mem::replace(&mut self.is_control_flow_dead, false);
+        self.visit_and_append_stmt(stmts, &mut export_default)
+            .expect("unreachable");
+        self.is_control_flow_dead = was_dead;
+        self.options.features.replace_exports = replace_exports;
+        count != stmts.len()
+    }
+
     pub(crate) fn replace_decl_and_possibly_remove(
         &mut self,
         decl: &mut G::Decl,
@@ -6765,6 +6798,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         use crate::parser::Runtime::ReplaceableExport;
         match replacement {
             ReplaceableExport::Delete => false,
+            // `s_local` injects `export default` because `default` can't be a binding name.
+            ReplaceableExport::Inject { .. } if replacement.injects_default() => false,
             ReplaceableExport::Replace(value) => {
                 let mut v = *value;
                 self.visit_expr(&mut v);
@@ -6880,16 +6915,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts_inside_closure: &'a mut [Stmt],
         all_values_are_pure: bool,
     ) -> Result<(), crate::Error> {
-        let mut name_ref = original_name_ref;
-
         // Follow the link chain in case symbols were merged
-        let mut symbol = &self.symbols[name_ref.inner_index() as usize];
-        while symbol.has_link() {
-            let link = symbol.link.get();
-            name_ref = link;
-            symbol = &self.symbols[name_ref.inner_index() as usize];
-        }
-        let symbol_kind = symbol.kind;
+        let name_ref = js_ast::symbol::follow_symbols(&self.symbols, original_name_ref);
+        let symbol_kind = self.symbols[name_ref.inner_index() as usize].kind;
         let arena = self.arena;
 
         // Make sure to only emit a variable once for a given namespace, since there
@@ -7110,7 +7138,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         assign_target: js_ast::AssignTarget,
         is_delete_target: bool,
-        define_data: &DefineData,
+        define_data: &'a DefineData,
     ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
         // real Expr.Data by contract.
@@ -7121,15 +7149,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // contract so `handle_identifier`'s trailing `find_symbol`
                 // rebind runs against the *resolved* scope ref, not the
                 // define-time ref silently passed through with `None`.
-                let original_name: &[u8] = define_data
+                let original_name = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
-                // SAFETY: `define_data` borrows `p.define: &'a Define`; the
-                // backing `original_name` bytes live for `'a`. Erase the local
-                // borrow lifetime to satisfy `handle_identifier`'s
-                // `Option<&'a [u8]>` param.
-                let original_name: &'a [u8] =
-                    unsafe { bun_collections::detach_lifetime(original_name) };
                 return self.handle_identifier(
                     loc,
                     id,
@@ -7143,6 +7165,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EString(str_) => {
                 return self.new_expr(&*str_, loc);
             }
+            // The define table is shared by every parse and later passes mutate AST nodes in place,
+            // so clone the value.
+            js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_) => {
+                let shared = Expr { data: value, loc };
+                if let Ok(copy) = shared.deep_clone_no_detach(self.arena, self.stack_check) {
+                    return copy;
+                }
+            }
             _ => {}
         }
         Expr { data: value, loc }
@@ -7151,40 +7181,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
-    pub(crate) fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
-        match expr.data {
-            js_ast::ExprData::EDot(ex) => {
-                if parts.len() > 1 {
-                    if ex.optional_chain.is_some() {
-                        return false;
-                    }
-                    // Intermediates must be dot expressions
-                    let last = parts.len() - 1;
-                    let is_tail_match = strings::eql(&parts[last], &ex.name);
-                    return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
+    pub(crate) fn is_dot_define_match(&mut self, mut expr: Expr, mut parts: &[Box<[u8]>]) -> bool {
+        while parts.len() > 1 {
+            let last = parts.len() - 1;
+            // Intermediates must be dot expressions
+            if let js_ast::ExprData::EDot(ex) = expr.data {
+                if ex.optional_chain.is_some() || !strings::eql(&parts[last], &ex.name) {
+                    return false;
                 }
-            }
-            js_ast::ExprData::EImportMeta(_) => {
-                return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
+                expr = ex.target;
+                parts = &parts[..last];
+                continue;
             }
             // Note: this behavior differs from esbuild
             // esbuild does not try to match index accessors
             // we do, but only if it's a UTF8 string
             // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
-            js_ast::ExprData::EIndex(index) => {
-                if parts.len() > 1 {
-                    if let js_ast::ExprData::EString(mut s) = index.index.data {
-                        if s.is_utf8() {
-                            if index.optional_chain.is_some() {
-                                return false;
-                            }
-                            let last = parts.len() - 1;
-                            let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
-                            return is_tail_match
-                                && self.is_dot_define_match(index.target, &parts[..last]);
-                        }
-                    }
+            if let js_ast::ExprData::EIndex(index) = expr.data
+                && let js_ast::ExprData::EString(mut s) = index.index.data
+                && s.is_utf8()
+            {
+                if index.optional_chain.is_some()
+                    || !strings::eql(&parts[last], s.slice(self.arena))
+                {
+                    return false;
                 }
+                expr = index.target;
+                parts = &parts[..last];
+                continue;
+            }
+            break;
+        }
+        match expr.data {
+            js_ast::ExprData::EImportMeta(_) => {
+                return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
             }
             js_ast::ExprData::EIdentifier(ex) => {
                 // The last expression must be an identifier
@@ -7327,6 +7357,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                 }
+                                // The visit pass skipped this method after a stack overflow.
+                                js_ast::ExprData::EMissing(_)
+                                    if self.reported_stack_overflow.get() => {}
                                 _ => unreachable!(),
                             }
                         }
@@ -7689,6 +7722,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) {
         use js_ast::g::PropertyKind;
+
+        // The visit pass skipped this method after a stack overflow.
+        if self.reported_stack_overflow.get() && prop.value.is_some_and(|value| value.is_missing())
+        {
+            return;
+        }
 
         // Local helper: bump-alloc an arg pair and call __legacyMetadataTS.
         // pulled out of the per-arm code to cut a ~3x repetition.
@@ -8342,16 +8381,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    /// A lowering's own `var`. `bun run` prints names as they are, so there it gets a per-file counter.
+    /// `bun run` doesn't rename symbols, so there a generated name gets a per-file counter.
+    pub(crate) fn temp_var_name(&mut self, name: &'a [u8]) -> &'a [u8] {
+        if self.will_use_renamer() {
+            return name;
+        }
+        self.temp_ref_count += 1;
+        bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
+            .into_bump_str()
+            .as_bytes()
+    }
+
     pub(crate) fn generate_temp_var(&mut self, name: &'a [u8]) -> Ref {
-        let name: &'a [u8] = if self.will_use_renamer() {
-            name
-        } else {
-            self.temp_ref_count += 1;
-            bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
-                .into_bump_str()
-                .as_bytes()
-        };
+        let name = self.temp_var_name(name);
         let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);
         self.declare_temp_var(ref_);
         ref_
@@ -9027,6 +9069,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned (arena-/process-lifetime).
+                unsafe { parts.set_len(parts_end) };
+
                 // We need to iterate multiple times if an import-equals statement was
                 // removed and there are more import-equals statements that may be removed
                 if !kept_import_equals || !removed_import_equals {
@@ -9252,12 +9297,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // If this symbol was merged, use the symbol at the end of the
                         // linked list in the map. This is the case for multiple "var"
                         // declarations with the same name, for example.
-                        let mut r#ref = input;
-                        let mut symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
-                        while symbol_ref.has_link() {
-                            r#ref = symbol_ref.link.get();
-                            symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
-                        }
+                        let r#ref = js_ast::symbol::follow_symbols(ctx.symbols, input);
 
                         ctx.top_level
                             .entry(r#ref)
@@ -9274,15 +9314,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
+        let force_cjs_to_esm = self.unwrap_all_requires
+            || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
+
         let wrapper_ref: Ref = 'brk: {
             if self.options.features.hot_module_reloading {
                 break 'brk self.hmr_api_ref;
             }
 
             // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
+            // The linker wraps every CommonJS file and may wrap a FORCE_CJS_TO_ESM file, so those need one too.
             // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
             if self.options.bundle
-                && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice()))
+                && (self.options.code_splitting
+                    || exports_kind == js_ast::ExportsKind::Cjs
+                    || force_cjs_to_esm
+                    || self.needs_wrapper_ref(parts.as_slice()))
             {
                 use core::fmt::Write as _;
                 let mut buf = bun_alloc::ArenaString::new_in(arena);
@@ -9363,9 +9410,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let parts_list = core::mem::replace(parts, BumpVec::new_in(arena));
         let import_records = self.import_records.move_to_baby_list(arena);
 
-        let force_cjs_to_esm = self.unwrap_all_requires
-            || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
-
         // PERF: box at the construction site so the ~1 KB `Ast` is written
         // straight into the heap allocation and only the thin `Box` pointer is
         // returned up the `_parse → parse → cache → transpiler` chain (see
@@ -9381,7 +9425,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ),
             approximate_newline_count: self.lexer.approximate_newline_count,
             exports_kind,
-            named_imports: core::mem::take(&mut *self.named_imports),
+            named_imports: core::mem::take(&mut self.named_imports),
             named_exports: core::mem::take(&mut self.named_exports),
             dynamic_import_aliases: core::mem::take(&mut self.dynamic_import_aliases),
             export_keyword: self.esm_export_keyword,
@@ -9415,6 +9459,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // const_values: self.const_values,
             ts_enums,
             import_meta_ref: self.import_meta_ref,
+            depends_on_more_than_source: self.depends_on_more_than_source(),
 
             symbols,
             parts: parts_list,
@@ -9584,7 +9629,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         out: &mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
-        source: &'a bun_ast::Source,
+        source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
@@ -9695,7 +9740,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loop_body: null_stmt_data(),
             define,
             import_records: ImportRecordList::Owned(BumpVec::new_in(arena)), // overwritten below for !SCAN_ONLY
-            named_imports: NamedImportsType::Owned(Default::default()), // overwritten below for !SCAN_ONLY
+            named_imports: Default::default(),
             named_exports: Default::default(),
             log,
             stack_check: bun_core::StackCheck::init(),
@@ -9792,8 +9837,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_pending: None,
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
+            react_compiler_outlined_from_nested: Vec::new(),
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
+            imported_mock_apis: Default::default(),
+            chai_imports: Default::default(),
+            did_apply_test_feature: false,
+            has_hoisted_mock_stmt: false,
+            import_meta_glob_use: Default::default(),
+            import_meta_glob_imports: BumpVec::new_in(arena),
+            import_meta_glob_eager_calls: BumpVec::new_in(arena),
             import_records_for_current_part: BumpVec::new_in(arena),
             export_star_import_records: BumpVec::new_in(arena),
             import_symbol_property_uses: Default::default(),
@@ -9820,6 +9873,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            decorated_class_names: BumpVec::new_in(arena),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
@@ -9849,11 +9903,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // receives its `*mut P` per-call from the live `&mut P` at the call
         // site — `prepare_for_visit_pass` only wires the arena/trampoline.
         //
-        // For SCAN_ONLY, the caller (Parser) assigns the borrowed
-        // `import_records` / `named_imports` variants after construction; for
-        // !SCAN_ONLY the literal's `Owned(..)` defaults are already correct
-        // (the previous post-init `if !SCAN_ONLY { .. }` rewrites were
-        // redundant with the literal and have been dropped).
+        // For SCAN_ONLY, the caller (Parser) moves the `ScanPassResult`'s containers in afterwards.
 
         Ok(())
     }
@@ -10007,18 +10057,7 @@ impl LowerUsingDeclarationsContext {
                 }
                 js_ast::StmtData::SExportClause(data) => {
                     // Merge export clauses together.
-                    // ClauseItem isn't `Clone` (POD-only fields, no derive);
-                    // shallow-copy via ptr::read.
-                    // arena-owned `StoreSlice<ClauseItem>` valid for 'a; the source
-                    // slot is never read again (this whole stmt is dropped via the
-                    // `continue` below) — safe to `ptr::read` each item.
-                    let items = data.items.slice();
-                    exports.reserve(items.len());
-                    for item in items {
-                        // SAFETY: arena-owned slot never read again (stmt dropped
-                        // via `continue` below); shallow move out is sound.
-                        exports.push(unsafe { core::ptr::read(item) });
-                    }
+                    exports.extend_from_slice(data.items.slice());
                     continue;
                 }
                 js_ast::StmtData::SFunction(_) => {
@@ -10240,6 +10279,7 @@ impl LowerUsingDeclarationsContext {
                 finally: Some(js_ast::Finally {
                     loc,
                     stmts: bun_ast::StoreSlice::new_mut(finally_stmts),
+                    body_loc: loc,
                 }),
             },
             loc,
@@ -10257,15 +10297,6 @@ impl LowerUsingDeclarationsContext {
 
         result
     }
-}
-
-// ─── Helper trait for generate_import_stmt's generic `symbols` param ───
-// Dispatches the alias lookup via `alias_name()`; implemented
-// for `RuntimeImports` (Key = u8 index) and `JSXImportSymbols` (Key = alias).
-pub trait GenerateImportSymbols {
-    type Key;
-    fn get(&self, key: &Self::Key) -> Option<Ref>;
-    fn alias_name(&self, key: &Self::Key) -> &'static [u8];
 }
 
 // ─── Module-level constructor fns ───

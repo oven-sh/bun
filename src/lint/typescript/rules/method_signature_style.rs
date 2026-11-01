@@ -7,20 +7,20 @@ pub struct MethodSignatureStyle {
     is_method: bool,
 }
 
-const CONVERT_TO_METHOD_SIGNATURE: Message = Message::new(
+const CONVERT_TO_METHOD_SIGNATURE: &Message = &Message::new(
     "convertToMethodSignature",
     "Convert to a method signature. This removes the `readonly` modifier, allowing the member to be reassigned.",
 );
-const ERROR_METHOD: Message = Message::new(
+const ERROR_METHOD: &Message = &Message::new(
     "errorMethod",
     "Shorthand method signature is forbidden. Use a function property instead.",
 );
-const ERROR_PROPERTY: Message = Message::new(
+const ERROR_PROPERTY: &Message = &Message::new(
     "errorProperty",
     "Function property signature is forbidden. Use a method shorthand instead.",
 );
 
-/// What upstream's `getMethodKey` makes one string of: `key`, `[key]`, `key?`, `[key]?`.
+/// The parts that upstream's `getMethodKey` joins into one string: `key`, `[key]`, `key?`, `[key]?`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct MethodKey<'a> {
     text: &'a [u8],
@@ -64,7 +64,7 @@ fn append_signature(func: Func, separator: &[u8], out: &mut Vec<u8>) {
         None => &b"()"[..],
     });
     out.extend_from_slice(separator);
-    // Without a return type it is implicitly `any`.
+    // A missing return type is implicitly `any`.
     out.extend_from_slice(func.return_type().map_or(&b"any"[..], TypeNode::text));
 }
 
@@ -94,7 +94,7 @@ fn return_type_references_this_type(func: Func) -> bool {
     func.return_type().is_some_and(|ty| for_each_child_estree(ty, is_this_type).is_some())
 }
 
-/// The members of the interface or the type literal that `member` is in.
+/// Returns the members of the interface or type literal that contains `member`.
 fn siblings<'a>(member: Member<'a>) -> Option<List<'a, Member<'a>>> {
     match member.parent() {
         Node::Stmt(statement) => match statement.kind() {
@@ -117,7 +117,8 @@ impl MethodSignatureStyle {
         let (Some(func), Some(key)) = (member.func(), MethodKey::of(member)) else {
             return;
         };
-        // Another declaration of the interface may overload this method, and two properties with one name are an error.
+        // Another declaration of the interface may overload this method, and two properties with the same name are an
+        // error.
         let is_safe = || match member.parent() {
             Node::Stmt(statement) => match statement.kind() {
                 StmtKind::Interface(interface) => is_only_declaration(interface),
@@ -156,8 +157,8 @@ impl MethodSignatureStyle {
                 }
             }
             text.extend_from_slice(get_delimiter(member));
-            // Don't fix if there are comments in or between the overloads. A comment that stayed behind would look like
-            // it describes the next member.
+            // Don't fix if there are comments in or between the overloads. A comment left behind would look like it
+            // describes the next member.
             let end = fixes.iter().map(|it| it.span.end).fold(overloads.last()?.span().end, u32::max);
             let all = Span::new(overloads.first()?.span().start, end);
             if !fixer.keeps_comments(&fixer.replace(all, &text[..])) {
@@ -189,7 +190,7 @@ impl MethodSignatureStyle {
             Some(fixer.replace(member, text)).filter(|it| fixer.keeps_comments(it))
         };
         let report = cx.report(member, ERROR_PROPERTY);
-        // A method cannot be `readonly`, so the change is not safe.
+        // A method can't be `readonly`, so the change isn't safe.
         if member.flags().contains(Flags::READONLY) {
             report.suggest(CONVERT_TO_METHOD_SIGNATURE, fix);
         } else {

@@ -11,6 +11,7 @@ import {
 } from "harness";
 import { join } from "path";
 import util from "util";
+import vm from "vm";
 it("prototype", () => {
   const prototypes = [
     Request.prototype,
@@ -287,6 +288,50 @@ it("BigIntArray", () => {
   }
 });
 
+it.concurrent("TypedArray over an ArrayBuffer at an odd address prints", async () => {
+  const types = [
+    ["Int16Array", "getInt16", ""],
+    ["Uint16Array", "getUint16", ""],
+    ["Int32Array", "getInt32", ""],
+    ["Uint32Array", "getUint32", ""],
+    ["Float16Array", "getFloat16", ""],
+    ["Float32Array", "getFloat32", ""],
+    ["Float64Array", "getFloat64", ""],
+    ["BigInt64Array", "getBigInt64", "n"],
+    ["BigUint64Array", "getBigUint64", "n"],
+  ];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { ptr, toArrayBuffer } from "bun:ffi";
+        const bytes = new Uint8Array(32).map((_, i) => i + 1);
+        // Moves the bytes of a small typed array, so it comes before ptr().
+        bytes.buffer;
+        const address = ptr(bytes) + 1;
+        for (const name of ${JSON.stringify(types.map(([name]) => name))}) {
+          console.log(new globalThis[name](toArrayBuffer(address, 0, 16)));
+        }
+        console.log(address % 2, bytes[0]);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const view = new DataView(new Uint8Array(32).map((_, i) => i + 1).buffer, 1, 16);
+  const expected = types.map(([name, get, suffix]) => {
+    const size = globalThis[name].BYTES_PER_ELEMENT;
+    const elements = Array.from({ length: 16 / size }, (_, i) => view[get](i * size, true) + suffix);
+    return `${name}(${elements.length}) [ ${elements.join(", ")} ]`;
+  });
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([...expected, "1 1"]);
+  expect(exitCode).toBe(0);
+});
+
 for (let TypedArray of [Float32Array, Float64Array]) {
   it(TypedArray.name + " " + Math.fround(42.68), () => {
     const buffer = new TypedArray([Math.fround(42.68)]);
@@ -531,6 +576,65 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
+// JSC passes its own scope object as `this` when a native function is called through a captured variable.
+// These functions return a `this` of the wrong class unchanged, which would leak that scope object to JS.
+it("a built-in's [Bun.inspect.custom] called without a receiver never returns an object", () => {
+  const returned = {};
+  for (const name of Object.getOwnPropertyNames(globalThis)) {
+    const inspectCustom = globalThis[name]?.prototype?.[Bun.inspect.custom];
+    if (typeof inspectCustom !== "function") continue;
+    returned[name] = [[], [-1], [2, {}]].map(args => {
+      try {
+        return (() => inspectCustom(...args))();
+      } catch (error) {
+        return error.name;
+      }
+    });
+  }
+  expect(Object.keys(returned)).toContainValues([
+    "ReadableStream",
+    "WritableStream",
+    "URL",
+    "URLSearchParams",
+    "CryptoKey",
+  ]);
+  expect(Object.entries(returned).filter(([, results]) => results.some(result => typeof result === "object"))).toEqual(
+    [],
+  );
+});
+
+it("native inspect.custom functions return undefined when called without a receiver", () => {
+  const classes = [
+    ByteLengthQueuingStrategy,
+    CountQueuingStrategy,
+    CryptoKey,
+    PerformanceEntry,
+    ReadableByteStreamController,
+    ReadableStream,
+    ReadableStreamBYOBReader,
+    ReadableStreamBYOBRequest,
+    ReadableStreamDefaultController,
+    ReadableStreamDefaultReader,
+    TransformStream,
+    TransformStreamDefaultController,
+    URL,
+    URLSearchParams,
+    WritableStream,
+    WritableStreamDefaultController,
+    WritableStreamDefaultWriter,
+  ];
+  const results = classes.map(klass => {
+    const inspectCustom = klass.prototype[util.inspect.custom];
+    // When a closed-over binding is called bare, JSC passes the scope object as `this`.
+    const bare = () => inspectCustom(-1, {});
+    // util.inspect falls back to its default formatting when inspect.custom returns its receiver unchanged.
+    const ordinaryReceiver = {};
+    const roundTripped = inspectCustom.call(ordinaryReceiver, -1, {}) === ordinaryReceiver;
+    return [klass.name, typeof inspectCustom, bare(), roundTripped];
+  });
+  expect(results).toEqual(classes.map(klass => [klass.name, "function", undefined, true]));
+});
+
 describe("Functions with names", () => {
   const closures = [
     () => function f() {},
@@ -770,23 +874,23 @@ describe("console.logging class displays names and extends", async () => {
 
 it("console.log on a Blob shows name", () => {
   const blob = new Blob(["foo"], { type: "text/plain" });
-  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  type: "text/plain;charset=utf-8"\n}');
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  type: "text/plain"\n}');
   blob.name = "bar";
-  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "bar",\n  type: "text/plain;charset=utf-8"\n}');
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "bar",\n  type: "text/plain"\n}');
   blob.name = "foobar";
-  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "foobar",\n  type: "text/plain;charset=utf-8"\n}');
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "foobar",\n  type: "text/plain"\n}');
 
   const file = new File(["foo"], "bar.txt", { type: "text/plain" });
   expect(Bun.inspect(file)).toBe(
-    `File (3 bytes) {\n  name: "bar.txt",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
+    `File (3 bytes) {\n  name: "bar.txt",\n  type: "text/plain",\n  lastModified: ${file.lastModified}\n}`,
   );
   file.name = "foobar";
   expect(Bun.inspect(file)).toBe(
-    `File (3 bytes) {\n  name: "foobar",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
+    `File (3 bytes) {\n  name: "foobar",\n  type: "text/plain",\n  lastModified: ${file.lastModified}\n}`,
   );
   file.name = "";
   expect(Bun.inspect(file)).toBe(
-    `File (3 bytes) {\n  name: "",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
+    `File (3 bytes) {\n  name: "",\n  type: "text/plain",\n  lastModified: ${file.lastModified}\n}`,
   );
 });
 
@@ -843,7 +947,7 @@ it("CloseEvent", () => {
     code: 1000,
     reason: "Normal",
   });
-  expect(Bun.inspect(closeEvent)).toMatchInlineSnapshot(`
+  expect(Bun.inspect(closeEvent).replace(/timeStamp: [\d.]+/, "timeStamp: 0")).toMatchInlineSnapshot(`
     "CloseEvent {
       isTrusted: false,
       wasClean: false,
@@ -922,7 +1026,7 @@ it("CustomEvent", () => {
     bubbles: true,
     cancelable: true,
   });
-  expect(Bun.inspect(customEvent)).toMatchInlineSnapshot(`
+  expect(Bun.inspect(customEvent).replace(/timeStamp: [\d.]+/, "timeStamp: 0")).toMatchInlineSnapshot(`
     "CustomEvent {
       isTrusted: false,
       detail: {
@@ -1321,4 +1425,366 @@ it("object property enumeration scales linearly with property count", () => {
     // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
     expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
   });
+});
+
+describe("own non-enumerable properties are not printed", () => {
+  const hide = (object, key, descriptor = { value: { hidden: true } }) =>
+    Object.defineProperty(object, key, descriptor);
+
+  it("string and symbol keys", () => {
+    const obj = hide(hide({}, Symbol("impl")), "hiddenString");
+    obj[Symbol("enumerable")] = 3;
+    obj.visible = 4;
+    expect(Bun.inspect(obj)).toBe("{\n  [Symbol(enumerable)]: 3,\n  visible: 4,\n}");
+  });
+
+  it("nothing else to print", () => {
+    expect(Bun.inspect(hide({}, "a"))).toBe("{}");
+    expect(Bun.inspect(hide(Object.create(null), "a"))).toBe("[Object: null prototype] {}");
+    expect(Bun.inspect(hide(new (class Foo {})(), "a"))).toBe("Foo {}");
+  });
+
+  it("next to an accessor", () => {
+    const obj = {
+      get visible() {
+        return 1;
+      },
+    };
+    hide(obj, "data");
+    hide(obj, "accessor", { get() {} });
+    expect(Bun.inspect(obj)).toBe("{\n  visible: [Getter],\n}");
+  });
+
+  it("nested", () => {
+    expect(Bun.inspect({ a: hide({ b: 1 }, "c") })).toBe("{\n  a: {\n    b: 1,\n  },\n}");
+    expect(Bun.inspect([hide({ b: 1 }, "c")])).toBe("[\n  {\n    b: 1,\n  }\n]");
+  });
+
+  it("array", () => {
+    const array = hide([1, 2], "hidden");
+    array.visible = 3;
+    expect(Bun.inspect(array)).toBe("[ 1, 2, visible: 3 ]");
+  });
+
+  it("sorted", () => {
+    expect(Bun.inspect(hide({ b: 1, a: 2 }, "c"), { sorted: true })).toBe("{\n  a: 2,\n  b: 1,\n}");
+  });
+
+  it("hides the property of the prototype that it shadows", () => {
+    expect(Bun.inspect(hide(Object.create({ a: "inherited", b: 2 }), "a"))).toBe("{\n  b: 2,\n}");
+    class Foo {
+      get a() {
+        return "inherited";
+      }
+      get b() {
+        return 2;
+      }
+    }
+    expect(Bun.inspect(hide(new Foo(), "a"))).toBe("Foo {\n  b: [Getter],\n}");
+  });
+
+  it("members of the prototypes are still printed", () => {
+    class Foo {
+      field = 1;
+      get getter() {
+        return 1;
+      }
+      method() {}
+    }
+    expect(Bun.inspect(new Foo())).toBe("Foo {\n  field: 1,\n  getter: [Getter],\n  method: [Function: method],\n}");
+    expect(Bun.inspect(new TextDecoder())).toContain('encoding: "utf-8"');
+  });
+});
+
+describe("values of another realm", () => {
+  it("the members of its Object.prototype are not printed", () => {
+    expect(Bun.inspect(vm.runInNewContext("({ a: 1 })"))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(vm.runInNewContext("({})"))).toBe("{}");
+    expect(Bun.inspect(vm.runInNewContext("({ a: { b: [{ c: 1 }] } })"))).toBe(Bun.inspect({ a: { b: [{ c: 1 }] } }));
+    expect(Bun.inspect(vm.runInNewContext("Object.create({ a: 1 })"))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(vm.runInNewContext("new (class Foo { x = 1; m() {} })()"))).toBe(
+      "Foo {\n  x: 1,\n  m: [Function: m],\n}",
+    );
+  });
+
+  it("its global prints its enumerable properties", () => {
+    expect(Bun.inspect(vm.runInContext("this", vm.createContext({ a: 1 })))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(vm.runInContext("var b = 2; this", vm.createContext({})))).toBe("{\n  b: 2,\n}");
+    expect(Bun.inspect(vm.runInNewContext("this"))).toBe("{}");
+    expect(
+      Bun.inspect(
+        vm.runInNewContext("Object.setPrototypeOf(this, (class Window { m() {} }).prototype); this.a = 1; this"),
+      ),
+    ).toBe("Window {\n  a: 1,\n}");
+  });
+
+  it("properties inherited from its global aren't printed", () => {
+    expect(Bun.inspect(Object.create(vm.runInContext("this", vm.createContext({ a: 1 }))))).toBe("{}");
+  });
+});
+
+describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
+  const values = {
+    "inherits from a Proxy that throws": () =>
+      Object.create(
+        new Proxy(
+          {},
+          {
+            get() {
+              throw new Error("cannot be read");
+            },
+          },
+        ),
+      ),
+    "has a getter that throws": () => ({
+      get [Symbol.for("nodejs.util.inspect.custom")]() {
+        throw new Error("cannot be read");
+      },
+    }),
+  };
+  const holders = {
+    "itself": value => value,
+    "the first property": value => ({ value, b: 2 }),
+    "the second property": value => ({ a: 1, value }),
+    "an element": value => [1, value],
+    "a property of the global of a node:vm context": value => vm.runInContext("this", vm.createContext({ value })),
+    "a property of a DONT_CONTEXTIFY context": value =>
+      Object.assign(vm.createContext(vm.constants.DONT_CONTEXTIFY), { value }),
+  };
+
+  describe.each(Object.keys(values))("because it %s", kind => {
+    it.each(Object.keys(holders))("Bun.inspect() throws the error: %s", holder => {
+      expect(() => Bun.inspect(holders[holder](values[kind]()))).toThrow("cannot be read");
+      expect(Bun.inspect({ a: 1 })).toBe("{\n  a: 1,\n}");
+    });
+  });
+
+  it.concurrent("console.log() throws the error, and later calls still print", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const value = { get [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("cannot be read"); } };
+        for (const log of [console.log, console.error, console.table]) {
+          try {
+            log([{ value }]);
+            process.stdout.write("\\nreturned\\n");
+          } catch (error) {
+            process.stdout.write("\\n" + error.message + "\\n");
+          }
+        }
+        console.log({ a: 1 });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ lines: stdout.split("\n").filter(line => /^[a-z]/.test(line)), end: stdout.slice(-12), exitCode }).toEqual(
+      {
+        lines: ["cannot be read", "cannot be read", "cannot be read"],
+        end: "{\n  a: 1,\n}\n",
+        exitCode: 0,
+      },
+    );
+  });
+
+  // Printing an uncaught error must never throw itself.
+  describe.each(["throw thrown;", "Promise.reject(thrown);", "reportError(thrown); process.exitCode = 1;"])(
+    "%s",
+    report => {
+      async function reportOf(thrown) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `const thrown = ${thrown};\n${report}`],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr: stderr.replace(/\n+Bun v.*\n$/, "\n"), exitCode };
+      }
+
+      it.concurrent("does not read it", async () => {
+        const getter = `get [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("cannot be read"); }`;
+        expect(await reportOf(`{ value: { ${getter} }, b: 2 }`)).toEqual({
+          stdout: "",
+          stderr: "error\n{\n  value: {\n    [Symbol(nodejs.util.inspect.custom)]: [Getter],\n  },\n  b: 2,\n}\n",
+          exitCode: 1,
+        });
+      });
+
+      it.concurrent("prints [threw while printing] in place of a property that throws", async () => {
+        const handler = `{ getPrototypeOf() { throw new Error("has no prototype"); } }`;
+        expect(await reportOf(`{ a: 1, value: Object.create(new Proxy({}, ${handler})) }`)).toEqual({
+          stdout: "",
+          stderr: "error\n{\n  a: 1,\n  value: [threw while printing]\n",
+          exitCode: 1,
+        });
+      });
+    },
+  );
+});
+
+it("expect.objectContaining(fn) prints the function when it has no properties to list", () => {
+  const f = () => {};
+  expect(Bun.inspect(expect.objectContaining(f))).toBe("ObjectContaining [Function: f]");
+  expect(Bun.inspect(expect.objectContaining(class A {}))).toBe("ObjectContaining [class A]");
+  expect(Bun.inspect({ x: expect.objectContaining(f) })).toBe("{\n  x: ObjectContaining [Function: f],\n}");
+  expect(Bun.inspect(expect.objectContaining(Object.assign(() => {}, { a: 1 })))).toBe(
+    "ObjectContaining {\n  a: 1,\n}",
+  );
+});
+
+describe("compact prints one line", () => {
+  it("an array of more than 100 items", () => {
+    expect(Bun.inspect(Array(150).fill(0), { compact: true })).toBe(
+      `[ ${Array(100).fill(0).join(", ")}, ... 50 more items ]`,
+    );
+    expect(Bun.inspect({ a: Array(101).fill(0) }, { compact: true })).toBe(
+      `{ a: [ ${Array(100).fill(0).join(", ")}, ... 1 more items ] }`,
+    );
+  });
+
+  it("an object past the depth", () => {
+    expect(Bun.inspect({ a: { b: 1 }, z: 1 }, { compact: true, depth: 0 })).toBe("{ a: [Object ...], z: 1 }");
+    expect(Bun.inspect([{ b: 1 }, { c: 2 }], { compact: true, depth: 0 })).toBe("[ [Object ...], [Object ...] ]");
+  });
+});
+
+// Each case runs in a fresh child so the formatter hasn't loaded util.inspect before the failing call.
+describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect function throws", () => {
+  async function inspectInChild(code) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const obj = { [Bun.inspect.custom]() { return "custom"; } };
+          const styled = { [Bun.inspect.custom](depth, options) { return options.stylize("x", "number"); } };
+          ${code}
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("throws while a global the module needs is replaced, and works once it's restored", async () => {
+    const result = await inspectInChild(`
+      const RealSymbol = Symbol;
+      globalThis.Symbol = 0;
+      try {
+        console.log(Bun.inspect(styled, { colors: true }));
+      } catch {
+        console.log("threw");
+      }
+      globalThis.Symbol = RealSymbol;
+      console.log(Bun.inspect(obj));
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+      Bun.gc(true);
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+    `);
+    expect(result).toEqual({ stdout: "threw\ncustom\ntrue\ntrue\n", stderr: "", exitCode: 0 });
+  });
+
+  it("throws the RangeError at the stack limit, and works afterwards", async () => {
+    const result = await inspectInChild(`
+      let deep;
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          try {
+            deep = Bun.inspect(obj);
+          } catch (e) {
+            deep = e;
+          }
+        }
+      }
+      recurse();
+      console.log(String(deep));
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({
+      stdout: "RangeError: Maximum call stack size exceeded.\ncustom\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("passes the real inspect function while util.inspect is replaced", async () => {
+    const result = await inspectInChild(`
+      const util = require("node:util");
+      const realInspect = util.inspect;
+      util.inspect = 42;
+      const receives = { [Bun.inspect.custom](depth, options, inspect) { return String(inspect === realInspect); } };
+      console.log(Bun.inspect(receives));
+    `);
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// Runs in a subprocess because a native stack overflow would kill the test runner.
+it.concurrent.each([
+  [
+    "circular jsx",
+    `const children = { $$typeof: Symbol.for("react.element"), type: "div", key: null };
+     children.props = { children };
+     console.log(Bun.inspect(children));
+     const key = { $$typeof: Symbol.for("react.element"), type: "div", props: {} };
+     key.key = key;
+     console.log(Bun.inspect(key));`,
+    "<div>\n  [Circular]\n</div>\n<div key=[Circular] />",
+  ],
+  [
+    "a deep Proxy chain",
+    `let proxy = { ok: 1 };
+     for (let i = 0; i < 100000; i++) proxy = new Proxy(proxy, {});
+     console.log(Bun.inspect(proxy));`,
+    "{\n  ok: 1,\n}",
+  ],
+  [
+    "deep jsx",
+    `let element = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
+     for (let i = 0; i < 100000; i++)
+       element = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: element }, key: null };
+     try { Bun.inspect(element); } catch (e) { console.log(e.name); }`,
+    "RangeError",
+  ],
+])("Bun.inspect of %s doesn't overflow the stack", async (_, script, expected) => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(expected);
+  expect(exitCode).toBe(0);
+});
+
+// A substring rope's characters live in its base string, and only the rope references the base.
+// Malloc=1 makes bmalloc use the system heap so ASAN can catch a read of freed characters.
+it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.custom resolves the rope", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const type = Buffer.from("_div-abcdefghijklmnopqrstuvwxyz").toString().slice(1);
+       const custom = {
+         [Bun.inspect.custom]() {
+           // Using the rope as a property key atomizes it, which copies its characters and drops the base.
+           ({})[type];
+           Bun.gc(true);
+           return "x";
+         },
+       };
+       const props = { custom, children: "text" };
+       console.log(Bun.inspect({ $$typeof: Symbol.for("react.element"), type, key: null, props }));`,
+    ],
+    env: { ...bunEnv, Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
+  expect(exitCode).toBe(0);
 });

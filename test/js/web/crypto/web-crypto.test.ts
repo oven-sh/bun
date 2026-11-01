@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, type webcrypto } from "node:crypto";
+import { createCipheriv, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -344,6 +344,97 @@ describe("oversized inputs", () => {
         "small round-trip": "ok",
       });
     }
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("oversized outputs", () => {
+  // The output can be larger than the input because of a tag, padding, 8 bytes for AES-KW, or base64 for a JWK.
+  // The synthetic limit lowers the cap to 1 MiB.
+  it.concurrent("rejects an output over the buffer limit and accepts one at the limit", async () => {
+    const script = `
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      const limit = 1024 * 1024;
+      setSyntheticAllocationLimitForTesting(limit);
+      const { subtle } = crypto;
+
+      const gcmKey = await subtle.importKey("raw", new Uint8Array(32).fill(1), "AES-GCM", false, ["encrypt", "decrypt"]);
+      const cbcKey = await subtle.importKey("raw", new Uint8Array(32).fill(2), "AES-CBC", false, ["encrypt"]);
+      const chachaKey = await subtle.importKey("raw-secret", new Uint8Array(32).fill(3), "ChaCha20-Poly1305", false, ["encrypt"]);
+      const kek = await subtle.importKey("raw", new Uint8Array(32).fill(4), "AES-KW", false, ["wrapKey"]);
+      const ctrKey = await subtle.importKey("raw", new Uint8Array(32).fill(5), "AES-CTR", false, ["encrypt"]);
+      const cfbKey = await subtle.importKey("raw", new Uint8Array(32).fill(6), "AES-CFB-8", false, ["encrypt"]);
+      const iv12 = new Uint8Array(12);
+      const iv16 = new Uint8Array(16);
+
+      const results = {};
+      const record = async (label, promise) => {
+        try {
+          results[label] = (await promise).byteLength;
+        } catch (e) {
+          results[label] = e.name;
+        }
+      };
+      const hmac = size => subtle.importKey("raw", new Uint8Array(size), { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+      const wrap = async (format, size) => subtle.wrapKey(format, await hmac(size), kek, "AES-KW");
+      const exportJwk = async size => {
+        try {
+          results["HMAC jwk export " + (size * 4 > limit * 3 ? "over" : "at") + " limit"] = (await subtle.exportKey("jwk", await hmac(size))).k.length;
+        } catch (e) {
+          results["HMAC jwk export over limit"] = e.name;
+        }
+      };
+
+      await record("AES-GCM at limit", subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(limit - 16)));
+      await record("AES-GCM over limit", subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(limit - 15)));
+      await record("ChaCha20-Poly1305 at limit", subtle.encrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chachaKey, new Uint8Array(limit - 16)));
+      await record("ChaCha20-Poly1305 over limit", subtle.encrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chachaKey, new Uint8Array(limit - 15)));
+      await record("AES-CBC at limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit - 1)));
+      await record("AES-CBC over limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit)));
+      await record("AES-CTR at limit", subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctrKey, new Uint8Array(limit)));
+      await record("AES-CTR over limit", subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctrKey, new Uint8Array(limit + 1)));
+      await record("AES-CFB-8 at limit", subtle.encrypt({ name: "AES-CFB-8", iv: iv16 }, cfbKey, new Uint8Array(limit)));
+      await record("AES-CFB-8 over limit", subtle.encrypt({ name: "AES-CFB-8", iv: iv16 }, cfbKey, new Uint8Array(limit + 1)));
+      await record("AES-KW at limit", wrap("raw", limit - 8));
+      await record("AES-KW over limit", wrap("raw", limit));
+      // base64url encodes 3 bytes as 4 characters, so a 768 KiB key encodes to exactly 1 MiB.
+      await exportJwk((limit / 4) * 3);
+      await exportJwk((limit / 4) * 3 + 3);
+      await record("AES-KW jwk over limit", wrap("jwk", (limit / 4) * 3));
+
+      // The process is still usable after a rejection.
+      const small = await subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(16).fill(5));
+      const roundTrip = new Uint8Array(await subtle.decrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, small));
+      results["small round-trip"] = roundTrip.every(b => b === 5) ? "ok" : "mismatch";
+
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "AES-GCM at limit": 1024 * 1024,
+      "AES-GCM over limit": "OperationError",
+      "ChaCha20-Poly1305 at limit": 1024 * 1024,
+      "ChaCha20-Poly1305 over limit": "OperationError",
+      "AES-CBC at limit": 1024 * 1024,
+      "AES-CBC over limit": "OperationError",
+      "AES-CTR at limit": 1024 * 1024,
+      "AES-CTR over limit": "OperationError",
+      "AES-CFB-8 at limit": 1024 * 1024,
+      "AES-CFB-8 over limit": "OperationError",
+      "AES-KW at limit": 1024 * 1024,
+      "AES-KW over limit": "OperationError",
+      "HMAC jwk export at limit": 1024 * 1024,
+      "HMAC jwk export over limit": "OperationError",
+      "AES-KW jwk over limit": "OperationError",
+      "small round-trip": "ok",
+    });
     expect(exitCode).toBe(0);
   });
 });
@@ -1101,6 +1192,27 @@ describe("SubtleCrypto.deriveBits length", () => {
     });
   });
 
+  it("takes the length as an [EnforceRange] unsigned long", async () => {
+    const key = await crypto.subtle.importKey("raw", enc.encode("secret"), "HKDF", false, ["deriveBits"]);
+    const hkdf = { name: "HKDF", hash: "SHA-256", salt: enc.encode("salt"), info: enc.encode("info") };
+    const results: Record<string, string> = {};
+    for (const length of [16, 16.9, "16", NaN, -1, 2 ** 32, 2 ** 32 + 16, Infinity, "x", {}]) {
+      results[Bun.inspect(length)] = await probe(crypto.subtle.deriveBits(hkdf, key, length as number));
+    }
+    expect(results).toEqual({
+      "16": "f6d2",
+      "16.9": "f6d2",
+      '"16"': "f6d2",
+      NaN: "TypeError",
+      "-1": "TypeError",
+      "4294967296": "TypeError",
+      "4294967312": "TypeError",
+      Infinity: "TypeError",
+      '"x"': "TypeError",
+      "{}": "TypeError",
+    });
+  });
+
   // deriveKey(derivedKeyType: HKDF) has no inherent key length, so the entire shared
   // secret must become the imported HKDF key; a derivedKeyType with a concrete length
   // (AES-GCM 256) must still flow that length through.
@@ -1123,7 +1235,7 @@ describe("X25519 JWK import", () => {
   const x25519Public: JsonWebKey = {
     kty: "OKP",
     crv: "X25519",
-    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr06uFD1q1y5Go",
+    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
   };
   const x25519Private: JsonWebKey = {
     ...x25519Public,
@@ -1212,6 +1324,26 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
   });
 });
 
+it.each([
+  ["ECDSA", "sign"],
+  ["ECDH", "deriveBits"],
+] as const)("%s: a pkcs8 key without its optional public key is exported with it", async (name, usage) => {
+  const algorithm = { name, namedCurve: "P-256" };
+  const { privateKey } = await crypto.subtle.generateKey(algorithm, true, [usage]);
+  const { d } = await crypto.subtle.exportKey("jwk", privateKey);
+  // A PrivateKeyInfo whose ECPrivateKey (RFC 5915) is only the version and the private key.
+  const withoutPublicKey = Buffer.concat([
+    Buffer.from("3041020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420", "hex"),
+    Buffer.from(d!, "base64url"),
+  ]);
+  const imported = await crypto.subtle.importKey("pkcs8", withoutPublicKey, algorithm, true, [usage]);
+  expect(Buffer.from(await crypto.subtle.exportKey("pkcs8", imported))).toEqual(
+    Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)),
+  );
+  // The key itself stays as it came.
+  expect(KeyObject.from(imported).export({ format: "der", type: "pkcs8" })).toEqual(withoutPublicKey);
+});
+
 // importKey's empty-usages guard got Node's message; the same predicate in
 // generateKey, deriveKey's inner import and unwrapKey's inner import still
 // carried the empty-message SyntaxError.
@@ -1247,6 +1379,23 @@ describe("empty usages on a private or secret key", () => {
       deriveKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
       unwrapKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
     });
+  });
+
+  it("the SyntaxError is a DOMException", async () => {
+    const errors = await Promise.all(
+      [
+        crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, []),
+        crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["sign"]),
+        crypto.subtle.importKey("raw", new Uint8Array(16), "AES-GCM", false, ["sign"]),
+        (async () => createSecretKey(new Uint8Array(16)).toCryptoKey("AES-GCM", false, []))(),
+        (async () => createSecretKey(new Uint8Array(16)).toCryptoKey("AES-GCM", false, ["sign"]))(),
+      ].map(promise => promise.catch(e => e)),
+    );
+    for (const error of errors) {
+      expect(error).toBeInstanceOf(DOMException);
+      expect({ name: error.name, code: error.code }).toEqual({ name: "SyntaxError", code: DOMException.SYNTAX_ERR });
+      expect(error.stack).toBeString();
+    }
   });
 });
 
@@ -1357,8 +1506,8 @@ describe("CryptoKey.usages ordering", () => {
   });
 });
 
-// getRandomValues takes integer-typed views only; every other ArrayBufferView-ish
-// argument raises TypeMismatchError rather than being filled.
+// getRandomValues takes integer-typed views only; every other ArrayBufferView
+// raises TypeMismatchError rather than being filled.
 describe("crypto.getRandomValues argument types", () => {
   const integerViews = [
     ["Int8Array", () => new Int8Array(4)],
@@ -1370,6 +1519,9 @@ describe("crypto.getRandomValues argument types", () => {
     ["Uint32Array", () => new Uint32Array(4)],
     ["BigInt64Array", () => new BigInt64Array(4)],
     ["BigUint64Array", () => new BigUint64Array(4)],
+    // Node and the specification refuse these two.
+    ["Uint8Array on a SharedArrayBuffer", () => new Uint8Array(new SharedArrayBuffer(4))],
+    ["Uint8Array on a resizable ArrayBuffer", () => new Uint8Array(new ArrayBuffer(4, { maxByteLength: 8 }))],
   ] as const;
 
   for (const [name, make] of integerViews) {
@@ -1384,9 +1536,6 @@ describe("crypto.getRandomValues argument types", () => {
     ["Float32Array", () => new Float32Array(4)],
     ["Float64Array", () => new Float64Array(4)],
     ["DataView", () => new DataView(new ArrayBuffer(4))],
-    ["ArrayBuffer", () => new ArrayBuffer(4)],
-    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
-    ["plain object", () => ({})],
   ] as const;
 
   for (const [name, make] of rejected) {
@@ -1395,6 +1544,36 @@ describe("crypto.getRandomValues argument types", () => {
         expect.objectContaining({
           name: "TypeMismatchError",
           message: "The data argument must be an integer-type TypedArray",
+        }),
+      );
+    });
+  }
+
+  // Web IDL's conversion of the argument to an ArrayBufferView comes first.
+  const notConverted = [
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
+    ["plain object", () => ({})],
+  ] as const;
+
+  it("needs an argument", () => {
+    // @ts-expect-error
+    expect(() => crypto.getRandomValues()).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_MISSING_ARGS",
+        message: 'The "array" argument must be specified',
+      }),
+    );
+  });
+
+  for (const [name, make] of notConverted) {
+    it(`rejects ${name} with TypeError`, () => {
+      expect(() => crypto.getRandomValues(make() as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is not an ArrayBufferView.",
         }),
       );
     });
@@ -1466,5 +1645,143 @@ describe("exception scope discipline", () => {
       uncheckedScopes: [],
       exitCode: 0,
     });
+  });
+});
+
+describe("JWK import validation", () => {
+  const rejection = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      e => e.name,
+    );
+
+  it.each([
+    ["Ed25519", "sign", "K1wIouqnuiA04b3WrMa-xKIKIpfHetNZRv3h9fBf768", "wVK6M3SMhQh3NK-7GRrSV-BVWQx1FO5pW8hhQeu_NdA"],
+    [
+      "X25519",
+      "deriveBits",
+      "aSb8Q-RndwfNnPeOYGYPDUN3uhAPnMLzXyfi-mqfhig",
+      "mL_IWm55RrALUGRfJYzw40gEYWMvtRkesP9mj8o8Omc",
+    ],
+  ] as const)("%s private keys need the matching x", async (name, usage, x, d) => {
+    const importJwk = (members: JsonWebKey) =>
+      crypto.subtle.importKey("jwk", { kty: "OKP", crv: name, x, d, ...members }, name, true, [usage]);
+
+    // Node decodes both like Buffer.from(encoded, "base64"): either alphabet, skipping what is in neither.
+    const standard = (encoded: string) => Buffer.from(encoded, "base64url").toString("base64");
+    const wrapped = (encoded: string) => encoded.slice(0, 10) + "\n" + encoded.slice(10);
+    for (const spelled of [{}, { x: standard(x), d: standard(d) }, { x: wrapped(x), d: wrapped(d) }]) {
+      expect(await crypto.subtle.exportKey("jwk", await importJwk(spelled))).toMatchObject({ x, d });
+    }
+
+    expect({
+      otherKey: await rejection(importJwk({ x: d })),
+      missing: await rejection(importJwk({ x: undefined })),
+      notBase64: await rejection(importJwk({ x: "!!" })),
+      shortX: await rejection(importJwk({ x: x.slice(4) })),
+      shortD: await rejection(importJwk({ d: "AA" })),
+    }).toEqual({
+      otherKey: "DataError",
+      missing: "DataError",
+      notBase64: "DataError",
+      shortX: "DataError",
+      shortD: "DataError",
+    });
+  });
+
+  it("RSA private keys need the n that is p times q, and no oth", async () => {
+    const algorithm = {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 1024,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    };
+    const { privateKey } = await crypto.subtle.generateKey(algorithm, true, ["sign", "verify"]);
+    const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+    const { kty, n, e } = jwk;
+    const importJwk = (members: JsonWebKey) =>
+      crypto.subtle.importKey("jwk", { ...jwk, ...members }, algorithm, true, ["sign"]);
+
+    expect({
+      unchanged: await rejection(importJwk({})),
+      n: await rejection(importJwk({ n: jwk.d })),
+      p: await rejection(importJwk({ p: jwk.q })),
+      q: await rejection(importJwk({ q: jwk.p })),
+      oth: await rejection(importJwk({ oth: [] })),
+      publicOth: await rejection(crypto.subtle.importKey("jwk", { kty, n, e, oth: [] }, algorithm, true, ["verify"])),
+    }).toEqual({
+      unchanged: "resolved",
+      n: "DataError",
+      p: "DataError",
+      q: "DataError",
+      oth: "DataError",
+      publicOth: "DataError",
+    });
+  });
+
+  it("rejects a repeated key_ops entry for every key type", async () => {
+    const pair = async (algorithm: any, usages: KeyUsage[]) =>
+      crypto.subtle.exportKey(
+        "jwk",
+        ((await crypto.subtle.generateKey(algorithm, true, usages)) as CryptoKeyPair).publicKey,
+      );
+    const rsa = {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 1024,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    };
+    const ec = { name: "ECDSA", namedCurve: "P-256" };
+    const cases: [any, JsonWebKey, KeyUsage][] = [
+      ["AES-GCM", { kty: "oct", k: Buffer.alloc(16).toString("base64url") }, "encrypt"],
+      [rsa, await pair(rsa, ["sign", "verify"]), "verify"],
+      [ec, await pair(ec, ["sign", "verify"]), "verify"],
+      ["Ed25519", await pair("Ed25519", ["sign", "verify"]), "verify"],
+    ];
+    for (const [algorithm, jwk, usage] of cases) {
+      const importWith = (key_ops: string[]) =>
+        crypto.subtle.importKey("jwk", { ...jwk, key_ops }, algorithm, true, [usage]);
+      expect({
+        algorithm,
+        once: await rejection(importWith([usage])),
+        twice: await rejection(importWith([usage, usage])),
+      }).toEqual({ algorithm, once: "resolved", twice: "DataError" });
+    }
+  });
+
+  it("reports the modulus length in bits", async () => {
+    const n = Buffer.alloc(256);
+    n[0] = 0x40;
+    n[255] = 1;
+    const key = await crypto.subtle.importKey(
+      "jwk",
+      { kty: "RSA", n: n.toString("base64url"), e: "AQAB" },
+      { name: "RSA-OAEP", hash: "SHA-256" },
+      true,
+      ["encrypt"],
+    );
+    expect((key.algorithm as RsaHashedKeyAlgorithm).modulusLength).toBe(2047);
+  });
+});
+
+describe("AES-CTR", () => {
+  // 2^64 blocks are left before these counters wrap, which does not fit the size_t it was counted in.
+  it.each([
+    ["ffffffffffffffff0000000000000000", 128],
+    ["7fffffffffffffff0000000000000000", 127],
+    ["aabbccddffffffff0000000000000000", 96],
+    ["aabbccddeeff00010000000000000000", 65],
+  ])("counter %s with length %d", async (counter, length) => {
+    const rawKey = Buffer.alloc(16, 7);
+    const data = Buffer.alloc(40, 1);
+    const key = await crypto.subtle.importKey("raw", rawKey, "AES-CTR", false, ["encrypt"]);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-CTR", counter: Buffer.from(counter, "hex"), length },
+      key,
+      data,
+    );
+    expect(Buffer.from(encrypted).toString("hex")).toBe(
+      createCipheriv("aes-128-ctr", rawKey, Buffer.from(counter, "hex")).update(data).toString("hex"),
+    );
   });
 });

@@ -1,22 +1,22 @@
-//! The memory of one check: one arena per thread, all freed together.
+//! Memory for one check: one arena per thread, all freed together.
 //!
-//! `bun_alloc::Arena` is a mimalloc heap. A block in it can be freed or resized on its own, so a
-//! container that is dropped early returns its memory to the heap. Destroying the heap frees every
-//! block that is still allocated. Only the thread that created an arena allocates in it. Any thread
+//! `bun_alloc::Arena` is a mimalloc heap. Its blocks can be freed or resized individually, so a
+//! container that's dropped early returns its memory to the heap. Destroying the heap frees every
+//! block that's still allocated. Only the thread that created an arena allocates in it. Any thread
 //! may read or free a block of any arena.
 //!
-//! Everything that is allocated here borrows the `Session`, so the borrow checker proves that the
-//! session is dropped last.
+//! Every allocation made here borrows the `Session`, so the borrow checker proves that the session
+//! is dropped last.
 //!
-//! What lives until the check ends is here, and no destructor runs for it: the program is itself in
-//! an arena (`Arena::alloc`). So nothing that is reachable from the program owns memory on the
-//! regular heap, except what `Session::keep` has taken over. What a function or a task builds and
-//! throws away is on the regular heap, in std containers.
+//! Data that lives until the check ends is allocated here, and its destructors never run, because
+//! the program itself is in an arena (`Arena::alloc`). So nothing reachable from the program owns
+//! memory on the regular heap, except values passed to `Session::keep`. Temporary data that a
+//! function or a task builds and discards uses std containers on the regular heap.
 //!
-//! - A container that one thread fills holds `&Arena`: `ArenaVec`, `ArenaHashMap`, `LocalVec`.
-//! - A container that several threads add to holds `&Session`, which allocates in the arena of the
-//!   calling thread: `AppendVec`, `Cells`, `Newest`.
-//! - A list that never changes after it is built is `&[T]`, from `Arena::alloc_slice_copy`.
+//! - A container filled by one thread holds `&Arena`: `ArenaVec`, `ArenaHashMap`, `LocalVec`.
+//! - A container that several threads append to holds `&Session`, which allocates in the calling
+//!   thread's arena: `AppendVec`, `Cells`, `Newest`.
+//! - A list that never changes once it's built is a `&[T]` from `Arena::alloc_slice_copy`.
 
 pub use bun_alloc::{Arena, ArenaBox, ArenaVec, ArenaVecExt, transfer_arena, vec_from_iter_in};
 
@@ -24,6 +24,7 @@ use crate::util::{AppendVec, FxBuild};
 use bun_threading::Guarded;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
+use std::cell::UnsafeCell;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::thread::ThreadId;
@@ -43,13 +44,60 @@ pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
     ArenaHashSet::with_hasher_in(FxBuild, arena)
 }
 
+/// Gives the memory of the free blocks in the calling thread's heaps back to the system. A page with one block in use
+/// otherwise stays resident as a whole. Only the thread that owns a heap can do this. The allocator does it for a
+/// thread that parks, so this is for a thread that has work for a long time.
+pub fn give_back_free_memory() {
+    bun_alloc::mimalloc::mi_on_thread_idle();
+}
+
 /// Owns the arena of every thread that has allocated for one check.
 pub struct Session {
-    /// A linked list that only grows. A thread appends its own node, so each arena is created by
+    /// An append-only linked list. Each thread appends its own node, so each arena is created by
     /// the thread that allocates in it.
     first: Link,
-    /// What `keep` was given.
+    /// Values passed to `keep`.
     kept: AppendVec<Box<dyn Any + Send + Sync>>,
+}
+
+/// A session that its user empties once it's done with it, while others still refer to the slot.
+pub struct SessionSlot(UnsafeCell<Session>);
+
+// SAFETY: a `Session` is `Sync`, and by its contract `empty` runs while nothing else uses the slot.
+unsafe impl Sync for SessionSlot {}
+
+impl SessionSlot {
+    pub fn new() -> SessionSlot {
+        SessionSlot(UnsafeCell::new(Session::new()))
+    }
+
+    pub fn session(&self) -> &Session {
+        // SAFETY: `empty` runs only when no such reference is used again.
+        unsafe { &*self.0.get() }
+    }
+
+    /// Frees everything that was allocated in the session, on any thread. Afterwards the session is like new.
+    ///
+    /// # Safety
+    /// No reference to the session or into its arenas is used again, and no other thread uses the slot during the call.
+    pub unsafe fn empty(&self) {
+        // SAFETY: caller contract.
+        drop(unsafe { self.0.get().replace(Session::new()) });
+    }
+
+    /// `empty`, with the work of `Session::drop_in_parallel`.
+    ///
+    /// # Safety
+    /// As for `empty`.
+    pub unsafe fn empty_in_parallel(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        // SAFETY: caller contract.
+        let session = unsafe { self.0.get().replace(Session::new()) };
+        session.drop_in_parallel(in_parallel);
+    }
+
+    pub fn into_session(self) -> Session {
+        self.0.into_inner()
+    }
 }
 
 type Link = OnceLock<Box<ThreadArena>>;
@@ -74,9 +122,15 @@ impl Session {
         }
     }
 
-    /// The arena of the calling thread. The first call from a thread creates it.
+    /// No thread has asked for an arena.
+    pub fn is_unused(&self) -> bool {
+        self.first.get().is_none()
+    }
+
+    /// Returns the calling thread's arena, creating it on the thread's first call.
     ///
-    /// The search is linear in the number of threads. A task calls it once and stores the result.
+    /// The lookup is linear in the number of threads, so a task calls this once and stores the result.
+    #[inline(never)]
     pub fn arena(&self) -> &Arena {
         let thread = std::thread::current().id();
         let mut link = &self.first;
@@ -95,39 +149,87 @@ impl Session {
         }
     }
 
-    /// The bytes that are in use in the arenas. For a moment at which no thread allocates in them.
+    /// Returns the bytes in use across all arenas. Call it only while no thread is allocating in them.
     pub fn allocated_bytes(&self) -> usize {
         std::iter::successors(self.first.get(), |node| node.next.get())
             .map(|node| node.arena.allocated_bytes())
             .sum()
     }
 
-    /// Takes over a value that owns memory on the regular heap, and drops it with the session. For
-    /// what the program refers to, since nothing drops the program.
+    /// Takes ownership of a value that owns memory on the regular heap and drops it with the session.
+    /// Use it for values the program refers to, since nothing drops the program.
     pub fn keep<T: Send + Sync + 'static>(&self, value: T) -> &T {
         let at = self.kept.push(Box::new(value));
         let kept: &(dyn Any + Send + Sync) = &**self.kept.get(at);
         kept.downcast_ref().expect("it was boxed as a `T`")
     }
 
-    /// Drops the session right before the process exits. The arenas are destroyed in parallel, each thread preferring its
-    /// own, and their memory is returned to the OS immediately. Without this, a single thread unmaps everything at exit,
-    /// which costs about 70 ms per GB.
-    /// `in_parallel(n, f)` must call `f(i)` for every `i < n`, on any number of threads.
+    /// Drops `sessions` in parallel right before the process exits and returns their memory to the OS immediately.
+    /// Values passed to `keep` are dropped first, then the arenas are destroyed. Each thread prefers its own arena, and
+    /// after destroying it returns the free pages the allocator caches for that thread, which by then include the kept
+    /// values' pages. Without this, a single thread unmaps everything at exit, which costs about 70 ms per GB.
+    /// `in_parallel(n, f)` must call `f(i)` for every `i < n`, on any number of threads, starting them in ascending order.
     pub fn drop_before_the_process_ends(
-        mut self,
-        in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync)),
+        sessions: Vec<Session>,
+        in_parallel: impl FnOnce(usize, &(dyn Fn(usize) + Sync)),
     ) {
+        /// How many kept values a thread drops at a time.
+        const RUN: usize = 256;
+        let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
+        let mut kept: Vec<Vec<Box<dyn Any + Send + Sync>>> = Vec::new();
+        for mut session in sessions {
+            let mut next = session.first.take();
+            while let Some(mut node) = next {
+                next = node.next.take();
+                arenas.push(node);
+            }
+            session.kept.drain(|_, value| match kept.last_mut() {
+                Some(run) if run.len() < RUN => run.push(value),
+                _ => kept.push(vec![value]),
+            });
+        }
+        // Make mimalloc return freed pages right away instead of caching them for reuse.
+        bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
+        let (runs, count) = (kept.len(), kept.len() + arenas.len());
+        let (kept, arenas) = (Guarded::new(kept), Guarded::new(arenas));
+        in_parallel(count, &|index| {
+            if index < runs {
+                let run = kept.lock().pop();
+                return drop(run);
+            }
+            let thread = std::thread::current().id();
+            let mut left = arenas.lock();
+            let own = left.iter().position(|it| it.thread == thread);
+            let one = left.swap_remove(own.unwrap_or(0));
+            drop(left);
+            drop(one);
+            if own.is_some() {
+                bun_alloc::mimalloc::mi_collect(true);
+            }
+        });
+    }
+
+    pub fn drop_in_parallel(mut self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        /// How many kept values a thread drops at a time.
+        const RUN: usize = 256;
         let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
         let mut next = self.first.take();
         while let Some(mut node) = next {
             next = node.next.take();
             arenas.push(node);
         }
-        // Make mimalloc return freed pages right away instead of caching them for reuse.
-        bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
-        let (count, arenas) = (arenas.len(), Guarded::new(arenas));
-        in_parallel(count, &|_| {
+        let mut kept: Vec<Vec<Box<dyn Any + Send + Sync>>> = Vec::new();
+        self.kept.drain(|_, value| match kept.last_mut() {
+            Some(run) if run.len() < RUN => run.push(value),
+            _ => kept.push(vec![value]),
+        });
+        let (runs, count) = (kept.len(), kept.len() + arenas.len());
+        let (kept, arenas) = (Guarded::new(kept), Guarded::new(arenas));
+        in_parallel(count, &|index| {
+            if index < runs {
+                let run = kept.lock().pop();
+                return drop(run);
+            }
             let thread = std::thread::current().id();
             let mut left = arenas.lock();
             let own = left.iter().position(|it| it.thread == thread);
@@ -145,10 +247,11 @@ impl Session {
 }
 
 impl Drop for Session {
-    /// A loop, so that the stack depth does not depend on the number of threads.
+    /// Unlinks the nodes in a loop so the stack depth doesn't depend on the number of threads.
     ///
-    /// On any thread, while the threads that allocated work for other sessions: `mi_heap_destroy`
-    /// detaches what a thread holds of the heap under that thread's lock (`_mi_heap_detach_theaps`).
+    /// This can run on any thread, even while the threads that allocated are working for other
+    /// sessions, because `mi_heap_destroy` detaches each thread's part of the heap under that
+    /// thread's lock (`_mi_heap_detach_theaps`).
     fn drop(&mut self) {
         let mut next = self.first.take();
         while let Some(mut node) = next {
@@ -158,12 +261,12 @@ impl Drop for Session {
 }
 
 // SAFETY: every method forwards to `&Arena`, which upholds the contract for its own blocks: a block
-// is valid until it is freed or the arena is dropped, and the arena is dropped with the session,
-// which `&Session` borrows. A block may come from the arena of another thread than the one that
-// frees or resizes it. `&Arena` allows that: it frees with `mi_free`, which finds the heap of a
-// block from its address, and it resizes with `mi_heap_realloc_aligned`, which either leaves the
-// block in place or copies it to the given heap and calls `mi_free`. `bun_alloc::transfer_arena`
-// relies on the same two properties.
+// is valid until it's freed or the arena is dropped, and the arena is dropped with the session,
+// which `&Session` borrows. The thread that frees or resizes a block may not be the one whose arena
+// it came from. `&Arena` allows that, because it frees with `mi_free`, which finds a block's heap
+// from its address, and it resizes with `mi_heap_realloc_aligned`, which either leaves the block in
+// place or copies it to the given heap and calls `mi_free`. `bun_alloc::transfer_arena` relies on
+// the same two properties.
 unsafe impl Allocator for &Session {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
@@ -215,7 +318,7 @@ unsafe impl Allocator for &Session {
     }
 }
 
-/// mimalloc is foreign code, which Miri does not run.
+/// Miri can't run mimalloc, which is foreign code.
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
@@ -275,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn what_is_kept_is_dropped_with_the_session() {
+    fn kept_values_are_dropped_with_the_session() {
         let counted = std::sync::Arc::new(());
         let session = Session::new();
         let lists: Vec<&Vec<std::sync::Arc<()>>> = std::thread::scope(|scope| {
@@ -295,7 +398,41 @@ mod tests {
     }
 
     #[test]
-    fn a_vector_grows_on_another_thread_than_the_one_that_created_it() {
+    fn threads_drop_sessions_before_the_process_ends() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let counted = std::sync::Arc::new(());
+        let sessions: Vec<Session> = (0..2).map(|_| Session::new()).collect();
+        std::thread::scope(|scope| {
+            for session in sessions.iter().cycle().take(6) {
+                let counted = &counted;
+                scope.spawn(move || {
+                    for n in 0..200u32 {
+                        let kept = session.keep(vec![std::sync::Arc::clone(counted); 2]);
+                        assert_eq!(kept.len(), 2);
+                        assert_eq!(*session.arena().alloc_slice_copy(&[n; 100]), [n; 100]);
+                    }
+                });
+            }
+        });
+        assert_eq!(std::sync::Arc::strong_count(&counted), 1 + 6 * 200 * 2);
+        let (next, done) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        Session::drop_before_the_process_ends(sessions, |count, work| {
+            std::thread::scope(|scope| {
+                for _ in 0..3 {
+                    scope.spawn(|| {
+                        while next.fetch_add(1, Ordering::Relaxed) < count {
+                            work(done.fetch_add(1, Ordering::Relaxed));
+                        }
+                    });
+                }
+            });
+            assert_eq!(done.load(Ordering::Relaxed), count);
+        });
+        assert_eq!(std::sync::Arc::strong_count(&counted), 1);
+    }
+
+    #[test]
+    fn vector_grows_on_a_different_thread() {
         let session = Session::new();
         let mut list: Vec<u32, &Session> = Vec::new_in(&session);
         list.extend(0..100);
@@ -307,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn a_block_is_freed_on_another_thread_than_the_one_that_allocated_it() {
+    fn block_is_freed_on_a_different_thread() {
         let session = Session::new();
         let mut list = ArenaVec::new_in(session.arena());
         list.extend(0..1_000u32);
@@ -321,7 +458,7 @@ mod tests {
         let session = Session::new();
         let layout = Layout::array::<u64>(1 << 12).unwrap();
         let block = (&session).allocate_zeroed(layout).unwrap();
-        // SAFETY: the block was allocated with this length and is initialized with zeros.
+        // SAFETY: the block was allocated with this length and is zero-initialized.
         let bytes = unsafe { block.as_ref() };
         assert!(bytes.len() >= layout.size());
         assert!(bytes.iter().all(|&byte| byte == 0));

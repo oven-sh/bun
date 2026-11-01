@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
 
 // The React Compiler emits `import { c as _c } from "react/compiler-runtime"` and
@@ -739,6 +740,47 @@ describe("bundler", () => {
     });
   }
 
+  // `minify: { syntax: true }` joins adjacent pieces of template and string
+  // text before the React Compiler sees them. The joined text is a rope, and
+  // the compiler must read all of it, not only its first piece.
+  for (const minifySyntax of [false, true] as const) {
+    itBundled(`react-compiler/TextJoinedByTheMinifier-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          function TwoTemplates({ n, label }) { return <t>{\`a\${n}\` + \`b\${label}\`}</t>; }
+          function ConstantInHead({ n }) { return <t>{\`a\${"b"}c\${n}\`}</t>; }
+          function ConstantsInTail({ n }) { return <t>{\`\${n}a\${"b"}c\${1}d\${null}e\`}</t>; }
+          function TemplatePlusString({ n }) { return <t>{\`a\${n}b\` + "c" + "d"}</t>; }
+          function StringPlusTemplate({ n }) { return <t>{"a" + \`b\${n}\`}</t>; }
+          function Strings({ n }) { return <t title={"a" + "b" + "c"}>{n}</t>; }
+          function NotAscii({ n, label }) { return <t>{[\`a\${n}\` + \`\u00e9\${label}\`, \`\u65e5\${"b"}c\${n}\`, \`a\${"\u65e5"}c\${n}\`, \`\${n}a\` + "\u00e9" + "b", "a" + "\u{1f600}" + \`b\${n}\`]}</t>; }
+          function SpreadKey({ n }) { return <t {...{ ["a" + "b"]: n }} />; }
+          function ObjectKey({ n }) { return <t value={{ ["a" + "b"]: n }} />; }
+          const all = [TwoTemplates, ConstantInHead, ConstantsInTail, TemplatePlusString, StringPlusTemplate, Strings, NotAscii, SpreadKey, ObjectKey];
+          console.log(JSON.stringify(all.map(component => component({ n: 1, label: "L" }).props)));
+        `,
+        "/node_modules/react/compiler-runtime.js": `
+          exports.c = function (n) { return new Array(n).fill(Symbol.for("react.memo_cache_sentinel")); };
+        `,
+        "/node_modules/react/index.js": `exports.createElement = () => null;`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "api",
+      minifySyntax,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toMatch(/\$c\(\d+\)/);
+      },
+      run: {
+        stdout:
+          '[{"children":"a1bL"},{"children":"abc1"},{"children":"1abc1dnulle"},{"children":"a1bcd"},{"children":"ab1"},{"title":"abc","children":1},{"children":["a1\u00e9L","\u65e5bc1","a\u65e5c1","1a\u00e9b","a\u{1f600}b1"]},{"ab":1},{"value":{"ab":1}}]',
+      },
+    });
+  }
+
   // A user's local `jsx` / `jsxs` / `jsxDEV` / `Fragment` binding in the
   // component body scope must not capture the automatic JSX runtime import
   // when the React Compiler rewrites the component.
@@ -850,6 +892,46 @@ describe("bundler", () => {
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
     },
+  });
+
+  // A `try` body that can't throw loses its handler and `try` terminal, but the code after the `try` must be kept.
+  itBundled("react-compiler/DeadTryBodyKeepsTheCodeAfterIt", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const report = () => {};
+        function Branches(props) { try { const unused = 1; } catch (e) { if (props.debug) report(e); } return <div>{props.a}</div>; }
+        function Guard(props) {
+          try {
+            const isProduction = process.env.NODE_ENV === "production";
+            if (isProduction) report(props);
+          } catch (e) {
+            props.onError?.(e);
+          }
+          return <div>{props.a}</div>;
+        }
+        function Inner(props) {
+          let a;
+          try {
+            try { const unused = 1; } catch (e) { report(e); }
+            a = props.f();
+          } catch {
+            a = "caught";
+          }
+          return <div>{a}</div>;
+        }
+        const rendered = [Branches({ a: 1 }), Guard({ a: 2 }), Inner({ f: () => 3 })];
+        console.log(rendered.map(it => it?.p.children).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    define: { "process.env.NODE_ENV": '"development"' },
+    run: { stdout: "1, 2, 3" },
   });
 
   // `c` is assigned in a scope that lies in the scope of `d`. Only the inner one had it as an output, so a render in which
@@ -3308,6 +3390,416 @@ describe("bundler", () => {
     });
   }
 
+  // A memo block saves each `let` that it assigns and gives it back when its cache hits. Each component renders several
+  // times on one memo cache and has to render what the plain build renders. `*` marks a render that got the `list` of
+  // the render before it, so each line also shows that the block still hits its cache.
+  const reassignedLocalOutput = `
+    DefaultThenProp [1,[1]] [1,[1]]* [2,[2]]
+    EitherArmThenProp [3,[3]] [3,[3]]* [1,[1]]
+    NullableEntryThenProp ["anon",["anon"]] ["anon",["anon"]]* ["ann",["ann"]] ["ann",["ann"]]*
+    BothArmsThenProp ["b",["b"]] ["b",["b"]]* ["c",["c"]]
+    DependencyPath ["b",["a","b"]] ["b",["b","b"]] ["b",["b","b"]]*
+    ConditionalReassign [1,["x"]] [2,["x"]] [2,["x"]]* ["flagged",[]]
+    LoopReassign ["i",[1,2]] ["j",[1,2]] ["j",[1,2]]* [3,[3]]
+    PrunedNestedScope [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]]* ["k",[{"v":1,"w":1},{"v":2,"w":1}]]
+    NestedScope ["a",[3]] ["b",[3]] ["b",[3]]* ["off",[3]] ["off",[3]]*
+    LoopInsideScopeOfSibling ["a",{}] ["b",{}] ["b",{}]* ["off",{}] ["off",{}]*
+    JoinBeforeScope ["a1",["x"]] ["a2",["x"]] ["base",["x"]] ["base",["x"]]*
+    ChainedScopes ["1two",[[0],[]]] ["2two",[[0],[]]] ["2two",[[0],[]]]* ["onetwo",[[],[]]]
+    ForOfOnly ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]* ["none",null]
+    ForWithContinue ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]*
+    useFormErrors [false,[[],[]]] [true,[["That name is already taken"],[]]] [true,[["That name is already taken"],[]]]* [true,[[],["Pick an X variable"]]] [true,[["That name is already taken"],["Pick an X variable"]]]
+    useBareParam [1,["b"]] [2,["b"]] [2,["b"]]* ["X",[]]
+    UpdateInFrontOfInnerBlock ["c1:2",[{"b":1},{"b":1}]] ["c2:2",[{"b":1},{"b":1}]] ["c2:2",[{"b":1},{"b":1}]]*
+    UpdateInFrontOfInnerBlockNoJoin [1,["c1",{"b":1}]] [1,["c2",{"b":1}]] [1,["c2",{"b":1}]]*
+    ReadThenReassign [2,["x"]] [3,["x"]] [3,["x"]]*
+    CounterInLoop [1,[3]] [1,[3]]* [0,[1,2]]
+    AssignedBeforeLoop ["i:b",[1,2]] ["j:b",[1,2]]* ["j:3",[3]]
+  `;
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { render } from "react";
+
+          // The first four read a property after the join. Before the block the variable has the value that it came
+          // in with, which can be null, so nothing may read that property there.
+          const defaults = new Set([1]);
+          function DefaultThenProp(p) {
+            let v = p.v;
+            const list = [];
+            if (v == null) v = defaults;
+            list.push(v.size);
+            return <div label={v.size} list={list} />;
+          }
+
+          function EitherArmThenProp({ items, filter }) {
+            let shown;
+            const list = [];
+            if (filter) {
+              shown = items.filter(filter);
+            } else {
+              shown = items;
+            }
+            list.push(shown.length);
+            return <div label={shown.length} list={list} />;
+          }
+
+          function NullableEntryThenProp({ user, fallbackUser }) {
+            let u = user;
+            const list = [];
+            if (!u) u = fallbackUser;
+            list.push(u.profile.name);
+            return <div label={u.profile.name} list={list} />;
+          }
+
+          function BothArmsThenProp(p) {
+            let object = p.a;
+            const list = [];
+            if (p.kind) object = p.b;
+            else object = p.c;
+            list.push(object.v.w);
+            return <div label={object.v.w} list={list} />;
+          }
+
+          // The first read is of the value that object came in with, so it stays an input of the block.
+          function DependencyPath(p) {
+            let object = p.o;
+            const list = [];
+            list.push(object.x);
+            if (p.flag) object = p.o2;
+            list.push(object.x);
+            return <div label={object.x} list={list} />;
+          }
+
+          // In the next eleven a path through the block leaves the variable as it came in, so that value is an input
+          // of the block.
+          function ConditionalReassign(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) {
+              label = "flagged";
+            } else {
+              list.push(p.b);
+            }
+            return <div label={label} list={list} />;
+          }
+
+          function LoopReassign(p) {
+            let found = p.initial;
+            const list = [];
+            for (const item of p.items) {
+              if (item.ok) found = item.v;
+              list.push(item.v);
+            }
+            return <div label={found} list={list} />;
+          }
+
+          // The block of copy is in a loop, so the compiler prunes it.
+          function PrunedNestedScope(p) {
+            let hasOk = p.initial;
+            const list = [];
+            for (const item of p.items) {
+              const copy = { v: item.v };
+              if (item.ok) hasOk = true;
+              copy.w = p.w;
+              list.push(copy);
+            }
+            return <div label={hasOk} list={list} />;
+          }
+
+          // The assignment is in the block of inner, which is in the block of outer.
+          function NestedScope(p) {
+            let v = p.v;
+            const outer = [];
+            const inner = [];
+            if (p.off) v = "off";
+            inner.push(p.b);
+            outer.push(p.c);
+            return <div label={v} list={outer} inner={inner} />;
+          }
+
+          function LoopInsideScopeOfSibling(p) {
+            let v = p.v;
+            let w = "w";
+            for (const it of p.items) { if (p.off) v = "off"; }
+            for (const it of p.items) { w = {}; }
+            return <div label={v} list={w} />;
+          }
+
+          // The value that label comes in with is the join of two paths, and nothing reads it before the block.
+          function JoinBeforeScope(p) {
+            let label = "base";
+            if (p.primary) label = p.a;
+            const list = [];
+            if (p.flag) label = "flagged";
+            else list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          function ChainedScopes(p) {
+            let label = p.count;
+            const first = [];
+            if (p.f1) label = "one";
+            else first.push(p.x);
+            const second = [];
+            if (p.f2) label = label + "two";
+            else second.push(p.y);
+            return <div label={label} list={[first, second]} />;
+          }
+
+          // The memo block belongs to the loop, not to another value.
+          function ForOfOnly(p) {
+            let derived = [p.value, ...p.items];
+            for (const item of p.items) {
+              if (item < 0) derived = null;
+            }
+            return <div label={derived ? derived.join(",") : "none"} list={derived} />;
+          }
+
+          const check = () => false;
+          function ForWithContinue(p) {
+            let derived = [p.value, ...p.items];
+            for (let i = 0; i < 2; i++) {
+              if (i === 0) continue;
+              if (check()) derived = null;
+            }
+            return <div label={derived ? derived.join(",") : "none"} list={derived} />;
+          }
+
+          // facebook/react#37224: the second block gets hasErrors from the first. "use memo" because the compiler only
+          // infers a hook from a call to another hook.
+          function useFormErrors(name, existingNames, settings) {
+            "use memo";
+            let hasErrors = false;
+
+            const nameErrors = [];
+            if (existingNames.includes(name)) {
+              hasErrors = true;
+              nameErrors.push("That name is already taken");
+            }
+
+            const settingsErrors = [];
+            if (settings.chartView === "histogram" && !settings.xVariableId) {
+              hasErrors = true;
+              settingsErrors.push("Pick an X variable");
+            }
+
+            return { label: hasErrors, list: [nameErrors, settingsErrors] };
+          }
+
+          // label is a parameter that nothing but the join reads.
+          function useBareParam(p, label) {
+            "use memo";
+            const list = [];
+            if (p.flag) label = p.x;
+            else list.push(p.b);
+            return { label, list };
+          }
+
+          // In the next two the block of each <i> is in the block of rows and depends on b alone, so it does not run
+          // again for a new c. The index++ in front of it has to run all the same.
+          const start = globalThis.start ?? 0;
+          function UpdateInFrontOfInnerBlock({ b, c, k }) {
+            let label = c;
+            let index = start;
+            const rows = [];
+            if (b === 2) label = "two";
+            rows.push(<i key={index++} b={b} />);
+            rows.push(<i key={index++} b={b} />);
+            if (k === 1) index = -1;
+            return <div label={label + ":" + index} list={rows} />;
+          }
+
+          function UpdateInFrontOfInnerBlockNoJoin({ b, c, k }) {
+            let index = start;
+            const rows = [];
+            rows.push(c);
+            rows.push(<i key={index++} b={b} />);
+            if (k === 1) index = -1;
+            return <div label={index} list={rows} />;
+          }
+
+          // The block reads label, so it is an input. Its slot has to keep the value that label came in with.
+          function ReadThenReassign(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) label = label + 1;
+            list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          // In the last two the value that the variable came in with is not an input. Here it is a constant.
+          function CounterInLoop(p) {
+            let count = 0;
+            const list = [];
+            for (const item of p.items) {
+              if (item.ok) count++;
+              list.push(item.v);
+            }
+            return <div label={count} list={list} />;
+          }
+
+          // The block assigns found on each path to the loop.
+          function AssignedBeforeLoop(p) {
+            let found = p.initial;
+            const initial = found;
+            const list = [];
+            found = p.b;
+            for (const item of p.items) {
+              if (item.ok) found = item.v;
+              list.push(item.v);
+            }
+            return <div label={initial + ":" + found} list={list} />;
+          }
+
+          function run(Component, ...renders) {
+            let previous;
+            const results = renders.map(args => {
+              try {
+                const { label, list } = render(Component, ...(Array.isArray(args) ? args : [args]));
+                const hit = list === previous ? "*" : "";
+                previous = list;
+                return JSON.stringify([label, list]) + hit;
+              } catch (error) {
+                return "THROW(" + error.message + ")";
+              }
+            });
+            console.log(Component.name + " " + results.join(" "));
+          }
+
+          run(DefaultThenProp, {}, {}, { v: new Set([1, 2]) });
+          const three = [1, 2, 3];
+          run(EitherArmThenProp, { items: three }, { items: three }, { items: three, filter: item => item > 2 });
+          const ann = { profile: { name: "ann" } };
+          const anon = { user: null, fallbackUser: { profile: { name: "anon" } } };
+          run(
+            NullableEntryThenProp,
+            anon,
+            anon,
+            { user: ann, fallbackUser: null },
+            { user: ann, fallbackUser: null },
+          );
+          const w = value => ({ v: { w: value } });
+          const b1 = w("b"), c1 = w("c");
+          run(
+            BothArmsThenProp,
+            { a: null, kind: 1, b: b1, c: null },
+            { a: null, kind: 1, b: b1, c: null },
+            { a: null, kind: 0, b: null, c: c1 },
+          );
+          const o1 = { x: "a" }, o2 = { x: "b" }, o3 = { x: "b" };
+          run(DependencyPath, { o: o1, o2, flag: true }, { o: o3, o2, flag: true }, { o: o3, o2, flag: true });
+          run(
+            ConditionalReassign,
+            { count: 1, flag: false, b: "x" },
+            { count: 2, flag: false, b: "x" },
+            { count: 2, flag: false, b: "x" },
+            { count: 3, flag: true, b: "x" },
+          );
+          const none = [{ ok: false, v: 1 }, { ok: false, v: 2 }];
+          const some = [{ ok: true, v: 3 }];
+          run(
+            LoopReassign,
+            { initial: "i", items: none },
+            { initial: "j", items: none },
+            { initial: "j", items: none },
+            { initial: "k", items: some },
+          );
+          run(
+            PrunedNestedScope,
+            { initial: "i", items: some, w: 1 },
+            { initial: "j", items: some, w: 1 },
+            { initial: "j", items: some, w: 1 },
+            { initial: "k", items: none, w: 1 },
+          );
+          const entryA = { v: "a", off: false, b: 2, c: 3, items: [1] };
+          const entryB = { ...entryA, v: "b" };
+          const entryOff = { ...entryB, off: true };
+          run(NestedScope, entryA, entryB, entryB, entryOff, entryOff);
+          run(LoopInsideScopeOfSibling, entryA, entryB, entryB, entryOff, entryOff);
+          run(
+            JoinBeforeScope,
+            { primary: true, a: "a1", flag: false, b: "x" },
+            { primary: true, a: "a2", flag: false, b: "x" },
+            { primary: false, a: "a2", flag: false, b: "x" },
+            { primary: false, a: "a3", flag: false, b: "x" },
+          );
+          run(
+            ChainedScopes,
+            { count: 1, f1: false, f2: true, x: 0, y: 0 },
+            { count: 2, f1: false, f2: true, x: 0, y: 0 },
+            { count: 2, f1: false, f2: true, x: 0, y: 0 },
+            { count: 3, f1: true, f2: true, x: 0, y: 0 },
+          );
+          const positive = [1, 2];
+          run(
+            ForOfOnly,
+            { value: 5, items: positive },
+            { value: 6, items: positive },
+            { value: 6, items: positive },
+            { value: 7, items: [1, -2] },
+          );
+          run(
+            ForWithContinue,
+            { value: 5, items: positive },
+            { value: 6, items: positive },
+            { value: 6, items: positive },
+          );
+          const names = ["taken"];
+          const bar = { chartView: "bar" };
+          const histogram = { chartView: "histogram" };
+          run(
+            useFormErrors,
+            ["free", names, bar],
+            ["taken", names, bar],
+            ["taken", names, bar],
+            ["free", names, histogram],
+            ["taken", names, histogram],
+          );
+          const flagOff = { flag: false, x: "X", b: "b" };
+          run(useBareParam, [flagOff, 1], [flagOff, 2], [flagOff, 2], [{ flag: true, x: "X", b: "b" }, 3]);
+          const updates = [{ b: 1, k: 0, c: "c1" }, { b: 1, k: 0, c: "c2" }, { b: 1, k: 0, c: "c2" }];
+          run(UpdateInFrontOfInnerBlock, ...updates);
+          run(UpdateInFrontOfInnerBlockNoJoin, ...updates);
+          run(
+            ReadThenReassign,
+            { count: 1, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+          );
+          run(CounterInLoop, { items: some }, { items: some }, { items: none });
+          run(
+            AssignedBeforeLoop,
+            { initial: "i", b: "b", items: none },
+            { initial: "j", b: "b", items: none },
+            { initial: "j", b: "b", items: some },
+          );
+        `,
+        // One memo cache per component, kept between renders, as a fiber keeps it.
+        "/node_modules/react/index.js": /* js */ `
+          const fibers = new Map();
+          let current;
+          exports.render = (Component, ...args) => {
+            current = fibers.get(Component);
+            if (!current) fibers.set(Component, (current = { cache: null }));
+            return Component(...args);
+          };
+          exports.memoCache = size =>
+            (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? reassignedLocalOutput : reassignedLocalOutput.replaceAll("*", "") },
+    });
+  }
+
   // Codegen prints an instruction with an unnamed result inside the statement
   // that uses it, and every other instruction as a statement where it stands.
   // So a statement in the middle of an expression (the body of an inlined
@@ -3481,6 +3973,57 @@ describe("bundler", () => {
     });
   }
 
+  itBundled("react-compiler/SourceMapOfCatch", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ a }) {
+          let y;
+          try {
+            y = [a()];
+          } catch {
+            y = null;
+          }
+          let z;
+          try {
+            z = [a()];
+          } catch (e) {
+            z = [e];
+          }
+          return <div>{y}{z}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    outdir: "/out",
+    sourceMap: "external",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    async onAfterBundle(api) {
+      const source = api.readFile("/entry.jsx").split("\n");
+      expect(api.readFile("/out/entry.js")).toMatch(/\b_c\(\d+\)/);
+      await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
+        const original = (line: number, column: number) => {
+          const position = map.originalPositionFor({ line: line + 1, column });
+          const text = source[position.line! - 1];
+          return text.slice(0, position.column!).trimStart() + "|" + text.slice(position.column!);
+        };
+        const words = api
+          .readFile("/out/entry.js")
+          .split("\n")
+          .flatMap((text, line) =>
+            Array.from(text.matchAll(/\bcatch(?: \([\w$]+\))? \{/g), ({ 0: clause, index }) => [
+              original(line, index),
+              original(line, index + clause.length - 1),
+            ]),
+          );
+        expect(words).toEqual([
+          ["} |catch {", "} catch |{"],
+          ["} |catch (e) {", "} catch (e) |{"],
+        ]);
+      });
+    },
+  });
+
   // The fbt transform rejects a variable in place of a nested fbt.param()
   // call, so the call stays inside the fbt() call. The value given to
   // fbt.param() can be a variable, and it keeps its place ahead of a statement.
@@ -3572,6 +4115,484 @@ describe("bundler", () => {
         ParameterValueAheadOfAStatement=["a",["n",2],["m",20]]
         LetCapturedInsideTheMacroCall=[[2,5],5]
       `,
+    },
+  });
+
+  // The expected sizes come from babel-plugin-react-compiler 1.0.0 and 0.0.0-experimental-a1856f3-20260507 on this file.
+  // Only a declaration or a `const` names a function: upstream has code for `{ Property: fn }` and `Assigned = fn` too,
+  // but it never matches.
+  itBundled("react-compiler/WhichFunctionsAreCompiled", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { forwardRef, memo } from "react";
+
+        function makeDeclared(colour) {
+          function Declared({ depth }) {
+            const style = { top: depth };
+            return <li style={style}>{colour}</li>;
+          }
+          return Declared;
+        }
+        function makeArrow(colour) {
+          const Arrow = ({ depth }) => {
+            const style = { top: depth };
+            return <li style={style}>{colour}</li>;
+          };
+          return Arrow;
+        }
+        // These are named like a component and a hook but are neither, so the functions inside them are still considered.
+        function MakeInner(colour) {
+          function Inner({ depth }) {
+            const style = { top: depth };
+            return <li style={style}>{colour}</li>;
+          }
+          return Inner;
+        }
+        function useMakeInner(colour) {
+          const Inner = ({ depth }) => {
+            const style = { top: depth };
+            return <li style={style}>{colour}</li>;
+          };
+          return Inner;
+        }
+        let InABlock;
+        {
+          const Block = ({ depth }) => {
+            const style = { top: depth };
+            return <li style={style} />;
+          };
+          InABlock = Block;
+        }
+        const InMemo = memo(
+          forwardRef((props, ref) => {
+            const style = { top: props.depth };
+            return <li ref={ref} style={style} />;
+          }),
+        );
+        const InObjectAssign = Object.assign(
+          forwardRef(function (props, ref) {
+            const style = { top: props.depth };
+            return <li ref={ref} style={style} />;
+          }),
+          { displayName: "InObjectAssign" },
+        );
+        const NamedByTheDeclarator = function helper({ depth }) {
+          const style = { top: depth };
+          return <li style={style} />;
+        };
+        const [optedIn] = [
+          function () {
+            "use memo";
+            return [1, 2, 3];
+          },
+        ];
+        const WithADefault = ({ depth, render = () => <b /> }) => {
+          const style = { top: depth };
+          return <li style={style}>{render()}</li>;
+        };
+        function Outer({ depth }) {
+          function Nested({ top }) {
+            const style = { top };
+            return <li style={style} />;
+          }
+          return <Nested top={depth} />;
+        }
+
+        class Dock {
+          make() {
+            function InAClass({ depth }) {
+              const style = { top: depth };
+              return <li style={style} />;
+            }
+            return InAClass;
+          }
+        }
+        const object = {
+          Method({ depth }) {
+            "use memo";
+            const style = { top: depth };
+            return <li style={style} />;
+          },
+          Property: ({ depth }) => {
+            const style = { top: depth };
+            return <li style={style} />;
+          },
+        };
+        let Assigned;
+        Assigned = ({ depth }) => {
+          const style = { top: depth };
+          return <li style={style} />;
+        };
+        const returned = (() => {
+          return function Returned({ depth }) {
+            const style = { top: depth };
+            return <li style={style} />;
+          };
+        })();
+
+        const all = {
+          Declared: makeDeclared("red"),
+          Arrow: makeArrow("red"),
+          InnerOfMakeInner: MakeInner("red"),
+          InnerOfUseMakeInner: useMakeInner("red"),
+          makeDeclared,
+          MakeInner,
+          useMakeInner,
+          InABlock,
+          InMemo,
+          InObjectAssign,
+          NamedByTheDeclarator,
+          optedIn,
+          WithADefault,
+          Outer,
+          InAClass: new Dock().make(),
+          Method: object.Method,
+          Property: object.Property,
+          Assigned,
+          returned,
+        };
+        // Prints the memo cache sizes found in each function's source text.
+        console.log(
+          JSON.stringify(
+            Object.fromEntries(
+              Object.entries(all).map(([name, fn]) => [name, [...String(fn).matchAll(/\\$\\d* = [\\w$]+\\((\\d+)\\)/g)].map(m => +m[1])]),
+            ),
+          ),
+        );
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.memo = exports.forwardRef = fn => fn;
+        exports.createElement = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        Declared: [2],
+        Arrow: [2],
+        InnerOfMakeInner: [2],
+        InnerOfUseMakeInner: [2],
+        makeDeclared: [2],
+        MakeInner: [2],
+        useMakeInner: [2],
+        InABlock: [2],
+        InMemo: [5],
+        InObjectAssign: [5],
+        NamedByTheDeclarator: [2],
+        optedIn: [1],
+        // The arrow function in the default argument used to be compiled as if it were the component.
+        WithADefault: [],
+        Outer: [3],
+        InAClass: [],
+        Method: [],
+        Property: [],
+        Assigned: [],
+        returned: [],
+      }),
+    },
+  });
+
+  // A callback that uses nothing from its component is moved out of it. It can still use variables of the function that
+  // encloses the component, so it has to stay next to the component. Upstream only does that for function declarations.
+  // It moves the rest to the end of the module, where calling them throws a ReferenceError.
+  itBundled("react-compiler/OutlinedFromANestedComponentStaysInScope", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function makeBuoys(colour, log) {
+          const Arrow = ({ depth }) => {
+            const onClick = () => log("arrow " + colour);
+            return <li onClick={onClick}>{depth}</li>;
+          };
+          function Declared({ depth }) {
+            const onClick = () => log("declared " + colour);
+            return <li onClick={onClick}>{depth}</li>;
+          }
+          if (colour) {
+            const shade = "dark " + colour;
+            const InABlock = ({ depth }) => {
+              const onClick = () => log("block " + shade);
+              return <li onClick={onClick}>{depth}</li>;
+            };
+            return [Arrow, Declared, InABlock];
+          }
+        }
+        const makeInAnExpression = (colour, log) => [({ depth }) => depth].concat(function () {
+          const Inner = ({ depth }) => <li onClick={() => log("expression " + colour)}>{depth}</li>;
+          return Inner;
+        }());
+        for (const colour of ["red", "green"]) {
+          for (const Buoy of [...makeBuoys(colour, console.log), makeInAnExpression(colour, console.log)[1]]) {
+            Buoy({ depth: 1 }).props.onClick();
+          }
+        }
+        console.log(JSON.stringify([...String(makeBuoys).matchAll(/\\$\\d* = [\\w$]+\\((\\d+)\\)/g)].map(m => +m[1])));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.memo = exports.forwardRef = fn => fn;
+        exports.createElement = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: {
+      stdout: [
+        ...["red", "green"].flatMap(colour => [
+          `arrow ${colour}`,
+          `declared ${colour}`,
+          `block dark ${colour}`,
+          `expression ${colour}`,
+        ]),
+        "[2,2,2]",
+      ].join("\n"),
+    },
+  });
+
+  // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies
+  // used to be reported as reading a ref during render, unless it was initialized in one of a few ways. The expected sizes
+  // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`.
+  describe("react-compiler/ALocalNamedLikeARef", () => {
+    const remove = "bollardRef.current.remove();";
+    test.each([
+      ["const bollardRef = pier?.bollard;", "bollardRef?.current?.remove();", 4],
+      ["const bollardRef = pier?.bollard;", remove, 4],
+      ["const bollardRef = pier?.bollard;", "bollardRef?.current.remove();", 4],
+      ["const bollardRef = pier?.bollard;", "bollardRef.current?.remove();", 4],
+      ["const bollardRef = pier?.bollard;", "const x = bollardRef?.current; x;", 3],
+      ["const bollardRef = pier?.bollard;", "const x = bollardRef.current; x;", 2],
+      ["const bollardRef = pier ? pier.bollard : undefined;", remove, 4],
+      ["const bollardRef = pier && pier.bollard;", remove, 4],
+      ["const bollardRef = pier?.a?.bollard;", remove, 4],
+      ["const bollardRef = pier?.[0];", remove, 4],
+      ["const bollardRef = pier?.();", remove, 6],
+      ["const bollardRef = pier;", remove, 3],
+      ["let bollardRef; bollardRef = pier.bollard;", remove, 6],
+      ["let bollardRef = null; if (pier) bollardRef = pier.bollard;", remove, 6],
+      ["const bollardRef = pier.bollard;", remove, null],
+      ["const bollardRef = pier.bollard;", "bollardRef?.current?.remove();", null],
+    ])("%s %s", async (declaration, effect, size) => {
+      using dir = tempDir("react-compiler-ref-named-local", {
+        "entry.js": `
+          import { useEffect } from "react";
+          export function useMooring(pier) {
+            ${declaration}
+            useEffect(() => {
+              ${effect}
+            }, [bollardRef]);
+          }
+        `,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        packages: "external",
+        reactCompiler: true,
+      });
+      const output = await result.outputs[0].text();
+      expect(output.match(/_c\((\d+)\)/)?.[1] ?? null).toBe(size === null ? null : String(size));
+    });
+  });
+
+  // The parser drops a test that is always true. The compiler refused a `for` without a test, so it also refused
+  // `for (let i = 0; true; i++)`, which babel-plugin-react-compiler compiles, with a cache of 6 for this hook.
+  // It refuses the other three, which mean the same as `while (true)`.
+  itBundled("react-compiler/ForWithoutATest", {
+    files: {
+      "/entry.js": /* js */ `
+        import { useCallback, useState } from "react";
+        ${["let i = 0; true; i++", "let i = 0; ; i++", "; true; ", ";;"]
+          .map(
+            (head, n) => `
+              function usePages${n}(fetchPage) {
+                const [pages, setPages] = useState([]);
+                const run = useCallback(async () => {
+                  let cursor = 0;
+                  for (${head}) {
+                    const page = await fetchPage(cursor);
+                    setPages(page.items);
+                    if (page.next === undefined) break;
+                    if (page.skip) continue;
+                    cursor = page.next;
+                  }
+                  return cursor;
+                }, [fetchPage]);
+                return { pages, run };
+              }
+            `,
+          )
+          .join("")}
+        const book = [{ items: "a", next: 1 }, { items: "b", next: 2 }, { items: "c" }];
+        for (const usePages of [usePages0, usePages1, usePages2, usePages3]) {
+          const seen = [];
+          const last = await usePages(async cursor => (seen.push(cursor), book[cursor])).run();
+          console.log(JSON.stringify([seen, last, String(usePages).match(/\\$ = [\\w$]+\\((\\d+)\\)/)?.[1]]));
+        }
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.useState = value => [value, () => {}];
+        exports.useCallback = fn => fn;
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: { stdout: Array(4).fill(`[[0,1,2],2,"6"]`).join("\n") },
+  });
+
+  // The parser inlines a spread object literal into the props.
+  itBundled("react-compiler/JsxSpreadWithAComputedKey", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const KEY = "title";
+        function Computed({ n }) {
+          return <b {...{ [KEY]: n }} />;
+        }
+        function Between({ n }) {
+          return <b id="a" {...{ lang: "en", [KEY]: n, 1: "one" }} title="last" />;
+        }
+        // \`key\` after a spread makes this a createElement() call.
+        function KeyAfterSpread({ n, rest }) {
+          return <b {...rest} {...{ [KEY]: n }} key="k" />;
+        }
+        const sizes = fn => [...String(fn).matchAll(/\\$\\d* = [\\w$]+\\((\\d+)\\)/g)].map(m => +m[1]);
+        console.log(JSON.stringify([Computed({ n: 1 }).props, sizes(Computed)]));
+        console.log(JSON.stringify([Between({ n: 2 }).props, sizes(Between)]));
+        console.log(JSON.stringify([KeyAfterSpread({ n: 3, rest: { id: "r" } }).props, sizes(KeyAfterSpread)]));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.memo = exports.forwardRef = fn => fn;
+        exports.createElement = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    bundleWarnings: {
+      "/entry.jsx": [`"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.`],
+    },
+    run: {
+      stdout: [
+        `[{"title":1},[2]]`,
+        `[{"1":"one","id":"a","lang":"en","title":"last"},[2]]`,
+        `[{"id":"r","title":3,"key":"k"},[5]]`,
+      ].join("\n"),
+    },
+  });
+
+  // With `minify: { syntax: true }`, and always at runtime, the parser joins these into one template literal or string
+  // before the compiler sees them. The joined text is a rope.
+  itBundled("react-compiler/TextJoinedByTheParser", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        const enum Route { Users = "users" }
+        export function useJoined(v: string) {
+          const [k] = useState("k");
+          return [
+            \`\${k}-\` + "b",
+            \`\${k}-\` + "b" + "c",
+            \`\${k}\` + "z",
+            "a" + \`-\${k}\`,
+            "a" + "b" + \`-\${k}\`,
+            \`\${k}-\` + \`+\${v}\` + "z",
+            \`\${k}-\` + "m" + \`\${v}\`,
+            \`\${k}-\` + 1,
+            \`\${k}-\` + null,
+            (() => \`\${k}-\` + "b")(),
+            \`a\${"b"}c/\${k}\`,
+            \`\${k}/x\${"y"}z\`,
+            \`\${Route.Users}/\${k}\`,
+            \`n\${1 + 2}m/\${k}\`,
+            Object.keys({ ["a" + "b"]: k }).join(),
+          ];
+        }
+        console.log(useJoined("v").join(" "));
+      `,
+      "/node_modules/react/index.js": `exports.useState = value => [value, () => {}];`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    minifySyntax: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "k-b k-bc kz a-k ab-k k-+vz k-mv k-1 k-null k-b abc/k k/xyz users/k n3m/k ab" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(/\$\[\d+\]/);
+    },
+  });
+
+  // The argument of import() is joined without `minify: { syntax: true }` too.
+  itBundled("react-compiler/ImportSpecifierJoinedByTheParser", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const enum Dir { Pages = "./pages" }
+        export function Link({ name }: { name: string }) {
+          return <a onClick={() => import(Dir.Pages + \`/\${name}.js\`)}>{name}</a>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\$\[\d+\]/);
+      expect(out).toContain("import(`./pages/${name}.js`)");
+    },
+  });
+
+  itBundled("react-compiler/SourceMapOfSwitchClauses", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ kind, a }) {
+          let y;
+          switch (kind) {
+            case "a":
+              y = [a];
+              break;
+            default:
+              y = null;
+          }
+          return <div>{y}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    outdir: "/out",
+    sourceMap: "external",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    async onAfterBundle(api) {
+      const source = api.readFile("/entry.jsx").split("\n");
+      expect(api.readFile("/out/entry.js")).toMatch(/\b_c\(\d+\)/);
+      await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
+        const words = api
+          .readFile("/out/entry.js")
+          .split("\n")
+          .flatMap((text, line) =>
+            Array.from(text.matchAll(/\b(?:case|default)\b/g), ({ 0: word, index: column }) => {
+              const original = map.originalPositionFor({ line: line + 1, column });
+              return [word, source[original.line! - 1].slice(original.column!, original.column! + word.length)];
+            }),
+          );
+        expect(words).toEqual([
+          ["case", "case"],
+          ["default", "default"],
+        ]);
+      });
     },
   });
 });

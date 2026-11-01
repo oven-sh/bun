@@ -9,9 +9,9 @@ pub struct SwitchCaseBraces {
     avoids: bool,
 }
 
-const EMPTY_CLAUSE: Message = Message::new("", "Unexpected braces in empty case clause.");
-const MISSING_BRACES: Message = Message::new("", "Missing braces in case clause.");
-const UNNECESSARY_BRACES: Message = Message::new("", "Unnecessary braces in case clause.");
+const EMPTY_CLAUSE: &Message = &Message::new("", "Unexpected braces in empty case clause.");
+const MISSING_BRACES: &Message = &Message::new("", "Missing braces in case clause.");
+const UNNECESSARY_BRACES: &Message = &Message::new("", "Unnecessary braces in case clause.");
 
 impl Rule for SwitchCaseBraces {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "switch-case-braces", Kind::Suggestion)
@@ -65,7 +65,7 @@ impl Rule for SwitchCaseBraces {
         cx.report(span, MISSING_BRACES)
             .called_with(case.parent())
             .fix(|fixer| {
-                // The closing brace is under the `case`, if that starts its line.
+                // The closing brace lines up with the `case`, if that starts its line.
                 let code = match get_preceding_indent_str(file.text(), case_span.start) {
                     Some(indent) => [b"\n", indent, b"}"].concat(),
                     None => b"}".to_vec(),

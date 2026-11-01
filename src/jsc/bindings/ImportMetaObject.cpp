@@ -43,6 +43,7 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include "BunCompiledModules.h"
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
 #include <JavaScriptCore/JSPromise.h>
@@ -50,7 +51,14 @@
 #include "wtf/text/StringView.h"
 
 #include "isBuiltinModule.h"
+#include "VectorSizeLimit.h"
 #include "WebCoreJSBuiltins.h"
+
+extern "C" bool isBunTest;
+
+namespace Bun {
+JSC::JSObject* createImportMetaEnvForTests(Zig::GlobalObject*);
+}
 
 namespace Zig {
 using namespace JSC;
@@ -198,6 +206,30 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     return result;
 }
 
+// require() hands a native addon to process.dlopen without asking the module loader, and it answers a module that has run from its cache.
+static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath, JSC::JSValue from)
+{
+    if (!Bun::hasCompiledModules()) [[likely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto resolved = resolvedPath.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (auto module = Bun::compiledModuleForPath(resolved)) {
+        WTF::String pathOfAsker = from.isString() ? from.toWTFString(globalObject) : WTF::String();
+        RETURN_IF_EXCEPTION(scope, );
+        JSC::AOT::AskerOfModule asker(globalObject, pathOfAsker);
+        scope.release();
+        JSC::AOT::willAnswerWithModule(globalObject, *module);
+        return;
+    }
+    size_t query = resolved.find('?');
+    StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
+    if (!path.endsWith(".node"_s))
+        return;
+    if (JSValue error = Bun::errorIfCodeOutsideImageIsRefused(globalObject, Bun::ErrorCode::MODULE_NOT_FOUND, resolved))
+        JSC::throwException(globalObject, scope, error);
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -206,7 +238,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     JSC::JSValue moduleName = callFrame->argument(0);
     JSValue from = callFrame->argument(1);
-    bool isESM = callFrame->argument(2).asBoolean();
+    bool isESM = callFrame->argument(2).isTrue();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
     JSValue userPathList = callFrame->argument(4);
     JSValue parentModule = callFrame->argument(5);
@@ -218,6 +250,11 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    if (!isRequireDotResolve) {
+        Bun::willRequire(lexicalGlobalObject, moduleName);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
             auto moduleString = moduleName.toWTFString(globalObject);
@@ -225,6 +262,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             auto fromString = from.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
+                if (!isRequireDotResolve)
+                    resolvedString = Bun::keyOfImportByPackage(globalObject, resolvedString.value(), fromString, false);
+                if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
+                    return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), fromString, false)));
                 if (moduleString == resolvedString.value())
                     return JSC::JSValue::encode(moduleName);
                 return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
@@ -255,10 +296,22 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     RETURN_IF_EXCEPTION(scope, {});
                     auto str = string->value(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
+                    // The override bypasses the resolver, which is what normally rejects null bytes.
+                    if (str->contains('\0')) [[unlikely]] {
+                        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
+                        return {};
+                    }
                     WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
                     if (!prefixed.isNull()) {
                         return JSValue::encode(jsString(vm, prefixed));
                     }
+                    // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
+                    if (Bun::hasCompiledModules()) [[unlikely]] {
+                        if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
+                            string = jsString(vm, known);
+                    }
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string, from);
+                    RETURN_IF_EXCEPTION(scope, {});
                     return JSC::JSValue::encode(string);
                 }
                 return JSC::JSValue::encode(result);
@@ -296,7 +349,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     WTF::String pathStr = path.toWTFString(globalObject);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
-                    paths.append(Bun::toStringRef(pathStr));
+                    BunString pathRef = Bun::toStringRef(pathStr);
+                    if (!Bun::tryAppendWithinLimit(paths, pathRef)) [[unlikely]] {
+                        pathRef.deref();
+                        throwOutOfMemoryError(globalObject, scope);
+                        goto cleanup;
+                    }
                 }
 
                 result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
@@ -307,6 +365,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
                     result = {};
                     goto cleanup;
+                }
+
+                if (!isRequireDotResolve) {
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), from);
+                    if (scope.exception()) [[unlikely]]
+                        result = {};
                 }
 
             cleanup:
@@ -336,9 +400,35 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         return {};
     }
 
+    if (!isESM && !isRequireDotResolve) {
+        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), from);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (!isRequireDotResolve && globalObject->onLoadPlugins.hasVirtualModules()) [[unlikely]] {
+        String key = asString(JSC::JSValue::decode(result))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto fromString = from.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        String given = Bun::keyOfImportByPackage(globalObject, key, fromString, false);
+        if (!globalObject->onLoadPlugins.runningModuleMocks.isEmpty())
+            given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false);
+        if (given != key)
+            return JSC::JSValue::encode(jsString(vm, given));
+    } else if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]] {
+        auto key = asString(JSC::JSValue::decode(result))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto fromString = from.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, key, fromString, false)));
+    }
+
     scope.release();
     return result;
 }
+
+extern "C" bool Bun__resolveWithOnResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);
+extern "C" void Bun__importMetaResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);
 
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -404,45 +494,56 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto fromWTFString = from.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto a = Bun::toString(specifier);
+    auto b = Bun::toString(fromWTFString);
+    ErrorableString result;
+    BunString query = BunStringEmpty;
+
     // Try to resolve it to a relative file path. This path is not meant to throw module resolution errors.
     if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("/"_s) || specifier.startsWith("file://"_s)
 #if OS(WINDOWS)
         || specifier.startsWith(".\\"_s) || specifier.startsWith("..\\"_s) || specifier.startsWith("\\"_s)
 #endif
     ) {
-        auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
-        if (!fromURL.isValid()) {
-            JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
-            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
+        bool isAnswered = false;
+        if (!globalObject->onResolvePlugins.fileNamespace.filters.isEmpty()) [[unlikely]] {
+            isAnswered = Bun__resolveWithOnResolve(&result, globalObject, &a, &b, &query);
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
-        WTF::URL url(fromURL, specifier);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
+        if (!isAnswered) {
+            auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
+            if (!fromURL.isValid()) {
+                JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
+                RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
+            }
+
+            WTF::URL url(fromURL, specifier);
+            RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
+        }
+    } else {
+        // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`
+        if (specifier.startsWith("node:"_s) || specifier.startsWith("bun:"_s)) [[unlikely]] {
+            return JSValue::encode(jsString(vm, specifier));
+        }
+
+        // Run it through the module resolver, errors at this point are actual errors.
+        Bun__importMetaResolve(&result, globalObject, &a, &b, &query);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`
-    if (specifier.startsWith("node:"_s) || specifier.startsWith("bun:"_s)) [[unlikely]] {
-        return JSValue::encode(jsString(vm, specifier));
-    }
-
-    // Run it through the module resolver, errors at this point are actual errors.
-    auto a = Bun::toString(specifier);
-    auto b = Bun::toString(fromWTFString);
-    auto result = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &a, &b, true));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (!result.isString()) {
-        JSC::throwException(globalObject, scope, result);
+    if (!result.success) {
+        JSC::throwException(globalObject, scope, JSValue::decode(result.result.err));
         return {};
     }
 
-    auto resultString = result.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    auto resultString = result.result.value.transferToWTFString();
+    auto queryString = query.transferToWTFString();
     if (isAbsolutePath(resultString)) {
         // file path -> url
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::URL::fileURLWithFileSystemPath(resultString).string())));
+        resultString = WTF::URL::fileURLWithFileSystemPath(resultString).string();
     }
-    return JSValue::encode(result);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, queryString.isEmpty() ? resultString : makeString(resultString, queryString))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_url, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
@@ -509,10 +610,20 @@ JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsG
     return true;
 }
 
+// Registered as a CustomValue, so `thisValue` is the prototype that holds the property, not `import.meta`.
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
-    return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
+    if (!isBunTest) [[likely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSObject* env = globalObject->processEnvObject();
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(env);
+    }
+
+    JSObject* env = Bun::createImportMetaEnvForTests(globalObject);
+    asObject(JSValue::decode(thisValue))->putDirect(JSC::getVM(globalObject), propertyName, env, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
+    return JSValue::encode(env);
 }
 
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
@@ -537,16 +648,32 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         WTF::URL url(thisObject->url);
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+#if OS(WINDOWS)
+        if (Bun::hasCompiledModules()) [[unlikely]] {
+            auto key = makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark());
+            return JSValue::encode(jsBoolean(url.protocolIsFile() && makeStringByReplacingAll(mainKey.data, '/', '\\') == makeStringByReplacingAll(key, '/', '\\')));
+        }
+#endif
         return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
     }
 
-    if (!globalObject->scriptExecutionContext()->isMainThread())
+    // In an executable, `require.main === module` in a CommonJS file reads this property, and the file that a Worker starts with is the main module of its thread.
+    if (!globalObject->scriptExecutionContext()->isMainThread() && !(Bun::hasCompiledModules() && JSC::AOT::entryPointIsCommonJS(globalObject)))
         return JSValue::encode(jsBoolean(false));
     JSValue bunMain = JSValue::decode(BunObject_getter_main(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
     bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
     RETURN_IF_EXCEPTION(scope, {});
+    // The name of a text that a Worker starts from is no path. createFromSpecifier() makes a path of it for this object.
+    if (!isMain && Bun::hasCompiledModules() && bunMain.isString()) [[unlikely]] {
+        auto name = asString(bunMain)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        isMain = URL::fileURLWithFileSystemPath(name.data).string() == thisObject->url;
+        // `Bun.main = require.resolve("./other.cjs")` stores where the file lay when the program was built.
+        if (String known = isMain ? String() : Bun::pathInExecutable(name.data); !known.isNull())
+            isMain = URL::fileURLWithFileSystemPath(known).string() == thisObject->url;
+    }
 
     return JSValue::encode(jsBoolean(isMain));
 }
@@ -554,7 +681,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "dir"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "dirname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
-    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
+    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomValue | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
     { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
     { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },
@@ -569,7 +696,7 @@ static const HashTableValue ImportMetaObjectBakePrototypeValues[] = {
     { "bakeBuiltin"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, commonJSRequireESMCodeGenerator, 0 } },
     { "dir"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "dirname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
-    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
+    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomValue | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
     { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
     { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },

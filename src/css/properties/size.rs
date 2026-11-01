@@ -30,7 +30,7 @@ pub enum BoxSizing {
 impl BoxSizing {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         if bun_core::eql_case_insensitive_ascii(ident, b"content-box", true) {
             Ok(BoxSizing::ContentBox)
         } else if bun_core::eql_case_insensitive_ascii(ident, b"border-box", true) {
@@ -110,7 +110,7 @@ impl Size {
             return Ok(Size::FitContentFunction(v));
         }
 
-        let lp = input.try_parse(LengthPercentage::parse)?;
+        let lp = input.try_parse(LengthPercentage::parse_non_negative)?;
         Ok(Size::LengthPercentage(lp))
     }
 
@@ -244,7 +244,7 @@ impl MaxSize {
             return Ok(MaxSize::FitContentFunction(v));
         }
 
-        match input.try_parse(LengthPercentage::parse) {
+        match input.try_parse(LengthPercentage::parse_non_negative) {
             Ok(v) => Ok(MaxSize::LengthPercentage(v)),
             Err(e) => Err(e),
         }
@@ -454,9 +454,14 @@ macro_rules! property_helper {
         // or if the value contains syntax that isn't supported across all targets,
         // preserve the previous value as a fallback.
         if $category != $this.category
-            || ($this.$field.is_some()
-                && $context.targets.browsers.is_some()
-                && !$value.is_compatible($context.targets.browsers.as_ref().unwrap()))
+            || $this
+                .$field
+                .as_ref()
+                .is_some_and(|held| match &$context.targets.browsers {
+                    Some(browsers) => !$value.is_compatible(browsers),
+                    // Only targets can tell which prefixed keyword is not needed.
+                    None => held.has_vendor_prefix() || $value.has_vendor_prefix(),
+                })
         {
             $this.flush($dest, $context);
         }
@@ -469,6 +474,7 @@ macro_rules! property_helper {
 
 macro_rules! logical_unparsed_helper {
     ($this:expr, $unparsed:expr, $physical_id:expr, $physical_flag:expr, $logical_supported:expr, $dest:expr, $context:expr) => {{
+        $this.flush($dest, $context);
         let bump = $dest.bump();
         if $logical_supported {
             $this.flushed_properties.insert(
@@ -490,6 +496,7 @@ macro_rules! logical_unparsed_helper {
 /// out-of-line helper per value type instead of one expansion per property.
 trait PrefixedKeyword: Sized {
     fn unprefixed_keyword(&self) -> Option<(css::prefixes::Feature, fn(VendorPrefix) -> Self)>;
+    fn has_vendor_prefix(&self) -> bool;
 }
 
 macro_rules! impl_prefixed_keyword {
@@ -514,6 +521,14 @@ macro_rules! impl_prefixed_keyword {
                     }
                     _ => None,
                 }
+            }
+
+            fn has_vendor_prefix(&self) -> bool {
+                matches!(
+                    self,
+                    $ty::Stretch(vp) | $ty::MinContent(vp) | $ty::MaxContent(vp) | $ty::FitContent(vp)
+                        if *vp != VendorPrefix::NONE
+                )
             }
         }
     };
@@ -697,6 +712,7 @@ impl SizeHandler {
                 | PropertyIdTag::MaxWidth
                 | PropertyIdTag::MinHeight
                 | PropertyIdTag::MaxHeight => {
+                    self.flush(dest, context);
                     self.flushed_properties.insert(
                         SizeProperty::try_from_property_id_tag(unparsed.property_id.tag()).unwrap(),
                     );

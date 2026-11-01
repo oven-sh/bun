@@ -233,17 +233,8 @@ impl<'a> ImportScanner<'a> {
 
                                 // Remove the symbol if it's never used outside a dead code region
                                 if !removable!(ref_) {
-                                    // ClauseItem isn't `Copy`; bitwise-move it
-                                    // (its fields are all POD; arena-owned, never dropped).
-                                    if items_end != idx {
-                                        // SAFETY: items_end < idx < len; non-overlapping.
-                                        unsafe {
-                                            core::ptr::copy_nonoverlapping(
-                                                items.as_ptr().add(idx),
-                                                items.as_mut_ptr().add(items_end),
-                                                1,
-                                            );
-                                        }
+                                    if items_end < idx {
+                                        items[items_end] = items[idx];
                                     }
                                     items_end += 1;
                                 }
@@ -348,18 +339,11 @@ impl<'a> ImportScanner<'a> {
                             // member, while generated symbols (e.g. JSX runtime imports)
                             // link the other way.
                             let symbol = &p.symbols[name_ref.inner_index() as usize];
-                            let mut link = symbol.link.get();
-                            if !link.is_valid() {
+                            if !symbol.has_link() {
                                 continue;
                             }
                             // Follow the chain of replacements to the live symbol.
-                            loop {
-                                let next = p.symbols[link.inner_index() as usize].link.get();
-                                if !next.is_valid() {
-                                    break;
-                                }
-                                link = next;
-                            }
+                            let link = js_ast::symbol::follow_symbols(&p.symbols, name_ref);
                             // SAFETY: arena-owned slice valid for 'p.
                             let name = symbol.original_name.slice();
                             let member = p
@@ -373,6 +357,12 @@ impl<'a> ImportScanner<'a> {
                                 }
                             }
                         }
+                    }
+
+                    if record!().kind == js_ast::ImportKind::Dynamic {
+                        stmts[stmts_end] = p.lower_import_to_dynamic(st, stmt.loc);
+                        stmts_end += 1;
+                        continue;
                     }
 
                     if st.default_name.is_some() {
@@ -785,8 +775,9 @@ impl<'a> ImportScanner<'a> {
                         p.import_records.items_mut()[st.import_record_index as usize]
                             .flags
                             .insert(import_record::Flags::CONTAINS_IMPORT_STAR);
-                    } else {
+                    } else if !HOT_MODULE_RELOADING_TRANSFORMATIONS {
                         // "export * from 'path'"
+                        // (HMR lowering may merge the statement: `convert_stmt` lists the record it keeps)
                         p.export_star_import_records.push(st.import_record_index);
                     }
                 }

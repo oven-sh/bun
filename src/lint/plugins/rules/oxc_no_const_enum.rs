@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Disallow TypeScript `const enum`
 pub struct NoConstEnum;
 
-const NO_CONST_ENUM: Message = Message::new("", "Unexpected const enum");
+const NO_CONST_ENUM: &Message = &Message::new("", "Unexpected const enum");
 
 impl Rule for NoConstEnum {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-const-enum", Kind::Suggestion).fixable(Fixable::Code);
@@ -22,7 +22,7 @@ impl Rule for NoConstEnum {
         if !enum_decl.flags().contains(Flags::CONST) {
             return;
         }
-        // Where `declare const enum` starts too.
+        // oxlint reports five characters from here even if the statement starts with `declare`.
         let start = statement.span_without_export().start;
         cx.report(Span::new(start, start + 5), NO_CONST_ENUM).fix(|fixer| {
             let file = fixer.file();

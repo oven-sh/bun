@@ -30,8 +30,13 @@ struct PackageJson {
     path: Box<[u8]>,
     root: Expr,
     contents: Box<[u8]>,
-    source: Source,
     indentation: bun_ast::Indentation,
+}
+
+impl PackageJson {
+    fn source(&self) -> Source<'_> {
+        Source::init_path_string(&self.path[..], &self.contents[..])
+    }
 }
 
 /// One step of a key path such as `contributors[0].name` or `keywords[]`.
@@ -196,7 +201,6 @@ impl PmPkgCommand {
             path,
             root: result.root,
             contents,
-            source,
             indentation: result.indentation,
         }
     }
@@ -354,13 +358,12 @@ impl PmPkgCommand {
                     pkg_dir = cwd;
                 }
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let full_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    pkg_dir,
-                    &mut buf,
-                    &[bin_path],
-                );
+                // A path that's too long can't exist.
+                let full_path = path::resolve_path::join_abs_string_buf_z_checked::<
+                    path::platform::Auto,
+                >(pkg_dir, &mut buf[..], &[bin_path]);
 
-                if !bun_sys::exists_z(full_path) {
+                if !full_path.is_some_and(bun_sys::exists_z) {
                     bun_core::warn!(
                         "No bin file found at {}",
                         bun_core::fmt::EscapeControlChars(bstr::BStr::new(bin_path))
@@ -726,7 +729,7 @@ impl PmPkgCommand {
         if let Err(e) = js_printer::print_json(
             &mut writer,
             root,
-            &pkg.source,
+            &pkg.source(),
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,

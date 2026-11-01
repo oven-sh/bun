@@ -1,0 +1,6 @@
+# sabotage=DelayedStoresPassWhatMayThrow: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: sabotage=DelayedStoresPassWhatMayThrow
+# CHECK-NOT: one caught,t10011112213,t10011112213
+# PROGRAM-OF: delayed-stores-pass-what-may-throw-left-alone.ir

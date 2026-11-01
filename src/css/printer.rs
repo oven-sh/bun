@@ -2,6 +2,7 @@ use core::fmt;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec as BumpVec;
+use bun_alloc::AstAlloc;
 use bun_ast::ImportRecord;
 use bun_core::strings;
 
@@ -83,17 +84,17 @@ pub use css::targets::Features;
 
 #[derive(Clone, Copy)]
 pub struct ImportInfo<'a> {
-    pub import_records: &'a [ImportRecord],
+    pub import_records: &'a [ImportRecord<'a>],
     /// bundle_v2.graph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
-    pub ast_unique_key_for_additional_file: &'a [&'a [u8]],
+    pub ast_unique_key_for_additional_file: &'a [Box<[u8], AstAlloc>],
 }
 
 impl<'a> ImportInfo<'a> {
     /// Only safe to use when outside the bundler. As in, the import records
     /// were not resolved to source indices. This will out-of-bounds otherwise.
-    pub fn init_outside_of_bundler(records: &'a [ImportRecord]) -> ImportInfo<'a> {
+    pub fn init_outside_of_bundler(records: &'a [ImportRecord<'a>]) -> ImportInfo<'a> {
         ImportInfo {
             import_records: records,
             ast_urls_for_css: &[],
@@ -129,6 +130,8 @@ pub struct Printer<'a> {
     /// they are skipped while this is set and emitted once in the final pass,
     /// keeping the output linear in nesting depth instead of exponential.
     pub(crate) skip_prefixed_nested_rules: bool,
+    /// The last thing printed is a nested declaration with no `;` yet.
+    pub(crate) pending_semicolon: bool,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
     pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
@@ -147,6 +150,8 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub(crate) nesting_expansions: u32,
+    /// In the `<scope-end>` or the block of an `@scope` rule.
+    pub(crate) in_scope_rule: bool,
     /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
     /// whose selector list carries more than one vendor prefix (e.g. a list
     /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
@@ -189,14 +194,6 @@ impl<'a> Printer<'a> {
         symbols.get_const(final_ref).unwrap().original_name.slice()
     }
 
-    pub(crate) fn lookup_ident_or_ref(&self, ident: css_values::ident::IdentOrRef) -> &'a [u8] {
-        if ident.is_ident() {
-            // SAFETY: Ident.v is an arena-owned slice packed by IdentOrRef::from_ident.
-            return unsafe { crate::arena_str(ident.as_ident().unwrap().v) };
-        }
-        self.lookup_symbol(ident.as_ref().unwrap())
-    }
-
     // The `Write` trait exposes `written_len()` directly
     // (Vec<u8> / MutableString / counting sinks override it, others panic).
     #[inline]
@@ -220,11 +217,6 @@ impl<'a> Printer<'a> {
             }
         }
         b"unknown.css"
-    }
-
-    /// Returns whether the indent level is greater than one.
-    pub(crate) fn is_nested(&self) -> bool {
-        self.indent_amt > 2
     }
 
     /// Add an error related to std lib fmt errors
@@ -306,17 +298,19 @@ impl<'a> Printer<'a> {
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),
             skip_prefixed_nested_rules: false,
+            pending_semicolon: false,
             in_calc: false,
             css_module: None,
             ctx: None,
             nesting_expansions: 0,
+            in_scope_rule: false,
             prefix_expansion_bytes: 0,
             error_kind: None,
         }
     }
 
     #[inline]
-    pub(crate) fn get_import_records(&mut self) -> PrintResult<&'a [ImportRecord]> {
+    pub(crate) fn get_import_records(&mut self) -> PrintResult<&'a [ImportRecord<'a>]> {
         if let Some(info) = &self.import_info {
             return Ok(info.import_records);
         }
@@ -324,15 +318,23 @@ impl<'a> Printer<'a> {
     }
 
     #[inline]
-    pub(crate) fn import_record(&mut self, import_record_idx: u32) -> PrintResult<&ImportRecord> {
+    pub(crate) fn import_record(
+        &mut self,
+        import_record_idx: u32,
+    ) -> PrintResult<&'a ImportRecord<'a>> {
         if let Some(info) = &self.import_info {
             return Ok(&info.import_records[import_record_idx as usize]);
         }
         Err(self.add_no_import_record_error())
     }
 
+    /// The second value tells whether the URL is a placeholder, which the bundler replaces with
+    /// the path of the copied file after printing.
     #[inline]
-    pub(crate) fn get_import_record_url(&mut self, import_record_idx: u32) -> PrintResult<&[u8]> {
+    pub(crate) fn get_import_record_url(
+        &mut self,
+        import_record_idx: u32,
+    ) -> PrintResult<(&'a [u8], bool)> {
         let Some(import_info) = &self.import_info else {
             return Err(self.add_no_import_record_error());
         };
@@ -367,17 +369,17 @@ impl<'a> Printer<'a> {
                     Some(i) => &suffix[i as usize..],
                     None => b"",
                 };
-                return Ok(with_suffix(urls_for_css, fragment));
+                return Ok((with_suffix(urls_for_css, fragment), false));
             }
             // It is a chunk URL (copied asset): keep the full `?query#fragment`.
-            let unique_key_for_additional_file =
-                import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
+            let unique_key_for_additional_file: &'a [u8] =
+                &import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
             if !unique_key_for_additional_file.is_empty() {
-                return Ok(with_suffix(unique_key_for_additional_file, suffix));
+                return Ok((with_suffix(unique_key_for_additional_file, suffix), true));
             }
         }
         // External URL stays as-is
-        Ok(record.path.text)
+        Ok((record.path.text, false))
     }
 
     pub(crate) fn context(&self) -> Option<&css::StyleContext<'a>> {
@@ -516,41 +518,27 @@ impl<'a> Printer<'a> {
         str_
     }
 
+    /// An `Ident` prints as written. A `Ref` is a local name of a CSS module and prints hashed.
     pub(crate) fn write_ident_or_ref(
         &mut self,
         ident: css_values::ident::IdentOrRef,
-        handle_css_module: bool,
     ) -> PrintResult<()> {
-        if !handle_css_module {
-            if let Some(identifier) = ident.as_ident() {
-                return self.serialize_identifier(identifier.v());
-            } else {
-                let ref_ = ident.as_ref().unwrap();
-                let Some(symbol) = self.symbols.get_const(ref_) else {
-                    return Err(self.add_fmt_error());
-                };
-                // Copy out the arena slice before re-borrowing &mut self.
-                let name = symbol.original_name.slice();
-                return self.serialize_identifier(name);
-            }
+        if let Some(identifier) = ident.as_ident() {
+            return self.serialize_identifier(identifier.v());
         }
+        let ref_ = ident.as_ref().unwrap();
 
         if self.local_names.is_none() {
-            if let Some(ref_) = ident.as_ref() {
-                let ref_ = self.symbols.follow(ref_);
-                let Some(symbol) = self.symbols.get_const(ref_) else {
-                    return Err(self.add_fmt_error());
-                };
-                let name: &'a [u8] = symbol.original_name.slice();
-                return self.write_ident(name, true);
-            }
+            let ref_ = self.symbols.follow(ref_);
+            let Some(symbol) = self.symbols.get_const(ref_) else {
+                return Err(self.add_fmt_error());
+            };
+            let name: &'a [u8] = symbol.original_name.slice();
+            return self.write_ident(name, true);
         }
 
-        // `lookup_ident_or_ref` returns an `'a`-lifetime slice (arena/symbol-table),
-        // independent of the `&self` borrow, so no clone is needed before re-borrowing
-        // `&mut self` for the writer.
-        let str_: &'a [u8] = self.lookup_ident_or_ref(ident);
-        self.serialize_identifier(str_)
+        let name: &'a [u8] = self.lookup_symbol(ref_);
+        self.serialize_identifier(name)
     }
 
     /// Writes a CSS identifier to the underlying destination, escaping it
@@ -746,6 +734,7 @@ impl<'a> Printer<'a> {
         self.write_char(b'{')?;
         self.indent();
         f(self)?;
+        self.pending_semicolon = false;
         self.dedent();
         self.newline()?;
         self.write_char(b'}')
@@ -811,7 +800,11 @@ impl<'a> Printer<'a> {
             None
         };
 
-        let ctx = css::StyleContext { selectors, parent };
+        let ctx = css::StyleContext {
+            selectors,
+            parent,
+            vendor_prefix: self.vendor_prefix,
+        };
 
         // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`;
         // soundness relies on restoring `parent` before this frame returns.

@@ -3,7 +3,7 @@ use crate::prelude::*;
 /// Disallow reversed link and image syntax
 pub struct NoReversedMediaSyntax;
 
-const REVERSED_SYNTAX: Message = Message::new(
+const REVERSED_SYNTAX: &Message = &Message::new(
     "reversedSyntax",
     "Unexpected reversed syntax found. Use [label](URL) syntax instead.",
 );
@@ -72,7 +72,7 @@ impl Listens for NoReversedMediaSyntax {
                     // A span nested in an earlier one is already masked.
                     if span.start >= from {
                         text.extend_from_slice(cx.document.slice(Span::before(from, span)));
-                        util::push_blanks(cx.document.slice(span), false, &mut text);
+                        util::push_as_spaces(cx.document.slice(span), false, &mut text);
                         from = span.end;
                     }
                 }

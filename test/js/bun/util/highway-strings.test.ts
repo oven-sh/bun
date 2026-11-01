@@ -4,7 +4,7 @@
 // misaligned base pointers, and checks each against a scalar reference.
 
 import { highwayStringsForTesting as hw } from "bun:internal-for-testing";
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 
 // Lengths that straddle 16/32/64-byte lanes and the scalar tails on either side.
 const LENGTHS = [0, 1, 2, 3, 8, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024, 1029];
@@ -81,15 +81,32 @@ function positions(len: number): number[] {
   return [...set].sort((a, b) => a - b);
 }
 
+// The runner of CI has a collection follow every expect(), and these tests compare over 500,000 times.
+// So a test lists what is wrong, and one expect() follows it.
+let wrong: string[] = [];
+function compare<T extends number | string | boolean>(
+  kernel: string,
+  found: T,
+  expected: T,
+  at: string | (() => string),
+) {
+  if (found !== expected) wrong.push(`${kernel} ${typeof at === "string" ? at : at()}: ${found}, not ${expected}`);
+}
+afterEach(() => {
+  const found = wrong;
+  wrong = [];
+  expect(found.slice(0, 20)).toEqual([]);
+});
+
 describe("highway byte-search kernels", () => {
   it("indexOfChar / lastIndexOfChar / countChar: absent needle", () => {
     for (const len of LENGTHS) {
       for (const off of OFFSETS) {
         const h = filler(len, off);
         const at = `len=${len} off=${off}`;
-        expect(hw("indexOfChar", h, 0x2c), at).toBe(len);
-        expect(hw("lastIndexOfChar", h, 0x2c), at).toBe(len);
-        expect(hw("countChar", h, 0x2c), at).toBe(0);
+        compare("indexOfChar", hw("indexOfChar", h, 0x2c), len, at);
+        compare("lastIndexOfChar", hw("lastIndexOfChar", h, 0x2c), len, at);
+        compare("countChar", hw("countChar", h, 0x2c), 0, at);
       }
     }
   });
@@ -101,9 +118,9 @@ describe("highway byte-search kernels", () => {
           const h = filler(len, off);
           h[pos] = 0x2c;
           const at = `len=${len} off=${off} pos=${pos}`;
-          expect(hw("indexOfChar", h, 0x2c), at).toBe(pos);
-          expect(hw("lastIndexOfChar", h, 0x2c), at).toBe(pos);
-          expect(hw("countChar", h, 0x2c), at).toBe(1);
+          compare("indexOfChar", hw("indexOfChar", h, 0x2c), pos, at);
+          compare("lastIndexOfChar", hw("lastIndexOfChar", h, 0x2c), pos, at);
+          compare("countChar", hw("countChar", h, 0x2c), 1, at);
         }
       }
     }
@@ -117,9 +134,9 @@ describe("highway byte-search kernels", () => {
         h[ps[i]] = 0x0a;
         h[ps[ps.length - 1 - i]] = 0x0a;
         const at = `len=${len} pos=${ps[i]},${ps[ps.length - 1 - i]}`;
-        expect(hw("indexOfChar", h, 0x0a), at).toBe(refIndexOf(h, 0x0a));
-        expect(hw("lastIndexOfChar", h, 0x0a), at).toBe(refLastIndexOf(h, 0x0a));
-        expect(hw("countChar", h, 0x0a), at).toBe(refCount(h, 0x0a));
+        compare("indexOfChar", hw("indexOfChar", h, 0x0a), refIndexOf(h, 0x0a), at);
+        compare("lastIndexOfChar", hw("lastIndexOfChar", h, 0x0a), refLastIndexOf(h, 0x0a), at);
+        compare("countChar", hw("countChar", h, 0x0a), refCount(h, 0x0a), at);
       }
     }
   });
@@ -128,10 +145,10 @@ describe("highway byte-search kernels", () => {
     for (const len of LENGTHS) {
       const h = new Uint8Array(len).fill(0x61);
       const at = `len=${len}`;
-      expect(hw("countChar", h, 0x61), at).toBe(len);
+      compare("countChar", hw("countChar", h, 0x61), len, at);
       for (let i = 0; i < len; i += 3) h[i] = 0x62;
-      expect(hw("countChar", h, 0x61), at).toBe(refCount(h, 0x61));
-      expect(hw("countChar", h, 0x62), at).toBe(refCount(h, 0x62));
+      compare("countChar", hw("countChar", h, 0x61), refCount(h, 0x61), at);
+      compare("countChar", hw("countChar", h, 0x62), refCount(h, 0x62), at);
     }
   });
 
@@ -139,11 +156,16 @@ describe("highway byte-search kernels", () => {
     for (const len of LENGTHS) {
       for (const off of OFFSETS) {
         const all = new Uint8Array(len + off).subarray(off).fill(0x2f);
-        expect(hw("indexOfNotChar", all, 0x2f), `len=${len} off=${off}`).toBe(len);
+        compare("indexOfNotChar", hw("indexOfNotChar", all, 0x2f), len, `len=${len} off=${off}`);
         for (const run of positions(len)) {
           const h = new Uint8Array(len + off).subarray(off).fill(0x2f);
           h[run] = 0x61;
-          expect(hw("indexOfNotChar", h, 0x2f), `len=${len} off=${off} run=${run}`).toBe(refIndexOfNot(h, 0x2f));
+          compare(
+            "indexOfNotChar",
+            hw("indexOfNotChar", h, 0x2f),
+            refIndexOfNot(h, 0x2f),
+            `len=${len} off=${off} run=${run}`,
+          );
         }
       }
     }
@@ -156,19 +178,19 @@ describe("highway byte-search kernels", () => {
         for (const off of [0, 13]) {
           const none = filler(len, off);
           const at0 = `set=${set.length} len=${len} off=${off}`;
-          expect(hw("indexOfAny", none, set), at0).toBe(len);
-          expect(hw("lastIndexOfAny", none, set), at0).toBe(len);
+          compare("indexOfAny", hw("indexOfAny", none, set), len, at0);
+          compare("lastIndexOfAny", hw("lastIndexOfAny", none, set), len, at0);
           for (const pos of positions(len)) {
             const h = filler(len, off);
             // Alternate which member of the set is planted so every lane compare matters.
             h[pos] = set[pos % set.length];
             const at = `${at0} pos=${pos}`;
-            expect(hw("indexOfAny", h, set), at).toBe(pos);
-            expect(hw("lastIndexOfAny", h, set), at).toBe(pos);
+            compare("indexOfAny", hw("indexOfAny", h, set), pos, at);
+            compare("lastIndexOfAny", hw("lastIndexOfAny", h, set), pos, at);
             if (pos + 2 < len) {
               h[pos + 2] = set[(pos + 1) % set.length];
-              expect(hw("indexOfAny", h, set), at).toBe(refIndexOfAny(h, set));
-              expect(hw("lastIndexOfAny", h, set), at).toBe(refLastIndexOfAny(h, set));
+              compare("indexOfAny", hw("indexOfAny", h, set), refIndexOfAny(h, set), at);
+              compare("lastIndexOfAny", hw("lastIndexOfAny", h, set), refLastIndexOfAny(h, set), at);
             }
           }
         }
@@ -182,21 +204,21 @@ describe("highway byte-search kernels", () => {
       for (const len of LENGTHS) {
         const none = filler(len, 3);
         const at0 = `needle=${n.length} len=${len}`;
-        expect(hw("memmem", none, n), at0).toBe(refMemmem(none, n));
-        expect(hw("memrmem", none, n), at0).toBe(refMemrmem(none, n));
+        compare("memmem", hw("memmem", none, n), refMemmem(none, n), at0);
+        compare("memrmem", hw("memrmem", none, n), refMemrmem(none, n), at0);
         if (n.length === 0 || n.length > len) continue;
         for (const pos of positions(len - n.length + 1)) {
           const h = filler(len, 3);
           h.set(n, pos);
           const at = `${at0} pos=${pos}`;
-          expect(hw("memmem", h, n), at).toBe(pos);
-          expect(hw("memrmem", h, n), at).toBe(pos);
+          compare("memmem", hw("memmem", h, n), pos, at);
+          compare("memrmem", hw("memrmem", h, n), pos, at);
           // A second copy later on: memmem keeps the first, memrmem takes the last.
           const later = len - n.length;
           if (later >= pos + n.length) {
             h.set(n, later);
-            expect(hw("memmem", h, n), at).toBe(refMemmem(h, n));
-            expect(hw("memrmem", h, n), at).toBe(refMemrmem(h, n));
+            compare("memmem", hw("memmem", h, n), refMemmem(h, n), at);
+            compare("memrmem", hw("memrmem", h, n), refMemrmem(h, n), at);
           }
         }
       }
@@ -209,12 +231,12 @@ describe("highway byte-search kernels", () => {
       const h = filler(len, 0);
       // "abc" decoys everywhere, one real "abcd".
       for (let i = 0; i + 3 <= len; i += 5) h.set(enc("abc"), i);
-      expect(hw("memmem", h, n)).toBe(refMemmem(h, n));
-      expect(hw("memrmem", h, n)).toBe(refMemrmem(h, n));
+      compare("memmem", hw("memmem", h, n), refMemmem(h, n), `len=${len} decoys alone`);
+      compare("memrmem", hw("memrmem", h, n), refMemrmem(h, n), `len=${len} decoys alone`);
       if (len >= 24) {
         h.set(n, 19);
-        expect(hw("memmem", h, n)).toBe(refMemmem(h, n));
-        expect(hw("memrmem", h, n)).toBe(refMemrmem(h, n));
+        compare("memmem", hw("memmem", h, n), refMemmem(h, n), `len=${len}`);
+        compare("memrmem", hw("memrmem", h, n), refMemrmem(h, n), `len=${len}`);
       }
     }
   });
@@ -241,8 +263,8 @@ describe("highway byte-search kernels", () => {
         ]) {
           const none = filler(len, off, Uint16Array);
           const at0 = `needle=${n.length} len=${len} off=${off} byteOff=${byteOff}`;
-          expect(hw("memmem16", view16(none, byteOff), nb), at0).toBe(-1);
-          expect(hw("memrmem16", view16(none, byteOff), nb), at0).toBe(-1);
+          compare("memmem16", hw("memmem16", view16(none, byteOff), nb), -1, at0);
+          compare("memrmem16", hw("memrmem16", view16(none, byteOff), nb), -1, at0);
           if (n.length > len) continue;
           const starts = len - n.length + 1;
           // Long haystacks: both ends, the middle, and a few lane edges are enough.
@@ -253,13 +275,13 @@ describe("highway byte-search kernels", () => {
             const h = filler(len, off, Uint16Array);
             h.set(n, pos);
             const at = `${at0} pos=${pos}`;
-            expect(hw("memmem16", view16(h, byteOff), nb), at).toBe(pos);
-            expect(hw("memrmem16", view16(h, byteOff), nb), at).toBe(pos);
+            compare("memmem16", hw("memmem16", view16(h, byteOff), nb), pos, at);
+            compare("memrmem16", hw("memrmem16", view16(h, byteOff), nb), pos, at);
             const later = len - n.length;
             if (later >= pos + n.length) {
               h.set(n, later);
-              expect(hw("memmem16", view16(h, byteOff), nb), at).toBe(pos);
-              expect(hw("memrmem16", view16(h, byteOff), nb), at).toBe(later);
+              compare("memmem16", hw("memmem16", view16(h, byteOff), nb), pos, at);
+              compare("memrmem16", hw("memrmem16", view16(h, byteOff), nb), later, at);
             }
           }
         }
@@ -292,16 +314,16 @@ describe("highway byte-search kernels", () => {
       for (const len of [n.length, 33, 65, 130, 1030]) {
         const h = make(len);
         const at = `needle=${n.length} len=${len}`;
-        expect(hw("memmem16", view16(h, 0), nb), at).toBe(-1);
-        expect(hw("memrmem16", view16(h, 0), nb), at).toBe(-1);
+        compare("memmem16", hw("memmem16", view16(h, 0), nb), -1, at);
+        compare("memrmem16", hw("memrmem16", view16(h, 0), nb), -1, at);
         if (len >= 3 * n.length) {
           // Real copies near both ends, decoys between: first/last must be exact.
           h.set(n, 1);
           h.set(n, len - n.length - 1);
-          expect(hw("memmem16", view16(h, 0), nb), at).toBe(1);
-          expect(hw("memrmem16", view16(h, 0), nb), at).toBe(len - n.length - 1);
-          expect(refMemmem(h, n), at).toBe(1);
-          expect(refMemrmem(h, n), at).toBe(len - n.length - 1);
+          compare("memmem16", hw("memmem16", view16(h, 0), nb), 1, at);
+          compare("memrmem16", hw("memrmem16", view16(h, 0), nb), len - n.length - 1, at);
+          compare("refMemmem", refMemmem(h, n), 1, at);
+          compare("refMemrmem", refMemrmem(h, n), len - n.length - 1, at);
         }
       }
     }
@@ -318,20 +340,151 @@ describe("highway byte-search kernels", () => {
         buf[pos] = 0x21;
         buf[last] = 0x21;
         const at = `len=${len} pos=${pos} last=${last}`;
-        expect(buf.indexOf(0x21), at).toBe(pos);
-        expect(buf.lastIndexOf(0x21), at).toBe(last);
-        expect(buf.includes(0x21), at).toBe(true);
-        expect(buf.includes(0x22), at).toBe(false);
-        expect(buf.lastIndexOf(Buffer.from("!"), last), at).toBe(last);
+        compare("indexOf", buf.indexOf(0x21), pos, at);
+        compare("lastIndexOf", buf.lastIndexOf(0x21), last, at);
+        compare("includes", buf.includes(0x21), true, at);
+        compare("includes", buf.includes(0x22), false, at);
+        compare("lastIndexOf", buf.lastIndexOf(Buffer.from("!"), last), last, at);
         if (last !== pos) {
           // byteOffset plumbing: start just past the first hit / just before the last one.
-          expect(buf.indexOf(0x21, pos + 1), at).toBe(last);
-          expect(buf.lastIndexOf(0x21, last - 1), at).toBe(pos);
+          compare("indexOf", buf.indexOf(0x21, pos + 1), last, at);
+          compare("lastIndexOf", buf.lastIndexOf(0x21, last - 1), pos, at);
         }
       }
     }
-    expect(Buffer.alloc(0).indexOf(1)).toBe(-1);
-    expect(Buffer.alloc(0).lastIndexOf(1)).toBe(-1);
+    compare("indexOf", Buffer.alloc(0).indexOf(1), -1, "empty");
+    compare("lastIndexOf", Buffer.alloc(0).lastIndexOf(1), -1, "empty");
+  });
+});
+
+// The kernels of node:path (src/node_path/tidy.rs).
+describe("kernels for paths", () => {
+  const SLASH = 0x2f;
+  const DOT = 0x2e;
+  const slashOrDot = enc("/.");
+  const isUntidyPartAt = (p: Uint8Array, at: number) =>
+    p[at] === SLASH ||
+    (p[at] === DOT &&
+      (at + 1 === p.length ||
+        p[at + 1] === SLASH ||
+        (p[at + 1] === DOT && (at + 2 === p.length || p[at + 2] === SLASH))));
+  function refIndexOfUntidySlash(p: Uint8Array) {
+    for (let i = 0; i + 1 < p.length; i++) if (p[i] === SLASH && isUntidyPartAt(p, i + 1)) return i;
+    return p.length;
+  }
+  function refIndexOfUntidySlashOrNonAscii(p: Uint8Array) {
+    for (let i = 0; i < p.length; i++) {
+      if (p[i] >= 0x80 || (p[i] === SLASH && i + 1 < p.length && isUntidyPartAt(p, i + 1))) return i;
+    }
+    return p.length;
+  }
+  function refCommonPrefixLength(a: Uint8Array, b: Uint8Array) {
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    return i;
+  }
+  /** A copy that ends where its buffer ends, so that ASAN sees a read past it. */
+  const exact = (p: Uint8Array) => new Uint8Array(p);
+  function check(p: Uint8Array, at: () => string) {
+    p = exact(p);
+    compare("indexOfUntidySlash", hw("indexOfUntidySlash", p, 0), refIndexOfUntidySlash(p), at);
+    compare(
+      "indexOfUntidySlashOrNonAscii",
+      hw("indexOfUntidySlashOrNonAscii", p, 0),
+      refIndexOfUntidySlashOrNonAscii(p),
+      at,
+    );
+    compare("lastIndexOfSlash", hw("lastIndexOfSlash", p, 0), refLastIndexOf(p, SLASH), at);
+    compare("lastIndexOfSlashOrDot", hw("lastIndexOfSlashOrDot", p, 0), refLastIndexOfAny(p, slashOrDot), at);
+    compare("countSlashes", hw("countSlashes", p, 0), refCount(p, SLASH), at);
+  }
+
+  it("every text of up to 8 characters over '/', '.' and 'a'", () => {
+    const alphabet = enc("/.a");
+    for (let len = 0; len <= 8; len++) {
+      const p = new Uint8Array(len);
+      for (let k = 0; k < 3 ** len; k++) {
+        for (let i = 0, rest = k; i < len; i++, rest = Math.floor(rest / 3)) p[i] = alphabet[rest % 3];
+        check(p, () => new TextDecoder().decode(p));
+      }
+    }
+  });
+
+  it("one untidy part at every position of a path of every length up to 100", () => {
+    for (let len = 1; len <= 100; len++) {
+      const tidy = new Uint8Array(len);
+      for (let i = 0; i < len; i++) tidy[i] = i % 7 === 0 ? SLASH : i % 7 === 1 ? DOT : 0x61 + (i % 5);
+      // "/.abcd" is a name that starts with a dot.
+      if (len % 7 === 2) tidy[len - 1] = 0x61;
+      if (len % 7 === 1) tidy[len - 1] = 0x61;
+      check(tidy, () => `len=${len}`);
+      compare("indexOfUntidySlash", hw("indexOfUntidySlash", exact(tidy), 0), len, () => `len=${len}`);
+      for (const part of ["//", "/./", "/../", "/.", "/.."]) {
+        const planted = enc(part);
+        for (let pos = 0; pos + planted.length <= len; pos++) {
+          // One that does not end with a slash is a whole part only at the end.
+          if (!part.endsWith("/") && pos + planted.length !== len) continue;
+          const p = tidy.slice();
+          p.set(planted, pos);
+          check(p, () => `len=${len} part=${part} pos=${pos}`);
+        }
+      }
+    }
+  });
+
+  it("bytes that differ from '/' and '.' in one bit are neither", () => {
+    for (const len of [9, 17, 33, 34, 65, 70]) {
+      for (let bit = 0; bit < 8; bit++) {
+        for (let pos = 0; pos + 1 < len; pos++) {
+          for (const [first, second] of [
+            [SLASH ^ (1 << bit), SLASH],
+            [SLASH, SLASH ^ (1 << bit)],
+            [SLASH, DOT ^ (1 << bit)],
+          ]) {
+            const p = new Uint8Array(len).fill(0x61);
+            p[pos] = first;
+            p[pos + 1] = second;
+            check(p, () => `len=${len} pos=${pos} bytes=${first},${second}`);
+          }
+        }
+      }
+    }
+  });
+
+  it("a byte outside ASCII at every position of a path of every length up to 100, in front of and behind an untidy part", () => {
+    for (let len = 1; len <= 100; len++) {
+      const tidy = new Uint8Array(len);
+      for (let i = 0; i < len; i++) tidy[i] = i % 7 === 0 ? SLASH : 0x61 + (i % 5);
+      tidy[len - 1] = 0x61;
+      for (const byte of [0x80, 0xe9, 0xff]) {
+        for (let pos = 0; pos < len; pos++) {
+          const p = tidy.slice();
+          p[pos] = byte;
+          check(p, () => `len=${len} byte=${byte} pos=${pos}`);
+          for (const untidy of [pos - 9, pos - 2, pos + 1, pos + 8]) {
+            if (untidy < 0 || untidy + 2 > len) continue;
+            const both = p.slice();
+            both[untidy] = both[untidy + 1] = SLASH;
+            check(both, () => `len=${len} byte=${byte} pos=${pos} untidy=${untidy}`);
+          }
+        }
+      }
+    }
+  });
+
+  it("commonPrefixLength: the first difference at every position, and none", () => {
+    for (let len = 0; len <= 70; len++) {
+      const a = filler(len, 1);
+      const found = (b: Uint8Array) => hw("commonPrefixLength", exact(a), exact(b));
+      compare("commonPrefixLength", found(a), len, () => `len=${len}`);
+      compare("commonPrefixLength", found(a.subarray(0, len >> 1)), len >> 1, () => `len=${len} and its half`);
+      for (let pos = 0; pos < len; pos++) {
+        const b = a.slice();
+        b[pos] ^= 1 << (pos & 7);
+        if (pos + 3 < len) b[pos + 3] ^= 0x80;
+        compare("commonPrefixLength", found(b), refCommonPrefixLength(a, b), () => `len=${len} pos=${pos}`);
+      }
+    }
   });
 });
 
@@ -345,7 +498,7 @@ describe("scannerRunStops", () => {
     (b: number) => b === 0x22 || b === 0x27 || b === 0x60 || b === 0x24 || b === 0x5c || b < 0x20 || b >= 0x80,
   ];
 
-  function expectStops(text: Uint8Array, at: string) {
+  function compareStops(text: Uint8Array, at: string) {
     const planeLen = Math.ceil(text.length / 64) * 8;
     const expected = new Uint8Array(planeLen * 3);
     STOPS.forEach((stops, plane) => {
@@ -355,13 +508,13 @@ describe("scannerRunStops", () => {
       }
     });
     const out = new Uint8Array(planeLen * 3);
-    expect(hw("scannerRunStops", text, out), at).toBe(0);
-    expect(out.toHex(), at).toBe(expected.toHex());
+    compare("scannerRunStops", hw("scannerRunStops", text, out), 0, at);
+    compare("scannerRunStops", out.toHex(), expected.toHex(), at);
   }
 
   it("classifies every byte value in every lane", () => {
     for (let shift = 0; shift < 64; shift++) {
-      expectStops(
+      compareStops(
         Uint8Array.from({ length: 256 + shift }, (_, i) => (i + 256 - shift) & 0xff),
         `shift=${shift}`,
       );
@@ -372,7 +525,7 @@ describe("scannerRunStops", () => {
     for (const len of LENGTHS) {
       for (const off of OFFSETS) {
         for (const byte of [0x61, 0x20, 0x22, 0x00, 0xff]) {
-          expectStops(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+          compareStops(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
         }
       }
     }
@@ -392,7 +545,7 @@ describe("scannerRunStops", () => {
         ]) {
           const text = new Uint8Array(len + 1).fill(run).subarray(1);
           text[pos] = stop;
-          expectStops(text, `len=${len} pos=${pos} run=${run} stop=${stop}`);
+          compareStops(text, `len=${len} pos=${pos} run=${run} stop=${stop}`);
         }
       }
     }
@@ -404,13 +557,13 @@ describe("scannerRunStops", () => {
 });
 
 describe("lineStarts", () => {
-  function expectLineStarts(text: Uint8Array, at: string) {
+  function compareLineStarts(text: Uint8Array, at: string) {
     const expected: number[] = [];
     text.forEach((byte, i) => byte === 0x0a && expected.push(i + 1));
     // One more than there are line feeds, to see that the kernel stops.
     const out = new Uint32Array(expected.length + 1).fill(0xdeadbeef);
-    expect(hw("lineStarts", text, new Uint8Array(out.buffer)), at).toBe(expected.length);
-    expect([...out], at).toEqual([...expected, 0xdeadbeef]);
+    compare("lineStarts", hw("lineStarts", text, new Uint8Array(out.buffer)), expected.length, at);
+    compare("lineStarts", out.join(), [...expected, 0xdeadbeef].join(), at);
   }
 
   it("no line feed, and nothing but line feeds", () => {
@@ -418,7 +571,7 @@ describe("lineStarts", () => {
       for (const off of OFFSETS) {
         // The others differ from a line feed in one bit, or are what the last block is padded with.
         for (const byte of [0x0a, 0x61, 0x00, 0x0b, 0x08, 0x0d, 0x1a, 0x2a, 0x8a]) {
-          expectLineStarts(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+          compareLineStarts(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
         }
       }
     }
@@ -430,7 +583,7 @@ describe("lineStarts", () => {
         for (const pos of positions(len)) {
           const text = filler(len, off);
           text[pos] = 0x0a;
-          expectLineStarts(text, `len=${len} off=${off} pos=${pos}`);
+          compareLineStarts(text, `len=${len} off=${off} pos=${pos}`);
         }
       }
     }
@@ -438,8 +591,8 @@ describe("lineStarts", () => {
 
   it("lines of every length up to 130", () => {
     const lines = Array.from({ length: 131 }, (_, length) => Buffer.alloc(length, "a").toString() + "\n");
-    expectLineStarts(enc(lines.join("")), "ascending");
-    expectLineStarts(enc(lines.reverse().join("") + "no line feed at the end"), "descending");
+    compareLineStarts(enc(lines.join("")), "ascending");
+    compareLineStarts(enc(lines.reverse().join("") + "no line feed at the end"), "descending");
   });
 
   it("rejects a buffer that is too small", () => {
@@ -452,7 +605,7 @@ describe("oddBlocks", () => {
   // Both sides of a block of 64 bytes and of a word of 64 blocks.
   const LENGTHS = [0, 1, 63, 64, 65, 127, 128, 129, 4031, 4032, 4033, 4095, 4096, 4097, 4159, 4160, 4161, 8192, 9000];
 
-  function expectOddBlocks(text: Uint8Array, at: string) {
+  function compareOddBlocks(text: Uint8Array, at: string) {
     const words = Math.ceil(text.length / 4096);
     const expected = new BigUint64Array(words + 1);
     text.forEach((byte, i) => {
@@ -461,8 +614,8 @@ describe("oddBlocks", () => {
     // One word more than the kernel may write, to see that it stops.
     expected[words] = 0xaaaaaaaaaaaaaaaan;
     const out = new BigUint64Array(words + 1).fill(0xaaaaaaaaaaaaaaaan);
-    expect(hw("oddBlocks", text, new Uint8Array(out.buffer)), at).toBe(0);
-    expect([...out], at).toEqual([...expected]);
+    compare("oddBlocks", hw("oddBlocks", text, new Uint8Array(out.buffer)), 0, at);
+    compare("oddBlocks", out.join(), expected.join(), at);
   }
 
   it("classifies every byte value", () => {
@@ -470,7 +623,7 @@ describe("oddBlocks", () => {
       for (const pos of [0, 63, 64, 100, 129]) {
         const text = new Uint8Array(130).fill(0x61);
         text[pos] = byte;
-        expectOddBlocks(text, `byte=${byte} pos=${pos}`);
+        compareOddBlocks(text, `byte=${byte} pos=${pos}`);
       }
     }
   });
@@ -478,13 +631,13 @@ describe("oddBlocks", () => {
   it("marks the block of an odd byte, and no other", () => {
     for (const len of LENGTHS) {
       for (const off of OFFSETS) {
-        expectOddBlocks(new Uint8Array(len + off).fill(0x20).subarray(off), `len=${len} off=${off} plain`);
-        expectOddBlocks(new Uint8Array(len + off).fill(0x5c).subarray(off), `len=${len} off=${off} odd`);
+        compareOddBlocks(new Uint8Array(len + off).fill(0x20).subarray(off), `len=${len} off=${off} plain`);
+        compareOddBlocks(new Uint8Array(len + off).fill(0x5c).subarray(off), `len=${len} off=${off} odd`);
         for (const pos of [0, 1, 62, 63, 64, 65, 4031, 4032, 4095, 4096, 4097, len - 65, len - 64, len - 2, len - 1]) {
           if (pos < 0 || pos >= len) continue;
           const text = new Uint8Array(len + off).fill(0x7e).subarray(off);
           text[pos] = 0x7f;
-          expectOddBlocks(text, `len=${len} off=${off} pos=${pos}`);
+          compareOddBlocks(text, `len=${len} off=${off} pos=${pos}`);
         }
       }
     }

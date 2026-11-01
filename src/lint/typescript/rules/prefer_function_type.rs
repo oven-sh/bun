@@ -1,4 +1,4 @@
-use crate::rules::no_unnecessary_template_expression::binding_needed_in_place_of;
+use crate::rules::no_unnecessary_template_expression::min_precedence_at;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
@@ -6,23 +6,23 @@ use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
 /// Enforce using function types instead of interfaces with call signatures.
 pub struct PreferFunctionType;
 
-const FUNCTION_TYPE_OVER_CALLABLE_TYPE: Message = Message::new(
+const FUNCTION_TYPE_OVER_CALLABLE_TYPE: &Message = &Message::new(
     "functionTypeOverCallableType",
     "{{ literalOrInterface }} only has a call signature, you should use a function type instead.",
 );
-const UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE: Message = Message::new(
+const UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE: &Message = &Message::new(
     "unexpectedThisOnFunctionOnlyInterface",
     "`this` refers to the function type '{{ interfaceName }}', did you intend to use a generic `this` parameter like `<Self>(this: Self, ...) => Self` instead?",
 );
 
-/// What has the member.
+/// The node that declares the member.
 #[derive(Copy, Clone)]
 enum Owner<'a> {
     Interface(Interface<'a>),
     TypeLiteral(TypeNode<'a>),
 }
 
-/// Finds the first `this` type that is not in a type literal, where it is invalid.
+/// Finds the first `this` type outside a type literal. Inside a type literal `this` is invalid.
 #[derive(Default)]
 struct ThisTypes {
     literal_nesting: u32,
@@ -58,7 +58,7 @@ impl<'a> Visitor<'a> for ThisTypes {
     }
 }
 
-/// Whether the interface extends anything but `Function`.
+/// True if the interface extends anything other than `Function`.
 fn has_one_supertype(interface: Interface) -> bool {
     let extends = interface.extends();
     match (extends.first(), extends.len()) {
@@ -68,7 +68,7 @@ fn has_one_supertype(interface: Interface) -> bool {
     }
 }
 
-/// The signature `member` as a function type.
+/// Prints the signature `member` as a function type.
 fn function_type(member: Member, return_type: TypeNode) -> Option<Vec<u8>> {
     let text = member.text();
     let colon = return_type.annotation_span().start.checked_sub(member.span().start)? as usize;
@@ -95,7 +95,7 @@ fn fix<'a>(
     // The span to replace, the name with its type parameters, and the statement's span starting at `export`.
     let (replaced, name, export) = match owner {
         Owner::TypeLiteral(literal) => {
-            if binding_needed_in_place_of(literal) > 0 {
+            if min_precedence_at(literal) > 0 {
                 suggestion.insert(0, b'(');
                 suggestion.push(b')');
             }
@@ -105,7 +105,7 @@ fn fix<'a>(
             let name = interface.name().span();
             let name = interface.type_params().angle_brackets_span().map_or(name, |it| name.to(it));
             suggestion = [&b"type "[..], file.slice(name), b" = ", &suggestion[..]].concat();
-            // oxlint always ends the alias.
+            // oxlint always ends the alias with `;`.
             if is_terminated || file.language().is_oxlint {
                 suggestion.push(b';');
             }
@@ -150,7 +150,7 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
             if let Some(this) = this_types.first {
                 let report = cx.report(this, UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE);
                 let report = report.data("interfaceName", interface.name());
-                // For the help of oxlint.
+                // For oxlint's help text.
                 if cx.language().is_oxlint {
                     report.data("suggestion", function_type(member, return_type).unwrap_or_default());
                 }
@@ -162,7 +162,7 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
     let report = cx
         .report(member, FUNCTION_TYPE_OVER_CALLABLE_TYPE)
         .data("literalOrInterface", phrase);
-    // For the help of oxlint.
+    // For oxlint's help text.
     let report = match cx.language().is_oxlint {
         true => report.data("suggestion", function_type(member, return_type).unwrap_or_default()),
         false => report,
@@ -177,9 +177,9 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
     }
 }
 
-/// oxlint looks at a type literal that is a type annotation or the type of an alias, or a part of a union that is one
-/// of these, or of an intersection that is the type of an alias. Not in `a as { (): void }` or among type arguments.
-fn oxlint_looks_at(literal: TypeNode) -> bool {
+/// oxlint only checks a type literal that's a type annotation or an alias's type, a member of a union in one of those
+/// positions, or a member of an intersection that's an alias's type. It skips `a as { (): void }` and type arguments.
+fn oxlint_checks_literal(literal: TypeNode) -> bool {
     let is_annotated = |node: Node| matches!(node, Node::VarDecl(_) | Node::Param(_) | Node::Member(_) | Node::Func(_));
     let is_alias = |node: Node| matches!(node, Node::Stmt(it) if it.tag() == StmtTag::TypeAlias);
     if literal.is_parenthesized() {
@@ -226,7 +226,7 @@ impl Rule for PreferFunctionType {
         if let Some(member) = members.first()
             && members.len() == 1
             && matches!(member.kind(), MemberKind::CallSignature | MemberKind::ConstructSignature)
-            && (!cx.language().is_oxlint || oxlint_looks_at(literal))
+            && (!cx.language().is_oxlint || oxlint_checks_literal(literal))
         {
             check_member(member, Owner::TypeLiteral(literal), cx);
         }

@@ -1,0 +1,9 @@
+# The program of ../../answers is one in which coroutines are split, an async generator has its worker, what is live at a suspension is listed, and allocations are sunk around the suspensions.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: CoroutinesSplit >= 1
+# STATISTIC: AsyncWorkersMade >= 1
+# STATISTIC: SuspensionRoots >= 1
+# STATISTIC: AllocationsSunk >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/what-is-awaited-comes-back-in-its-turn.ir

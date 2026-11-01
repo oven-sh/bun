@@ -6,6 +6,7 @@
 namespace JSC {
 class Structure;
 class Identifier;
+class SourceCode;
 class SourceCodeKey;
 class SourceProvider;
 } // namespace JSC
@@ -50,6 +51,9 @@ public:
     bun_ModuleInfoDeserialized* m_moduleInfo { nullptr };
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
+    bool m_dependsOnMoreThanSource { false };
+    // Set by IsolatedModuleCache::insert() and compared by lookup().
+    uint64_t m_madeFromHash { 0 };
 
 private:
     SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
@@ -60,6 +64,7 @@ private:
         , m_moduleInfo(std::exchange(resolvedSource.module_info, nullptr))
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
+        , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
         , m_bunVM(bunVM)
         , m_source(WTF::move(sourceImpl))
     {
@@ -76,6 +81,10 @@ private:
 } // namespace Zig
 
 namespace Bun {
+
+// JSC's bytecode encoder aborts on a string of 2^27 or more characters unless it encodes against a string table.
+// Call this after `source`'s unlinked code is generated.
+bool hasStringTooLongForBytecodeCache(JSC::VM&, const JSC::SourceCode& source);
 
 // Bytecode that is a section of the executable: not owned, and there for the life of the process. `entryOffset` is where
 // the module's cache entry starts in `bytes` when they are the one payload of a link.

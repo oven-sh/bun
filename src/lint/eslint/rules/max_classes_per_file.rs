@@ -6,7 +6,7 @@ pub struct MaxClassesPerFile {
     max: usize,
 }
 
-const MAXIMUM_EXCEEDED: Message = Message::new(
+const MAXIMUM_EXCEEDED: &Message = &Message::new(
     "maximumExceeded",
     "File has too many classes ({{ classCount }}). Maximum allowed is {{ max }}.",
 );
@@ -43,7 +43,7 @@ impl Rule for MaxClassesPerFile {
             && let (Some(first), Some(last)) = (body.first(), body.last())
         {
             let start = first.export_span().unwrap_or_else(|| first.span()).start;
-            // oxlint points at the first byte.
+            // oxlint reports only the first byte.
             let end = if cx.language().is_oxlint { start + 1 } else { last.span().end };
             cx.report(Span::new(start, end), MAXIMUM_EXCEEDED)
                 .data("classCount", cx.state)

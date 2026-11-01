@@ -4,9 +4,9 @@ use bun_lint::prelude::*;
 /// Disallow empty static blocks.
 pub struct NoEmptyStaticBlock;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected empty static block.");
-const SUGGEST_COMMENT: Message =
-    Message::new("suggestComment", "Add comment inside empty static block.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected empty static block.");
+const SUGGEST_COMMENT: &Message =
+    &Message::new("suggestComment", "Add comment inside empty static block.");
 
 impl Rule for NoEmptyStaticBlock {
     const META: Meta = Meta::eslint("no-empty-static-block", Kind::Suggestion)
@@ -39,12 +39,12 @@ impl NoEmptyStaticBlock {
         let Some(braces) = func.body_span() else {
             return;
         };
-        // Without statements, all that can be between the braces is whitespace and comments.
+        // Without statements, only whitespace and comments can be between the braces.
         let inside = braces.shrink(1, 1);
-        // For oxlint a comment before the `{` fills it too.
+        // For oxlint a comment before the `{` also makes it non-empty.
         let is_filled = cx.language().is_oxlint && cx.file().comments_in(member.span()).next().is_some();
         if !is_filled && strings::is_all_js_whitespace(cx.slice(inside)) {
-            // oxlint points at the `static`, and suggests to remove the block.
+            // oxlint's report starts at the `static`, and its fix removes the block.
             match cx.language().is_oxlint {
                 true => cx.report(member.span(), UNEXPECTED).fix(|fixer| fixer.remove(member.span())),
                 false => (cx.report(braces, UNEXPECTED))

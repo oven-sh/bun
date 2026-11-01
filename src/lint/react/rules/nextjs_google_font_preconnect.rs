@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforces the presence of `rel="preconnect"` when using Google Fonts via `<link>` tags.
 pub struct GoogleFontPreconnect;
 
-const GOOGLE_FONT_PRECONNECT: Message = Message::new("", "`rel=\"preconnect\"` is missing from Google Font.");
+const GOOGLE_FONT_PRECONNECT: &Message = &Message::new("", "`rel=\"preconnect\"` is missing from Google Font.");
 
 impl Rule for GoogleFontPreconnect {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "google-font-preconnect", Kind::Problem);

@@ -20,32 +20,32 @@ enum Mode {
     Module,
 }
 
-const FUNCTION: Message = Message::new("function", "Use the function form of 'use strict'.");
-const GLOBAL: Message = Message::new("global", "Use the global form of 'use strict'.");
-const MULTIPLE: Message = Message::new("multiple", "Multiple 'use strict' directives.");
-const NEVER: Message = Message::new("never", "Strict mode is not permitted.");
-const UNNECESSARY: Message = Message::new("unnecessary", "Unnecessary 'use strict' directive.");
-const MODULE: Message = Message::new("module", "'use strict' is unnecessary inside of modules.");
-const IMPLIED: Message = Message::new(
+const FUNCTION: &Message = &Message::new("function", "Use the function form of 'use strict'.");
+const GLOBAL: &Message = &Message::new("global", "Use the global form of 'use strict'.");
+const MULTIPLE: &Message = &Message::new("multiple", "Multiple 'use strict' directives.");
+const NEVER: &Message = &Message::new("never", "Strict mode is not permitted.");
+const UNNECESSARY: &Message = &Message::new("unnecessary", "Unnecessary 'use strict' directive.");
+const MODULE: &Message = &Message::new("module", "'use strict' is unnecessary inside of modules.");
+const IMPLIED: &Message = &Message::new(
     "implied",
     "'use strict' is unnecessary when implied strict mode is enabled.",
 );
-const UNNECESSARY_IN_CLASSES: Message = Message::new(
+const UNNECESSARY_IN_CLASSES: &Message = &Message::new(
     "unnecessaryInClasses",
     "'use strict' is unnecessary inside of classes.",
 );
-const NON_SIMPLE_PARAMETER_LIST: Message = Message::new(
+const NON_SIMPLE_PARAMETER_LIST: &Message = &Message::new(
     "nonSimpleParameterList",
     "'use strict' directive inside a function with non-simple parameter list throws a syntax error since ES2016.",
 );
-const WRAP: Message = Message::new(
+const WRAP: &Message = &Message::new(
     "wrap",
     "Wrap {{name}} in a function with 'use strict' directive.",
 );
 
 impl Mode {
-    /// What a directive is reported with that the mode does not allow.
-    fn message(self) -> Message {
+    /// The message for a directive that the mode doesn't allow.
+    fn message(self) -> &'static Message {
         match self {
             Mode::Never => NEVER,
             Mode::Global => GLOBAL,
@@ -61,8 +61,8 @@ impl Mode {
     }
 }
 
-/// `Program.sourceType === "module"`. `@typescript-eslint/parser` overwrites what typescript-estree
-/// says with the option it was given: an `import` or an `export` makes no module of a script.
+/// `Program.sourceType === "module"`. `@typescript-eslint/parser` overwrites typescript-estree's value with the option
+/// it was given, so an `import` or an `export` doesn't turn a script into a module.
 fn is_module(file: &File<'_>) -> bool {
     file.language().scope_source_type() == SourceType::Module
 }
@@ -92,7 +92,7 @@ fn is_simple_parameter_list(func: Func<'_>) -> bool {
     })
 }
 
-/// What is around a function.
+/// The constructs that enclose a function.
 #[derive(Default)]
 struct Surroundings {
     /// The body of a class.
@@ -102,12 +102,12 @@ struct Surroundings {
     is_in_strict_function: bool,
 }
 
-/// By a node: the innermost function with a body, or class whose body it is in, around it.
+/// Maps a node to the innermost enclosing function with a body, or class whose body contains the node.
 type Containers<'a> = AncestorMemo<'a, Node<'a>>;
 
 impl Surroundings {
     fn of<'a>(func: Func<'a>, containers: &mut Containers<'a>) -> Surroundings {
-        let mut around = Surroundings::default();
+        let mut surroundings = Surroundings::default();
         let mut inner = Node::Func(func);
         while let Some(container) = containers.find(inner, |child, ancestor| match ancestor {
             Node::Func(outer) => ast_utils::is_function_with_body(outer).then_some(ancestor),
@@ -116,14 +116,14 @@ impl Surroundings {
         }) {
             match container {
                 Node::Func(outer) => {
-                    around.is_in_function = true;
-                    around.is_in_strict_function |= has_use_strict_directive(outer);
+                    surroundings.is_in_function = true;
+                    surroundings.is_in_strict_function |= has_use_strict_directive(outer);
                 }
-                _ => around.is_in_class = true,
+                _ => surroundings.is_in_class = true,
             }
             inner = container;
         }
-        around
+        surroundings
     }
 }
 
@@ -133,7 +133,7 @@ pub struct State<'a> {
     containers: Containers<'a>,
 }
 
-fn report_directive<'a>(cx: &Cx<'a, Strict>, directive: Stmt<'a>, message: Message, fix: bool) {
+fn report_directive<'a>(cx: &Cx<'a, Strict>, directive: Stmt<'a>, message: &'static Message, fix: bool) {
     let report = cx.report(directive, message);
     if fix {
         report.fix(|fixer| fixer.remove(directive));
@@ -141,14 +141,14 @@ fn report_directive<'a>(cx: &Cx<'a, Strict>, directive: Stmt<'a>, message: Messa
 }
 
 impl Strict {
-    /// In the mode `Function`.
+    /// Only called in `Function` mode.
     fn check_function_without_directive<'a>(func: Func<'a>, cx: &mut Cx<'a, Self>) {
         // A static block is in a class.
         if func.enclosing().is_some_and(Func::has_body) {
             return;
         }
-        let around = Surroundings::of(func, &mut cx.state.containers);
-        if around.is_in_function || around.is_in_class {
+        let surroundings = Surroundings::of(func, &mut cx.state.containers);
+        if surroundings.is_in_function || surroundings.is_in_class {
             return;
         }
         if is_simple_parameter_list(func) {
@@ -212,10 +212,10 @@ impl Rule for Strict {
             directives.for_each(|it| report_directive(cx, it, mode.message(), mode.should_fix()));
             return;
         } else {
-            let around = Surroundings::of(func, &mut cx.state.containers);
-            if around.is_in_strict_function {
+            let surroundings = Surroundings::of(func, &mut cx.state.containers);
+            if surroundings.is_in_strict_function {
                 report_directive(cx, first, UNNECESSARY, true);
-            } else if around.is_in_class {
+            } else if surroundings.is_in_class {
                 report_directive(cx, first, UNNECESSARY_IN_CLASSES, true);
             }
         }

@@ -3,7 +3,7 @@ use crate::prelude::*;
 /// Require alternative text for images
 pub struct RequireAltText;
 
-const ALT_TEXT_REQUIRED: Message = Message::new(
+const ALT_TEXT_REQUIRED: &Message = &Message::new(
     "altTextRequired",
     "Alternative text for image is required.",
 );

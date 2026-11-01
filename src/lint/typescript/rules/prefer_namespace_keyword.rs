@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Require using `namespace` keyword over `module` keyword to declare custom TypeScript modules.
 pub struct PreferNamespaceKeyword;
 
-const USE_NAMESPACE: Message = Message::new(
+const USE_NAMESPACE: &Message = &Message::new(
     "useNamespace",
     "Use 'namespace' instead of 'module' to declare custom TypeScript modules.",
 );
@@ -26,7 +26,7 @@ impl Rule for PreferNamespaceKeyword {
         let ModuleName::Ident(name) = module.name() else {
             return;
         };
-        // The `B` of `module A.B {}` is part of the declaration of `A`.
+        // The `B` in `module A.B {}` is part of `A`'s declaration.
         if !module.uses_module_keyword() || stmt.span().start == name.start() {
             return;
         }

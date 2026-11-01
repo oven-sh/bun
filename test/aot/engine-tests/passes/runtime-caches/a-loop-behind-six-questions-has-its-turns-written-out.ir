@@ -1,0 +1,199 @@
+# -- source: a-loop-behind-six-questions-has-its-turns-written-out.ts
+# // The loop asks six questions ahead of its turns. Behind all six answers it still counts as a loop that runs often, so its turns are written out.
+# interface Table { step: number | string }
+# function addUp(first: Table, second: Table, third: Table, start: number, turns: number): number {
+#   let total = start;
+#   for (let i = 0; i < turns; i++) total += ((first.step as number) & 1) + ((second.step as number) & 2) + ((third.step as number) & 4) + (i & 1);
+#   return total;
+# }
+# function tableWith(step: number | string): Table {
+#   const made = Object.create(null);
+#   made[Date.now() > 0 ? "step" : "pace"] = step;
+#   return made;
+# }
+# const one = tableWith(1);
+# const two = tableWith(2);
+# const four = tableWith(4);
+# const words = tableWith("7");
+# let seen = 0;
+# for (let round = 0; round < 100; round++) seen += addUp(one, two, four, round / 2, 100) + addUp(four, words, two, round, 100);
+# console.log(String(seen));
+# -- end of source
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# STATISTIC: LoopsEnteredByAnswers = 1
+# RUN: lower-to-air loops f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+# CHECK-LABEL: function {{*}}name="addUp"
+# CHECK: role=Source
+# CHECK: loop #{{*}}, patchpoints: 0, {{*}} steps by 8
+# CHECK-LABEL: end of function
+
+module m0 path="a-loop-behind-six-questions-has-its-turns-written-out.ts" displayPath="a-loop-behind-six-questions-has-its-turns-written-out.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=738 kind=Variable
+typesite w1 module=m0 position=204 kind=Parameter
+typesite w2 module=m0 position=218 kind=Parameter
+typesite w3 module=m0 position=233 kind=Parameter
+typesite w4 module=m0 position=247 kind=Parameter
+typesite w5 module=m0 position=262 kind=Parameter
+typesite w6 module=m0 position=189 kind=Result
+typesite w7 module=m0 position=491 kind=Parameter
+typesite w8 module=m0 position=472 kind=Result
+typesite w9 module=m0 position=637 kind=CallResult
+typesite w10 module=m0 position=663 kind=CallResult
+typesite w11 module=m0 position=690 kind=CallResult
+typesite w12 module=m0 position=718 kind=CallResult
+typesite w13 module=m0 position=757 kind=Variable
+typesite w14 module=m0 position=798 kind=CallResult
+typesite w15 module=m0 position=838 kind=CallResult
+typesite w16 module=m0 position=887 kind=CallResult
+typesite w17 module=m0 position=293 kind=Variable
+typesite w18 module=m0 position=319 kind=Variable
+typesite w19 module=m0 position=367 kind=Assertion
+typesite w20 module=m0 position=399 kind=Assertion
+typesite w21 module=m0 position=430 kind=Assertion
+typesite w22 module=m0 position=566 kind=CallResult
+layout L0 name="Table" module=m0 position=157 fields=[{key="step" declared={type=undefined|null|number|string flags=[OmitsNull, OmitsUndefined]} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = Integer integer=1 @647
+    v5 = Call v3, -, v4 calleeName="tableWith" @637
+    v6 = Convert v5 declared={type=undefined|null|object site=w9 flags=[OmitsNull, OmitsUndefined]} @637
+    v7 = Integer integer=2 @673
+    v8 = Call v3, -, v7 calleeName="tableWith" @663
+    v9 = Convert v8 declared={type=undefined|null|object site=w10 flags=[OmitsNull, OmitsUndefined]} @663
+    v10 = Integer integer=4 @700
+    v11 = Call v3, -, v10 calleeName="tableWith" @690
+    v12 = Convert v11 declared={type=undefined|null|object site=w11 flags=[OmitsNull, OmitsUndefined]} @690
+    v13 = String string="7" @728
+    v14 = Call v3, -, v13 calleeName="tableWith" @718
+    v15 = Convert v14 declared={type=undefined|null|object site=w12 flags=[OmitsNull, OmitsUndefined]} @718
+    v16 = Integer @745
+    v17 = Convert v16 declared={type=number site=w0} @745
+    v18 = Integer @765
+    v19 = Convert v18 declared={type=number site=w13} @765
+    Jump -> next b2(v17, v19) @757
+  b2(v20: number, v21: number):
+    LoopHint @757
+    v23 = Integer integer=100 @776
+    v24 = Less v21, v23 @768
+    Branch v24 -> taken b3(| 0), notTaken b6(| 0) @768
+  b3(v25):
+    Jump -> next b4() @768
+  b4():
+    v26 = Integer integer=2 @828
+    v27 = Div v25, v26 @820
+    v28 = Integer integer=100 @831
+    v29 = Call v1, -, v6, v9, v12, v27, v28 calleeName="addUp" @798
+    v30 = Convert v29 declared={type=number site=w14} @798
+    v31 = Integer integer=100 @869
+    v32 = Call v1, -, v12, v15, v9, v25, v31 calleeName="addUp" @838
+    v33 = Convert v32 declared={type=number site=w15} @838
+    v34 = Add v30, v33 @798
+    v35 = Add v20, v34 @798
+    v36 = Convert v35 declared={type=number site=w0} @790
+    Jump -> next b5() @790
+  b5():
+    v37 = Increment v25 @798
+    v38 = Convert v37 declared={type=number site=w13} @781
+    Jump -> next b2(v36, v38) @781
+  b6(v39):
+    Jump -> next b7() @768
+  b7():
+    v40 = Builtin builtin=GlobalThis @875
+    v41 = PropGet v40 key="console" [isFreeName] @875
+    v42 = Convert v41 declared={type=builtin(Console) flags=[IsExpected]} @875
+    v43 = PropGet v42 key="log" @875
+    v44 = Convert v43 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @875
+    v45 = Builtin builtin=String @887
+    v46 = Call v45, -, v20 calleeName="String" @887
+    v47 = Convert v46 declared={type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @887
+    v48 = Call v44, v42, v47 calleeKey="log" calleeName="console.log" @883
+    v49 = Undefined @875
+    Return v49 @875
+}
+function f1 name="addUp" module=m0 position=189 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|null|object site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w2 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w4}, {type=number site=w5}] results=[{type=number site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|object, v2: undefined|null|object, v3: number, v4: number):
+    Jump -> next b1() @189
+  b1():
+    v5 = Convert v3 declared={type=number site=w17} @301
+    v6 = Integer @323
+    v7 = Convert v6 declared={type=number site=w18} @323
+    Jump -> next b2(v5, v7) @319
+  b2(v8: number, v9: number):
+    LoopHint @319
+    v11 = Convert v9 declared={type=i32 flags=[IsExpected]} @326
+    v12 = Less v11, v4 @326
+    Branch v12 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @326
+  b3(v13, v14):
+    Jump -> next b4() @326
+  b4():
+    v15 = PropGet v0 key="step" @353
+    v16 = Convert v15 declared={type=number site=w19} illTypedCause=Assertion @353
+    v17 = Integer integer=1 @377
+    v18 = BitAnd v16, v17 @353
+    v19 = PropGet v1 key="step" @384
+    v20 = Convert v19 declared={type=number site=w20} illTypedCause=Assertion @384
+    v21 = Integer integer=2 @409
+    v22 = BitAnd v20, v21 @384
+    v23 = Add v18, v22 @342
+    v24 = PropGet v2 key="step" @416
+    v25 = Convert v24 declared={type=number site=w21} illTypedCause=Assertion @416
+    v26 = Integer integer=4 @440
+    v27 = BitAnd v25, v26 @416
+    v28 = Add v23, v27 @342
+    v29 = Convert v13 declared={type=i32 flags=[IsExpected]} @446
+    v30 = Integer integer=1 @450
+    v31 = BitAnd v29, v30 @446
+    v32 = Add v28, v31 @342
+    v33 = Add v8, v32 @342
+    v34 = Convert v33 declared={type=number site=w17} @342
+    Jump -> next b5() @342
+  b5():
+    v35 = Increment v29 @342
+    v36 = Convert v35 declared={type=number site=w18} @337
+    Jump -> next b2(v34, v36) @337
+  b6(v37, v38):
+    Jump -> next b7() @326
+  b7():
+    v39 = Convert v8 declared={type=number site=w6} @463
+    Return v39 @463
+}
+function f2 name="tableWith" module=m0 position=472 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|object site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string):
+    Jump -> next b1() @472
+  b1():
+    v1 = Builtin builtin=Object @538
+    v2 = Builtin builtin=ObjectCreate @538
+    v3 = Null @552
+    v4 = Call v2, v1, v3 calleeName="Object.create" @545
+    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @538
+    v6 = Builtin builtin=GlobalThis @566
+    v7 = PropGet v6 key="Date" [isFreeName] @566
+    v8 = Convert v7 declared={type=builtin(Date) flags=[IsExpected]} @566
+    v9 = PropGet v8 key="now" @566
+    v10 = Convert v9 declared={type=builtin(DateNow) flags=[IsExpected]} @566
+    v11 = Call v10, v8 calleeKey="now" calleeName="Date.now" @571
+    v12 = Convert v11 declared={type=number site=w22} illTypedCause=DeclarationWithoutBody @566
+    v13 = Integer @579
+    v14 = Greater v12, v13 @566
+    Branch v14 -> taken b2(), notTaken b3() @566
+  b2():
+    v15 = String string="step" @583
+    Jump -> next b4(v15) @583
+  b3():
+    v16 = String string="pace" @592
+    Jump -> next b4(v16) @592
+  b4(v17):
+    ElemSet v5, v17, v0 @561
+    v19 = Convert v5 declared={type=undefined|null|object site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @617
+    Return v19 @617
+}
+# -- generated: *

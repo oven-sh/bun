@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -193,6 +194,189 @@ describe("ReadStream.prototype.setRawMode", () => {
   });
 });
 
+describe.concurrent("ReadStream destroy()", () => {
+  // As in Node, whose tty.ReadStream wraps a libuv handle that never closes
+  // descriptors 0-2: destroying a ReadStream on fd 0 leaves fd 0 open, and one
+  // on a higher fd closes it.
+  test("leaves fd 0 open and closes a higher fd", async () => {
+    const script = `
+      const fs = require("fs");
+      const tty = require("tty");
+      const isOpen = fd => { try { fs.fstatSync(fd); return true; } catch { return false; } };
+      const stdin = new tty.ReadStream(0);
+      stdin.on("close", () => {
+        const fd = fs.openSync(process.execPath, "r");
+        const other = new tty.ReadStream(fd);
+        other.on("close", () => console.log(JSON.stringify({ fd0: isOpen(0), higherFd: isOpen(fd) })));
+        other.destroy();
+      });
+      stdin.destroy();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      stdin: Bun.file(import.meta.path),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: '{"fd0":true,"higherFd":false}', stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("runs a subclass's _destroy on fds 0-2", async () => {
+    const script = `
+      const fs = require("fs");
+      const tty = require("tty");
+      const { once } = require("events");
+      const isOpen = fd => { try { fs.fstatSync(fd); return true; } catch { return false; } };
+      const out = process.stdout;
+      const destroyed = [];
+      class Sub extends tty.ReadStream {
+        _destroy(err, cb) {
+          destroyed.push(this.fd);
+          super._destroy(err, cb);
+        }
+      }
+      (async () => {
+        for (const fd of [0, 1, 2]) {
+          const stream = new Sub(fd);
+          stream.destroy();
+          await once(stream, "close");
+        }
+        out.write(JSON.stringify({ destroyed, open: [0, 1, 2].map(isOpen) }));
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      stdin: Bun.file(import.meta.path),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: '{"destroyed":[0,1,2],"open":[true,true,true]}', stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The parent leaves the child's stdin open and silent until the child has reported, so the child's
+  // read is in flight at destroy(). Closing it then ends that read, which is what lets the child exit.
+  test("on fd 0 does not wait for a read in flight", async () => {
+    const script = `
+      const tty = require("tty");
+      const stdin = new tty.ReadStream(0);
+      let closed = false;
+      stdin.on("close", () => (closed = true));
+      stdin.resume();
+      setImmediate(() => {
+        stdin.destroy();
+        setImmediate(() => console.log(JSON.stringify({ closed })));
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    async function readStdoutThenCloseStdin() {
+      const decoder = new TextDecoder();
+      let stdout = "";
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.includes("\n")) proc.stdin.end();
+      }
+      return stdout;
+    }
+
+    const [stdout, stderr, exitCode] = await Promise.all([readStdoutThenCloseStdin(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: '{"closed":true}', stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("WriteStream destroy()", () => {
+  async function destroyStdioStreams(exhaustDescriptors: boolean) {
+    const script = `
+      const fs = require("fs");
+      const tty = require("tty");
+      const { once } = require("events");
+      const isOpen = fd => { try { fs.fstatSync(fd); return true; } catch { return false; } };
+      const hasSink = s => Object.getOwnPropertySymbols(s).some(sym => sym.description === "kWriteStreamFastPath");
+      const out = process.stdout;
+      const destroyed = [];
+      const errors = [];
+      class Sub extends tty.WriteStream {
+        _destroy(err, cb) {
+          destroyed.push(this.fd);
+          super._destroy(err, cb);
+        }
+      }
+      (async () => {
+        // A debug build opens each builtin module's file on first use, so load them while it still can.
+        const warmup = new tty.WriteStream(1);
+        warmup.destroy();
+        await once(warmup, "close");
+
+        const held = [];
+        let code;
+        try {
+          while (${exhaustDescriptors}) held.push(fs.openSync(process.execPath, "r"));
+        } catch (e) {
+          code = e.code;
+        }
+        const streams = [0, 1, 2].map(fd => new Sub(fd));
+        held.forEach(fd => fs.closeSync(fd));
+        await new Promise(resolve => setImmediate(resolve)); // a write before construction ends is only queued
+        for (const stream of streams) {
+          stream.on("error", e => errors.push(e.code));
+          stream.write(""); // without a FileSink, still in flight at destroy()
+          stream.destroy();
+          await new Promise(resolve => stream.on("close", resolve)); // once() would reject on "error"
+        }
+        const sinks = code && [warmup, ...streams].map(hasSink);
+        const pending = streams.map(s => s.pending);
+        out.write(JSON.stringify({ code, sinks, destroyed, errors, pending, open: [0, 1, 2].map(isOpen) }));
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [...(exhaustDescriptors ? ["sh", "-c", 'ulimit -n 64 && exec "$0" "$@"'] : []), bunExe(), "-e", script],
+      stdin: Bun.file(import.meta.path),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("leaves fds 0-2 open", async () => {
+    expect(await destroyStdioStreams(false)).toEqual({
+      stdout: '{"destroyed":[0,1,2],"errors":[],"pending":[true,true,true],"open":[true,true,true]}',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The FileSink writes to its own dup of the fd. With no descriptor left for the dup, the
+  // stream falls back to node:fs on the fd itself, and only then could destroy() close it.
+  // Windows has no ulimit, and its FileSink takes the fd without a dup, so this cannot take the sink away.
+  test.skipIf(isWindows)("leaves fds 0-2 open when it has no FileSink", async () => {
+    expect(await destroyStdioStreams(true)).toEqual({
+      stdout:
+        '{"code":"EMFILE","sinks":[true,false,false,false],"destroyed":[0,1,2],"errors":[],' +
+        '"pending":[true,true,true],"open":[true,true,true]}',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("WriteStream end()", () => {
   // The parent does not read the child's stdout until the child has called
   // end(), so most of the 1 MiB sits in the stream's sink at that point. The
@@ -238,6 +422,17 @@ describe("WriteStream end()", () => {
     expect(await stderr).toBe("");
     expect(received).toBe(4 * 256 * 1024);
     expect(await exited).toBe(0);
+  });
+});
+
+describe("WriteStream.prototype", () => {
+  test("keeps its methods off fs.WriteStream", () => {
+    const names = [...Object.getOwnPropertyNames(WriteStream.prototype), Symbol.asyncIterator];
+    expect(names).toContain("hasColors");
+    const overrides: PropertyKey[] = ["constructor", "_destroy"];
+    expect(names.filter(name => !overrides.includes(name) && name in fs.WriteStream.prototype)).toEqual([]);
+    expect(Object.create(fs.WriteStream.prototype) instanceof WriteStream).toBe(false);
+    expect(Object.create(WriteStream.prototype) instanceof fs.WriteStream).toBe(true);
   });
 });
 

@@ -6,7 +6,7 @@ use bun_lint_oxlint::module_record::{ModuleRecord, in_hash_order};
 /// Prevents using exports if a file has one or more tests in it.
 pub struct NoExport<const RUNNER: u8 = { jest::JEST }>;
 
-const NO_EXPORT: Message = Message::new("", "Do not export from a test file.");
+const NO_EXPORT: &Message = &Message::new("", "Do not export from a test file.");
 
 impl<const RUNNER: u8> Rule for NoExport<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "no-export", Kind::Problem);
@@ -49,7 +49,7 @@ fn run_once(ctx: &Ctx) {
     });
     if has_tests {
         let module_record = ModuleRecord::new(file);
-        // Who imports a type does not run the file. oxlint reports these too.
+        // Importing a type doesn't run the file, so type exports are fine under Bun. oxlint reports them.
         let is_type = |at: Span| {
             ctx.runner == Runner::Bun
                 && file
@@ -67,12 +67,15 @@ fn run_once(ctx: &Ctx) {
                         _ => is_type_export_declaration(it),
                     })
         };
-        // The parser comes to them in the order of the source. oxlint goes through its hash map of them.
+        // oxlint's parser inserts them in source order, and the rule iterates that hash map, so the reports follow its
+        // order.
         let bindings = module_record
             .exported_bindings
             .iter()
             .map(|it| (*it.0, *it.1));
-        let bindings = in_hash_order(utils::sort::in_order_of(bindings, |it| it.1.start));
+        let bindings = in_hash_order(utils::sort::collect_sorted_by_key(bindings, |it| {
+            it.1.start
+        }));
         for span in bindings
             .into_iter()
             .map(|it| it.1)

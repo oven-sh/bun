@@ -1,4 +1,4 @@
-//! The options of Prettier.
+//! Prettier's options.
 //!
 //! | Prettier | here |
 //! | --- | --- |
@@ -43,63 +43,63 @@ pub struct FormatOptions {
     pub embedded_language_formatting: EmbeddedLanguageFormatting,
     /// For YAML and Markdown.
     pub prose_wrap: ProseWrap,
-    /// For HTML and what is like it.
+    /// For HTML and similar languages.
     pub html_whitespace_sensitivity: HtmlWhitespaceSensitivity,
     pub vue_indent_script_and_style: bool,
     /// For Svelte.
     pub svelte: SvelteOptions,
-    /// The name of the file, if it is not the one that it was parsed under: text from stdin.
+    /// The file name, if it isn't the one the file was parsed under: text from stdin.
     pub filepath: Option<Box<[u8]>>,
-    /// Prettier's `parser`, if it is not left to the name of the file: `json5`, `babel`, ..
+    /// Prettier's `parser`, if it isn't inferred from the file name: `json5`, `babel`, ..
     pub parser: Option<Box<[u8]>>,
-    /// Only what is between the two is formatted. As in Prettier, they count UTF-16 code units.
+    /// Only the text between the two is formatted. As in Prettier, they count UTF-16 code units.
     pub range_start: Option<u32>,
     pub range_end: Option<u32>,
-    /// Where the cursor is, in UTF-16 code units. Where it ends up is part of the result.
+    /// The cursor's position, in UTF-16 code units. Its new position is part of the result.
     pub cursor_offset: Option<u32>,
     /// Puts `@format` in a comment at the top of the file.
     pub insert_pragma: bool,
-    /// Only a file with `@format` or `@prettier` in a comment at its top is formatted.
+    /// Only format a file with `@format` or `@prettier` in a comment at its top.
     pub require_pragma: bool,
-    /// A file with `@noformat` or `@noprettier` in a comment at its top is not formatted.
+    /// Don't format a file with `@noformat` or `@noprettier` in a comment at its top.
     pub check_ignore_pragma: bool,
-    /// The text is code in Markdown: Prettier's `parentParser`. A statement that is nothing but JSX gets no
-    /// semicolon. A line break that is part of a text (in a template, in a comment) is written as `\r\n`, to
-    /// tell it from the others: Markdown indents what follows it in another way.
+    /// The text is code in Markdown: Prettier's `parentParser`. A statement that's only JSX gets no semicolon. A line
+    /// break that's part of a text (in a template, in a comment) is written as `\r\n` to tell it apart from the others,
+    /// because Markdown indents what follows it differently.
     pub is_in_markdown: bool,
-    /// The text is `<$>`, JSX that is in MDX, and `</$>`: Prettier's `rootMarker: "mdx"`. Only what is between the
-    /// two is written.
+    /// The text is `<$>`, JSX from MDX, and `</$>`: Prettier's `rootMarker: "mdx"`. Only the part between the two is
+    /// printed.
     pub is_mdx_jsx: bool,
     /// The text is `import` and `export` declarations in MDX. Anything else in it is an error: Prettier's
     /// `validateImportExport`.
     pub is_mdx_es_syntax: bool,
-    /// Whether HTML in the templates of JavaScript and in the blocks of code of Markdown is formatted.
+    /// Format HTML in JavaScript templates and in Markdown code blocks.
     pub embedded_html: bool,
-    /// In how many templates of JavaScript that are written as HTML the text is.
+    /// How many JavaScript templates that are printed as HTML the text is nested in.
     pub html_template_depth: u32,
-    /// The text is in a file whose name ends with `.html` or `.htm`, in which the doctype of HTML5 is written in lower case.
+    /// The text is in a file whose name ends with `.html` or `.htm`, where the HTML5 doctype is printed in lowercase.
     pub is_in_html_file: bool,
-    /// Formats the JavaScript and TypeScript in blocks of code in Markdown. Without it they stay as they are.
+    /// Formats the JavaScript and TypeScript in Markdown code blocks. Without it they're left as is.
     pub format_javascript: Option<FormatJavaScript>,
-    /// Parses the JavaScript and TypeScript in HTML. Without it they stay as they are.
+    /// Parses the JavaScript and TypeScript in HTML. Without it they're left as is.
     pub parse_javascript: Option<ParseJavaScript>,
-    /// Parses the expressions in a component of Svelte. Without it there is no telling where they end.
+    /// Parses the expressions in a Svelte component. Without it there's no way to find where they end.
     pub parse_parts: Option<ParseParts>,
-    /// What the code is in, if it is in HTML.
+    /// The code's context, if it's in HTML.
     pub in_html: InHtml,
-    /// Whose output to produce where the two differ.
+    /// Which tool's output to match where the two differ.
     pub flavor: Flavor,
-    /// How the keys of a `package.json` are sorted, if they are: oxfmt's `sortPackageJson`, or `prettier-plugin-packagejson`.
+    /// How to sort a `package.json`'s keys, if at all: oxfmt's `sortPackageJson`, or `prettier-plugin-packagejson`.
     pub sort_package_json: Option<crate::json::SortPackageJson>,
-    /// How imports are sorted, if they are.
+    /// How to sort imports, if at all.
     pub sort_imports: Option<std::sync::Arc<crate::sort_imports::SortImports>>,
-    /// oxfmt's `jsdoc`: how JSDoc comments are formatted, if they are.
+    /// oxfmt's `jsdoc`: how to format JSDoc comments, if at all.
     pub jsdoc: Option<JsdocOptions>,
-    /// oxfmt's `sortTailwindcss`: how the classes of Tailwind CSS are sorted, if they are.
+    /// oxfmt's `sortTailwindcss`: how to sort Tailwind CSS classes, if at all.
     pub tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
     /// Format TOML even in Prettier's flavor. Only the caller that detects file types reads this.
     pub toml: bool,
-    /// For the tests: what to output instead of the formatted text.
+    /// For tests: what to output instead of the formatted text.
     pub debug_comments: DebugComments,
 }
 
@@ -109,75 +109,75 @@ pub enum DebugComments {
     Off,
     /// Every comment and the node that owns it.
     Owners,
-    /// The comments that no printer has printed, which is a bug.
+    /// The comments that no printer printed, which is a bug.
     Unprinted,
 }
 
-/// Formats JavaScript or TypeScript, which this crate cannot parse by itself. It is given the name of a file that
-/// says which of them it is, the code, the options, and where to append the result. It returns whether the
-/// code could be formatted.
+/// Formats JavaScript or TypeScript, which this crate can't parse by itself. It gets a file name that tells which of
+/// the two it is, the code, the options, and a buffer to append the result to. Returns true if the code could be
+/// formatted.
 pub type FormatJavaScript = fn(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool;
 
 /// Code to parse.
 #[derive(Copy, Clone)]
 pub struct Code<'c> {
-    /// The name of a file that says whether it is JavaScript or TypeScript.
+    /// A file name that tells if it's JavaScript or TypeScript.
     pub path: &'c [u8],
     pub text: &'c [u8],
     pub is_script: bool,
 }
 
-/// What is called with the file that has become of [`Code`], errors or not.
+/// The callback that gets the file parsed from [`Code`], with or without errors.
 pub type Then<'t> = &'t mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>);
 
-/// Parses JavaScript or TypeScript, which this crate cannot do by itself, and calls what it is given with the result.
+/// Parses JavaScript or TypeScript, which this crate can't do by itself, and passes the result to the callback.
 pub type ParseJavaScript = fn(Code<'_>, Then<'_>);
 
-/// The same for a caller that keeps what it parses with: a text can have many pieces of code in it.
+/// The same for a caller that reuses its parser state: a text can contain many pieces of code.
 pub type JavaScriptParser<'p> = &'p dyn Fn(Code<'_>, Then<'_>);
 
-/// What a [`Part`] is.
+/// The kind of a [`Part`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Goal {
-    /// An expression, commas included.
+    /// An expression, including commas.
     Expression,
     /// A `let`, `const` or `var`.
     Declaration,
     Type,
 }
 
-/// Code in a text whose end only a parser finds. More can follow it, in any language.
+/// Code in a text, whose end only a parser can find. More text can follow it, in any language.
 #[derive(Debug, Copy, Clone)]
 pub struct Part {
     pub goal: Goal,
-    /// Where it starts in the text.
+    /// Its start in the text.
     pub from: u32,
-    /// Where the text ends for the parser.
+    /// The end of the text that the parser sees.
     pub until: u32,
     pub is_typescript: bool,
 }
 
-/// What is called with the file that has become of a [`Part`], and with where the part ends in it, with the parentheses
-/// around it. The text of the file starts where the part starts, and the part is its only statement: a type is the type of
-/// an alias.
+/// The callback that gets the file parsed from a [`Part`], and the part's end in that file, including the parentheses
+/// around it. The file's text starts where the part starts, and the part is its only statement. A type is parsed as the
+/// type of an alias.
 pub type ThenWithEnd<'t> = &'t mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>, u32);
 
-/// Why a [`Part`] cannot be parsed.
+/// Why a [`Part`] can't be parsed.
 #[derive(Debug, Copy, Clone)]
 pub struct PartError {
-    /// Where the first error is in the text.
+    /// The position of the first error in the text.
     pub at: u32,
     pub is_nested_too_deeply: bool,
 }
 
-/// Parses a part of the text that it has been made for.
+/// Parses a part of the text that it was created for.
 pub type ParsePart<'p> = &'p mut dyn FnMut(Part, ThenWithEnd<'_>) -> Result<(), PartError>;
 
-/// Calls what it is given with what parses the parts of a text.
+/// Passes the callback a parser for a text's parts.
 pub type ParseParts = fn(&[u8], &mut dyn FnMut(ParsePart<'_>));
 
-/// What Prettier tells the formatter of code that is in HTML: the options whose names start with `__`, and the parsers for
-/// what is less than a program.
+/// The context Prettier passes to the formatter for code in HTML: the options whose names start with `__`, and the
+/// parsers for less than a whole program.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub struct InHtml {
     pub root: HtmlRoot,
@@ -189,18 +189,18 @@ pub struct InHtml {
     pub is_inline_event_handler: bool,
     /// `__isHTMLStyleAttribute`
     pub is_style_attribute: bool,
-    /// `singleQuote`, which `quote_style` does not say in an attribute.
+    /// `singleQuote`, which `quote_style` doesn't reflect in an attribute.
     pub quote_style: QuoteStyle,
-    /// `singleQuote: true`, whatever the options say: what `prettier-plugin-svelte` asks for between double quotes.
+    /// `singleQuote: true`, regardless of the options: what `prettier-plugin-svelte` asks for between double quotes.
     pub has_single_quotes: bool,
-    /// The parser is `babel-ts`: TypeScript, in a tree of Babel.
-    pub has_tree_of_babel: bool,
+    /// The parser is `babel-ts`: TypeScript in Babel's tree.
+    pub has_babel_tree: bool,
 }
 
-/// What the code is.
+/// The kind of code.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub enum HtmlRoot {
-    /// It is not in HTML.
+    /// It isn't in HTML.
     #[default]
     None,
     /// `babel`, `typescript`, `css`, ..
@@ -226,7 +226,7 @@ pub enum HtmlRoot {
 }
 
 impl HtmlRoot {
-    /// Prettier's `NGRoot`: the code is an expression of Angular, in which `a | b(c)` stands for the pipe `a | b: c`.
+    /// Prettier's `NGRoot`: the code is an Angular expression, where `a | b(c)` represents the pipe `a | b: c`.
     #[inline]
     pub fn is_angular(self) -> bool {
         matches!(
@@ -239,7 +239,7 @@ impl HtmlRoot {
     }
 }
 
-/// The parts of a component of Svelte.
+/// The parts of a Svelte component.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SveltePart {
     Options,
@@ -249,7 +249,7 @@ pub enum SveltePart {
 }
 
 impl SveltePart {
-    /// `options-scripts-markup-styles` and the like: each of the four once.
+    /// `options-scripts-markup-styles` and similar: each of the four once.
     fn order(value: &[u8]) -> Option<[SveltePart; 4]> {
         let mut order = Vec::with_capacity(4);
         for name in bun_core::strings::split(value, b"-") {
@@ -269,17 +269,17 @@ impl SveltePart {
     }
 }
 
-/// The options of `prettier-plugin-svelte`. In `svelte` of oxfmt and of `[fmt]` they have shorter names.
+/// `prettier-plugin-svelte`'s options. They have shorter names in oxfmt's and `[fmt]`'s `svelte`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SvelteOptions {
-    /// `svelteSortOrder`, `svelte.sortOrder`. `None`: `"none"`.
+    /// `svelteSortOrder`, `svelte.sortOrder`. `None` is `"none"`.
     pub sort_order: Option<[SveltePart; 4]>,
     /// `svelteAllowShorthand`, `svelte.allowShorthand`
     pub allows_shorthand: bool,
     /// `svelteIndentScriptAndStyle`, `svelte.indentScriptAndStyle`
     pub indents_script_and_style: bool,
-    /// Components are formatted, and so are the blocks of Svelte in Markdown. For components only the caller that detects
-    /// file types reads this.
+    /// Format components, and Svelte code blocks in Markdown. For components only the caller that detects file types
+    /// reads this.
     pub is_on: bool,
 }
 
@@ -299,13 +299,12 @@ impl Default for SvelteOptions {
     }
 }
 
-/// An option has a value that Prettier does not accept, or there is no such option.
+/// An option has a value that Prettier doesn't accept, or there's no such option.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct InvalidOption;
 
 impl FormatOptions {
-    /// Sets the option that Prettier calls `name`. `value` is as it is written in JSON, a string
-    /// without its quotes.
+    /// Sets the option that Prettier calls `name`. `value` is raw JSON, except that a string has no quotes.
     pub fn set(&mut self, name: &[u8], value: &[u8]) -> Result<(), InvalidOption> {
         let boolean = || match value {
             b"true" => Ok(true),
@@ -326,7 +325,7 @@ impl FormatOptions {
                 Ok(n)
             }
         };
-        // What Prettier takes for an integer: `Number(value)` of what is on the command line, `Infinity` too.
+        // What Prettier accepts as an integer: `Number(value)` of the command line argument, including `Infinity`.
         let integer = || match bun_core::fmt::js_string_to_number(value) {
             it if it.is_nan() || (it.is_finite() && it.fract() != 0.0) => Err(InvalidOption),
             it => Ok(it),
@@ -339,9 +338,9 @@ impl FormatOptions {
             }
         };
         match name {
-            // Less than nothing is nothing, and more than there is room for is all of it.
+            // The cast clamps a negative width to 0 and a huge one to the maximum.
             b"printWidth" => self.line_width = LineWidth(integer()? as u32),
-            // Prettier fails where it repeats a blank less than no times.
+            // Prettier fails when it repeats a space a negative number of times.
             b"tabWidth" => match integer()? {
                 it if it < 0.0 => return Err(InvalidOption),
                 it => self.indent_width = IndentWidth(it as u32),
@@ -389,7 +388,7 @@ impl FormatOptions {
             }
             b"bracketSpacing" => self.bracket_spacing = BracketSpacing(boolean()?),
             b"bracketSameLine" => self.bracket_same_line = BracketSameLine(boolean()?),
-            // The name it had before 2.4. One of the two is enough.
+            // Its name before 2.4. Setting either of the two is enough.
             b"jsxBracketSameLine" => {
                 self.bracket_same_line =
                     BracketSameLine(boolean()? || self.bracket_same_line.value());
@@ -468,12 +467,12 @@ impl FormatOptions {
             b"insertPragma" => self.insert_pragma = boolean()?,
             b"requirePragma" => self.require_pragma = boolean()?,
             b"checkIgnorePragma" => self.check_ignore_pragma = boolean()?,
-            // oxfmt's: `true`, `false` or `{ "sortScripts": true }`.
+            // oxfmt's option: `true`, `false` or `{ "sortScripts": true }`.
             b"sortPackageJson" => self.sort_package_json = boolean()?.then(Default::default),
             b"sortPackageJson.sortScripts" => {
                 self.sort_package_json.get_or_insert_default().sort_scripts = boolean()?;
             }
-            // oxfmt's: `true`, `false` or an object, whose properties come as `jsdoc.<name>`.
+            // oxfmt's option: `true`, `false` or an object, whose properties arrive as `jsdoc.<name>`.
             b"jsdoc" => self.jsdoc = (value == b"{}" || boolean()?).then(Default::default),
             _ if name.starts_with(b"jsdoc.") => {
                 let jsdoc = self.jsdoc.get_or_insert_default();
@@ -507,7 +506,7 @@ impl FormatOptions {
                     _ => return Err(InvalidOption),
                 }
             }
-            // Not an option of Prettier. The kind of the configuration file decides.
+            // Not a Prettier option. The kind of configuration file decides.
             b"flavor" => {
                 self.flavor = match value {
                     b"prettier" => Flavor::Prettier,
@@ -521,10 +520,10 @@ impl FormatOptions {
     }
 }
 
-/// oxfmt's `jsdoc`, which has the options of prettier-plugin-jsdoc.
+/// oxfmt's `jsdoc`, which has prettier-plugin-jsdoc's options.
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub struct JsdocOptions {
-    /// The first letter of a description is made a capital one.
+    /// Capitalize the first letter of a description.
     pub capitalize_descriptions: bool,
     pub comment_line_strategy: CommentLineStrategy,
     /// An empty line between tags of different kinds.
@@ -533,16 +532,16 @@ pub struct JsdocOptions {
     pub separate_returns_from_param: bool,
     /// `{ string }` instead of `{string}`.
     pub bracket_spacing: bool,
-    /// A description ends with a dot.
+    /// End a description with a dot.
     pub description_with_dot: bool,
     /// "Default is `value`" at the end of the description of `@param [name=value]`.
     pub add_default_to_description: bool,
-    /// Code without a language is between fences instead of being indented.
+    /// Put code without a language between fences instead of indenting it.
     pub prefer_code_fences: bool,
     pub line_wrapping_style: LineWrappingStyle,
-    /// The description comes after `@description`.
+    /// Put the description after `@description`.
     pub description_tag: bool,
-    /// An `@example` that cannot be parsed keeps its indentation.
+    /// Keep the indentation of an `@example` that can't be parsed.
     pub keep_unparsable_example_indent: bool,
 }
 
@@ -564,32 +563,32 @@ impl Default for JsdocOptions {
     }
 }
 
-/// Whether a JSDoc comment is on one line.
+/// When a JSDoc comment goes on one line.
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum CommentLineStrategy {
-    /// If it can be.
+    /// Whenever it can.
     #[default]
     SingleLine,
     /// Never.
     Multiline,
-    /// If it is.
+    /// If it already is.
     Keep,
 }
 
-/// How descriptions in JSDoc comments are broken into lines.
+/// How descriptions in JSDoc comments are wrapped.
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum LineWrappingStyle {
     /// As much on each line as fits.
     #[default]
     Greedy,
-    /// The lines stay as they are if all of them fit.
+    /// The lines stay as they are if they all fit.
     Balance,
 }
 
-/// Which white space in HTML counts.
+/// Which whitespace in HTML is significant.
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum HtmlWhitespaceSensitivity {
-    /// What the default value of the CSS property `display` says.
+    /// Decided by the default value of the CSS property `display`.
     #[default]
     Css,
     /// All of it.
@@ -598,20 +597,20 @@ pub enum HtmlWhitespaceSensitivity {
     Ignore,
 }
 
-/// How a paragraph is divided into lines.
+/// How a paragraph is wrapped.
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum ProseWrap {
     /// At the print width.
     Always,
     /// Not at all.
     Never,
-    /// As it is.
+    /// As in the source.
     #[default]
     Preserve,
 }
 
-/// oxfmt follows an older Prettier (3.8) in a few places, and has a few rules of its own. Whoever
-/// has an `.oxfmtrc.json` gets no diff from switching.
+/// oxfmt follows an older Prettier (3.8) in a few places, and has a few rules of its own. A project with an
+/// `.oxfmtrc.json` gets no diff from switching.
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum Flavor {
     #[default]
@@ -624,8 +623,8 @@ impl Flavor {
         matches!(self, Flavor::Oxfmt)
     }
 
-    /// Whether a comment with nothing but `text` in it says that what follows stays as it is written. oxfmt knows
-    /// Prettier's comment too, Prettier only its own.
+    /// True if a comment that contains only `text` means that the code after it is left as is. oxfmt also recognizes
+    /// Prettier's comment. Prettier only recognizes its own.
     pub fn is_ignore_comment(self, text: &[u8]) -> bool {
         text == b"prettier-ignore" || (text == b"oxfmt-ignore" && self.is_oxfmt())
     }
@@ -654,7 +653,7 @@ pub enum LineEnding {
     Lf,
     Crlf,
     Cr,
-    /// That of the first line of the file.
+    /// The line ending of the file's first line.
     Auto,
 }
 
@@ -668,7 +667,7 @@ impl LineEnding {
         }
     }
 
-    /// Prettier's `guessEndOfLine`: the first `\r` decides, also if lines before it end in `\n`.
+    /// Prettier's `guessEndOfLine`: the first `\r` decides, even if lines before it end in `\n`.
     pub(crate) fn resolve(self, text: &[u8]) -> LineEnding {
         if self != LineEnding::Auto {
             return self;
@@ -818,25 +817,24 @@ impl ArrowParentheses {
     }
 }
 
-/// Where a trailing comma is written if `trailing_commas` allows it: anywhere, or only where
-/// ES5 allows one.
+/// Where a trailing comma is printed if `trailing_commas` allows it: anywhere, or only where ES5 allows one.
 #[derive(Debug, Copy, Clone)]
 pub enum FormatTrailingCommas {
     All,
-    /// After the last argument of a call and the last parameter of a function: like `All`, but Angular takes none there.
+    /// After a call's last argument and a function's last parameter: like `All`, but Angular doesn't accept one there.
     Arguments,
     ES5,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum TrailingSeparator {
-    /// Written if the enclosing group breaks.
+    /// Printed if the enclosing group breaks.
     #[default]
     Allowed,
     /// A syntax error, after a rest element for example.
     Disallowed,
     Mandatory,
-    /// Left out because of the options.
+    /// Omitted because of the options.
     Omit,
 }
 

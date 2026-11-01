@@ -358,6 +358,31 @@ describe("yield", async () => {
         expect(alive()).toBe(false);
       });
 
+      // `Bun.build()` turns the event loop until an async plugin `setup()` settles, so the killed member exits while the catch block runs.
+      test.concurrent("a catch block that turns the event loop", async () => {
+        await using proc = Bun.spawn({
+          cmd: child(`
+            try {
+              await $\`\${bun} --version; ${sleeper} | echo hi > \${new Blob(["x"])}\`.quiet();
+            } catch (error) {
+              await Bun.build({
+                entrypoints: ["/turn.js"],
+                files: { "/turn.js": "" },
+                plugins: [{ name: "turn", setup: () => Bun.sleep(50) }],
+              });
+              console.log("rejected " + error.constructor.name + ": " + error.message);
+            }
+          `),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ result: stdout.trim(), stderr, exitCode }).toEqual({ result: builtin, stderr: "", exitCode: 0 });
+      });
+
       test.concurrent("two members fail: the first error rejects, the shell stays usable", async () => {
         expect(await rejectionOf($`echo a > ${new Blob(["x"])} | echo b > ${new Blob(["x"])}`.quiet())).toMatchObject({
           message: "Cannot redirect stdout/stderr to an immutable blob. Expected a file",

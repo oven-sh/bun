@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallow `class` declarations that exclusively contain `static` members.
 pub struct NoStaticOnlyClass;
 
-const NO_STATIC_ONLY_CLASS: Message = Message::new("", "Use an object instead of a `class` with only `static` members.");
+const NO_STATIC_ONLY_CLASS: &Message = &Message::new("", "Use an object instead of a `class` with only `static` members.");
 
 impl Rule for NoStaticOnlyClass {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-static-only-class", Kind::Suggestion).fixable(Fixable::Code);
@@ -29,7 +29,7 @@ impl Rule for NoStaticOnlyClass {
     }
 }
 
-/// A method or a property that is `static` and nothing else that an object cannot have.
+/// A method or property that's `static` and has no other modifier that an object member can't have.
 fn is_plain_static_member(member: Member) -> bool {
     let flags = member.flags();
     let is_allowed = match member.kind() {

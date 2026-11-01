@@ -146,6 +146,8 @@ pub struct TransitionHandler {
     pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
+    /// `flush` writes `transition` only if the rule did: it also resets `transition-behavior`.
+    pub(crate) has_shorthand: bool,
     pub(crate) has_any: bool,
 }
 
@@ -323,6 +325,7 @@ mod transition_handler_body {
                         &timing_functions,
                         vp
                     );
+                    self.has_shorthand = true;
                 }
                 Property::Unparsed(x) => {
                     if is_transition_property(&x.property_id) {
@@ -335,6 +338,16 @@ mod transition_handler_body {
                     } else {
                         return false;
                     }
+                }
+                Property::Custom(x) => {
+                    // `transition` resets it, so it stays behind a buffered `transition`.
+                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        x.name.as_str(),
+                        b"transition-behavior",
+                    ) {
+                        self.flush(dest, context);
+                    }
+                    return false;
                 }
                 _ => return false,
             }
@@ -355,6 +368,7 @@ mod transition_handler_body {
                 return;
             }
             self.has_any = false;
+            let has_shorthand = core::mem::take(&mut self.has_shorthand);
 
             let arena = dest.bump();
 
@@ -388,7 +402,12 @@ mod transition_handler_body {
                 // prefixes will be handled by outputting individual properties below.
                 let intersection =
                     *property_prefixes & *duration_prefixes & *delay_prefixes & *timing_prefixes;
-                if !intersection.is_empty() {
+                // Only `transition` gives the prefixed copy the targets add its own times.
+                let adds_copy = properties
+                    .slice()
+                    .iter()
+                    .any(|p| p.prefix().bits().count_ones() > 1);
+                if (has_shorthand || adds_copy) && !intersection.is_empty() {
                     let transitions =
                         get_transitions(arena, properties, durations, delays, timing_functions);
 

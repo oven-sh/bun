@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Disallows member access from `await` expressions.
 pub struct NoAwaitExpressionMember;
 
-const NO_AWAIT_EXPRESSION_MEMBER: Message = Message::new("", "Do not access a member directly from an await expression.");
+const NO_AWAIT_EXPRESSION_MEMBER: &Message = &Message::new("", "Do not access a member directly from an await expression.");
 
 impl Rule for NoAwaitExpressionMember {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-await-expression-member", Kind::Suggestion).fixable(Fixable::Code);
@@ -33,13 +33,13 @@ impl Rule for NoAwaitExpressionMember {
             }
             let name = parent.pat().as_ident()?.bytes();
             let replacement = match member_expr.kind() {
-                // `const a = (await b())[0]` is `const [a] = await b()`
+                // `const a = (await b())[0]` becomes `const [a] = await b()`
                 ExprKind::Index { index, .. } if index.tag() == ExprTag::Number && !index.is_parenthesized() => match index.text() {
                     b"0" => concat(&[b"[", name, b"]"]),
                     b"1" => concat(&[b"[, ", name, b"]"]),
                     _ => return None,
                 },
-                // `const a = (await b()).a` is `const {a} = await b()`
+                // `const a = (await b()).a` becomes `const {a} = await b()`
                 ExprKind::Dot { name: property, .. } if property.bytes() == name => concat(&[b"{", name, b"}"]),
                 _ => return None,
             };

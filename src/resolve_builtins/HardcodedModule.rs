@@ -19,6 +19,8 @@ pub enum HardcodedModule {
     BunMain,
     #[strum(serialize = "bun:test")]
     BunTest,
+    #[strum(serialize = "bun:test/vitest")]
+    BunTestVitest,
     #[strum(serialize = "bun:wrap")]
     BunWrap,
     #[strum(serialize = "bun:sqlite")]
@@ -212,6 +214,7 @@ bun_core::comptime_string_map! {
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
         b"bun:test" => HardcodedModule::BunTest,
+        b"bun:test/vitest" => HardcodedModule::BunTestVitest,
         b"bun:sqlite" => HardcodedModule::BunSqlite,
         b"bun:wrap" => HardcodedModule::BunWrap,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
@@ -394,8 +397,7 @@ macro_rules! entry {
 
 // `comptime_string_map!` only accepts inline literal entries, so it cannot
 // consume const slices directly; instead the const tables stay the source of
-// truth (callers like `ModuleLoader` iterate them) and `lookup` goes through
-// lazily-built hash maps.
+// truth and `lookup` goes through lazily-built hash maps.
 
 type AliasKv = (&'static [u8], Alias);
 
@@ -710,6 +712,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
         },
     ),
     entry!("bun:test"),
+    entry!("bun:test/vitest"),
     entry!("bun:bake"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),
@@ -815,7 +818,7 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     (
         b"vitest",
         Alias {
-            path: zstr!("bun:test"),
+            path: zstr!("bun:test/vitest"),
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
@@ -823,9 +826,16 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     ),
 ];
 
-// A lazily-built `HashMap` per alias table (see `lookup`); the const
-// slice-of-tables form is kept public because `ModuleLoader` iterates the raw
-// entries.
+// `is_test_module` must cover these, or a file importing one would share its transpiler cache entry with `bun run`.
+const _: () = {
+    let mut i = 0;
+    while i < BUN_TEST_EXTRA_ALIAS_KVS.len() {
+        assert!(import_record::is_test_module(BUN_TEST_EXTRA_ALIAS_KVS[i].0));
+        i += 1;
+    }
+};
+
+// A lazily-built `HashMap` per alias table (see `lookup`).
 const NODE_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS];
 pub const BUN_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS, BUN_EXTRA_ALIAS_KVS];
 const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
@@ -835,10 +845,20 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
 ];
 
 static EXPOSE_INTERNALS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static ARE_INTERNALS_SEALED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Node's `--expose-internals`.
 pub fn expose_internals_enabled() -> bool {
-    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed)
+    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed) && !are_internals_sealed()
+}
+
+pub fn are_internals_sealed() -> bool {
+    ARE_INTERNALS_SEALED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn seal_internals() {
+    ARE_INTERNALS_SEALED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn set_expose_internals_enabled(enabled: bool) {
@@ -871,16 +891,17 @@ pub(crate) extern "C" fn Bun__streamIterEnabled() -> bool {
 }
 
 /// True when `name` is a stream/iter specifier that must stay invisible
-/// because `--experimental-stream-iter` was not passed. Consulted by every
-/// reader of the alias tables (`Alias::get` and `ModuleLoader`'s raw-table
-/// scan) so introspection APIs like `require.resolve.paths` agree with
-/// `require` about what is a builtin.
-pub fn stream_iter_alias_gated(name: &[u8]) -> bool {
-    (name == b"stream/iter"
+/// because `--experimental-stream-iter` was not passed.
+fn stream_iter_alias_gated(name: &[u8]) -> bool {
+    is_stream_iter_alias(name) && !stream_iter_enabled()
+}
+
+/// A stream/iter specifier: a builtin only with `--experimental-stream-iter`.
+fn is_stream_iter_alias(name: &[u8]) -> bool {
+    name == b"stream/iter"
         || name == b"node:stream/iter"
         || name == b"zlib/iter"
-        || name == b"node:zlib/iter")
-        && !stream_iter_enabled()
+        || name == b"node:zlib/iter"
 }
 
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
@@ -938,5 +959,21 @@ impl Alias {
             return lookup(&NODE_ALIAS_MAP, name);
         }
         None
+    }
+
+    /// Programs import `bun:fs` (#16883), so `bun:` + a bare Node builtin name means that builtin.
+    #[inline]
+    pub fn bun_prefixed_builtin(specifier: &[u8]) -> Option<&[u8]> {
+        Self::bare_node_builtin(specifier.strip_prefix(b"bun:")?)
+    }
+
+    // Reads no flag or mode: the answer goes into cached output. A name behind a flag is not kept.
+    #[cold]
+    #[inline(never)]
+    fn bare_node_builtin(name: &[u8]) -> Option<&[u8]> {
+        (!name.starts_with(b"node:")
+            && !is_stream_iter_alias(name)
+            && lookup(&NODE_ALIAS_MAP, name).is_some())
+        .then_some(name)
     }
 }

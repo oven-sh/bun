@@ -108,7 +108,7 @@ pub struct Symbol {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
-    pub struct SymbolFlags: u8 {
+    pub struct SymbolFlags: u16 {
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
 
         /// Certain symbols must not be renamed or minified. For example, the
@@ -131,6 +131,9 @@ bitflags::bitflags! {
 
         /// A call of this function declaration or lifted export ignores `this`.
         const CALL_IGNORES_THIS = 1 << 7;
+
+        /// The parser linked another declaration of this variable to this symbol.
+        const HAS_REDECLARATION = 1 << 8;
     }
 }
 
@@ -159,10 +162,16 @@ symbol_flag_accessors! {
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
     called_as_method, set_called_as_method => CALLED_AS_METHOD;
     call_ignores_this, set_call_ignores_this => CALL_IGNORES_THIS;
+    has_redeclaration, set_has_redeclaration => HAS_REDECLARATION;
 }
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);
 const _: () = assert!(core::mem::size_of::<Symbol>() <= 48);
+// Two flags on one bit alias with no other diagnostic.
+const _: () = assert!(
+    SymbolFlags::all().bits().count_ones() as usize
+        == <SymbolFlags as bitflags::Flags>::FLAGS.len()
+);
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
@@ -238,6 +247,12 @@ impl Symbol {
     #[inline]
     pub fn has_link(&self) -> bool {
         self.link.get().is_valid()
+    }
+
+    /// In the parser: another symbol also declares this variable, with uses and a declaration of its own.
+    #[inline]
+    pub fn shares_variable(&self) -> bool {
+        self.has_link() || self.has_redeclaration()
     }
 
     /// An import item the linker merged into the export it names. A local

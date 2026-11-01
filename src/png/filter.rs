@@ -47,8 +47,7 @@ pub(crate) fn unfilter_first(
     if matches!(filter_type, NONE | UP) {
         return Ok(());
     }
-    // A piece starts on the last pixel of the piece before it. That pixel stays as it is: it has zeros above it and
-    // nothing to its left.
+    // A piece starts on the last pixel of the one before, which stays as it is under zeros with nothing to its left.
     let mut start = 0;
     loop {
         let piece = row.get_mut(start..).unwrap_or_default();

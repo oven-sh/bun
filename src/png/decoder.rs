@@ -534,7 +534,11 @@ fn read_any_layout(
         (line_len, bytes_per_pixel) = (stride + 1, 4);
     }
     let mut line: Vec<u8> = Vec::new();
+    line.try_reserve_exact(line_len)?;
     let mut line_above: Vec<u8> = Vec::new();
+    if header.passes().any(|pass| pass.height > 1) {
+        line_above.try_reserve_exact(line_len)?;
+    }
 
     // For the passes that do not have every pixel of a row.
     let mut pass_rgba: Vec<u8> = Vec::new();
@@ -545,10 +549,6 @@ fn read_any_layout(
     for pass in header.passes() {
         for y in 0..pass.height {
             line.clear();
-            // Here, so that an image of one row has one of the two.
-            if line.capacity() == 0 {
-                line.try_reserve_exact(line_len)?;
-            }
             if is_rgb8 {
                 rgb_line.clear();
                 idat.read(&mut rgb_line, pass.row_bytes + 1)?;
@@ -589,7 +589,10 @@ fn read_any_layout(
                     }
                 }
             }
-            core::mem::swap(&mut line, &mut line_above);
+            // Nothing is above the first row of the next pass, so an image of one row writes to one of the two.
+            if y + 1 < pass.height {
+                core::mem::swap(&mut line, &mut line_above);
+            }
         }
     }
     Ok(image.into_vec())

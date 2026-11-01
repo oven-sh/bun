@@ -1,0 +1,2 @@
+see("right");
+export {};

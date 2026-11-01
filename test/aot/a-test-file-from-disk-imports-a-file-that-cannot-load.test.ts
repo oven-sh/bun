@@ -4,12 +4,8 @@
 // Each case is a folder of one project: a build costs as much for one case as for all of them.
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
-import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { beforeAll, test } from "./supported";
-
-// One of the two builds takes a debug build of Bun longer than the limit that supported.ts sets.
-if (isDebug) raiseDefaultTimeout(900_000);
 
 const words: Record<string, Record<string, string>> = {
   "the test files from disk": { BUN_AOT_TEST_FILES_FROM_DISK: "1" },
@@ -169,28 +165,24 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   };
 }
 
-// `bun test --isolate <flags>` in the one project, once for each way of running it. The runs start together, and a case waits
-// for the two that it compares. The cases are concurrent: one that runs alone and times out ends every child process.
+// `bun test --isolate <flags>` in the one project, once for each way of running it. The runs start together and end in the hook:
+// a case only compares, and a run that fails fails the cases that read it. Side by side the two builds take a debug build of Bun
+// 4 to 9 minutes, and supported.ts gives a hook 270 s there.
 const ways: Record<string, [env: Record<string, string>, ...flags: string[]]> = {
   "bun test": [{}],
   ...Object.fromEntries(Object.entries(words).map(([form, env]) => [form, [env, "--aot"]])),
 };
 const runs = new Map<string, ReturnType<typeof runTests>>();
 let dir: ReturnType<typeof tempDir> | undefined;
-beforeAll(() => {
-  dir = tempDir("aot-a-test-file-from-disk-imports-a-file-that-cannot-load", project);
-  for (const [way, [env, ...flags]] of Object.entries(ways)) {
-    const ran = runTests(String(dir), env, ...flags);
-    // A run that fails fails the cases that wait for it, and nothing while none waits yet.
-    ran.catch(() => {});
-    runs.set(way, ran);
-  }
-});
-afterAll(async () => {
-  // Under `bun test -t` a run may still be under way that no case waited for.
-  await Promise.allSettled(runs.values());
-  dir?.[Symbol.dispose]();
-});
+beforeAll(
+  async () => {
+    dir = tempDir("aot-a-test-file-from-disk-imports-a-file-that-cannot-load", project);
+    for (const [way, [env, ...flags]] of Object.entries(ways)) runs.set(way, runTests(String(dir), env, ...flags));
+    await Promise.allSettled(runs.values());
+  },
+  isDebug ? 900_000 : undefined,
+);
+afterAll(() => dir?.[Symbol.dispose]());
 
 for (const form of Object.keys(words)) {
   test.concurrent.each(Object.keys(cannotLoad))(`${form}: a file that %s`, async name => {

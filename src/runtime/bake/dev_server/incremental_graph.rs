@@ -546,8 +546,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         file_index: FileIndex<SIDE>,
     ) -> bool {
         let lists = &mut self.edge_lists[file_index.get() as usize];
-        debug_assert!(lists.first_dep.is_none()); // must have no dependencies
-        // A release build gets here with a component that another client component still imports.
         let has_importer = lists.first_dep.is_some();
 
         // Disconnect all imports.
@@ -575,7 +573,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // Tombstoned slots are not reused; a free-list is a pending idea.
         self.bundled_files.keys_mut()[file_index.get() as usize] = Box::default();
         let lists = &self.edge_lists[file_index.get() as usize];
-        debug_assert!(lists.first_dep.is_none());
         debug_assert!(lists.first_import.is_none());
         !has_importer
     }

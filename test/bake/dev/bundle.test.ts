@@ -1,7 +1,7 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import type { Bake } from "bun";
 import { expect } from "bun:test";
-import { isASAN, isDebug, MAX_PATH_BYTES } from "harness";
+import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -654,31 +654,29 @@ devTest("removing 'use client' from a component with a pending resolution failur
       await c.expectMessage("page: string");
     },
   });
-  // A build with debug assertions stops at `debug_assert!(lists.first_dep.is_none())` in `disconnect_and_delete_file`.
-  if (!isDebug && !isASAN) {
-    devTest("a component that another client component imports keeps its build error when it loses 'use client'", {
-      framework: framework(false),
-      files: {
-        ...componentFiles,
-        "routes/index.ts": `
-          import * as Comp from '../components/Comp';
-          import * as Other from '../components/Other';
-          export default () => typeof Comp.marker + typeof Other.other;
-        `,
-        "components/Comp.ts": browserOnlyComponent,
-        "components/Other.ts": `
-          "use client";
-          import { marker } from './Comp';
-          export const other = marker;
-        `,
-      },
-      async test(dev) {
-        expect((await dev.fetch("/")).status).toBe(500);
-        await dev.write("components/Comp.ts", serverComponent, { errors: null });
-        expect((await dev.fetch("/")).status).toBe(500);
-      },
-    });
-  }
+  // The other component still runs in the browser and imports this one, so the browser build still fails.
+  devTest("a component that another client component imports keeps its build error when it loses 'use client'", {
+    framework: framework(false),
+    files: {
+      ...componentFiles,
+      "routes/index.ts": `
+        import * as Comp from '../components/Comp';
+        import * as Other from '../components/Other';
+        export default () => typeof Comp.marker + typeof Other.other;
+      `,
+      "components/Comp.ts": browserOnlyComponent,
+      "components/Other.ts": `
+        "use client";
+        import { marker } from './Comp';
+        export const other = marker;
+      `,
+    },
+    async test(dev) {
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("components/Comp.ts", serverComponent, { errors: null });
+      expect((await dev.fetch("/")).status).toBe(500);
+    },
+  });
 }
 // The bundler has no transform for a module that starts with "use server".
 // Bundling one used to abort the process from a bundler thread (the parser

@@ -1755,8 +1755,11 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     // A debug build reads its built-in modules from files, so two are loaded while descriptors are free:
     // internal/async_context_frame, which a write that waits takes and which node:_http_agent loads, and node:util,
     // which a failed write takes.
+    // Node makes process.stderr at its first read, and destroy() of a socket reads it. To open that pipe libuv
+    // needs a descriptor on macOS, for a kqueue that it asks once. With none free the destroy() of Node never ends.
     const limit = `
       require("node:_http_agent"), require("node:util");
+      void process.stderr;
       const taken = [];
       const takeAll = () => { try { for (;;) taken.push(fs.openSync("/dev/null", "r")); } catch (err) { return err.code; } };
       // LeakSanitizer opens files when the process exits.

@@ -174,7 +174,9 @@ describe("which builds compile WebKit", () => {
       join(aot, "tests"),
     ];
 
-    const prebuilt = linux({});
+    // A cache of its own: in the machine's, a tarball that a build unpacked decides where testaot is.
+    using dir = tempDir("build-prebuilt-aot-files", {});
+    const prebuilt = linux({ cacheDir: join(String(dir), "cache") });
     const source = webkit.source(prebuilt);
     if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
     const dest = source.destDir!;

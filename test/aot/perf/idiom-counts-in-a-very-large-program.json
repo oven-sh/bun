@@ -282,7 +282,7 @@
 "everyday-collections/map-get-missing": {"typed":{"branches":5000},"untyped":{"branches":5000}},
 "everyday-collections/map-get-of-numbers-one-call-at-a-time": {"typed":{"branches":507000},"untyped":{"branches":607000}},
 "everyday-collections/map-get-or-create": {"typed":{"branches":6000},"untyped":{"branches":6000}},
-"everyday-collections/map-group-by": {"typed":{"arrivals":6000,"operations":22,"branches":81000,"cells":8000,"bytes":352000},"untyped":{"arrivals":6000,"operations":22,"branches":81000,"cells":8000,"bytes":352000}},
+"everyday-collections/map-group-by": {"typed":{"arrivals":6000,"operations":22,"branches":63000,"cells":8000,"bytes":352000},"untyped":{"arrivals":6000,"operations":22,"branches":63000,"cells":8000,"bytes":352000}},
 "everyday-collections/map-has-then-get": {"typed":{"branches":5000},"untyped":{"branches":5000}},
 "everyday-collections/map-keys-spread": {"typed":{"operations":4,"branches":8000,"cells":1000,"bytes":64000},"untyped":{"operations":4,"branches":8000,"cells":1000,"bytes":64000}},
 "everyday-collections/map-lru": {"typed":{"operations":1202,"branches":15000,"cells":1000,"bytes":32000},"untyped":{"operations":1202,"branches":15000,"cells":1000,"bytes":32000}},

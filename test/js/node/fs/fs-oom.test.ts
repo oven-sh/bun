@@ -139,6 +139,8 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
     payload[0] = 0xc3;
     payload[1] = 0xa9;
     writeFileSync(file, payload);
+    const bomFile = join(String(dir), "big-utf8-bom.txt");
+    writeFileSync(bomFile, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), payload]));
 
     await using proc = Bun.spawn({
       cmd: [
@@ -156,10 +158,15 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
           e => results.push(report(e)),
         );
         // Bun.file().text() reaches the converter through
-        // Blob::to_string_with_bytes with Lifetime::Temporary, the one caller
-        // that also owns its input buffer across the failing allocation.
+        // text_from_owned_bytes, the one caller that also owns its input
+        // buffer across the failing allocation.
         await Bun.file(file).text().then(
           () => results.push("BUNFILE_UNEXPECTED_SUCCESS"),
+          e => results.push(report(e)),
+        );
+        // Behind a UTF-8 BOM the same text takes the decoder's other transcode arm.
+        await Bun.file(${JSON.stringify(bomFile)}).text().then(
+          () => results.push("BUNFILE_BOM_UNEXPECTED_SUCCESS"),
           e => results.push(report(e)),
         );
         const big = Buffer.alloc(${SIZE}, "a"); big[0] = 0xc3; big[1] = 0xa9;
@@ -189,6 +196,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
     expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
       { name: "Error", code: "ENOMEM" },
       { name: "Error", code: "ENOMEM" },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
       { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
       { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
       { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },

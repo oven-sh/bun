@@ -138,7 +138,7 @@ describe("yield", async () => {
           Bun.gc(true);
           console.log(JSON.stringify(out));
         `),
-        env: bunEnv,
+        env: { ...bunEnv, U: undefined },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -227,7 +227,7 @@ describe("yield", async () => {
             await run("A=\${U:?x}; A=\${U:?x} true; true"),
           ]));
         `),
-        env: bunEnv,
+        env: { ...bunEnv, U: undefined },
         stdout: "pipe",
         stderr: Bun.file("/dev/full"),
       });

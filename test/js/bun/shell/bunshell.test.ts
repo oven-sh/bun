@@ -41,6 +41,12 @@ export const bunEnv: NodeJS.ProcessEnv = {
   PWD: (process.env.PWD || process.cwd()).replaceAll("\\", "/"),
 };
 
+// The parameter expansion tests read these names as not set.
+const notSet = ["A", "B", "BAR", "C", "E", "EMPTY", "FOO", "NONE", "S", "U", "V", "VALUE", "W"];
+for (const name of Object.keys(bunEnv)) {
+  if (notSet.includes(name) || name.startsWith("SHELL_TEST_")) delete bunEnv[name];
+}
+
 $.env(bunEnv);
 $.cwd(process.cwd().replaceAll("\\", "/"));
 $.nothrow();

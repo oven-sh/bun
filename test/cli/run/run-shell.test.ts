@@ -228,9 +228,14 @@ const paramRows: ParamRow[] = [
 const bashVersion = await (async () => {
   const bash = Bun.which("bash", { PATH: bunEnv.PATH });
   if (!bash) return 0;
-  await using proc = Bun.spawn({ cmd: [bash, "-c", 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'], stdout: "pipe" });
-  return Number(await proc.stdout.text());
+  await using proc = Bun.spawn({ cmd: [bash, "-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], stdout: "pipe" });
+  const [major, minor] = (await proc.stdout.text()).trim().split(" ").map(Number);
+  return major * 100 + minor;
 })();
+
+// Each name that `script` reads, as not set in the environment. A row reads a name as not set until the row sets it.
+const notSetIn = (script: string) =>
+  Object.fromEntries(Array.from(script.matchAll(/\$\{?([A-Za-z_]\w*)/g), match => [match[1], undefined]));
 
 // Bun's shell runs package.json scripts by default on Windows. The system
 // shell rows show that both shells give the same output.
@@ -242,7 +247,7 @@ describe.each(isWindows ? ["bun"] : ["bun", "system"])("package script with --sh
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", `--shell=${shell}`, "braced", ...args],
       cwd: String(dir),
-      env: { ...bunEnv, ...env },
+      env: { ...bunEnv, ...notSetIn(script), ...env },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -271,7 +276,7 @@ describe.each(isWindows ? ["bun"] : ["bun", "system"])("package script with --sh
   });
 
   // Each row runs in a subshell of one script, so that no row changes a variable of another row.
-  test.skipIf(isWindows || (shell === "system" && bashVersion < 5.2))(
+  test.skipIf(isWindows || (shell === "system" && bashVersion < 502))(
     "${NAME<op>word} gives what sh gives",
     async () => {
       const script = paramRows.map(([row]) => `echo @@row; (\n${row}\n) && echo @@ok || echo @@fail`).join("\n");
@@ -280,13 +285,10 @@ describe.each(isWindows ? ["bun"] : ["bun", "system"])("package script with --sh
         "args.sh": `#!/bin/sh\nfor a in "$@"; do printf '<%s>' "$a"; done; printf '\\n'\n`,
       });
       chmodSync(join(String(dir), "args.sh"), 0o755);
-      // A row reads a name as not set until the row sets it.
-      const names = new Set(Array.from(script.matchAll(/\$\{?([A-Za-z_]\w*)/g), match => match[1]));
-      const notSet = Object.fromEntries(Array.from(names, name => [name, undefined]));
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", `--shell=${shell}`, "rows"],
         cwd: String(dir),
-        env: { ...bunEnv, ...notSet, HOME: "/home/user" },
+        env: { ...bunEnv, ...notSetIn(script), HOME: "/home/user" },
         stdout: "pipe",
         stderr: "ignore",
       });

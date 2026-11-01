@@ -2387,6 +2387,23 @@ fn lex_pass<'bump>(
     }
 }
 
+/// Whether a second pass, with every `${` as text, can give another result than the pass that failed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Retry {
+    AsText,
+    /// The parser ran out of stack. As text the script can parse, with another meaning.
+    Never,
+}
+
+impl Retry {
+    fn after(error: crate::Error) -> Retry {
+        match error {
+            crate::Error::NestingTooDeep => Retry::Never,
+            _ => Retry::AsText,
+        }
+    }
+}
+
 /// Gives the tokens of `src` to `parse`. When that fails for a pass that `can_be_text`, every `${` is text in a second pass.
 #[inline]
 fn with_tokens<'bump, T, E>(
@@ -2394,15 +2411,16 @@ fn with_tokens<'bump, T, E>(
     src: &'bump [u8],
     strings_to_escape: &'bump [BunString],
     jsobjs_len: u32,
-    mut parse: impl FnMut(Result<LexResult<'bump>, LexerError>) -> Result<T, E>,
+    mut parse: impl FnMut(Result<LexResult<'bump>, LexerError>) -> Result<T, (Retry, E)>,
 ) -> Result<T, E> {
     let pass = lex_pass(bump, src, strings_to_escape, jsobjs_len, true);
-    match parse(pass.result) {
-        Err(_) if pass.can_be_text => {
+    let parsed = match parse(pass.result) {
+        Err((Retry::AsText, _)) if pass.can_be_text => {
             parse(lex_pass(bump, src, strings_to_escape, jsobjs_len, false).result)
         }
         parsed => parsed,
-    }
+    };
+    parsed.map_err(|(_, error)| error)
 }
 
 /// Lexes and parses `src`. On `Err`, `out_lex_result` holds the errors of the lexer or `out_parser` those of the parser.
@@ -2419,12 +2437,15 @@ where
 {
     with_tokens(bump, src, strings_to_escape, jsobjs_len, |lexed| {
         (*out_parser, *out_lex_result) = (None, None);
-        let lex_result = lexed?;
+        let lex_result = lexed.map_err(|error| (Retry::AsText, error.into()))?;
         if !lex_result.errors.is_empty() {
             *out_lex_result = Some(lex_result);
-            return Err(ParseError::Lex.into());
+            return Err((Retry::AsText, ParseError::Lex.into()));
         }
-        Ok(out_parser.insert(Parser::new(bump, lex_result)).parse()?)
+        out_parser
+            .insert(Parser::new(bump, lex_result))
+            .parse()
+            .map_err(|error| (Retry::after(error), error.into()))
     })
 }
 
@@ -2435,21 +2456,16 @@ pub fn lex_script<'bump>(
     strings_to_escape: &'bump [BunString],
     jsobjs_len: u32,
 ) -> Result<LexResult<'bump>, LexerError> {
-    let parsed = with_tokens(
-        bump,
-        src,
-        strings_to_escape,
-        jsobjs_len,
-        |lexed| match lexed {
-            Ok(lex_result)
-                if lex_result.errors.is_empty()
-                    && Parser::new(bump, lex_result).parse().is_ok() =>
-            {
-                Ok(lex_result)
-            }
-            failed => Err(failed),
-        },
-    );
+    let parsed = with_tokens(bump, src, strings_to_escape, jsobjs_len, |lexed| {
+        let lex_result = match lexed {
+            Ok(lex_result) if lex_result.errors.is_empty() => lex_result,
+            failed => return Err((Retry::AsText, failed)),
+        };
+        match Parser::new(bump, lex_result).parse() {
+            Ok(_) => Ok(lex_result),
+            Err(error) => Err((Retry::after(error), Ok(lex_result))),
+        }
+    });
     parsed.or_else(|failed| failed)
 }
 

@@ -1872,6 +1872,8 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
           const result = await spawnBunTest(bunFor(execPath, testPath), join("test", testPath), {
             cwd,
             filesAtATime: buildingFilesWidth,
+            // As a bucket is, it is ended five minutes before the job.
+            atMost: Math.max(60_000, jobBudgetMs() - 5 * 60_000),
             stdout: () => {},
             stderr: () => {},
           });
@@ -2744,6 +2746,8 @@ interface SpawnBunTestOptions {
   cwd: string;
   /** How many files share the machine. Each may take that many times as long as alone, so its time limits are that many times as long. */
   filesAtATime?: number;
+  /** Milliseconds after which the file is ended, where its own time limit is longer. */
+  atMost?: number;
   args?: string[];
   env?: SpawnEnv;
   stdout?: SpawnOutputHandler;
@@ -2822,7 +2826,7 @@ async function spawnBunTest(
     // setup (napi node-gyp compiles) or many subprocess spawns don't hit
     // the file wall before any individual test times out. Kept below the
     // per-test multiplier so the overall shard stays inside the job timeout.
-    timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
+    timeout: Math.min(isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000, opts.atMost ?? Infinity),
     env,
     stdout: opts.stdout ?? pipeTestStdout(process.stdout),
     stderr: opts.stderr ?? pipeTestStdout(process.stderr),

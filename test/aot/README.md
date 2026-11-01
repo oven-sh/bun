@@ -87,7 +87,8 @@ last section.
   processors, and no more than one for every three gigabytes of the machine. On the lane with a sanitizer no file of this folder
   runs in a bucket, whatever the allowlist says: each has a process of its own, its share of the processors for its concurrent
   tests there too, and one try beside the others. A file that fails there is tried again alone when the others are through, as
-  a file of a bucket is. A file that judges by a clock, or by the memory that is
+  a file of a bucket is. What a crash or a sanitizer reports there is final, as it is for any file that is not in a bucket. A
+  file that judges by a clock, or by the memory that is
   held or left, says so in a line `// Runs alone: <why>`, and nothing else of the shard runs beside it.
 - **Every test runs on every push, on x64 and arm64: the programs of `parallel/` and a few folders of test files on Ubuntu
   (`distroOfAotTest` in `scripts/runner.node.ts`), the other test files on Debian. Neither repeats what the other runs. The other lanes (Alpine, Windows, macOS) run what asks the system**: processes, Workers and

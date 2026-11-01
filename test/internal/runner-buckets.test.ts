@@ -3,7 +3,8 @@
  * file that builds executables is in no bucket: it runs in a process of its own, beside two others.
  *
  * These tests start the runner itself, under Node.js as CI does, over test files of this repository. A stand-in for the
- * Bun under test answers what the runner asks of it and records each `bun test` command that it is started with.
+ * Bun under test answers what the runner asks of it. It records each `bun test` command that it is started with, and when
+ * a process of one file begins and ends.
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
@@ -21,26 +22,47 @@ case "$1" in
   --revision) echo "0.0.0+stand-in" ;;
   test)
     echo "$*" >> "$COMMANDS"
+    case "$*" in *--parallel=*) exit 0 ;; esac
     for last; do :; done
-    case "$last" in
-      *"\${FAILS_ONCE:-no file}"*)
-        if [ ! -e "$COMMANDS.failed" ]; then
-          : > "$COMMANDS.failed"
-          echo "\${FAILS_SAYING:-(fail) made to fail once}"
-          exit 1
-        fi ;;
-    esac ;;
+    fails=
+    case "$last" in *"\${FAILS_ONCE:-no file}"*) fails=once ;; esac
+    if [ -n "$fails" ] && [ -e "$COMMANDS.failed" ]; then fails=; echo "begins again" >> "$COMMANDS.events"
+    else echo "begins" >> "$COMMANDS.events"; fi
+    # Runs until as many files run at once as the test expects, until another file has seen that, or for two seconds. It
+    # looks when all that started with it are under way, so more files at once than the test expects are counted too.
+    tries=0
+    while [ "\${RUNS_BESIDE:-0}" -gt 0 ] && [ ! -e "$COMMANDS.together" ] && [ "$tries" -lt 40 ]; do
+      sleep 0.05
+      tries=$((tries + 1))
+      underWay=$(( $(grep -c begins "$COMMANDS.events") - $(grep -c ends "$COMMANDS.events") ))
+      if [ "$underWay" -ge "$RUNS_BESIDE" ]; then break; fi
+    done
+    : > "$COMMANDS.together"
+    echo "ends" >> "$COMMANDS.events"
+    if [ -n "$fails" ]; then
+      : > "$COMMANDS.failed"
+      echo "\${FAILS_SAYING:-(fail) made to fail once}"
+      exit 1
+    fi ;;
 esac
 `;
 // The widths of the runner follow the machine, so every machine that runs these tests answers as the CI machines with a
 // sanitizer do.
 const processors = 8;
-const machine = `import { syncBuiltinESMExports } from "node:module";
+const machine = `import { appendFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 os.availableParallelism = () => ${processors};
 os.totalmem = () => 64 * 1024 ** 3;
 syncBuiltinESMExports();
+// A time limit of the runner is a timer of a minute or more. Each is written down, so no test waits for one.
+const { setTimeout: setTimer } = globalThis;
+globalThis.setTimeout = (callback, milliseconds, ...rest) => {
+  if (milliseconds >= 60_000) appendFileSync(process.env.COMMANDS + ".limits", milliseconds + "\\n");
+  return setTimer(callback, milliseconds, ...rest);
+};
 `;
+const minutes = 60_000;
 
 const linesOf = (file: string) => readFileSync(join(tests, file), "utf8").split("\n");
 const leftOut: string[] = JSON.parse(readFileSync(join(tests, "parallel-allowlist.json"), "utf8")).excludeFiles;
@@ -67,7 +89,7 @@ function bucketFiles(folder: string, count: number, named = /\.test\.ts$/) {
     .slice(0, count);
 }
 const building = [
-  ...bucketFiles("aot", 10),
+  ...bucketFiles("aot", 11),
   ...bucketFiles("bundler", 2, /^compile-trim-.*\.test\.ts$/),
   ...bucketFiles("cli", 2, /^aot-.*\.test\.ts$/),
 ].sort();
@@ -110,17 +132,32 @@ async function run(
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([runner.stdout.text(), runner.stderr.text(), runner.exited]);
+  // What the stand-in and the runner wrote down. A run in which no process of one file started has no events.
+  const written = async (what: "" | ".events" | ".limits") => {
+    const file = Bun.file(commands + what);
+    return (await file.exists()) ? (await file.text()).split("\n").filter(Boolean) : [];
+  };
+  // How many processes of one file ran at once, and how many ran beside the file that was tried again.
+  let underWay = 0;
+  let mostAtOnce = 0;
+  let besideTheFileTriedAgain: number | undefined;
+  for (const event of await written(".events")) {
+    if (event === "ends") underWay--;
+    else mostAtOnce = Math.max(mostAtOnce, ++underWay);
+    if (event === "begins again") besideTheFileTriedAgain = underWay - 1;
+  }
   return {
-    commands: (await Bun.file(commands).text())
-      .split("\n")
-      .filter(Boolean)
-      .map((line): Command => {
-        const words = line.split("\t").slice(1);
-        return {
-          files: words.filter(word => word.startsWith(tests)).map(word => word.slice(tests.length + 1)),
-          flags: words.filter(word => word.startsWith("--") && !word.startsWith("--reporter-outfile=")).join(" "),
-        };
-      }),
+    commands: (await written("")).map((line): Command => {
+      const words = line.split("\t").slice(1);
+      return {
+        files: words.filter(word => word.startsWith(tests)).map(word => word.slice(tests.length + 1)),
+        flags: words.filter(word => word.startsWith("--") && !word.startsWith("--reporter-outfile=")).join(" "),
+      };
+    }),
+    mostAtOnce,
+    besideTheFileTriedAgain,
+    /** In milliseconds, in the order in which the runner set them. */
+    timeLimits: (await written(".limits")).map(Number),
     stdout,
     stderr,
     exitCode,
@@ -134,7 +171,7 @@ const alone = `--timeout=270000 --reporter=dots --max-concurrency=${processors}`
 describe.skipIf(isWindows || !node)("scripts/runner.node.ts", () => {
   test("the files that these tests give to the runner", () => {
     expect({ building: building.length, others: others.length, buildingAndLong: buildingAndLong.length }).toEqual({
-      building: 14,
+      building: 15,
       others: 12,
       buildingAndLong: 3,
     });
@@ -150,46 +187,85 @@ describe.skipIf(isWindows || !node)("scripts/runner.node.ts", () => {
     }).toEqual({ buckets: [building, others], filesOfTheirOwnProcess: [], stderr: "", exitCode: 0 });
   });
 
-  test.concurrent("with a sanitizer a file that builds executables has a process of its own", async () => {
-    const { commands, stderr, exitCode } = await run("bun-asan", [...building, ...others], ["--quiet"]);
-    expect({
-      buckets: commands.filter(isBucket).map(({ files }) => files.sort()),
-      filesOfTheirOwnProcess: commands
-        .filter(command => !isBucket(command))
-        .map(ofOneFile)
-        .sort(),
-      stderr,
-      exitCode,
-    }).toEqual({
-      buckets: [others],
-      filesOfTheirOwnProcess: building.map(file => `${file} ${besideOthers}`),
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  test.concurrent(
+    "with a sanitizer a file that builds executables has a process of its own, three at a time",
+    async () => {
+      const { commands, mostAtOnce, stderr, exitCode } = await run("bun-asan", [...building, ...others], ["--quiet"], {
+        RUNS_BESIDE: "3",
+      });
+      expect({
+        buckets: commands.filter(isBucket).map(({ files }) => files.sort()),
+        filesOfTheirOwnProcess: commands
+          .filter(command => !isBucket(command))
+          .map(ofOneFile)
+          .sort(),
+        mostAtOnce,
+        stderr,
+        exitCode,
+      }).toEqual({
+        buckets: [others],
+        filesOfTheirOwnProcess: building.map(file => `${file} ${besideOthers}`),
+        mostAtOnce: 3,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   test.concurrent(
     "with a sanitizer a file that fails beside others is tried again alone when they are through",
     async () => {
       const failing = building[3]!;
-      const { commands, stdout, stderr, exitCode } = await run("bun-asan", [...building, ...others], ["--quiet"], {
-        FAILS_ONCE: failing,
-      });
+      const { commands, mostAtOnce, besideTheFileTriedAgain, timeLimits, stdout, stderr, exitCode } = await run(
+        "bun-asan",
+        [...building, ...others],
+        ["--quiet"],
+        { FAILS_ONCE: failing, RUNS_BESIDE: "3" },
+      );
       expect({
         order: commands.map(command => (isBucket(command) ? "a bucket" : command.flags)),
         triedAgain: commands[building.length]?.files,
+        mostAtOnce,
+        besideTheFileTriedAgain,
+        // The bucket is started after them.
+        timeLimits: timeLimits.slice(0, building.length + 1),
         said: stdout.split("\n").filter(line => line.includes("beside other files")),
         stderr,
         exitCode,
       }).toEqual({
         order: [...building.map(() => besideOthers), alone, "a bucket"],
         triedAgain: [failing],
+        mostAtOnce: 3,
+        besideTheFileTriedAgain: 0,
+        // Of each file beside others, and of the file alone.
+        timeLimits: [...building.map(() => 18 * minutes), 6 * minutes],
         said: [expect.stringContaining(`test/${failing} - code 1: made to fail once beside other files`)],
         stderr: "",
         exitCode: 0,
       });
     },
   );
+
+  test.concurrent("with a sanitizer a file beside others is ended five minutes before the job", async () => {
+    // BUILDKITE_TIMEOUT is the minutes that a job has. Eight leave a file three, less what the runner has run by then, and
+    // no less than one.
+    const { timeLimits, stderr, exitCode } = await run("bun-asan", [...building, ...others], ["--quiet"], {
+      FAILS_ONCE: building[3]!,
+      BUILDKITE_TIMEOUT: "8",
+    });
+    const whatTheJobLeaves = (limit: number) =>
+      limit >= 1 * minutes && limit <= 3 * minutes ? "what the job leaves" : limit;
+    expect({
+      timeLimits: timeLimits.slice(0, building.length + 1).map(whatTheJobLeaves),
+      stderr,
+      exitCode,
+    }).toEqual({
+      // The file that is tried again alone keeps its own, as after a bucket.
+      timeLimits: [...building.map(() => "what the job leaves"), 6 * minutes],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 
   test.concurrent("with a sanitizer what a sanitizer reports beside others is final", async () => {
     const failing = building[3]!;

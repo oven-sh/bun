@@ -12,9 +12,14 @@ const inCheckout = (webkit: string): string => join(webkit, "Source", "JavaScrip
 
 function prebuiltInCache(): string | undefined {
   const cache = sharedCacheDir(resolve(import.meta.dirname, "..", ".."));
-  if (!existsSync(cache)) return undefined;
   const prefix = prebuiltDirPrefix(WEBKIT_VERSION);
-  return readdirSync(cache)
+  let names: string[];
+  try {
+    names = readdirSync(cache);
+  } catch {
+    return undefined;
+  }
+  return names
     .filter(name => name.startsWith(prefix))
     .map(name => inCheckout(join(cache, name)))
     .find(directory => existsSync(join(directory, "builtins", "generator")));
@@ -24,18 +29,19 @@ function findEngineDirectory(): string {
   const valueOf = (name: string): string | undefined =>
     process.argv.find(argument => argument.startsWith(name))?.slice(name.length);
   const javaScriptCore = valueOf(checkoutFlag);
-  const places: readonly (readonly [place: string, directory: string | undefined])[] = [
-    [flag.slice(0, -1), valueOf(flag)],
-    [checkoutFlag.slice(0, -1), javaScriptCore && join(javaScriptCore, "aot")],
-    ["$AOT_ENGINE_DIRECTORY", process.env.AOT_ENGINE_DIRECTORY],
-    ["$BUN_WEBKIT_PATH", process.env.BUN_WEBKIT_PATH && inCheckout(process.env.BUN_WEBKIT_PATH)],
-    ["vendor/WebKit", inCheckout(resolve(import.meta.dirname, "..", "..", "vendor", "WebKit"))],
+  const places: readonly (readonly [place: string, directory: () => string | undefined])[] = [
+    [flag.slice(0, -1), () => valueOf(flag)],
+    [checkoutFlag.slice(0, -1), () => javaScriptCore && join(javaScriptCore, "aot")],
+    ["$AOT_ENGINE_DIRECTORY", () => process.env.AOT_ENGINE_DIRECTORY],
+    ["$BUN_WEBKIT_PATH", () => process.env.BUN_WEBKIT_PATH && inCheckout(process.env.BUN_WEBKIT_PATH)],
+    ["vendor/WebKit", () => inCheckout(resolve(import.meta.dirname, "..", "..", "vendor", "WebKit"))],
     // Where CI puts it for the machines that only run tests.
-    ["aot-engine beside the Bun that runs this", join(dirname(realpathSync(process.execPath)), "aot-engine")],
+    ["aot-engine beside the Bun that runs this", () => join(dirname(realpathSync(process.execPath)), "aot-engine")],
     // A prebuilt WebKit of the version that the build pins, which a build of any profile extracted to the shared cache.
-    ["the prebuilt WebKit in the build cache", prebuiltInCache()],
+    ["the prebuilt WebKit in the build cache", prebuiltInCache],
   ];
-  for (const [, directory] of places) {
+  for (const [, find] of places) {
+    const directory = find();
     if (directory !== undefined && directory !== "" && existsSync(join(directory, "builtins", "generator"))) {
       return resolve(directory);
     }

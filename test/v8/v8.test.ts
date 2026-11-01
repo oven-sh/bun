@@ -522,6 +522,59 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       await checkSameOutput("test_uv_queue_work_on_current_event_loop");
     });
   });
+
+  describe("node::MakeCallback", () => {
+    // Not on Windows: after_work_cb runs with no handle scope open there, as in the uv_queue_work test.
+    it.skipIf(isWindows)("runs the ticks and microtasks of an outermost call before it returns", async () => {
+      const output = await checkSameOutput("test_make_callback_from_event_loop");
+      expect(output.split(/\r?\n/)).toEqual([
+        "callback 1",
+        "callback 1 tick",
+        "callback 1 microtask",
+        "result.IsEmpty() = 0",
+        "result.ToLocalChecked()->IsUndefined() = 0",
+        "callback 2",
+        "callback 2 tick",
+        "callback 2 microtask",
+        "result.IsEmpty() = 0",
+        "result.ToLocalChecked()->IsUndefined() = 0",
+      ]);
+    });
+
+    it("leaves the ticks and microtasks of a nested call to the JS caller", async () => {
+      const output = await checkSameOutput("test_make_callback_from_js");
+      expect(output.split(/\r?\n/)).toEqual([
+        "callback",
+        "result.IsEmpty() = 0",
+        "result.ToLocalChecked()->IsUndefined() = 0",
+        "JS caller continues",
+        "callback tick",
+        "callback microtask",
+      ]);
+    });
+
+    it.skipIf(isWindows)("reports an outermost callback's throw as uncaught and returns undefined", async () => {
+      const output = await checkSameOutput("test_make_callback_from_event_loop_throws");
+      expect(output.split(/\r?\n/)).toEqual([
+        "callback 1",
+        "uncaughtException: thrown by callback 1",
+        "result.IsEmpty() = 0",
+        "result.ToLocalChecked()->IsUndefined() = 1",
+        "callback 2",
+        "callback 1 tick",
+        "callback 2 tick",
+        "callback 1 microtask",
+        "callback 2 microtask",
+        "result.IsEmpty() = 0",
+        "result.ToLocalChecked()->IsUndefined() = 0",
+      ]);
+    });
+
+    it("propagates what a nested callback throws to the JS caller", async () => {
+      const output = await checkSameOutput("test_make_callback_from_js_throws");
+      expect(output.split(/\r?\n/)).toEqual(["result.IsEmpty() = 1", "caught: thrown by the callback"]);
+    });
+  });
 });
 
 async function checkSameOutput(testName: string, args?: string, thisValue?: any) {

@@ -483,6 +483,16 @@ impl<'a> Prices<'a> {
 
 // ── binary tree search ────────────────────────────────────────────────────
 
+/// What a parser has to search before the current segment.
+#[derive(Clone, Copy)]
+enum Before {
+    Nothing,
+    /// Of the window.
+    OlderSegment,
+    /// One that is searched in place.
+    Dictionary,
+}
+
 /// Where the repeat offsets lead, for [`Trees::skip_matchless_generic`].
 #[derive(Clone, Copy)]
 enum Reps {
@@ -692,7 +702,7 @@ impl<'a> Trees<'a> {
 
     /// Where the repeat offset `rep_offset` of `ip` leads, which is before the current segment: a buffer, the position
     /// in it, and that of the end of the segment. `None` unless what is there starts like `ip`. `dms` is `self.dms`,
-    /// of which a loop has a copy at hand.
+    /// of which a loop has a copy at hand, or `None` where the caller knows that there is none.
     #[inline(always)]
     fn far_rep(
         &self,
@@ -734,6 +744,18 @@ impl<'a> Trees<'a> {
         let here = input.near.read32(ip).ok_or(BUG)?;
         let is_alike = minmatch_differs(read_le32(buf, pos)?, here, self.min_match) == 0;
         Ok(is_alike.then_some((buf, pos, end)))
+    }
+
+    /// Whether what is at `index` of the older segment may start with the first 3 bytes of `bytes`.
+    #[inline(always)]
+    fn older_starts_alike(&self, index: u32, bytes: u32) -> Result<bool> {
+        let input = self.input;
+        // Not met: the last 8 positions of a segment do not get into the table.
+        if input.dict_limit.wrapping_sub(index) < 4 {
+            return Ok(true);
+        }
+        let there = read_le32(input.dict.buf, input.dict.pos_of(index))?;
+        Ok(minmatch_differs(there, bytes, 3) == 0)
     }
 
     /// `ZSTD_btGetAllMatches_internal`: adds the positions up to `ip`, a position of `near`, to the trees, and stores in
@@ -916,7 +938,19 @@ impl<'a> Trees<'a> {
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
     ) -> Result<(u32, u32)> {
-        self.skip_matchless_generic(matches, ip, limit, rep, false, Reps::Near)
+        self.skip_matchless_generic(matches, ip, limit, rep, Before::Nothing, Reps::Near)
+    }
+
+    /// [`Self::skip_matchless`] where the window has an older segment.
+    #[inline(never)]
+    fn skip_matchless_older(
+        &mut self,
+        matches: &mut [Match],
+        ip: u32,
+        limit: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+    ) -> Result<(u32, u32)> {
+        self.skip_matchless_far_then_near(matches, ip, limit, rep, Before::OlderSegment)
     }
 
     /// [`Self::skip_matchless`] where a dictionary is searched in place.
@@ -924,41 +958,91 @@ impl<'a> Trees<'a> {
     fn skip_matchless_in_place(
         &mut self,
         matches: &mut [Match],
-        mut ip: u32,
+        ip: u32,
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
     ) -> Result<(u32, u32)> {
+        self.skip_matchless_far_then_near(matches, ip, limit, rep, Before::Dictionary)
+    }
+
+    /// [`Self::skip_matchless`] with repeat offsets that lead before the current segment, which after a match there is
+    /// most of the time: one loop up to where none does any more, then the other.
+    #[inline(always)]
+    fn skip_matchless_far_then_near(
+        &mut self,
+        matches: &mut [Match],
+        mut ip: u32,
+        limit: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+        before: Before,
+    ) -> Result<(u32, u32)> {
+        let in_place = matches!(before, Before::Dictionary);
         let [rep0, rep1, rep2] = *rep;
         let farthest = rep0.max(rep1).max(rep2);
         if ip < farthest {
             // What was at the last offset goes on after a few bytes that differ: nothing to pass.
             let window_low = self.lowest_match_index(ip.wrapping_add(self.input.dict_limit));
-            if ip < rep0 && self.far_rep(self.dms, ip, rep0, window_low)?.is_some() {
+            let dms = if in_place { self.dms } else { None };
+            if ip < rep0 && self.far_rep(dms, ip, rep0, window_low)?.is_some() {
                 return Ok((ip, 0));
             }
             let found;
-            (ip, found) = self.skip_matchless_far_reps(matches, ip, limit.min(farthest), rep)?;
+            (ip, found) = if in_place {
+                self.skip_matchless_far_reps_in_place(matches, ip, limit.min(farthest), rep)?
+            } else {
+                self.skip_matchless_far_reps_older(matches, ip, limit.min(farthest), rep)?
+            };
             if ip < farthest {
                 return Ok((ip, found));
             }
         }
-        self.skip_matchless_generic(matches, ip, limit, rep, true, Reps::Near)
+        if in_place {
+            self.skip_matchless_generic(matches, ip, limit, rep, before, Reps::Near)
+        } else if self.min_match == 3 {
+            self.skip_matchless_near_reps_older(matches, ip, limit, rep)
+        } else {
+            // The same loop but for the table of 3 bytes. A copy comes out 3 to 8% slower on noise.
+            self.skip_matchless(matches, ip, limit, rep)
+        }
     }
 
-    /// [`Self::skip_matchless_in_place`] where a repeat offset leads into the dictionary, which after a match there is
-    /// most of the time.
+    /// The first part of [`Self::skip_matchless_older`].
     #[inline(never)]
-    fn skip_matchless_far_reps(
+    fn skip_matchless_far_reps_older(
         &mut self,
         matches: &mut [Match],
         ip: u32,
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
     ) -> Result<(u32, u32)> {
-        self.skip_matchless_generic(matches, ip, limit, rep, true, Reps::Far)
+        self.skip_matchless_generic(matches, ip, limit, rep, Before::OlderSegment, Reps::Far)
     }
 
-    /// `in_place` and `reps` are not const parameters: an instance of a generic function is compiled apart from the rest
+    /// The second part of [`Self::skip_matchless_older`], where a match can be 3 bytes.
+    #[inline(never)]
+    fn skip_matchless_near_reps_older(
+        &mut self,
+        matches: &mut [Match],
+        ip: u32,
+        limit: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+    ) -> Result<(u32, u32)> {
+        self.skip_matchless_generic(matches, ip, limit, rep, Before::OlderSegment, Reps::Near)
+    }
+
+    /// The first part of [`Self::skip_matchless_in_place`].
+    #[inline(never)]
+    fn skip_matchless_far_reps_in_place(
+        &mut self,
+        matches: &mut [Match],
+        ip: u32,
+        limit: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+    ) -> Result<(u32, u32)> {
+        self.skip_matchless_generic(matches, ip, limit, rep, Before::Dictionary, Reps::Far)
+    }
+
+    /// `before` and `reps` are not const parameters: an instance of a generic function is compiled apart from the rest
     /// of this file, after which [`Self::search_dms`] takes 2% longer on short records.
     #[inline(always)]
     fn skip_matchless_generic(
@@ -967,9 +1051,10 @@ impl<'a> Trees<'a> {
         mut ip: u32,
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
-        in_place: bool,
+        before: Before,
         reps: Reps,
     ) -> Result<(u32, u32)> {
+        let in_place = matches!(before, Before::Dictionary);
         let far_reps = matches!(reps, Reps::Far);
         let near = self.input.near;
         let dict_limit = self.input.dict_limit;
@@ -1021,7 +1106,13 @@ impl<'a> Trees<'a> {
                 let match_index3 = self.insert_and_find_first_index_hash3(curr, bytes as u32)?;
                 if match_index3 >= match_low
                     && curr.wrapping_sub(match_index3) < (1 << 18)
-                    && (match_index3 < dict_limit || starts_alike(match_index3 - dict_limit, 3))
+                    && if match_index3 >= dict_limit {
+                        starts_alike(match_index3 - dict_limit, 3)
+                    } else if matches!(before, Before::OlderSegment) {
+                        self.older_starts_alike(match_index3, bytes as u32)?
+                    } else {
+                        true
+                    }
                 {
                     break;
                 }
@@ -1375,7 +1466,7 @@ fn try_lengths(
     }
 }
 
-/// `ZSTD_compressBlock_opt_generic`. `in_place` is whether there may be a dictionary to search in place.
+/// `ZSTD_compressBlock_opt_generic`. `before` is what `dict_mode` says, as a constant.
 #[inline(always)]
 fn compress_block_opt_generic(
     ms: &mut MatchState,
@@ -1384,7 +1475,7 @@ fn compress_block_opt_generic(
     src: &BlockSrc<'_>,
     opt_level: i32,
     dict_mode: DictMode,
-    in_place: bool,
+    before: Before,
 ) -> Result<usize> {
     // The match finders borrow the rest of `ms`.
     let mut opt_state = mem::replace(&mut ms.opt, OptState::new());
@@ -1400,7 +1491,7 @@ fn compress_block_opt_generic(
         src,
         opt_level,
         dict_mode,
-        in_place,
+        before,
     );
     opt_state.match_table = match_table;
     opt_state.price_table = price_table;
@@ -1420,7 +1511,7 @@ fn parse_block(
     src: &BlockSrc<'_>,
     opt_level: i32,
     dict_mode: DictMode,
-    in_place: bool,
+    before: Before,
 ) -> Result<usize> {
     let buf = src.buf;
     let istart = src.start;
@@ -1476,10 +1567,14 @@ fn parse_block(
                 if ip != anchor && opt_ldm.is_over() {
                     let first = (ip - prefix_start) as u32;
                     let limit = (ilimit - prefix_start) as u32;
-                    let (stop, found) = if in_place {
-                        trees.skip_matchless_in_place(matches, first, limit, rep)?
-                    } else {
-                        trees.skip_matchless(matches, first, limit, rep)?
+                    let (stop, found) = match before {
+                        Before::Nothing => trees.skip_matchless(matches, first, limit, rep)?,
+                        Before::OlderSegment => {
+                            trees.skip_matchless_older(matches, first, limit, rep)?
+                        }
+                        Before::Dictionary => {
+                            trees.skip_matchless_in_place(matches, first, limit, rep)?
+                        }
                     };
                     ip += (stop - first) as usize;
                     if ip >= ilimit {
@@ -1787,11 +1882,11 @@ fn compress_block_opt0(
     src: &BlockSrc<'_>,
     dict_mode: DictMode,
 ) -> Result<usize> {
-    compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode, false)
+    compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode, Before::Nothing)
 }
 
-/// [`compress_block_opt0`] with [`Trees::skip_matchless_in_place`]. A copy: one parser that chooses between the two takes
-/// 0.4 to 1.4% longer on most data without a dictionary.
+/// [`compress_block_opt0`] with [`Trees::skip_matchless_in_place`]. A copy: one parser that chooses takes 0.4 to 1.4%
+/// longer on most data without a dictionary.
 #[inline(never)]
 fn compress_block_opt0_in_place(
     ms: &mut MatchState,
@@ -1800,7 +1895,19 @@ fn compress_block_opt0_in_place(
     src: &BlockSrc<'_>,
     dict_mode: DictMode,
 ) -> Result<usize> {
-    compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode, true)
+    compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode, Before::Dictionary)
+}
+
+/// [`compress_block_opt0`] with [`Trees::skip_matchless_older`], likewise.
+#[inline(never)]
+fn compress_block_opt0_older(
+    ms: &mut MatchState,
+    seq_store: &mut SeqStore,
+    rep: &mut [u32; ZSTD_REP_NUM],
+    src: &BlockSrc<'_>,
+    dict_mode: DictMode,
+) -> Result<usize> {
+    compress_block_opt_generic(ms, seq_store, rep, src, 0, dict_mode, Before::OlderSegment)
 }
 
 /// `ZSTD_compressBlock_opt2`
@@ -1811,7 +1918,7 @@ fn compress_block_opt2(
     src: &BlockSrc<'_>,
     dict_mode: DictMode,
 ) -> Result<usize> {
-    compress_block_opt_generic(ms, seq_store, rep, src, 2, dict_mode, false)
+    compress_block_opt_generic(ms, seq_store, rep, src, 2, dict_mode, Before::Nothing)
 }
 
 /// [`compress_block_opt2`], likewise.
@@ -1823,7 +1930,19 @@ fn compress_block_opt2_in_place(
     src: &BlockSrc<'_>,
     dict_mode: DictMode,
 ) -> Result<usize> {
-    compress_block_opt_generic(ms, seq_store, rep, src, 2, dict_mode, true)
+    compress_block_opt_generic(ms, seq_store, rep, src, 2, dict_mode, Before::Dictionary)
+}
+
+/// [`compress_block_opt2`], likewise.
+#[inline(never)]
+fn compress_block_opt2_older(
+    ms: &mut MatchState,
+    seq_store: &mut SeqStore,
+    rep: &mut [u32; ZSTD_REP_NUM],
+    src: &BlockSrc<'_>,
+    dict_mode: DictMode,
+) -> Result<usize> {
+    compress_block_opt_generic(ms, seq_store, rep, src, 2, dict_mode, Before::OlderSegment)
 }
 
 /// `ZSTD_initStats_ultra`: a first pass over the block, only to have better statistics to start from. It has to be the
@@ -1894,10 +2013,14 @@ pub(crate) fn compress_block_opt(
         (Strategy::BtUltra | Strategy::BtUltra2, _) if in_place => {
             compress_block_opt2_in_place(ms, seq_store, rep, src, dict_mode)
         }
+        (Strategy::BtUltra | Strategy::BtUltra2, DictMode::ExtDict) => {
+            compress_block_opt2_older(ms, seq_store, rep, src, dict_mode)
+        }
         (Strategy::BtUltra | Strategy::BtUltra2, _) => {
             compress_block_opt2(ms, seq_store, rep, src, dict_mode)
         }
         _ if in_place => compress_block_opt0_in_place(ms, seq_store, rep, src, dict_mode),
+        (_, DictMode::ExtDict) => compress_block_opt0_older(ms, seq_store, rep, src, dict_mode),
         _ => compress_block_opt0(ms, seq_store, rep, src, dict_mode),
     }
 }

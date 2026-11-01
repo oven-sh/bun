@@ -1683,36 +1683,58 @@ describe("the output is that of zstd 1.5.7", () => {
     ]);
   });
 
+  // Noise of 5 bits. After 30,000 bytes it has pieces from so far back, in turn, with one byte of each altered.
+  const withAlteredPieces = (distances: number[]) => {
+    const next = xorshift(5);
+    const all = Buffer.alloc(63_000);
+    for (let at = 0; at < 30_000; at++) all[at] = next() >>> 27;
+    for (let at = 30_000, n = 0; at < all.length; n++) {
+      for (let k = 1 + (next() % 12); k > 0; k--) all[at++] = next() >>> 27;
+      const from = at - distances[n % distances.length];
+      all.copyWithin(at, from, from + 16);
+      all[at + 4 + (next() % 8)] ^= 1 + (next() % 3);
+      at += 16;
+    }
+    return all;
+  };
+
   it("where there are literals while a repeat offset leads into a dictionary", () => {
-    // Noise of 5 bits. What follows the dictionary has pieces from so far back, in turn, with one byte of each altered.
-    const withAlteredPieces = (distances: number[]) => {
-      const next = xorshift(5);
-      const all = Buffer.alloc(39_000);
-      for (let at = 0; at < 30_000; at++) all[at] = next() >>> 27;
-      for (let at = 30_000, n = 0; at < all.length; n++) {
-        for (let k = 1 + (next() % 12); k > 0; k--) all[at++] = next() >>> 27;
-        const from = at - distances[n % distances.length];
-        all.copyWithin(at, from, from + 16);
-        all[at + 4 + (next() % 8)] ^= 1 + (next() % 3);
-        at += 16;
-      }
-      return all;
-    };
-    const digests = (all: Buffer, size: number) =>
-      [13, 16].flatMap(n => {
-        const compress = (from: number, to: number) =>
-          zlib.zstdCompressSync(all.subarray(from, to), { params: level(n), dictionary: all.subarray(0, 30_000) });
-        // The offsets that a frame starts with, 1, 4 and 8, lead into the dictionary for its first 8 bytes.
-        const starts = Array.from({ length: 8 }, (_, start) => compress(30_000 + start, 30_300 + start));
-        return [digest(compress(30_000, 30_000 + size)), digest(Buffer.concat(starts))];
-      });
+    const compress = (all: Buffer, n: number, from: number, size: number) =>
+      zlib.zstdCompressSync(all.subarray(from, from + size), { params: level(n), dictionary: all.subarray(0, 30_000) });
+    const digests = (all: Buffer, size: number) => [13, 16].map(n => digest(compress(all, n, 30_000, size)));
+    const fromThreePlaces = withAlteredPieces([25_000, 12_345, 50]);
+    const fromNearby = withAlteredPieces([20]);
     expect([
-      digests(withAlteredPieces([25_000, 12_345, 50]), 8_000),
-      // A piece goes on over the end of the dictionary, whose tables level 16 copies for more than 8 KB.
-      digests(withAlteredPieces([20]), 9_000),
+      digests(fromThreePlaces, 8_000),
+      // The tables of the dictionary are copied for more than 8 KB from level 16 on, else for more than 32 KB.
+      digests(fromThreePlaces, 33_000),
+      // A piece goes on over the end of the dictionary.
+      digests(fromNearby, 9_000),
     ]).toEqual([
-      ["2519 24ce676ed4360f6b", "1093 e9f462ba5074daef", "2482 b0633ed5d69d3d65", "1061 d826405e9ce9c5d2"],
-      ["2689 ac0ddc2b63fa3cf0", "1044 9e83e945e3585cf6", "2593 665843657aba87c4", "1018 d57ef3f0c34b3189"],
+      ["2519 24ce676ed4360f6b", "2482 b0633ed5d69d3d65"],
+      ["10359 10c42f22fc137208", "10027 1fd5fb810e81ee70"],
+      ["2689 ac0ddc2b63fa3cf0", "2593 665843657aba87c4"],
+    ]);
+    // The offsets that a frame starts with, 1, 4 and 8, lead into the dictionary for its first 8 bytes.
+    const starts = (all: Buffer) =>
+      [13, 16].map(n =>
+        digest(Buffer.concat(Array.from({ length: 8 }, (_, start) => compress(all, n, 30_000 + start, 300)))),
+      );
+    expect([starts(fromThreePlaces), starts(fromNearby)]).toEqual([
+      ["1093 e9f462ba5074daef", "1061 d826405e9ce9c5d2"],
+      ["1044 9e83e945e3585cf6", "1018 d57ef3f0c34b3189"],
+    ]);
+  });
+
+  it("where there are literals while a repeat offset leads before the place where the buffer of a stream starts again", () => {
+    // Of the distances, one is just out of a window of 16 KB and one just in it.
+    const all = withAlteredPieces([16_450, 16_300, 9_000]);
+    const window = (n: number, windowLog: number) => ({ params: { ...level(n), [c.ZSTD_c_windowLog]: windowLog } });
+    expect(
+      [13, 14].map(windowLog => [13, 16, 19].map(n => digest(zlib.zstdCompressSync(all, window(n, windowLog))))),
+    ).toEqual([
+      ["38845 7721ae005eb10446", "38929 da0285f338ad0055", "38929 da0285f338ad0055"],
+      ["32494 857cd1a443168536", "32293 4e37f66382f2b3a3", "32293 4e37f66382f2b3a3"],
     ]);
   });
 

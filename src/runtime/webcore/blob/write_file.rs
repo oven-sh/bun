@@ -92,7 +92,9 @@ impl WriteFile {
 
 /// A JS string that a write reads in place. JS can make it an atom of its thread, so only that thread drops it.
 pub(crate) struct LentString {
-    string: ThreadIsolated<StringOrBuffer<'static>>,
+    bytes: bun_ptr::RawSlice<u8>,
+    /// Owns `bytes`.
+    _string: ThreadIsolated<StringOrBuffer<'static>>,
     /// Debug builds: locked by the thread that lent the string.
     lender: bun_core::ThreadLock,
 }
@@ -112,8 +114,11 @@ impl WriteSource {
     /// `Err` has the UTF-8 bytes of a string that the write cannot read where it is.
     pub(crate) fn string(string: bun_core::String) -> Result<Self, Vec<u8>> {
         let string = StringOrBuffer::lend_string(string)?;
-        let lender = bun_core::ThreadLock::init_locked();
-        Ok(Self::String(LentString { string, lender }))
+        Ok(Self::String(LentString {
+            bytes: bun_ptr::RawSlice::new(string.slice()),
+            _string: string,
+            lender: bun_core::ThreadLock::init_locked(),
+        }))
     }
 
     /// A buffered body, spent as [`body::Value::use_`] spends it.
@@ -139,7 +144,7 @@ impl WriteSource {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::Blob(blob) => blob.shared_view(),
-            Self::String(lent) => lent.string.slice(),
+            Self::String(lent) => lent.bytes.slice(),
         }
     }
 
@@ -148,9 +153,7 @@ impl WriteSource {
         match self {
             Self::Blob(blob) => blob,
             // All ASCII, or the write could not read the string where it is.
-            Self::String(lent) => {
-                Blob::init_with_all_ascii(lent.string.slice().to_vec(), global, true)
-            }
+            Self::String(lent) => Blob::init_with_all_ascii(lent.bytes.to_vec(), global, true),
         }
     }
 }

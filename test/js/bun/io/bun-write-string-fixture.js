@@ -40,41 +40,48 @@ function writeToPipeAndDrop(fifo) {
 }
 
 if (mode === "copies") {
-  // How much memory the process gains inside each call. The Buffer the string came from stays
-  // alive and no write is awaited before the last call, so nothing of the string's size is
-  // freed that a copy of the string could reuse.
+  // How much memory the process gains inside each call. The Buffers the strings came from stay
+  // alive and no write is awaited before the last call, so nothing of a string's size is freed
+  // that a copy of a string could reuse.
   const size = Number(arg);
-  const keep = Buffer.alloc(size, "a");
-  const str = keep.toString("latin1");
-  const atom = Buffer.alloc(size, "k").toString("latin1");
+  const keep = [Buffer.alloc(size, "a"), Buffer.alloc(size, "k")];
+  const str = keep[0].toString("latin1");
+  const atom = keep[1].toString("latin1");
   ({})[atom] = 1;
-  const fd = fs.openSync(out + "-fd", "w");
   const sources = Object.fromEntries(Object.entries(wraps).map(([name, wrap]) => [name, wrap(str)]));
-  const calls = {
-    "Bun.write(path, string)": path => Bun.write(path, str),
-    "Bun.write(Bun.file(path), string)": path => Bun.write(Bun.file(path), str),
-    "Bun.write(fd, string)": () => Bun.write(fd, str),
-    "Bun.file(path).write(string)": path => Bun.file(path).write(str),
-    "Bun.write(path, [string])": path => Bun.write(path, sources["a one-element array"]),
-    "Bun.write(path, new String(string))": path => Bun.write(path, sources["a String object"]),
-    "Bun.write(path, new Response(string))": path => Bun.write(path, sources["a Response body"]),
-    "Bun.write(path, new Request(url, { body: string }))": path => Bun.write(path, sources["a Request body"]),
-    "Bun.write(path, atom)": path => Bun.write(path, atom),
-  };
+  let fd;
+  // The name of the call, the bytes that the file must have, and the call.
+  const calls = [
+    ["Bun.write(path, string)", keep[0], path => Bun.write(path, str)],
+    ["Bun.write(Bun.file(path), string)", keep[0], path => Bun.write(Bun.file(path), str)],
+    ["Bun.write(fd, string)", keep[0], path => Bun.write((fd = fs.openSync(path, "w")), str)],
+    ["Bun.file(path).write(string)", keep[0], path => Bun.file(path).write(str)],
+    ["Bun.write(path, [string])", keep[0], path => Bun.write(path, sources["a one-element array"])],
+    ["Bun.write(path, new String(string))", keep[0], path => Bun.write(path, sources["a String object"])],
+    ["Bun.write(path, new Response(string))", keep[0], path => Bun.write(path, sources["a Response body"])],
+    [
+      "Bun.write(path, new Request(url, { body: string }))",
+      keep[0],
+      path => Bun.write(path, sources["a Request body"]),
+    ],
+    ["Bun.write(path, atom)", keep[1], path => Bun.write(path, atom)],
+  ];
   // The first writes on the work pool start its threads.
   await Promise.all([1, 2, 3, 4].map(i => Bun.write(out + i, new Blob(["warm"]))));
-  const started = Object.entries(calls).map(([name, call], i) => {
+  const started = calls.map(([name, bytes, call], i) => {
+    const path = out + "-" + i;
     const before = process.memoryUsage.rss();
-    const written = call(out + "-" + i);
+    const written = call(path);
     const grew = process.memoryUsage.rss() - before;
-    return [name, grew, written];
+    return { name, bytes, path, grew, written };
   });
-  const results = {};
-  for (const [name, grew, written] of started) {
-    results[name] = { copied: grew >= size / 2, written: await written };
-  }
+  const written = await Promise.all(started.map(call => call.written));
   fs.closeSync(fd);
-  console.log(JSON.stringify({ results, keep: keep.length }));
+  const results = {};
+  started.forEach(({ name, bytes, path, grew }, i) => {
+    results[name] = { copied: grew >= size / 2, written: written[i], same: fs.readFileSync(path).equals(bytes) };
+  });
+  console.log(JSON.stringify({ results, keep: keep.map(buffer => buffer.length) }));
 } else if (mode === "strings") {
   // The write reads the first two where they are (the rope once it is flat). It copies an atom
   // and a substring, and it makes the UTF-8 form of the others.

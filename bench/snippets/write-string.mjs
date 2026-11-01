@@ -49,9 +49,13 @@ async function time(write, path, string) {
     if (pending) setImmediate(turn);
     else idle();
   });
-  await promise;
-  const total = performance.now() - start;
-  pending = false;
+  let total;
+  try {
+    await promise;
+    total = performance.now() - start;
+  } finally {
+    pending = false;
+  }
   await stopped;
   return { inCall, stall, total };
 }

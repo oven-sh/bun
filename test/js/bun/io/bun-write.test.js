@@ -1742,7 +1742,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
     it("is not copied inside the call", async () => {
       const size = 16 * 1024 * 1024;
-      const inPlace = { copied: false, written: size };
+      const inPlace = { copied: false, written: size, same: true };
       expect(await fixture("copies", String(size))).toEqual({
         stdout: {
           results: {
@@ -1755,9 +1755,9 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
             "Bun.write(path, new Response(string))": inPlace,
             "Bun.write(path, new Request(url, { body: string }))": inPlace,
             // An atom belongs to its thread, so the write takes a copy of it.
-            "Bun.write(path, atom)": { copied: true, written: size },
+            "Bun.write(path, atom)": { copied: true, written: size, same: true },
           },
-          keep: size,
+          keep: [size, size],
         },
         stderr: "",
         exitCode: 0,

@@ -5256,8 +5256,8 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f83
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=3288 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined}] functionTypes=[f54] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function):
+# CHECK: m0 position=3288 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|function}] results=[{type=undefined}] functionTypes=[f54] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|function):
 # CHECK-NEXT: PutModuleVariable v0 variable=g8
 # CHECK-NEXT: v2: undefined = Undefined
 # CHECK-NEXT: Return v2
@@ -5288,7 +5288,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f83
 # CHECK-LABEL: function f18 module=
 # CHECK: m0 position=3549 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] functionTypes=[f58] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: anything ~ undefined|null|function = GetModuleVariable variable=g8
+# CHECK-NEXT: v0: undefined|function = GetModuleVariable variable=g8
 # CHECK-NEXT: v1: "x" = String string="x"
 # CHECK-NEXT: v2: anything = Call v0, -, v1 calleeName="settle" accessSite=151
 # CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined} resolution=Assume}]
@@ -5355,8 +5355,8 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f83
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
-# CHECK: m0 position=1955 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=undefined|null|string site=w18 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="name"}] thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f303 fallback=f312} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: anything ~ undefined|null|function):
+# CHECK: m0 position=1955 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=undefined|null|string site=w18 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="name"}] thisType={type=anything} parameters=[{type=undefined|function}] results=[{type=undefined}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f303 fallback=f312} {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: undefined|function):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=undefined|null|string
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: undefined|null|string):
@@ -5542,8 +5542,8 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f83
 # CHECK-NEXT: Jump -> next b4() @426:2 tail
 # CHECK-NEXT: }
 # CHECK-LABEL: function f34 module=
-# CHECK: m0 position=1981 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|string site=w18 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="name"}, {type=undefined|null|function flags=[IsExpected] variableName="resolve"}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f46] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f306 fallback=f315} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: anything ~ undefined|null|function):
+# CHECK: m0 position=1981 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|string site=w18 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="name"}, {type=undefined|function variableName="resolve"}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f46] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f306 fallback=f315} {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: undefined|function):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=undefined|null|string
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: undefined|null|string):

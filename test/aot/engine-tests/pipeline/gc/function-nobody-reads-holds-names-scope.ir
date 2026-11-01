@@ -4449,7 +4449,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f136 visibility=Private
 # CHECK-NEXT: v3: Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: 0 = Integer
 # CHECK-NEXT: v5: Array<Promise<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = GetModuleVariable variable=g3
-# CHECK-NEXT: v6: unspecified|Array<undefined|object, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4 [mayPrecedeItsStore]
+# CHECK-NEXT: v6: unspecified|Array<undefined|function, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4 [mayPrecedeItsStore]
 # CHECK-NEXT: Jump -> next b1(v4)
 # CHECK-NEXT: b1(v7: int[0, 40]):
 # CHECK-NEXT: LoopHint
@@ -4463,7 +4463,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f136 visibility=Private
 # CHECK-NEXT: b3() handler=b4():
 # CHECK-NEXT: v14: f82 = NewClosure v13 function=f82 allocationSite=54
 # CHECK-NEXT: v15: fact = Entered function=f11
-# CHECK-NEXT: v16: Array<undefined|object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v6, v15 provenType=Array<undefined|object, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: Array<undefined|function, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v6, v15 provenType=Array<undefined|function, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v17: int[0, 4294967295] = CallBuiltin v16, v14 overload=ArrayPrototypePush/0 accessSite=58 @1473:4 tail
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() role=CatchHandler:

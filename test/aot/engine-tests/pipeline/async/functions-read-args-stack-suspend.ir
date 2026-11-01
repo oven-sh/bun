@@ -2760,8 +2760,8 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f36
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f16 module=
-# CHECK: m0 position=147 kind=Arrow captures=[{type=undefined|null|function flags=[IsExpected] variableName="resolve"}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function):
+# CHECK: m0 position=147 kind=Arrow captures=[{type=undefined|function variableName="resolve"}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|function):
 # CHECK-NEXT: v1: 1 = Integer integer=1
 # CHECK-NEXT: v2: anything = Call v0, -, v1 calleeName="resolve" accessSite=58
 # CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined} resolution=Assume}]

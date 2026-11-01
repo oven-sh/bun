@@ -643,8 +643,8 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f51 visibilit
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f4 module=
-# CHECK: m2 position=380 kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|object flags=[IsExpected]}, {type="b" site=w1 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|object, v1: "b", v2: anything ~ undefined|null|function, v3: anything ~ undefined|null|function):
+# CHECK: m2 position=380 kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|object flags=[IsExpected]}, {type="b" site=w1 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|function}, {type=undefined|function}] results=[{type=undefined}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|object, v1: "b", v2: undefined|function, v3: undefined|function):
 # CHECK-NEXT: v9: "b" = AssumeType v1 provenType=undefined|null|string
 # CHECK-NEXT: v10: "b" = AssumeType v9 provenType="b"
 # CHECK-NEXT: v4: f6 = NewClosure v3 function=f6 allocationSite=4
@@ -655,8 +655,8 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f51 visibilit
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function f6 module=
-# CHECK: m2 position=503 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|function flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function, v1: anything ~ undefined|null|object):
+# CHECK: m2 position=503 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|function}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0(v0: undefined|function, v1: anything ~ undefined|null|object):
 # CHECK-NEXT: v2: builtin(GlobalThis) = Builtin builtin=GlobalThis
 # CHECK-NEXT: v3: anything = PropGet v2 key="Error" accessSite=13 [isFreeName]
 # CHECK-NEXT: v13: builtin(Error) = AssumeType v3 provenType=builtin(Error)

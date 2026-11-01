@@ -198,7 +198,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { isWindows, tempDir } from "harness";
+import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 // @ts-expect-error resolved by package.json "module"
 import "../../third_party/svelte";
@@ -4781,10 +4781,11 @@ it.concurrent("the path passed to onLoad is still valid after the module is free
 // A specifier is read as the loader reads it: its query is not its extension, an extension can start with a digit,
 // and a colon in a relative or an absolute path does not start a namespace.
 describe.concurrent("what onResolve and onLoad are asked about", () => {
+  // (--no-install: nothing here may ask the registry, whatever a build under test does with a bare name.)
   async function run(files: Record<string, string>, args: string[], cwd = ".") {
     using dir = tempDir("plugin-asked", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
+      cmd: [bunExe(), "--no-install", ...args],
       cwd: resolve(String(dir), cwd),
       env: bunEnv,
       stdout: "pipe",
@@ -4796,7 +4797,9 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
 
   const names = /plain\.ts|video\.3gp|ok\.yaml\.1|note\.txt|\.env|\.babelrc|LICENSE|\.1$/;
   const specifiers = [
+    "./plain.ts?v=123",
     "./plain.ts?v=123.456",
+    "./plain.ts?v=.456",
     "./plain.ts?v=1.2.3",
     "./plain.ts?v=123.",
     "./plain.ts?next=../",
@@ -4862,67 +4865,68 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/4609
-  it("is such a file by an import statement, with an onLoad alone", async () => {
+  it("is such a file by an import statement, import() and require(), with an onLoad alone", async () => {
     const files = {
       "ok.yaml.1": "",
+      "ok.txt.2": "",
+      "video.3gp": "",
+      "ok.custom": "",
       "plugin.ts": `
         Bun.plugin({
           name: "Loader",
           async setup(build) {
-            build.onLoad({ filter: /\\.1$/ }, args => {
-              console.log("success");
-              return { exports: { from: "onLoad" }, loader: "object" };
-            });
+            for (const [filter, from] of [[/\\.1$/, "one"], [/\\.txt\\.2$/, "two"], [/\\.3gp$/, "3gp"], [/\\.custom$/, "custom"]])
+              build.onLoad({ filter }, () => ({ exports: { from }, loader: "object" }));
           },
         });
       `,
-      "index.ts": `import { from } from "./ok.yaml.1";\nconsole.log(from);`,
+      "index.ts": `
+        import { from } from "./ok.yaml.1";
+        const rest = [await import("./ok.txt.2"), await import("./video.3gp"), await import("./ok.custom"), require("./ok.yaml" + ".1")];
+        console.log(from, ...rest.map(module => module.from));
+      `,
     };
     expect(await run(files, ["--preload", "./plugin.ts", "index.ts"])).toEqual({
-      stdout: "success\nonLoad\n",
+      stdout: "one two 3gp custom one\n",
       stderr: "",
       exitCode: 0,
     });
   });
 
-  // The namespace and the path that onResolve is asked about for each specifier.
-  const asked: [specifier: string, namespace: string, path?: string][] = [
-    ["./plain.ts", "file"],
-    ["./plain.ts?v=123", "file"],
-    ["./plain.ts?v=1.2.3", "file"],
-    ["./plain.ts?v=123.", "file"],
-    ["./plain.ts?t=12:30", "file"],
-    ["<dir>/plain.ts", "file"],
-    ["<dir>/plain.ts?v=1.2.3", "file"],
-    ["./video.3gp", "file"],
-    ["<dir>/video.3gp", "file"],
-    ["./ok.yaml.1", "file"],
-    ["./menu.\u00e9", "file"],
-    ["./.env", "file"],
-    ["./.env?v=1.2.3", "file"],
-    ["./.1", "file"],
-    ["./v1.2/", "file"],
-    // A dot in the query or in a directory has always been enough.
-    ["./LICENSE?v=1.a", "file"],
-    ["./my.app/LICENSE", "file"],
-    ["./my.app/LICENSE?v=1.2", "file"],
-    ["../outside.d/helper", "file"],
-    ["highlight.js/lib/core", "file"],
-    ["chart.js/auto", "file"],
-    ["socket.io", "file"],
-    ["virtual-config?file=app.json", "file"],
-    ["virtual-b.js?v=1.5", "file"],
-    ["virtual-b.js?t=12:30", "file"],
-    [":memory:", "file"],
-    ["node:fs", "node", "fs"],
-    ["virtual:thing", "virtual", "thing"],
-    ["virtual:thing.js?t=12:30", "virtual", "thing.js?t=12:30"],
-    ...(isWindows
-      ? []
-      : ([
-          ["./with:colon/note.txt", "file"],
-          ["<dir>/with:colon/note.txt", "file"],
-        ] as [string, string][])),
+  // The namespace and the path that onResolve is asked about for each specifier: the specifier as it is, in the
+  // namespace "file", where nothing else is listed.
+  const asked: [specifier: string, ...asks: string[]][] = [
+    ["./plain.ts"],
+    ["./plain.ts?v=123"],
+    ["./plain.ts?v=1.2.3"],
+    ["./plain.ts?v=123."],
+    ["./plain.ts?t=12:30"],
+    ["<dir>/plain.ts"],
+    ["<dir>/plain.ts?v=1.2.3"],
+    ["./video.3gp"],
+    ["<dir>/video.3gp"],
+    ["./ok.yaml.1"],
+    ["./menu.\u00e9"],
+    ["./.env"],
+    ["./.env?v=1.2.3"],
+    ["./.1"],
+    ["./v1.2/"],
+    ["./LICENSE?v=1.a"],
+    ["./my.app/LICENSE"],
+    ["./my.app/LICENSE?v=1.2"],
+    ["../outside.d/helper"],
+    ["highlight.js/lib/core"],
+    ["chart.js/auto"],
+    ["socket.io"],
+    ["virtual-config?file=app.json"],
+    ["virtual-b.js?v=1.5"],
+    ["virtual-b.js?t=12:30"],
+    [":memory:"],
+    ["node:fs", "node fs"],
+    // In its namespace first, and when that declines in the namespace "file", whole.
+    ["virtual:thing", "virtual thing", "file virtual:thing"],
+    ["virtual:thing.js?t=12:30", "virtual thing.js?t=12:30", "file virtual:thing.js?t=12:30"],
+    ...(isWindows ? [] : ([["./with:colon/note.txt"], ["<dir>/with:colon/note.txt"]] satisfies [string][])),
   ];
   // Wherever the temporary directory is, nothing after the last dot of the path of `bin/cli` or of the source of
   // -e is an extension: they are under a directory whose name ends in a dot and a digit.
@@ -4954,10 +4958,12 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
   };
 
   it("is each of these for onResolve, and is not a path without an extension for onLoad", async () => {
-    expect(await run(fixture, ["--no-install", "--preload", "./plugin.ts", "entry.mjs"], "app-1.2")).toEqual({
+    expect(await run(fixture, ["--preload", "./plugin.ts", "entry.mjs"], "app-1.2")).toEqual({
       stdout:
-        asked.map(([specifier, namespace, path = specifier]) => `${namespace} ${path}\n`).join("") +
-        "disk\nCannot find module 'served@1.2'\n",
+        asked
+          .flatMap(([specifier, ...asks]) => (asks.length ? asks : ["file " + specifier]))
+          .map(ask => ask + "\n")
+          .join("") + "disk\nCannot find module 'served@1.2'\n",
       stderr: "",
       exitCode: 0,
     });

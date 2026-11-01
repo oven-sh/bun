@@ -953,15 +953,14 @@ unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
     out: *mut u16,
 ) -> SimdutfResult {
     // SAFETY: the caller passes a slice, as a pointer and a length.
-    let text = match core::str::from_utf8(unsafe { bytes(p, len) }) {
-        Ok(text) => text,
-        // simdutf's HEADER_BITS
-        Err(error) => {
-            return SimdutfResult {
-                status: 1,
-                count: error.valid_up_to(),
-            };
-        }
+    let input = unsafe { bytes(p, len) };
+    let (text, stopped_at) = match core::str::from_utf8(input) {
+        Ok(text) => (text, None),
+        // Like simdutf, convert what is in front of the ill-formed sequence: the caller keeps those units.
+        Err(error) => (
+            core::str::from_utf8(&input[..error.valid_up_to()]).unwrap_or_default(),
+            Some(error.valid_up_to()),
+        ),
     };
     let mut written = 0;
     for unit in text.encode_utf16() {
@@ -970,9 +969,16 @@ unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
         unsafe { out.add(written).write(unit) };
         written += 1;
     }
-    SimdutfResult {
-        status: 0,
-        count: written,
+    match stopped_at {
+        None => SimdutfResult {
+            status: 0,
+            count: written,
+        },
+        // simdutf's HEADER_BITS
+        Some(stopped_at) => SimdutfResult {
+            status: 1,
+            count: stopped_at,
+        },
     }
 }
 #[unsafe(no_mangle)]

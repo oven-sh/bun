@@ -1063,3 +1063,148 @@ it.each(["utf-16le", "utf-16be"])(
   },
   30_000,
 ); // 3072 decodes + repeated Bun.gc(true) take ~4s under ASAN.
+
+describe("UTF-8 with ill-formed sequences", () => {
+  // What https://encoding.spec.whatwg.org/#utf-8-decoder gives for each.
+  const illFormed = [
+    [[0xe0, 0x80, 0x80], "\ufffd\ufffd\ufffd"], // overlong
+    [[0xed, 0xa0, 0x80], "\ufffd\ufffd\ufffd"], // a surrogate
+    [[0xf4, 0x90, 0x80, 0x80], "\ufffd\ufffd\ufffd\ufffd"], // above U+10FFFF
+    [[0xe4, 0xb8], "\ufffd"], // ends early
+    [[0xf0, 0x9f, 0x98, 0x41], "\ufffdA"],
+    [[0xc3, 0x28], "\ufffd("],
+    [[0xff], "\ufffd"],
+    [[0x80], "\ufffd"],
+  ];
+  // One character of each encoded length.
+  const wellFormed = ["a", "é", "世", "😀"];
+  // Built as UTF-16, so that the UTF-8 decoder has no part in what it is compared with.
+  const repeat = (text, count) =>
+    Buffer.alloc(Buffer.byteLength(text, "utf16le") * count, text, "utf16le").toString("utf16le");
+
+  it("replaces them in long text", () => {
+    const decoder = new TextDecoder();
+    const fatal = new TextDecoder("utf-8", { fatal: true });
+    for (const character of wellFormed) {
+      // More than simdutf converts in one step, in front of the sequence and after it.
+      const count = Math.ceil(4500 / Buffer.byteLength(character));
+      const text = Buffer.alloc(count * Buffer.byteLength(character), character);
+      for (const [bytes, replaced] of illFormed) {
+        const input = Buffer.concat([text, Buffer.from(bytes), text]);
+        const expected = repeat(character, count) + replaced + repeat(character, count);
+        expect(decoder.decode(input) === expected, `[${bytes}] in ${character}`).toBe(true);
+        expect(() => fatal.decode(input), `fatal, [${bytes}] in ${character}`).toThrow(TypeError);
+        // The throw leaves nothing behind in the decoder.
+        expect(fatal.decode(text) === repeat(character, count), `fatal, after [${bytes}] in ${character}`).toBe(true);
+      }
+    }
+  });
+
+  it("decodes a stream to the same text wherever its chunks end", () => {
+    const parts = [];
+    for (const [bytes] of illFormed) parts.push(Buffer.from("aé世😀"), Buffer.from(bytes));
+    // Short text: a chunk can end at each byte of each sequence.
+    // Long text: the chunks are longer than what simdutf converts in one step.
+    const short = Buffer.concat(parts);
+    const long = Buffer.concat([Buffer.alloc(4000, "é"), short, Buffer.alloc(6003, "世"), Buffer.from([0xf0, 0x9f])]);
+    const ends = input => {
+      if (input === short) return Array.from({ length: input.length + 1 }, (_, end) => end);
+      // Around the ill-formed sequences, at the end, and some places in the long text.
+      const ends = [];
+      for (let end = 0; end <= input.length; end++) {
+        if (end % 509 === 0 || (end > 3990 && end < 4000 + short.length + 10) || end > input.length - 8) ends.push(end);
+      }
+      return ends;
+    };
+    for (const input of [short, long]) {
+      const expected = new TextDecoder().decode(input);
+      for (const first of ends(input)) {
+        for (const second of [first, first + 1, first + 2, first + 3, input.length]) {
+          if (second > input.length) continue;
+          const decoder = new TextDecoder();
+          const text =
+            decoder.decode(input.subarray(0, first), { stream: true }) +
+            decoder.decode(input.subarray(first, second), { stream: true }) +
+            decoder.decode(input.subarray(second), { stream: true }) +
+            decoder.decode();
+          expect(text === expected, `chunks end at ${first} and ${second} of ${input.length}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("a fatal stream throws for an ill-formed sequence and not for a sequence that a chunk cuts", () => {
+    const text = Buffer.from("aé世😀".repeat(3));
+    for (let end = 0; end <= text.length; end++) {
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      const decoded = decoder.decode(text.subarray(0, end), { stream: true }) + decoder.decode(text.subarray(end));
+      expect(decoded).toBe("aé世😀".repeat(3));
+    }
+    for (const [bytes] of illFormed) {
+      const input = Buffer.concat([text, Buffer.from(bytes), text]);
+      for (let end = 0; end <= input.length; end++) {
+        const decoder = new TextDecoder("utf-8", { fatal: true });
+        expect(() => {
+          decoder.decode(input.subarray(0, end), { stream: true });
+          decoder.decode(input.subarray(end));
+        }, `[${bytes}], first chunk ends at ${end}`).toThrow(TypeError);
+      }
+    }
+  });
+
+  // [name, fatal, calls, what each call gives]. A call is the bytes in hex,
+  // after a "+" when it is a `{ stream: true }` chunk. "" is decode() with no argument.
+  const THROWS = Symbol("throws");
+  it.each([
+    ["a sequence cut by a chunk, completed by the next", false, ["+e4b8", "+ad"], ["", "\u4e2d"]],
+    ["an empty chunk between the two", false, ["+e4b8", "+", "+ad"], ["", "", "\u4e2d"]],
+    ["a cut sequence at the end of the stream", false, ["+e4b8", ""], ["", "\ufffd"]],
+    ["nothing is left after the end of the stream", false, ["+e4", "", ""], ["", "\ufffd", ""]],
+    ["a cut sequence, then a byte that does not continue it", false, ["+e4b8", "41"], ["", "\ufffdA"]],
+    ["a tail that no byte can complete is not held back", false, ["+e080", ""], ["\ufffd\ufffd", ""]],
+    ["an ill-formed byte, then a cut sequence", false, ["+ffe4b8", "ad"], ["\ufffd", "\u4e2d"]],
+    ["a 4-byte sequence cut after 3 bytes", false, ["+c3a9fff09f98", "+80", ""], ["\u00e9\ufffd", "\ud83d\ude00", ""]],
+    ["a sequence that a later byte of the chunk ends", false, ["+f09f41", ""], ["\ufffdA", ""]],
+    ["the lead of a surrogate with its second byte", false, ["+eda0", ""], ["\ufffd\ufffd", ""]],
+    ["a lead above U+10FFFF with its second byte", false, ["+f490", ""], ["\ufffd\ufffd", ""]],
+    ["a lead, then a byte that is overlong with it", false, ["+e0", "+80", ""], ["", "\ufffd\ufffd", ""]],
+    ["ill-formed text that ends in a lead", false, ["+41ff42e4", "+b8ad"], ["A\ufffdB", "\u4e2d"]],
+    ["ASCII that ends in a cut sequence", false, ["+6162e4b8", "+ad63", ""], ["ab", "\u4e2dc", ""]],
+    ["a byte order mark, then a cut sequence", false, ["+efbbbfe4b8", "+ad"], ["", "\u4e2d"]],
+    ["two bytes of a byte order mark, then an ill-formed byte", false, ["+efbbff", ""], ["\ufffd\ufffd", ""]],
+    ["fatal: a cut sequence, completed by the next chunk", true, ["+e4b8", "+ad"], ["", "\u4e2d"]],
+    ["fatal: a cut sequence at the end of the stream", true, ["+e4b8", ""], ["", THROWS]],
+    ["fatal: a cut sequence that the next chunk does not continue", true, ["+41e4", "+ff", "42"], ["A", THROWS, "B"]],
+    ["fatal: an ill-formed byte in front of a cut sequence", true, ["+41ffe4", "b8ad", "41"], [THROWS, THROWS, "A"]],
+    ["fatal: a tail that no byte can complete", true, ["+e080", ""], [THROWS, ""]],
+    ["fatal: a cut byte order mark at the end of the stream", true, ["+efbb", ""], ["", THROWS]],
+    ["fatal: the rest of a cut sequence, then an ill-formed byte", true, ["+f09f98", "+80ff", "41"], ["", THROWS, "A"]],
+    ["fatal: an empty chunk inside a sequence", true, ["+61e4", "+", "+b8ad", ""], ["a", "", "\u4e2d", ""]],
+    ["fatal: a throw, then text", true, ["e4b8", "41"], [THROWS, "A"]],
+  ])("%s", (_, fatal, calls, expected) => {
+    const decoder = new TextDecoder("utf-8", { fatal });
+    const results = calls.map(call => {
+      try {
+        if (call === "") return decoder.decode();
+        return decoder.decode(Buffer.from(call.replace("+", ""), "hex"), { stream: call.startsWith("+") });
+      } catch (error) {
+        expect(error).toBeInstanceOf(TypeError);
+        return THROWS;
+      }
+    });
+    expect(results).toEqual(expected);
+  });
+
+  // A sequence that the end of a chunk cuts is held back before the chunk is
+  // decoded. What is left is then ASCII, and ASCII needs no 16-bit string.
+  it("a chunk of ASCII that ends inside a sequence decodes to an 8-bit string", () => {
+    const ascii = Buffer.alloc(100, "a").toString();
+    for (const cut of [[0xc3], [0xe4], [0xe4, 0xb8], [0xf0], [0xf0, 0x9f], [0xf0, 0x9f, 0x98]]) {
+      const decoder = new TextDecoder();
+      const text = decoder.decode(Buffer.concat([Buffer.from(ascii), Buffer.from(cut)]), { stream: true });
+      expect(text).toBe(ascii);
+      expect(text).toBeLatin1String();
+      expect(decoder.decode()).toBe("\ufffd");
+    }
+  });
+});

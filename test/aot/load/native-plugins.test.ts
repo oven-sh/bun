@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { afterAll, beforeAll, describe, test } from "../harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { slot, spawned, unsupported } from "../harness/commands";
+import { afterAll, beforeAll, describe, test } from "../harness/declare";
 
 type Files = Record<string, string>;
 type Environment = Record<string, string>;

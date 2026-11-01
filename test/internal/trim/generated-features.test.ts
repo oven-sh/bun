@@ -1,5 +1,4 @@
 import { expect } from "bun:test";
-import { describe, test } from "../../aot/harness/declare";
 import { bunExe, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +23,7 @@ import {
   removableFeatures,
   tableEntryRecord,
 } from "../../../src/codegen/removable-entry-points.ts";
+import { describe, test } from "../../aot/harness/declare";
 import { run } from "../../aot/harness/run";
 
 type Files = Partial<Record<(typeof featureFiles)[number], string>>;

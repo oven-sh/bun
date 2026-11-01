@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { join, resolve } from "node:path";
 import { collectBindgen } from "../../../src/codegen/builtins/collect-bindgen.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
+import { test } from "../../aot/harness/declare";
 
 const library = resolve(import.meta.dir, "../../../src/codegen/bindgen-lib.ts");
 

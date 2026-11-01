@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunExe, isASAN, isDebug, tempDir } from "harness";
+import { test } from "./harness/declare";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 

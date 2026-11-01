@@ -1,10 +1,10 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { checkMutability } from "../../../src/codegen/builtins/check.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type { ModelBuiltin } from "../../../src/codegen/builtins/model.ts";
 import { formatOwnProperties, parseOwnProperties } from "../../../src/codegen/builtins/own-properties.ts";
 import type { BuiltinKind, BuiltinMark, Mutability } from "../../../src/codegen/builtins/vocabulary.ts";
+import { test } from "../../aot/harness/declare";
 
 const holder = {
   text: "process",

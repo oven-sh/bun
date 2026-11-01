@@ -1,11 +1,11 @@
 // An error at the top level of a file quotes what failed, so an executable keeps the text of the statements there. It keeps no more than that: no comment between
 // statements, no function that nobody enters, no statement that only names data.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand } from "./harness/flags";
 import { beforeAll, describe, test } from "./supported";
 

@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./harness/declare";
 
 // The program never names node:async_hooks. Code that the build has not seen enables an `init` hook, and from then on process.nextTick, which is
 // the program's own, has to show each tick to the hook. Whichever copy of node:async_hooks enabled it: the one compiled with the program, or one

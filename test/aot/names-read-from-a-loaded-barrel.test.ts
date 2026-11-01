@@ -3,10 +3,10 @@
 // src/aot/compile/barrel_tests.rs list entry points by what is loaded behind a barrel. This test holds the same lines against the bundler:
 // a file behind the barrel is in the output or it is not. Where the two answer differently, `inTheBundler` holds the bundler's answer.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./harness/declare";
 
 const tests = readFileSync(join(import.meta.dir, "../../src/aot/compile/barrel_tests.rs"), "utf8");
 

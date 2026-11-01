@@ -1,6 +1,6 @@
 import { expect, setDefaultTimeout } from "bun:test";
-import { describe, test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
+import { describe, test } from "../../aot/harness/declare";
 import {
   addOne,
   asCStrings,

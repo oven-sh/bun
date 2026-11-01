@@ -1,5 +1,5 @@
-import { test } from "./harness/declare";
 import { unsupported } from "./harness/compiler";
+import { test } from "./harness/declare";
 import { oneLineChangesLittle } from "./one-line-changes-little-cases";
 
 if (unsupported) test.skip(unsupported, () => {});

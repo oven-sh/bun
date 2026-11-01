@@ -2,10 +2,10 @@
 // opened as many files as it may gets none (EMFILE). The constructor of fs.WriteStream catches that and writes to the descriptor that it was given. The two smaller
 // streams of a compiled program did not: the mere read of process.stderr threw, or the first write did, just where a program wants to say that it is out of descriptors.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 
 const untilNoneIsLeft = `const fs = require("node:fs");
 const held = [];

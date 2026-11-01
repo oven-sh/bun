@@ -3,10 +3,10 @@
 // pending error must not start a collection inside that call. The loop's own poll collects the garbage and withdraws the error.
 // An executable built with --aot-validate stops with "CallCollected" when a collection runs inside such a call.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
+import { test } from "./harness/declare";
 
 const objects = 40_000;
 

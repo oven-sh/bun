@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "../harness/declare";
 import { writeFileSync } from "fs";
 import { isWindows, tempDir } from "harness";
 import { join } from "path";
+import { test } from "../harness/declare";
 
 const python = Bun.which("python3");
 const pythonHasFcntlAndResource = !isWindows;

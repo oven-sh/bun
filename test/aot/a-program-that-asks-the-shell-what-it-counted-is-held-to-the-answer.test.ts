@@ -3,10 +3,10 @@
 // shell/expectations.py, and shell/quick.py as anybody starts it. None of them passes it whatever it counts, and where there is no shell the driver says
 // that it has not asked. shell/tools.ts says what the scripts need.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 

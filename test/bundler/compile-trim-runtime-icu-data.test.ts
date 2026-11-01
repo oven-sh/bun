@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "../aot/harness/declare";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { unsupported } from "../aot/harness/compiler";
+import { describe, test } from "../aot/harness/declare";
 import { sharedBuilds, sizeOf } from "../aot/harness/shared-builds";
 import { canTrim, featureNamed, saysFeatureWasRemoved, withoutFeatures } from "./compile-trim-features";
 

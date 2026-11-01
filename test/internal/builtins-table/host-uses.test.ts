@@ -1,5 +1,4 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { checkHostUses } from "../../../src/codegen/builtins/check-host-uses.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
@@ -16,6 +15,7 @@ import type {
   ModelType,
   TableModel,
 } from "../../../src/codegen/builtins/model.ts";
+import { test } from "../../aot/harness/declare";
 
 type CheckedModel = Parameters<typeof checkHostUses>[0];
 

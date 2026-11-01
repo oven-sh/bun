@@ -2,11 +2,11 @@
 // a holder that is missing there names a set that is gone, or another set that has taken its number. freeAOTFlowSetsEveryRound frees after every round, so that a small program meets what only a large one
 // meets otherwise. The executable must be the same, byte for byte, and a Bun with assertions stops at the first read of a freed set.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { mkdirSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand } from "./harness/flags";
 import { describe, test } from "./supported";
 

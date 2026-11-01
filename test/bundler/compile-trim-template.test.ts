@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { afterAll, describe, test } from "../aot/harness/declare";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/harness/commands";
+import { afterAll, describe, test } from "../aot/harness/declare";
 import { inTurn } from "../aot/harness/shared-builds";
 import { copyWithoutDebugInformation, withoutDebugInformation } from "../aot/harness/without-debug-information";
 import { canTrim, tempDirForAotBuilds } from "./compile-trim-features";

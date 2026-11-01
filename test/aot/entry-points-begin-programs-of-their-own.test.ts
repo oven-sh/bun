@@ -3,12 +3,12 @@
 // An entry point that loads a module by a name that the build does not know may load any of the others, so its program has to hold them all. An executable holds nothing twice: the
 // build has one program then, as it has where nothing starts a Worker.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
 import type { BuildReport } from "./harness/build-report";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand, withProgramOutput } from "./harness/flags";
 import { describe, test } from "./supported";
 

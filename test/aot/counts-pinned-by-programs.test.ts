@@ -5,9 +5,9 @@
 // run-parallel.ts and shell/expectations.py ask the same of a program that they are given, where there is a shell. A shard of CI that runs programs
 // need not have one: this test holds all of them wherever Bun has the compiler.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { afterAll } from "../harness/declare";
 import { bunExe, tempDir, type DirectoryTree } from "harness";
 import { linesOf, tsc } from "../../cli/check/differential";
 import { endChildren } from "../../cli/children";
+import { afterAll } from "../harness/declare";
 import { test } from "../with-compiler";
 import { describeDirectory, type TreeGraph } from "./describe";
 

@@ -1,5 +1,4 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { checkResultLayouts } from "../../../src/codegen/builtins/check-overloads.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type {
@@ -8,6 +7,7 @@ import type {
   ModelOverload,
   ModelResultLayout,
 } from "../../../src/codegen/builtins/model.ts";
+import { test } from "../../aot/harness/declare";
 
 const layoutOf = (token: string, isTuple = false): ModelLayout => ({ id: 0, token, isTuple, fields: [] });
 const step = layoutOf("IteratorResult");

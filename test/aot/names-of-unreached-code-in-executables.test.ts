@@ -4,11 +4,11 @@
 // By default it also keeps the text of its functions, for toString() and for what an error quotes. That is the text that `bun build --compile`
 // holds, so a name of unreached code may stand there where an executable built without --aot holds it too, and nowhere else.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { beforeAll, describe, eachRow, gap, test } from "./supported";

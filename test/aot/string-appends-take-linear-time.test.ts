@@ -6,10 +6,10 @@
 //
 //   AOT_STRING_APPENDS=<text>    only the idioms whose name contains the text
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { describe, test } from "./supported";
 
 // `build(appends)` answers the length of the string it has built.

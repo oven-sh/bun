@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import type { MemberDeclaration } from "../../../src/codegen/builtins/declarations.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
 import { targetPlatforms } from "../../../src/codegen/builtins/vocabulary.ts";
+import { test } from "../../aot/harness/declare";
 
 const separator = Object.fromEntries(
   targetPlatforms.map(platform => [platform, b.enumeration([platform === "Windows" ? "\\" : "/"])]),

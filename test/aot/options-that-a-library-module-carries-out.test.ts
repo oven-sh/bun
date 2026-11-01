@@ -2,9 +2,9 @@
 // modules that the program uses, so an executable does without that one: native code sets the limit as the module would, and the options that only print or write
 // something for whoever started the program are ignored with a warning. A server starts, whatever its environment holds.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { afterAll } from "./harness/declare";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";

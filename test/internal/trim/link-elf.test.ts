@@ -1,6 +1,5 @@
 import { trimExecutable } from "bun:internal-for-testing";
 import { expect, setDefaultTimeout } from "bun:test";
-import { describe, test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { closeSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { constants } from "node:os";
@@ -12,6 +11,7 @@ import { elfImage } from "../../../scripts/build/trim/linked-image.ts";
 import { unnamedSectionPrefix } from "../../../scripts/build/trim/linker-elf.ts";
 import { foldedEntryPointsHeading } from "../../../scripts/build/trim/report.ts";
 import { findHolders, parseRetained } from "../../../scripts/build/trim/why.ts";
+import { describe, test } from "../../aot/harness/declare";
 import { packageOf } from "../icu-data-package.ts";
 import {
   addressInMap,

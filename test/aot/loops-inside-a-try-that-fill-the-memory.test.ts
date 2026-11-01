@@ -1,10 +1,10 @@
 // A loop inside a try block fills the range of the program's objects with one kind of thing. The RangeError comes to the catch clause of that try block, whatever the loop makes:
 // the loop has its handler for what it makes, not for its own turns.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
+import { test } from "./harness/declare";
 
 const made: Record<string, string> = {
   instances: `new Point(i, i)`,

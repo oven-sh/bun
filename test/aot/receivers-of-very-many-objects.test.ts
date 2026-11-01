@@ -2,9 +2,9 @@
 // Flow links receivers of very many objects through the sets of objects they share.
 // No test program is that large, so the limit is lowered.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 

@@ -2,11 +2,11 @@
 // It happens to many objects one after the other, in every order of the fields, while accessors and read-only properties come and go above them, while they get other prototypes, become prototypes,
 // are frozen, get fields defined on them by a class that returns them from its parent's constructor, and while collections run. One program holds all of it, each case with declarations of its own. It runs under plain Bun and as an --aot executable, with its types and without, and prints the same.
 import { expect } from "bun:test";
-import { afterAll, describe, test } from "./harness/declare";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, describe, test } from "./harness/declare";
 
 // Every second case names each key that it uses and never lists the keys of its objects.
 const namesItsKeys = (n: number) => n % 2 === 0;

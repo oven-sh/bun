@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "../aot/harness/declare";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "../aot/harness/declare";
 import { run } from "../aot/harness/run";
 import { canTrim } from "./compile-trim-features";
 

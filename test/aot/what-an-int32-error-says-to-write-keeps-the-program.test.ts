@@ -2,11 +2,11 @@
 // program printed before, as long as its numbers stay int32: `A[top++] = x` still stores at the old `top`, and `++i * 3` is
 // still a product. Every form of the advice stands here, each where the words around it matter.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { describe, test } from "./supported";
 
 const head = `import type { int32 } from "bun";\n`;

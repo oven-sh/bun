@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 
 const build = (naming: string) => `import plugin, { calls } from "./plugin";
 const result = await Bun.build({ entrypoints: ["./main.ts"], compile: { outfile: process.argv[2], aot: true }, ${naming} plugins: [plugin], throw: false });

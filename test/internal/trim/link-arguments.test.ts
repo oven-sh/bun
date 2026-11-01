@@ -1,5 +1,4 @@
 import { expect, setDefaultTimeout, spyOn } from "bun:test";
-import { describe, test } from "../../aot/harness/declare";
 import { bunExe, tempDir } from "harness";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -30,6 +29,7 @@ import type { LinkerFormat, LinkName, LinkRequest } from "../../../scripts/build
 import type { RemovableRange } from "../../../scripts/build/trim/ranges.ts";
 import { removedRangeListBytes, roomFor } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry, BuiltinUses } from "../../../scripts/build/trim/types.ts";
+import { describe, test } from "../../aot/harness/declare";
 import { run } from "../../aot/harness/run";
 import { packageOf } from "../icu-data-package.ts";
 import { feature, modelOf } from "./toy-graph.ts";

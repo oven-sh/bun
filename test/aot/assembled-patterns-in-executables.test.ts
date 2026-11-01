@@ -1,11 +1,11 @@
 // A program can put the source of a regular expression together while it runs, so that no file of the build spells it. The compiler
 // foresees such expressions and compiles them ahead of time, and must not spell their sources in the executable either.
 import { expect } from "bun:test";
-import { afterAll, describe, test } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, describe, test } from "./harness/declare";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const sources = {

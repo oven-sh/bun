@@ -1,10 +1,10 @@
 // A Bun built with assertions can ask of every call that may throw whether somebody looked for the exception behind it
 // (BUN_JSC_validateExceptionChecks=1), and aborts where nobody did. Any other Bun ignores the variable.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 
 const programs: Record<string, { main: string; files: Record<string, string>; stdout: string; flags?: string[] }> = {
   "async generators that hand on to each other, taken by hand and by for await": {

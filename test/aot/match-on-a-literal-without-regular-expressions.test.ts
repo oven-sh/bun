@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim, featureNamed, saysFeatureWasRemoved, withoutFeatures } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 

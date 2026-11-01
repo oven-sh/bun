@@ -2,9 +2,9 @@
 // turns. With 4,000,000 turns planned, the short run took the loop and the long run the copy: a copy of 11 instructions a turn for the loop's 8 read 12.
 // The program here is arithmetic, so this needs no counter of the processor.
 import { expect } from "bun:test";
-import { test } from "../harness/declare";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { test } from "../harness/declare";
 import { fewestTurnsThatTakeTheCopy, mostTurnsOfLoopWithoutCopy, runsOfReading } from "./measure-idioms";
 
 /** `inFront` turns stand in front of the loop, each at the price of a turn of the loop. The copy is for over 2 ** 20 turns that are left. */

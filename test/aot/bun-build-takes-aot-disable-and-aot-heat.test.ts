@@ -1,12 +1,12 @@
 // `bun build --compile --aot` takes --aot-disable=<names> and --aot-heat=<word>. Bun.build takes the same words as compile.aotDisable and compile.aotHeat.
 // One function reads both spellings, so the same words give the same executable, byte for byte, and a word that the one rejects the other rejects with the same sentence.
 import { expect } from "bun:test";
-import { afterAll, describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
+import { afterAll, describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
 import { copyWithoutDebugInformation, withoutDebugInformation } from "./harness/without-debug-information";

@@ -3,11 +3,11 @@
 // --compile-exec-argv. What the bunfig.toml of the working directory would load is ignored. A build with --compile-inspector, or with --inspect in --compile-exec-argv, takes both kinds, unless it has
 // --no-compile-function-source or --obfuscate.
 import { expect } from "bun:test";
-import { afterAll } from "../harness/declare";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "../harness/commands";
+import { afterAll } from "../harness/declare";
 import { beforeAll, describe, test } from "../supported";
 
 const before = `(globalThis as any).loaded = "preloaded";\nconsole.log("before");\n`;

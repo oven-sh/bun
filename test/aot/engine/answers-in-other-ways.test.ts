@@ -3,9 +3,9 @@
 // failing now and then, as hot and as cold code, without expected types, without the results of the flow analysis and with every allocation on its slow path.
 //   testaot run <aot/tests>/answers --option=<way> --show-output
 import { expect } from "bun:test";
-import { test } from "../harness/declare";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "../harness/declare";
 import { engineTests, run, whyNoNativeTests } from "./testaot";
 
 const ways = [

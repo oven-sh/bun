@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 
 const files = {
   "hello.ts": `

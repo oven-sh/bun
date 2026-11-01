@@ -5,11 +5,11 @@
 // the object looks like afterwards, and what an object that nobody touched looks like. There --aot may differ from plain Bun in
 // two ways only: the call fails with an error and leaves the object untouched, or typed code that reads the object afterwards throws.
 import { expect } from "bun:test";
-import { afterAll, beforeAll, describe, test } from "./harness/declare";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, beforeAll, describe, test } from "./harness/declare";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const programs = join(import.meta.dir, "napi-addon");

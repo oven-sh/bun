@@ -2,9 +2,9 @@
 // functions share is there several times, each copy within reach of its callers. No test program is that large, so the reach is lowered.
 // How the code is laid out: the engine's native tests image/layout/*. Here a program runs that is laid out so.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 

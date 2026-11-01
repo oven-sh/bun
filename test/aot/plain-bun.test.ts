@@ -1,10 +1,10 @@
 // Bugs in Bun without --aot that the programs under ./programs have found. The correct output of such a program is stored in
 // its last comment, so that --aot is still tested with it; this file checks plain `bun run` against the same output.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
+import { test } from "./harness/declare";
 
 /** What the last comment of the program says it prints: see run-parallel.ts. */
 const storedOutput = (program: string) =>

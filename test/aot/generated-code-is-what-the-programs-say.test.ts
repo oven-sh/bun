@@ -3,9 +3,9 @@
 // shell/expectations.py asks them, of testaot and the `jsc` shell. shell/known-failures.txt lists the lines that are not met today:
 // one more fails here, and so does a listed one that is met again, so the list only gets shorter.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { isArm64, isASAN, isDebug, isLinux } from "harness";
 import { join } from "path";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 

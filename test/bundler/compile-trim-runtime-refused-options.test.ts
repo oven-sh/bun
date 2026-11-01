@@ -1,8 +1,8 @@
 // Options at startup and --trim. With --aot, every option in each of its forms: compile-trim-bun-options.test.ts.
 import { expect } from "bun:test";
-import { describe, test } from "../aot/harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "../aot/harness/compiler";
+import { describe, test } from "../aot/harness/declare";
 import { run } from "../aot/harness/run";
 import { sharedBuilds, type Build } from "../aot/harness/shared-builds";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";

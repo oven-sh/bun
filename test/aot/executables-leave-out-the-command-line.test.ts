@@ -1,11 +1,11 @@
 // An executable compiled ahead of time never starts the JIT and never acts as `bun`, so `bun build --compile --aot` leaves both out, with or without --trim.
 // What the program itself can use stays. Each way into what was left out answers with a sentence.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, isWindows } from "harness";
 import { join } from "node:path";
 import { canTrim, model } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 import { sharedBuilds, sizeOf, type Build } from "./harness/shared-builds";
 import { readRemovedFeatures } from "./trimmed-against-whole/removed-features";

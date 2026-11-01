@@ -3,10 +3,10 @@
 // or the handler of exceptions ran with nothing thrown. The program is one of the corpus, of which a run takes a share. This file
 // runs it on every platform, every time.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 
 const program = join(import.meta.dir, "parallel", "calls", "worker-terminated-inside-loop-calls.ts");
 

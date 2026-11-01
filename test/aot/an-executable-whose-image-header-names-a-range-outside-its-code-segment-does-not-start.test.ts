@@ -1,5 +1,4 @@
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import {
   bunEnv,
@@ -15,6 +14,7 @@ import { findImage, imageHeader } from "./cli/compiled-image";
 import { runCopy, type SpawnResult } from "./cli/edited-executable";
 import { isHardened } from "./hardened";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { beforeAll, describe, test } from "./supported";
 
 // Eight classes are too many to tell apart by tests: the calls of `area` go through the image's method table, which has the last pages in front of the code to itself.

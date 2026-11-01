@@ -1,13 +1,13 @@
 // A test that needs a build of Bun of its own skips itself on every other build. No test of this file skips itself.
 // getTestBunStep() of .buildkite/ci.ts says in EXPECTED_PLATFORM_* what build it hands to scripts/runner.node.ts.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { hasGuardedPages, isHardened, locksEnvironment } from "./hardened";
 import { namesOfSections } from "./harness/commands";
 import { unsupported } from "./harness/compiler";
+import { test } from "./harness/declare";
 
 const { EXPECTED_PLATFORM_PROFILE: profile, EXPECTED_PLATFORM_CANARY: canary } = process.env;
 

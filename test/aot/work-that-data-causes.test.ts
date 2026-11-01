@@ -2,10 +2,10 @@
 // Each form of work-that-data-causes/forms.js and typed-forms.ts answers on the same input as it does in plain Bun.
 // A table that such data fills must not make the work quadratic: the forms that once were run on an input on which quadratic work does not end in time.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
+import { afterAll } from "./harness/declare";
 import { measureUntilWithinBounds } from "./harness/measure-again";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";

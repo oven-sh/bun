@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 
 test.skipIf(!!unsupported)(
   "an object literal with an index among its keys still gets its Structure in one step",

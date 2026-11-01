@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, spawned } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { test } from "./supported";
 
 // On Windows the title of a process is the title of its console. The processes on a console share it and it outlives

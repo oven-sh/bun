@@ -3,9 +3,9 @@
 // cold, or neither. Where the shell dies of a signal on Linux, shell/quick.py says where (shell/where-it-died.py). shell/tools.ts says what
 // the scripts need.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 

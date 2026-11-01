@@ -1,10 +1,10 @@
 // The sampling profiler's tier breakdown has a row for compiled code: a sample whose top frame is a compiled function counts as "AOT".
 // Plain Bun has no such row.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { test } from "./harness/declare";
 import { test as testCompiled } from "./supported";
 
 // The inner loop is int32 arithmetic with no calls, so nearly every sample has its pc in hot() itself.

@@ -1,10 +1,10 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
+import { test } from "../../aot/harness/declare";
 import { engineDirectory, engineFiles as generated } from "./engine-files.ts";
 
 const bunRoot = resolve(import.meta.dir, "..", "..", "..");

@@ -3,11 +3,11 @@
 // beside flow's own statements. A rule that newly opens the body of every function with a literal or a loop in it
 // fails no other test and moves no answer.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";

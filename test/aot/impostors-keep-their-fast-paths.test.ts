@@ -1,10 +1,10 @@
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { cpSync, readFileSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { built, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { buildEnvironment, compileCommand, withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import {

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { withoutCoreDump, withoutCrashReport } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { run as runProcess } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 

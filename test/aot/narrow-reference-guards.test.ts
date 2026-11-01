@@ -6,10 +6,10 @@
 // fails shows nothing, so here the pointers are left out and the build must fail. With the scan's knowledge of the numbers turned off,
 // the pointers alone must keep every object alive.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 
 const program = `
 class Link {

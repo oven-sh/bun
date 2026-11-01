@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 
 if (isASAN)

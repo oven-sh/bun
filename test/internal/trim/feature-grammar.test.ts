@@ -1,5 +1,4 @@
 import { expect } from "bun:test";
-import { describe, test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { join } from "node:path";
 import { BuildError } from "../../../scripts/build/error";
@@ -11,6 +10,7 @@ import {
   readFeatureModel,
   serializeFeatureModel,
 } from "../../../scripts/build/trim/features";
+import { describe, test } from "../../aot/harness/declare";
 
 type Files = Partial<Record<(typeof featureFiles)[number], string>>;
 

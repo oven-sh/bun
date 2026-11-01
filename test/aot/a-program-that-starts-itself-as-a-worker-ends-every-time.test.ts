@@ -4,10 +4,10 @@
 // spawned()'s time limit and is listed with that signal and with what it had printed. The runs from source say whether an order
 // that goes wrong is one of compiled code alone.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 
 const program = join(import.meta.dir, "parallel", "library-modules", "worker-thread-and-message-channels.js");
 const runs = 36;

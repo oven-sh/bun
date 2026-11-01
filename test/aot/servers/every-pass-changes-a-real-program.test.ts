@@ -19,12 +19,12 @@
 //
 // It prints one line a pass that begins with PASS: the changes by program; and one that begins with ROUNDS.
 import { expect } from "bun:test";
-import { afterAll } from "../harness/declare";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { readBuildReport, type BuildReport } from "../harness/build-report";
 import { built, slot, spawned } from "../harness/commands";
+import { afterAll } from "../harness/declare";
 import { compileCommand, withReport } from "../harness/flags";
 import { beforeAll, describe, test } from "../supported";
 import { installSmallRenderer } from "../typed-packages/small-renderer/install";

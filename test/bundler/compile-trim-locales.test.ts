@@ -2,11 +2,11 @@
 // ICU also opens the data of its own default locale, which it takes from the host: the first date format of a process makes a calendar in it. No program sees that locale
 // (Bun's default is en-US on every host), so the language of the host decides nothing: not where it was removed, and not where the host has none (LANG=C is en_US_POSIX to ICU).
 import { expect } from "bun:test";
-import { describe, test } from "../aot/harness/declare";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
+import { describe, test } from "../aot/harness/declare";
 import { run } from "../aot/harness/run";
 import { inTurn } from "../aot/harness/shared-builds";
 import { copyWithoutDebugInformation, withoutDebugInformation } from "../aot/harness/without-debug-information";

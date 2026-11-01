@@ -1,10 +1,10 @@
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
 import { withoutCoreDump } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { run as runProcess } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 

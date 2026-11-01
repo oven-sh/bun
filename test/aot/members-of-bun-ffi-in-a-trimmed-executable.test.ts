@@ -1,10 +1,10 @@
 // Bun.FFI is the object behind bun:ffi. Each program names one member of it and nothing else of bun:ffi, so that member alone has to keep the feature in a trimmed executable.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const calls = {

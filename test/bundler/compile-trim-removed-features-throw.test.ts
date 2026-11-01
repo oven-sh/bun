@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { afterAll, beforeAll, describe, test } from "../aot/harness/declare";
 import { bunEnv, isWindows } from "harness";
 import { isBuiltin } from "node:module";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
+import { afterAll, beforeAll, describe, test } from "../aot/harness/declare";
 import {
   builtinEntries,
   canTrim,

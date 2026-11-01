@@ -1,11 +1,11 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { checkNamesReadByNativeCode } from "../../../src/codegen/builtins/check-host-uses.ts";
 import { Problems, type Declaration } from "../../../src/codegen/builtins/declarations.ts";
 import { registerLibraryModule } from "../../../src/codegen/builtins/load-declaration-files.ts";
 import type { ModelBuiltin, ModelName } from "../../../src/codegen/builtins/model.ts";
+import { test } from "../../aot/harness/declare";
 
 const root = resolve(import.meta.dir, "../../..");
 

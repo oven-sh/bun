@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "../aot/harness/declare";
 import { bunExe, isASAN, isGlibc, isMacOS, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "../aot/harness/declare";
 import { run } from "../aot/harness/run";
 import { withoutDebugInformation } from "../aot/harness/without-debug-information";
 import { canTrim } from "./compile-trim-features";

@@ -1,11 +1,11 @@
 // The pages about bun compile show commands and what they print. Each command that is directly followed by its output
 // is run here. Every line of the output on the page has to be printed, in that order; a page may leave lines out.
 import { expect } from "bun:test";
-import { describe, test } from "../aot/harness/declare";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 import { unsupported } from "../aot/harness/commands";
+import { describe, test } from "../aot/harness/declare";
 
 const compiles = !unsupported;
 const hasTheShellOfThePages = !isWindows;

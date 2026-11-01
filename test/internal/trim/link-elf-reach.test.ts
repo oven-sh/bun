@@ -1,6 +1,6 @@
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { isMusl, tempDir } from "harness";
+import { test } from "../../aot/harness/declare";
 import {
   canLink,
   compileFeatureCodeOnce,

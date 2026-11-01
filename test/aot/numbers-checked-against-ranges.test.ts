@@ -2,9 +2,9 @@
 // no number is inside such a range. ./parallel/builtin-modules/numbers-checked-against-ranges/as-node-checks.cjs holds what Node does.
 import { exposedInternals } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 
 const asNode = require("./parallel/builtin-modules/numbers-checked-against-ranges/as-node-checks.cjs");

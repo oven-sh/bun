@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import * as b from "../../../src/codegen/builtins/lib.ts";
+import { test } from "../../aot/harness/declare";
 
 const once = { afterwards: "TouchesOnlyWhatRowNames", times: "Once" } as const;
 

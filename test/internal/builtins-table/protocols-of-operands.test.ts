@@ -1,10 +1,10 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import type { WrittenSignature } from "../../../src/codegen/builtins/build-entries.ts";
 import { applyUses, OverloadContext, type EntryContext } from "../../../src/codegen/builtins/build-uses.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
 import type { ModelName, ModelParameter } from "../../../src/codegen/builtins/model.ts";
 import type { Protocol, UseSpec } from "../../../src/codegen/builtins/vocabulary.ts";
+import { test } from "../../aot/harness/declare";
 
 const receiver = { operand: "Receiver" } as const;
 

@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "../../aot/harness/declare";
 import { featureNamed } from "../../../scripts/build/trim/features.ts";
 import { Demangler } from "../../../scripts/build/trim/report.ts";
+import { describe, test } from "../../aot/harness/declare";
 import { model, skipNotice } from "./toy-program.ts";
 
 const namesAndParameters: [mangled: string, text: string][] = [

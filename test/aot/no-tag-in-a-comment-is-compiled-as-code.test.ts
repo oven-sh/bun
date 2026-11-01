@@ -3,11 +3,11 @@
 // Every tag that the parser knows, with texts behind it that would be code if they were read as code, at every kind of place, in each kind
 // of JavaScript file: the executable prints what `bun run` prints. A call that ran says which case it stands in.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { describe, test } from "./supported";

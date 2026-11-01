@@ -1,10 +1,10 @@
 // b.leftOut(): what the table leaves out of a host.
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { parseHashTable } from "../../../src/codegen/builtins/collect-static-tables.ts";
 import type { LeftOutDeclaration, Source } from "../../../src/codegen/builtins/declarations.ts";
 import { leftOut } from "../../../src/codegen/builtins/lib.ts";
 import { ModelBuilder } from "../../../src/codegen/builtins/model-builder.ts";
+import { test } from "../../aot/harness/declare";
 
 const source: Source = { file: "made-up.builtins.ts", line: null, origin: "Host", proof: "Structure" };
 

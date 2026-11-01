@@ -1,5 +1,4 @@
 import { expect } from "bun:test";
-import { describe, test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { join } from "node:path";
 import { BuildError } from "../../../scripts/build/error.ts";
@@ -37,6 +36,7 @@ import {
   type RemovableRange,
 } from "../../../scripts/build/trim/ranges.ts";
 import { xxh3 } from "../../../scripts/build/trim/xxh3.ts";
+import { describe, test } from "../../aot/harness/declare";
 import { packageOf } from "../icu-data-package.ts";
 import { A, feature, modelOf, partitioned, tableOutput } from "./toy-graph.ts";
 

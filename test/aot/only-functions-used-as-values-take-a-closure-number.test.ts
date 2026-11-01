@@ -3,9 +3,9 @@
 // build needed 4.6 million and the build stopped. Now only a function that is used as a value takes one. No test program is
 // that large, so the limit is lowered below the number of functions that the program below has.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 

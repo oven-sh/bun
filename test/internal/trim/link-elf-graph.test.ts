@@ -1,5 +1,4 @@
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { isMusl, tempDir } from "harness";
 import { closeSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,6 +6,7 @@ import { ArchiveCache } from "../../../scripts/build/trim/archive.ts";
 import { openElf } from "../../../scripts/build/trim/elf-file.ts";
 import { readElfGraph } from "../../../scripts/build/trim/elf-graph.ts";
 import { readElfObject } from "../../../scripts/build/trim/elf-objects.ts";
+import { test } from "../../aot/harness/declare";
 import {
   canLink,
   compileFeatureCodeOnce,

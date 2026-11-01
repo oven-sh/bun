@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { isASAN, isLinux } from "harness";
 import { readFileSync } from "node:fs";
+import { test } from "./harness/declare";
 
 // AddressSanitizer adds thread-local state of its own.
 test.skipIf(!isLinux || isASAN)("the static TLS block that every thread pays for stays small", () => {

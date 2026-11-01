@@ -11,11 +11,11 @@
 //   executable", is the list of what may. A rule for what some test might do belongs behind what the files of the run do.
 //   A share that rises: raise the number here. It prints one line a server that begins with EQUAL.
 import { expect } from "bun:test";
-import { afterAll } from "../harness/declare";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned } from "../harness/commands";
+import { afterAll } from "../harness/declare";
 import { raiseDefaultTimeout } from "../harness/default-timeout";
 import { buildEnvironment, compileCommand } from "../harness/flags";
 import { beforeAll, describe, test } from "../supported";

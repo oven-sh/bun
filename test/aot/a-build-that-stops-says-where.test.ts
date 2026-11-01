@@ -4,11 +4,11 @@
 //
 // `--aot-sabotage=<name>` (hidden) makes a build stop at a known place: in a function named stopsTheCompiler, or at a step that every build has.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { existsSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { describe, test } from "./supported";
 
 const program = `

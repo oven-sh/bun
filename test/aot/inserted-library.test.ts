@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
+import { afterAll } from "./harness/declare";
 import { run } from "./harness/run";
 import { test } from "./supported";
 

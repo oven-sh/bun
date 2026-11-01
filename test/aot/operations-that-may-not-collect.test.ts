@@ -3,11 +3,11 @@
 // places: a collection that is forced at an allocation is skipped while collections are deferred, and these operations stopped where a deferral ended.
 // engine-tests/validation/*-beside-a-collector.ir start three more programs so in the engine's shell.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { withoutCoreDump } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
 

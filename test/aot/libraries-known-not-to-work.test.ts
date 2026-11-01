@@ -2,11 +2,11 @@
 // Here each row has a small program that does what the package does. The program runs under plain Bun, is built with `bun compile`, and the
 // executable has to print the messages of the row, letter for letter. A row without a program fails, and so does a program without a row.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { slot, unsupported } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 
 const read = (path: string) => readFileSync(join(import.meta.dir, path), "utf8");

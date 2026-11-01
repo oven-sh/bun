@@ -1,9 +1,9 @@
 // The program reads every member of `process`, takes one more step, and prints the keys in order.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunExe } from "harness";
 import { canTrim } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 

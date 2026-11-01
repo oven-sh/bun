@@ -3,11 +3,11 @@
 // in one program, those that only read in another. The executable and plain Bun then run it in another environment and must agree.
 // `process.env.NODE_ENV` written out is not among the cases: the bundler replaces it at every build, with --aot and without.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join } from "path";
 import { built, spawned, told, unsupported } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 
 const lines = readFileSync(join(import.meta.dir, "built-in-one-environment-run-in-another.fixture.mjs"), "utf8").split(
   "\n",

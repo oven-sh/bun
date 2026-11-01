@@ -6,11 +6,11 @@
 // program that looks under the symbol finds the map, whichever form the headers had. `bun run` evaluates another text of node:http,
 // which has none of the three.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fixture, measure, stacks } from "../js/node/http/node-http-fast-path-coverage";
+import { afterAll } from "./harness/declare";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";

@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { Type, type FunctionDefinition } from "../../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../../src/codegen/bindgen-lib.ts";
 import { declareFunction } from "../../../src/codegen/builtins/collect-bindgen.ts";
 import type { MemberDeclaration } from "../../../src/codegen/builtins/declarations.ts";
+import { test } from "../../aot/harness/declare";
 
 const boolean = { type: "Primitive", primitive: "Boolean" };
 const number = { type: "Primitive", primitive: "Number" };

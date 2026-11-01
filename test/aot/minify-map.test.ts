@@ -2,11 +2,11 @@
 // without --aot does. With --sourcemap=external it writes <outfile>.map, which holds what each token stands for and is not part of the
 // executable. With that file alone, what the executable prints is turned back into what the executable built without --minify prints.
 import { expect } from "bun:test";
-import { afterAll, describe, test } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, describe, test } from "./harness/declare";
 
 const sources = {
   "entryOfTheTest.ts": `

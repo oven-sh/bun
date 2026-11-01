@@ -1,8 +1,8 @@
 // Each file of the program makes a Worker from text and prints what the Worker reports.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { canTrim } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 

@@ -3,11 +3,11 @@
 // the call are one operation with one return address, and a stack trace took the read for the call: f was missing. The stored program shows it only beside these
 // two others, and which programs share a build is dealt anew whenever a program comes: so the three are built together here.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand } from "./harness/flags";
 import { describe, test } from "./supported";
 

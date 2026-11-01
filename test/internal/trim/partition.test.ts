@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { describe, test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { describe, test } from "../../aot/harness/declare";
 
 import { BuildError } from "../../../scripts/build/error.ts";
 import type { Feature, FeatureModel } from "../../../scripts/build/trim/features.ts";

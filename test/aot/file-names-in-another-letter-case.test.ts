@@ -1,11 +1,11 @@
 // On a file system that tells the letter cases apart plain Bun still finds `import "./Foo.ts"` of foo.ts: the file name as written, with its extension, is looked for without regard to case, both
 // spellings are one module, and require.resolve answers the name that the folder lists. A name without its extension and a folder in another case are not found. An executable does the same.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand } from "./harness/flags";
 import { describe, test } from "./supported";
 

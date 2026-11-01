@@ -5,11 +5,11 @@
 // and looks for a function that ends in a call all the same. One call may stand last: the poll that a failed stack check in the
 // prologue branches to. It is told its function by the address of the call itself and returns to the prologue, never behind itself.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 
 // Methods of many lengths that are taken off their objects. Each has an entry that tests `this`, throws by a call if it is not
 // an object of the class, and goes on into the method, which is laid next: the shape that once ended in a call.

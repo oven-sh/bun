@@ -1,8 +1,8 @@
 import { expect, setDefaultTimeout } from "bun:test";
-import { describe, test } from "../../aot/harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { describe, test } from "../../aot/harness/declare";
 
 import { readBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import type { BuiltinEntry, BuiltinKind } from "../../../scripts/build/trim/types.ts";

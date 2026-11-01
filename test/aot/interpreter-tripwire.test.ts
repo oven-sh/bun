@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { realpathSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { afterAll } from "./harness/declare";
 import { run as runProcess } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 

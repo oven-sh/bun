@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { afterAll, describe, test } from "../aot/harness/declare";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows } from "harness";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
+import { afterAll, describe, test } from "../aot/harness/declare";
 import { run } from "../aot/harness/run";
 import { inTurn } from "../aot/harness/shared-builds";
 import { copyWithoutDebugInformation } from "../aot/harness/without-debug-information";

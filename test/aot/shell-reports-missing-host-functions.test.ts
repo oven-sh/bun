@@ -2,10 +2,10 @@
 // function without testing that it is there, so the shell puts one in its place that names the function the program needs, and
 // shell/quick.py skips the program. shell/tools.ts says what the scripts need.
 import { expect } from "bun:test";
-import { test } from "./harness/declare";
 import { tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 

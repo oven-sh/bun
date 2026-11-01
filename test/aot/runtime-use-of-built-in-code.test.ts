@@ -1,7 +1,7 @@
 // What a program is said to use although it names nothing: the names in the built-in JavaScript that is compiled into every executable.
 import { expect } from "bun:test";
-import { describe } from "./harness/declare";
 import { builtinModules } from "node:module";
+import { describe } from "./harness/declare";
 import { closed, completeness, type Use } from "./runtime-use-expectations";
 import { of } from "./runtime-use-harness";
 import { eachRow, test } from "./supported";

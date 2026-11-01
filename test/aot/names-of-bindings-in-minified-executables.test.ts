@@ -1,11 +1,11 @@
 // `bun build --minify-identifiers` renames functions, classes, variables, parameters and imports. An executable built with --aot has no text to rename, and it shows such a name in `name`, in a stack trace and in a message:
 // under the flag it shows a short one, and the executable does not hold what was written. Keys, strings, names of globals and what a direct eval can ask for stay. --keep-names keeps everything.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { beforeAll, describe, test } from "./supported";

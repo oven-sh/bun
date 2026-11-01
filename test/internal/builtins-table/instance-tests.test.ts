@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import { checkInstanceTests } from "../../../src/codegen/builtins/check-instance-tests.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type { BuiltinFlag, ModelBuiltin, ModelClass } from "../../../src/codegen/builtins/model.ts";
+import { test } from "../../aot/harness/declare";
 
 function classOf(token: string, columns: Partial<ModelClass> = {}): ModelClass {
   return {

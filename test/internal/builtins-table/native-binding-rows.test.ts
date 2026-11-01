@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { test } from "../../aot/harness/declare";
 import type { Schema } from "../../../src/codegen/aot-schema/load.ts";
 import { buildEntries, ModelBuilder } from "../../../src/codegen/builtins/build-entries.ts";
 import type { Declaration, SourcedDeclaration } from "../../../src/codegen/builtins/declarations.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
+import { test } from "../../aot/harness/declare";
 
 const path = "native:Cpp:Path.cpp:createNodePathBinding";
 

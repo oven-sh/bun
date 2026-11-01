@@ -2,9 +2,9 @@
 // code ends in the flag's own error, an EvalError with one text. An executable built with --aot refuses code from the disk
 // anyway, in words of its own. Where the flag is set it says what the flag says, so the two builds print the same.
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { afterAll } from "./harness/declare";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";

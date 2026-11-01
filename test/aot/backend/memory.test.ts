@@ -1,9 +1,9 @@
 // Runs alone: it judges by the memory that a server holds.
 import { expect } from "bun:test";
-import { test } from "../harness/declare";
 import { writeFileSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
+import { test } from "../harness/declare";
 
 const python = Bun.which("python3");
 

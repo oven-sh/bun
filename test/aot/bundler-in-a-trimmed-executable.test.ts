@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, spawned, unsupported, withoutDebugInformation } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 
 type Completeness = "Complete" | "Incomplete";
 

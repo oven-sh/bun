@@ -1,9 +1,9 @@
 import { expect, setDefaultTimeout } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";

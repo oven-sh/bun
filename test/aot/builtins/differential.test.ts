@@ -12,12 +12,12 @@
 // passed everywhere, and the others where the table or one of those few shows that native code tells the family from the rest.
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { afterAll } from "../harness/declare";
 import { bunEnv, bunExe, isASAN, isDebug, isGlibc, tempDir } from "harness";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { needsDifferentialTest } from "../../../src/codegen/builtins/dump.ts";
+import { afterAll } from "../harness/declare";
 import { beforeAll, describe, test } from "../supported";
 import { checkCall } from "./differential/check-call";
 import { formatDifference } from "./differential/compare";

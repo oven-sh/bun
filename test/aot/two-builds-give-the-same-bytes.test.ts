@@ -3,11 +3,11 @@
 // there are registers, so each of them moves several values between the stack and registers at the ends of its loop: the order of such
 // moves once followed addresses.
 import { expect } from "bun:test";
-import { afterAll, describe, test } from "./harness/declare";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, describe, test } from "./harness/declare";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const numberOfFunctions = 150;

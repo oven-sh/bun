@@ -1,9 +1,9 @@
 import { readTrimTable } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { afterAll, describe, test } from "../../aot/harness/declare";
 import { tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { afterAll, describe, test } from "../../aot/harness/declare";
 
 import { BuildError } from "../../../scripts/build/error.ts";
 import { loadFeatures } from "../../../scripts/build/trim/features.ts";

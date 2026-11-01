@@ -1,5 +1,4 @@
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import {
   chmodSync,
@@ -17,6 +16,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { slot } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { run as runCommand } from "./harness/run";
 import { test as oneAtATime, unsupported } from "./supported";
 

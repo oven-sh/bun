@@ -3,11 +3,11 @@
 // version left nodes and edges behind for each: sites times rounds. The program below needs about a tenth of the bound
 // when reads wait.
 import { expect } from "bun:test";
-import { describe, test } from "./harness/declare";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";

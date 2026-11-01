@@ -11,7 +11,6 @@
 //   bun test test/aot/sabotages                          all
 //   AOT_SABOTAGE=<text> bun test test/aot/sabotages      the names that contain the text
 import { expect } from "bun:test";
-import { afterAll } from "./harness/declare";
 import { readdirSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join, resolve } from "path";
@@ -26,6 +25,7 @@ import {
   withoutCrashReport,
   withoutDebugInformation,
 } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { registry } from "./harness/registry";
 import { describe, test } from "./supported";
 

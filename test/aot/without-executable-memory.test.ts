@@ -1,10 +1,10 @@
 import { expect } from "bun:test";
-import { afterAll, describe, test } from "./harness/declare";
 import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { copyFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened, locksEnvironment } from "./hardened";
 import { unsupported, withoutCoreDump } from "./harness/commands";
+import { afterAll, describe, test } from "./harness/declare";
 
 const programs = join(import.meta.dir, "without-executable-memory");
 const control = "asks-for-executable-memory";

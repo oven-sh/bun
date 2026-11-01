@@ -507,6 +507,7 @@ public:
     bool keepsModuleObject { false };
 #if ENABLE(AOT)
     std::optional<unsigned> compiledModuleThatNeverRan;
+    unsigned testFileOfFirstLoad { 0 };
 #endif
 
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSValue factory, JSC::JSString* specifier, JSC::JSString* writtenSpecifier, ModuleMockFunction);
@@ -3044,6 +3045,7 @@ void runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     RETURN_IF_EXCEPTION(scope, );
     loaded.compiledModule = module;
     mock->compiledModuleThatNeverRan = module.index();
+    mock->testFileOfFirstLoad = Bun::isBunTest && !JSMock__isInPreload(globalObject) ? globalObject->onLoadPlugins.testFile : 0;
     if (loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports())
         loaded.esmNamespace = nullptr;
     // Nothing was loaded when the mock was made. Since then the host has answered a require(): of a name that the build does not know, or from code outside the image.
@@ -3177,6 +3179,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // Nor does vi.doMock() patch what a test file loaded. This file's importers keep it. What an earlier file left is loaded again: in Vitest a file starts with nothing loaded.
     bool isDoMock = function == ModuleMockFunction::ViDoMock;
     unsigned loadedByTestFile = globalObject->onLoadPlugins.testFileOfModule.get(specifier);
+#if ENABLE(AOT)
+    if (previous && previous->compiledModuleThatNeverRan && !loadedByTestFile)
+        loadedByTestFile = previous->testFileOfFirstLoad;
+#endif
     bool wasLoadedByImportActual = globalObject->onLoadPlugins.loadedByImportActual.remove(specifier);
     bool staysTheOriginal = wasLoadedByImportActual || isInNodeModules(specifier) || (isDoMock && loadedByTestFile == globalObject->onLoadPlugins.testFile);
     bool leavesLoadedModuleAlone = mock->isOfVitest() && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!loadedByTestFile || staysTheOriginal || isDoMock);
@@ -3242,6 +3248,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         mock->patchOrder = previous->patchOrder;
         if (JSValue exports = previous->originalCommonJSExports.get())
             mock->originalCommonJSExports.set(vm, mock, exports);
+#if ENABLE(AOT)
+        mock->compiledModuleThatNeverRan = previous->compiledModuleThatNeverRan;
+        mock->testFileOfFirstLoad = previous->testFileOfFirstLoad;
+#endif
     } else {
         if (loaded.esmNamespace)
             mock->originalExports.set(vm, mock, JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()));

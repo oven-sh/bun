@@ -1446,8 +1446,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::CompileCommand
             | CommandTag::TestCommand
     ) {
-        if !args.options(b"--conditions").is_empty() {
-            opts.conditions = slice_to_owned(args.options(b"--conditions"));
+        let cli_conditions = args.options(b"--conditions");
+        if !cli_conditions.is_empty() {
+            // Append CLI conditions to any set from bunfig.toml so both sources
+            // stack rather than the CLI clobbering the config.
+            opts.conditions.extend(slice_to_owned(cli_conditions));
         }
         // `bun run --aot` runs the files that `bun build --compile --aot` compiles.
         let runs_program = !matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand);

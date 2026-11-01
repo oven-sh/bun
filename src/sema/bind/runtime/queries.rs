@@ -4,7 +4,7 @@ use super::storage::RuntimeDeclarationsIn;
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
+    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
     StoreKind, SymbolStore, has_mapped_arguments, stability,
 };
 use crate::atom::Atom;
@@ -260,6 +260,23 @@ impl RuntimeBindings<'_> {
 
     pub fn implicit_references(&self) -> &[ImplicitReference] {
         &self.references.implicit_references
+    }
+
+    pub fn implicit_references_of_element(&self, element: ExprId) -> &[ImplicitReference] {
+        let element_of = |reference: &ImplicitReference| match (reference.kind, reference.node) {
+            (ImplicitReferenceKind::DecoratorMetadata(_), _) => None,
+            (_, NodeData::Expr(element)) => Some(element),
+            _ => None,
+        };
+        let references = self.implicit_references();
+        let start = references.partition_point(|it| element_of(it).is_some_and(|at| at < element));
+        let len = references[start..].partition_point(|it| element_of(it) == Some(element));
+        &references[start..start + len]
+    }
+
+    pub fn is_named_implicitly(&self, symbol: SymbolId) -> bool {
+        let mut references = self.implicit_references().iter();
+        references.any(|reference| reference.binding == Binding::Symbol(symbol))
     }
 
     pub fn redeclared_commonjs_variables(&self) -> &[(SymbolId, CommonJsVariable)] {

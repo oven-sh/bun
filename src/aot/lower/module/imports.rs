@@ -453,6 +453,20 @@ impl WayToDeclaration<'_> {
                     None => false,
                 }
             }
+            // A name of a CommonJS file that another file hands on.
+            Some((ExportBinding::Synthetic(handed_on), _)) => {
+                match *modules.synthetic_export(handed_on) {
+                    SyntheticExport {
+                        module: ModuleRef::File(next),
+                        name,
+                        ..
+                    } if next != file => self.ask(next, name, AskedBy::Name),
+                    _ => {
+                        self.steps.push(Step::Declaration);
+                        true
+                    }
+                }
+            }
             Some(_) => {
                 self.steps.push(Step::Declaration);
                 true

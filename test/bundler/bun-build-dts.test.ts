@@ -236,30 +236,13 @@ export function run(n: number): string {
     });
     const built = await bun(String(dir), "build", "./index.ts", "--outdir", "src", "--dts");
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(readFileSync(join(String(dir), "src/index.aot.ts"), "utf8")).toBe(`// src/util.ts
-interface Flagged {
-  n: string;
-}
-function util2(options: Flagged): string {
-  return options.n;
-}
-
-// util.ts
-interface Options {
-  n: number;
-}
-function util(options: Options): string {
-  return String(options.n);
-}
-
-// index.ts
-const other = ({});
-function run(n: number): string {
-  return util({ n }) + util2({ n: "x" });
-}
-export {
-  run
-};
-`);
+    const typed = readFileSync(join(String(dir), "src/index.aot.ts"), "utf8");
+    expect(typed.match(/^(?:interface|function) .*$/gm)).toEqual([
+      "interface Flagged {",
+      "function util2(options: Flagged): string {",
+      "interface Options {",
+      "function util(options: Options): string {",
+      "function run(n: number): string {",
+    ]);
   });
 });

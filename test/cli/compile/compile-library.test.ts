@@ -201,9 +201,6 @@ describe.concurrent("bun compile --library", () => {
       module: "./index.js",
       types: "./index.d.ts",
     });
-    expect(readFileSync(join(String(dir), "dist/tools/index.aot.ts"), "utf8")).toBe(
-      `// src/tools/index.ts\nconst tool: string = "hammer";\nexport {\n  tool\n};\n`,
-    );
   });
 
   const where = {

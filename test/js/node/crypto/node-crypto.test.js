@@ -908,6 +908,21 @@ describe("integer arguments whose JSValue is a double", () => {
   });
 });
 
+it("getCipherInfo() takes keyLength and ivLength as unsigned 32-bit integers", () => {
+  for (const option of ["keyLength", "ivLength"]) {
+    for (const length of [-1, 2 ** 32]) {
+      expect(() => crypto.getCipherInfo("aes-128-gcm", { [option]: length })).toThrow(
+        expect.objectContaining({
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "options.${option}" is out of range. It must be >= 0 && <= 4294967295. Received ${length}`,
+        }),
+      );
+    }
+  }
+  expect(crypto.getCipherInfo("aes-128-gcm", { ivLength: 2 ** 32 - 1 }).ivLength).toBe(2 ** 32 - 1);
+  expect(crypto.getCipherInfo("aes-128-gcm", { keyLength: 2 ** 32 - 1 })).toBeUndefined();
+});
+
 describe("ECDH", () => {
   it("should have correct method names", () => {
     const ecdh = crypto.createECDH("prime256v1");

@@ -66,6 +66,22 @@ enum class CipherOperation {
     recover,
 };
 
+// Reads an option that names a digest. `digest` stays empty if the option is undefined.
+static void getDigestOption(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* options, ASCIILiteral name, ASCIILiteral argName, ncrypto::Digest& digest)
+{
+    JSValue value = options->get(globalObject, Identifier::fromString(globalObject->vm(), name));
+    RETURN_IF_EXCEPTION(scope, );
+    if (value.isUndefined())
+        return;
+    V::validateString(scope, globalObject, value, argName);
+    RETURN_IF_EXCEPTION(scope, );
+    GCOwnedDataScope<WTF::StringView> view = asString(value)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    digest = ncrypto::Digest::FromName(view);
+    if (!digest)
+        ERR::OSSL_EVP_INVALID_DIGEST(scope, globalObject);
+}
+
 JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, KeyType keyType, CipherOperation operation, int32_t defaultPadding)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -76,9 +92,10 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     JSValue optionsValue = callFrame->argument(0);
     JSValue bufferValue = callFrame->argument(1);
 
-    // Like Node, validate the cipher options (padding, oaepHash, oaepLabel) before any key
+    // The cipher options (padding, oaepHash, mgf1Hash, oaepLabel) are validated before any key
     // parsing so an invalid digest is reported even when the key material itself is invalid.
     ncrypto::Digest digest;
+    ncrypto::Digest mgf1Digest;
     int32_t padding = defaultPadding;
     std::optional<WTF::Vector<uint8_t>> oaepLabel;
     JSValue encodingValue = jsUndefined();
@@ -90,21 +107,10 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        JSValue oaepHashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepHash"_s));
+        getDigestOption(lexicalGlobalObject, scope, options, "oaepHash"_s, "key.oaepHash"_s, digest);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!oaepHashValue.isUndefined()) {
-            V::validateString(scope, lexicalGlobalObject, oaepHashValue, "options.oaepHash"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSString* oaepHashString = oaepHashValue.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            GCOwnedDataScope<WTF::StringView> oaepHashView = oaepHashString->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            digest = ncrypto::Digest::FromName(oaepHashView);
-            if (!digest) {
-                ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
-                return {};
-            }
-        }
+        getDigestOption(lexicalGlobalObject, scope, options, "mgf1Hash"_s, "key.mgf1Hash"_s, mgf1Digest);
+        RETURN_IF_EXCEPTION(scope, {});
 
         encodingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
         RETURN_IF_EXCEPTION(scope, {});
@@ -114,7 +120,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         if (!oaepLabelValue.isUndefined()) {
             // Key parsing below runs user JS (option getters, warning events) that could
             // detach a borrowed label buffer, so copy the bytes instead of holding a view.
-            auto view = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
+            auto view = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "key.oaepLabel"_s, encodingValue);
             RETURN_IF_EXCEPTION(scope, {});
             oaepLabel = copyArgumentBytes(lexicalGlobalObject, scope, std::span { view->data(), view->size() }, "oaepLabel"_s);
             if (!oaepLabel) return {};
@@ -184,6 +190,13 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         return {};
     }
 
+    // Under another padding, OpenSSL's encryption and decryption ignore the OAEP options. BoringSSL refuses them.
+    if (padding != RSA_PKCS1_OAEP_PADDING && (operation == CipherOperation::encrypt || operation == CipherOperation::decrypt)) {
+        digest = nullptr;
+        mgf1Digest = nullptr;
+        oaepLabel.reset();
+    }
+
     ncrypto::Buffer<const void> labelBuf = {};
     if (oaepLabel) {
         labelBuf = {
@@ -195,6 +208,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     ncrypto::Cipher::CipherParams cipherParams {
         .padding = padding,
         .digest = digest,
+        .mgf1_digest = mgf1Digest,
         .label = labelBuf,
     };
 

@@ -4305,6 +4305,14 @@ where
                         MAX_REQUEST_BODY_PREALLOCATE_LENGTH
                     };
                     buf.reserve_exact(this.request_body_content_len.get().min(cap));
+                } else if !MUX && buf.len() + chunk.len() > buf.capacity() {
+                    // More than the preallocation has arrived: grow once to the declared
+                    // length (already within maxRequestBodySize) instead of doubling, which
+                    // copies every byte received so far on each growth.
+                    let declared = this.request_body_content_len.get();
+                    if declared >= buf.len() + chunk.len() {
+                        buf.reserve_exact(declared - buf.len());
+                    }
                 }
                 buf.extend_from_slice(chunk);
             });

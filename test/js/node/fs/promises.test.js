@@ -243,6 +243,53 @@ test("errors from fs.promises include async stack frames", async () => {
   expect(caught.stack).toContain("at async level1");
 });
 
+async function stackOfRejectionUnderStackTraceLimit(limit) {
+  async function level3() {
+    await readFile("/nonexistent-path/does-not-exist.txt");
+  }
+  async function level2() {
+    await level3();
+  }
+  async function level1() {
+    await level2();
+  }
+
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  let caught;
+  try {
+    Error.stackTraceLimit = limit;
+    await level1();
+  } catch (e) {
+    caught = e;
+  } finally {
+    Object.defineProperty(Error, "stackTraceLimit", descriptor);
+  }
+  expect(caught?.code).toBe("ENOENT");
+  return caught.stack;
+}
+
+// A limit that is no number records no stack, as in Node.js v26.3.0. The row "2" passes without that too: a number always was the count.
+test.each([
+  ["2", 2, ["at async level3", "at async level2"]],
+  ['"x"', "x", undefined],
+  ["undefined", undefined, undefined],
+])(
+  "errors from fs.promises get the async frames that an Error.stackTraceLimit of %s allows",
+  async (_, limit, frames) => {
+    const stack = await stackOfRejectionUnderStackTraceLimit(limit);
+    expect(typeof stack === "string" ? stack.match(/at async \w+/g) : stack).toEqual(frames);
+  },
+);
+
+// Node.js v26.3.0 has a stack of the message line alone there, and Bun has none, so this only says that no frame is attached.
+// The rows 0 and -1 pass without the change too.
+test.each([0, -1, NaN])(
+  "errors from fs.promises get no async frames under an Error.stackTraceLimit of %p",
+  async limit => {
+    expect(String(await stackOfRejectionUnderStackTraceLimit(limit))).not.toContain("\n    at ");
+  },
+);
+
 test("fs.promises async stack through Promise subclass", async () => {
   class MyPromise extends Promise {}
 

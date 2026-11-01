@@ -942,8 +942,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         Ok(())
     }
 
-    /// The href of a `URL` prints like a property. The entries of a `Headers` print like the entries of a `Map`:
-    /// `deepEquals` compares them apart from the own properties, so a header and an own property with one name must differ.
+    /// A header prints like a `Map` entry, so it differs from an own property with its name: `deepEquals` compares the two apart.
     fn print_native_state(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let state = native_state_of(global_this, self.parent)?;
         if state.is_string() {

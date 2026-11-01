@@ -367,16 +367,14 @@ extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t le
     return false;
 }
 
-// deepEquals compares the entries of a Headers and the href of a URL before the own properties.
-// It does the same for a URLSearchParams, which is not a DOM wrapper cell and prints as JSON.
+// deepEquals compares the entries or the href before the own properties. It does so for a URLSearchParams too, which prints as JSON.
 extern "C" bool SnapshotFormat__isHeadersOrURL(EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
     return dynamicDowncast<WebCore::JSFetchHeaders>(value) || dynamicDowncast<WebCore::JSDOMURL>(value);
 }
 
-// Those entries as an object, or that href as a string, read from the native object: no toJSON is called.
-// Undefined for a Headers with no entries.
+// The entries as an object or the href as a string, with no call of toJSON. Undefined for a Headers with no entries.
 extern "C" EncodedJSValue SnapshotFormat__nativeStateOf(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     auto& vm = getVM(globalObject);

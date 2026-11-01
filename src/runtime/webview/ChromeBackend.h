@@ -485,9 +485,9 @@ public:
         return it->value.get();
     }
 
-    // Register a fresh view. Returns its viewId and stores one Weak.
-    // Called from JSWebView::createChrome after the transport is up.
-    uint32_t registerView(JSWebView*);
+    // reserveView() adds the id with an empty Weak before the view's cell exists, bindView() stores the Weak.
+    uint32_t reserveView();
+    void bindView(uint32_t viewId, JSWebView*);
 };
 
 Transport& transport();

@@ -6575,9 +6575,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         features.minify_syntax || (features.is_library && features.dead_code_elimination)
     }
 
-    /// Whether an expression statement is reduced to its side effects. A parse that minifies
-    /// syntax, bundles or tree-shakes does that. Any other parse is a transpile and keeps the
-    /// statement as written.
+    /// A plain transpile keeps an unused expression statement as written.
     pub(crate) fn should_simplify_unused_expr(&self) -> bool {
         self.should_remove_dead_statements()
             || ((self.options.bundle || self.options.tree_shaking)

@@ -1,12 +1,30 @@
 #include "HandleScopeBuffer.h"
 #include "GlobalInternals.h"
 #include "../v8_handle_scope_data.h"
+#include <atomic>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace v8 {
 namespace shim {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HandleScopeBuffer);
+
+// See releaseRetiredGlobalHandle(). Process-wide, because the v8::Global that points to a retired
+// handle is disposed in another VM, or on a thread that has none.
+struct RetiredGlobalHandles {
+    WTF::Lock lock;
+    WTF::HashSet<Handle*> handles WTF_GUARDED_BY_LOCK(lock);
+    // handles.size(), so that the lock is only taken once a buffer was freed with live handles.
+    std::atomic<unsigned> count { 0 };
+};
+
+static RetiredGlobalHandles& retiredGlobalHandles()
+{
+    static WTF::NeverDestroyed<RetiredGlobalHandles> retired;
+    return retired;
+}
 
 HandleScopeBuffer::HandleScopeBuffer(Bun::HandleScopeImpl* owner, Isolate* isolate)
     : m_owner(owner)
@@ -17,7 +35,17 @@ HandleScopeBuffer::HandleScopeBuffer(Bun::HandleScopeImpl* owner, Isolate* isola
     m_savedLimit = data->limit;
 }
 
-HandleScopeBuffer::~HandleScopeBuffer() = default;
+HandleScopeBuffer::~HandleScopeBuffer()
+{
+    if (m_liveGlobalHandles.isEmpty()) {
+        return;
+    }
+    // v8::Globals still point to these handles.
+    auto& retired = retiredGlobalHandles();
+    WTF::Locker locker { retired.lock };
+    retired.handles.addAll(m_liveGlobalHandles);
+    retired.count.store(retired.handles.size());
+}
 
 JSC::VM& HandleScopeBuffer::vm() const
 {
@@ -157,13 +185,19 @@ void HandleScopeBuffer::evacuateActiveReturnValues(Bun::HandleScopeImpl* parent)
     }
 }
 
+TaggedPointer* HandleScopeBuffer::setHandle(Handle& handle, const Handle& value)
+{
+    WTF::Locker locker { m_owner->cellLock() };
+    handle = value;
+    return handle.slot();
+}
+
 TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Handle* reuseHandle)
 {
     int32_t smi;
     if (address.getSmi(smi)) {
         if (reuseHandle) {
-            *reuseHandle = Handle(smi);
-            return reuseHandle->slot();
+            return setHandle(*reuseHandle, Handle(smi));
         } else {
             return createSmiHandle(smi);
         }
@@ -186,13 +220,102 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
                     reinterpret_cast<Oddball*>(v8_object)->kind());
             }
         }
+        if (v8_object->map()->m_instanceType == InstanceType::HeapNumber) {
+            if (reuseHandle) {
+                return setHandle(*reuseHandle, Handle(v8_object->asDouble()));
+            } else {
+                return createDoubleHandle(v8_object->asDouble());
+            }
+        }
         if (reuseHandle) {
-            *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner);
-            return reuseHandle->slot();
+            return setHandle(*reuseHandle, Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner));
         } else {
             return createHandle(v8_object->asCell(), v8_object->map(), vm());
         }
     }
+}
+
+// Whether `scope` or a scope around it has V8 handles.
+static bool hasV8Handles(Bun::HandleScopeImpl* scope)
+{
+    for (; scope; scope = scope->parent()) {
+        if (scope->v8Handles()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool isRetiredGlobalHandle(Handle* handle)
+{
+    auto& retired = retiredGlobalHandles();
+    // Zero proves it without the lock: an address is retired, and counted, before its storage is freed.
+    if (!retired.count.load()) {
+        return false;
+    }
+    WTF::Locker locker { retired.lock };
+    return retired.handles.contains(handle);
+}
+
+TaggedPointer* HandleScopeBuffer::createGlobalHandle(TaggedPointer address)
+{
+    Handle* handle = m_freeGlobalHandles.isEmpty() ? &createEmptyHandle() : m_freeGlobalHandles.takeLast();
+    // A v8::Global still points to a retired address, and disposing it would dispose this handle,
+    // so the handle stays unused.
+    while (isRetiredGlobalHandle(handle)) {
+        handle = &createEmptyHandle();
+    }
+    TaggedPointer* slot = createHandleFromExistingObject(address, handle);
+    if (slot != handle->slot()) {
+        // undefined, null, true or false: the slot is one of the isolate's roots
+        m_freeGlobalHandles.append(handle);
+        return slot;
+    }
+    m_liveGlobalHandles.add(handle);
+    return slot;
+}
+
+void HandleScopeBuffer::disposeGlobalHandle(TaggedPointer* slot)
+{
+    auto* handle = reinterpret_cast<Handle*>(slot);
+    if (!m_liveGlobalHandles.remove(handle)) {
+        return;
+    }
+    m_disposedGlobalHandles.append(handle);
+    if (hasV8Handles(m_isolate->globalObject()->m_currentHandleScopeImpl.get())) {
+        return;
+    }
+    // Never waits: a static v8::Global is destroyed at exit, when the thread that holds the lock may be gone.
+    if (auto locker = WTF::Locker<JSC::JSCellLock>::tryLock(m_owner->cellLock())) {
+        releaseDisposedGlobalHandles(locker);
+    }
+}
+
+bool HandleScopeBuffer::releaseRetiredGlobalHandle(TaggedPointer* slot)
+{
+    auto& retired = retiredGlobalHandles();
+    if (!retired.count.load()) {
+        return false;
+    }
+    // Never waits, like disposeGlobalHandle(). An address that stays retired is just never used again.
+    if (!retired.lock.tryLock()) {
+        return false;
+    }
+    WTF::Locker locker { WTF::AdoptLock, retired.lock };
+    if (!retired.handles.remove(reinterpret_cast<Handle*>(slot))) {
+        return false;
+    }
+    retired.count.store(retired.handles.size());
+    return true;
+}
+
+void HandleScopeBuffer::releaseDisposedGlobalHandles(const WTF::AbstractLocker&)
+{
+    for (Handle* handle : m_disposedGlobalHandles) {
+        *handle = Handle();
+    }
+    m_freeGlobalHandles.appendVector(m_disposedGlobalHandles);
+    m_disposedGlobalHandles.shrink(0);
 }
 
 void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
@@ -210,6 +333,12 @@ void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
     // the frame is read.
     if (parent && !internals->activeReturnValueSlots().isEmpty()) {
         evacuateActiveReturnValues(parent);
+    }
+    if (auto* globalHandles = internals->globalHandlesIfCreated()) {
+        if (!globalHandles->m_disposedGlobalHandles.isEmpty() && !hasV8Handles(parent)) {
+            WTF::Locker locker { globalHandles->m_owner->cellLock() };
+            globalHandles->releaseDisposedGlobalHandles(locker);
+        }
     }
     // The owner detaches this buffer and then frees it, along with every handle.
 }

@@ -54,6 +54,8 @@ public:
 
     // Returns the scope for v8::Global handles. It's never closed.
     HandleScopeBuffer* globalHandles();
+    // Null until the first v8::Global is created. Unlike globalHandles(), this never allocates.
+    HandleScopeBuffer* globalHandlesIfCreated();
 
     // Returns the innermost open scope's V8 handles (GlobalObject::m_currentHandleScopeImpl). Like V8,
     // aborts if no scope is open. Bun opens a scope around every native callback it makes.

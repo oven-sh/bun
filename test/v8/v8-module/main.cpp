@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <iomanip>
 #include <iostream>
+#include <vector>
 
 using namespace v8;
 
@@ -489,6 +490,183 @@ void GlobalTestWrapper::store(Isolate *isolate, Local<Value> new_value) {
 }
 
 void GlobalTestWrapper::cleanup(void *unused) { value.Reset(); }
+
+// v8::Global::Reset() and ~Global() call v8::api_internal::DisposeGlobal. It
+// has to let go of the Global's value, and it must not change what a Local or
+// a return value that was read from the Global before shows.
+
+// Globals that outlive the native call that created them.
+static std::vector<Global<Value>> held_globals;
+// The Global that the functions below read and reset.
+static Global<Value> stored_global;
+constexpr int primitive_global_count = 8;
+static Global<Value> primitive_globals[primitive_global_count];
+
+// node cannot destroy a non-empty static Global at exit.
+static void reset_test_globals(void *unused) {
+  held_globals.clear();
+  stored_global.Reset();
+  for (Global<Value> &global : primitive_globals) {
+    global.Reset();
+  }
+}
+
+// Holds each argument in a new Global.
+void global_hold(const FunctionCallbackInfo<Value> &info) {
+  for (int i = 0; i < info.Length(); i++) {
+    held_globals.emplace_back(info.GetIsolate(), info[i]);
+  }
+}
+
+void global_held(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> values = Array::New(isolate);
+  for (size_t i = 0; i < held_globals.size(); i++) {
+    values->Set(context, static_cast<uint32_t>(i), held_globals[i].Get(isolate))
+        .Check();
+  }
+  info.GetReturnValue().Set(values);
+}
+
+void global_reset_held(const FunctionCallbackInfo<Value> &info) {
+  held_globals.clear();
+}
+
+// Holds a value in a Global, moves the Global, reads it and resets it, all in
+// one native call.
+void global_hold_and_reset(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Global<Value> global(isolate, info[0]);
+  Global<Value> moved(std::move(global));
+  Local<Value> local = moved.Get(isolate);
+  moved.Reset();
+  info.GetReturnValue().Set(local);
+}
+
+void global_store(const FunctionCallbackInfo<Value> &info) {
+  stored_global.Reset(info.GetIsolate(), info[0]);
+}
+
+static std::string name_of(Isolate *isolate, Local<Value> value) {
+  if (!value->IsObject()) {
+    return "not an object: " + describe(isolate, value);
+  }
+  Local<Value> name = value.As<Object>()
+                          ->Get(isolate->GetCurrentContext(),
+                                String::NewFromUtf8Literal(isolate, "name"))
+                          .ToLocalChecked();
+  return describe(isolate, name);
+}
+
+// A Local made from a Global is a handle of its own. It has to show the same
+// object after the Global is reset, after a collection for which only the
+// Local keeps the object alive, and after Globals were created for the
+// arguments, which could take over the handle that the reset Global gave back.
+void global_local_outlives_reset(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> local = stored_global.Get(isolate);
+  Local<Value> copy = Local<Value>::New(isolate, local);
+  stored_global.Reset();
+  isolate->LowMemoryNotification();
+  std::cout << "local after Reset = " << name_of(isolate, local) << std::endl;
+  global_hold(info);
+  isolate->LowMemoryNotification();
+  std::cout << "local after other Globals were created = "
+            << name_of(isolate, local)
+            << ", its copy = " << name_of(isolate, copy) << std::endl;
+  info.GetReturnValue().Set(local);
+}
+
+// ReturnValue::Set copies what the handle of a Local or of a Global holds into
+// the callback's frame, and the caller reads it there after the callback
+// returned. By then the Global is reset and Globals exist for the arguments.
+static void return_stored_then_reset(const FunctionCallbackInfo<Value> &info,
+                                     bool as_local) {
+  Isolate *isolate = info.GetIsolate();
+  if (as_local) {
+    info.GetReturnValue().Set(stored_global.Get(isolate));
+  } else {
+    info.GetReturnValue().Set(stored_global);
+  }
+  stored_global.Reset();
+  global_hold(info);
+  isolate->LowMemoryNotification();
+}
+
+void global_return_local_then_reset(const FunctionCallbackInfo<Value> &info) {
+  return_stored_then_reset(info, true);
+}
+
+void global_return_global_then_reset(const FunctionCallbackInfo<Value> &info) {
+  return_stored_then_reset(info, false);
+}
+
+// Like the functions above, but the Global is reset by native calls that the
+// JS function in info[0] makes. Their handle scopes have closed by the time
+// this function reads its Local and returns.
+void global_local_outlives_nested_reset(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> local = stored_global.Get(isolate);
+  info.GetReturnValue().Set(stored_global);
+  if (info[0]
+          .As<Function>()
+          ->Call(isolate->GetCurrentContext(), Undefined(isolate), 0, nullptr)
+          .IsEmpty()) {
+    return;
+  }
+  isolate->LowMemoryNotification();
+  std::cout << "local after nested calls reset the Global = "
+            << name_of(isolate, local) << std::endl;
+}
+
+// Prints and resets the Globals that the previous round stored, prints
+// undefined, null, true and false, and then stores undefined (twice), null,
+// true, false, a small integer, a double and a string. In Bun the Globals of
+// undefined, null, true and false share the isolate's slot for that value
+// with its Locals, so resetting one must leave the slot alone. The values
+// rotate by `round`, so that a handle that is used again holds another kind
+// of value. A negative round stores nothing.
+void global_primitives_round(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  int round = static_cast<int>(info[0].As<Number>()->Value());
+
+  // the string of the previous round is only held by its Global
+  isolate->LowMemoryNotification();
+  std::cout << "round " << round << ":";
+  for (Global<Value> &global : primitive_globals) {
+    if (global.IsEmpty()) {
+      continue;
+    }
+    Local<Value> value = global.Get(isolate);
+    global.Reset();
+    std::cout << " " << describe(isolate, value);
+  }
+  std::cout << " | " << describe(isolate, Undefined(isolate)) << " "
+            << describe(isolate, Null(isolate)) << " "
+            << describe(isolate, True(isolate)) << " "
+            << describe(isolate, False(isolate)) << std::endl;
+  if (round < 0) {
+    return;
+  }
+
+  std::string text = "string " + std::to_string(round);
+  Local<Value> values[primitive_global_count] = {
+      Undefined(isolate),
+      Undefined(isolate),
+      Null(isolate),
+      True(isolate),
+      False(isolate),
+      Integer::New(isolate, round),
+      Number::New(isolate, round + 0.5),
+      String::NewFromUtf8(isolate, text.c_str()).ToLocalChecked(),
+  };
+  for (int i = 0; i < primitive_global_count; i++) {
+    primitive_globals[(i + round) % primitive_global_count].Reset(isolate,
+                                                                  values[i]);
+  }
+}
 
 // Native data property whose getter returns the holder it was invoked on and
 // whose setter stores it where global_get() can read it, so JS can check what
@@ -2233,6 +2411,20 @@ void initialize(Local<Object> exports, Local<Value> module,
                   create_objects_with_internal_fields);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
+  NODE_SET_METHOD(exports, "global_hold", global_hold);
+  NODE_SET_METHOD(exports, "global_held", global_held);
+  NODE_SET_METHOD(exports, "global_reset_held", global_reset_held);
+  NODE_SET_METHOD(exports, "global_hold_and_reset", global_hold_and_reset);
+  NODE_SET_METHOD(exports, "global_store", global_store);
+  NODE_SET_METHOD(exports, "global_local_outlives_reset",
+                  global_local_outlives_reset);
+  NODE_SET_METHOD(exports, "global_return_local_then_reset",
+                  global_return_local_then_reset);
+  NODE_SET_METHOD(exports, "global_return_global_then_reset",
+                  global_return_global_then_reset);
+  NODE_SET_METHOD(exports, "global_local_outlives_nested_reset",
+                  global_local_outlives_nested_reset);
+  NODE_SET_METHOD(exports, "global_primitives_round", global_primitives_round);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
   NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
   NODE_SET_METHOD(exports, "test_v8_escapable_handle_scope",
@@ -2313,6 +2505,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   // with the isolate entered, so take the current one)
   node::AddEnvironmentCleanupHook(Isolate::GetCurrent(),
                                   GlobalTestWrapper::cleanup, nullptr);
+  node::AddEnvironmentCleanupHook(Isolate::GetCurrent(), reset_test_globals,
+                                  nullptr);
 }
 
 NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)

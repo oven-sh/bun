@@ -7,6 +7,7 @@
 #include "Map.h"
 #include "Handle.h"
 #include "napi_handle_scope.h"
+#include <wtf/HashSet.h>
 #include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -79,8 +80,26 @@ public:
     // returns the location of the new handle's V8 object pointer or Smi
     TaggedPointer* createHandleFromExistingObject(TaggedPointer address, Handle* reuseHandle = nullptr);
 
+    // The handles of v8::Globals, which only GlobalInternals::globalHandles() has. V8's inline
+    // Local::New(isolate, global) and ReturnValue::Set(global) copy the Global's tagged pointer,
+    // which points into its handle, so a disposed handle keeps its value, and is not reused,
+    // until no open scope has V8 handles.
+    TaggedPointer* createGlobalHandle(TaggedPointer address);
+    // Ignores a slot that is not a live handle of this buffer: an isolate root (a Global of
+    // undefined, null, true or false), a handle that is already disposed, another isolate's handle.
+    // A Global that outlived its isolate passes a stale address. If it is the address of a handle,
+    // it is retired (see releaseRetiredGlobalHandle()), so it is not a live handle of this buffer.
+    // If it is the address of a root, nothing rules that out.
+    void disposeGlobalHandle(TaggedPointer* slot);
+    // A v8::Global can outlive the buffer that has its handle: an addon keeps it in a static and
+    // disposes it in the next VM that runs the addon's init. From when the buffer is freed until
+    // then, the handle's address is retired: createGlobalHandle() does not use it in any isolate.
+    // Returns whether `slot` was a retired address, and if so makes it usable again.
+    static bool releaseRetiredGlobalHandle(TaggedPointer* slot);
+
     // Called when the owning scope is closing and about to free this. Restores the isolate's
-    // HandleScopeData and moves any handle a live callback return value still points to into `parent`.
+    // HandleScopeData, moves any handle a live callback return value still points to into `parent`,
+    // and releases the disposed v8::Global handles if no scope with V8 handles stays open.
     void close(Bun::HandleScopeImpl* parent);
 
     // Called by the owning scope's visitChildren, which holds the owner's cellLock().
@@ -104,9 +123,15 @@ private:
     // close() restores them so they never point into freed handles.
     uintptr_t* m_savedNext;
     uintptr_t* m_savedLimit;
+    // See createGlobalHandle(). A handle is in at most one of these.
+    WTF::HashSet<Handle*> m_liveGlobalHandles;
+    WTF::Vector<Handle*> m_disposedGlobalHandles;
+    WTF::Vector<Handle*> m_freeGlobalHandles;
 
     JSC::VM& vm() const;
     Handle& createEmptyHandle();
+    // Overwrite a handle that the GC may be visiting.
+    TaggedPointer* setHandle(Handle& handle, const Handle& value);
 
     // Requires the owner's cellLock(). Return `value`'s target if it is the ObjectLayout of a
     // handle at index >= begin, else null.
@@ -117,6 +142,9 @@ private:
     TaggedPointer appendRescuedLayout(const ObjectLayout& layout);
 
     void evacuateActiveReturnValues(Bun::HandleScopeImpl* parent);
+
+    // Requires the owner's cellLock(). Empty the disposed v8::Global handles for reuse.
+    void releaseDisposedGlobalHandles(const WTF::AbstractLocker&);
 };
 
 } // namespace shim

@@ -3,7 +3,7 @@ import { expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
-it("should log to console correctly", async () => {
+it.concurrent("should log to console correctly", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), join(import.meta.dir, "console-log.js")],
     stdin: "inherit",
@@ -35,6 +35,35 @@ it("should log to console correctly", async () => {
   expect(out).toBe(expected);
   expect(err).toBe("uh oh\n");
   expect(exitCode).toBe(0);
+});
+
+it.concurrent("a format specifier right after %% is filled in", async () => {
+  const src = `
+    console.log("%d%%%s", 50, "!");
+    console.log("%%%s", "a");
+    console.log("%s is %d%%%s", "disk", 93, " full");
+    console.log("%%%%", "a");
+    console.log("%%%%%s", "a");
+    console.log("%%%d %%%i %%%f %%%j %%%o %%%O %%%c.", 1, 2, 3.5, { a: 1 }, 4, 5, "css");
+    console.error("%%%s", "a");
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Each expected line is what Node.js prints for the same call.
+  expect({
+    stdout: stdout.replaceAll("\r\n", "\n").split("\n"),
+    stderr: stderr.replaceAll("\r\n", "\n"),
+    exitCode,
+  }).toEqual({
+    stdout: ["50%!", "%a", "disk is 93% full", "%% a", "%%a", '%1 %2 %3.5 %{"a":1} %4 %5 %.', ""],
+    stderr: "%a\n",
+    exitCode: 0,
+  });
 });
 
 it("long arrays get cutoff", () => {

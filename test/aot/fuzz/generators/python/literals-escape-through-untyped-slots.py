@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""literals-escape-through-untyped-slots.py <seed>: A LITERAL IS LET OUT THROUGH A PLACE THAT SAYS NOTHING (a parameter, field, element, result of type unknown | any | object | {} | T), KEPT THERE, AND COMES BACK THROUGH A CAST THAT IS TRUE: of the HOLDER, of the value, by a guard, by a generic getter. Every cast in these programs is true and every store fits: SO NOTHING MAY BE REFUSED: every line as plain Bun, no throw."""
+"""literals-escape-through-untyped-slots.py <seed>: A literal escapes through an untyped place (a parameter, field,
+element or result of type unknown, any, object, {} or T), is kept there, and comes back through a cast that is true.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

@@ -145,7 +145,7 @@ tell("Number kept in a variable", () => { const convert = Number; return ["1", "
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|Array site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=[[w_15]]}] functionTypes={{*}}[[f_16]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|Array site=[[w_14]] flags=[OmitsNull, OmitsUndefined] variableName="list"}] thisType={type=anything} results=[{type=number site=[[w_15]]}] functionTypes={{*}}[[f_16]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

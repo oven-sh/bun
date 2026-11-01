@@ -99,34 +99,33 @@ console.log(Object.keys(new (makeEarly())()).join())
 // CHECK-NEXT: v14 = NewRuntimeError runtimeError=UninitializedThis
 // CHECK-NEXT: Throw v14
 // CHECK-NEXT: b4(v15):
-// CHECK-NEXT: v16 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: v17 = CheckInitialized v16 name="errorName"
-// CHECK-NEXT: v18 = Convert v2 declared={type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: PropSet v15, v18 key="~test/Reason/error"
-// CHECK-NEXT: v20 = Undefined
-// CHECK-NEXT: v21 = TypeTest v20 testedType=object
-// CHECK-NEXT: Branch v21 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v22):
-// CHECK-NEXT: Jump -> next b10(v22)
-// CHECK-NEXT: b6(v23):
-// CHECK-NEXT: v24 = TypeTest v23 testedType=undefined
-// CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b7(v25):
-// CHECK-NEXT: v26 = TypeTest v15 testedType=absent
-// CHECK-NEXT: Branch v26 -> taken b8(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b8(v27) frequency=Unlikely:
-// CHECK-NEXT: v28 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v28
-// CHECK-NEXT: b9(v29):
-// CHECK-NEXT: Jump -> next b10(v29)
-// CHECK-NEXT: b10(v30):
-// CHECK-NEXT: Return v30
-// CHECK-NEXT: b11(v31) frequency=Unlikely:
-// CHECK-NEXT: v32 = NewRuntimeError runtimeError=DerivedConstructorResult name="Fail"
-// CHECK-NEXT: Throw v32
-// CHECK-NEXT: b12(v33) frequency=Unlikely:
-// CHECK-NEXT: v34 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v34
+// CHECK-NEXT: v16 = String string="~test/Reason/error"
+// CHECK-NEXT: v17 = Convert v2 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropSet v15, v17 key="~test/Reason/error"
+// CHECK-NEXT: v19 = Undefined
+// CHECK-NEXT: v20 = TypeTest v19 testedType=object
+// CHECK-NEXT: Branch v20 -> taken b5(| 0), notTaken b6(| 0)
+// CHECK-NEXT: b5(v21):
+// CHECK-NEXT: Jump -> next b10(v21)
+// CHECK-NEXT: b6(v22):
+// CHECK-NEXT: v23 = TypeTest v22 testedType=undefined
+// CHECK-NEXT: Branch v23 -> taken b7(| 0), notTaken b11(| 0)
+// CHECK-NEXT: b7(v24):
+// CHECK-NEXT: v25 = TypeTest v15 testedType=absent
+// CHECK-NEXT: Branch v25 -> taken b8(| 0), notTaken b9(| 0)
+// CHECK-NEXT: b8(v26) frequency=Unlikely:
+// CHECK-NEXT: v27 = NewRuntimeError runtimeError=UninitializedThis
+// CHECK-NEXT: Throw v27
+// CHECK-NEXT: b9(v28):
+// CHECK-NEXT: Jump -> next b10(v28)
+// CHECK-NEXT: b10(v29):
+// CHECK-NEXT: Return v29
+// CHECK-NEXT: b11(v30) frequency=Unlikely:
+// CHECK-NEXT: v31 = NewRuntimeError runtimeError=DerivedConstructorResult name="Fail"
+// CHECK-NEXT: Throw v31
+// CHECK-NEXT: b12(v32) frequency=Unlikely:
+// CHECK-NEXT: v33 = NewRuntimeError runtimeError=ThisAlreadyBound
+// CHECK-NEXT: Throw v33
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Early"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] captures=[{type=env [[L_3]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
@@ -136,6 +135,6 @@ console.log(Object.keys(new (makeEarly())()).join())
 // CHECK-NEXT: v2 = GetConstructPrototype v1 layout=[[L_5]]
 // CHECK-NEXT: v3 = NewObject v2 layout=[[L_5]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=[[L_5]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = CallDirect v0, v4 function=[[f_13]]
+// CHECK-NEXT: v5 = CallDirect v0, v4 function=[[f_12]]
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }

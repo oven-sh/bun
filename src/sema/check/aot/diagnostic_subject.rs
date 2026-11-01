@@ -1,4 +1,5 @@
 use crate::atom::{Atom, known};
+use crate::bind::SymFlags;
 use crate::check::Checker;
 use crate::program::{Files, Sym};
 use crate::types::{Origin, TypeData, TypeId};
@@ -20,7 +21,7 @@ impl DiagnosticSubject {
     }
 }
 
-pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 3] {
+pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 4] {
     let bun_module = files
         .atoms
         .lookup(b"bun")
@@ -33,7 +34,13 @@ pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 3] 
         .lookup(b"ErrorConstructor")
         .and_then(|name| files.global_type_symbol(name))
         .map(|symbol| files.canonical(symbol));
-    [bun_module, import_meta, error_constructor]
+    // A program that adds to it (`declare global { namespace NodeJS { interface ProcessEnv { .. } } }`) declares it alone.
+    let node_namespace = files
+        .atoms
+        .lookup(b"NodeJS")
+        .and_then(|name| files.global(name, SymFlags::NAMESPACE))
+        .map(|symbol| files.canonical(symbol));
+    [bun_module, import_meta, error_constructor, node_namespace]
 }
 
 impl Checker<'_, '_> {
@@ -45,7 +52,8 @@ impl Checker<'_, '_> {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => self.member_container(target),
             TypeData::Anon {
-                origin: Origin::Module(module) | Origin::Namespace { module, .. },
+                origin:
+                    Origin::Module(module) | Origin::Namespace { module, .. } | Origin::Function(module),
                 ..
             } => self.member_container(module),
             _ => DiagnosticSubject::None,

@@ -1,9 +1,10 @@
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
+use super::module_cache::is_module_cache;
 use super::resolver::{ExprState, ResolvedValue, Resolver};
 use super::{
     BuiltinPath, ModuleField, ModuleObjectMention, ModuleObjectOwner, ModuleObjectUse,
-    SourceDialect,
+    ReplacedMembersSought, SourceDialect,
 };
 use crate::builtins::table::{self, BuiltinId, Mutability};
 use bun_sema::atom::known;
@@ -141,7 +142,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn find_member_of(&self, object: ExprId) -> Option<ExprId> {
+    pub(super) fn find_member_of(&self, object: ExprId) -> Option<ExprId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut node = object;
         loop {
@@ -213,7 +214,7 @@ impl Resolver<'_, '_> {
                 table::canonical_id(value.path.id) == BuiltinId::ModuleRequireMain
                     && self.is_locked(CommonJsVariable::Require)
             }
-            ModuleObjectOwner::Related => false,
+            ModuleObjectOwner::Related | ModuleObjectOwner::ListedInCache => false,
         }
     }
 
@@ -246,7 +247,9 @@ impl Resolver<'_, '_> {
         if self.is_only_tested(e) {
             return match owner {
                 ModuleObjectOwner::EntryPoint => Some(ModuleObjectUse::Tested),
-                ModuleObjectOwner::OwnFile | ModuleObjectOwner::Related => None,
+                ModuleObjectOwner::OwnFile
+                | ModuleObjectOwner::Related
+                | ModuleObjectOwner::ListedInCache => None,
             };
         }
         match self.classify_use(e) {
@@ -286,6 +289,50 @@ impl Resolver<'_, '_> {
             _ => return None,
         };
         Some((owner, member_use))
+    }
+
+    // In a test run `require.cache[path]` is the module object of a compiled file. A test of an entry takes nothing, and neither does a read of a member that leads
+    // to no other module object: `require.cache[path].exports`.
+    fn takes_module_object_out_of_cache(&self, cache: ExprId) -> bool {
+        if self.input.replaced_members_sought == ReplacedMembersSought::None {
+            return false;
+        }
+        let Some(entry) = self.find_member_of(cache) else {
+            return self.goes_out_of_sight(cache);
+        };
+        if !self.is_plain_read(entry) || self.is_only_tested(entry) {
+            return false;
+        }
+        let Some(member) = self.find_member_of(entry) else {
+            return !matches!(self.classify_use(entry), MentionUse::Inspected);
+        };
+        match self.input.hir.member_key(member) {
+            Some((_, MemberKey::Name(name))) => {
+                let found = self.find_named_member(some_module_object(), name);
+                matches!(
+                    found.map(|found| table::canonical_id(found.id)),
+                    Some(BuiltinId::ModuleObjectParent | BuiltinId::ModuleObjectChildren)
+                )
+            }
+            _ => true,
+        }
+    }
+
+    // Whoever holds such an entry reads `children` and `parent` of it where no expression stands for a module object, so nobody can say that he does not.
+    fn find_ways_out_of_cache(
+        &self,
+        e: ExprId,
+    ) -> SmallVec<[(ModuleObjectOwner, ModuleObjectUse); 2]> {
+        let (ExprState::Builtin(value) | ExprState::Held(value)) = self.state(e) else {
+            return SmallVec::new();
+        };
+        if !is_module_cache(value.path.id) || !self.takes_module_object_out_of_cache(e) {
+            return SmallVec::new();
+        }
+        smallvec![
+            (ModuleObjectOwner::ListedInCache, ModuleObjectUse::Children),
+            (ModuleObjectOwner::ListedInCache, ModuleObjectUse::Parent),
+        ]
     }
 
     fn find_module_object_mention(
@@ -419,6 +466,7 @@ impl Resolver<'_, '_> {
             }
             let found = self.find_module_object_mention(expr).into_iter();
             let found = found.chain(self.find_way_that_computed_key_reads(expr));
+            let found = found.chain(self.find_ways_out_of_cache(expr));
             for (owner, object_use) in found.chain(self.find_ways_that_pattern_reads(expr)) {
                 mentions.push(ModuleObjectMention {
                     expr,

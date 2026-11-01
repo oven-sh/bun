@@ -344,7 +344,7 @@ const testPlatforms: Platform[] = [
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
 
-// The WebKit that this links is newer than what the other lanes are written for.
+// The other lanes have nothing to say about landing pads.
 for (const platforms of [buildPlatforms, testPlatforms]) {
   const onlyLane = platforms.filter(platform => platform.profile === "hardened" && platform.arch === "aarch64");
   platforms.splice(0, platforms.length, ...onlyLane);

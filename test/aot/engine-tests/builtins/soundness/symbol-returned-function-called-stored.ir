@@ -182,7 +182,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="makeInner"
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000005, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v0:KeyConstant)
+# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000004, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}, v0:KeyConstant)
 # CHECK-NEXT: Void b@20 = Return(b@19, Terminal)
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@19: dereferenceableBytes = 8

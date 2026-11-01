@@ -14,6 +14,7 @@ use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
+use bun_sema::util::SharedSort;
 
 pub(super) struct ListedModules {
     pub list: ModuleList,
@@ -153,7 +154,7 @@ impl Collector<'_, '_> {
         let mut names: Vec<Vec<u8>> = exports
             .map(|export| self.atoms.bytes(export.name).to_vec())
             .collect();
-        names.sort_unstable();
+        names.shared_sort_unstable();
         names.dedup();
         names
     }
@@ -293,6 +294,6 @@ fn import_kind(site: ImportSiteKind) -> Option<ModuleImportKind> {
         ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_) => {
             ModuleImportKind::RequireResolve
         }
-        ImportSiteKind::GetBuiltinModule(_) => return None,
+        ImportSiteKind::GetBuiltinModule(_) | ImportSiteKind::MockModule(_) => return None,
     })
 }

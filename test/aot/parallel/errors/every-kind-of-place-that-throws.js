@@ -7,13 +7,17 @@ function framesOf(stack, count) {
     const frame = /^\s*at (?:(async )?(.*?) \()?([^()]*?)(?::(\d+):(\d+))?\)?$/.exec(text);
     if (!frame) continue;
     const file = frame[3].replace(/^.*[\\/]/, "");
-    frames.push((frame[1] ?? "") + (frame[2] ?? "") + "@" + file + (frame[4] ? ":" + frame[4] + ":" + frame[5] : ""));
+    // Only a build with assertions records positions inside built-in functions.
+    const position = frame[4] && file !== "native" ? ":" + frame[4] + ":" + frame[5] : "";
+    frames.push((frame[1] ?? "") + (frame[2] ?? "") + "@" + file + position);
   }
   return frames.slice(0, count).join(" | ");
 }
 function describe(error) {
   if (!(error instanceof Error)) return "no error: " + String(error);
-  return error.name + ": " + error.message + " [" + error.line + ":" + error.column + "] " + framesOf(error.stack, 3);
+  const frames = framesOf(error.stack, 3);
+  const position = /^[^|]*@native( |$)/.test(frames) ? "native" : error.line + ":" + error.column;
+  return error.name + ": " + error.message + " [" + position + "] " + frames;
 }
 function attempt(label, run) {
   try {

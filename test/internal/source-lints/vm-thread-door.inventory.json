@@ -119,6 +119,7 @@
     "HTTPThread::schedule": 1
   },
   "src/runtime/cli/run_compiled.rs": {
+    "thread spawn": 1,
     "unsafe impl Send": [
       "SharedWatcher"
     ]

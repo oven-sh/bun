@@ -3,12 +3,13 @@ mod tests;
 
 use super::ModuleRef;
 use super::bindings::{
-    AccessedModule, Candidates, ExportBinding, ExportLookup, ExportUse, Holder, ImportBinding,
-    ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule, SyntheticExport,
-    SyntheticExportId,
+    AccessedModule, AnswerMember, Candidates, ExportBinding, ExportLookup, ExportUse, Holder,
+    ImportBinding, ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule,
+    SyntheticExport, SyntheticExportId,
 };
 use super::commonjs_exports::CommonJsExports;
 use super::compare_code_units;
+use super::deferred_exports::mirrors_an_object;
 use super::failures::{ModuleFailure, ModuleFailureId};
 use super::imports::NamedMember;
 use super::interop::{Interop, ModuleKind};
@@ -44,11 +45,16 @@ pub struct ModuleGraph {
     pub(super) rows: Vec<FileRow>,
     pub(super) record_files: Vec<FileId>,
     pub(super) left_out_files: Vec<FileId>,
+    pub(super) files_brought_by_calls: Vec<FileId>,
     /// Those of `left_out_files` that keep a record without code.
     pub(super) placeholder_files: Vec<FileId>,
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
     pub(super) other_modules: Vec<ModuleRef>,
     pub(super) external_kinds: Vec<((FileId, Atom), ExternalKind)>,
+    /// `ModuleSet::left_to_loader`, sorted the same way.
+    pub(super) statements_left_to_loader: Vec<((FileId, Atom), FileId)>,
+    /// `join_externals_that_spell_paths`. Ascending by the number of the atom.
+    pub(super) importers_that_stand_for_all: Vec<(Atom, FileId)>,
     pub(super) synthetic_exports: Vec<SyntheticExport>,
     pub(super) errors: Vec<ModuleFailure>,
     pub(super) failures: Vec<ModuleFailure>,
@@ -86,11 +92,17 @@ pub(super) struct FileRow {
     pub evaluating_sites: Vec<(SiteKey, StoredSite)>,
     pub unread_sites: Vec<(ExprId, bool)>,
     pub holders: Vec<Holder>,
+    pub answer_members: Vec<(ExprId, AnswerMember)>,
     pub exports: Vec<ModuleExport>,
+    /// `find_ambiguous_names`
+    pub ambiguous_names: Vec<Atom>,
     pub unread_exports: Vec<SymbolId>,
     /// A module of data: whatever names it in the files of the program is an import or export statement that links names to its variables.
     pub is_data_linked_by_names_alone: bool,
+    /// A statement of a test file names the file to the loader of the run time, which may ask it for any name.
+    pub is_left_to_loader: bool,
     pub required_names: Vec<RequiredName>,
+    pub names_searched_behind_stars: Vec<(FileId, Atom)>,
 }
 
 pub(super) fn find<K: Copy + Ord, V: Copy>(entries: &[(K, V)], key: K) -> Option<V> {
@@ -173,11 +185,53 @@ impl ModuleGraph {
         }
     }
 
+    /// A program above other images names a file of theirs by its whole path, which means the same from every file. One module stands for it then,
+    /// that of the first file that imports it: the run time makes what it keeps for a module once for the file, not once for each importer.
+    pub fn join_externals_that_spell_paths(&mut self, atoms: &Interner<'_>) {
+        let is_kept = |file: FileId| self.left_out_files.binary_search(&file).is_err();
+        let mut importers: Vec<(Atom, FileId)> = (self.external_kinds.iter())
+            .filter(|(_, kind)| *kind == ExternalKind::UncompiledCode)
+            .map(|&((importer, specifier), _)| (specifier, importer))
+            .filter(|&(specifier, importer)| {
+                atoms.bytes(specifier).starts_with(b"/") && is_kept(importer)
+            })
+            .collect();
+        importers.shared_sort_unstable_by_key(|&(specifier, importer)| (specifier.0, importer));
+        importers.dedup_by_key(|entry| entry.0);
+        self.importers_that_stand_for_all = importers;
+    }
+
+    /// The importer under which the program knows the external module.
+    pub fn importer_of_external(&self, importer: FileId, specifier: Atom) -> FileId {
+        let all = &self.importers_that_stand_for_all;
+        let found = all.binary_search_by_key(&specifier.0, |entry| entry.0.0);
+        found.map_or(importer, |index| all[index].1)
+    }
+
+    pub fn importers_of_uncompiled_code(&self) -> Vec<FileId> {
+        let uncompiled = (self.external_kinds.iter())
+            .filter(|(_, kind)| *kind == ExternalKind::UncompiledCode)
+            .map(|&((importer, _), _)| importer);
+        let mut importers: Vec<FileId> = uncompiled.collect();
+        importers.shared_sort_unstable();
+        importers.dedup();
+        importers
+    }
+
+    /// Whether the loader of the run time links a statement of the test file that spells the specifier so.
+    pub fn leaves_statement_to_loader(&self, importer: FileId, specifier: Atom) -> bool {
+        let left = &self.statements_left_to_loader;
+        let key = external_key((importer, specifier));
+        left.binary_search_by_key(&key, |entry| external_key(entry.0))
+            .is_ok()
+    }
+
     pub fn external_kind(&self, module: ModuleRef) -> Option<ExternalKind> {
         let key = match module {
             ModuleRef::External {
                 importer,
                 specifier,
+                ..
             } => external_key((importer, specifier)),
             _ => return None,
         };
@@ -382,6 +436,10 @@ impl ModuleGraph {
         files.filter(is_on_cycle_with_file_that_runs).collect()
     }
 
+    pub fn set_files_brought_by_calls(&mut self, files: Vec<FileId>) {
+        self.files_brought_by_calls = files;
+    }
+
     pub fn is_placeholder(&self, file: FileId) -> bool {
         self.placeholder_files.binary_search(&file).is_ok()
     }
@@ -415,6 +473,11 @@ impl ModuleGraph {
                             pending.extend(imports.map(|&request| (request, false)));
                         }
                     }
+                    // Only a call wants it, and it says that nothing is lost until then.
+                    ModuleRef::File(target)
+                        if !is_written_here
+                            && !request.is_dynamic_star_export
+                            && self.files_brought_by_calls.binary_search(&target).is_ok() => {}
                     // It goes with its importer, as a file does that only a file asks for that is left out.
                     ModuleRef::External { importer, .. } if is_left_out(importer) => {}
                     // What the file asks for itself stays as it is written, also twice.
@@ -481,6 +544,10 @@ impl ModuleGraph {
         &self.row(file).exports
     }
 
+    pub fn ambiguous_names(&self, file: FileId) -> &[Atom] {
+        &self.row(file).ambiguous_names
+    }
+
     pub fn unread_exports(&self, file: FileId) -> &[SymbolId] {
         &self.row(file).unread_exports
     }
@@ -514,8 +581,29 @@ impl ModuleGraph {
         &self.row(file).required_names
     }
 
+    /// Where a required name of the file comes through `export *` and a mock may take it away: the files behind the module that a link looks into, with the name.
+    pub fn names_searched_behind_stars(&self, file: FileId) -> &[(FileId, Atom)] {
+        &self.row(file).names_searched_behind_stars
+    }
+
     pub fn synthetic_export(&self, id: SyntheticExportId) -> &SyntheticExport {
         &self.synthetic_exports[id.0 as usize]
+    }
+
+    /// `export { a } from "node:process"` reads nothing. `process.a` is read when an importer binds the name, or when the namespace object is asked for it.
+    pub fn lazy_export(&self, binding: ExportBinding) -> Option<(ModuleRef, Atom)> {
+        let ExportBinding::Synthetic(id) = binding else {
+            return None;
+        };
+        let export = self.synthetic_export(id);
+        match export.module {
+            ModuleRef::Runtime(module)
+                if export.name != known::default && mirrors_an_object(module) =>
+            {
+                Some((export.module, export.name))
+            }
+            _ => None,
+        }
     }
 
     pub fn synthetic_exports(&self) -> &[SyntheticExport] {
@@ -612,6 +700,37 @@ impl ModuleGraph {
         debug_assert!(external_kinds.is_sorted_by(|a, b| external_key(a.0) < external_key(b.0)));
         self.finish_plan(in_parallel);
         self
+    }
+
+    /// The files that a site which loads a module names. A load of an unknown path names none, and `require.resolve` and
+    /// `import.meta.resolve` load nothing.
+    pub fn find_files_named_by_load_sites(&self) -> Vec<FileId> {
+        let mut found = Vec::new();
+        for row in &self.rows {
+            for (site, answer) in &row.sites {
+                if matches!(
+                    site,
+                    ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_)
+                ) {
+                    continue;
+                }
+                match answer {
+                    StoredSiteAnswer::Module(ModuleRef::File(file)) => found.push(*file),
+                    StoredSiteAnswer::Candidates(range) => {
+                        found.extend(spelled_in(row, range).iter().filter_map(|spelled| {
+                            match spelled.module {
+                                ModuleRef::File(file) => Some(file),
+                                _ => None,
+                            }
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        found.sort_unstable();
+        found.dedup();
+        found
     }
 
     fn find_row(&self, file: FileId) -> Option<&FileRow> {

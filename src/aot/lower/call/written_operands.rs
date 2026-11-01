@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 
 use super::{Arguments, Callee, emit_call_of};
 use crate::builtins::id::BuiltinId;
+use crate::builtins::table::Mutability;
 use crate::builtins::{Resolved, table};
 use crate::ir::{PropertyKeyId, ValueId};
 use crate::lower::expression::Tail;
@@ -24,6 +25,13 @@ pub(super) fn find_locked_builtin(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    /// A method that is called in the place of a lookup which no expression spells: the `add` that `new Set(list)` asks the new set for. Nobody has resolved it, and a test run may have listed it as replaced.
+    pub(super) fn is_fixed_method(&self, method: BuiltinId) -> bool {
+        let replaced = self.inputs.replaced_builtins;
+        table::entry(method).mutability == Mutability::AlwaysLocked
+            && replaced.binary_search(&(method as u32)).is_err()
+    }
+
     /// The literal of `Object.defineProperty(object, key, { .. })`. The call alone has it: what it says becomes part of the definition, also where it says constants alone.
     pub(in crate::lower) fn is_written_descriptor(&self, literal: ExprId) -> bool {
         let Parent::Expr(parent) = self.bound.parent_of_expr(literal) else {
@@ -213,6 +221,50 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(self.claim_call_result(call, defined))
     }
 
+    // `Object.assign({}, source, ..)`: nobody else has the literal, so the first source is copied as `{ ...source }` copies it, by stores.
+    fn lower_assignment_to_new_object(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        tail: Tail<'_>,
+    ) -> Option<ValueId> {
+        let hir = self.file.hir;
+        let arguments: SmallVec<[ExprId; 4]> = hir.ids(site.args).collect();
+        let (&target, sources) = arguments.split_first()?;
+        let &first = sources.first()?;
+        let is_spread = |&argument: &ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
+        let is_empty_literal =
+            matches!(hir[target].kind, ExprKind::Object(properties) if properties.is_empty());
+        if !is_empty_literal
+            || arguments.iter().any(is_spread)
+            || !self.file.has_names_known_only_at_run_time(first)
+        {
+            return None;
+        }
+
+        self.emit_locked_builtin(BuiltinId::ObjectAssign);
+        let mut written: SmallVec<[ValueId; 4]> = SmallVec::new();
+        written.push(self.builder.undefined());
+        for &source in sources {
+            written.push(self.lower_expression(source));
+        }
+        self.convert_arguments(call, &mut written);
+        let outer = self
+            .builder
+            .set_tail_position(matches!(tail, Tail::Yes { .. }));
+        self.set_position(self.file.last_mapped_position(site.callee));
+        written[0] = self.builder.copy_object(written[1], &[], &[], true);
+        written.remove(1);
+        let made = if written.len() == 1 {
+            written[0]
+        } else {
+            self.emit_locked_call(BuiltinId::ObjectAssign, None, &written)
+        };
+        self.builder.set_tail_position(outer);
+        self.set_position(hir[call].pos);
+        Some(self.claim_call_result(call, made))
+    }
+
     pub(super) fn try_lower_call(
         &mut self,
         call: ExprId,
@@ -229,6 +281,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             Some(BuiltinId::ArrayFrom) => self.lower_array_from(call, site, tail),
             Some(BuiltinId::Object) => self.lower_empty_object(call, site),
+            Some(BuiltinId::ObjectAssign) => self.lower_assignment_to_new_object(call, site, tail),
             Some(_) => None,
             None => self.try_lower_method_call(call, site, tail),
         }
@@ -250,7 +303,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // `new Map([[key, value], ..])`. A list of constants stays: the whole map is laid into the image.
     fn lower_map_of_entries(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {
         let list = self.file.find_only_argument(site)?;
-        if self.file.is_made_of_constants(list) {
+        if self.file.is_made_of_constants(list)
+            || !self.file.is_fixed_method(BuiltinId::MapPrototypeSet)
+        {
             return None;
         }
         let pairs = self.file.find_written_pairs(list)?;
@@ -273,7 +328,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // `new Set([value, ..])`.
     fn lower_set_of_values(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {
         let list = self.file.find_only_argument(site)?;
-        if self.file.is_made_of_constants(list) {
+        if self.file.is_made_of_constants(list)
+            || !self.file.is_fixed_method(BuiltinId::SetPrototypeAdd)
+        {
             return None;
         }
         let elements = self.file.find_written_list(list)?;
@@ -295,8 +352,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             BuiltinId::Map => self.lower_map_of_entries(expression, site),
             BuiltinId::Set => self.lower_set_of_values(expression, site),
             BuiltinId::Object => self.lower_empty_object(expression, site),
+            BuiltinId::Array => self.lower_empty_array(expression, site),
             _ => None,
         }
+    }
+
+    /// `new Array()` is `[]`: the same storage, capacity planning and proofs.
+    fn lower_empty_array(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {
+        if !site.args.is_empty() {
+            return None;
+        }
+        let contents = self.file.array_literal_contents(expression);
+        let position = self.file.hir[expression].pos;
+        Some(self.lower_elements(contents, &[], &[], position))
     }
 
     fn lower_empty_object(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {

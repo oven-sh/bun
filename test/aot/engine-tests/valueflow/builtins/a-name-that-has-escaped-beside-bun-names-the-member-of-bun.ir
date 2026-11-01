@@ -1,0 +1,17 @@
+# somebody(Bun, "Glob")
+# Bun and the name are in the same unknown hands, which may read the one under the other: that is a use of Bun.Glob. No other member is named
+# RUN: valueflow-solve used
+# CHECK: BunGlob
+# CHECK-NOT: BunArchive
+# CHECK-NOT: BunSql
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somebody" [isFreeName]
+    v2 = PropGet v0 key="Bun" [isFreeName]
+    v3 = String string="Glob"
+    v4 = Call v1, -, v2, v3
+    Return v4
+}

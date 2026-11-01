@@ -28,5 +28,5 @@ function own() {
 console.log(reads(), own());
 
 /* Output:
-2 {"1":198000,"null is not an object (evaluating 'null.a')":2000}
+2 {"1":198000,"null is not an object (evaluating '(i % 100 === 99 ? null : { a: 1 }).a')":2000}
 */

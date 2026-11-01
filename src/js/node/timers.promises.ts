@@ -8,6 +8,9 @@ const symbolAsyncIterator = Symbol.asyncIterator;
 const setImmediateGlobal = globalThis.setImmediate;
 const setTimeoutGlobal = globalThis.setTimeout;
 const setIntervalGlobal = globalThis.setInterval;
+const clearImmediateGlobal = globalThis.clearImmediate;
+const clearTimeoutGlobal = globalThis.clearTimeout;
+const clearIntervalGlobal = globalThis.clearInterval;
 
 interface TimerOptions {
   signal?: AbortSignal;
@@ -77,7 +80,7 @@ function setTimeout(after = 1, value?, options: TimerOptions = {}) {
     }
     if (signal) {
       onCancel = () => {
-        clearTimeout(timeout);
+        clearTimeoutGlobal(timeout);
         reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
@@ -116,7 +119,7 @@ function setImmediate(value?, options: TimerOptions = {}) {
     }
     if (signal) {
       onCancel = () => {
-        clearImmediate(immediate);
+        clearImmediateGlobal(immediate);
         reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
@@ -196,7 +199,7 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
     }
     if (signal) {
       onCancel = () => {
-        clearInterval(interval);
+        clearIntervalGlobal(interval);
         if (callback) {
           callback();
           callback = undefined;
@@ -230,7 +233,7 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
         });
       },
       return: function () {
-        clearInterval(interval);
+        clearIntervalGlobal(interval);
         signal?.removeEventListener("abort", onCancel!);
         return Promise.$resolve({});
       },
@@ -238,7 +241,7 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
   } catch {
     return asyncIterator({
       next: function () {
-        clearInterval(interval);
+        clearIntervalGlobal(interval);
         signal?.removeEventListener("abort", onCancel!);
       },
     });

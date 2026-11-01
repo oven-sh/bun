@@ -80,7 +80,7 @@ export type Act<In> = { early: Promise<In>; isEarly(): boolean };
 // CHECK-NEXT: Return v32
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isEarly"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=boolean site=[[w_12]]}] thisType={type=anything} results=[{type=boolean site=[[w_13]]}] functionTypes={{*}}[[f_14]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=boolean site=[[w_12]] variableName="has"}] thisType={type=anything} results=[{type=boolean site=[[w_13]]}] functionTypes={{*}}[[f_14]]] {
 // CHECK-NEXT: b0(v0: boolean):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

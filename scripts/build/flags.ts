@@ -23,7 +23,6 @@ export const safeStackDependencies: readonly DepName[] = [
   "brotli",
   "libdeflate",
   "libjpeg-turbo",
-  "libwebp",
   "lshpack",
   "zlib",
   "zstd",

@@ -53,6 +53,7 @@ members = [
   "src/threading",
   "src/valkey",
   "src/watcher",
+  "src/webp",
   "src/cares_sys",
   "src/clap",
   "src/clap_macros",
@@ -177,6 +178,10 @@ panic = "abort"
 # (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
 # `dsymutil` already expects.
 split-debuginfo = "unpacked"
+
+# Unoptimised, a photo 640 pixels wide takes 20 s to encode instead of 2. Overflow checks and debug assertions stay on.
+[profile.dev.package.bun_webp]
+opt-level = 3
 
 # Release with debuginfo retained for `perf record` / flamegraphs. Same opt
 # level as release; binary is large but profilable.
@@ -433,6 +438,7 @@ bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
+bun_webp = { path = "src/webp" }
 bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }

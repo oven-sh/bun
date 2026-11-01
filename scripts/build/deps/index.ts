@@ -18,7 +18,6 @@ import { highway } from "./highway.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
 import { libuv } from "./libuv.ts";
-import { libwebp } from "./libwebp.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lshpack } from "./lshpack.ts";
 import { lsqpack } from "./lsqpack.ts";
@@ -51,7 +50,6 @@ export const allDeps: readonly Dependency[] = [
   libdeflate,
   // Image codecs.
   libjpegTurbo,
-  libwebp,
   cares,
   highway,
   libuv,
@@ -81,7 +79,6 @@ export {
   libdeflate,
   libjpegTurbo,
   libuv,
-  libwebp,
   lolhtml,
   lshpack,
   lsqpack,

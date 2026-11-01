@@ -8584,7 +8584,22 @@ declare module "bun" {
     Err extends SpawnOptions.Readable = SpawnOptions.Readable,
   > extends AsyncDisposable {
     readonly stdin: SpawnOptions.WritableToIO<In>;
+    /**
+     * The standard output of the process. With `"pipe"` (the default) it is a
+     * `ReadableStream`.
+     *
+     * The stream is created when this property is first accessed. A stream
+     * first accessed after {@link Subprocess.unref} does not keep Bun's process
+     * alive.
+     */
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
+    /**
+     * The standard error of the process. With `"pipe"` it is a `ReadableStream`.
+     *
+     * The stream is created when this property is first accessed. A stream
+     * first accessed after {@link Subprocess.unref} does not keep Bun's process
+     * alive.
+     */
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
 
     /**
@@ -8676,6 +8691,9 @@ declare module "bun" {
      * called `unref()`.
      *
      * By default, Bun waits for all subprocesses to exit before shutting down
+     *
+     * Like `unref()`, this also applies to the `stdout` and `stderr` streams
+     * that have not been accessed yet.
      */
     ref(): void;
 
@@ -8683,6 +8701,20 @@ declare module "bun" {
      * Tell Bun not to wait for this process to exit before shutting down.
      *
      * By default, Bun waits for all subprocesses to exit before shutting down.
+     *
+     * This also applies to the `stdout` and `stderr` streams that have not been
+     * accessed yet. A stream first accessed after `unref()` does not keep Bun's
+     * process alive: a read from it completes only while something else keeps
+     * the process running. A stream accessed before `unref()` is not affected.
+     * Access the stream first when a read must keep the process alive.
+     *
+     * @example
+     * ```ts
+     * const proc = Bun.spawn(["echo", "hello"]);
+     * const stdout = proc.stdout; // accessed before unref()
+     * proc.unref();
+     * console.log(await stdout.text()); // "hello\n"
+     * ```
      */
     unref(): void;
 

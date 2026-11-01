@@ -8,7 +8,7 @@ use bun_core::strings;
 use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::drop_namespace_of_lowered_callee;
 use crate::lower::import_meta_glob::is_object_keys_call;
-use crate::p::P;
+use crate::p::{DefineMemberKey, P};
 use crate::parser::{
     ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
     StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
@@ -23,6 +23,21 @@ use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Stmt, Symbol};
 use js_ast::ExprData as Data;
 use js_ast::ExprTag as Tag;
 use js_ast::OpCode as Op;
+
+/// A member read that only takes the value of the member. A store (`x.a = 1`, `x.a++`), a call
+/// (`x.a()`, `` x.a`` ``) and a link of an optional chain (`x?.a`) do more with the object.
+#[inline]
+fn is_plain_member_read(
+    in_: ExprIn,
+    optional_chain: Option<js_ast::OptionalChain>,
+    is_call_target: bool,
+    is_template_tag: bool,
+) -> bool {
+    in_.assign_target == js_ast::AssignTarget::None
+        && optional_chain.is_none()
+        && !is_call_target
+        && !is_template_tag
+}
 
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
@@ -43,6 +58,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+        debug_assert!(
+            self.define_member_target.is_none(),
+            "a member read takes the define that the visit of its target leaves"
+        );
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             // The caller assumes `e` was visited, so replace it. Don't mutate it on a revisit
             // because it can be part of a shared `define` value.
@@ -155,8 +174,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
                 // Substitute user-specified defines
-                *e =
-                    p.value_for_define(expr.loc, in_.assign_target, is_delete_target, &define.data);
+                if !p.leave_define_to_member_read(in_, define.data.value) {
+                    *e = p.value_for_define(
+                        expr.loc,
+                        in_.assign_target,
+                        is_delete_target,
+                        &define.data,
+                    );
+                }
                 return;
             }
         }
@@ -282,6 +307,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let defines = p.define;
             if let Some(def) = defines.for_identifier(name) {
                 if !def.valueless() {
+                    if p.leave_define_to_member_read(in_, def.value) {
+                        p.ignore_usage(e_.ref_);
+                        return;
+                    }
                     let newvalue: Expr =
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
@@ -973,13 +1002,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        p.visit_expr_in_out(
+        let define_target = p.visit_member_target(
             &mut e_.target,
             ExprIn {
                 is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
         );
+        if let Some(define) = define_target {
+            let key = is_plain_member_read(in_, e_.optional_chain, is_call_target, is_template_tag)
+                .then_some(DefineMemberKey::Index(e_.index));
+            if p.read_member_of_define(e, &mut e_.target, in_, define, key) {
+                return;
+            }
+        }
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -1432,12 +1468,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if in_.assign_target == js_ast::AssignTarget::None {
                         // Substitute user-specified defines
                         if !define.data.valueless() {
-                            *e = p.value_for_define(
-                                expr.loc,
-                                in_.assign_target,
-                                is_delete_target,
-                                &define.data,
-                            );
+                            if !p.leave_define_to_member_read(in_, define.data.value) {
+                                *e = p.value_for_define(
+                                    expr.loc,
+                                    in_.assign_target,
+                                    is_delete_target,
+                                    &define.data,
+                                );
+                            }
                             return;
                         }
 
@@ -1491,7 +1529,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        p.visit_expr_in_out(
+        let define_target = p.visit_member_target(
             &mut e_.target,
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: in_
@@ -1500,6 +1538,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+        if let Some(define) = define_target {
+            let name = e_.name;
+            let key = is_plain_member_read(in_, e_.optional_chain, is_call_target, is_template_tag)
+                .then_some(DefineMemberKey::Name(name.slice()));
+            if p.read_member_of_define(e, &mut e_.target, in_, define, key) {
+                return;
+            }
+        }
 
         // 'require.resolve' -> .e_require_resolve_call_target
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {

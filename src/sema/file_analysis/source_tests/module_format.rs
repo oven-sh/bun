@@ -432,6 +432,13 @@ const BUILD_FACTS: Fold<'static> = Fold {
     ..Fold::NONE
 };
 
+const SETTINGS: Defined<'static> = Defined::Value(Data::Object(&[
+    ("debug", Data::Boolean(false)),
+    ("level", Data::Number(3.0)),
+    ("nested", Data::Object(&[("on", Data::Boolean(true))])),
+    ("list", Data::Array(&[Data::Number(0.0), Data::Number(1.0)])),
+]));
+
 const USER_DEFINES: Fold<'static> = Fold {
     defines: &[
         (
@@ -461,6 +468,8 @@ const USER_DEFINES: Fold<'static> = Fold {
             Path::Global(&["LIST"]),
             Defined::Value(Data::Array(&[Data::Number(1.0)])),
         ),
+        (Path::Global(&["SETTINGS"]), SETTINGS),
+        (Path::Global(&["BUILT"]), SETTINGS),
         (Path::Global(&["RUNTIME"]), Defined::GlobalPath(&["Bun"])),
     ],
     user_defined: &[
@@ -470,6 +479,7 @@ const USER_DEFINES: Fold<'static> = Fold {
         Path::Global(&["NOTHING"]),
         Path::Global(&["CONFIG"]),
         Path::Global(&["LIST"]),
+        Path::Global(&["SETTINGS"]),
         Path::Global(&["RUNTIME"]),
     ],
     ..Fold::NONE
@@ -556,6 +566,51 @@ const FORMATS_WITH_USER_DEFINES: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"CONFIG ?? require("a");"#, Esm),
     ("a.js", r#"if (CONFIG == null) require("a");"#, CommonJs),
     ("a.js", r#"if (!LIST) require("a");"#, Esm),
+    ("a.js", r#"if (CONFIG.a !== 1) require("a");"#, Esm),
+    ("a.js", r#"if (!LIST[0]) require("a");"#, Esm),
+    ("a.js", r#"if (SETTINGS.debug) require("a");"#, Esm),
+    ("a.js", r#"if (SETTINGS["debug"]) require("a");"#, Esm),
+    ("a.js", r#"if (!SETTINGS.nested.on) require("a");"#, Esm),
+    ("a.js", r#"if (SETTINGS.list[0]) require("a");"#, Esm),
+    (
+        "a.js",
+        r#"if (SETTINGS.list.length !== 2) require("a");"#,
+        Esm,
+    ),
+    ("a.js", r#"SETTINGS.level ?? require("a");"#, Esm),
+    ("a.js", r#"SETTINGS.nested ?? require("a");"#, Esm),
+    ("a.js", r#"SETTINGS.nested || require("a");"#, Esm),
+    ("a.js", r#"SETTINGS.debug && module.exports;"#, Esm),
+    (
+        "a.ts",
+        r#"if (SETTINGS["debug" as const]) require("a");"#,
+        Esm,
+    ),
+    (
+        "a.ts",
+        r#"if (SETTINGS.list[0 as number]) require("a");"#,
+        Esm,
+    ),
+    ("a.js", r#"if (SETTINGS.level) require("a");"#, CommonJs),
+    ("a.js", r#"if (SETTINGS.missing) require("a");"#, CommonJs),
+    ("a.js", r#"if (SETTINGS?.debug) require("a");"#, CommonJs),
+    ("a.js", r#"if (BUILT.debug) require("a");"#, CommonJs),
+    // `bun run` has the whole value around a key that is computed.
+    (
+        "a.js",
+        r#"if (SETTINGS["de" + "bug"]) require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"const KEY = "debug"; if (SETTINGS[KEY]) require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (SETTINGS[(0, "debug")]) require("a");"#,
+        CommonJs,
+    ),
     ("a.js", r#"if (!RUNTIME) require("a");"#, CommonJs),
     (
         "a.js",

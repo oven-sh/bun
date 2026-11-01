@@ -1,4 +1,5 @@
 use super::dead_code::{DeadRoots, mark_nodes_below};
+use super::define_members::DefineMember;
 use super::evaluate::{Evaluator, Value};
 use super::feature_flags::find_feature_import;
 use super::folder_commonjs::LoaderNames;
@@ -74,6 +75,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) values: Vec<Value>,
     pub(super) effects: Vec<Effects>,
     pub(super) path_states: FxHashMap<ExprId, PathState>,
+    pub(super) define_members: FxHashMap<ExprId, DefineMember<'s>>,
     pub(super) data_literals: PositionSet,
     pub(super) decided: Vec<(ExprId, Decision<'s>)>,
     pub(super) specifiers: Vec<(ExprId, ImportSpecifier)>,
@@ -119,6 +121,7 @@ pub(super) fn run<'s>(
         values: vec![Value::Unknown; hir.exprs.len()],
         effects: vec![Effects::Unknown; hir.exprs.len()],
         path_states: FxHashMap::default(),
+        define_members: FxHashMap::default(),
         data_literals: PositionSet::new(hir.exprs.len()),
         decided: Vec::new(),
         specifiers: Vec::new(),

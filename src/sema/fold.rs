@@ -1,6 +1,7 @@
 mod children;
 mod data_literals;
 mod dead_code;
+mod define_members;
 mod define_trie;
 mod evaluate;
 mod feature_flags;

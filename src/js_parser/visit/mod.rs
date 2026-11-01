@@ -353,7 +353,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
-                self.visit_expr_in_out(
+                let define_target = self.visit_member_target(
                     &mut val,
                     ExprIn {
                         is_immediately_assigned_to_decl: true,
@@ -362,6 +362,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     },
                 );
+                if let Some(define) = define_target {
+                    val = self.copy_of_define_value(val.loc, define);
+                }
                 self.react_compiler_candidate_name = None;
                 self.react_compiler_in_react_hoc = false;
                 decl.value = Some(val);

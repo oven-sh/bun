@@ -104,7 +104,7 @@ To replace all usages of `AWS` with the JSON object `{"ACCESS_KEY":"abc","SECRET
 bun --define AWS='{"ACCESS_KEY":"abc","SECRET_KEY":"def"}' src/index.ts
 ```
 
-Bun transforms these into the equivalent JavaScript code.
+Bun replaces a read of a key that the object has with the value of that key. Write the key after a dot or as a string in brackets.
 
 From:
 
@@ -115,7 +115,27 @@ console.log(AWS.ACCESS_KEY); // => "abc"
 To:
 
 ```ts
-console.log({ ACCESS_KEY: "abc", SECRET_KEY: "def" }.ACCESS_KEY);
+console.log("abc");
+```
+
+Every other use gets a copy of the whole object. That includes `AWS?.ACCESS_KEY`, `AWS[name]`, `const { ACCESS_KEY } = AWS`, and a read of a key that the object does not have. So every value of a JSON define can appear in the output.
+
+From:
+
+```ts
+console.log(AWS);
+```
+
+To:
+
+```ts
+console.log({ ACCESS_KEY: "abc", SECRET_KEY: "def" });
+```
+
+To replace one key and nothing else, define that key:
+
+```sh
+bun --define AWS.ACCESS_KEY='"abc"' src/index.ts
 ```
 
 ### Replace values with other properties

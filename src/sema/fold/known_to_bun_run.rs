@@ -323,6 +323,9 @@ impl<'s> Folder<'_, 's> {
 
     /// What `--define` or bunfig.toml gives for `e`. `bun run` has that in its place.
     pub(super) fn find_user_defined_value(&self, e: ExprId) -> Option<DefineValue<'s>> {
+        if let Some(member) = self.define_members.get(&e) {
+            return member.is_user_defined.then_some(member.value);
+        }
         let &state = self.path_states.get(&e)?;
         let value = self.inputs.value_of(state)?;
         let is_replaced = self.inputs.is_user_defined(state) && !self.is_assignment_target(e);

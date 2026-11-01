@@ -21,7 +21,7 @@ use crate::parse::parse_entry::Options as ParserOptions;
 use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
-    DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
+    DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple, ExprIn,
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
@@ -199,6 +199,13 @@ pub struct RecentlyVisitedTSNamespace {
     pub(crate) expr: js_ast::ExprData,
     // ARENA back-pointer — `StoreRef` for safe `Deref` at the read sites.
     pub(crate) map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
+}
+
+/// How a member read names the member: `.name`, or `[index]` as it is written.
+#[derive(Clone, Copy)]
+pub(crate) enum DefineMemberKey<'a> {
+    Name(&'a [u8]),
+    Index(Expr),
 }
 
 /// Keyed by where the node is: an async arrow's `async` -> its parameters; an arrow's `=>` -> its expression body; a
@@ -575,6 +582,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// We must be careful to avoid revisiting nodes that have scopes.
     /// A revisited node can be part of a `define` value, which is shared with other parses.
     pub(crate) is_revisit_for_substitution: bool,
+
+    /// What `leave_define_to_member_read` leaves for `visit_member_target`: the value of an
+    /// object or array define, or a value inside one. It is a node of the define table, which
+    /// every parse shares.
+    pub(crate) define_member_target: Option<js_ast::ExprData>,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
@@ -7162,6 +7174,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .with_was_originally_identifier(true),
                 );
             }
+            _ => self.copy_of_define_value(loc, value),
+        }
+    }
+
+    /// `value` is a node of the define table: the value of a define, or a value inside one.
+    pub(crate) fn copy_of_define_value(
+        &mut self,
+        loc: bun_ast::Loc,
+        value: js_ast::ExprData,
+    ) -> Expr {
+        match value {
             js_ast::ExprData::EString(str_) => {
                 return self.new_expr(&*str_, loc);
             }
@@ -7176,6 +7199,77 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         Expr { data: value, loc }
+    }
+
+    /// Visits `target` with an `in_` that has `is_property_access_target`. A target that is an
+    /// object or array define is then left as it is, and the value of the define is returned:
+    /// the caller puts the member that it reads, or a copy of the value, in its place.
+    #[inline]
+    pub(crate) fn visit_member_target(
+        &mut self,
+        target: &mut Expr,
+        in_: ExprIn,
+    ) -> Option<js_ast::ExprData> {
+        self.visit_expr_in_out(target, in_);
+        // No store where nothing was left: every member access passes here.
+        self.define_member_target?;
+        self.define_member_target.take()
+    }
+
+    /// Where a use of the define value `value` is the target of a member read, leaves `value` to
+    /// that read and returns true: the read copies the one member it reads, not all of `value`.
+    pub(crate) fn leave_define_to_member_read(
+        &mut self,
+        in_: ExprIn,
+        value: js_ast::ExprData,
+    ) -> bool {
+        let has_members = matches!(
+            value,
+            js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_)
+        );
+        if !in_.is_property_access_target || !has_members {
+            return false;
+        }
+        debug_assert!(self.define_member_target.is_none());
+        self.define_member_target = Some(value);
+        true
+    }
+
+    /// Finishes the member read `e`, whose target `define` was left by the visit of `target`.
+    /// `key` is `None` where `e` stores to the member, calls it, or is a link of an optional
+    /// chain. Returns true when `e` is done: it is the own member that `key` names, or that
+    /// member is left to the member read around `e`. Otherwise `target` is now a copy of `define`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn read_member_of_define(
+        &mut self,
+        e: &mut Expr,
+        target: &mut Expr,
+        in_: ExprIn,
+        define: js_ast::ExprData,
+        key: Option<DefineMemberKey<'_>>,
+    ) -> bool {
+        let member = key.and_then(|key| match key {
+            DefineMemberKey::Name(name) => crate::defines::own_member(define, name),
+            // `index` is not visited yet, so a string or a number here is a literal in the source.
+            DefineMemberKey::Index(index) => match index.data {
+                js_ast::ExprData::EString(name) if name.is_utf8() => {
+                    crate::defines::own_member(define, name.data.slice())
+                }
+                js_ast::ExprData::ENumber(number) => {
+                    crate::defines::own_item(define, number.value())
+                }
+                _ => None,
+            },
+        });
+        let Some(member) = member else {
+            *target = self.copy_of_define_value(target.loc, define);
+            return false;
+        };
+        if !self.leave_define_to_member_read(in_, member) {
+            *e = self.copy_of_define_value(e.loc, member);
+        }
+        true
     }
 
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
@@ -9868,6 +9962,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
+            define_member_target: None,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,

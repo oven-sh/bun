@@ -77,6 +77,113 @@ const IMPORT_META: Fold<'static> = Fold {
     )],
     ..Fold::NONE
 };
+const MEMBERS: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::Global(&["CFG"]),
+            Defined::Value(Data::Object(&[
+                ("a", Data::Object(&[("b", Data::Number(2.0))])),
+                ("k-k", Data::Number(1.0)),
+                (
+                    "l",
+                    Data::Array(&[Data::String("z"), Data::Object(&[("x", Data::Number(3.0))])]),
+                ),
+                ("s", Data::String("\u{e9}")),
+                ("\u{e9}", Data::Number(6.0)),
+                ("x", Data::Number(9.0)),
+                ("__proto__", Data::Number(5.0)),
+            ])),
+        ),
+        (
+            Path::Global(&["CFG", "x"]),
+            Defined::Value(Data::String("explicit")),
+        ),
+        (
+            Path::Global(&["process", "env"]),
+            Defined::Value(Data::Object(&[("DBG", Data::Boolean(false))])),
+        ),
+        (
+            Path::ImportMeta(&["env"]),
+            Defined::Value(Data::Object(&[("DEV", Data::Boolean(false))])),
+        ),
+        (
+            Path::ImportMeta(&[]),
+            Defined::Value(Data::Object(&[(
+                "o",
+                Data::Object(&[("x", Data::Number(7.0))]),
+            )])),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+// The last member of each, and what stands in its place.
+const MEMBERS_OF_DEFINES: &[(&str, &str, &str)] = &[
+    ("a.mjs", "CFG.a.b;", "2"),
+    ("a.mjs", "CFG.a;", r#"{"b":2}"#),
+    ("a.mjs", r#"CFG["k-k"];"#, "1"),
+    ("a.mjs", r#"CFG["a"].b;"#, "2"),
+    ("a.mjs", "CFG[`a`].b;", "2"),
+    ("a.mjs", r#"CFG[("a")].b;"#, "2"),
+    ("a.mjs", "CFG.l[0];", r#""z""#),
+    ("a.mjs", "CFG.l[0x1].x;", "3"),
+    ("a.mjs", "CFG.l.length;", "2"),
+    ("a.mjs", r#"CFG.l["length"];"#, "2"),
+    ("a.mjs", "CFG.s;", "\"\u{e9}\""),
+    ("a.mjs", "CFG.\u{e9};", "6"),
+    ("a.mjs", "new CFG.a.b();", "2"),
+    ("a.mjs", "(0, CFG.a.b)();", "2"),
+    ("a.mjs", "process.env.DBG;", "false"),
+    ("a.mjs", "import.meta.env.DEV;", "false"),
+    ("a.mjs", "import.meta.o.x;", "7"),
+    // The transpiler has no node for a type assertion.
+    ("a.ts", "(CFG as any).a!.b;", "2"),
+    ("a.ts", r#"CFG["a" as const].b;"#, "2"),
+    ("a.ts", r#"CFG["k-k"!];"#, "1"),
+    ("a.ts", r#"CFG[<any>"a"].b;"#, "2"),
+    ("a.ts", r#"CFG["a" satisfies string].b;"#, "2"),
+    ("a.ts", "CFG.l[0 as number];", r#""z""#),
+    ("a.ts", r#"CFG.l["length" as const];"#, "2"),
+    // The value alone does not say what the read gives.
+    ("a.mjs", "CFG.l[2];", "unknown"),
+    ("a.mjs", "CFG.l[0.5];", "unknown"),
+    ("a.mjs", r#"CFG.l["0"];"#, "unknown"),
+    ("a.mjs", "CFG.missing;", "unknown"),
+    ("a.mjs", "CFG.toString;", "unknown"),
+    ("a.mjs", "CFG.__proto__;", "unknown"),
+    // The key is a name, a string or a number in the source. The transpiler has the whole value around any other key.
+    ("a.mjs", r#"CFG["a" + ""];"#, "unknown"),
+    ("a.mjs", "CFG[`${\"a\"}`];", "unknown"),
+    ("a.mjs", r#"const K = "a"; CFG[K];"#, "unknown"),
+    ("a.mjs", r#"CFG[(0, "a")];"#, "unknown"),
+    ("a.mjs", "CFG.l[1 - 1];", "unknown"),
+    ("a.mjs", "CFG.l[-0];", "unknown"),
+    ("a.mjs", "CFG.l[0n];", "unknown"),
+    // The transpiler stores a key in brackets that is not ASCII in another form than the keys of the value.
+    ("a.mjs", "CFG[\"\u{e9}\"];", "unknown"),
+    // More than a read is done with the member.
+    ("a.mjs", "CFG?.a;", "unknown"),
+    ("a.mjs", "CFG.a?.b;", "unknown"),
+    ("a.mjs", "CFG.a.b = 1;", "unknown"),
+    ("a.mjs", "CFG.a.b++;", "unknown"),
+    ("a.mjs", "[CFG.a.b] = [];", "unknown"),
+    ("a.mjs", "delete CFG.a.b;", "unknown"),
+    ("a.mjs", "CFG.a.b();", "unknown"),
+    ("a.mjs", "CFG.a.b``;", "unknown"),
+    ("a.mjs", "CFG.l[0] = 1;", "unknown"),
+    ("a.mjs", "CFG.l[0]();", "unknown"),
+    ("a.mjs", "CFG.l?.[0];", "unknown"),
+    ("a.ts", "(CFG.a.b as any)();", "unknown"),
+    // The transpiler has no define in place of a path that ends in `["name"]` or holds `?.`.
+    ("a.mjs", r#"process["env"].DBG;"#, "unknown"),
+    ("a.mjs", "process?.env.DBG;", "unknown"),
+    ("a.mjs", "process.env?.DBG;", "unknown"),
+    ("a.mjs", "import.meta.env?.DEV;", "unknown"),
+    ("a.mjs", "import.meta?.o.x;", "unknown"),
+    // A define of the path itself comes first where the path ends in `.name`.
+    ("a.mjs", "CFG.x;", r#""explicit""#),
+    ("a.mjs", r#"CFG["x"];"#, "9"),
+];
 const NESTED_PATHS: Fold<'static> = Fold {
     defines: &[
         (
@@ -1480,10 +1587,60 @@ fn kinds_of_define_values() {
     folded("a.mjs", "CONFIG.a;", CONFIG, |s| {
         let found = decision(s, s.ident("CONFIG", 0));
         assert_eq!(data_text(s, found), r#"{"a":[1]}"#);
-        assert_eq!(decision(s, last_member(s)), Decision::Unknown);
+        assert_eq!(data_text(s, decision(s, last_member(s))), "[1]");
     });
     folded("a.mjs", "import.meta.env.MODE;", IMPORT_META, |s| {
         assert_eq!(decision(s, last_member(s)), string(s, "test"));
+    });
+}
+
+#[test]
+fn members_of_object_and_array_defines() {
+    let describe = |s: &Analyzed<'_>, found: Decision<'_>| match found {
+        Decision::Constant(constant) => s.workspace.describe_data(&constant.to_data_value()),
+        Decision::Data(value) => s.workspace.describe_data(value),
+        found => format!("{found:?}").to_lowercase(),
+    };
+    for &(path, text, expected) in MEMBERS_OF_DEFINES {
+        folded(path, text, MEMBERS, |s| {
+            assert_eq!(describe(s, decision(s, last_member(s))), expected, "{text}");
+        });
+    }
+    folded("a.mjs", "CFG.a.b;", MEMBERS, |s| {
+        let decisions = &s.analysis.decisions;
+        let object = member_object(s, last_member(s));
+        assert!(decisions.is_dead_expr(object));
+        assert!(decisions.is_dead_expr(s.ident("CFG", 0)));
+    });
+    // The object of a member that is called is the member of the define.
+    folded("a.mjs", "CFG.a.b();", MEMBERS, |s| {
+        let object = member_object(s, last_member(s));
+        assert_eq!(describe(s, decision(s, object)), r#"{"b":2}"#);
+    });
+    // A string member is in place of the read also where a property of it is stored to or deleted.
+    for text in [
+        "CFG.l[0].length;",
+        "CFG.l[0].length = 0;",
+        "CFG.l[0].length++;",
+        "delete CFG.l[0].length;",
+    ] {
+        folded("a.mjs", text, MEMBERS, |s| {
+            let object = member_object(s, last_member(s));
+            assert_eq!(decision(s, object), string(s, "z"), "{text}");
+        });
+    }
+    let minifying = Fold {
+        minifies_syntax: true,
+        ..MEMBERS
+    };
+    folded("a.mjs", r#"CFG["x"];"#, minifying, |s| {
+        assert_eq!(decision(s, last_member(s)), string(s, "explicit"));
+    });
+    folded("a.ts", r#"CFG["x" as const];"#, minifying, |s| {
+        assert_eq!(decision(s, last_member(s)), string(s, "explicit"));
+    });
+    folded("a.mjs", r#"process["env"].DBG;"#, minifying, |s| {
+        assert_eq!(describe(s, decision(s, last_member(s))), "false");
     });
 }
 

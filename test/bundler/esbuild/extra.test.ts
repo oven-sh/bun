@@ -671,6 +671,129 @@ describe("bundler", () => {
     run: true,
   });
 
+  // A read of one member of an object or array define is printed as that member.
+  // https://github.com/oven-sh/bun/issues/21312
+  for (const minifySyntax of [false, true]) {
+    itBundled(`extra/DefineObjectMember${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "in.js": /* js */ `
+          capture(AWS.ACCESS_KEY);
+          capture(AWS["SECRET_KEY"]);
+          capture(CFG.nested.deep);
+          capture(CFG.list[1]);
+          capture(CFG.list.length);
+          capture(process.env.FOO);
+          capture(import.meta.env.MODE);
+          capture(import.meta.answer);
+          capture(Math.PI);
+        `,
+      },
+      define: {
+        AWS: '{"ACCESS_KEY":"abc","SECRET_KEY":"def"}',
+        CFG: '{"nested":{"deep":1,"other":2},"list":["a","b"]}',
+        "process.env": '{"FOO":"foo","OTHER":"other"}',
+        "import.meta.env": '{"MODE":"m","OTHER":"other"}',
+        "import.meta": '{"answer":42,"other":0}',
+        Math: '{"PI":3,"E":2}',
+      },
+      minifySyntax,
+      capture: ['"abc"', '"def"', "1", '"b"', "2", '"foo"', '"m"', "42", "3"],
+    });
+  }
+  // The branch that the member rules out goes, and with it the only file that it loads.
+  itBundled("extra/DefineObjectMemberDropsDeadBranch", {
+    files: {
+      "in.js": /* js */ `
+        if (CFG.debug) require("./heavy.js");
+        console.log(CFG.level === 3 ? "KEEP" : "REMOVE");
+      `,
+      "heavy.js": `console.log("REMOVE");`,
+    },
+    define: { CFG: '{"debug":false,"level":3}' },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__commonJS");
+    },
+    run: { stdout: "KEEP" },
+  });
+  // Each use of a define is a new value, and a member that is an object or an array is one too.
+  itBundled("extra/DefineObjectMemberIsFreshAtEachUse", {
+    files: {
+      "in.js": /* js */ `
+        const { deep } = CFG.nested;
+        CFG.nested.deep = 5;
+        CFG.list.push("c");
+        console.log(CFG.nested === CFG.nested, CFG.list === CFG.list, deep, CFG.nested.deep, CFG.list.length);
+      `,
+    },
+    define: { CFG: '{"nested":{"deep":1,"other":2},"list":["a","b"]}' },
+    run: { stdout: "false false 1 1 2" },
+  });
+  // A string that a member read prints is a module specifier to `require`, `require.resolve` and `import()`,
+  // as it is with a define of that path: the bundle holds the file, and a file that is not there fails the build.
+  for (const minifySyntax of [false, true]) {
+    itBundled(`extra/DefineObjectMemberAsModuleSpecifier${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/src/in.js": /* js */ `
+          console.log(require(CFG.driver).name, typeof require.resolve(CFG.driver));
+          import(CFG.plugin).then(plugin => console.log(plugin.name));
+        `,
+        "/src/driver.js": `exports.name = "DRIVER";`,
+        "/src/plugin.js": `export const name = "PLUGIN";`,
+      },
+      entryPoints: ["/src/in.js"],
+      outfile: "/out/out.js",
+      target: "bun",
+      define: { CFG: '{"driver":"./driver.js","plugin":"./plugin.js"}' },
+      minifySyntax,
+      run: { stdout: "DRIVER string\nPLUGIN" },
+    });
+  }
+  itBundled("extra/DefineObjectMemberAsMissingModule", {
+    files: {
+      "in.js": /* js */ `
+        require(CFG.absent);
+      `,
+    },
+    define: { CFG: '{"absent":"./not-here.js","other":1}' },
+    bundleErrors: { "/in.js": [`Could not resolve: "./not-here.js"`] },
+  });
+  // `external` leaves the specifier for run time, and so does a read through a variable.
+  itBundled("extra/DefineObjectMemberAsExternalModule", {
+    files: {
+      "in.js": /* js */ `
+        const load = () => require(CFG.absent);
+        const cfg = CFG;
+        const loadLater = () => require(cfg.absent);
+        console.log(typeof load, typeof loadLater);
+      `,
+    },
+    define: { CFG: '{"absent":"./not-here.js","other":1}' },
+    external: ["./not-here.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('require("./not-here.js")');
+      api.expectFile("/out.js").toContain("require(cfg.absent)");
+    },
+    run: { stdout: "function function" },
+  });
+  // A define of the path itself, a dropped call and a key that the object lacks are as they were.
+  itBundled("extra/DefineObjectMemberBesideOtherDefines", {
+    files: {
+      "in.js": /* js */ `
+        capture(CFG.a);
+        capture(CFG.a.b);
+        capture(CFG.c);
+        capture(CFG.missing);
+        capture(CFG?.c);
+        CFG.log("dropped");
+        capture(CFG.log);
+      `,
+    },
+    define: { CFG: '{"a":{"b":1},"c":2,"log":3}', "CFG.a": '"x"' },
+    drop: ["CFG.log"],
+    capture: ['"x"', '"x".b', "2", "{ a: { b: 1 }, c: 2, log: 3 }.missing", "{ a: { b: 1 }, c: 2, log: 3 }?.c", "3"],
+  });
+
   // Various ESM cases
   itBundled("extra/CatchScope1", {
     files: {

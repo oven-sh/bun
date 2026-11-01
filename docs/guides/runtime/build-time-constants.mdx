@@ -130,7 +130,7 @@ declare const CONFIG: {
   retries: number;
 };
 
-// CONFIG is replaced with the actual object at build time
+// Bun replaces CONFIG.apiUrl and CONFIG.timeout with their values at build time
 const response = await fetch(CONFIG.apiUrl, {
   timeout: CONFIG.timeout,
 });

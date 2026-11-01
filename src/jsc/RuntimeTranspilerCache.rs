@@ -86,7 +86,9 @@ bun_core::declare_scope!(cache, visible);
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 52: `"ab".length`, `"ab"[0]` and `[x][0]` stay under a write or a `delete`, and a string fold leaves 8-bit text that is not ASCII for run time.
-const EXPECTED_VERSION: u32 = 52;
+/// Version 53: A read of a member of an object or array `--define` is printed as that member, so
+/// a file whose only `require` stands behind such a read is now an ES module.
+const EXPECTED_VERSION: u32 = 53;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

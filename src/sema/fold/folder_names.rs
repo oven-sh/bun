@@ -69,8 +69,17 @@ impl<'s> Folder<'_, 's> {
 
     pub(super) fn fold_member(&mut self, e: ExprId, chain: Chain) -> Folded {
         let hir = self.hir;
-        let Some((obj, MemberKey::Name(name))) = hir.member_key(e) else {
+        let Some((obj, key)) = hir.member_key(e) else {
             return Folded::UNKNOWN;
+        };
+        // The transpiler has no node for a type assertion: `a["b" as const]` is `a["b"]` to it.
+        let key = match key {
+            MemberKey::Computed(index) => hir.index_member_key(hir.skip_type_assertions(index)),
+            key => key,
+        };
+        let MemberKey::Name(name) = key else {
+            let folded = self.fold_define_member(e, obj, key, chain);
+            return folded.unwrap_or(Folded::UNKNOWN);
         };
         let is_in_chain = chain != Chain::No;
         let form = LinkForm {
@@ -82,6 +91,9 @@ impl<'s> Folder<'_, 's> {
             object_state.filter(|_| hir.is_name_resolved_by_transpiler(e, self.atoms.bytes(name)));
         let state = object_state.and_then(|&state| self.inputs.child(state, name, form));
         if let Some(folded) = self.try_decide_define(e, state) {
+            return folded;
+        }
+        if let Some(folded) = self.fold_define_member(e, obj, key, chain) {
             return folded;
         }
         if let Some(folded) = self.fold_imported_member(e, obj, name) {
@@ -319,7 +331,7 @@ impl<'s> Folder<'_, 's> {
         scope.is_none()
     }
 
-    fn find_outermost_cast(&self, e: ExprId) -> ExprId {
+    pub(super) fn find_outermost_cast(&self, e: ExprId) -> ExprId {
         let mut outermost = e;
         while let Some(parent) = self.parent_expr(outermost)
             && self.hir.type_assertion_operand(parent).is_some()

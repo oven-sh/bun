@@ -289,10 +289,6 @@ export const knownToday: Record<string, string> = {
   "esbuild/extra: extra/CyclicImport1": "bundled: code bytes 128 -> 66, operations 9 -> 2",
   "esbuild/extra: extra/CyclicImport2":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/extra: extra/DefineArray":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
-  "esbuild/extra: extra/DefineArray2":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/DefineExports1":
     'each file: code bytes 183 -> 12, operations 9 -> 0, run-time operations 238 -> 234; bundled: "error: fail\\n\\nexit 1", bun run "\\nexit 0"; bundled: run-time operations 238 -> 237',
   "esbuild/extra: extra/DefineExports2":
@@ -301,10 +297,6 @@ export const knownToday: Record<string, string> = {
     'each file: code bytes 183 -> 12, operations 9 -> 0, run-time operations 238 -> 234; bundled: "error: fail\\n\\nexit 1", bun run "\\nexit 0"; bundled: run-time operations 238 -> 237',
   "esbuild/extra: extra/DefineModuleArray1":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/extra: extra/DefineObject1":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
-  "esbuild/extra: extra/DefineObject2":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/DotAccess1":
     "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/DotAccess2":

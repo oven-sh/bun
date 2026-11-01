@@ -128,14 +128,37 @@ impl Finder<'_, '_> {
                     self.leave_out(start, start_of(hir, kept));
                     self.leave_out(end_of_expr(hir, kept), end);
                 }
-                ExprKind::Ident(_) | ExprKind::Dot { .. }
-                    if !shorthand_values.contains(&expression) =>
+                ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }
+                    if !shorthand_values.contains(&expression)
+                        && !self.is_object_of_defined_member(expression) =>
                 {
                     self.add_defined(expression, decisions.decision(expression));
                 }
                 _ => {}
             }
         }
+    }
+
+    // `CONFIG.a` with a value in its place is printed as that value, without the value of `CONFIG`.
+    fn is_object_of_defined_member(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let mut object = expression;
+        while let Parent::Expr(parent) = self.bound.parent_of_expr(object) {
+            if hir.type_assertion_operand(parent).is_some() {
+                object = parent;
+                continue;
+            }
+            let is_object = matches!(
+                hir[parent].kind,
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == object
+            );
+            let is_defined = !matches!(
+                self.decisions.decision(parent),
+                Decision::Unknown | Decision::DeferredData
+            );
+            return is_object && is_defined;
+        }
+        false
     }
 
     // `true && f()` is printed as `f()`.
@@ -162,7 +185,7 @@ impl Finder<'_, '_> {
                 let operand = self.find_written_or_defined(operand)?;
                 Some(Constant::Boolean(!self.is_truthy(operand)?))
             }
-            ExprKind::Ident(_) | ExprKind::Dot { .. } => {
+            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 match self.decisions.decision(expression) {
                     Decision::Constant(constant) => Some(constant),
                     _ => None,

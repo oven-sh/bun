@@ -362,6 +362,55 @@ devTest("import.meta.hot.accept with a dependency list from a define", {
     await c.expectMessage("Counter updated: 3");
   },
 });
+// A member that a read takes out of a define is a copy too, and the rewrite changes that copy.
+devTest("import.meta.hot.accept with a dependency list that is a member of a define", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      define = { CFG = '{"deps":["./counter.ts"],"other":1}' }
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { count } from "./counter.ts";
+      console.log("Initial: " + count + " " + JSON.stringify(CFG.deps));
+
+      import.meta.hot.accept(CFG.deps, (newModules) => {
+        console.log("Counter updated: " + newModules[0].count);
+      });
+    `,
+    "counter.ts": `
+      export const count = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(`Initial: 1 ["./counter.ts"]`);
+
+    await dev.write(
+      "counter.ts",
+      `
+        export const count = 2;
+      `,
+    );
+    await c.expectMessage("Counter updated: 2");
+
+    // index.ts doesn't accept itself, so the page reloads and the dev server reads the member again.
+    await c.expectReload(async () => {
+      await dev.patch("index.ts", { find: "Initial", replace: "Again" });
+    });
+    await c.expectMessage(`Again: 2 ["./counter.ts"]`);
+
+    await dev.write(
+      "counter.ts",
+      `
+        export const count = 3;
+      `,
+    );
+    await c.expectMessage("Counter updated: 3");
+  },
+});
 devTest("import.meta.hot.data persistence", {
   files: {
     "index.html": emptyHtmlFile({

@@ -730,6 +730,40 @@ pub mod defines {
         }
         true
     }
+
+    /// What a read of `name` gives on a fresh copy of `value`, the value of an object or array
+    /// define or a value inside one. `None` when the own properties do not decide the read:
+    /// the key is missing (the prototype has `toString`), or it is `__proto__`.
+    pub fn own_member(value: ExprData, name: &[u8]) -> Option<ExprData> {
+        match value {
+            ExprData::EObject(object) if name != b"__proto__" => object
+                .properties
+                .iter()
+                .rev()
+                .find(|property| {
+                    property.flags.is_empty()
+                        && matches!(
+                            property.key.map(|key| key.data),
+                            Some(ExprData::EString(key)) if key.is_utf8() && key.data == name
+                        )
+                })
+                .and_then(|property| property.value)
+                .map(|member| member.data),
+            ExprData::EArray(array) if name == b"length" => {
+                Some(ExprData::ENumber(E::Number::new(array.items.len() as f64)))
+            }
+            _ => None,
+        }
+    }
+
+    /// `own_member` for `value[index]`.
+    pub fn own_item(value: ExprData, index: f64) -> Option<ExprData> {
+        let ExprData::EArray(array) = value else {
+            return None;
+        };
+        let is_in_range = index >= 0.0 && index < array.items.len() as f64;
+        (is_in_range && index % 1.0 == 0.0).then(|| array.items[index as usize].data)
+    }
 }
 pub use defines::{Define, DefineData};
 

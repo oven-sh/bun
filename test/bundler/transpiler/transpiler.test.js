@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isASAN,
+  isDebug,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -2889,6 +2898,395 @@ export const after = { a: 1 };
         stderr: "",
         exitCode: 0,
         signalCode: null,
+      });
+    });
+
+    // https://github.com/oven-sh/bun/issues/21312
+    describe("a read of one member", () => {
+      const define = {
+        AWS: '{"ACCESS_KEY":"abc","SECRET_KEY":"def"}',
+        CFG: '{"a":{"b":{"c":7}},"k-k":1,"list":["z",{"x":2}],"dup":1,"dup":2,"__proto__":{"p":1}}',
+        LIST: "[10,[20],30]",
+        "process.env": '{"FOO":"foo","NODE_ENV":"from the object"}',
+        "process.env.NODE_ENV": '"from its own define"',
+        "import.meta.env": '{"MODE":"m"}',
+      };
+      const AWS = `{ ACCESS_KEY: "abc", SECRET_KEY: "def" }`;
+      const CFG = `{ a: { b: { c: 7 } }, "k-k": 1, list: ["z", { x: 2 }], dup: 1, dup: 2, ["__proto__"]: { p: 1 } }`;
+      const LIST = "[10, [20], 30]";
+      const transform = (target, expressions) =>
+        new Bun.Transpiler({ define, target }).transformSync(expressions.map(it => `x = ${it};`).join("\n"));
+      const printed = expressions => expressions.map(it => `x = ${it};\n`).join("");
+      // Each row is a use and what is printed for it. Target bun minifies syntax, so it can print something else.
+      const itPrints = (title, rows) =>
+        it.each(["browser", "bun"])(`${title} for target %s`, target => {
+          const output = transform(
+            target,
+            rows.map(([use]) => use),
+          );
+          expect(output).toBe(printed(rows.map(([, browser, bun = browser]) => (target === "bun" ? bun : browser))));
+        });
+
+      itPrints("is printed as that member", [
+        ["AWS.ACCESS_KEY", `"abc"`],
+        [`AWS["SECRET_KEY"]`, `"def"`],
+        ["AWS[`SECRET_KEY`]", `"def"`],
+        ["CFG.a.b.c", "7"],
+        ["CFG.a.b", "{ c: 7 }"],
+        [`CFG["a"]["b"].c`, "7"],
+        [`CFG["k-k"]`, "1"],
+        ["CFG.list[0]", `"z"`],
+        ["CFG.list[1].x", "2"],
+        ["CFG.list.length", "2"],
+        // The last of two equal keys is the one that a read finds.
+        ["CFG.dup", "2"],
+        ["LIST[0]", "10"],
+        ["LIST[0x1][0]", "20"],
+        ["LIST.length", "3"],
+        [`LIST["length"]`, "3"],
+        ["process.env.FOO", `"foo"`],
+        // A define of the path itself comes first.
+        ["process.env.NODE_ENV", `"from its own define"`],
+        ["import.meta.env.MODE", `"m"`],
+        ["typeof AWS.ACCESS_KEY", `"string"`],
+      ]);
+
+      // Here the value alone does not say what the expression gives, or more than a read is done.
+      // The rule for `[a, b][0]` in minified syntax then has its turn with the copy, as it has with an array in the source.
+      itPrints("keeps the value around any other use", [
+        ["AWS", AWS],
+        ["AWS.REGION", `${AWS}.REGION`],
+        ["AWS.toString", `${AWS}.toString`],
+        ["AWS?.ACCESS_KEY", `${AWS}?.ACCESS_KEY`],
+        ["AWS[key]", `${AWS}[key]`],
+        ["CFG.__proto__", `${CFG}.__proto__`],
+        ["CFG.p", `${CFG}.p`],
+        ["LIST[-1]", `${LIST}[-1]`],
+        ["LIST[0.5]", `${LIST}[0.5]`],
+        ["LIST[3]", `${LIST}[3]`],
+        [`LIST["0"]`, `${LIST}["0"]`],
+        ["LIST?.[0]", `${LIST}?.[0]`, "10"],
+        ["AWS.ACCESS_KEY()", `${AWS}.ACCESS_KEY()`],
+        ["LIST[0]()", `${LIST}[0]()`, "10()"],
+        ["AWS.ACCESS_KEY``", `${AWS}.ACCESS_KEY\`\``],
+        ["LIST[0]``", `${LIST}[0]\`\``, "10``"],
+        ["delete AWS.ACCESS_KEY", `delete ${AWS}.ACCESS_KEY`],
+        ["delete LIST[0]", `delete ${LIST}[0]`],
+        ["AWS.ACCESS_KEY = 1", `${AWS}.ACCESS_KEY = 1`],
+        ["AWS.ACCESS_KEY++", `${AWS}.ACCESS_KEY++`],
+        ["--AWS.ACCESS_KEY", `--${AWS}.ACCESS_KEY`],
+        ["AWS.ACCESS_KEY ||= 1", `${AWS}.ACCESS_KEY ||= 1`],
+        ["LIST[0] = 5", `${LIST}[0] = 5`],
+        ["LIST[1]++", `${LIST}[1]++`],
+        [`CFG["k-k"] += 1`, `${CFG}["k-k"] += 1`],
+        ["[AWS.ACCESS_KEY = 3] = []", `[${AWS}.ACCESS_KEY = 3] = []`],
+        ["[...CFG.list] = [1]", `[...${CFG}.list] = [1]`],
+        ["({ a: AWS.ACCESS_KEY, b: LIST[0] } = {})", `{ a: ${AWS}.ACCESS_KEY, b: ${LIST}[0] } = {}`],
+        ["({ a: AWS.ACCESS_KEY = 2 } = {})", `{ a: ${AWS}.ACCESS_KEY = 2 } = {}`],
+        ["({ ...CFG.a } = {})", `{ ...${CFG}.a } = {}`],
+      ]);
+
+      it.each(["browser", "bun"])("keeps the value in a statement that is no plain read for target %s", target => {
+        const transpiler = new Bun.Transpiler({ define, target });
+        const statements = [
+          ["const { ACCESS_KEY } = AWS;", `const { ACCESS_KEY } = ${AWS};\n`],
+          ["for (AWS.ACCESS_KEY in o);", `for (${AWS}.ACCESS_KEY in o)\n  ;\n`],
+          ["for (LIST[0] of o);", `for (${LIST}[0] of o)\n  ;\n`],
+          [
+            "class C { #x; static f() { return AWS.#x; } }",
+            `class C {\n  #x;\n  static f() {\n    return ${AWS}.#x;\n  }\n}\n`,
+          ],
+        ];
+        expect(statements.map(([statement]) => transpiler.transformSync(statement))).toEqual(
+          statements.map(([, output]) => output),
+        );
+      });
+
+      // Only a key that is written as a name, a string or a number says at once which member the read
+      // finds. The value stays around any other key, also where a later rule computes it.
+      itPrints("keeps the value around a key that is computed", [
+        [`AWS["ACCESS" + "_KEY"]`, `${AWS}["ACCESS" + "_KEY"]`, `${AWS}.ACCESS_KEY`],
+        [`CFG["k-" + "k"]`, `${CFG}["k-" + "k"]`, `${CFG}["k-k"]`],
+        ["AWS[`ACCESS_${'KEY'}`]", `${AWS}[\`ACCESS_\${"KEY"}\`]`, `${AWS}.ACCESS_KEY`],
+        [`AWS[("x", "ACCESS_KEY")]`, `${AWS}["x", "ACCESS_KEY"]`, `${AWS}.ACCESS_KEY`],
+        ["LIST[1 - 1]", `${LIST}[1 - 1]`, "10"],
+        ["LIST[+0]", `${LIST}[0]`, "10"],
+      ]);
+
+      it("keeps the value around a key that is a constant or an enum member", () => {
+        const transpiler = new Bun.Transpiler({ define, loader: "ts" });
+        expect(transpiler.transformSync(`const KEY = "k-k"; x = CFG[KEY];`)).toBe(
+          `const KEY = "k-k";\nx = ${CFG}[KEY];\n`,
+        );
+        expect(transpiler.transformSync(`enum E { A = "k-k" } x = CFG[E.A];`)).toContain(
+          `x = ${CFG}["k-k" /* A */];\n`,
+        );
+      });
+
+      // The rest of a chain reads from a copy of the last member that the chain decides, as it does with a define of that path.
+      itPrints("reads the rest of a chain from a copy of the member", [
+        ["CFG.list[2]", `["z", { x: 2 }][2]`],
+        [`CFG.list["0"]`, `["z", { x: 2 }]["0"]`],
+        ["CFG.a.b.c = 1", "{ c: 7 }.c = 1"],
+        ["CFG.a.b.c++", "{ c: 7 }.c++"],
+        ["CFG.list[0] = 1", `["z", { x: 2 }][0] = 1`],
+        ["delete CFG.a.b.c", "delete { c: 7 }.c"],
+        ["CFG.a.b()", "{ b: { c: 7 } }.b()"],
+        ["CFG.a?.b", "{ b: { c: 7 } }?.b"],
+        ["CFG.a.missing", "{ b: { c: 7 } }.missing"],
+        ["CFG.list.map(f)", `["z", { x: 2 }].map(f)`],
+      ]);
+
+      // A string that a read takes out of the value is a string literal to the rules for one:
+      // they keep it where a property of it is stored to or deleted.
+      itPrints("is a string literal to a store or a delete", [
+        ["AWS.ACCESS_KEY.length = 1", `"abc".length = 1`],
+        ["AWS.ACCESS_KEY.length++", `"abc".length++`],
+        ["delete AWS.ACCESS_KEY.length", `delete "abc".length`],
+        ["AWS.ACCESS_KEY[0] = 1", `"abc"[0] = 1`],
+        ["delete CFG.list[0][0]", `delete "z"[0]`],
+        ["CFG.list[0].length = 5", `"z".length = 5`],
+        ["AWS.ACCESS_KEY[0].length = 0", `"abc"[0].length = 0`, `"a".length = 0`],
+        ["[AWS.ACCESS_KEY.length] = [1]", `["abc".length] = [1]`],
+      ]);
+
+      it("is the value of an enum member that it initializes", () => {
+        const transpiler = new Bun.Transpiler({ define: { CFG: '{"a":1,"b":"s"}' }, loader: "ts" });
+        const output = transpiler.transformSync("enum E { A = CFG.a, B, C = CFG.b } x = [E.A, E.B, E.C];");
+        expect(output).toContain(`x = [1 /* A */, 2 /* B */, "s" /* C */];`);
+      });
+
+      // transform() parses on a pool thread, and every call reads the members out of one define table.
+      it("is printed the same by every concurrent transform()", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const transpiler = new Bun.Transpiler({ loader: "jsx", define: ${JSON.stringify(define)} });
+              const line = i => "export const a" + i + " = [AWS.ACCESS_KEY, CFG.a.b, CFG.list[1].x, AWS, <div {...CFG.a.b}>kid</div>];";
+              const source = Array.from({ length: 200 }, (_, i) => line(i)).join("\\n");
+              const outputs = await Promise.all(Array.from({ length: 8 }, () => transpiler.transform(source)));
+              const first = transpiler.transformSync(line(0));
+              console.log(JSON.stringify({ distinct: new Set(outputs).size, starts: outputs[0].startsWith(first), first }));
+            `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: JSON.stringify({
+            distinct: 1,
+            starts: true,
+            first: `export const a0 = ["abc", { c: 7 }, 2, ${AWS}, jsxDEV_7x81h0kn("div", {
+  c: 7,
+  children: "kid"
+}, undefined, false, undefined, this)];\n`,
+          }),
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
+
+      const run = async (cmd, cwd) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+
+      // The command of the issue.
+      it("is printed by bun build --define", async () => {
+        using dir = tempDir("define-object-member-build", { "src/index.ts": "console.log(AWS.ACCESS_KEY);\n" });
+        expect(await run(["build", "--define", `AWS=${define.AWS}`, "src/index.ts"], String(dir))).toEqual({
+          stdout: '// src/index.ts\nconsole.log("abc");\n',
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // A function shows as its text what the run time has in place of the read.
+      const source = `console.log(String(() => [AWS.ACCESS_KEY, AWS["SECRET_KEY"], AWS.REGION]));`;
+      const text = `() => ["abc", "def", ${AWS}.REGION]\n`;
+
+      it("is replaced at run time by --define", async () => {
+        expect(await run(["--define", `AWS=${define.AWS}`, "-e", source])).toEqual({
+          stdout: text,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      it("is replaced at run time by [define] in bunfig.toml", async () => {
+        using dir = tempDir("define-object-member-bunfig", {
+          "bunfig.toml": `[define]\nAWS = ${JSON.stringify(define.AWS)}\n`,
+          "index.js": source,
+        });
+        expect(await run(["index.js"], String(dir))).toEqual({ stdout: text, stderr: "", exitCode: 0 });
+      });
+
+      // The read copies the one member, not the value of the define. Four roots: a name, a member
+      // of a value, a path with a dot, and import.meta.
+      it("copies the member alone", async () => {
+        const fixture = `
+          const keys = 2000, reads = 250;
+          const value = JSON.stringify(Object.fromEntries(Array.from({ length: keys }, (_, i) => ["KEY_" + i, "v" + i])));
+          const define = { AWS: value, CFG: '{"a":' + value + "}", "process.env": value, "import.meta": value };
+          const roots = ["AWS", "CFG.a", "process.env", "import.meta"];
+          const lines = line => roots.flatMap(root => Array.from({ length: reads }, (_, i) => line(root, i))).join("");
+          const input = lines((root, i) => "x = " + root + ".KEY_" + i + ";\\n");
+          const transpiler = new Bun.Transpiler({ define });
+          const before = process.memoryUsage.rss();
+          const output = transpiler.transformSync(input);
+          const after = process.memoryUsage.rss();
+          if (output !== lines((root, i) => 'x = "v' + i + '";\\n')) throw new Error("wrong output: " + output.slice(0, 200));
+          console.log(JSON.stringify({ megabytes: (after - before) / 1024 / 1024 }));
+        `;
+        const { stdout, stderr, exitCode } = await run(["-e", fixture]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: expect.stringMatching(/^\{"megabytes":/),
+          stderr: "",
+          exitCode: 0,
+        });
+        // A copy of the value at each of the 1,000 reads takes more than 400 MB.
+        expect(JSON.parse(stdout).megabytes).toBeLessThan(isASAN || isDebug ? 100 : 50);
+      });
+
+      // Every use of the define is a new copy of its value. How much of that copy is printed
+      // must not change what an expression gives, also where it stores, deletes or calls.
+      describe("gives what a new copy of the value gives", () => {
+        const json = '{"a":{"b":{"c":7},"e":[1,2]},"l":["z",{"x":2}],"n":1.5,"s":"str","nul":null,"toString":"own"}';
+        const expressions = [
+          "V.a.b.c + V.a.e[1] + V.l.length + V.n",
+          "[V.s, V.s.length, V.s[1], V.l[0], V.l[1].x, V.nul, V.toString, V.missing, V.l[9], V.l['0']]",
+          "[V?.a.b.c, V.a?.b.c, V.nul?.x, V['a']['b'].c, V[`s`], typeof V.a, typeof V.missing]",
+          "[V['n' + 'ul'], V[('s', 'n')], V.l[1 - 1], V.l[0.5], V.a.e[V.a.e[0]], V.l[+1].x]",
+          "[V.a === V.a, V.l === V.l, V.a.b.c === V.a.b.c, 'b' in V.a, V.l instanceof Array]",
+          "[V.a.e.map(x => x * 2), [...V.l].length, { ...V.a.b }, V.l.at(-1).x, V.s.toUpperCase()]",
+          "V.a.b()",
+          "V.s()",
+          "V.a.b``",
+          "new V.a.b()",
+          "V.nul.x",
+          "V.a.b.c = 9",
+          "V.a.b.c++",
+          "V.n++",
+          "V.nul ??= 4",
+          "V.l[0] = 5",
+          "V.l[0]++",
+          "V.s.x = 9",
+          "V.s.length = 0",
+          "V.s.length++",
+          "V.s[0].length = 0",
+          "(V.s + 'x').length = 0",
+          "V.l[0].length = 5",
+          "V.l.length = 0",
+          "delete V.a.b",
+          "delete V.s.length",
+          "delete V.s[0]",
+          "delete V.s[0][0]",
+          "delete V.l[0]",
+          "delete V.l.length",
+          "(() => { [V.a.b.c, V.s.length] = [5, 6]; })()",
+          "(() => { const { b } = V.a, [first] = V.l, { length } = V.s; return [b, first, length]; })()",
+          "(() => { const list = V.l; list.push(1); return [list.length, V.l.length]; })()",
+        ];
+        const show = `value => JSON.stringify(value, (key, it) => (it === undefined ? "undefined" : it)) ?? String(value)`;
+        const results = of =>
+          `[${expressions.map(it => `(() => { "use strict"; try { return show(${of(it)}); } catch (error) { return error.constructor.name; } })()`)}]`;
+        const expected = new Function("show", "copy", `return ${results(it => it.replaceAll("V", "copy()"))};`)(
+          new Function(`return ${show}`)(),
+          () => JSON.parse(json),
+        );
+
+        it("at run time", async () => {
+          const source = `const show = ${show}; console.log(JSON.stringify(${results(it => it)}));`;
+          const { stdout, stderr, exitCode } = await run(["--define", `V=${json}`, "-e", source]);
+          expect({ results: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+            results: expected,
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        // The last two are what Bun makes of a file that `bun build` printed: it transpiles the file again as it loads it.
+        const withDefine = options => new Bun.Transpiler({ define: { V: json }, ...options });
+        const loaded = new Bun.Transpiler({ target: "bun" });
+        const modes = {
+          "browser": source => withDefine({ target: "browser" }).transformSync(source),
+          "bun": source => withDefine({ target: "bun" }).transformSync(source),
+          "minify.syntax": source => withDefine({ minify: { syntax: true } }).transformSync(source),
+          "browser, then loaded by Bun": source =>
+            loaded.transformSync(withDefine({ target: "browser" }).transformSync(source)),
+          "minify.syntax, then loaded by Bun": source =>
+            loaded.transformSync(withDefine({ minify: { syntax: true } }).transformSync(source)),
+        };
+        it.each(Object.keys(modes))("in the output for %s", mode => {
+          const output = modes[mode](`results = ${results(it => it)};`);
+          // The transpiler prints a function without its "use strict".
+          const evaluate = new Function("show", `"use strict"; let results; ${output}; return results;`);
+          expect(evaluate(new Function(`return ${show}`)())).toEqual(expected);
+        });
+      });
+
+      // A store to a property of a string, and a delete of one, with the string alone in its value,
+      // as an item, and under a path with a dot.
+      it("gives what a new copy of the value gives where the string is all of it", () => {
+        const define = {
+          ONE: '{"s":"str"}',
+          ITEMS: '["str"]',
+          "process.env": '{"s":"str","n":1}',
+          "import.meta.env": '{"s":"str"}',
+        };
+        const expressions = [
+          ["ONE", "[V.s, V.s.length, V.s[1]]"],
+          ["ONE", "V.s.length = 0"],
+          ["ONE", "V.s[0].length = 0"],
+          ["ONE", "delete V.s[0]"],
+          ["ITEMS", "[V[0], V.length, V[0][1]]"],
+          ["ITEMS", "V[0].length = 0"],
+          ["ITEMS", "delete V[0][0]"],
+          ["ITEMS", "V[0] = 1"],
+          ["process.env", "[V.s, V.n, V.s.length, V.missing]"],
+          ["process.env", "V.s.length = 0"],
+          ["process.env", "delete V.s[0]"],
+          ["import.meta.env", "[V.s, V.s[1]]"],
+          ["import.meta.env", "delete V.s.length"],
+        ];
+        const show = `value => JSON.stringify(value, (key, it) => (it === undefined ? "undefined" : it)) ?? String(value)`;
+        const results = of =>
+          `[${expressions.map(([root, it]) => `(() => { "use strict"; try { return show(${of(root, it)}); } catch (error) { return error.constructor.name; } })()`)}]`;
+        const expected = new Function(
+          "show",
+          `return ${results((root, it) => it.replaceAll("V", `JSON.parse(${JSON.stringify(define[root])})`))};`,
+        )(new Function(`return ${show}`)());
+        const source = `results = ${results((root, it) => it.replaceAll("V", root))};`;
+        const loaded = new Bun.Transpiler({ target: "bun" });
+        const outputs = [
+          new Bun.Transpiler({ define, target: "browser" }).transformSync(source),
+          new Bun.Transpiler({ define, target: "bun" }).transformSync(source),
+          loaded.transformSync(new Bun.Transpiler({ define, target: "browser" }).transformSync(source)),
+        ];
+        const evaluate = output =>
+          new Function("show", `"use strict"; let results; ${output}; return results;`)(
+            new Function(`return ${show}`)(),
+          );
+        expect(outputs.map(evaluate)).toEqual([expected, expected, expected]);
+      });
+
+      // A define makes 8-bit text, and the rules for a string literal leave such text for run time where it is not ASCII.
+      it("gives what the object gives for a string that is not ASCII", async () => {
+        const value = { s: "a\u00e9b", t: "abc", o: { s: "a\u00e9b", k: 2 }, n: 1, "\u00e9": 6 };
+        const read = `[NA.s[1], (NA.s + "x").length, NA.s.charCodeAt(1), +NA.s, NA.o.s[1], NA.o.k, NA.n, (NA.t + TEXT).length, NA.s === "a\u00e9b"]`;
+        const source = `console.log(JSON.stringify([${read}, String(() => [NA.n, NA.s, NA.\u00e9])]));`;
+        const defines = ["--define", `NA=${JSON.stringify(value)}`, "--define", `TEXT="\u00e9"`];
+        expect(await run([...defines, "-e", source])).toEqual({
+          stdout: JSON.stringify([["\u00e9", 4, 233, null, "\u00e9", 2, 1, 4, true], `() => [1, "a\\xE9b", 6]`]) + "\n",
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
   });

@@ -4460,6 +4460,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
         if is_eval || is_stdin {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
+            // `<cwd>/[eval]` has no query: a `?` in it is part of the cwd.
+            path = Fs::Path::init(specifier);
         }
     }
 

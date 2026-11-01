@@ -175,6 +175,13 @@ public:
     JSC::JSPromise* reload(JSC::JSGlobalObject*);
     void doClose();
 
+    // What both backends' send helpers rely on: checkReady() in JSWebViewPrototype.cpp ran last.
+    void assertReady(const JSC::WriteBarrier<JSC::JSPromise>& slot) const
+    {
+        ASSERT(!m_closed);
+        ASSERT_UNUSED(slot, !slot);
+    }
+
 #if OS(DARWIN)
     // WebKit constructor: spawn host if needed, allocate viewId, register
     // in the Weak routing table, write the Create frame. Returns nullptr if

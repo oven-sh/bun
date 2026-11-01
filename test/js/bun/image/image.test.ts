@@ -1135,6 +1135,214 @@ describe("Bun.Image", () => {
       expect(await new Bun.Image(cornersPng).webp().dataurl()).toMatch(/^data:image\/webp;base64,/);
     });
 
+    // ThumbHash stores the cosine terms 0 to 6 of an axis, and fewer for a short side. A term above the pixel count of
+    // the axis repeats a lower term. These sources have one: 1x1, 100x1, 2x2, and 640x8, which the fit to 100px makes
+    // 100x1.
+    describe(".placeholder() of a thin or tiny source", () => {
+      type Rgba = [number, number, number, number];
+      const sizeOf = (size: string) => size.split("x").map(Number);
+      const decode = async (url: string) => decodePngRaw(await new Bun.Image(url).png().bytes());
+      const render = async (src: Uint8Array) => decode(await new Bun.Image(src).placeholder());
+      // "r=111 g=123 b=129 a=255" for a render of one colour, "r=0..255 ..." when a channel varies.
+      const spread = ({ data }: { data: Uint8Array }) =>
+        ["r", "g", "b", "a"]
+          .map((name, c) => {
+            const values = data.filter((_, i) => i % 4 === c);
+            const [lo, hi] = [Math.min(...values), Math.max(...values)];
+            return lo === hi ? `${name}=${lo}` : `${name}=${lo}..${hi}`;
+          })
+          .join(" ");
+      const distance = (data: Uint8Array, i: number, c: Rgba) =>
+        Math.hypot(data[i] - c[0], data[i + 1] - c[1], data[i + 2] - c[2], data[i + 3] - c[3]);
+
+      // ThumbHash stores the average in 6 bits per colour plane and 4 bits of alpha, so [110, 120, 130] comes back
+      // as [111, 123, 129] and alpha 128 as 136. The first two sizes of each row have no such term.
+      test.each([
+        [
+          "opaque",
+          255,
+          "r=111 g=123 b=129 a=255",
+          "8x8 132x2 1x1 2x1 1x2 8x1 100x1 1x100 2x2 2x3 3x2 3x3 640x8 134x2 200x2 2x200",
+        ],
+        ["half-transparent", 128, "r=111 g=123 b=129 a=136", "8x8 100x4 1x1 2x2 100x1 1x100 100x2 2x100 160x2 150x3"],
+      ] as const)("a flat %s source renders as one colour at every size", async (_, alpha, flat, sizes) => {
+        const got = await Promise.all(
+          sizes.split(" ").map(async size => {
+            const [w, h] = sizeOf(size);
+            return [size, spread(await render(makePng(w, h, () => [110, 120, 130, alpha])))];
+          }),
+        );
+        expect(Object.fromEntries(got)).toEqual(Object.fromEntries(sizes.split(" ").map(size => [size, flat])));
+      });
+
+      test("a strip of two colours renders each colour at its own end", async () => {
+        const blue: Rgba = [40, 60, 200, 255];
+        const orange: Rgba = [230, 150, 40, 255];
+        // Counts the pixels in the outer quarters of the placeholder that are nearer to the colour of the other end.
+        const misplaced = async (size: string) => {
+          const [w, h] = sizeOf(size);
+          const tall = h > w;
+          const px = await render(makePng(w, h, (x, y) => ((tall ? y < h / 2 : x < w / 2) ? blue : orange)));
+          let count = 0;
+          for (let y = 0; y < px.h; y++) {
+            for (let x = 0; x < px.w; x++) {
+              const along = tall ? (y + 0.5) / px.h : (x + 0.5) / px.w;
+              if (along > 0.25 && along < 0.75) continue;
+              const [own, other] = along < 0.5 ? [blue, orange] : [orange, blue];
+              const i = (y * px.w + x) * 4;
+              if (distance(px.data, i, own) >= distance(px.data, i, other)) count++;
+            }
+          }
+          return [size, count];
+        };
+        // 100x8 has no such term.
+        const sizes = ["100x8", "100x1", "1x100", "8x1", "2x1", "1x2", "640x8"];
+        expect(Object.fromEntries(await Promise.all(sizes.map(misplaced)))).toEqual(
+          Object.fromEntries(sizes.map(size => [size, 0])),
+        );
+      });
+
+      // The first size of each row has no such term.
+      test.each([
+        ["end", "100x8 100x1 1x100 8x1 2x1 1x2 640x8 100x2 2x100"],
+        ["side", "100x8 100x2 2x100 8x2 2x2 150x3"],
+      ] as const)("a strip with a transparent %s keeps the alpha of each half", async (half, sizes) => {
+        const clear: Rgba = [230, 150, 40, 0];
+        const solid: Rgba = [230, 150, 40, 255];
+        // The mean alpha of the outer quarter of the placeholder in the transparent half, then in the opaque half.
+        const alphas = async (size: string) => {
+          const [w, h] = sizeOf(size);
+          const onY = (half === "end") === h > w;
+          const px = await render(makePng(w, h, (x, y) => ((onY ? y < h / 2 : x < w / 2) ? clear : solid)));
+          const quarters: number[][] = [[], []];
+          for (let y = 0; y < px.h; y++) {
+            for (let x = 0; x < px.w; x++) {
+              const at = onY ? (y + 0.5) / px.h : (x + 0.5) / px.w;
+              if (at < 0.25 || at > 0.75) quarters[at < 0.5 ? 0 : 1].push(px.data[(y * px.w + x) * 4 + 3]);
+            }
+          }
+          const [low, high] = quarters.map(q => Math.round(q.reduce((sum, a) => sum + a, 0) / q.length));
+          return [size, low < 48 && high > 208 ? "kept" : `${low} and ${high}`];
+        };
+        const list = sizes.split(" ");
+        expect(Object.fromEntries(await Promise.all(list.map(alphas)))).toEqual(
+          Object.fromEntries(list.map(size => [size, "kept"])),
+        );
+      });
+
+      test("a 2x2 source renders each pixel's colour in its own quadrant", async () => {
+        const colours: Rgba[] = [
+          [220, 40, 40, 255],
+          [40, 200, 60, 255],
+          [40, 60, 220, 255],
+          [230, 220, 60, 255],
+        ];
+        const px = await render(makePng(2, 2, (x, y) => colours[y * 2 + x]));
+        // The source pixel that the centre of each quadrant of the placeholder is nearest to.
+        const nearest = [0.25, 0.75].flatMap(fy =>
+          [0.25, 0.75].map(fx => {
+            const i = (Math.floor(px.h * fy) * px.w + Math.floor(px.w * fx)) * 4;
+            const distances = colours.map(c => distance(px.data, i, c));
+            return distances.indexOf(Math.min(...distances));
+          }),
+        );
+        expect(nearest).toEqual([0, 1, 2, 3]);
+      });
+
+      // Each row is one line of a square source, in grey or in alpha. A term above the pixel count that is still
+      // summed makes the placeholder turn more often along that line than the source does. The last column says
+      // whether the placeholder ends over 200 levels below its start, so that a flat render cannot pass.
+      test.each([
+        ["grey", [230, 30, 30, 230], 1, false],
+        ["alpha", [255, 30, 255], 1, false],
+        ["grey", [230, 30], 0, true],
+        ["alpha", [255, 30], 0, true],
+      ] as const)(
+        "a source of %s lines %j renders with %d turns along either axis",
+        async (kind, line, turns, falls) => {
+          const along = async (axis: "x" | "y") => {
+            const px = await render(
+              makePng(line.length, line.length, (x, y) => {
+                const v = line[axis === "x" ? x : y];
+                return kind === "alpha" ? [110, 120, 130, v] : [v, v, v, 255];
+              }),
+            );
+            // One channel through the middle of the placeholder.
+            const profile = Array.from({ length: axis === "x" ? px.w : px.h }, (_, i) =>
+              axis === "x" ? rgbaAt(px.data, px.w, i, px.h >> 1) : rgbaAt(px.data, px.w, px.w >> 1, i),
+            ).map(rgba => rgba[kind === "alpha" ? 3 : 0]);
+            // Direction changes, ignoring steps of 4 levels or fewer.
+            let [count, direction, last] = [0, 0, profile[0]];
+            for (const v of profile) {
+              if (Math.abs(v - last) <= 4) continue;
+              if (direction !== 0 && Math.sign(v - last) !== direction) count++;
+              [direction, last] = [Math.sign(v - last), v];
+            }
+            return { turns: count, falls: profile[0] - profile[profile.length - 1] > 200 };
+          };
+          expect({ x: await along("x"), y: await along("y") }).toEqual({ x: { turns, falls }, y: { turns, falls } });
+        },
+      );
+
+      test("every input form of a thin source gives the same flat placeholder", async () => {
+        const png = makePng(2, 1, () => [110, 120, 130, 255]);
+        using dir = tempDir("image-placeholder-thin", {});
+        const path = join(String(dir), "thin.png");
+        await Bun.write(path, png);
+        const urls = await Promise.all([
+          new Bun.Image(png).placeholder(),
+          new Bun.Image(path).placeholder(),
+          new Bun.Image(`data:image/png;base64,${Buffer.from(png).toString("base64")}`).placeholder(),
+          Bun.file(path).image().placeholder(),
+          new Blob([png]).image().placeholder(),
+        ]);
+        expect(new Set(urls).size).toBe(1);
+        expect(spread(await decode(urls[0]))).toBe("r=111 g=123 b=129 a=255");
+      });
+
+      // These sources have no such term, so their placeholder stays the one that bun 1.4.3 gives. The last column is
+      // its RGBA at 3x3 pixels. 6x3, 3x6 and 4x4 have a term at the pixel count itself. The encoder still sums that
+      // term: to skip it too changes these three rows.
+      const smooth =
+        (alpha: boolean) =>
+        (x: number, y: number): Rgba => [
+          (x * y) % 256,
+          (5 * x + 2 * y) % 256,
+          (x * x) % 256,
+          alpha ? (40 + 3 * x + 2 * y) % 256 : 255,
+        ];
+      const pixels = (w: number, hex: string) => {
+        const rgba = Buffer.from(hex, "hex");
+        return (x: number, y: number) => [...rgba.subarray((y * w + x) * 4, (y * w + x) * 4 + 4)] as Rgba;
+      };
+      const six = pixels(
+        6,
+        "dcdad1ff151004ff260f0dff2f0c1aff302515ffc9ffe8ffedd4e4ff011211ffe0dbdeff210413fff7e2e8ffe2cfe1ff" +
+          "cad5e4ffdcf8deff291e11ffcccdcbff2d2a1cff0c2115ff",
+      );
+      const four = pixels(
+        4,
+        "c09469cb781528a7ef0230485e9d853f88a56ff7196da830494bc2e0aa23284e19f0f8f8ba6e2dfdb7a8428bd2ff8243" +
+          "29f9d3ad596ab34d0dd15b851b6daf1d",
+      );
+      const sixTall = (x: number, y: number) => six(y, x);
+      test.each([
+        [70, 50, false, smooth(false), "253529ff48867cff525065ff655535ff87a48aff7b5665ff6b6d2dff87b483ff796167ff"],
+        [70, 50, true, smooth(true), "5f695454718f7c86675f70c770705350899d84b97a6975937176486d8aa47cca6d64656a"],
+        [6, 3, false, six, "a4ab9bff332111ff363e2bffd6d0deff7c5867ffa495a0ffcde2e2ff5f5354ff666864ff"],
+        [3, 6, false, sixTall, "a4ab9bffd6d0deffcde2e2ff332111ff7c5867ff5f5354ff363e2bffa495a0ff666864ff"],
+        [4, 4, true, four, "8b9a80d28d454e7a926c775877b89ada816264968578767f40e9b8d45d97808473a47f68"],
+      ] as const)("a %dx%d source keeps its placeholder (transparency: %p)", async (w, h, _, pixelOf, at) => {
+        const px = await render(makePng(w, h, pixelOf));
+        const lattice = (n: number) => [0.1, 0.4, 0.75].map(f => Math.floor(n * f));
+        const sampled = lattice(px.h).flatMap(y => lattice(px.w).flatMap(x => rgbaAt(px.data, px.w, x, y)));
+        // The last step of the render truncates, so a platform can land one level away. Snap those onto the
+        // expected value, so that a failure prints the channels that differ.
+        const want = [...Buffer.from(at, "hex")];
+        expect(sampled.map((v, i) => (Math.abs(v - want[i]) <= 1 ? want[i] : v))).toEqual(want);
+      });
+    });
+
     test(".placeholder() is a ThumbHash-rendered ≤32px PNG data: URL", async () => {
       // Source big enough to force the ≤100 box-downscale before the DCT;
       // colour gradient so the LPQ coefficients are non-degenerate.

@@ -766,7 +766,7 @@ Specifies the type of sourcemap to generate.
 
 The associated `*.js.map` sourcemap is a JSON file containing an equivalent `debugId` property.
 
-Bun reads the `*.js.map` file beside a bundle built with [`target: "bun"`](#target) when it needs a stack trace for that bundle. If the `debugId` in the `*.js.map` file differs from the `//# debugId` comment of the bundle, the map is from another build. Bun prints a warning and does not use the map.
+Bun reads the `*.js.map` file beside a bundle built with [`target: "bun"`](#target) the first time it needs a stack trace for that bundle. If the `debugId` in the `*.js.map` file differs from the `//# debugId` comment of the bundle, the map is from another build. Bun prints a warning and does not use the map. Bun does not compare a map that has no `debugId`.
 
 ### minify
 

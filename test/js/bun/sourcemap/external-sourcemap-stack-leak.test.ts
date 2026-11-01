@@ -243,10 +243,10 @@ describe.concurrent("the debug id of a // @bun file and of the .map beside it", 
       // sentry-cli writes the id there.
       ["id-below-the-url.js", name => url(name) + "\n" + external(), { debugId: otherId }, fileId],
       ["long-id-other-end.js", () => external(longId + "1"), { debugId: longId + "2" }, longId + "1"],
-      // Bytes that are not ASCII above the id line do not hide it.
+      // Characters that are not ASCII above the id line do not hide it, below and above U+00FF.
       [
         "not-ascii-above-id.js",
-        () => "/*! Copyright \u00a9 W\u00e4rting */\n" + external(),
+        () => "/*! Copyright \u00a9 W\u00e4rting \u0100 */\n" + external(),
         { debugId: otherId },
         fileId,
       ],

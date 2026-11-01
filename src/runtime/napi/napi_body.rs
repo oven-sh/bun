@@ -3651,6 +3651,7 @@ mod v8_api {
         pub(super) fn _ZNK2v85Value8IsNumberEv() -> *mut c_void;
         pub(super) fn _ZNK2v85Value8IsUint32Ev() -> *mut c_void;
         pub(super) fn _ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value10Int32ValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
         pub(super) fn _ZNK2v85Value11IsUndefinedEv() -> *mut c_void;
         pub(super) fn _ZNK2v85Value6IsNullEv() -> *mut c_void;
         pub(super) fn _ZNK2v85Value17IsNullOrUndefinedEv() -> *mut c_void;
@@ -3760,6 +3761,26 @@ mod v8_api {
         pub(super) fn _ZNK2v814CpuProfileNode8GetChildEi() -> *mut c_void;
         pub(super) fn _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() -> *mut c_void;
         pub(super) fn _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer15NewBackingStoreEPvmPFvS1_mS1_ES1_() -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer6DetachEv() -> *mut c_void;
+        pub(super) fn _ZNK2v811ArrayBuffer10ByteLengthEv() -> *mut c_void;
+        pub(super) fn _ZNK2v811ArrayBuffer4DataEv() -> *mut c_void;
+        pub(super) fn _ZNK2v817SharedArrayBuffer10ByteLengthEv() -> *mut c_void;
+        pub(super) fn _ZNK2v817SharedArrayBuffer4DataEv() -> *mut c_void;
+        pub(super) fn _ZN2v812BackingStoreD1Ev() -> *mut c_void;
+        pub(super) fn _ZN2v813CFunctionInfoC2ERKNS_9CTypeInfoEjPS2_NS0_19Int64RepresentationE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v89CFunctionC1EPKvPKNS_13CFunctionInfoE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEENS_14PropertyFilterENS_17KeyConversionModeE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86Object5CloneEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value12BooleanValueEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value10IsExternalEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value13IsArrayBufferEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value17IsArrayBufferViewEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value19IsSharedArrayBufferEv() -> *mut c_void;
         // NOTE: return type omitted to match the `uv_functions_to_export` declarations
         // below (avoids `clashing_extern_declarations`); only the symbol address is used.
         pub(super) fn uv_os_getpid();
@@ -3971,6 +3992,8 @@ mod v8_api {
         pub(super) fn v8_Value_IsUint32() -> *mut c_void;
         #[link_name = "?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z"]
         pub(super) fn v8_Value_Uint32Value() -> *mut c_void;
+        #[link_name = "?Int32Value@Value@v8@@QEBA?AV?$Maybe@H@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_Int32Value() -> *mut c_void;
         #[link_name = "?IsUndefined@Value@v8@@QEBA_NXZ"]
         pub(super) fn v8_Value_IsUndefined() -> *mut c_void;
         #[link_name = "?IsNull@Value@v8@@QEBA_NXZ"]
@@ -4173,6 +4196,50 @@ mod v8_api {
         pub(super) fn v8_Map_Set() -> *mut c_void;
         #[link_name = "?Delete@Map@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
         pub(super) fn v8_Map_Delete() -> *mut c_void;
+        #[link_name = "?NewBackingStore@ArrayBuffer@v8@@SA?AV?$unique_ptr@VBackingStore@v8@@U?$default_delete@VBackingStore@v8@@@std@@@std@@PEAX_KP6AX010@Z0@Z"]
+        pub(super) fn v8_ArrayBuffer_NewBackingStore() -> *mut c_void;
+        #[link_name = "?New@ArrayBuffer@v8@@SA?AV?$Local@VArrayBuffer@v8@@@2@PEAVIsolate@2@V?$shared_ptr@VBackingStore@v8@@@std@@@Z"]
+        pub(super) fn v8_ArrayBuffer_New_backing_store() -> *mut c_void;
+        #[link_name = "?Detach@ArrayBuffer@v8@@QEAAXXZ"]
+        pub(super) fn v8_ArrayBuffer_Detach() -> *mut c_void;
+        #[link_name = "?ByteLength@ArrayBuffer@v8@@QEBA_KXZ"]
+        pub(super) fn v8_ArrayBuffer_ByteLength() -> *mut c_void;
+        #[link_name = "?Data@ArrayBuffer@v8@@QEBAPEAXXZ"]
+        pub(super) fn v8_ArrayBuffer_Data() -> *mut c_void;
+        #[link_name = "?ByteLength@SharedArrayBuffer@v8@@QEBA_KXZ"]
+        pub(super) fn v8_SharedArrayBuffer_ByteLength() -> *mut c_void;
+        #[link_name = "?Data@SharedArrayBuffer@v8@@QEBAPEAXXZ"]
+        pub(super) fn v8_SharedArrayBuffer_Data() -> *mut c_void;
+        #[link_name = "??1BackingStore@v8@@QEAA@XZ"]
+        pub(super) fn v8_BackingStore_dtor() -> *mut c_void;
+        #[link_name = "??3BackingStore@v8@@SAXPEAX@Z"]
+        pub(super) fn v8_BackingStore_operator_delete() -> *mut c_void;
+        #[link_name = "??0CFunctionInfo@v8@@QEAA@AEBVCTypeInfo@1@IPEBV21@W4Int64Representation@01@@Z"]
+        pub(super) fn v8_CFunctionInfo_ctor() -> *mut c_void;
+        #[link_name = "??0CFunction@v8@@QEAA@PEBXPEBVCFunctionInfo@1@@Z"]
+        pub(super) fn v8_CFunction_ctor() -> *mut c_void;
+        #[link_name = "?NewFromUnsigned@BigInt@v8@@SA?AV?$Local@VBigInt@v8@@@2@PEAVIsolate@2@_K@Z"]
+        pub(super) fn v8_BigInt_NewFromUnsigned() -> *mut c_void;
+        #[link_name = "?GetOwnPropertyNames@Object@v8@@QEAA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Object_GetOwnPropertyNames() -> *mut c_void;
+        #[link_name = "?GetOwnPropertyNames@Object@v8@@QEAA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@W4PropertyFilter@2@W4KeyConversionMode@2@@Z"]
+        pub(super) fn v8_Object_GetOwnPropertyNames_filter() -> *mut c_void;
+        #[link_name = "?Clone@Object@v8@@QEAA?AV?$Local@VObject@v8@@@2@XZ"]
+        pub(super) fn v8_Object_Clone() -> *mut c_void;
+        #[link_name = "?NumberValue@Value@v8@@QEBA?AV?$Maybe@N@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_NumberValue() -> *mut c_void;
+        #[link_name = "?BooleanValue@Value@v8@@QEBA_NPEAVIsolate@2@@Z"]
+        pub(super) fn v8_Value_BooleanValue() -> *mut c_void;
+        #[link_name = "?IsExternal@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsExternal() -> *mut c_void;
+        #[link_name = "?IsArrayBuffer@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsArrayBuffer() -> *mut c_void;
+        #[link_name = "?IsArrayBufferView@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsArrayBufferView() -> *mut c_void;
+        #[link_name = "?IsSharedArrayBuffer@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsSharedArrayBuffer() -> *mut c_void;
+        #[link_name = "??1CallbackScope@node@@QEAA@XZ"]
+        pub(super) fn node_CallbackScope_dtor() -> *mut c_void;
     }
 }
 
@@ -4192,6 +4259,9 @@ mod posix_platform_specific_v8_apis {
         pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEl() -> *mut c_void;
         pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE()
         -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer3NewEPNS_7IsolateENSt6__ndk110shared_ptrINS_12BackingStoreEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEm() -> *mut c_void;
     }
 }
 #[cfg(all(not(windows), target_os = "macos"))]
@@ -4205,6 +4275,9 @@ mod posix_platform_specific_v8_apis {
         pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEx() -> *mut c_void;
         pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEyiNS0_13SamplingFlagsE()
         -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer3NewEPNS_7IsolateENSt3__110shared_ptrINS_12BackingStoreEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEy() -> *mut c_void;
     }
 }
 #[cfg(all(not(windows), target_os = "freebsd"))]
@@ -4220,6 +4293,9 @@ mod posix_platform_specific_v8_apis {
         pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEl() -> *mut c_void;
         pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE()
         -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer3NewEPNS_7IsolateENSt3__110shared_ptrINS_12BackingStoreEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEm() -> *mut c_void;
     }
 }
 #[cfg(all(
@@ -4237,6 +4313,9 @@ mod posix_platform_specific_v8_apis {
         pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEl() -> *mut c_void;
         pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE()
         -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer3NewEPNS_7IsolateESt10shared_ptrINS_12BackingStoreEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEm() -> *mut c_void;
     }
 }
 
@@ -5089,7 +5168,8 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZN2v820EscapableHandleScopeC2EPNS_7IsolateE, _ZN2v820EscapableHandleScopeD1Ev,
             _ZN2v820EscapableHandleScopeD2Ev, _ZNK2v85Value8IsObjectEv,
             _ZNK2v85Value8IsNumberEv, _ZNK2v85Value8IsUint32Ev,
-            _ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE, _ZNK2v85Value11IsUndefinedEv,
+            _ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value10Int32ValueENS_5LocalINS_7ContextEEE, _ZNK2v85Value11IsUndefinedEv,
             _ZNK2v85Value6IsNullEv, _ZNK2v85Value17IsNullOrUndefinedEv, _ZNK2v85Value6IsTrueEv,
             _ZNK2v85Value7IsFalseEv, _ZNK2v85Value8IsStringEv,
             _ZNK2v85Value12StrictEqualsENS_5LocalIS0_EE, _ZN2v87Boolean3NewEPNS_7IsolateEb,
@@ -5173,6 +5253,24 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZNK2v814CpuProfileNode8GetChildEi,
             _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
             _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
+            _ZN2v811ArrayBuffer15NewBackingStoreEPvmPFvS1_mS1_ES1_,
+            _ZN2v811ArrayBuffer6DetachEv,
+            _ZNK2v811ArrayBuffer10ByteLengthEv,
+            _ZNK2v811ArrayBuffer4DataEv,
+            _ZNK2v817SharedArrayBuffer10ByteLengthEv,
+            _ZNK2v817SharedArrayBuffer4DataEv,
+            _ZN2v812BackingStoreD1Ev,
+            _ZN2v813CFunctionInfoC2ERKNS_9CTypeInfoEjPS2_NS0_19Int64RepresentationE,
+            _ZN2v89CFunctionC1EPKvPKNS_13CFunctionInfoE,
+            _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEE,
+            _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEENS_14PropertyFilterENS_17KeyConversionModeE,
+            _ZN2v86Object5CloneEv,
+            _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value12BooleanValueEPNS_7IsolateE,
+            _ZNK2v85Value10IsExternalEv,
+            _ZNK2v85Value13IsArrayBufferEv,
+            _ZNK2v85Value17IsArrayBufferViewEv,
+            _ZNK2v85Value19IsSharedArrayBufferEv,
         );
         // Data symbol: keep_symbols! only takes function paths.
         ::core::hint::black_box(&raw const _ZN2v88Function19kLineOffsetNotFoundE);
@@ -5276,6 +5374,7 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Value_IsNumber,
             v8_Value_IsUint32,
             v8_Value_Uint32Value,
+            v8_Value_Int32Value,
             v8_Value_IsUndefined,
             v8_Value_IsNull,
             v8_Value_IsNullOrUndefined,
@@ -5376,6 +5475,28 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_CpuProfileNode_GetChild,
             v8_Map_Set,
             v8_Map_Delete,
+            v8_ArrayBuffer_NewBackingStore,
+            v8_ArrayBuffer_New_backing_store,
+            v8_ArrayBuffer_Detach,
+            v8_ArrayBuffer_ByteLength,
+            v8_ArrayBuffer_Data,
+            v8_SharedArrayBuffer_ByteLength,
+            v8_SharedArrayBuffer_Data,
+            v8_BackingStore_dtor,
+            v8_BackingStore_operator_delete,
+            v8_CFunctionInfo_ctor,
+            v8_CFunction_ctor,
+            v8_BigInt_NewFromUnsigned,
+            v8_Object_GetOwnPropertyNames,
+            v8_Object_GetOwnPropertyNames_filter,
+            v8_Object_Clone,
+            v8_Value_NumberValue,
+            v8_Value_BooleanValue,
+            v8_Value_IsExternal,
+            v8_Value_IsArrayBuffer,
+            v8_Value_IsArrayBufferView,
+            v8_Value_IsSharedArrayBuffer,
+            node_CallbackScope_dtor,
         );
         ::core::hint::black_box(&raw const v8_Function_kLineOffsetNotFound);
     }
@@ -5387,6 +5508,8 @@ pub(crate) fn fix_dead_code_elimination() {
         posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt6__ndk18optionalImEE,
         posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEl,
         posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE,
+        posix_platform_specific_v8_apis::_ZN2v811ArrayBuffer3NewEPNS_7IsolateENSt6__ndk110shared_ptrINS_12BackingStoreEEE,
+        posix_platform_specific_v8_apis::_ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEm,
     );
     #[cfg(all(not(windows), target_os = "macos"))]
     keep_symbols!(
@@ -5394,6 +5517,8 @@ pub(crate) fn fix_dead_code_elimination() {
         posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalIyEE,
         posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEx,
         posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEyiNS0_13SamplingFlagsE,
+        posix_platform_specific_v8_apis::_ZN2v811ArrayBuffer3NewEPNS_7IsolateENSt3__110shared_ptrINS_12BackingStoreEEE,
+        posix_platform_specific_v8_apis::_ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEy,
     );
     #[cfg(all(not(windows), target_os = "freebsd"))]
     keep_symbols!(
@@ -5401,6 +5526,8 @@ pub(crate) fn fix_dead_code_elimination() {
         posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalImEE,
         posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEl,
         posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE,
+        posix_platform_specific_v8_apis::_ZN2v811ArrayBuffer3NewEPNS_7IsolateENSt3__110shared_ptrINS_12BackingStoreEEE,
+        posix_platform_specific_v8_apis::_ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEm,
     );
     #[cfg(all(
         not(windows),
@@ -5413,6 +5540,8 @@ pub(crate) fn fix_dead_code_elimination() {
         posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateESt8optionalImE,
         posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEl,
         posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE,
+        posix_platform_specific_v8_apis::_ZN2v811ArrayBuffer3NewEPNS_7IsolateESt10shared_ptrINS_12BackingStoreEE,
+        posix_platform_specific_v8_apis::_ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEm,
     );
 
     keep_symbols!(crate::node::buffer::BufferVectorized::fill);

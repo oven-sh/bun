@@ -647,6 +647,7 @@ EXPORTS
   ?IsMap@Value@v8@@QEBA_NXZ
   ?IsUint32@Value@v8@@QEBA_NXZ
   ?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z
+  ?Int32Value@Value@v8@@QEBA?AV?$Maybe@H@2@V?$Local@VContext@v8@@@2@@Z
   ?IsUndefined@Value@v8@@QEBA_NXZ
   ?IsNull@Value@v8@@QEBA_NXZ
   ?IsNullOrUndefined@Value@v8@@QEBA_NXZ
@@ -684,3 +685,25 @@ EXPORTS
   ?IsFunction@Value@v8@@QEBA_NXZ
   ?FromJustIsNothing@api_internal@v8@@YAXXZ
   ?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z
+  ??1CallbackScope@node@@QEAA@XZ
+  ?ByteLength@SharedArrayBuffer@v8@@QEBA_KXZ
+  ?ByteLength@ArrayBuffer@v8@@QEBA_KXZ
+  ?Data@ArrayBuffer@v8@@QEBAPEAXXZ
+  ?Detach@ArrayBuffer@v8@@QEAAXXZ
+  ?NewBackingStore@ArrayBuffer@v8@@SA?AV?$unique_ptr@VBackingStore@v8@@U?$default_delete@VBackingStore@v8@@@std@@@std@@PEAX_KP6AX010@Z0@Z
+  ??0CFunction@v8@@QEAA@PEBXPEBVCFunctionInfo@1@@Z
+  ??0CFunctionInfo@v8@@QEAA@AEBVCTypeInfo@1@IPEBV21@W4Int64Representation@01@@Z
+  ??1BackingStore@v8@@QEAA@XZ
+  ??3BackingStore@v8@@SAXPEAX@Z
+  ?BooleanValue@Value@v8@@QEBA_NPEAVIsolate@2@@Z
+  ?Clone@Object@v8@@QEAA?AV?$Local@VObject@v8@@@2@XZ
+  ?Data@SharedArrayBuffer@v8@@QEBAPEAXXZ
+  ?GetOwnPropertyNames@Object@v8@@QEAA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@@Z
+  ?GetOwnPropertyNames@Object@v8@@QEAA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@W4PropertyFilter@2@W4KeyConversionMode@2@@Z
+  ?IsArrayBuffer@Value@v8@@QEBA_NXZ
+  ?IsArrayBufferView@Value@v8@@QEBA_NXZ
+  ?IsExternal@Value@v8@@QEBA_NXZ
+  ?IsSharedArrayBuffer@Value@v8@@QEBA_NXZ
+  ?New@ArrayBuffer@v8@@SA?AV?$Local@VArrayBuffer@v8@@@2@PEAVIsolate@2@V?$shared_ptr@VBackingStore@v8@@@std@@@Z
+  ?NewFromUnsigned@BigInt@v8@@SA?AV?$Local@VBigInt@v8@@@2@PEAVIsolate@2@_K@Z
+  ?NumberValue@Value@v8@@QEBA?AV?$Maybe@N@2@V?$Local@VContext@v8@@@2@@Z

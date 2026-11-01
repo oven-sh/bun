@@ -6,10 +6,47 @@
 
 #include <v8-profiler.h>
 
+#include <atomic>
 #include <cinttypes>
 #include <cstdarg>
 #include <iomanip>
 #include <iostream>
+#include <new>
+
+// V8 14.6's v8-fast-api-calls.h, which Node's headers omit, with public fields.
+namespace v8 {
+
+class CTypeInfo {
+public:
+  enum class Type : uint8_t { kInt32 = 3, kV8Value = 10 };
+  enum class Flags : uint8_t { kNone = 0, kClampBit = 1 << 2 };
+
+  Type type_;
+  Flags flags_;
+};
+
+class CFunctionInfo {
+public:
+  enum class Int64Representation : uint8_t { kNumber = 0, kBigInt = 1 };
+
+  V8_EXPORT CFunctionInfo(const CTypeInfo &return_info, unsigned int arg_count,
+                          const CTypeInfo *arg_info, Int64Representation repr);
+
+  const CTypeInfo return_info_;
+  const Int64Representation repr_;
+  const unsigned int arg_count_;
+  const CTypeInfo *arg_info_;
+};
+
+class CFunction {
+public:
+  V8_EXPORT CFunction(const void *address, const CFunctionInfo *type_info);
+
+  const void *address_;
+  const CFunctionInfo *type_info_;
+};
+
+} // namespace v8
 
 using namespace v8;
 
@@ -1469,6 +1506,34 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void print_external_and_buffer_type_checks(
+    const FunctionCallbackInfo<Value> &info) {
+  Local<Value> value = info[0];
+  char label[128] = {0};
+  info[1].As<String>()->WriteUtf8V2(info.GetIsolate(), label,
+                                    sizeof(label) - 1);
+  std::cout << label << ": IsExternal=" << value->IsExternal()
+            << " IsArrayBuffer=" << value->IsArrayBuffer()
+            << " IsArrayBufferView=" << value->IsArrayBufferView()
+            << " IsSharedArrayBuffer=" << value->IsSharedArrayBuffer()
+            << std::endl;
+}
+
+void create_external_and_template_instance(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  static int target;
+  Local<ObjectTemplate> obj_template = ObjectTemplate::New(isolate);
+  obj_template->SetInternalFieldCount(2);
+  Local<Value> values[] = {
+      External::New(isolate, &target),
+      obj_template->NewInstance(context).ToLocalChecked(),
+  };
+  info.GetReturnValue().Set(Array::New(isolate, values, 2));
+}
+
 void test_v8_integer(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
@@ -1620,6 +1685,49 @@ void test_v8_bigint(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(big);
 }
 
+// 0, 1 and values that a uint32_t, a double or an int64_t cannot hold.
+static const uint64_t uint64_boundary_values[] = {
+    0,
+    1,
+    uint64_t{1} << 32,
+    (uint64_t{1} << 53) + 1,
+    uint64_t{1} << 63,
+    UINT64_MAX,
+};
+
+static Local<BigInt> log_bigint_from_unsigned(Isolate *isolate,
+                                              uint64_t value) {
+  Local<BigInt> big = BigInt::NewFromUnsigned(isolate, value);
+  std::cout << "NewFromUnsigned(" << value
+            << "): IsBigInt() = " << big->IsBigInt()
+            << ", IsNumber() = " << big->IsNumber() << std::endl;
+  return big;
+}
+
+void create_bigints_from_unsigned(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  constexpr size_t count =
+      sizeof(uint64_boundary_values) / sizeof(uint64_boundary_values[0]);
+  Local<Value> bigints[count];
+  for (size_t i = 0; i < count; i++) {
+    bigints[i] = log_bigint_from_unsigned(isolate, uint64_boundary_values[i]);
+  }
+  // Return them so JS can print the type and the exact value of each.
+  info.GetReturnValue().Set(Array::New(isolate, bigints, count));
+}
+
+// An addon does not check the Local that BigInt::NewFromUnsigned returns.
+void create_bigints_from_unsigned_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+
+  for (uint64_t value : uint64_boundary_values) {
+    log_bigint_from_unsigned(isolate, value);
+  }
+}
+
 void test_v8_string_from_utf8_literal(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
@@ -1748,6 +1856,332 @@ void test_v8_typedarray(const FunctionCallbackInfo<Value> &info) {
   LOG_EXPR(tail->ByteLength());
 
   return ok(info);
+}
+
+// JS prints this text: Node drops a native write to a full non-blocking stdout.
+static void return_description(const FunctionCallbackInfo<Value> &info,
+                               const std::string &description) {
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(info.GetIsolate(), description.c_str())
+          .ToLocalChecked());
+}
+
+// Also writes 0xee to the last byte through Data(), which the JS caller reads.
+template <typename BufferType>
+static std::string describe_buffer_accessors(Local<BufferType> buffer) {
+  size_t length = buffer->ByteLength();
+  uint8_t *data = static_cast<uint8_t *>(buffer->Data());
+  std::string description = "ByteLength() = " + std::to_string(length);
+  description += "\nData() != nullptr = " + std::to_string(data != nullptr);
+  for (size_t i = 0; data != nullptr && i < length && i < 4; i++) {
+    description +=
+        "\nData()[" + std::to_string(i) + "] = " + std::to_string(data[i]);
+  }
+  if (data != nullptr && length > 0) {
+    data[length - 1] = 0xee;
+  }
+  return description;
+}
+
+void describe_array_buffer(const FunctionCallbackInfo<Value> &info) {
+  Local<ArrayBuffer> buffer = info[0].As<ArrayBuffer>();
+  std::string description = describe_buffer_accessors(buffer);
+  description +=
+      "\nData() == GetBackingStore()->Data() = " +
+      std::to_string(buffer->Data() == buffer->GetBackingStore()->Data());
+  return_description(info, description);
+}
+
+void describe_shared_array_buffer(const FunctionCallbackInfo<Value> &info) {
+  return_description(
+      info, describe_buffer_accessors(info[0].As<SharedArrayBuffer>()));
+}
+
+// Reads and writes a view like uWebSockets.js: Buffer()->Data() + ByteOffset().
+void describe_array_buffer_view_bytes(const FunctionCallbackInfo<Value> &info) {
+  Local<ArrayBufferView> view = info[0].As<ArrayBufferView>();
+  Local<ArrayBuffer> buffer = view->Buffer();
+  size_t length = view->ByteLength();
+  size_t offset = view->ByteOffset();
+  uint8_t *data = static_cast<uint8_t *>(buffer->Data());
+  std::string description = "view ByteLength() = " + std::to_string(length);
+  description += "\nview ends within Buffer()->ByteLength() = " +
+                 std::to_string(offset + length <= buffer->ByteLength());
+  for (size_t i = 0; data != nullptr && i < length && i < 4; i++) {
+    description += "\n(Buffer()->Data() + ByteOffset())[" + std::to_string(i) +
+                   "] = " + std::to_string(data[offset + i]);
+  }
+  if (data != nullptr && length > 0) {
+    data[offset] = 0xdd;
+  }
+  return_description(info, description);
+}
+
+void detach_array_buffer(const FunctionCallbackInfo<Value> &info) {
+  Local<ArrayBuffer> buffer = info[0].As<ArrayBuffer>();
+  std::string description =
+      "ByteLength() before Detach() = " + std::to_string(buffer->ByteLength());
+  buffer->Detach();
+  description +=
+      "\nByteLength() after Detach() = " + std::to_string(buffer->ByteLength());
+  description += "\nData() != nullptr after Detach() = " +
+                 std::to_string(buffer->Data() != nullptr);
+  return_description(info, description);
+}
+
+// uWebSockets.js detaches the buffer it lent to a JS handler that threw.
+void read_store_after_detach(const FunctionCallbackInfo<Value> &info) {
+  Local<ArrayBuffer> buffer = info[0].As<ArrayBuffer>();
+  std::shared_ptr<BackingStore> store = buffer->GetBackingStore();
+  const uint8_t *bytes = static_cast<const uint8_t *>(store->Data());
+  size_t length = buffer->ByteLength();
+  buffer->Detach();
+  std::string description = "the store has the same memory after Detach() = " +
+                            std::to_string(store->Data() == bytes) +
+                            "\nbytes read through the store =";
+  for (size_t i = 0; i < length; i++) {
+    description += " " + std::to_string(bytes[i]);
+  }
+  return_description(info, description);
+}
+
+void detach_array_buffer_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+  info[0].As<ArrayBuffer>()->Detach();
+}
+
+// The deleter only counts: an engine may call it on a GC thread or at exit.
+struct WrappedMemory {
+  uint8_t bytes[8];
+  size_t wrapped_length;
+  // Calls with `bytes` and `wrapped_length`, and calls with anything else.
+  std::atomic<int> deleter_calls;
+  std::atomic<int> unexpected_deleter_calls;
+};
+constexpr uint32_t wrapped_memory_slots = 80;
+static WrappedMemory wrapped_memory[wrapped_memory_slots];
+
+static WrappedMemory *wrapped_memory_at(uint32_t slot) {
+  if (slot >= wrapped_memory_slots) {
+    fprintf(stderr, "there is no wrapped_memory slot %u\n", slot);
+    abort();
+  }
+  return &wrapped_memory[slot];
+}
+
+static void count_wrapped_memory_deleter(void *data, size_t length,
+                                         void *deleter_data) {
+  auto *memory = static_cast<WrappedMemory *>(deleter_data);
+  if (data == memory->bytes && length == memory->wrapped_length) {
+    memory->deleter_calls++;
+  } else {
+    memory->unexpected_deleter_calls++;
+  }
+}
+
+static std::unique_ptr<BackingStore> wrap_memory(
+    uint32_t slot, size_t length = sizeof(WrappedMemory::bytes),
+    BackingStore::DeleterCallback deleter = count_wrapped_memory_deleter) {
+  WrappedMemory *memory = wrapped_memory_at(slot);
+  if (length > sizeof(memory->bytes)) {
+    fprintf(stderr, "a wrapped_memory slot has no %zu bytes\n", length);
+    abort();
+  }
+  memory->wrapped_length = length;
+  return ArrayBuffer::NewBackingStore(memory->bytes, length, deleter, memory);
+}
+
+// One ArrayBuffer per slot. Returns the last: nothing refers to the others.
+static Local<ArrayBuffer>
+create_wrapped_buffers(Isolate *isolate, uint32_t first_slot, uint32_t count,
+                       size_t length, BackingStore::DeleterCallback deleter) {
+  Local<ArrayBuffer> buffer;
+  for (uint32_t i = 0; i < count; i++) {
+    buffer = ArrayBuffer::New(
+        isolate, std::shared_ptr<BackingStore>(
+                     wrap_memory(first_slot + i, length, deleter).release()));
+  }
+  return buffer;
+}
+
+// The addon destroys stores that no ArrayBuffer was made from.
+void test_v8_new_backing_store(const FunctionCallbackInfo<Value> &info) {
+  {
+    WrappedMemory &unique_owned = wrapped_memory[0];
+    std::unique_ptr<BackingStore> store = wrap_memory(0);
+    LOG_EXPR(store->Data() == unique_owned.bytes);
+    LOG_EXPR(unique_owned.deleter_calls);
+    store.reset();
+    LOG_EXPR(unique_owned.deleter_calls);
+  }
+
+  // uWebSockets.js moves the store into a std::shared_ptr.
+  {
+    WrappedMemory &shared_owned = wrapped_memory[1];
+    std::shared_ptr<BackingStore> store(wrap_memory(1).release());
+    std::shared_ptr<BackingStore> copy = store;
+    LOG_EXPR(copy->Data() == shared_owned.bytes);
+    store.reset();
+    LOG_EXPR(shared_owned.deleter_calls);
+    copy.reset();
+    LOG_EXPR(shared_owned.deleter_calls);
+  }
+
+  // A store over zero bytes of the addon's memory hands that memory back too.
+  {
+    WrappedMemory &zero_length = wrapped_memory[2];
+    std::unique_ptr<BackingStore> store = wrap_memory(2, 0);
+    LOG_EXPR(store->Data() == zero_length.bytes);
+    store.reset();
+    LOG_EXPR(zero_length.deleter_calls);
+  }
+
+  // A store over no memory has nothing to hand back.
+  {
+    WrappedMemory &no_memory = wrapped_memory[3];
+    std::unique_ptr<BackingStore> store = ArrayBuffer::NewBackingStore(
+        nullptr, 0, count_wrapped_memory_deleter, &no_memory);
+    LOG_EXPR(store->Data() == nullptr);
+    store.reset();
+    LOG_EXPR(no_memory.deleter_calls + no_memory.unexpected_deleter_calls);
+  }
+
+  int unexpected_deleter_calls = 0;
+  for (WrappedMemory &memory : wrapped_memory) {
+    unexpected_deleter_calls += memory.unexpected_deleter_calls;
+  }
+  LOG_EXPR(unexpected_deleter_calls);
+
+  return ok(info);
+}
+
+void wrapped_buffers_create(const FunctionCallbackInfo<Value> &info) {
+  uint32_t first_slot = static_cast<uint32_t>(info[0].As<Number>()->Value());
+  uint32_t count = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  size_t length = info.Length() > 2
+                      ? static_cast<size_t>(info[2].As<Number>()->Value())
+                      : sizeof(WrappedMemory::bytes);
+  info.GetReturnValue().Set(
+      create_wrapped_buffers(info.GetIsolate(), first_slot, count, length,
+                             count_wrapped_memory_deleter));
+}
+
+// wrapped_buffer_create_without_memory(slot): the slot only counts the calls.
+void wrapped_buffer_create_without_memory(
+    const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  std::shared_ptr<BackingStore> store(
+      ArrayBuffer::NewBackingStore(nullptr, 0, count_wrapped_memory_deleter,
+                                   memory)
+          .release());
+  info.GetReturnValue().Set(ArrayBuffer::New(info.GetIsolate(), store));
+}
+
+static std::shared_ptr<BackingStore> kept_wrapped_store;
+
+void wrapped_buffer_create_keeping_store(
+    const FunctionCallbackInfo<Value> &info) {
+  kept_wrapped_store =
+      wrap_memory(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  info.GetReturnValue().Set(
+      ArrayBuffer::New(info.GetIsolate(), kept_wrapped_store));
+}
+
+void wrapped_kept_store_has_memory(const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  info.GetReturnValue().Set(Boolean::New(
+      info.GetIsolate(),
+      kept_wrapped_store && kept_wrapped_store->Data() == memory->bytes));
+}
+
+void wrapped_kept_store_release(const FunctionCallbackInfo<Value> &info) {
+  kept_wrapped_store.reset();
+}
+
+void wrapped_buffer_pair(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  std::shared_ptr<BackingStore> store =
+      wrap_memory(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  Local<Value> buffers[] = {ArrayBuffer::New(isolate, store),
+                            ArrayBuffer::New(isolate, store)};
+  info.GetReturnValue().Set(Array::New(isolate, buffers, 2));
+}
+
+void wrapped_buffer_store_has_memory(const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[1].As<Number>()->Value()));
+  std::shared_ptr<BackingStore> store =
+      info[0].As<ArrayBuffer>()->GetBackingStore();
+  info.GetReturnValue().Set(
+      Boolean::New(info.GetIsolate(), store->Data() == memory->bytes));
+}
+
+void wrapped_memory_get(const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  uint32_t index = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  if (index >= sizeof(memory->bytes)) {
+    fprintf(stderr, "a wrapped_memory slot has no byte %u\n", index);
+    abort();
+  }
+  info.GetReturnValue().Set(
+      Number::New(info.GetIsolate(), memory->bytes[index]));
+}
+
+void wrapped_memory_set(const FunctionCallbackInfo<Value> &info) {
+  WrappedMemory *memory =
+      wrapped_memory_at(static_cast<uint32_t>(info[0].As<Number>()->Value()));
+  uint32_t index = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  if (index >= sizeof(memory->bytes)) {
+    fprintf(stderr, "a wrapped_memory slot has no byte %u\n", index);
+    abort();
+  }
+  memory->bytes[index] = static_cast<uint8_t>(info[2].As<Number>()->Value());
+}
+
+void wrapped_memory_deleter_calls(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> calls[wrapped_memory_slots];
+  for (uint32_t slot = 0; slot < wrapped_memory_slots; slot++) {
+    calls[slot] =
+        Number::New(isolate, wrapped_memory[slot].deleter_calls.load());
+  }
+  info.GetReturnValue().Set(Array::New(isolate, calls, wrapped_memory_slots));
+}
+
+void wrapped_memory_unexpected_deleter_calls(
+    const FunctionCallbackInfo<Value> &info) {
+  int calls = 0;
+  for (WrappedMemory &memory : wrapped_memory) {
+    calls += memory.unexpected_deleter_calls;
+  }
+  info.GetReturnValue().Set(Number::New(info.GetIsolate(), calls));
+}
+
+// A full collection that is over when this returns, in V8 and in JSC.
+void wrapped_memory_collect_garbage(const FunctionCallbackInfo<Value> &info) {
+  info.GetIsolate()->LowMemoryNotification();
+}
+
+void wrapped_store_destroy_with_null_deleter(
+    const FunctionCallbackInfo<Value> &info) {
+  uint32_t slot = static_cast<uint32_t>(info[0].As<Number>()->Value());
+  std::unique_ptr<BackingStore> store =
+      wrap_memory(slot, sizeof(WrappedMemory::bytes), nullptr);
+  store.reset();
+}
+
+void wrapped_buffers_create_with_null_deleter(
+    const FunctionCallbackInfo<Value> &info) {
+  uint32_t first_slot = static_cast<uint32_t>(info[0].As<Number>()->Value());
+  uint32_t count = static_cast<uint32_t>(info[1].As<Number>()->Value());
+  info.GetReturnValue().Set(
+      create_wrapped_buffers(info.GetIsolate(), first_slot, count,
+                             sizeof(WrappedMemory::bytes), nullptr));
 }
 
 void test_v8_function_call(const FunctionCallbackInfo<Value> &info) {
@@ -2200,6 +2634,427 @@ void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// Leaves the exception of a conversion that throws pending for the JS caller.
+void perform_uint32_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Maybe<uint32_t> maybe = info[0]->Uint32Value(context);
+  LOG_EXPR(maybe.IsNothing());
+  if (maybe.IsNothing()) {
+    return;
+  }
+  LOG_EXPR(maybe.FromJust());
+}
+
+void perform_int32_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Maybe<int32_t> maybe = info[0]->Int32Value(context);
+  LOG_EXPR(maybe.IsNothing());
+  if (maybe.IsNothing()) {
+    return;
+  }
+  LOG_EXPR(maybe.FromJust());
+}
+
+// V8 converts a number without running JS, also while an exception is pending.
+void perform_uint32_value_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+  perform_uint32_value(info);
+}
+
+// Prints every digit of the double. A conversion's exception stays pending.
+void perform_number_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Maybe<double> maybe = info[0]->NumberValue(context);
+  LOG_EXPR(maybe.IsNothing());
+  if (maybe.IsNothing()) {
+    return;
+  }
+  double number = maybe.FromJust();
+  char buf[32];
+  if (number != number) {
+    // the sign bit of a NaN is not part of the conversion's result
+    snprintf(buf, sizeof(buf), "NaN");
+  } else {
+    snprintf(buf, sizeof(buf), "%.17g", number);
+  }
+  std::cout << "maybe.FromJust() = " << buf << std::endl;
+}
+
+void perform_boolean_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  LOG_EXPR(info[0]->BooleanValue(isolate));
+}
+
+// Room for one T between guard bytes. T's own bytes start as guard bytes too.
+template <typename T> class GuardedStorage {
+public:
+  GuardedStorage() { memset(bytes_, kGuardByte, sizeof(bytes_)); }
+
+  void *object() { return bytes_ + kGuardSize; }
+
+  bool guards_intact() const {
+    for (size_t i = 0; i < kGuardSize; i++) {
+      if (bytes_[i] != kGuardByte ||
+          bytes_[kGuardSize + sizeof(T) + i] != kGuardByte) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+private:
+  static constexpr size_t kGuardSize = 16;
+  static constexpr unsigned char kGuardByte = 0xa5;
+  static_assert(kGuardSize % alignof(T) == 0);
+
+  alignas(T) unsigned char bytes_[kGuardSize + sizeof(T) + kGuardSize];
+};
+
+// As in V8's CFunction::Make(), an addon imports the base object constructor.
+class DerivedFunctionInfo : public CFunctionInfo {
+public:
+  using CFunctionInfo::CFunctionInfo;
+};
+
+static int32_t fast_add(Local<Object> receiver, int32_t a, int32_t b) {
+  return a + b;
+}
+
+static void slow_add(const FunctionCallbackInfo<Value> &info) {
+  double a = info[0].As<Number>()->Value();
+  double b = info[1].As<Number>()->Value();
+  std::cout << "slow callback called with " << a << " and " << b << std::endl;
+  info.GetReturnValue().Set(Number::New(info.GetIsolate(), a + b));
+}
+
+void create_function_with_c_function(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  // static: V8 keeps these pointers for as long as the function exists
+  static const CTypeInfo arg_info[] = {
+      {CTypeInfo::Type::kV8Value, CTypeInfo::Flags::kNone},
+      {CTypeInfo::Type::kInt32, CTypeInfo::Flags::kNone},
+      {CTypeInfo::Type::kInt32, CTypeInfo::Flags::kNone},
+  };
+  static GuardedStorage<DerivedFunctionInfo> type_info_storage;
+  static GuardedStorage<CFunction> c_function_storage;
+
+  // every field gets a value that is neither zero nor the guard byte
+  const CTypeInfo return_info = {CTypeInfo::Type::kInt32,
+                                 CTypeInfo::Flags::kClampBit};
+  const CFunctionInfo *type_info = new (type_info_storage.object())
+      DerivedFunctionInfo(return_info, 3, arg_info,
+                          CFunctionInfo::Int64Representation::kBigInt);
+  LOG_EXPR(type_info->return_info_.type_ == CTypeInfo::Type::kInt32);
+  LOG_EXPR(type_info->return_info_.flags_ == CTypeInfo::Flags::kClampBit);
+  LOG_EXPR(type_info->repr_ == CFunctionInfo::Int64Representation::kBigInt);
+  LOG_EXPR(type_info->arg_count_);
+  LOG_EXPR(type_info->arg_info_ == arg_info);
+  LOG_EXPR(type_info_storage.guards_intact());
+
+  const void *address = reinterpret_cast<const void *>(fast_add);
+  const CFunction *c_function =
+      new (c_function_storage.object()) CFunction(address, type_info);
+  LOG_EXPR(c_function->address_ == address);
+  LOG_EXPR(c_function->type_info_ == type_info);
+  LOG_EXPR(c_function_storage.guards_intact());
+
+  // V8 refuses a CFunction for a function that can be a constructor
+  Local<FunctionTemplate> tmp = FunctionTemplate::New(
+      isolate, slow_add, Local<Value>(), Local<Signature>(), 0,
+      ConstructorBehavior::kThrow, SideEffectType::kHasSideEffect, c_function);
+  info.GetReturnValue().Set(tmp->GetFunction(context).ToLocalChecked());
+}
+
+// module.js passes PropertyFilter and KeyConversionMode values as numbers.
+static_assert(ALL_PROPERTIES == 0 && ONLY_WRITABLE == 1 &&
+              ONLY_ENUMERABLE == 2 && ONLY_CONFIGURABLE == 4 &&
+              SKIP_STRINGS == 8 && SKIP_SYMBOLS == 16);
+static_assert(static_cast<int>(KeyConversionMode::kConvertToString) == 0 &&
+              static_cast<int>(KeyConversionMode::kKeepNumbers) == 1 &&
+              static_cast<int>(KeyConversionMode::kNoNumbers) == 2);
+
+void perform_get_own_property_names(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> object = info[0].As<Object>();
+
+  MaybeLocal<Array> maybe_names;
+  if (info.Length() < 2) {
+    maybe_names = object->GetOwnPropertyNames(context);
+  } else {
+    PropertyFilter filter =
+        static_cast<PropertyFilter>(info[1].As<Int32>()->Value());
+    if (info.Length() < 3) {
+      maybe_names = object->GetOwnPropertyNames(context, filter);
+    } else {
+      KeyConversionMode conversion =
+          static_cast<KeyConversionMode>(info[2].As<Int32>()->Value());
+      maybe_names = object->GetOwnPropertyNames(context, filter, conversion);
+    }
+  }
+
+  Local<Array> names;
+  if (!maybe_names.ToLocal(&names)) {
+    std::cout << "GetOwnPropertyNames returned an empty MaybeLocal"
+              << std::endl;
+    return;
+  }
+  info.GetReturnValue().Set(names);
+}
+
+#if defined(_MSC_VER)
+#define V8TESTS_NOINLINE __declspec(noinline)
+#else
+#define V8TESTS_NOINLINE __attribute__((noinline))
+#endif
+
+struct BackingStoreTally {
+  int stores;
+  size_t bytes;
+};
+
+static void tally_deleted_backing_store(void *data, size_t length,
+                                        void *deleter_data) {
+  BackingStoreTally *deleted = static_cast<BackingStoreTally *>(deleter_data);
+  deleted->stores++;
+  deleted->bytes += length;
+}
+
+// ASAN keeps an id of the allocating stack before the block: one per depth.
+V8TESTS_NOINLINE static std::unique_ptr<BackingStore>
+new_backing_store_at_depth(int depth, void *data, size_t length,
+                           BackingStoreTally *deleted, int *frames) {
+  if (depth == 0) {
+    return ArrayBuffer::NewBackingStore(data, length,
+                                        tally_deleted_backing_store, deleted);
+  }
+  std::unique_ptr<BackingStore> store =
+      new_backing_store_at_depth(depth - 1, data, length, deleted, frames);
+  // Written after the call, so that the call is no tail call.
+  ++*frames;
+  return store;
+}
+
+// Dies if the runtime's allocator does not pair with this addon's `delete`.
+void test_v8_backing_store_deleted_by_addon(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  static char memory[24];
+  static BackingStoreTally made;
+  static BackingStoreTally deleted;
+  int frames = 0;
+
+  for (int round = 0; round < 4; round++) {
+    for (int depth = 0; depth < static_cast<int>(sizeof(memory)); depth++) {
+      HandleScope scope(isolate);
+      // the deleters add up the lengths, which differ from depth to depth
+      size_t length = depth + 1;
+      auto new_store = [&]() {
+        made.stores++;
+        made.bytes += length;
+        return new_backing_store_at_depth(depth, memory, length, &deleted,
+                                          &frames);
+      };
+
+      std::unique_ptr<BackingStore> unique = new_store();
+      if (unique->Data() != memory) {
+        return fail(info, "BackingStore::Data() is not the wrapped memory");
+      }
+      unique.reset();
+
+      // uWebSockets.js: the `delete` is in a shared_ptr's control block.
+      std::shared_ptr<BackingStore> shared(new_store().release());
+      std::shared_ptr<BackingStore> second_owner = shared;
+      shared.reset();
+      second_owner.reset();
+
+      // The runtime drops the last reference.
+      std::shared_ptr<BackingStore> for_buffer(new_store().release());
+      Local<ArrayBuffer> buffer = ArrayBuffer::New(isolate, for_buffer);
+      for_buffer.reset();
+      buffer->Detach();
+
+      // The ArrayBuffer is the only owner of a store that came in a unique_ptr.
+      Local<ArrayBuffer> only_owner = ArrayBuffer::New(isolate, new_store());
+      only_owner->Detach();
+
+      // The addon drops the last reference, after an ArrayBuffer used it.
+      std::shared_ptr<BackingStore> kept(new_store().release());
+      ArrayBuffer::New(isolate, kept)->Detach();
+      if (kept->Data() != memory) {
+        return fail(info, "BackingStore::Data() is not the wrapped memory "
+                          "after its ArrayBuffer was detached");
+      }
+      kept.reset();
+    }
+  }
+
+  LOG_EXPR(made.stores);
+  LOG_EXPR(deleted.stores);
+  LOG_EXPR(made.bytes);
+  LOG_EXPR(deleted.bytes);
+  LOG_EXPR(frames);
+  return ok(info);
+}
+
+void perform_object_clone(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(info[0].As<Object>()->Clone());
+}
+
+// What the aligned pointers in the Object::Clone tests point at.
+static int clone_target_a;
+static int clone_target_b;
+static int clone_target_c;
+
+// As in uWebSockets.js, field 0 holds an aligned pointer and field 1 a value.
+static std::string describe_internal_fields(Isolate *isolate,
+                                            Local<Object> object) {
+  void *pointer = object->GetAlignedPointerFromInternalField(
+      0, kEmbedderDataTypeTagDefault);
+  const char *target = pointer == &clone_target_a   ? "&a"
+                       : pointer == &clone_target_b ? "&b"
+                       : pointer == &clone_target_c ? "&c"
+                       : pointer == nullptr         ? "nullptr"
+                                                    : "an unknown address";
+  return std::to_string(object->InternalFieldCount()) +
+         " internal fields: " + target + ", " +
+         describe(isolate, object->GetInternalField(1).As<Value>());
+}
+
+// Like uWebSockets.js's response methods, reads the fields of its receiver.
+static void
+describe_internal_fields_callback(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(
+          isolate, describe_internal_fields(isolate, info.This()).c_str())
+          .ToLocalChecked());
+}
+
+// clone_template_instance(use_function_template): returns [original, copy].
+void clone_template_instance(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<String> method_name =
+      String::NewFromUtf8Literal(isolate, "describeInternalFields");
+  Local<FunctionTemplate> method =
+      FunctionTemplate::New(isolate, describe_internal_fields_callback);
+
+  Local<ObjectTemplate> object_template;
+  Local<Function> constructor;
+  if (info[0]->IsTrue()) {
+    Local<FunctionTemplate> function_template = FunctionTemplate::New(isolate);
+    function_template->InstanceTemplate()->SetInternalFieldCount(2);
+    function_template->PrototypeTemplate()->Set(method_name, method);
+    constructor = function_template->GetFunction(context).ToLocalChecked();
+  } else {
+    object_template = ObjectTemplate::New(isolate);
+    object_template->SetInternalFieldCount(2);
+    object_template->Set(method_name, method);
+  }
+  auto new_instance = [&]() {
+    return constructor.IsEmpty()
+               ? object_template->NewInstance(context).ToLocalChecked()
+               : constructor->NewInstance(context).ToLocalChecked();
+  };
+  auto new_string = [&](const std::string &text) {
+    return String::NewFromUtf8(isolate, text.c_str()).ToLocalChecked();
+  };
+  auto log_fields = [&](const char *label, Local<Object> object) {
+    std::cout << label << ": " << describe_internal_fields(isolate, object)
+              << std::endl;
+  };
+
+  Local<Object> original = new_instance();
+  original->SetAlignedPointerInInternalField(0, &clone_target_a,
+                                             kEmbedderDataTypeTagDefault);
+  original->SetInternalField(1, new_string("set on the original"));
+  original->Set(context, new_string("own"), new_string("set before Clone()"))
+      .Check();
+  log_fields("original", original);
+
+  Local<Object> copy = original->Clone();
+  log_fields("copy", copy);
+
+  copy->SetAlignedPointerInInternalField(0, &clone_target_b,
+                                         kEmbedderDataTypeTagDefault);
+  copy->SetInternalField(1, new_string("set on the copy"));
+  log_fields("original after writing the copy's fields", original);
+  log_fields("copy after writing its fields", copy);
+
+  original->SetAlignedPointerInInternalField(0, &clone_target_c,
+                                             kEmbedderDataTypeTagDefault);
+  original->SetInternalField(1, new_string("set on the original again"));
+  log_fields("copy after writing the original's fields", copy);
+
+  constexpr int count = 100;
+
+  // uWebSockets.js per request: clone, store state in the copy, let it go.
+  for (int i = 0; i < count; i++) {
+    HandleScope scope(isolate);
+    Local<Object> request = original->Clone();
+    request->SetAlignedPointerInInternalField(0, &clone_target_b,
+                                              kEmbedderDataTypeTagDefault);
+    request->SetInternalField(1, new_string("request " + std::to_string(i)));
+  }
+  isolate->LowMemoryNotification();
+  log_fields("original after collecting copies of it", original);
+
+  // Each copy keeps what it holds once its original and that scope are gone.
+  Local<Object> survivors[count];
+  for (int i = 0; i < count; i++) {
+    EscapableHandleScope scope(isolate);
+    Local<Object> temporary = new_instance();
+    temporary->SetAlignedPointerInInternalField(0, &clone_target_a,
+                                                kEmbedderDataTypeTagDefault);
+    temporary->SetInternalField(1, new_string("survivor " + std::to_string(i)));
+    survivors[i] = scope.Escape(temporary->Clone());
+  }
+  isolate->LowMemoryNotification();
+  int intact = 0;
+  for (int i = 0; i < count; i++) {
+    HandleScope scope(isolate);
+    intact += describe_internal_fields(isolate, survivors[i]) ==
+              "2 internal fields: &a, \"survivor " + std::to_string(i) + "\"";
+  }
+  std::cout << "copies intact after collecting their originals: " << intact
+            << " of " << count << std::endl;
+
+  Local<Value> objects[] = {original, copy};
+  info.GetReturnValue().Set(Array::New(isolate, objects, 2));
+}
+
+// uWebSockets.js clones for the next request after a handler threw.
+void perform_object_clone_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Object> original = info[0].As<Object>();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+  Local<Object> copy = original->Clone();
+  std::cout << "copy made while an exception is pending: "
+            << copy->InternalFieldCount() << " internal fields";
+  // Only an object with internal fields has an aligned pointer to read.
+  if (original->InternalFieldCount() > 0) {
+    std::cout << ", same aligned pointer: "
+              << (copy->GetAlignedPointerFromInternalField(
+                      0, kEmbedderDataTypeTagDefault) ==
+                  original->GetAlignedPointerFromInternalField(
+                      0, kEmbedderDataTypeTagDefault));
+  }
+  std::cout << std::endl;
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2274,6 +3129,10 @@ void initialize(Local<Object> exports, Local<Value> module,
                   perform_object_set_by_key);
   NODE_SET_METHOD(exports, "test_v8_value_type_checks",
                   test_v8_value_type_checks);
+  NODE_SET_METHOD(exports, "print_external_and_buffer_type_checks",
+                  print_external_and_buffer_type_checks);
+  NODE_SET_METHOD(exports, "create_external_and_template_instance",
+                  create_external_and_template_instance);
   NODE_SET_METHOD(exports, "test_v8_integer", test_v8_integer);
   NODE_SET_METHOD(exports, "perform_to_int32", perform_to_int32);
   NODE_SET_METHOD(exports, "get_function_script_origin",
@@ -2281,12 +3140,52 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_define_own_property",
                   test_v8_define_own_property);
   NODE_SET_METHOD(exports, "test_v8_bigint", test_v8_bigint);
+  NODE_SET_METHOD(exports, "create_bigints_from_unsigned",
+                  create_bigints_from_unsigned);
+  NODE_SET_METHOD(exports,
+                  "create_bigints_from_unsigned_with_pending_exception",
+                  create_bigints_from_unsigned_with_pending_exception);
   NODE_SET_METHOD(exports, "test_v8_string_from_utf8_literal",
                   test_v8_string_from_utf8_literal);
   NODE_SET_METHOD(exports, "test_v8_prototype_template",
                   test_v8_prototype_template);
   NODE_SET_METHOD(exports, "test_v8_arraybuffer", test_v8_arraybuffer);
   NODE_SET_METHOD(exports, "test_v8_typedarray", test_v8_typedarray);
+  NODE_SET_METHOD(exports, "describe_array_buffer", describe_array_buffer);
+  NODE_SET_METHOD(exports, "describe_shared_array_buffer",
+                  describe_shared_array_buffer);
+  NODE_SET_METHOD(exports, "describe_array_buffer_view_bytes",
+                  describe_array_buffer_view_bytes);
+  NODE_SET_METHOD(exports, "detach_array_buffer", detach_array_buffer);
+  NODE_SET_METHOD(exports, "read_store_after_detach", read_store_after_detach);
+  NODE_SET_METHOD(exports, "detach_array_buffer_with_pending_exception",
+                  detach_array_buffer_with_pending_exception);
+  NODE_SET_METHOD(exports, "test_v8_new_backing_store",
+                  test_v8_new_backing_store);
+  NODE_SET_METHOD(exports, "wrapped_buffers_create", wrapped_buffers_create);
+  NODE_SET_METHOD(exports, "wrapped_buffer_create_without_memory",
+                  wrapped_buffer_create_without_memory);
+  NODE_SET_METHOD(exports, "wrapped_buffer_create_keeping_store",
+                  wrapped_buffer_create_keeping_store);
+  NODE_SET_METHOD(exports, "wrapped_kept_store_has_memory",
+                  wrapped_kept_store_has_memory);
+  NODE_SET_METHOD(exports, "wrapped_kept_store_release",
+                  wrapped_kept_store_release);
+  NODE_SET_METHOD(exports, "wrapped_buffer_pair", wrapped_buffer_pair);
+  NODE_SET_METHOD(exports, "wrapped_buffer_store_has_memory",
+                  wrapped_buffer_store_has_memory);
+  NODE_SET_METHOD(exports, "wrapped_memory_get", wrapped_memory_get);
+  NODE_SET_METHOD(exports, "wrapped_memory_set", wrapped_memory_set);
+  NODE_SET_METHOD(exports, "wrapped_memory_deleter_calls",
+                  wrapped_memory_deleter_calls);
+  NODE_SET_METHOD(exports, "wrapped_memory_unexpected_deleter_calls",
+                  wrapped_memory_unexpected_deleter_calls);
+  NODE_SET_METHOD(exports, "wrapped_memory_collect_garbage",
+                  wrapped_memory_collect_garbage);
+  NODE_SET_METHOD(exports, "wrapped_store_destroy_with_null_deleter",
+                  wrapped_store_destroy_with_null_deleter);
+  NODE_SET_METHOD(exports, "wrapped_buffers_create_with_null_deleter",
+                  wrapped_buffers_create_with_null_deleter);
   NODE_SET_METHOD(exports, "test_v8_function_call", test_v8_function_call);
   NODE_SET_METHOD(exports, "test_v8_function_new_instance",
                   test_v8_function_new_instance);
@@ -2307,6 +3206,22 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_cpu_profiler_overlapping_sessions);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler_title_api",
                   test_v8_cpu_profiler_title_api);
+  NODE_SET_METHOD(exports, "perform_uint32_value", perform_uint32_value);
+  NODE_SET_METHOD(exports, "perform_int32_value", perform_int32_value);
+  NODE_SET_METHOD(exports, "perform_uint32_value_with_pending_exception",
+                  perform_uint32_value_with_pending_exception);
+  NODE_SET_METHOD(exports, "perform_number_value", perform_number_value);
+  NODE_SET_METHOD(exports, "perform_boolean_value", perform_boolean_value);
+  NODE_SET_METHOD(exports, "create_function_with_c_function",
+                  create_function_with_c_function);
+  NODE_SET_METHOD(exports, "perform_get_own_property_names",
+                  perform_get_own_property_names);
+  NODE_SET_METHOD(exports, "test_v8_backing_store_deleted_by_addon",
+                  test_v8_backing_store_deleted_by_addon);
+  NODE_SET_METHOD(exports, "perform_object_clone", perform_object_clone);
+  NODE_SET_METHOD(exports, "clone_template_instance", clone_template_instance);
+  NODE_SET_METHOD(exports, "perform_object_clone_with_pending_exception",
+                  perform_object_clone_with_pending_exception);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

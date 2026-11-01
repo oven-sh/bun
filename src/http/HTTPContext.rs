@@ -47,8 +47,9 @@ pub struct HTTPContext<const SSL: bool> {
     /// Built from this context's SSLConfig (or the default `request_cert=1`
     /// opts). Only meaningful when `SSL`.
     pub(crate) secure: Option<OwnedSslCtx>,
-    /// HTTP/2 sessions with at least one active stream, available for
-    /// concurrent attachment if `hasHeadroom()`. Each entry holds a ref.
+    /// HTTP/2 sessions with at least one active stream or an unanswered
+    /// liveness PING, available for concurrent attachment if `hasHeadroom()`.
+    /// Each entry holds a ref.
     pub(crate) active_h2_sessions: Vec<RefPtr<h2::ClientSession>>,
     /// HTTPClients whose fresh TLS connect is in flight and whose request
     /// is h2-capable. Subsequent h2-capable requests to the same origin
@@ -92,9 +93,7 @@ pub(crate) type ActiveSocket<const SSL: bool> = TaggedPtrUnion<ActiveSocketTypes
 pub(crate) struct ActiveSocketTypes<const SSL: bool>;
 
 // Note: tags assigned 1024 - i, descending.
-impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {
-    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 3;
-}
+impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {}
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for DeadSocket {
     const TAG: bun_ptr::tagged_pointer::TagType = 1024;
 }
@@ -320,6 +319,11 @@ struct ExistingSocket<const SSL: bool> {
     /// Present if the socket negotiated "h2"; ownership transferred.
     h2_session: Option<RefPtr<h2::ClientSession>>,
     verification: PeerVerification,
+}
+
+#[inline(never)]
+fn need_socket_handlers() {
+    core::hint::black_box(uws::SocketKind::HttpClient);
 }
 
 impl<const SSL: bool> HTTPContext<SSL> {
@@ -1023,6 +1027,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &mut self.group,
             Self::KIND,
@@ -1046,23 +1051,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
         Ok(Some(socket))
     }
 
-    pub(crate) fn connect(
+    pub(crate) fn connect<'a>(
         &mut self,
-        client: &mut HTTPClient,
-        hostname: &[u8],
+        client: &mut HTTPClient<'a>,
+        hostname: &'a [u8],
         port: u16,
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
         client.connected_url = client
             .http_proxy
             .clone()
             .unwrap_or_else(|| client.url.clone());
-        // URL.hostname is a borrowed slice — assigning a local would not
-        // satisfy the field's lifetime, so this uses raw lifetime erasure.
-        client.connected_url.hostname =
-            // SAFETY: hostname borrows `client.url` or `client.http_proxy`,
-            // which outlive `connected_url` for the duration of the connect
-            // attempt.
-            unsafe { bun_ptr::detach_lifetime(hostname) };
+        client.connected_url.hostname = hostname;
 
         if SSL {
             if client.can_offer_h2() {
@@ -1184,6 +1183,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_group(
             &mut self.group,
             Self::KIND,
@@ -1231,7 +1231,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 }
 
 impl<const SSL: bool> HTTPContext<SSL> {
-    /// Retire every parked socket that belongs to fetch session `pool_id`.
+    /// Retire every idle socket that belongs to fetch session `pool_id`.
     pub(crate) fn close_idle_sockets(&mut self, pool_id: u64) {
         fn close_in<const SSL: bool, const N: usize>(
             pool: &HiveArray<PooledSocket<SSL>, N>,
@@ -1252,6 +1252,16 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         if let Some(pool) = self.pending_unix_sockets.get() {
             close_in(pool, pool_id);
+        }
+        // Collected first: closing a session takes it off the list.
+        let idle: Vec<_> = self
+            .active_h2_sessions
+            .iter()
+            .map(|session| session.this_ptr())
+            .filter(|session| session.is_idle_in_pool(pool_id))
+            .collect();
+        for session in idle {
+            h2::ClientSession::close_idle(session);
         }
     }
 
@@ -1358,6 +1368,11 @@ impl<const SSL: bool> Handler<SSL> {
 
         let active = HTTPContext::<SSL>::get_tagged(ptr);
         if let Some(client) = active.client_mut() {
+            // A reused connection is past its handshake: uSockets reports a fatal error on an
+            // established session as a failed one, then closes the socket, and `on_close` resends.
+            if !handshake_success && client.retries_on_close() {
+                return;
+            }
             // handshake completed but we may have ssl errors
             client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
             if handshake_success {
@@ -1417,6 +1432,20 @@ impl<const SSL: bool> Handler<SSL> {
                 );
                 return;
             }
+        }
+
+        // uSockets reports a fatal alert on an established session as a failed handshake. A
+        // success is a finished renegotiation, which RFC 9113 §9.2.1 makes a connection error.
+        if let Some(session) = active.session() {
+            HTTPContext::<SSL>::mark_socket_as_dead(socket);
+            h2::ClientSession::on_close(
+                session,
+                if handshake_success {
+                    crate::Error::HTTP2ProtocolError
+                } else {
+                    crate::handshake_failure(handshake_error.error_no)
+                },
+            );
         }
 
         if socket.is_closed() {
@@ -1542,7 +1571,7 @@ impl<const SSL: bool> Handler<SSL> {
         }
         if let Some(session) = tagged.session() {
             HTTPContext::<SSL>::mark_socket_as_dead(socket);
-            h2::ClientSession::on_close(session, crate::Error::Timeout);
+            h2::ClientSession::on_timeout(session);
         }
 
         HTTPContext::<SSL>::terminate_socket(socket);

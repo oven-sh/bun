@@ -26,7 +26,10 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { createHash, type webcrypto } from "node:crypto";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe("bun:jsc", () => {
   function count() {
@@ -282,8 +285,20 @@ describe("bun:jsc", () => {
       return acc;
     };
 
+    // On a busy machine the sampler thread may still not get to run in that
+    // window, so profile again until it has. A profiler that no longer samples
+    // uses up the time limit, which has to be here: this never yields.
+    const deadline = performance.now() + 5000;
+    const profileUntilSampled = () => {
+      let result;
+      do {
+        result = profile(work, sampleInterval);
+      } while (result.stackTraces.traces.length === 0 && performance.now() < deadline);
+      return result;
+    };
+
     // First profile call
-    const result1 = profile(work, sampleInterval);
+    const result1 = profileUntilSampled();
     expect(result1).toBeDefined();
     expect(result1.functions).toBeDefined();
     expect(result1.stackTraces).toBeDefined();
@@ -291,14 +306,14 @@ describe("bun:jsc", () => {
 
     // Second profile call - should work after first one completed
     // This verifies that shutdown() -> pause() fix works
-    const result2 = profile(work, sampleInterval);
+    const result2 = profileUntilSampled();
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
     expect(result2.stackTraces).toBeDefined();
     expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Third profile call - verify profiler can be reused multiple times
-    const result3 = profile(work, sampleInterval);
+    const result3 = profileUntilSampled();
     expect(result3).toBeDefined();
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();
@@ -326,6 +341,16 @@ describe("bun:jsc", () => {
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
   });
+});
+
+it("deserialize returns a Date whose getTime() is NaN when the timestamp is a NaN with a payload", () => {
+  const nan = Buffer.alloc(8);
+  nan.writeDoubleLE(NaN, 0);
+  const bytes = Buffer.from(serialize(new Date(NaN)));
+  const at = bytes.indexOf(nan);
+  expect(at).toBeGreaterThan(0);
+  bytes.writeBigUInt64LE(0xfffe000000000007n, at);
+  expect(deserialize(bytes).getTime()).toBeNaN();
 });
 
 it("deserialize rejects an object reference index outside the deserialized object pool", async () => {
@@ -464,6 +489,26 @@ it("deserialize rejects a RegExp record whose pattern does not parse", async () 
     ].join("\n"),
   );
   expect(exitCode).toBe(0);
+});
+
+it("getProtectedObjects returns only objects", async () => {
+  const script = `
+    import { getProtectedObjects } from "bun:jsc";
+    const list = getProtectedObjects();
+    for (const value of list) {
+      if (Object(value) !== value) throw new Error("getProtectedObjects returned a non-object: " + typeof value);
+      Object.prototype.toString.call(value);
+    }
+    console.log("ok", list.length > 0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "ok true\n", exitCode: 0 });
 });
 
 it("serialize rejects a CryptoKey created with extractable set to false", async () => {
@@ -613,6 +658,212 @@ it("deserialize rejects a CryptoKey record with no key bytes", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\ntrue Ed25519\n", exitCode: 0 });
 });
 
+describe("deserialize rejects a CryptoKey whose hash tag is not a digest", () => {
+  const digests = {
+    14: "SHA-1",
+    15: "SHA-224",
+    16: "SHA-256",
+    17: "SHA-384",
+    18: "SHA-512",
+    24: "SHA3-256",
+    25: "SHA3-384",
+    26: "SHA3-512",
+  };
+
+  function acceptedHashes(bytes: Uint8Array, offset: number) {
+    expect(bytes[offset]).toBe(16);
+    const accepted: Record<number, string> = {};
+    for (let tag = 0; tag < 256; tag++) {
+      bytes[offset] = tag;
+      let key: CryptoKey;
+      try {
+        key = deserialize(bytes);
+      } catch (e) {
+        expect((e as Error).message).toBe("Unable to deserialize data.");
+        continue;
+      }
+      accepted[tag] = (key.algorithm as HmacKeyAlgorithm).hash.name;
+    }
+    return accepted;
+  }
+
+  it("HMAC", async () => {
+    const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+    const bytes = new Uint8Array(serialize(key));
+    // The hash tag is the last byte of an HMAC record.
+    expect(acceptedHashes(bytes, bytes.length - 1)).toEqual(digests);
+  });
+
+  it("RSA", async () => {
+    const { publicKey } = await crypto.subtle.generateKey(
+      { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["encrypt", "decrypt"],
+    );
+    const bytes = new Uint8Array(serialize(publicKey));
+    // key class, algorithm tag, isRestrictedToHash, hash tag
+    const offset = Buffer.from(bytes).indexOf(Buffer.from([2, 3, 1, 0, 0, 0, 16]));
+    expect(offset).toBeGreaterThan(0);
+    expect(acceptedHashes(bytes, offset + 6)).toEqual(digests);
+  });
+
+  // Cloning a key whose hash is no algorithm aborts, so this one runs in its own process.
+  it.concurrent("HMAC with a tag that names no algorithm", async () => {
+    const script = `
+      import { deserialize } from "bun:jsc";
+      const record = Uint8Array.fromHex("0e00000021570000000e00000002000000017f000001000000020040000000af585e45c2b062325fdd84c81a0febee9000000000000020008c8e3e4aff4f4f4081b6f22e031d9b1b3883a0a7d6bee7a7a5d870f9100de4aafd5cd0209bfd9008");
+      for (const tag of [8, 13, 19, 16]) {
+        record[95] = tag;
+        let key;
+        try {
+          key = deserialize(record);
+        } catch {
+          console.log(tag, "rejected");
+          continue;
+        }
+        console.log(tag, structuredClone(key).algorithm.hash.name);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "8 rejected\n13 rejected\n19 rejected\n16 SHA-256\n", exitCode: 0 });
+  });
+});
+
+// Joins the parts of a patched CryptoKey value and fixes its size: <version:uint32_t> CryptoKeyTag <recordSize:uint32_t> <record>
+function cryptoKeyRecord(...parts: (Uint8Array | number[])[]) {
+  const bytes = Buffer.concat(parts.map(part => Buffer.from(part)));
+  bytes.writeUInt32LE(bytes.length - 9, 5);
+  return bytes;
+}
+
+it("deserialize rejects a CryptoKey record whose key bytes its key class refuses", async () => {
+  // Empties the record's last length-prefixed byte vector, which `trailing` bytes follow.
+  function withoutKeyBytes(bytes: Uint8Array, trailing: number) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset);
+    const end = bytes.length - trailing;
+    let size = 1;
+    while (view.getUint32(end - size - 4, true) !== size) size++;
+    return cryptoKeyRecord(bytes.subarray(0, end - size - 4), [0, 0, 0, 0], bytes.subarray(end));
+  }
+
+  const keys: Record<string, CryptoKey> = {
+    "HMAC": await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]),
+    "AES-GCM": await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt"]),
+  };
+  const pairs: [{ name: string; [parameter: string]: unknown }, string[]][] = [
+    [{ name: "RSA-PSS", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) }, ["sign"]],
+    [{ name: "ECDSA", namedCurve: "P-256" }, ["sign"]],
+    [{ name: "ECDH", namedCurve: "P-384" }, ["deriveBits"]],
+    [{ name: "Ed25519" }, ["sign"]],
+    [{ name: "X25519" }, ["deriveBits"]],
+    [{ name: "ML-DSA-44" }, ["sign"]],
+    [{ name: "ML-KEM-768" }, ["decapsulateBits"]],
+  ];
+  for (const [algorithm, usages] of pairs) {
+    const pair = (await crypto.subtle.generateKey(algorithm, true, usages as KeyUsage[])) as CryptoKeyPair;
+    keys[algorithm.name + " public"] = pair.publicKey;
+    keys[algorithm.name + " private"] = pair.privateKey;
+  }
+
+  const read = (bytes: Uint8Array) => {
+    try {
+      return Bun.inspect(deserialize(bytes)).split(" ")[0];
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+  // createHash only gets to its own message when the BoringSSL error queue is empty.
+  const unknownDigest = () => {
+    try {
+      createHash("not a digest");
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+  const outcomes: Record<string, (string | undefined)[]> = {};
+  const expected: typeof outcomes = {};
+  for (const [label, key] of Object.entries(keys)) {
+    const bytes = new Uint8Array(serialize(key));
+    // An HMAC record's hash tag comes after its key bytes.
+    outcomes[label] = [read(bytes), read(withoutKeyBytes(bytes, label === "HMAC" ? 1 : 0)), unknownDigest()];
+    expected[label] = ["CryptoKey", "Unable to deserialize data.", "Digest method not supported"];
+  }
+  expect(outcomes).toEqual(expected);
+});
+
+it("deserialize rejects an RSA CryptoKey with no hash", async () => {
+  const publicKey = await crypto.subtle.importKey(
+    "jwk",
+    { kty: "RSA", n: Buffer.alloc(256, 0xff).toString("base64url"), e: "AQAB" },
+    { name: "RSA-PSS", hash: "SHA-256" },
+    true,
+    ["verify"],
+  );
+  const bytes = Buffer.from(serialize(publicKey));
+  // key class, algorithm tag, isRestrictedToHash, hash tag
+  const offset = bytes.indexOf(Buffer.from([2, 2, 1, 0, 0, 0, 16]));
+  expect(offset).toBeGreaterThan(0);
+
+  const accepted: [string, string | undefined][] = [];
+  // RSAES-PKCS1-v1_5, which no key can have, then RSASSA-PKCS1-v1_5, RSA-PSS and RSA-OAEP
+  for (const algorithmTag of [0, 1, 2, 3]) {
+    for (const hash of [
+      [0, 0, 0, 0],
+      [0, 0, 0, 0, 16],
+      [1, 0, 0, 0, 16],
+    ]) {
+      let key: CryptoKey;
+      try {
+        key = deserialize(
+          cryptoKeyRecord(bytes.subarray(0, offset), [2, algorithmTag, ...hash], bytes.subarray(offset + 7)),
+        );
+      } catch (e) {
+        expect((e as Error).message).toBe("Unable to deserialize data.");
+        continue;
+      }
+      accepted.push([key.algorithm.name, (key.algorithm as webcrypto.RsaHashedKeyAlgorithm).hash?.name]);
+    }
+  }
+  expect(accepted).toEqual([
+    ["RSASSA-PKCS1-v1_5", "SHA-256"],
+    ["RSA-PSS", "SHA-256"],
+    ["RSA-OAEP", "SHA-256"],
+  ]);
+});
+
+it("deserialize rejects a ChaCha20-Poly1305 CryptoKey that is not 32 bytes", async () => {
+  const key = (await crypto.subtle.generateKey("ChaCha20-Poly1305", true, ["encrypt"])) as CryptoKey;
+  const bytes = Buffer.from(serialize(key));
+  // The record ends with <keySize:uint32_t> <keyData>.
+  expect(bytes.readUInt32LE(bytes.length - 36)).toBe(32);
+
+  const accepted: number[] = [];
+  for (const size of [0, 16, 31, 32, 33, 64]) {
+    try {
+      deserialize(cryptoKeyRecord(bytes.subarray(0, -36), [size, 0, 0, 0], new Uint8Array(size)));
+    } catch (e) {
+      expect((e as Error).message).toBe("Unable to deserialize data.");
+      continue;
+    }
+    accepted.push(size);
+  }
+  expect(accepted).toEqual([32]);
+
+  // The other algorithms of its key class take a key of any length. They are never extractable, so serialize() refuses them.
+  for (const name of ["HKDF", "PBKDF2"]) {
+    for (const size of [0, 31, 33]) {
+      const secret = await crypto.subtle.importKey("raw", new Uint8Array(size), name, false, ["deriveBits"]);
+      expect(structuredClone(secret).algorithm).toEqual({ name });
+    }
+  }
+});
+
 it("deserialize applies the same nesting depth limit to arrays as to objects", async () => {
   const script = `
     import { serialize, deserialize } from "bun:jsc";
@@ -686,5 +937,39 @@ describe("JsRef::Weak liveness", () => {
     expect(stillLive).toBeLessThan(dropped.length / 2);
     expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
     expect(kept.keep).toBe(true);
+  });
+});
+
+describe.concurrent("sampling profiler report at exit", () => {
+  const work = `let x = 0; for (let i = 0; i < 2e6; i++) x += Math.sqrt(i); console.log("done", x > 0);`;
+
+  async function run(script: string, env: Record<string, string> = {}) {
+    using dir = tempDir("sampling-profiler", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const profiles = join(String(dir), "missing", "profiles");
+    const reports = existsSync(profiles) ? readdirSync(profiles) : [];
+    return {
+      stdout,
+      stderr,
+      reports: reports.map(name => readFileSync(join(profiles, name), "utf8").includes("Top functions as")),
+      exitCode,
+    };
+  }
+  const expected = { stdout: "done true\n", stderr: "", reports: [true], exitCode: 0 };
+
+  it("is written when startSamplingProfiler is given a missing directory", async () => {
+    expect(await run(`require("bun:jsc").startSamplingProfiler("missing/profiles"); ${work}`)).toEqual(expected);
+  });
+
+  it("is written on process.exit() when BUN_JSC_samplingProfilerPath is a missing directory", async () => {
+    const env = { BUN_JSC_useSamplingProfiler: "1", BUN_JSC_samplingProfilerPath: "missing/profiles" };
+    expect(await run(`${work} process.exit(0);`, env)).toEqual(expected);
   });
 });

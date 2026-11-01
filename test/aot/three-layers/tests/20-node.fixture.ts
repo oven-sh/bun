@@ -1,0 +1,20 @@
+import { check } from "../src/show";
+import { EventEmitter, once } from "node:events";
+import { Readable, Transform, pipeline } from "node:stream";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { inspect, format, promisify, types, isDeepStrictEqual } from "node:util";
+import * as path from "node:path";
+import assert from "node:assert";
+import { createHash } from "node:crypto";
+import { gzipSync, gunzipSync } from "node:zlib";
+import { later, Vec2 } from "fake-typed";
+import { callTwice, PkgError } from "fake-shapes";
+import { makeUser, Square } from "../src/models";
+const F = "20";
+class Hub extends EventEmitter { seen: string[] = []; constructor() { super({ captureRejections: false }); this.on("ping", (n: number) => this.seen.push("ping " + n)); } ping(n: number) { return this.emit("ping", n); } }
+check(F, "an emitter subclass", async () => { const h = new Hub(); const got = once(h, "pong"); h.ping(1); h.prependListener("ping", function (this: Hub, n: number) { this.seen.push("first " + n); }); h.ping(2); h.emit("pong", makeUser(1), 2); return [h.seen, await got, h.listenerCount("ping"), h.eventNames(), h instanceof EventEmitter, (() => { try { h.emit("error", new PkgError("e", 1)); } catch (e) { return (e as Error).name; } })()]; });
+check(F, "streams", async () => { const upper = new Transform({ transform(chunk, _e, done) { done(null, String(chunk).toUpperCase()); } }); const out: string[] = []; await new Promise<void>((resolve, reject) => pipeline(Readable.from(["a", "b", makeUser(1).name]), upper, async function* (source: AsyncIterable<Buffer>) { for await (const each of source) out.push(String(each)); }, (error: unknown) => (error ? reject(error) : resolve()))); class Count extends Readable { n = 0; override _read() { this.push(this.n < 3 ? String(this.n++) : null); } } const text: string[] = []; for await (const each of new Count()) text.push(String(each)); return [out, text.join("")]; });
+check(F, "async local storage through package code", async () => { const als = new AsyncLocalStorage<{ id: number }>(); return als.run({ id: 7 }, async () => { const a = als.getStore()?.id; await later(1); const b = als.getStore()?.id; const c = callTwice(() => als.getStore()?.id); const d = await new Promise(resolve => setTimeout(() => resolve(als.getStore()?.id), 1)); return [a, b, c, d, als.exit(() => als.getStore())]; }); });
+check(F, "util", async () => [inspect(new Vec2(1, 2)), inspect(new Square("s", 1), { depth: 0 }), inspect(makeUser(3), { compact: true, breakLength: Infinity }), format("%s %d %j %o", new Vec2(1, 2), "3", makeUser(1), [1]), await promisify((a: number, cb: (e: unknown, v: number) => void) => cb(null, a + 1))(1), types.isProxy(new Proxy({}, {})), types.isPromise(later(1)), isDeepStrictEqual(makeUser(3), makeUser(3)), isDeepStrictEqual(new Vec2(1, 2), { x: 1, y: 2 })]);
+check(F, "assert", () => { const out: unknown[] = []; for (const f of [() => assert.deepStrictEqual(makeUser(1), makeUser(1)), () => assert.deepStrictEqual(new Vec2(1, 2), new Vec2(1, 3)), () => assert.throws(() => { throw new PkgError("p", 1); }, PkgError), () => assert.strictEqual(1, 2), () => assert(new Square("s", 0).area())]) { try { f(); out.push("ok"); } catch (e) { out.push([(e as Error).name, (e as any).code]); } } return out; });
+check(F, "path, crypto, zlib", () => [path.join("a", "..", "b", makeUser(1).name), path.parse("/x/y.test.ts"), path.relative("/a/b", "/a/c/d"), createHash("sha256").update(JSON.stringify(makeUser(1))).digest("hex").slice(0, 16), gunzipSync(gzipSync(String(new Vec2(1, 2)))).toString(), path.posix === path || path.posix.sep]);

@@ -4,3 +4,4 @@
 
 #[path = "SemverObject.rs"]
 pub mod SemverObject;
+pub(crate) mod generated_bindgen;

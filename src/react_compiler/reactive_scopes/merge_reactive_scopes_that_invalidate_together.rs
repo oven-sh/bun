@@ -8,7 +8,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/MergeReactiveScopesThatInvalidateTogether.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::diagnostics::CompilerError;
@@ -309,7 +309,7 @@ impl<'a> MergeTransform<'a> {
                                     scope_id: next_scope_id,
                                     from: i,
                                     to: i + 1,
-                                    lvalues: HashSet::new(),
+                                    lvalues: HashSet::default(),
                                 });
                             }
                         }
@@ -320,7 +320,7 @@ impl<'a> MergeTransform<'a> {
                                 scope_id: next_scope_id,
                                 from: i,
                                 to: i + 1,
-                                lvalues: HashSet::new(),
+                                lvalues: HashSet::default(),
                             });
                         }
                     }

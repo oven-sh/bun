@@ -187,6 +187,43 @@ describe("res.destroy() while the request is being read", () => {
 });
 
 // The expected values are what Node.js v26.3.0 does (end(), onError() and write_() in lib/_http_outgoing.js).
+// After the 'request' listener has returned to the event loop. Ending the response instead would tell the client "200 OK".
+describe("destroying a response before anything is sent sends nothing", () => {
+  const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+  test.concurrent.each<[string, (req: IncomingMessage, res: ServerResponse) => Promise<void>]>([
+    ["res.destroy()", async (_, res) => (await turn(), void res.destroy())],
+    ["res.destroy() after writeHead(201)", async (_, res) => (res.writeHead(201), await turn(), void res.destroy())],
+    [
+      "res.destroy() after statusCode = 500",
+      async (_, res) => ((res.statusCode = 500), await turn(), void res.destroy()),
+    ],
+    [
+      "res.destroy(error)",
+      async (_, res) => (res.on("error", () => {}), await turn(), void res.destroy(new Error("destroyed"))),
+    ],
+    ["req.destroy()", async req => (await turn(), void req.destroy())],
+    [
+      "req.destroy(error)",
+      async req => (req.on("error", () => {}), await turn(), void req.destroy(new Error("destroyed"))),
+    ],
+  ])("%s", async (_, listener) => {
+    const server = createServer(listener);
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      await new Promise(resolve => client.on("close", resolve));
+      expect(received).toBe("");
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("a late end() or write() answers its callback like Node.js", () => {
   type Callback = (err?: NodeJS.ErrnoException | null) => void;
   type Observed = { callbacks: string[]; errorEvents: (string | undefined)[]; returned: unknown };
@@ -1272,6 +1309,43 @@ test("res.write()/end() after req.socket.destroy() inside the handler", async ()
   } finally {
     server.close();
   }
+});
+
+test("headersSent and setHeader() agree when the response ends on a closed socket", async () => {
+  async function endAfterSocketClose(chunk: string | undefined) {
+    const { promise: sampled, resolve } = Promise.withResolvers<unknown>();
+    const server = createServer((req, res) => {
+      req.socket.on("close", () => {
+        res.end(chunk);
+        let setHeader = "ok";
+        try {
+          res.setHeader("X-Late", "1");
+        } catch (e) {
+          setHeader = (e as NodeJS.ErrnoException).code!;
+        }
+        resolve({ headersSent: res.headersSent, finished: res.finished, setHeader });
+      });
+      client.destroy();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    try {
+      return await sampled;
+    } finally {
+      server.close();
+    }
+  }
+
+  // Node.js drops the chunk of a destroyed response before it renders the head.
+  expect(await endAfterSocketClose("late")).toEqual({ headersSent: false, finished: true, setHeader: "ok" });
+  expect(await endAfterSocketClose(undefined)).toEqual({
+    headersSent: true,
+    finished: true,
+    setHeader: "ERR_HTTP_HEADERS_SENT",
+  });
 });
 
 // Like Node.js's net.Socket: the connection socket (req.socket) emits 'end' for

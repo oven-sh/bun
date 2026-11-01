@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+class A {
+  a/* prettier-ignore */ < B >( c ) { d( ) }
+  e// prettier-ignore
+  < F >( g ) { h( ) }
+}
+const i = {
+  j/* prettier-ignore */ < K >( l ) { m( ) },
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A {
+  a/* prettier-ignore */ < B >( c ) { d( ) }
+  e// prettier-ignore
+  < F >( g ) { h( ) }
+}
+const i = {
+  j/* prettier-ignore */ < K >( l ) { m( ) },
+};
+
+===================== End =====================

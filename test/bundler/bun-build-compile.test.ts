@@ -28,6 +28,7 @@ import {
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
+import { isHardened } from "../aot/hardened";
 
 describe("Bun.build compile", () => {
   test("compile with current platform target string", async () => {
@@ -69,7 +70,7 @@ describe("Bun.build compile", () => {
     async () => {
       const body = Array.from(
         { length: 24 },
-        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << j % 20}) s = s - ${j} | 0; o.p${j} = s;`,
+        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << (j % 20)}) s = s - ${j} | 0; o.p${j} = s;`,
       ).join(" ");
       const functions = Array.from(
         { length: 4000 },
@@ -2216,6 +2217,33 @@ describe("compiled binary validity", () => {
     expect(stdout.trim()).toBe("compile-test-output");
     expect(exitCode).toBe(0);
   });
+
+  test("import.meta.main is true in the entry point and false in what it imports", async () => {
+    using dir = tempDir("build-compile-import-meta-main", {
+      "app.ts": `import { isMain } from "./imported";\nconsole.log(import.meta.main, isMain);`,
+      "imported.ts": `export const isMain = import.meta.main;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "app.ts")],
+      compile: {
+        outfile: join(dir + "", "app-main"),
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
+  });
 });
 
 if (isLinux) {
@@ -2470,8 +2498,8 @@ if (isLinux) {
       // #29963: the writable PT_LOAD must have been grown to cover .bun,
       // rather than a new late PT_LOAD being appended.
       expect(writableLoadCoversBun).toBe(true);
-      // A stock bun has 3 PT_LOAD segments; the fix must not add a 4th.
-      expect(loadCount).toBe(3);
+      // A stock bun has 3 PT_LOAD segments (4 when built with --hardened=on); the fix must not add one.
+      expect(loadCount).toBe(isHardened ? 4 : 3);
       // JSC bytecode cache requires 128-byte-aligned deserialization input.
       // StandaloneModuleGraph writes bytecode at payload offset 120 assuming
       // the `[u64 size]` header sits at a 128-byte-aligned vaddr (so bytecode

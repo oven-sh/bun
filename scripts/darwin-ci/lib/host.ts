@@ -48,6 +48,7 @@ export async function brewInstall(formula: string): Promise<void> {
 
 export async function joinTailnet(hostname: string, tags: string | undefined): Promise<void> {
   await brewInstall("tailscale");
+  if (await succeeds(["sudo", tailscale, "status"])) return;
   await spawn(["sudo", `${brewPrefix}/bin/tailscaled`, "install-system-daemon"]);
   await sleep(3000);
   if (await succeeds(["sudo", tailscale, "status"])) return;

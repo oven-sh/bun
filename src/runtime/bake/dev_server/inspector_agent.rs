@@ -8,6 +8,7 @@
 //! `Bun__InspectorBunFrontendDevServerAgent__setEnabled`, `slot.sequence` is
 //! `next_inspector_connection_id`.
 
+use super::*;
 use bun_core::String as BunString;
 use bun_jsc::debugger::{DebuggerId, ErasedAgentSlot};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -23,27 +24,32 @@ bun_opaque::opaque_ffi! {
 /// reduce to `i32` / `u8` at the C++ FFI boundary, so callers resolve them
 /// before calling.
 ///
-/// Both slot fields are `Copy` `Cell`s, so every method takes `&self` —
-/// callers reach this through a shared `&Debugger` borrow.
-#[repr(transparent)]
-pub(crate) struct BunFrontendDevServerAgent(ErasedAgentSlot);
+/// Both slot fields are `Copy` `Cell`s, so a shared borrow of the slot
+/// suffices — callers reach this through a shared `&Debugger` borrow.
+#[derive(Copy, Clone)]
+pub(crate) struct BunFrontendDevServerAgent<'a>(&'a ErasedAgentSlot);
 
-impl BunFrontendDevServerAgent {
-    /// Reinterpret the `Debugger`'s erased slot as this agent. Sound because
-    /// `Self` is `#[repr(transparent)]` over [`ErasedAgentSlot`] and this
-    /// module is the slot's sole owner.
-    pub(crate) fn from_slot(slot: &ErasedAgentSlot) -> &Self {
-        // SAFETY: `#[repr(transparent)]` guarantees identical layout.
-        unsafe { &*core::ptr::from_ref(slot).cast::<Self>() }
+impl<'a> BunFrontendDevServerAgent<'a> {
+    /// The VM's agent, or `None` while the `BunFrontendDevServer` domain is disabled.
+    pub(crate) fn of(vm: &'a VirtualMachine) -> Option<Self> {
+        if let Some(debugger) = vm.debugger.as_ref() {
+            bun_core::hint::cold();
+            let agent = Self(&debugger.extension_agent);
+            if agent.is_enabled() {
+                bun_core::hint::cold();
+                return Some(agent);
+            }
+        }
+        None
     }
 
     /// `nextConnectionID` — wrapping post-increment.
-    pub(crate) fn next_connection_id(&self) -> i32 {
+    pub(crate) fn next_connection_id(self) -> i32 {
         self.0.post_increment_sequence()
     }
 
     #[inline]
-    pub(crate) fn is_enabled(&self) -> bool {
+    pub(crate) fn is_enabled(self) -> bool {
         !self.0.agent_ptr().is_null()
     }
 
@@ -51,7 +57,7 @@ impl BunFrontendDevServerAgent {
     /// C++ inspector backend (`frontend_dev_server_agent_set_enabled`) and
     /// stays live while the agent is enabled. Returns `None` when disabled.
     #[inline]
-    fn handle_mut(&self) -> Option<&mut InspectorBunFrontendDevServerAgentHandle> {
+    fn handle_mut(self) -> Option<&'a mut InspectorBunFrontendDevServerAgentHandle> {
         let handle = self.0.agent_ptr();
         if handle.is_null() {
             return None;
@@ -63,7 +69,7 @@ impl BunFrontendDevServerAgent {
         ))
     }
 
-    pub(crate) fn notify_client_connected(&self, dev_server_id: DebuggerId, connection_id: i32) {
+    pub(crate) fn notify_client_connected(self, dev_server_id: DebuggerId, connection_id: i32) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyClientConnected(
                 handle,
@@ -73,7 +79,7 @@ impl BunFrontendDevServerAgent {
         }
     }
 
-    pub(crate) fn notify_client_disconnected(&self, dev_server_id: DebuggerId, connection_id: i32) {
+    pub(crate) fn notify_client_disconnected(self, dev_server_id: DebuggerId, connection_id: i32) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
                 handle,
@@ -84,7 +90,7 @@ impl BunFrontendDevServerAgent {
     }
 
     pub(crate) fn notify_bundle_start(
-        &self,
+        self,
         dev_server_id: DebuggerId,
         trigger_files: &mut [BunString],
     ) {
@@ -102,7 +108,7 @@ impl BunFrontendDevServerAgent {
         }
     }
 
-    pub(crate) fn notify_bundle_complete(&self, dev_server_id: DebuggerId, duration_ms: f64) {
+    pub(crate) fn notify_bundle_complete(self, dev_server_id: DebuggerId, duration_ms: f64) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyBundleComplete(
                 handle,
@@ -113,7 +119,7 @@ impl BunFrontendDevServerAgent {
     }
 
     pub(crate) fn notify_bundle_failed(
-        &self,
+        self,
         dev_server_id: DebuggerId,
         build_errors_payload_base64: BunString,
     ) {
@@ -130,7 +136,7 @@ impl BunFrontendDevServerAgent {
     /// `DevServer.RouteBundle.Index` (`-1` for `None`) — caller does
     /// `rbi.map(|i| i.get() as i32).unwrap_or(-1)`.
     pub(crate) fn notify_client_navigated(
-        &self,
+        self,
         dev_server_id: DebuggerId,
         connection_id: i32,
         url: &BunString,
@@ -149,7 +155,7 @@ impl BunFrontendDevServerAgent {
 
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller does `kind as u8`.
-    pub(crate) fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &BunString) {
+    pub(crate) fn notify_console_log(self, dev_server_id: DebuggerId, kind: u8, data: &BunString) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
                 handle,
@@ -219,5 +225,14 @@ mod ffi {
             kind: u8,
             data: &BunString,
         );
+    }
+}
+
+impl DevServer {
+    /// The dev server's inspector agent, or `None` while the
+    /// `BunFrontendDevServer` domain is disabled. The agent's state is
+    /// `Cell`-based, so a shared borrow suffices. JS-thread only.
+    pub(crate) fn inspector(&self) -> Option<BunFrontendDevServerAgent<'_>> {
+        BunFrontendDevServerAgent::of(self.vm())
     }
 }

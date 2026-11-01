@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+it.each`
+  range                       | result
+  ${"[<	2.0.0, loose=False]"} | ${true}
+  ${"[<2.0.0, loose=False]"}  | ${true}
+  ${"[< 2.0.0, loose=False]"} | ${false}
+`("a", () => {});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+it.each`
+  range                       | result
+  ${"[<	2.0.0, loose=False]"} | ${true}
+  ${"[<2.0.0, loose=False]"}  | ${true}
+  ${"[< 2.0.0, loose=False]"} | ${false}
+`("a", () => {});
+
+===================== End =====================

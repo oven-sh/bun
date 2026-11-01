@@ -1,8 +1,12 @@
+import { setSocketOptions } from "bun:internal-for-testing";
 import { expect, it } from "bun:test";
+import { isWindows } from "harness";
 import net from "node:net";
 
 const CHUNK = new Uint8Array(64 * 1024);
-const TOTAL = 1024; // 64 MiB
+// With a 64 KiB SO_SNDBUF, 4 MiB hit backpressure dozens of times. Winsock may take any write whole, so send 64 MiB
+// there.
+const TOTAL = isWindows ? 1024 : 64;
 
 // A send() that partial-writes from inside the drain handler must keep the
 // socket polling for writable. us_socket_write2 (the header+payload writev
@@ -34,6 +38,7 @@ it("ServerWebSocket.send() that backpressures inside drain keeps draining", asyn
     },
     websocket: {
       open(ws) {
+        setSocketOptions(ws, 1, CHUNK.byteLength);
         pump(ws);
       },
       message() {},

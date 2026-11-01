@@ -1,0 +1,39 @@
+------------------
+{ printWidth: 80 }
+------------------
+class A {
+  declare +a: T;
+  declare static -b: T;
+  static +c = 1;
+}
+declare class B {
+  @@iterator: C;
+  @@asyncIterator(): D;
+}
+declare export {} from "a";
+declare namespace N {
+}
+declare module M {}
+declare component C(...rest?: Props);
+type T = boolean;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A {
+  declare +a: T;
+  declare static -b: T;
+  static +c = 1;
+}
+declare class B {
+  @@iterator: C;
+  @@asyncIterator(): D;
+}
+declare export {} from "a";
+declare namespace N {
+}
+declare module M {}
+declare component C(...rest?: Props);
+type T = boolean;
+
+===================== End =====================

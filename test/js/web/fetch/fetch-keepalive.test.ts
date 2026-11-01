@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
-import { createServer } from "node:net";
+import { connect, createServer, type AddressInfo, type Socket } from "node:net";
+import { release } from "node:os";
 import { join } from "node:path";
+import { createSecureContext, TLSSocket } from "node:tls";
 
 test("keepalive", async () => {
   using server = Bun.serve({
@@ -732,12 +734,14 @@ const idleInjections: [label: string, bytes: string][] = [
 ];
 // "Before" only holds when write() returns with the bytes already in the
 // peer's receive buffer. An AF_UNIX stream does that everywhere, and TCP
-// loopback does it on Linux and Windows. macOS hands a loopback segment to
-// the dlil input thread first, so it can land after the checkout, which no
-// client can tell from an answer: there only the unix-socket pool is checked.
-// fetch() does not pool unix sockets on Windows. Both pools check a socket
-// out through the same code.
-const idleTransports = [...(isMacOS ? [] : ["tcp"]), ...(isWindows ? [] : ["unix"])];
+// loopback does it on Linux and Windows 11. macOS hands a loopback segment to
+// the dlil input thread first, and Windows Server 2019 delivers it later too
+// while other loopback connections are busy. So it can land after the
+// checkout, which no client can tell from an answer: there only the
+// unix-socket pool is checked. fetch() does not pool unix sockets on Windows.
+// Both pools check a socket out through the same code.
+const lateLoopback = isMacOS || (isWindows && release() === "10.0.17763");
+const idleTransports = [...(lateLoopback ? [] : ["tcp"]), ...(isWindows ? [] : ["unix"])];
 
 test.concurrent.each(
   idleTransports.flatMap(transport => idleInjections.map(([label, bytes]) => [transport, label, bytes])),
@@ -937,5 +941,141 @@ test.concurrent.each(["http", "https"])(
       result: { connections: total, ended: evicted, reset: 0, other: [] },
       exitCode: 0,
     });
+  },
+);
+
+const NOT_A_TLS_RECORD = "not a tls record at all\r\n";
+// application_data, 32 bytes that no key authenticates.
+const UNAUTHENTICATED_RECORD = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
+
+// Calls `onRequest` for every complete request that arrives on `socket`.
+function eachRequest(socket: Socket, onRequest: () => void) {
+  let buf = "";
+  socket.on("data", chunk => {
+    buf += chunk.toString("latin1");
+    let end: number;
+    while ((end = buf.indexOf("\r\n\r\n")) >= 0) {
+      const length = Number(/^content-length: (\d+)/im.exec(buf.slice(0, end))?.[1] ?? 0);
+      if (buf.length < end + 4 + length) return;
+      buf = buf.slice(end + 4 + length);
+      onRequest();
+    }
+  });
+}
+
+// An https origin that keeps its connections alive. It leaves the second request of its first connection, the one fetch
+// reuses, to `secondRequest`, which gets the TLS session and the TCP socket under it. `requests` is what arrived.
+async function originWithBrokenReuse(secondRequest: (session: TLSSocket, raw: Socket) => void) {
+  const secureContext = createSecureContext(tls);
+  const sockets: Socket[] = [];
+  const requests: string[] = [];
+  const server = createServer(raw => {
+    const connection = sockets.push(raw);
+    let count = 0;
+    const session = new TLSSocket(raw, { isServer: true, secureContext });
+    for (const socket of [raw, session]) socket.on("error", () => {});
+    eachRequest(session, () => {
+      requests.push(`connection ${connection} request ${++count}`);
+      if (connection === 1 && count === 2) return secondRequest(session, raw);
+      session.write("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok");
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  return {
+    url: `https://localhost:${(server.address() as AddressInfo).port}/`,
+    requests,
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise(closed => server.close(closed));
+    },
+  };
+}
+
+const bodyOrCode = (url: string, init: BunFetchRequestInit) =>
+  fetch(url, { tls: { ca: tls.cert }, ...init })
+    .then(response => response.text())
+    .catch(e => `${e.code}`);
+
+// A reused connection can be gone by the time the request reaches the origin, so a request that can be sent twice goes
+// out again on a new one when it ends before the response body, however it ends.
+test.concurrent.each<[string, Parameters<typeof originWithBrokenReuse>[0]]>([
+  ["bytes that are not a TLS record", (_session, raw) => raw.end(NOT_A_TLS_RECORD)],
+  ["a record that does not authenticate", (_session, raw) => raw.end(UNAUTHENTICATED_RECORD)],
+  [
+    "half a response head, then bytes that are not a TLS record",
+    (session, raw) => session.write("HTTP/1.1 200 OK\r\nContent-Le", () => raw.end(NOT_A_TLS_RECORD)),
+  ],
+  ["close_notify", session => session.end()],
+  ["FIN", (_session, raw) => raw.end()],
+  ["RST", (_session, raw) => raw.resetAndDestroy()],
+])("a GET that a reused https connection answers with %s is sent again", async (_label, secondRequest) => {
+  await using origin = await originWithBrokenReuse(secondRequest);
+  const bodies = [await bodyOrCode(origin.url, {}), await bodyOrCode(origin.url, {})];
+  expect({ bodies, requests: origin.requests }).toEqual({
+    bodies: ["ok", "ok"],
+    requests: ["connection 1 request 1", "connection 1 request 2", "connection 2 request 1"],
+  });
+});
+
+test.concurrent.each<[string, BunFetchRequestInit, Parameters<typeof originWithBrokenReuse>[0]]>([
+  ["a POST", { method: "POST", body: "x" }, (_session, raw) => raw.end(NOT_A_TLS_RECORD)],
+  [
+    "a GET whose response body has started",
+    {},
+    (session, raw) => session.write("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nok", () => raw.end(NOT_A_TLS_RECORD)),
+  ],
+])(
+  "%s on a reused https connection whose TLS session breaks is not sent again",
+  async (_label, init, secondRequest) => {
+    await using origin = await originWithBrokenReuse(secondRequest);
+    const bodies = [await bodyOrCode(origin.url, init), await bodyOrCode(origin.url, init)];
+    expect({ bodies, requests: origin.requests }).toEqual({
+      bodies: ["ok", "EPROTO"],
+      requests: ["connection 1 request 1", "connection 1 request 2"],
+    });
+  },
+);
+
+// The session with an https proxy is the one that breaks, under a CONNECT tunnel that fetch reuses.
+test.concurrent(
+  "a GET through a reused tunnel is sent again when the TLS session with the https proxy breaks",
+  async () => {
+    const secureContext = createSecureContext(tls);
+    const clients: Socket[] = [];
+    await using origin = await originWithBrokenReuse(() => clients[0].end(NOT_A_TLS_RECORD));
+    const proxy = createServer(raw => {
+      clients.push(raw);
+      const session = new TLSSocket(raw, { isServer: true, secureContext });
+      for (const socket of [raw, session]) socket.on("error", () => {});
+      let head = "";
+      session.on("data", function onHead(chunk) {
+        head += chunk.toString("latin1");
+        if (!head.includes("\r\n\r\n")) return;
+        session.off("data", onHead);
+        // fetch sends nothing more until it has the reply, so piping right after writing it misses no tunnel bytes.
+        const upstream = connect(Number(new URL(origin.url).port), "127.0.0.1", () => {
+          session.write("HTTP/1.1 200 Connection established\r\n\r\n");
+          session.pipe(upstream).pipe(session);
+        });
+        upstream.on("error", () => {});
+        raw.on("close", () => upstream.destroy());
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    try {
+      const url = `https://localhost:${(proxy.address() as AddressInfo).port}`;
+      const init = { proxy: { url, respectNoProxy: false } };
+      const bodies = [await bodyOrCode(origin.url, init), await bodyOrCode(origin.url, init)];
+      expect({ bodies, requests: origin.requests, tunnels: clients.length }).toEqual({
+        bodies: ["ok", "ok"],
+        requests: ["connection 1 request 1", "connection 1 request 2", "connection 2 request 1"],
+        tunnels: 2,
+      });
+    } finally {
+      for (const client of clients) client.destroy();
+      await new Promise(closed => proxy.close(closed));
+    }
   },
 );

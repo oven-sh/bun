@@ -2,9 +2,7 @@
 //!
 //! Follows https://tools.ietf.org/html/rfc1950#section-9 and zlib's `adler32.c`.
 //!
-//! `HashObject.rs` exposes this via `hash_wrap::<Adler32>`, which calls
-//! the single-argument `hash(input)` (no seed) — the JS-side seed argument is
-//! ignored for Adler32.
+//! `HashObject.rs` exposes the single-argument `hash(input)`: Adler32 takes no seed.
 
 pub struct Adler32;
 

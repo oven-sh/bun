@@ -115,19 +115,6 @@ impl Strong {
         self.strong.set(global, value);
     }
 
-    /// Wrap an existing promise `JSValue` in a fresh Strong handle.
-    /// `Strong` owns its slot, so a literal copy would
-    /// double-free. Callers that need a second owner of the same promise
-    /// (e.g. `bake::DevServer::PromiseEnsureRouteBundledCtx::ensurePromise`)
-    /// allocate a second slot here instead.
-    pub fn from_value(value: JSValue, global: &JSGlobalObject) -> Self {
-        // No `as_promise()` debug-check here: this is reached from finalizers
-        // (Server::deinit_if_we_can) where JSCell::classInfo() would assert.
-        Self {
-            strong: JscStrong::create(value, global),
-        }
-    }
-
     /// Borrow the GC-rooted `JSPromise` cell. Panics if the strong slot is
     /// empty (use [`has_value`] to check first).
     ///

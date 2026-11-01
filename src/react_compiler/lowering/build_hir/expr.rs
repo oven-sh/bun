@@ -22,6 +22,9 @@ pub(crate) fn lower_expression(
     builder: &mut HirBuilder,
     expr: &Expr,
 ) -> Result<InstructionValue, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let loc = convert_loc(expr.loc);
     match &expr.data {
         Data::EObjectJSON(_) | Data::EArrayJSON(_) => Ok(unsupported_node("JSONValue", loc)),
@@ -422,7 +425,9 @@ fn lower_logical(
     let test_block = builder.reserve(BlockKind::Value);
     let test_block_id = test_block.id;
     let place = build_temporary_place(builder, loc);
-    let left_loc = convert_loc(bin.left.loc);
+    let around_left = (builder.parentheses_around(bin.left.loc))
+        .or_else(|| builder.type_cast_around(bin.left.loc));
+    let left_loc = convert_loc(around_left.unwrap_or(bin.left.loc));
     let left_place = build_temporary_place(builder, left_loc);
 
     let consequent_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {
@@ -614,6 +619,10 @@ fn lower_sequence(
 
     let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
         fn flatten_comma(builder: &mut HirBuilder, e: &Expr) -> Result<Place, CompilerError> {
+            if !builder.environment().has_stack() {
+                return Err(crate::lowering::nested_too_deeply().into());
+            }
+
             if let Data::EBinary(b) = &e.data {
                 if b.op == OpCode::BinComma {
                     flatten_comma(builder, &b.left)?;
@@ -1282,6 +1291,8 @@ fn convert_template_contents(
         E::TemplateContents::Cooked(s) => {
             let cooked = if s.is_utf16 {
                 arena_utf8_from_utf16(s.slice16(), loc)?
+            } else if s.next.is_some() {
+                arena_str_from_rope(s)
             } else {
                 StoreStr::new(s.slice8())
             };
@@ -1308,6 +1319,18 @@ fn arena_utf8_from_utf16(
         buf.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
     }
     Ok(StoreStr::new(buf.leak()))
+}
+
+/// The parser joins constant strings into a rope: `"a" + "b"`, `` `${x}a` + "b" ``.
+fn arena_str_from_rope(s: &E::EString) -> StoreStr {
+    let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(s.len());
+    let mut cur = Some(s);
+    while let Some(seg) = cur {
+        debug_assert!(!seg.is_utf16);
+        buf.extend_from_slice(seg.slice8());
+        cur = seg.next.as_ref().map(|r| r.get());
+    }
+    StoreStr::new(buf.leak())
 }
 
 // =============================================================================
@@ -1338,6 +1361,9 @@ fn is_reorderable_expression(
     expr: &Expr,
     allow_local_identifiers: bool,
 ) -> bool {
+    if !builder.environment().has_stack() {
+        return false;
+    }
     match &expr.data {
         Data::EIdentifier(ident) => {
             if is_module_level_or_global(builder, ident.ref_) {
@@ -1408,6 +1434,11 @@ fn is_reorderable_expression(
             }
             stmts.is_empty()
         }
+        Data::ECall(call)
+            if call.was_jsx_element && !builder.environment().config.jsx_can_be_reordered =>
+        {
+            false
+        }
         Data::ECall(call) if call.optional_chain.is_none() => {
             is_reorderable_expression(builder, &call.target, allow_local_identifiers)
                 && call
@@ -1469,17 +1500,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
     ) {
         return true;
     }
-    if let Some(member) = builder
-        .host()
-        .module_scope()
-        .members
-        .get(sym.original_name.slice())
-    {
-        if member.ref_ == ref_ {
-            return true;
-        }
-    }
-    false
+    builder.host().is_module_level(ref_)
 }
 
 // =============================================================================
@@ -1490,16 +1511,8 @@ fn convert_js_string(s: StoreRef<E::EString>) -> JsString {
     if s.get().next.is_none() {
         return JsString::new(s);
     }
-    // Roped literal (rare; only from parser-level constant folding): flatten so
-    // every HIR consumer can ignore ropes.
-    let mut joined: Vec<u8> = Vec::with_capacity(s.get().len());
-    let mut cur = Some(s.get());
-    while let Some(seg) = cur {
-        debug_assert!(!seg.is_utf16);
-        joined.extend_from_slice(seg.slice8());
-        cur = seg.next.as_ref().map(|r| r.get());
-    }
-    JsString::from_wtf8_bytes(&joined)
+    // Flatten, so every HIR consumer can ignore ropes.
+    JsString::from_wtf8_bytes(arena_str_from_rope(s.get()).slice())
 }
 
 fn unsupported_node(node_type: &'static str, loc: Option<SourceLocation>) -> InstructionValue {

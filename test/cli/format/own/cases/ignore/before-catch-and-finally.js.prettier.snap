@@ -1,0 +1,39 @@
+------------------
+{ printWidth: 80 }
+------------------
+try {
+  a;
+} catch (b) {
+  // prettier-ignore
+  c
+}
+try {
+  d;
+} /* prettier-ignore */ catch ( e ) { f }
+try {
+  g;
+} finally {
+  // prettier-ignore
+  h
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+try {
+  a;
+} catch (b) {
+  // prettier-ignore
+  c
+}
+try {
+  d;
+} /* prettier-ignore */ catch ( e ) { f }
+try {
+  g;
+} finally {
+  // prettier-ignore
+  h
+}
+
+===================== End =====================

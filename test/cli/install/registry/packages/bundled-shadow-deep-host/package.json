@@ -1,0 +1,26 @@
+{
+  "_id": "bundled-shadow-deep-host",
+  "name": "bundled-shadow-deep-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shadow-deep-host",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-shadow-consumer": "1.0.0",
+        "bundled-shadow-wrapper": "1.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-shadow-wrapper"
+      ],
+      "_id": "bundled-shadow-deep-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-0AapvZZN+czyjr1l05qbGQaBHKNiLw+2BFxouwkst7BvNfJUv09ZgHtRL1tb7QGHhm1VwwR/Vg70Uz+IOzmeXA==",
+        "shasum": "9e14944bae0586dc76c6ec9f0cd68af710da5a94",
+        "tarball": "http://localhost:4873/bundled-shadow-deep-host/-/bundled-shadow-deep-host-1.0.0.tgz"
+      }
+    }
+  }
+}

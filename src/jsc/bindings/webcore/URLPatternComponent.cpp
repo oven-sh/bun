@@ -53,7 +53,10 @@ ExceptionOr<URLPatternComponent> URLPatternComponent::compile(Ref<JSC::VM> vm, S
         return maybePartList.releaseException();
     Vector<Part> partList = maybePartList.releaseReturnValue();
 
-    auto [regularExpressionString, nameList] = generateRegexAndNameList(partList, options);
+    auto maybeRegexAndNameList = generateRegexAndNameList(partList, options);
+    if (maybeRegexAndNameList.hasException())
+        return maybeRegexAndNameList.releaseException();
+    auto [regularExpressionString, nameList] = maybeRegexAndNameList.releaseReturnValue();
 
     OptionSet<JSC::Yarr::Flags> flags = { JSC::Yarr::Flags::UnicodeSets };
     if (options.ignoreCase)
@@ -63,7 +66,10 @@ ExceptionOr<URLPatternComponent> URLPatternComponent::compile(Ref<JSC::VM> vm, S
     if (!regularExpression->isValid())
         return Exception { ExceptionCode::TypeError, "Unable to create RegExp object regular expression from provided URLPattern string."_s };
 
-    String patternString = generatePatternString(partList, options);
+    auto maybePatternString = generatePatternString(partList, options);
+    if (maybePatternString.hasException())
+        return maybePatternString.releaseException();
+    String patternString = maybePatternString.releaseReturnValue();
 
     bool hasRegexGroups = partList.containsIf([](auto& part) {
         return part.type == PartType::Regexp;

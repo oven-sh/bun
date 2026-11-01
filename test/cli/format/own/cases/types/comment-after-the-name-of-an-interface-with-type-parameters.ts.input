@@ -1,0 +1,4 @@
+interface A // c
+<T extends object = {}> extends B<T> { a: T }
+interface C /* a */ // b
+<T extends object = {}> extends B<T> { a: T }

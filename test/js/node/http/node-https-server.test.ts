@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls as validCert } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tls as validCert } from "harness";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
+import { pipeline } from "node:stream";
 import tls from "node:tls";
 
 function listen(server: http.Server): Promise<number> {
@@ -474,4 +475,89 @@ test.each([
   });
   client.exited.then(() => stalled.resolve("the exit of the client"));
   expect(await closed).toEqual({ closedAt: "a write that the client does not take", wellAheadOfTheDeadline: true });
+});
+
+// Linux only: epoll is the one poller that reports a hangup while reads are paused.
+test.skipIf(!isLinux)(
+  "a response ends when its client leaves with a request body that nobody reads",
+  async () => {
+    using dir = tempDir("https-unread-body", { "big.bin": Buffer.alloc(4 << 20, "b").toString() });
+    let requests = 0;
+    let ended = 0;
+    let clientsLeft = false;
+    const allEnded = Promise.withResolvers<void>();
+    const server = https.createServer(validCert, (_req, res) => {
+      requests++;
+      pipeline(createReadStream(join(String(dir), "big.bin")), res, () => {
+        ended++;
+        if (clientsLeft && ended === requests) allEnded.resolve();
+      });
+    });
+    const port = await listen(server);
+    // In a process of its own: each client is gone while this loop still writes to it.
+    await using clients = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const post = Buffer.concat([
+        Buffer.from("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 16777216\\r\\n\\r\\n"),
+        Buffer.alloc(4 << 20, 97),
+      ]);
+      for (let i = 0; i < 20; i++) {
+        await new Promise(done => {
+          const socket = require("node:tls").connect({ port: ${port}, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+            socket.write(post);
+            socket.destroy();
+          });
+          socket.on("error", () => {}).on("close", done);
+        });
+      }`,
+      ],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await clients.exited).toBe(0);
+    expect(requests).toBeGreaterThan(0);
+    clientsLeft = true;
+    if (ended === requests) allEnded.resolve();
+    await allEnded.promise;
+    // Calls back only once every connection is closed.
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    expect(ended).toBe(requests);
+    // A debug build takes seconds to start the clients' process.
+  },
+  30_000,
+);
+
+// Linux still hands over what it received ahead of the reset that the first answer provokes.
+test.skipIf(!isLinux)("every request of one read is dispatched when the client leaves without reading", async () => {
+  let requests = 0;
+  let closed = 0;
+  const connectionClosed = Promise.withResolvers<void>();
+  const server = https.createServer(validCert, (req, res) => {
+    if (++requests === 1) req.socket.once("close", () => connectionClosed.resolve());
+    res.once("close", () => closed++);
+    req.resume().once("end", () => res.end("stored"));
+  });
+  const port = await listen(server);
+  // In a process of its own: it is gone while this loop still answers.
+  await using client = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const socket = require("node:tls").connect({ port: ${port}, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+        socket.write("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 5\\r\\n\\r\\nhello".repeat(20));
+        socket.destroy();
+      });
+      socket.on("error", () => {});`,
+    ],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(await client.exited).toBe(0);
+  await connectionClosed.promise;
+  await new Promise<void>(resolve => server.close(() => resolve()));
+  expect({ requests, closed }).toEqual({ requests: 20, closed: 20 });
 });

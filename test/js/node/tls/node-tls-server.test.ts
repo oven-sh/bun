@@ -5222,7 +5222,7 @@ describe("a send that the kernel rejects", () => {
       let received = 0;
       // More than the socket buffers arrives in the one read, so the reads stop until this runs.
       socket.on("readable", () => {
-        for (let chunk; (chunk = socket.read()) !== null; ) received += chunk.length;
+        for (let chunk; (chunk = socket.read()) !== null;) received += chunk.length;
       });
       socket.on("error", () => {}).on("close", () => outcome.resolve(received));
       process.nextTick(() => socket.write(Buffer.alloc(8 * 1024 * 1024, "a")));
@@ -5232,6 +5232,93 @@ describe("a send that the kernel rejects", () => {
     client.write(Buffer.alloc(70000, "c"));
     client.write(Buffer.alloc(16385, "c"), () => client.destroySoon());
     expect(await outcome.promise).toBe(sent);
+  });
+
+  // The client is a process of its own and the server does next to nothing, so the reset arrives in the middle of the sends.
+  it.each(["its own socket", "tls.connect({ socket })"])(
+    "leaves an upload over %s the answer that came before the reset",
+    async transport => {
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: COMMON_CERT,
+        socket: {
+          data(socket) {
+            socket.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 8\r\nConnection: close\r\n\r\nrefused\n");
+            socket.terminate();
+          },
+        },
+      });
+      await using client = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const body = Buffer.alloc(4 * 1024 * 1024, "a");
+          const options = { host: "${server.hostname}", port: ${server.port}, rejectUnauthorized: false };
+          const createConnection = ${transport === "its own socket"}
+            ? undefined
+            : () => require("node:tls").connect({ ...options, socket: require("node:net").connect(options) });
+          const headers = { "Content-Length": body.length };
+          // The first connection finds the server cold: its reset comes after the client has filled the kernel's buffers.
+          for (let i = 0; i < 4; i++) {
+            const request = require("node:https").request({ ...options, method: "POST", headers, createConnection });
+            let outcome = "nothing";
+            request.on("response", response => {
+              response.setEncoding("utf8").on("data", chunk => (outcome = response.statusCode + " " + chunk.trim()));
+            });
+            request.on("error", () => (outcome = outcome === "nothing" ? "error" : outcome)).end(body);
+            await new Promise(resolve => request.on("close", resolve));
+            console.log(outcome);
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
+      const outcomes = stdout.trim().split("\n");
+      // At the reset of the server, Windows drops what is still unread in the kernel: there the upload may just fail.
+      expect(isWindows ? outcomes.map(outcome => (outcome === "error" ? "403 refused" : outcome)) : outcomes).toEqual(
+        Array(4).fill("403 refused"),
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("does not report the write that it cut off as done", async () => {
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: COMMON_CERT,
+      socket: { data: socket => socket.terminate() },
+    });
+    await using client = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `// More than the kernel takes for a peer that does not read.
+        const body = Buffer.alloc(32 * 1024 * 1024, "a");
+        const options = { host: "${server.hostname}", port: ${server.port}, rejectUnauthorized: false };
+        // The first connection finds the server cold: its reset comes after the client has filled the kernel's buffers.
+        for (let i = 0; i < 4; i++) {
+          const socket = require("node:tls").connect(options);
+          let written = "pending";
+          socket.on("error", () => {}).write(body, error => (written = error ? "failed" : "done"));
+          await new Promise(resolve => socket.on("close", resolve));
+          console.log(written);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
+    const outcomes = stdout.trim().split("\n");
+    expect({ count: outcomes.length, done: outcomes.filter(outcome => outcome === "done") }).toEqual({
+      count: 4,
+      done: [],
+    });
+    expect(exitCode).toBe(0);
   });
 
   it.each([true, false])("in the handshake is a 'tlsClientError' (allowHalfOpen: %p)", async allowHalfOpen => {

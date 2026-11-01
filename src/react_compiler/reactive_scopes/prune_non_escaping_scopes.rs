@@ -8,8 +8,9 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PruneNonEscapingScopes.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
+use crate::collections::IdBitSet;
 use crate::collections::IdMap;
 use crate::collections::IndexSet;
 use crate::diagnostics::CompilerError;
@@ -38,7 +39,8 @@ use crate::hir::ScopeId;
 use crate::hir::environment::Environment;
 use crate::hir::is_array_type;
 use crate::hir::is_primitive_type;
-use crate::hir::visitors::each_instruction_value_operand;
+use crate::hir::visitors::operands;
+use smallvec::{SmallVec, smallvec};
 
 use crate::reactive_scopes::visitors::ReactiveFunctionTransform;
 use crate::reactive_scopes::visitors::ReactiveFunctionVisitor;
@@ -73,12 +75,12 @@ pub(crate) fn prune_non_escaping_scopes(
     }
 
     // Then walk outward from the returned values and find all captured operands.
-    let memoized = compute_memoized_identifiers(&state)?;
+    let memoized = compute_memoized_identifiers(state, env)?;
 
     // Prune scopes that do not declare/reassign any escaping values
     let mut transform = PruneScopesTransform {
         env,
-        pruned_scopes: HashSet::new(),
+        pruned_scopes: HashSet::default(),
         reassignments: IdMap::new(),
     };
     let mut memoized_state = memoized;
@@ -237,6 +239,9 @@ struct LValueMemoization {
     level: MemoizationLevel,
 }
 
+type LValues = SmallVec<[LValueMemoization; 2]>;
+type RValues = SmallVec<[(IdentifierId, EvaluationOrder); 4]>;
+
 // =============================================================================
 // Helper: get_place_scope
 // =============================================================================
@@ -262,8 +267,8 @@ fn get_place_scope(
 // Helper: compute pattern lvalues
 // =============================================================================
 
-fn compute_pattern_lvalues(pattern: &Pattern) -> Vec<LValueMemoization> {
-    let mut lvalues = Vec::new();
+fn compute_pattern_lvalues(pattern: &Pattern) -> LValues {
+    let mut lvalues = LValues::new();
     match pattern {
         Pattern::Array(array_pattern) => {
             for item in &array_pattern.items {
@@ -352,7 +357,11 @@ impl<'a> CollectDependenciesVisitor<'a> {
         value: &ReactiveValue,
         lvalue: Option<IdentifierId>,
         state: &mut CollectState,
-    ) -> (Vec<LValueMemoization>, Vec<(IdentifierId, EvaluationOrder)>) {
+    ) -> (LValues, RValues) {
+        if !self.env.has_stack() {
+            return (LValues::new(), RValues::new());
+        }
+
         match value {
             ReactiveValue::ConditionalExpression {
                 consequent,
@@ -365,12 +374,12 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 let mut rvalues = cons_rvalues;
                 rvalues.extend(alt_rvalues);
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Conditional,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
                 (lvalues, rvalues)
             }
@@ -380,12 +389,12 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 let mut rvalues = left_rvalues;
                 rvalues.extend(right_rvalues);
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Conditional,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
                 (lvalues, rvalues)
             }
@@ -404,24 +413,24 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 }
                 let (_, rvalues) = self.compute_memoization_inputs(id, inner, None, state);
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Conditional,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
                 (lvalues, rvalues)
             }
             ReactiveValue::OptionalExpression { value: inner, .. } => {
                 let (_, rvalues) = self.compute_memoization_inputs(id, inner, None, state);
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Conditional,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
                 (lvalues, rvalues)
             }
@@ -437,7 +446,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
         id: EvaluationOrder,
         value: &InstructionValue,
         lvalue: Option<IdentifierId>,
-    ) -> (Vec<LValueMemoization>, Vec<(IdentifierId, EvaluationOrder)>) {
+    ) -> (LValues, RValues) {
         let env = self.env;
         let options = &self.options;
 
@@ -448,7 +457,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 children,
                 ..
             } => {
-                let mut rvalues: Vec<(IdentifierId, EvaluationOrder)> = Vec::new();
+                let mut rvalues = RValues::new();
                 if let JsxTag::Place(place) = tag {
                     rvalues.push((place.identifier, id));
                 }
@@ -473,12 +482,12 @@ impl<'a> CollectDependenciesVisitor<'a> {
                     MemoizationLevel::Unmemoized
                 };
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
                 (lvalues, rvalues)
             }
@@ -488,15 +497,14 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 } else {
                     MemoizationLevel::Unmemoized
                 };
-                let rvalues: Vec<(IdentifierId, EvaluationOrder)> =
-                    children.iter().map(|c| (c.identifier, id)).collect();
+                let rvalues: RValues = children.iter().map(|c| (c.identifier, id)).collect();
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
                 (lvalues, rvalues)
             }
@@ -515,42 +523,42 @@ impl<'a> CollectDependenciesVisitor<'a> {
             | InstructionValue::UnaryExpression { .. } => {
                 if options.force_memoize_primitives {
                     let level = MemoizationLevel::Conditional;
-                    let operands = each_instruction_value_operand(value, env);
-                    let rvalues: Vec<(IdentifierId, EvaluationOrder)> =
-                        operands.iter().map(|p| (p.identifier, id)).collect();
+                    let rvalues: RValues = operands(value, &env.functions)
+                        .map(|p| (p.identifier, id))
+                        .collect();
                     let lvalues = if let Some(lv) = lvalue {
-                        vec![LValueMemoization {
+                        smallvec![LValueMemoization {
                             place_identifier: lv,
                             level,
                         }]
                     } else {
-                        vec![]
+                        smallvec![]
                     };
                     (lvalues, rvalues)
                 } else {
                     let level = MemoizationLevel::Never;
                     let lvalues = if let Some(lv) = lvalue {
-                        vec![LValueMemoization {
+                        smallvec![LValueMemoization {
                             place_identifier: lv,
                             level,
                         }]
                     } else {
-                        vec![]
+                        smallvec![]
                     };
-                    (lvalues, vec![])
+                    (lvalues, smallvec![])
                 }
             }
             InstructionValue::Await { value: inner, .. }
             | InstructionValue::TypeCastExpression { value: inner, .. } => {
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Conditional,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
-                (lvalues, vec![(inner.identifier, id)])
+                (lvalues, smallvec![(inner.identifier, id)])
             }
             InstructionValue::IteratorNext {
                 iterator,
@@ -558,56 +566,56 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 ..
             } => {
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Conditional,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
                 (
                     lvalues,
-                    vec![(iterator.identifier, id), (collection.identifier, id)],
+                    smallvec![(iterator.identifier, id), (collection.identifier, id)],
                 )
             }
             InstructionValue::GetIterator { collection, .. } => {
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Conditional,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
-                (lvalues, vec![(collection.identifier, id)])
+                (lvalues, smallvec![(collection.identifier, id)])
             }
             InstructionValue::LoadLocal { place, .. } => {
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Conditional,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
-                (lvalues, vec![(place.identifier, id)])
+                (lvalues, smallvec![(place.identifier, id)])
             }
             InstructionValue::LoadContext { place, .. } => {
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Conditional,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
-                (lvalues, vec![(place.identifier, id)])
+                (lvalues, smallvec![(place.identifier, id)])
             }
             InstructionValue::DeclareContext {
                 lvalue: decl_lvalue,
                 ..
             } => {
-                let mut lvalues = vec![LValueMemoization {
+                let mut lvalues = smallvec![LValueMemoization {
                     place_identifier: decl_lvalue.place.identifier,
                     level: MemoizationLevel::Memoized,
                 }];
@@ -617,13 +625,13 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Unmemoized,
                     });
                 }
-                (lvalues, vec![])
+                (lvalues, smallvec![])
             }
             InstructionValue::DeclareLocal {
                 lvalue: decl_lvalue,
                 ..
             } => {
-                let mut lvalues = vec![LValueMemoization {
+                let mut lvalues = smallvec![LValueMemoization {
                     place_identifier: decl_lvalue.place.identifier,
                     level: MemoizationLevel::Unmemoized,
                 }];
@@ -633,7 +641,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Unmemoized,
                     });
                 }
-                (lvalues, vec![])
+                (lvalues, smallvec![])
             }
             InstructionValue::PrefixUpdate {
                 lvalue: upd_lvalue,
@@ -645,7 +653,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 value: upd_value,
                 ..
             } => {
-                let mut lvalues = vec![LValueMemoization {
+                let mut lvalues = smallvec![LValueMemoization {
                     place_identifier: upd_lvalue.identifier,
                     level: MemoizationLevel::Conditional,
                 }];
@@ -655,14 +663,14 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Conditional,
                     });
                 }
-                (lvalues, vec![(upd_value.identifier, id)])
+                (lvalues, smallvec![(upd_value.identifier, id)])
             }
             InstructionValue::StoreLocal {
                 lvalue: store_lvalue,
                 value: store_value,
                 ..
             } => {
-                let mut lvalues = vec![LValueMemoization {
+                let mut lvalues = smallvec![LValueMemoization {
                     place_identifier: store_lvalue.place.identifier,
                     level: MemoizationLevel::Conditional,
                 }];
@@ -672,14 +680,14 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Conditional,
                     });
                 }
-                (lvalues, vec![(store_value.identifier, id)])
+                (lvalues, smallvec![(store_value.identifier, id)])
             }
             InstructionValue::StoreContext {
                 lvalue: store_lvalue,
                 value: store_value,
                 ..
             } => {
-                let mut lvalues = vec![LValueMemoization {
+                let mut lvalues = smallvec![LValueMemoization {
                     place_identifier: store_lvalue.place.identifier,
                     level: MemoizationLevel::Memoized,
                 }];
@@ -689,27 +697,27 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Conditional,
                     });
                 }
-                (lvalues, vec![(store_value.identifier, id)])
+                (lvalues, smallvec![(store_value.identifier, id)])
             }
             InstructionValue::StoreGlobal {
                 value: store_value, ..
             } => {
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Unmemoized,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
-                (lvalues, vec![(store_value.identifier, id)])
+                (lvalues, smallvec![(store_value.identifier, id)])
             }
             InstructionValue::Destructure {
                 lvalue: dest_lvalue,
                 value: dest_value,
                 ..
             } => {
-                let mut lvalues = Vec::new();
+                let mut lvalues = LValues::new();
                 if let Some(lv) = lvalue {
                     lvalues.push(LValueMemoization {
                         place_identifier: lv,
@@ -717,27 +725,27 @@ impl<'a> CollectDependenciesVisitor<'a> {
                     });
                 }
                 lvalues.extend(compute_pattern_lvalues(&dest_lvalue.pattern));
-                (lvalues, vec![(dest_value.identifier, id)])
+                (lvalues, smallvec![(dest_value.identifier, id)])
             }
             InstructionValue::ComputedLoad { object, .. }
             | InstructionValue::PropertyLoad { object, .. } => {
                 let level = MemoizationLevel::Conditional;
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
-                (lvalues, vec![(object.identifier, id)])
+                (lvalues, smallvec![(object.identifier, id)])
             }
             InstructionValue::ComputedStore {
                 object,
                 value: store_value,
                 ..
             } => {
-                let mut lvalues = vec![LValueMemoization {
+                let mut lvalues = smallvec![LValueMemoization {
                     place_identifier: object.identifier,
                     level: MemoizationLevel::Conditional,
                 }];
@@ -747,11 +755,11 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Conditional,
                     });
                 }
-                (lvalues, vec![(store_value.identifier, id)])
+                (lvalues, smallvec![(store_value.identifier, id)])
             }
             InstructionValue::TaggedTemplateExpression { tag, .. } => {
                 let no_alias = env.has_no_alias_signature(tag.identifier);
-                let mut lvalues = Vec::new();
+                let mut lvalues = LValues::new();
                 if let Some(lv) = lvalue {
                     lvalues.push(LValueMemoization {
                         place_identifier: lv,
@@ -759,10 +767,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
                     });
                 }
                 if no_alias {
-                    return (lvalues, vec![]);
+                    return (lvalues, smallvec![]);
                 }
-                let operands = each_instruction_value_operand(value, env);
-                for op in &operands {
+                for op in operands(value, &env.functions) {
                     if op.effect.is_mutable() {
                         lvalues.push(LValueMemoization {
                             place_identifier: op.identifier,
@@ -770,13 +777,14 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         });
                     }
                 }
-                let rvalues: Vec<(IdentifierId, EvaluationOrder)> =
-                    operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::CallExpression { callee, .. } => {
                 let no_alias = env.has_no_alias_signature(callee.identifier);
-                let mut lvalues = Vec::new();
+                let mut lvalues = LValues::new();
                 if let Some(lv) = lvalue {
                     lvalues.push(LValueMemoization {
                         place_identifier: lv,
@@ -784,10 +792,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
                     });
                 }
                 if no_alias {
-                    return (lvalues, vec![]);
+                    return (lvalues, smallvec![]);
                 }
-                let operands = each_instruction_value_operand(value, env);
-                for op in &operands {
+                for op in operands(value, &env.functions) {
                     if op.effect.is_mutable() {
                         lvalues.push(LValueMemoization {
                             place_identifier: op.identifier,
@@ -795,13 +802,14 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         });
                     }
                 }
-                let rvalues: Vec<(IdentifierId, EvaluationOrder)> =
-                    operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::MethodCall { property, .. } => {
                 let no_alias = env.has_no_alias_signature(property.identifier);
-                let mut lvalues = Vec::new();
+                let mut lvalues = LValues::new();
                 if let Some(lv) = lvalue {
                     lvalues.push(LValueMemoization {
                         place_identifier: lv,
@@ -809,10 +817,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
                     });
                 }
                 if no_alias {
-                    return (lvalues, vec![]);
+                    return (lvalues, smallvec![]);
                 }
-                let operands = each_instruction_value_operand(value, env);
-                for op in &operands {
+                for op in operands(value, &env.functions) {
                     if op.effect.is_mutable() {
                         lvalues.push(LValueMemoization {
                             place_identifier: op.identifier,
@@ -820,8 +827,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         });
                     }
                 }
-                let rvalues: Vec<(IdentifierId, EvaluationOrder)> =
-                    operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::RegExpLiteral { .. }
@@ -829,9 +837,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
             | InstructionValue::NewExpression { .. }
             | InstructionValue::ObjectExpression { .. }
             | InstructionValue::PropertyStore { .. } => {
-                let operands = each_instruction_value_operand(value, env);
-                let mut lvalues: Vec<LValueMemoization> = operands
-                    .iter()
+                let mut lvalues: LValues = operands(value, &env.functions)
                     .filter(|op| op.effect.is_mutable())
                     .map(|op| LValueMemoization {
                         place_identifier: op.identifier,
@@ -844,16 +850,15 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Memoized,
                     });
                 }
-                let rvalues: Vec<(IdentifierId, EvaluationOrder)> =
-                    operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::ObjectMethod { .. } | InstructionValue::FunctionExpression { .. } => {
-                // The canonical each_instruction_value_operand already includes context
+                // The canonical `operands` already includes context
                 // (captured variables) for FunctionExpression/ObjectMethod.
-                let operands = each_instruction_value_operand(value, env);
-                let mut lvalues: Vec<LValueMemoization> = operands
-                    .iter()
+                let mut lvalues: LValues = operands(value, &env.functions)
                     .filter(|op| op.effect.is_mutable())
                     .map(|op| LValueMemoization {
                         place_identifier: op.identifier,
@@ -866,20 +871,21 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Memoized,
                     });
                 }
-                let rvalues: Vec<(IdentifierId, EvaluationOrder)> =
-                    operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::UnsupportedNode { .. } => {
                 let lvalues = if let Some(lv) = lvalue {
-                    vec![LValueMemoization {
+                    smallvec![LValueMemoization {
                         place_identifier: lv,
                         level: MemoizationLevel::Never,
                     }]
                 } else {
-                    vec![]
+                    smallvec![]
                 };
-                (lvalues, vec![])
+                (lvalues, smallvec![])
             }
         }
     }
@@ -898,7 +904,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
 
         // Associate all the rvalues with the instruction's scope if it has one
         // We need to collect rvalue data first to avoid borrow issues
-        let rvalue_data: Vec<(IdentifierId, DeclarationId)> = aliasing_rvalues
+        let rvalue_data: SmallVec<[(IdentifierId, DeclarationId); 4]> = aliasing_rvalues
             .iter()
             .map(|(identifier_id, _)| {
                 let decl_id = env.identifiers[identifier_id.0 as usize].declaration_id;
@@ -1002,7 +1008,10 @@ impl<'a> CollectDependenciesVisitor<'a> {
                             state.escaping_values.insert(decl);
                         }
                     }
-                } else if receiver.effect.is_mutable() {
+                } else if receiver.effect.is_mutable()
+                    && (env.config.arguments_of_no_alias_methods_escape
+                        || !env.has_no_alias_signature(property.identifier))
+                {
                     // Args of a mutable-array method call escape via the receiver.
                     let type_id = env.identifiers[receiver.identifier.0 as usize].type_;
                     if is_array_type(&env.types[type_id.0 as usize]) {
@@ -1090,68 +1099,47 @@ impl<'a> ReactiveFunctionVisitor for CollectDependenciesVisitor<'a> {
 // computeMemoizedIdentifiers
 // =============================================================================
 
-type IdentNodeTuple = (
-    MemoizationLevel,
-    bool,
-    IndexSet<DeclarationId>,
-    IndexSet<ScopeId>,
-    bool,
-);
-
 fn compute_memoized_identifiers(
-    state: &CollectState,
-) -> Result<HashSet<DeclarationId>, CompilerError> {
-    let mut memoized = HashSet::new();
-
-    // We need mutable access to the nodes, so we clone the state into mutable structures
-    let mut identifier_nodes: IdMap<DeclarationId, IdentNodeTuple> = IdMap::new();
-    for (id, node) in state.identifiers.iter() {
-        identifier_nodes.insert(
-            id,
-            (
-                node.level,
-                node.memoized,
-                node.dependencies.clone(),
-                node.scopes.clone(),
-                node.seen,
-            ),
-        );
-    }
-
-    let mut scope_nodes: IdMap<ScopeId, (Vec<DeclarationId>, bool)> = IdMap::new();
-    for (id, node) in state.scopes.iter() {
-        scope_nodes.insert(id, (node.dependencies.clone(), node.seen));
-    }
+    mut state: CollectState,
+    env: &Environment,
+) -> Result<IdBitSet<DeclarationId>, CompilerError> {
+    let mut memoized = IdBitSet::new();
 
     fn visit(
         id: DeclarationId,
         force_memoize: bool,
-        identifier_nodes: &mut IdMap<DeclarationId, IdentNodeTuple>,
-        scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
-        memoized: &mut HashSet<DeclarationId>,
+        state: &mut CollectState,
+        memoized: &mut IdBitSet<DeclarationId>,
+        env: &Environment,
     ) -> Result<bool, CompilerError> {
-        let Some(&(level, _, _, _, seen)) = identifier_nodes.get(id) else {
-            return Ok(false);
+        // TS: CompilerError.invariant(node !== undefined, ...)
+        let Some(node) = state.identifiers.get_mut(id) else {
+            let found = format!("none found for `{}`", id.0);
+            return Err(cold_invariant(
+                "Expected a node for all identifiers",
+                Some(found),
+                None,
+            ));
         };
-        if seen {
-            return Ok(identifier_nodes.get(id).unwrap().1);
+        if node.seen {
+            return Ok(node.memoized);
+        }
+        if !env.has_stack() {
+            return Err(crate::lowering::nested_too_deeply().into());
         }
 
         // Mark as seen, temporarily mark as non-memoized
-        identifier_nodes.get_mut(id).unwrap().4 = true; // seen = true
-        identifier_nodes.get_mut(id).unwrap().1 = false; // memoized = false
+        node.seen = true;
+        node.memoized = false;
+        let level = node.level;
+        // Nothing reads these of a node that is seen.
+        let dependencies = std::mem::take(&mut node.dependencies);
+        let scopes = std::mem::take(&mut node.scopes);
 
         // Visit dependencies
-        let deps: Vec<DeclarationId> = identifier_nodes
-            .get(id)
-            .unwrap()
-            .2
-            .iter()
-            .copied()
-            .collect();
         let mut has_memoized_dependency = false;
-        for dep in deps {
-            let is_dep_memoized = visit(dep, false, identifier_nodes, scope_nodes, memoized)?;
+        for dep in dependencies {
+            let is_dep_memoized = visit(dep, false, state, memoized, env)?;
             has_memoized_dependency |= is_dep_memoized;
         }
 
@@ -1160,59 +1148,39 @@ fn compute_memoized_identifiers(
                 && (has_memoized_dependency || force_memoize))
             || (level == MemoizationLevel::Unmemoized && force_memoize)
         {
-            identifier_nodes.get_mut(id).unwrap().1 = true; // memoized = true
+            state.identifiers.get_mut(id).unwrap().memoized = true;
             memoized.insert(id);
-            let scopes: Vec<ScopeId> = identifier_nodes
-                .get(id)
-                .unwrap()
-                .3
-                .iter()
-                .copied()
-                .collect();
             for scope_id in scopes {
-                force_memoize_scope_dependencies(
-                    scope_id,
-                    identifier_nodes,
-                    scope_nodes,
-                    memoized,
-                )?;
+                force_memoize_scope_dependencies(scope_id, state, memoized, env)?;
             }
         }
-        Ok(identifier_nodes.get(id).unwrap().1)
+        Ok(state.identifiers.get(id).unwrap().memoized)
     }
 
     fn force_memoize_scope_dependencies(
         id: ScopeId,
-        identifier_nodes: &mut IdMap<DeclarationId, IdentNodeTuple>,
-        scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
-        memoized: &mut HashSet<DeclarationId>,
+        state: &mut CollectState,
+        memoized: &mut IdBitSet<DeclarationId>,
+        env: &Environment,
     ) -> Result<(), CompilerError> {
         // TS: CompilerError.invariant(node !== undefined, ...)
-        let Some(node) = scope_nodes.get_mut(id) else {
+        let Some(node) = state.scopes.get_mut(id) else {
             return Err(cold_invariant("Expected a node for all scopes", None, None));
         };
-        if node.1 {
+        if node.seen {
             return Ok(());
         }
-        node.1 = true; // seen = true
+        node.seen = true;
 
-        let deps: Vec<DeclarationId> = node.0.clone();
-        for dep in deps {
-            visit(dep, true, identifier_nodes, scope_nodes, memoized)?;
+        for dep in std::mem::take(&mut node.dependencies) {
+            visit(dep, true, state, memoized, env)?;
         }
         Ok(())
     }
 
     // Walk from the "roots" aka returned/escaping identifiers
-    let escaping: Vec<DeclarationId> = state.escaping_values.iter().copied().collect();
-    for value in escaping {
-        visit(
-            value,
-            false,
-            &mut identifier_nodes,
-            &mut scope_nodes,
-            &mut memoized,
-        )?;
+    for value in std::mem::take(&mut state.escaping_values) {
+        visit(value, false, &mut state, &mut memoized, env)?;
     }
 
     Ok(memoized)
@@ -1229,7 +1197,7 @@ struct PruneScopesTransform<'a> {
 }
 
 impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
-    type State = HashSet<DeclarationId>;
+    type State = IdBitSet<DeclarationId>;
 
     fn env(&self) -> &Environment {
         self.env
@@ -1238,7 +1206,7 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
     fn transform_scope(
         &mut self,
         scope: &mut ReactiveScopeBlock,
-        state: &mut HashSet<DeclarationId>,
+        state: &mut IdBitSet<DeclarationId>,
     ) -> Result<Transformed<ReactiveStatement>, CompilerError> {
         self.visit_scope(scope, state)?;
 
@@ -1255,10 +1223,10 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
 
         let has_memoized_output = scope_data.declarations.iter().any(|(_, decl)| {
             let decl_id = self.env.identifiers[decl.identifier.0 as usize].declaration_id;
-            state.contains(&decl_id)
+            state.contains(decl_id)
         }) || scope_data.reassignments.iter().any(|reassign_id| {
             let decl_id = self.env.identifiers[reassign_id.0 as usize].declaration_id;
-            state.contains(&decl_id)
+            state.contains(decl_id)
         });
 
         if has_memoized_output {
@@ -1274,7 +1242,7 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
     fn transform_instruction(
         &mut self,
         instruction: &mut ReactiveInstruction,
-        state: &mut HashSet<DeclarationId>,
+        state: &mut IdBitSet<DeclarationId>,
     ) -> Result<Transformed<ReactiveStatement>, CompilerError> {
         self.traverse_instruction(instruction, state)?;
 
@@ -1286,10 +1254,7 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
             }) if store_lvalue.kind == InstructionKind::Reassign => {
                 let decl_id =
                     self.env.identifiers[store_lvalue.place.identifier.0 as usize].declaration_id;
-                let ids = self
-                    .reassignments
-                    .entry(decl_id)
-                    .or_insert_with(HashSet::new);
+                let ids = self.reassignments.entry(decl_id).or_default();
                 ids.insert(store_value.identifier);
             }
             ReactiveValue::Instruction(InstructionValue::LoadLocal { place, .. }) => {
@@ -1308,10 +1273,7 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
                 if has_scope && lvalue_no_scope {
                     if let Some(lv) = &instruction.lvalue {
                         let decl_id = self.env.identifiers[lv.identifier.0 as usize].declaration_id;
-                        let ids = self
-                            .reassignments
-                            .entry(decl_id)
-                            .or_insert_with(HashSet::new);
+                        let ids = self.reassignments.entry(decl_id).or_default();
                         ids.insert(place.identifier);
                     }
                 }

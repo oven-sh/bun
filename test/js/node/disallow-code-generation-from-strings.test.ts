@@ -1,7 +1,8 @@
 // --disallow-code-generation-from-strings: as Node.js's flag, eval and the Function constructors
 // throw. With "=strict" (Bun's own), nothing in the process turns a string into script.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, nodeExe, tempDir } from "harness";
+import { join } from "node:path";
 
 const refused = "EvalError: Code generation from strings disallowed for this context";
 const flag = "--disallow-code-generation-from-strings";
@@ -116,6 +117,11 @@ const files = {
         Bun.plugin({ name: "module-source", setup(build) { build.module("made:source", () => ({ contents: "export default 1 + 1", loader: "ts" })); } });
         return (await import("made:source")).default;
       },
+      // Bun makes a module of the text whatever the loader is.
+      pluginModuleData: async () => {
+        Bun.plugin({ name: "module-data", setup(build) { build.module("made:data", () => ({ contents: "a = 2", loader: "toml" })); } });
+        return typeof (await import("made:data"));
+      },
       inspectorOpen: () => { inspector.open(0, "127.0.0.1"); inspector.close(); return 2; },
       // The refusal does not depend on what script can replace.
       inspectorOpenWhenInstanceofLies: () => {
@@ -130,10 +136,6 @@ const files = {
       vmCreateContext: () => typeof vm.createContext({}, { codeGeneration: { strings: true } }),
       vmSyntheticModule: () => typeof new vm.SyntheticModule(["x"], function () { this.setExport("x", 1); }),
       moduleWrapperSameValue: () => { Module.wrapper[0] = Module.wrapper[0]; return "set"; },
-      pluginModuleData: async () => {
-        Bun.plugin({ name: "module-data", setup(build) { build.module("made:data", () => ({ contents: "a = 2", loader: "toml" })); } });
-        return typeof (await import("made:data"));
-      },
       pluginModuleExports: async () => {
         Bun.plugin({ name: "module-exports", setup(build) { build.module("made:exports", () => ({ exports: { default: 2 }, loader: "object" })); } });
         return (await import("made:exports")).default;
@@ -142,6 +144,8 @@ const files = {
       regexp: () => /(\\d)/.exec("a2")[1],
       webAssembly: () => typeof WebAssembly === "undefined" ? "not in this build" : WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
       importComputedSpecifier: async () => Object.keys(await import("./emp" + "ty.mjs")).length,
+      importBlobOfFile: async () => Object.keys(await import(URL.createObjectURL(Bun.file(here("./empty.mjs"))))).length,
+      importDataOfJSON: async () => (await import("data:application/json,2", { with: { type: "json" } })).default,
       requireBuiltin: () => typeof require("node:fs").readFileSync,
     };
     const workers = {
@@ -227,6 +231,7 @@ const everythingElse = {
   workerEvalOption: 2,
   pluginOnLoadSource: 2,
   pluginModuleSource: 2,
+  pluginModuleData: "object",
   inspectorOpen: 2,
   inspectorOpenWhenInstanceofLies: 2,
   jscStartRemoteDebugger: 2,
@@ -236,13 +241,14 @@ const notScriptFromAString = {
   vmCreateContext: "object",
   vmSyntheticModule: "object",
   moduleWrapperSameValue: "set",
-  pluginModuleData: "object",
   pluginModuleExports: 2,
   jsonParse: 2,
   regexp: "2",
   // A build of Bun configured with webAssembly off has no WebAssembly global.
   webAssembly: typeof WebAssembly === "undefined" ? "not in this build" : true,
   importComputedSpecifier: 0,
+  importBlobOfFile: 0,
+  importDataOfJSON: 2,
   requireBuiltin: "function",
 };
 // What a Worker evaluates, and the process.execArgv it sees.
@@ -550,5 +556,247 @@ describe.concurrent.skipIf(!builtStrict)("a build with =strict as a constant", (
       stderr: `error: --inspect cannot be used with ${strict}: the inspector evaluates code from strings`,
     });
     expect(exitCode).toBe(1);
+  });
+});
+
+// With =strict the engine runs static code only: builtins, and what the loader read from where the program is stored. It
+// refuses everything else where code is made ready to run, whichever way it came in. A `bun build --compile` executable is
+// stored in itself, so to it a file on disk is not static.
+describe.concurrent("=strict runs static code only", () => {
+  const exe = isWindows ? "app.exe" : "app";
+
+  // No top-level await: --format=cjs and --bytecode do not take it.
+  const runRoutes = `
+      const unhandled = [];
+      process.on("unhandledRejection", reason => unhandled.push(String(reason)));
+      (async () => {
+        const results = {};
+        for (const [name, route] of Object.entries(routes)) {
+          try { results[name] = await route(); } catch (e) { results[name] = e.constructor.name + ": " + e.message; }
+        }
+        console.log(JSON.stringify({ results, unhandled, ran: globalThis.ran }));
+        process.exit(0);
+      })();
+  `;
+  const files = {
+    // Every source that must not run records itself in globalThis.ran if it does.
+    "refused-routes.ts": `
+      import fs from "node:fs";
+      const dir = process.argv[2];
+      const recordRun = name => '(globalThis.ran ??= []).push("' + name + '");';
+      const write = (name, source = recordRun(name)) => { fs.writeFileSync(dir + "/" + name, source); return dir + "/" + name; };
+      const workerOutcome = path => new Promise(resolve => {
+        const worker = new Worker(path);
+        worker.onmessage = e => resolve("ran: " + e.data);
+        worker.onerror = e => resolve(e.message.trim());
+      });
+
+      const routes = {
+        pluginOnLoadJSON: () => {
+          Bun.plugin({ name: "json", setup(build) {
+            build.onLoad({ filter: /\\.plugin-json$/ }, () => ({ contents: recordRun("pluginOnLoadJSON"), loader: "json" }));
+          } });
+          return import(write("x.plugin-json", ""));
+        },
+        // What a module imports is evaluated before the module is.
+        pluginOnLoadImports: () => {
+          const imported = JSON.stringify(write("imported-by-a-refused-module.mjs"));
+          Bun.plugin({ name: "imports", setup(build) {
+            build.onLoad({ filter: /\\.plugin-imports$/ }, () => ({ contents: "import " + imported + ";", loader: "js" }));
+          } });
+          return import(write("x.plugin-imports", ""));
+        },
+        macroExportName: () => new Bun.Transpiler({ loader: "ts" }).transformSync(
+          'import { "a\\']; (globalThis.ran ??= []).push(/macroExportName/.source); //" as macro } from "bun" with { type: "macro" }; export default macro();'),
+        macroInBuild: async () => {
+          write("macro.ts", "export function macro() { " + recordRun("macroInBuild") + " }");
+          const entry = write("uses-macro.ts", 'import { macro } from "./macro.ts" with { type: "macro" }; export default macro();');
+          return (await Bun.build({ entrypoints: [entry], throw: false })).logs.map(log => log.message);
+        },
+        devServer: () => Bun.serve({ port: 0, app: { root: dir, framework: {
+          fileSystemRouterTypes: [{ root: "pages", style: "nextjs-pages", serverEntryPoint: dir + "/framework-server.ts", clientEntryPoint: dir + "/framework-client.ts" }],
+          reactFastRefresh: false,
+        } } }),
+      };
+      if (process.argv[3] === "compiled") {
+        Object.assign(routes, {
+          importWritten: () => import(write("imported.mjs")),
+          requireWritten: () => require(write("required.cjs")),
+          importEmpty: () => import(write("empty.mjs", "")),
+          importText: () => import(write("text.txt")),
+          importMarkdown: () => import(write("markdown.md")),
+          importWithTypeText: () => import(write("typed-text.bin"), { with: { type: "text" } }),
+          workerFromWrittenFile: () => workerOutcome(write("worker.mjs", 'postMessage("worker.mjs")')),
+        });
+      }
+      ${runRoutes}
+    `,
+    // Few builtin modules: --bytecode makes their bytecode too, which is slow on a debug build.
+    "allowed-routes.ts": `
+      import { neverCalledAtStartup } from "./lazy.ts";
+      const dir = process.argv[2];
+      const write = async (name, contents) => { await Bun.write(dir + "/" + name, contents); return dir + "/" + name; };
+
+      const routes = {
+        functionFirstCalledLate: async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          const first = neverCalledAtStartup(20);
+          Bun.gc(true);
+          return [first, neverCalledAtStartup(21)];
+        },
+        classWithoutConstructor: () => {
+          class Base { field = 1; }
+          class Derived extends Base {}
+          return new Derived().field;
+        },
+        builtinsFirstUsedLate: async () => [
+          typeof (await import("node:querystring")).parse,
+          typeof require("node:os").cpus,
+          typeof (await import("bun:sqlite")).Database,
+          new TextDecoder().decode(await new Response(new Blob(["streams"]).stream()).arrayBuffer()),
+        ],
+        embeddedESM: async () => (await import("./esm.mjs")).default,
+        embeddedCommonJS: () => require("./commonjs.cjs"),
+        embeddedUTF16: async () => (await import("./utf16.ts")).default(),
+        worker: () => new Promise((resolve, reject) => {
+          const worker = new Worker("./worker.ts");
+          worker.onmessage = e => resolve(e.data);
+          worker.onerror = e => reject(new Error(e.message));
+        }),
+        hotLoop: async () => {
+          const { noInline, numberOfDFGCompiles } = await import("bun:jsc");
+          function hot(a, b) { return a + b; }
+          // Inlined into this loop, hot() would never be called again and never be compiled itself.
+          noInline(hot);
+          let sum = 0;
+          while (!numberOfDFGCompiles(hot)) sum = hot(sum, 1) | 0;
+          return numberOfDFGCompiles(hot) > 0;
+        },
+        dataFilesAtRunTime: async () => [
+          (await import(await write("data.json", '{"a":1}'))).default,
+          (await import(await write("data.jsonc", '{"a":1} // comment'))).default,
+          (await import(await write("data.json5", "{a:1}"))).default,
+          (await import(await write("data.yaml", "a: 1"))).default,
+          (await import(await write("data.xml", "<a>1</a>"))).default,
+          require(await write("data.toml", "a = 1")),
+        ],
+        databaseAtRunTime: async () => {
+          const { Database } = await import("bun:sqlite");
+          new Database(dir + "/made.sqlite").run("create table t (a)");
+          return (await import(dir + "/made.sqlite", { with: { type: "sqlite" } })).default.query("select count(*) as n from t").get();
+        },
+      };
+      ${runRoutes}
+    `,
+    "lazy.ts": `export function neverCalledAtStartup(x) { return [x].map(y => y * 2)[0]; }`,
+    "esm.mjs": `export default "esm";`,
+    "commonjs.cjs": `module.exports = "commonjs";`,
+    // An entry point of its own, so a file of its own, embedded as UTF-16: a legal comment is printed as it is written.
+    "utf16.ts": `/*! é 漢字 🎉 */ export default function () { return "utf16"; }`,
+    "worker.ts": `import { neverCalledAtStartup } from "./lazy.ts"; postMessage(neverCalledAtStartup(4));`,
+    "framework-server.ts": `(globalThis.ran ??= []).push("devServer"); export function render() { return new Response(""); }`,
+    "framework-client.ts": ``,
+    "pages/index.tsx": `export default function () { return new Response(""); }`,
+  };
+
+  async function spawn(cmd: string[], cwd: string, env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({ cmd, env: { ...bunEnv, ...env }, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function compile(cwd: string, entryPoints: string[], buildArgs: readonly string[], execArgv: string) {
+    const args = [
+      "build",
+      "--compile",
+      ...buildArgs,
+      "--compile-exec-argv=" + execArgv,
+      ...entryPoints,
+      "--outfile",
+      exe,
+    ];
+    expect(await spawn([bunExe(), ...args], cwd)).toEqual({
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  }
+
+  const runCompiled = (cwd: string, args: string[], env?: Record<string, string>) =>
+    spawn([join(cwd, exe), ...args], cwd, env);
+
+  const refusedMacro = `Macros cannot be used with ${strict}`;
+  const refusedWhereverTheProgramIsStored = {
+    pluginOnLoadJSON: refused,
+    pluginOnLoadImports: refused,
+    macroExportName: "BuildMessage: " + refusedMacro,
+    macroInBuild: [refusedMacro],
+    devServer: refused,
+  };
+  const bake = { BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" };
+
+  test("refuses what is made at run time", async () => {
+    using dir = tempDir("disallow-code-generation-refuses", files);
+    const cwd = String(dir);
+    const cmd = [bunExe(), strict, "./refused-routes.ts", cwd];
+    const { stdout, exitCode } = await spawn(cmd, cwd, bake);
+    expect(JSON.parse(stdout)).toEqual({ results: refusedWhereverTheProgramIsStored, unhandled: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a compiled executable refuses files on disk too", async () => {
+    using dir = tempDir("disallow-code-generation-compiled-refuses", files);
+    const cwd = String(dir);
+    await compile(cwd, ["./refused-routes.ts"], [], strict);
+
+    const { stdout, exitCode } = await runCompiled(cwd, [cwd, "compiled"], bake);
+    expect(JSON.parse(stdout)).toEqual({
+      results: {
+        ...refusedWhereverTheProgramIsStored,
+        importWritten: refused,
+        requireWritten: refused,
+        importEmpty: refused,
+        importText: refused,
+        importMarkdown: refused,
+        importWithTypeText: refused,
+        workerFromWrittenFile: refused,
+      },
+      unhandled: [],
+    });
+    expect(exitCode).toBe(0);
+    expect(await runCompiled(cwd, [cwd], { BUN_OPTIONS: "--preload=" + join(cwd, "imported.mjs") })).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining(refused),
+      exitCode: 1,
+    });
+  });
+
+  test.each([
+    { modules: "ES modules", buildArgs: [] },
+    { modules: "ES modules with bytecode", buildArgs: ["--bytecode"] },
+    { modules: "CommonJS", buildArgs: ["--format=cjs"] },
+    { modules: "CommonJS with bytecode", buildArgs: ["--format=cjs", "--bytecode"] },
+  ])("a compiled executable runs what is in it: $modules", async ({ buildArgs }) => {
+    using dir = tempDir("disallow-code-generation-compiled-runs", files);
+    const cwd = String(dir);
+    await compile(cwd, ["./allowed-routes.ts", "./worker.ts", "./utf16.ts"], buildArgs, strict);
+    const { stdout, stderr, exitCode } = await runCompiled(cwd, [cwd]);
+    expect({ stderr, ...JSON.parse(stdout) }).toEqual({
+      stderr: "",
+      results: {
+        functionFirstCalledLate: [40, 42],
+        classWithoutConstructor: 1,
+        builtinsFirstUsedLate: ["function", "function", "function", "streams"],
+        embeddedESM: "esm",
+        embeddedCommonJS: "commonjs",
+        embeddedUTF16: "utf16",
+        worker: 8,
+        hotLoop: true,
+        dataFilesAtRunTime: [{ a: 1 }, { a: 1 }, { a: 1 }, { a: 1 }, { a: "1" }, { a: 1 }],
+        databaseAtRunTime: { n: 0 },
+      },
+      unhandled: [],
+    });
+    expect(exitCode).toBe(0);
   });
 });

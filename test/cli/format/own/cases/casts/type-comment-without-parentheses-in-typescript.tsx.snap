@@ -1,0 +1,26 @@
+------------------
+{ printWidth: 80 }
+------------------
+function a() {
+  const connectButton =
+    /** @type {HTMLElement} */ document.getElementById("connect-button1")!;
+  const other = /** @type {HTMLElement} */ (
+    document.getElementById("connect-button123456")
+  );
+  const third = /** @type {HTMLElement} */ (document).getElementById(
+    "connect-button12345",
+  );
+  return [connectButton, other, third];
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function a() {
+  const connectButton = /** @type {HTMLElement} */ document.getElementById("connect-button1")!;
+  const other = /** @type {HTMLElement} */ (document.getElementById("connect-button123456"));
+  const third = /** @type {HTMLElement} */ (document).getElementById("connect-button12345");
+  return [connectButton, other, third];
+}
+
+===================== End =====================

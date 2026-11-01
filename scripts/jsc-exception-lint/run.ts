@@ -169,7 +169,7 @@ function bunSourceFiles(entries: Entry[]): string[] {
     );
 }
 
-// Generated C++ (ZigGeneratedClasses.cpp, JSSink.cpp, ...). Summarized so
+// Generated C++ (Generated*.cpp, ...). Summarized so
 // calls into it are classified from its bodies; not analyzed, the generators
 // own that code.
 function generatedSourceFiles(entries: Entry[]): string[] {

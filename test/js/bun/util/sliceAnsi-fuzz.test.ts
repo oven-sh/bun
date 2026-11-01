@@ -407,7 +407,7 @@ describe("sliceAnsi consistency with other Bun APIs", () => {
 function randomString(rng: () => number, minLen: number, maxLen: number): string {
   const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
   const pieces: string[] = [];
-  for (let i = 0; i < len; ) {
+  for (let i = 0; i < len;) {
     const r = rng();
     if (r < 0.4) {
       // ASCII char
@@ -816,7 +816,7 @@ describe("sliceAnsi direct stringWidth invariant (post-fix)", () => {
 function randomStringNoC1(rng: () => number, minLen: number, maxLen: number): string {
   const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
   const pieces: string[] = [];
-  for (let i = 0; i < len; ) {
+  for (let i = 0; i < len;) {
     const r = rng();
     if (r < 0.4) {
       pieces.push(String.fromCharCode(0x20 + Math.floor(rng() * 95)));

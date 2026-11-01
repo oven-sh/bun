@@ -11,7 +11,7 @@
 //!
 //! Conditional on `env.config.enable_name_anonymous_functions`.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
@@ -37,7 +37,15 @@ pub(crate) fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environ
 
     let nodes = name_anonymous_functions_impl(func, env);
 
-    fn visit(node: &Node, prefix: &str, updates: &mut Vec<(FunctionId, String)>) {
+    fn visit(
+        env: &Environment,
+        node: &Node,
+        prefix: &str,
+        updates: &mut Vec<(FunctionId, String)>,
+    ) {
+        if !env.has_stack() {
+            return;
+        }
         if node.generated_name.is_some() && node.existing_name_hint.is_none() {
             // Only add the prefix to anonymous functions regardless of nesting depth
             let name = format!("{}{}]", prefix, node.generated_name.as_ref().unwrap());
@@ -54,14 +62,14 @@ pub(crate) fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environ
         };
         let next_prefix = format!("{}{} > ", prefix, bstr(label));
         for inner in &node.inner {
-            visit(inner, &next_prefix, updates);
+            visit(env, inner, &next_prefix, updates);
         }
     }
 
     let mut updates: Vec<(FunctionId, String)> = Vec::new();
     let prefix = format!("{}[", bstr(fn_id.slice()));
     for node in &nodes {
-        visit(node, &prefix, &mut updates);
+        visit(env, node, &prefix, &mut updates);
     }
 
     if updates.is_empty() {
@@ -127,10 +135,14 @@ struct Node {
 }
 
 fn name_anonymous_functions_impl(func: &HirFunction, env: &Environment) -> Vec<Node> {
+    if !env.has_stack() {
+        return Vec::new();
+    }
+
     // Functions that we track to generate names for
-    let mut functions: HashMap<IdentifierId, usize> = HashMap::new();
+    let mut functions: HashMap<IdentifierId, usize> = HashMap::default();
     // Tracks temporaries that read from variables/globals/properties
-    let mut names: HashMap<IdentifierId, String> = HashMap::new();
+    let mut names: HashMap<IdentifierId, String> = HashMap::default();
     // Tracks all function nodes
     let mut nodes: Vec<Node> = Vec::new();
 

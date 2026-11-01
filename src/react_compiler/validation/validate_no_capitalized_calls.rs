@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use crate::collections::IdMap;
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::environment::Environment;
@@ -12,20 +12,8 @@ pub(crate) fn validate_no_capitalized_calls(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
-    // Build the allow list from global registry keys + config entries
-    let mut allow_list: HashSet<Vec<u8>> = env
-        .globals()
-        .keys()
-        .map(|k| k.as_bytes().to_vec())
-        .collect();
-    if let Some(config_entries) = &env.config.validate_no_capitalized_calls {
-        for entry in config_entries {
-            allow_list.insert(entry.as_bytes().to_vec());
-        }
-    }
-
-    let mut capital_load_globals: HashMap<IdentifierId, StoreStr> = HashMap::new();
-    let mut capitalized_properties: HashMap<IdentifierId, StoreStr> = HashMap::new();
+    let mut capital_load_globals: IdMap<IdentifierId, StoreStr> = IdMap::new();
+    let mut capitalized_properties: IdMap<IdentifierId, StoreStr> = IdMap::new();
 
     let reason = "Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config";
 
@@ -41,14 +29,14 @@ pub(crate) fn validate_no_capitalized_calls(
                     if name.first().is_some_and(u8::is_ascii_uppercase)
                         // We don't want to flag CONSTANTS()
                         && name.iter().any(u8::is_ascii_lowercase)
-                        && !allow_list.contains(name)
+                        && !is_allowed(env, name)
                     {
                         capital_load_globals.insert(lvalue_id, StoreStr::new(name));
                     }
                 }
                 InstructionValue::CallExpression { callee, loc, .. } => {
                     let callee_id = callee.identifier;
-                    if let Some(callee_name) = capital_load_globals.get(&callee_id) {
+                    if let Some(callee_name) = capital_load_globals.get(callee_id) {
                         env.record_error(CompilerErrorDetail {
                             category: ErrorCategory::CapitalizedCalls,
                             reason: reason.to_string(),
@@ -75,7 +63,7 @@ pub(crate) fn validate_no_capitalized_calls(
                 }
                 InstructionValue::MethodCall { property, loc, .. } => {
                     let property_id = property.identifier;
-                    if let Some(prop_name) = capitalized_properties.get(&property_id) {
+                    if let Some(prop_name) = capitalized_properties.get(property_id) {
                         env.record_error(CompilerErrorDetail {
                             category: ErrorCategory::CapitalizedCalls,
                             reason: reason.to_string(),
@@ -93,4 +81,11 @@ pub(crate) fn validate_no_capitalized_calls(
         }
     }
     Ok(())
+}
+
+/// The allow list is the keys of the global registry and the entries of the config.
+fn is_allowed(env: &Environment, name: &[u8]) -> bool {
+    core::str::from_utf8(name).is_ok_and(|name| env.globals().contains_key(name))
+        || (env.config.validate_no_capitalized_calls.iter().flatten())
+            .any(|entry| entry.as_bytes() == name)
 }

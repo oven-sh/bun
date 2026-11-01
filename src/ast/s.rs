@@ -71,10 +71,7 @@ pub struct Label {
 
 /// This is a stand-in for a TypeScript type declaration
 #[derive(Clone, Copy, Default)]
-pub struct TypeScript {
-    /// The source syntax, if the parser saves TypeScript syntax. `NONE` otherwise.
-    pub syntax: crate::ts_syntax::StatementId,
-}
+pub struct TypeScript {}
 
 #[derive(Clone, Copy, Default)]
 pub struct Debugger {}
@@ -132,6 +129,8 @@ pub struct If {
     pub test: ExprNodeIndex,
     pub yes: StmtNodeIndex,
     pub no: Option<StmtNodeIndex>,
+    /// Where the `else` of `no` is. `Loc::EMPTY` in an `if` that the parser did not make.
+    pub else_loc: crate::Loc,
 }
 
 pub struct For {

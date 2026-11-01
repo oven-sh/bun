@@ -93,7 +93,8 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     while (iter->next(globalObject, item)) {
         RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
-        if (!parser) {
+        // close() frees the impl but doesn't remove the parser from the set.
+        if (!parser || !parser->impl()) {
             continue;
         }
 
@@ -153,7 +154,7 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     while (iter->next(globalObject, item)) {
         RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
-        if (!parser) {
+        if (!parser || !parser->impl()) {
             continue;
         }
 

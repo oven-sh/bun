@@ -186,7 +186,7 @@ describe("list", () => {
     await using t = start();
     seed(t, scrambled(TREE));
     const pages: string[] = [];
-    for (let marker = ""; pages.length <= expected.length; ) {
+    for (let marker = ""; pages.length <= expected.length;) {
       const result = await list(t, query, { marker });
       const { Marker, NextMarker, IsTruncated } = result;
       expect(Marker).toBe(marker);

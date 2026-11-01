@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, integersThatNeedRounding } from "harness";
 
 test("Bun.JSONC exists", () => {
   expect(Bun.JSONC).toBeDefined();
@@ -154,9 +154,9 @@ test("Bun.JSONC.parse throws a SyntaxError on invalid input", () => {
 });
 
 test("Bun.JSONC.parse throws on undefined and null input", () => {
-  expect(() => Bun.JSONC.parse(undefined as any)).toThrow("Expected a string to parse");
-  expect(() => (Bun.JSONC.parse as any)()).toThrow("Expected a string to parse");
-  expect(() => Bun.JSONC.parse(null as any)).toThrow("Expected a string to parse");
+  expect(() => Bun.JSONC.parse(undefined as any)).toThrow("input must be a string");
+  expect(() => (Bun.JSONC.parse as any)()).toThrow("input must be a string");
+  expect(() => Bun.JSONC.parse(null as any)).toThrow("input must be a string");
 });
 
 test("Bun.JSONC.parse stringifies non-string input like JSON.parse does", () => {
@@ -179,6 +179,18 @@ test("Bun.JSONC.parse SyntaxError names the actual error, not a preceding warnin
   expect(thrown).toBeInstanceOf(SyntaxError);
   expect((thrown as Error).message).toMatchInlineSnapshot(`"JSONC Parse error: Expected string but found end of file"`);
   expect((thrown as Error).message).not.toContain("Duplicate key");
+});
+
+test("Bun.JSONC.parse rounds hexadecimal, octal and binary numbers to the nearest double", () => {
+  const wrong: object[] = [];
+  const cases = integersThatNeedRounding();
+  cases.push(["0777777777777777777777", 0o777777777777777777777n]);
+  for (const [text, exact] of cases.slice()) if (exact !== 0n) cases.push(["-" + text, -exact]);
+  for (const [text, exact] of cases) {
+    const value = Bun.JSONC.parse(text);
+    if (!Object.is(value, Number(exact))) wrong.push({ text, value, nearest: Number(exact) });
+  }
+  expect(wrong).toEqual([]);
 });
 
 test("Bun.JSONC.parse handles empty object", () => {

@@ -1,0 +1,23 @@
+import { a } /* comment */ from "a";
+
+import { b } // comment
+from "b";
+
+import { c }
+// comment
+from "c";
+
+export { d } /* comment */ from "d";
+
+import e /* comment */ from "e";
+
+import f // comment
+from "f";
+
+import g
+// comment
+from "g";
+
+import * as h
+/* comment */
+from "h";

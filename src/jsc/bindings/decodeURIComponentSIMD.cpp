@@ -29,7 +29,7 @@ ALWAYS_INLINE static void appendLiteralRun(StringBuilder& result, std::span<cons
         result.append(chars);
         return;
     }
-    result.append(Zig::convertUTF8ToString(chars));
+    result.append(Zig::convertUTF8ToString(bytes));
 }
 
 WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
@@ -64,7 +64,7 @@ WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
 
     if (inputIsASCII)
         return String(lchar);
-    return Zig::convertUTF8ToString(lchar);
+    return Zig::convertUTF8ToString(input);
 
 slow_path:
     while (cursor < end && *cursor != '%') {
@@ -96,7 +96,7 @@ slow_path:
             // Start of UTF-8 sequence
             if ((byte & 0x80) == 0) {
                 // ASCII
-                result.append(byte);
+                result.append(static_cast<Latin1Character>(byte));
                 cursor += 3;
             } else if ((byte & 0xE0) == 0xC0) {
                 // 2-byte sequence

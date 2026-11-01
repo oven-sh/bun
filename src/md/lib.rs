@@ -3,6 +3,7 @@
 pub mod ansi_renderer;
 pub mod autolinks;
 pub(crate) mod blocks;
+pub(crate) mod compat;
 pub(crate) mod containers;
 pub(crate) mod entity;
 pub mod helpers;

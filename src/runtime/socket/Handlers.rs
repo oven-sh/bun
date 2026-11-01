@@ -2,11 +2,11 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
+use crate::generated_bindgen::socket_config::{
+    SocketHandler, SocketHandlerBinaryType, SocketOptions, SocketOptionsTLS,
+};
 use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::generated::{
-    SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
-};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
@@ -59,10 +59,7 @@ pub(crate) struct Handlers {
     /// Deliberately a nullable raw pointer and not a `BackRef`: a `BackRef`
     /// promises the pointee outlives the holder, and this one does not. Every
     /// accepted socket holds an `Rc<Handlers>` that routinely outlives the
-    /// `Listener` (uws defers the close of a force-closed socket past
-    /// `Listener::deinit`). What keeps it sound is that `deinit` clears this
-    /// field before freeing itself — so reads must go through [`listener`] and
-    /// handle `None`.
+    /// `Listener`, whose `Drop` clears this field: reads go through [`listener`] and handle `None`.
     ///
     /// [`listener`]: Self::listener
     listener: Cell<Option<NonNull<SocketListener>>>,
@@ -75,11 +72,11 @@ pub(crate) struct ReloadedHandlers {
     pub(crate) binary_type: BinaryType,
 }
 
-fn binary_type_from_generated(binary_type: GeneratedBinaryType) -> BinaryType {
+fn binary_type_from_generated(binary_type: SocketHandlerBinaryType) -> BinaryType {
     match binary_type {
-        GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
-        GeneratedBinaryType::Buffer => BinaryType::Buffer,
-        GeneratedBinaryType::Uint8array => BinaryType::Uint8Array,
+        SocketHandlerBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
+        SocketHandlerBinaryType::Buffer => BinaryType::Buffer,
+        SocketHandlerBinaryType::Uint8array => BinaryType::Uint8Array,
     }
 }
 
@@ -103,20 +100,15 @@ impl Handlers {
     }
 
     /// Records the listener that accepted these sockets (server mode only), or
-    /// clears it as that listener frees itself.
+    /// clears it when that listener is dropped.
     pub(crate) fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
         debug_assert!(self.mode == SocketMode::Server || listener.is_none());
         self.listener.set(listener);
     }
 
-    /// The accepting listener, or `None` for client-mode handlers and for a
-    /// listener already torn down by `Listener::deinit`.
+    /// The accepting listener, or `None` for client-mode handlers and for a dropped listener.
     pub(crate) fn listener(&self) -> Option<&SocketListener> {
-        // SAFETY: `Listener::listen` stores its `heap::into_raw` allocation root
-        // here, and `Listener::deinit` clears it before freeing that allocation
-        // (after force-closing every accepted socket), so a `Some` is live. The
-        // borrow cannot outlive `&self`, and nothing frees a `Listener` while a
-        // caller holds one — `deinit` runs from GC finalize, not from dispatch.
+        // SAFETY: the `Listener` is the payload of its wrapper, and its `Drop` (run by the sweeper, not from dispatch) clears this.
         self.listener.get().map(|l| unsafe { &*l.as_ptr() })
     }
 
@@ -310,13 +302,14 @@ impl Handlers {
         opts: JSValue,
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
-        let generated = GeneratedSocketConfigHandlers::from_js(global_object, opts)?;
-        Self::from_generated(global_object, &generated, mode)
+        SocketHandler::from_js(global_object, opts, |generated| {
+            Self::from_generated(global_object, &generated, mode)
+        })
     }
 
     pub(crate) fn from_generated(
         global_object: &JSGlobalObject,
-        generated: &GeneratedSocketConfigHandlers,
+        generated: &SocketHandler<'_>,
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
         let callbacks = Self::validate_callbacks(global_object, generated)?;
@@ -331,7 +324,7 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
-            context: global_object.bun_vm().context_of_caller_no_frame().id(),
+            context: global_object.bun_vm().context_of_caller().id(),
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),
@@ -343,11 +336,11 @@ impl Handlers {
     /// `JSValue::ZERO`. Array order matches `Bun::JSSocketHandlers::Field`.
     fn validate_callbacks(
         global_object: &JSGlobalObject,
-        generated: &GeneratedSocketConfigHandlers,
+        generated: &SocketHandler<'_>,
     ) -> JsResult<[JSValue; CALLBACK_COUNT]> {
         macro_rules! validated_callback {
             ($field:ident, $name:literal) => {{
-                let value = generated.$field;
+                let value = generated.$field.to_js();
                 if value.is_undefined_or_null() {
                     JSValue::ZERO
                 } else if !value.is_callable() {
@@ -406,11 +399,12 @@ impl Handlers {
         global_object: &JSGlobalObject,
         opts: JSValue,
     ) -> JsResult<ReloadedHandlers> {
-        let generated = GeneratedSocketConfigHandlers::from_js(global_object, opts)?;
-        let callbacks = Self::validate_callbacks(global_object, &generated)?;
-        Ok(ReloadedHandlers {
-            callbacks,
-            binary_type: binary_type_from_generated(generated.binary_type),
+        SocketHandler::from_js(global_object, opts, |generated| {
+            let callbacks = Self::validate_callbacks(global_object, &generated)?;
+            Ok(ReloadedHandlers {
+                callbacks,
+                binary_type: binary_type_from_generated(generated.binary_type),
+            })
         })
     }
 
@@ -449,8 +443,6 @@ impl Scope {
         self.handlers.mark_inactive()
     }
 }
-
-use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 pub(crate) struct SocketConfig {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
@@ -495,20 +487,20 @@ impl SocketConfig {
     pub(crate) fn from_generated(
         vm: &'static VirtualMachine,
         global: &JSGlobalObject,
-        generated: GeneratedSocketConfig,
+        generated: SocketOptions<'_>,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
-                GeneratedTls::None => None,
-                GeneratedTls::Boolean(b) => {
+                SocketOptionsTLS::None => None,
+                SocketOptionsTLS::Boolean(b) => {
                     if *b {
                         Some(super::tls_true_defaults(vm, mode.is_server()))
                     } else {
                         None
                     }
                 }
-                GeneratedTls::Object(ssl) => {
+                SocketOptionsTLS::Object(ssl) => {
                     SSLConfig::from_generated(vm, global, ssl, mode.is_server())?
                 }
             };
@@ -530,7 +522,7 @@ impl SocketConfig {
                 default_data: if generated.data.is_undefined() {
                     JSValue::ZERO
                 } else {
-                    generated.data
+                    generated.data.to_js()
                 },
                 exclusive: false,
                 allow_half_open: false,
@@ -550,7 +542,7 @@ impl SocketConfig {
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
-        } else if let Some(unix) = generated.unix_.into_inner() {
+        } else if let Some(unix) = generated.unix_ {
             if unix.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
@@ -564,7 +556,7 @@ impl SocketConfig {
                 let without_prefix = slice[7..].to_vec();
                 result.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
             }
-        } else if let Some(hostname) = generated.hostname.into_inner() {
+        } else if let Some(hostname) = generated.hostname {
             if hostname.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
@@ -601,9 +593,8 @@ impl SocketConfig {
         global_object: &JSGlobalObject,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
-        let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
-        Self::from_generated(vm, global_object, generated, mode)
+        SocketOptions::from_js(global_object, opts, |generated| {
+            Self::from_generated(vm, global_object, generated, mode)
+        })
     }
 }
-
-use bun_jsc::generated::SocketConfigTls as GeneratedTls;

@@ -25,14 +25,4 @@ pub(crate) fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -
     boringssl_jsc::err_to_js(global_this, err_code)
 }
 
-pub(crate) use crypto_hasher::CryptoHasher;
-pub(crate) use crypto_hasher::MD4;
-pub(crate) use crypto_hasher::MD5;
-pub(crate) use crypto_hasher::SHA1;
-pub(crate) use crypto_hasher::SHA224;
-pub(crate) use crypto_hasher::SHA256;
-pub(crate) use crypto_hasher::SHA384;
-pub(crate) use crypto_hasher::SHA512;
-pub(crate) use crypto_hasher::SHA512_256;
-
 pub(crate) use hmac::HMAC;

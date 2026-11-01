@@ -1,0 +1,311 @@
+# class Emitter { constructor() { this.events = undefined; this.count = 0; this.limit = 10; } on() { return this; } }
+# const make = (Base, k) => class extends Base {
+#   constructor(name, i) { super(); this.name = name; this.state = i + k; }
+# };
+# const classes = [];
+# const others = [];
+# for (let k = 0; k < 24; k++) { classes.push(make(Emitter, k));  }
+# function round() {
+#   let sum = 0;
+#   for (let k = 0; k < 24; k++) {
+#     const C = classes[k];
+#     const made = new C("n", 1);
+#     sum += made.state + made.count + made.limit + made.name.length + (Object.getPrototypeOf(made) === C.prototype ? 0 : 1000);
+#   }
+#   return sum;
+# }
+# let sum = 0;
+# const units = Number(argv[2]);
+# for (let index = 0; index < units; index++) {
+#   if (index === 40) mark();
+#   sum += round();
+# }
+# report(sum === units * 564 ? "ok" : "no");
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "240"]; const counters = () => { const all = {}; const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { const parts = lines[i].split("\t"); if (parts.length > 1) all[parts[1]] = Number(parts[0]); } return all; }; let marked; globalThis.mark = () => { marked = counters(); }; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); const now = counters(); let asked = ""; for (const key in now) if (key.startsWith("operation:") && now[key] - (marked[key] || 0) >= 100) asked += " " + key.slice(22); print("asked in most rounds:" + (asked || " nothing")); };
+# One class expression is evaluated many times, and each of its classes has a prototype object of its own. An object of any of them is made where the constructor is, without the run time.
+# CHECK: ok
+# CHECK-NEXT: asked in most rounds: nothing
+# CHECK-NEXT: exited with 0
+
+module m0 path="rounds.js" displayPath="rounds.js" flags=[KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Emitter" module=m0 constructor=f2 fields=[{key="events" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="count" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="limit" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
+layout L1 kind=Instance module=m0 constructor=f5 fields=[{key="name" declared={type=anything} flags=[IsRequired]}, {key="state" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage] ownFieldCount=2
+variable g0 name="classes" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    PutModuleVariable v3 variable=g1
+    v5 = NewClosure function=f3
+    DefineMethod v3, v5 layout=L0 key="on"
+    v7 = FinishClass v3 layout=L0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f4
+    v11 = Convert v10 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v12 = Data data=d0
+    v13 = Convert v12 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v14 = Convert v13 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutModuleVariable v14 variable=g0
+    v16 = Integer
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v17)
+  b2(v18):
+    LoopHint
+    v20 = Integer integer=24
+    v21 = Less v18, v20
+    Branch v21 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v22):
+    Jump -> next b4()
+  b4():
+    v23 = PropGet v14 key="push"
+    v24 = Convert v23 declared={type=undefined|null|function flags=[IsExpected]}
+    v25 = Call v11, -, v9, v22 calleeName="make"
+    v26 = Convert v25 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    v27 = Call v24, v14, v26 calleeKey="push" calleeName="classes.push"
+    Jump -> next b5()
+  b5():
+    v28 = Increment v22
+    v29 = Convert v28 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v29)
+  b6(v30):
+    Jump -> next b7()
+  b7():
+    v31 = Integer
+    v32 = Convert v31 declared={type=number flags=[IsExpected]}
+    v33 = Builtin builtin=Number
+    v34 = Builtin builtin=GlobalThis
+    v35 = PropGet v34 key="argv" [isFreeName]
+    v36 = Integer integer=2
+    v37 = ElemGet v35, v36
+    v38 = Call v33, -, v37 calleeName="Number"
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    v40 = Integer
+    v41 = Convert v40 declared={type=number flags=[IsExpected]}
+    Jump -> next b8(v32, v41)
+  b8(v42, v43):
+    LoopHint
+    v45 = Less v43, v39
+    Branch v45 -> taken b9(| 0, 1), notTaken b16(| 0, 1)
+  b9(v46, v47):
+    Jump -> next b10()
+  b10():
+    v48 = Integer integer=40
+    v49 = StrictEq v46, v48
+    Branch v49 -> taken b11(| 0), notTaken b13(| 0)
+  b11(v50):
+    Jump -> next b12()
+  b12():
+    v51 = Builtin builtin=GlobalThis
+    v52 = PropGet v51 key="mark" [isFreeName]
+    v53 = Call v52 calleeName="mark"
+    Jump -> next b14(v50)
+  b13(v54):
+    Jump -> next b14(v54)
+  b14(v55):
+    v56 = Call v1 calleeName="round"
+    v57 = Convert v56 declared={type=number flags=[IsExpected]}
+    v58 = Add v42, v57
+    v59 = Convert v58 declared={type=number flags=[IsExpected]}
+    Jump -> next b15()
+  b15():
+    v60 = Increment v55
+    v61 = Convert v60 declared={type=number flags=[IsExpected]}
+    Jump -> next b8(v59, v61)
+  b16(v62, v63):
+    Jump -> next b17()
+  b17():
+    v64 = Builtin builtin=GlobalThis
+    v65 = PropGet v64 key="report" [isFreeName]
+    v66 = Integer integer=564
+    v67 = Mul v63, v66
+    v68 = StrictEq v42, v67
+    Branch v68 -> taken b18(| 0), notTaken b20(| 0)
+  b18(v69):
+    Jump -> next b19()
+  b19():
+    v70 = String string="ok"
+    Jump -> next b22(v70)
+  b20(v71):
+    Jump -> next b21()
+  b21():
+    v72 = String string="no"
+    Jump -> next b22(v72)
+  b22(v73):
+    v74 = Call v65, -, v73 calleeName="report"
+    v75 = Undefined
+    Return v75
+}
+function f1 name="round" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v1, v3)
+  b2(v4, v5):
+    LoopHint
+    v7 = Integer integer=24
+    v8 = Less v5, v7
+    Branch v8 -> taken b3(| 0), notTaken b9(| 0)
+  b3(v9):
+    Jump -> next b4()
+  b4():
+    v10 = GetModuleVariable variable=g0
+    v11 = CheckInitialized v10 name="classes"
+    v12 = ElemGet v11, v9
+    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]}
+    v14 = String string="n"
+    v15 = Integer integer=1
+    v16 = Construct v13, -, v14, v15 calleeName="C" @459 constructs
+    v17 = Convert v16 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v18 = PropGet v17 key="state"
+    v19 = PropGet v17 key="count"
+    v20 = Add v18, v19
+    v21 = PropGet v17 key="limit"
+    v22 = Add v20, v21
+    v23 = PropGet v17 key="name"
+    v24 = PropGet v23 key="length"
+    v25 = Add v22, v24
+    v26 = Builtin builtin=Object
+    v27 = Builtin builtin=ObjectGetPrototypeOf
+    v28 = Call v27, v26, v17 calleeName="Object.getPrototypeOf"
+    v29 = PropGet v13 key="prototype"
+    v30 = StrictEq v28, v29
+    Branch v30 -> taken b5(), notTaken b6()
+  b5():
+    v31 = Integer
+    Jump -> next b7(v31)
+  b6():
+    v32 = Integer integer=1000
+    Jump -> next b7(v32)
+  b7(v33):
+    v34 = Add v25, v33
+    v35 = Add v4, v34
+    v36 = Convert v35 declared={type=number flags=[IsExpected]}
+    Jump -> next b8()
+  b8():
+    v37 = Increment v9
+    v38 = Convert v37 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v36, v38)
+  b9(v39):
+    Jump -> next b10()
+  b10():
+    v40 = Convert v4 declared={type=number flags=[IsExpected]}
+    Return v40
+}
+function f2 name="Emitter" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v5 = Undefined
+    PropSet v4, v5 key="events"
+    v7 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    PropSet v7, v9 key="count"
+    v11 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v12 = Integer integer=10
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    PropSet v11, v13 key="limit"
+    v15 = Undefined
+    v16 = TypeTest v15 testedType=object
+    Branch v16 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v17):
+    Jump -> next b4(v17)
+  b3(v18):
+    Jump -> next b4(v3)
+  b4(v19):
+    Return v19
+}
+function f3 name="on" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=undefined|null|L0 flags=[IsExpected]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
+    Return v1
+}
+function f4 name="make" module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|function|f2 flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|function|f5 flags=[IsExpected]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f2, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = ResolveHeritage v0
+    v3 = NewClosure v1 function=f5
+    v4 = NewClass v3, v0, v2 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = Convert v5 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    Return v6
+}
+function f5 module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] length=2 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: function, v2: anything, v3: anything, v4: anything):
+    Jump -> next b1()
+  b1():
+    v5 = Absent
+    v6 = GetSuperBase v1
+    v7 = SuperConstruct v6, v2 layout=L1
+    v8 = Convert v7 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v9 = TypeTest v5 testedType=absent
+    Branch v9 -> taken b2(| 0), notTaken b14(| 0)
+  b2(v10):
+    v11 = TypeTest v8 testedType=absent
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v12) frequency=Unlikely:
+    v13 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v13
+  b4(v14):
+    v15 = Convert v14 declared={type=undefined|null|L1 flags=[IsExpected]}
+    PropSet v15, v3 key="name"
+    v17 = TypeTest v14 testedType=absent
+    Branch v17 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v18) frequency=Unlikely:
+    v19 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v19
+  b6(v20):
+    v21 = Convert v20 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v22 = Convert v0 declared={type=number flags=[IsExpected]}
+    v23 = Add v4, v22
+    PropSet v21, v23 key="state"
+    v25 = Undefined
+    v26 = TypeTest v25 testedType=object
+    Branch v26 -> taken b7(| 0), notTaken b8(| 0)
+  b7(v27):
+    Jump -> next b12(v27)
+  b8(v28):
+    v29 = TypeTest v28 testedType=undefined
+    Branch v29 -> taken b9(| 0), notTaken b13(| 0)
+  b9(v30):
+    v31 = TypeTest v20 testedType=absent
+    Branch v31 -> taken b10(| 0), notTaken b11(| 0)
+  b10(v32) frequency=Unlikely:
+    v33 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v33
+  b11(v34):
+    Jump -> next b12(v34)
+  b12(v35):
+    Return v35
+  b13(v36) frequency=Unlikely:
+    v37 = NewRuntimeError runtimeError=DerivedConstructorResult
+    Throw v37
+  b14(v38) frequency=Unlikely:
+    v39 = NewRuntimeError runtimeError=ThisAlreadyBound
+    Throw v39
+}
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+data d0 root=Array{contents=anything} module=m0

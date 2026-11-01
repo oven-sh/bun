@@ -1783,6 +1783,72 @@ describe("Host header field values in request.url", () => {
     expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
   });
 
+  // Only node:http relaxes the Host requirement, because Node emits 'upgrade'
+  // and 'connect' before it checks for Host. Bun.serve has no such events, so a
+  // request without Host would reach fetch() with a relative req.url.
+  test.each([
+    ["Upgrade: websocket", "GET /index HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"],
+    ["Upgrade: foo", "GET /index HTTP/1.1\r\nUpgrade: foo\r\n\r\n"],
+    ["empty Upgrade", "GET /index HTTP/1.1\r\nUpgrade:\r\n\r\n"],
+    ["CONNECT", "CONNECT example.com:443 HTTP/1.1\r\n\r\n"],
+  ])("rejects an HTTP/1.1 request with no Host header even with %s", async (_name, payload) => {
+    let fetchCalled = false;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        fetchCalled = true;
+        return new Response("OK");
+      },
+      websocket: {
+        message() {},
+      },
+    });
+
+    // Only read the status line. If the server wrongly serves the request it
+    // keeps the connection open, so waiting for close would hang.
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const client = net.connect(server.port, "127.0.0.1", () => client.write(payload));
+    client.on("error", reject);
+    let received = "";
+    client.on("data", chunk => {
+      received += chunk.toString();
+      if (received.includes("\r\n")) resolve(received);
+    });
+    try {
+      const response = await promise;
+      expect(response).toStartWith("HTTP/1.1 400");
+      expect(fetchCalled).toBe(false);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test("a node:http server still emits 'upgrade' for a request with no Host header", async () => {
+    const server = createServer((req, res) => {
+      res.writeHead(500);
+      res.end();
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+    server.on("upgrade", (req, socket) => {
+      resolve(req.headers.host);
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: foo\r\nConnection: Upgrade\r\n\r\n");
+    });
+    server.on("clientError", reject);
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const response = await sendRawRequest(
+        server.address() as { port: number },
+        "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: Upgrade\r\n\r\n",
+      );
+      expect(response).toStartWith("HTTP/1.1 101");
+      expect(await promise).toBeUndefined();
+    } finally {
+      server.close();
+    }
+  });
+
   test.each([
     [0x21, 0x40],
     [0x41, 0x60],

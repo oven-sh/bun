@@ -58,6 +58,7 @@ RUN apt-get update -qq \
       -fsSLO \
       --compressed \
       --retry 5 \
+      --retry-all-errors \
     && gpg --batch --assert-signer F3DCC08A8572C0749B3E18888EAB4D40A7B22B59 \
       --verify --output SHASUMS256.verified.txt SHASUMS256.txt.asc \
       || (echo "error: failed to verify: $tag" && exit 1) \

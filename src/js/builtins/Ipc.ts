@@ -1,11 +1,11 @@
 // have to use jsdoc type definitions because bundle-functions is based on regex
-interface DgramSocketFields {
-  type: import("node:dgram").SocketType;
+/** What this file reads of a `dgram.Socket` (node/dgram.ts). */
+interface UDPSocket {
+  type: "udp4" | "udp6";
 }
-type IpcHandle =
-  | import("node:net").Server
-  | import("node:net").Socket
-  | (import("node:dgram").Socket & DgramSocketFields);
+interface IpcSendOptions {
+  keepOpen?: boolean;
+}
 /**
  * @typedef {Object} Serialized
  * @property {"NODE_HANDLE"} cmd
@@ -19,7 +19,8 @@ type IpcHandle =
  * @param {Handle} handle
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(message, handle: IpcHandle, options) {
+// `handle` and `options` are the caller's second and third argument as they came. `options` can be the callback.
+export function serialize(message: unknown, handle: unknown, options: unknown) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
     const native = handle._handle;
@@ -31,12 +32,12 @@ export function serialize(message, handle: IpcHandle, options) {
     if (typeof handle[Symbol.for("::buntls::")] === "function") throw $ERR_INVALID_HANDLE_TYPE();
     const native = handle._handle;
     if (!native) return null;
-    if (!options?.keepOpen) {
+    if (!(options as IpcSendOptions | undefined)?.keepOpen) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L120-L148
       const { server } = handle;
       if (server) server._connections--;
       handle.setTimeout(0);
-      native.data = undefined;
+      (native as $Node.SocketHandle<unknown>).data = undefined;
       handle._handle = null;
     }
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" }];
@@ -45,7 +46,7 @@ export function serialize(message, handle: IpcHandle, options) {
     const { kStateSymbol } = require("internal/dgram");
     const native = handle[kStateSymbol]?.handle?.socket;
     if (!native) return null;
-    return [native, { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type }];
+    return [native, { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: (handle as UDPSocket).type }];
   }
   throw $ERR_INVALID_HANDLE_TYPE();
 }
@@ -55,8 +56,11 @@ export function serialize(message, handle: IpcHandle, options) {
  * @param {(handle: Handle) => void} emit
  * @returns {void}
  */
-export function parseHandle(target, serialized, fd) {
-  const emit = $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
+export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Node.SerializedIPCHandle, fd: number) {
+  const emit: (target: $Bindgen.Subprocess | null, message: unknown, handle: object) => void = $bindgen(
+    "ipc_host.bind.ts",
+    "emitHandleIPCMessage",
+  );
   const net = require("node:net");
   // const dgram = require("node:dgram");
   switch (serialized.type) {
@@ -111,7 +115,7 @@ export function parseHandle(target, serialized, fd) {
  * @param {unknown} message
  * @returns {[unknown, unknown[]] | null}
  */
-export function tagAdvancedBuffers(message) {
+export function tagAdvancedBuffers(message: unknown) {
   return require("internal/serialization_buffers").tagBuffers(message);
 }
 
@@ -121,6 +125,6 @@ export function tagAdvancedBuffers(message) {
  * @param {unknown} envelope
  * @returns {unknown}
  */
-export function restoreAdvancedBuffers(envelope) {
+export function restoreAdvancedBuffers(envelope: unknown) {
   return require("internal/serialization_buffers").restoreBuffers(envelope);
 }

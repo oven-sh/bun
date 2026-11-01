@@ -1918,7 +1918,7 @@
                  handle_early_read_shutdown(stream);
          }
          SM_HISTORY_APPEND(stream, SHE_SHUTDOWN_READ);
-@@ -4442,6 +4464,62 @@ lsquic_stream_close (lsquic_stream_t *stream)
+@@ -4442,6 +4464,67 @@ lsquic_stream_close (lsquic_stream_t *stream)
  }
  
  
@@ -1957,6 +1957,11 @@
 +lsquic_stream_force_reset_ext (struct lsquic_stream *stream,
 +                               uint64_t error_code)
 +{
++    /* bun: a finished stream is freed in this tick, and the packet of a
++     * RESET_STREAM would keep a pointer to it. Every byte and the FIN are
++     * acked, so there is nothing to reset. */
++    if (stream->stream_flags & STREAM_FINISHED)
++        return;
 +    /* bun: stream_reset clears every queued sending flag; a STOP_SENDING
 +     * the application queued just before the reset (Node's shutdown_stream
 +     * emits both frames) must still reach the wire. */

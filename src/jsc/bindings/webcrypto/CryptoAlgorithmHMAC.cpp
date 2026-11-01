@@ -233,6 +233,10 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
         break;
     case CryptoKeyFormat::Jwk: {
         JsonWebKey jwk = hmacKey.exportJwk();
+        if (jwk.k.isNull()) {
+            exceptionCallback(OperationError, ""_s);
+            return;
+        }
         switch (hmacKey.hashAlgorithmIdentifier()) {
         case CryptoAlgorithmIdentifier::SHA_1:
             jwk.alg = String(ALG1);

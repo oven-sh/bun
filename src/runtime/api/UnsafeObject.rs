@@ -1,56 +1,35 @@
 use bun_core::EncodedSlice;
-use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::virtual_machine::GCLevel;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::virtual_machine::{GCLevel, VirtualMachine};
+use bun_jsc::{self as jsc, JSType, JSValue, JsResult};
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _};
 
-pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
-    // NB: helper sizes inline capacity from `fns.len()`, fixing the prior
-    // `len = 3` vs 4-entry drift.
-    jsc::create_host_function_object(
-        global,
-        &[
-            ("gcAggressionLevel", __jsc_host_gc_aggression_level, 1),
-            ("arrayBufferToString", __jsc_host_array_buffer_to_string, 1),
-            ("mimallocDump", __jsc_host_dump_mimalloc, 1),
-            ("memoryFootprint", __jsc_host_memory_footprint, 1),
-            ("setJITPolicy", __jsc_host_set_jit_policy, 1),
-        ],
-    )
-}
-
-#[bun_jsc::host_fn]
-fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
-    // we hold no other Rust borrow of the VM across these accesses.
-    let vm = global.bun_vm().as_mut();
-    let ret = JSValue::js_number(vm.aggressive_garbage_collection as i32 as f64);
-    let [value] = frame.arguments_as_array::<1>();
-
-    if !value.is_empty_or_undefined_or_null() {
-        match value.coerce::<i32>(global)? {
-            1 => vm.aggressive_garbage_collection = GCLevel::Mild,
-            2 => vm.aggressive_garbage_collection = GCLevel::Aggressive,
-            0 => vm.aggressive_garbage_collection = GCLevel::None,
-            _ => {}
-        }
+pub(crate) fn gc_aggression_level(level: Option<f64>) -> i32 {
+    let vm = VirtualMachine::get().as_mut();
+    let previous = vm.aggressive_garbage_collection as i32;
+    match level.map(|level| level as i32) {
+        Some(1) => vm.aggressive_garbage_collection = GCLevel::Mild,
+        Some(2) => vm.aggressive_garbage_collection = GCLevel::Aggressive,
+        Some(0) => vm.aggressive_garbage_collection = GCLevel::None,
+        _ => {}
     }
-    Ok(ret)
+    previous
 }
 
-#[bun_jsc::host_fn]
-fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments();
-    if args.len() < 1 || !args[0].is_cell() || !args[0].js_type().is_typed_array_or_array_buffer() {
+pub(crate) fn array_buffer_to_string<'a>(
+    cx: &mut JsScope<'a>,
+    buffer: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let buffer = buffer.to_js();
+    if !buffer.is_cell() || !buffer.js_type().is_typed_array_or_array_buffer() {
         return Err(global.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
     }
 
-    let array_buffer = jsc::ArrayBuffer::from_typed_array(global, args[0]);
+    let array_buffer = jsc::ArrayBuffer::from_typed_array(global, buffer);
     match array_buffer.typed_array_type {
         JSType::Uint16Array | JSType::Int16Array => {
-            // Uint16Array/Int16Array storage is u16-aligned with even byte length;
-            // bytemuck checks both at runtime.
-            let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
-            Ok(EncodedSlice::utf16(utf16).to_js(global))
+            bun_core::String::clone_utf16_bytes(array_buffer.byte_slice()).into_js(global)
         }
         _ => Ok(EncodedSlice::latin1(array_buffer.slice()).to_js(global)),
     }
@@ -66,22 +45,15 @@ unsafe extern "C" {
 /// `/proc/self/smaps_rollup` (Linux), `PrivateUsage` (Windows). Returns
 /// `undefined` when no platform-specific accessor is available so the caller
 /// can `?? process.memoryUsage.rss()`.
-#[bun_jsc::host_fn]
-fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let bytes = Bun__memoryFootprint();
-    if bytes == 0 {
-        return Ok(JSValue::UNDEFINED);
+pub(crate) fn memory_footprint() -> Option<usize> {
+    match Bun__memoryFootprint() {
+        0 => None,
+        bytes => Some(bytes),
     }
-    Ok(JSValue::js_number(bytes as f64))
 }
 
-#[bun_jsc::host_fn]
-fn set_jit_policy(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [value] = frame.arguments_as_array::<1>();
-    if !value.is_number() {
-        return Err(global.throw_invalid_argument_type_value("scale", "number", value));
-    }
-    let scale = value.as_number();
+pub(crate) fn set_jit_policy(cx: &mut JsScope<'_>, scale: f64) -> JsResult<()> {
+    let global = cx.global();
     if !(scale.is_finite() && scale >= 1.0) {
         return Err(global.throw_range_error(
             scale,
@@ -93,11 +65,10 @@ fn set_jit_policy(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         ));
     }
     global.vm().set_startup_jit_deferral_scale(scale);
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
-#[bun_jsc::host_fn]
-fn dump_mimalloc(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn mimalloc_dump() {
     // Print the process-wide mimalloc stats to stderr via
     // `mi_stats_print_out` directly.
     extern "C" fn dump(text: *const core::ffi::c_char, _arg: *mut core::ffi::c_void) {
@@ -111,5 +82,4 @@ fn dump_mimalloc(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVal
     if bun_alloc::heap_breakdown::ENABLED {
         dump_zone_malloc_stats();
     }
-    Ok(JSValue::UNDEFINED)
 }

@@ -1,0 +1,15 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A0 = B extends C   extends D ? E : F // prettier-ignore
+  ? G
+  : H;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A0 = B extends C   extends D ? E : F // prettier-ignore
+  ? G
+  : H;
+
+===================== End =====================

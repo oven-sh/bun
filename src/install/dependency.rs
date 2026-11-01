@@ -17,13 +17,15 @@ use crate::{PackageManager, PackageNameHash};
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait NpmAliasRegistry {
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version);
+    /// Takes the alias's text, because a parsed `Version` is only valid together with the buffer it
+    /// was parsed from.
+    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]);
 }
 
 impl NpmAliasRegistry for PackageManager {
     #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        self.known_npm_aliases.insert(hash, Clone::clone(version));
+    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
+        self.known_npm_aliases.record_npm_alias(hash, specifier);
     }
 }
 
@@ -34,8 +36,12 @@ impl NpmAliasRegistry for PackageManager {
 /// `&mut PackageManager`.
 impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
     #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        self.insert(hash, Clone::clone(version));
+    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
+        // An install parses the same alias several times. Skip the allocation if it is unchanged.
+        if self.get(&hash).is_some_and(|known| **known == *specifier) {
+            return;
+        }
+        self.insert(hash, Box::from(specifier));
     }
 }
 
@@ -309,7 +315,6 @@ pub struct Context<'a> {
     // allocator dropped (global mimalloc)
     pub(crate) log: &'a mut bun_ast::Log,
     pub(crate) buffer: &'a [u8],
-    pub(crate) package_manager: Option<&'a mut PackageManager>,
 }
 
 pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
@@ -393,7 +398,7 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
 ///
 /// This also checks for a github url that ends with ".tar.gz"
 #[inline]
-fn is_github_tarball_path(dependency: &[u8]) -> bool {
+pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
     if is_tarball(dependency) {
         return true;
     }
@@ -430,6 +435,37 @@ fn has_suffix_ignore_ascii_case(s: &[u8], suffix: &[u8]) -> bool {
 #[inline]
 pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
     dependency.starts_with(b"https://") || dependency.starts_with(b"http://")
+}
+
+/// Matches `2x`, `1beta` and `v2x`. Like in npm-package-arg, a word that only starts like a version
+/// is a tag.
+fn is_dist_tag_with_leading_digit(dependency: &[u8]) -> bool {
+    // The usual case is `1.2.3`. Three numbers leave no room for a wildcard, and the caller parses
+    // it again.
+    if dependency.len() <= 17 {
+        let mut dots = 0;
+        let mut after_digit = false;
+        let is_plain = dependency.iter().all(|&byte| match byte {
+            b'0'..=b'9' => {
+                after_digit = true;
+                true
+            }
+            b'.' if after_digit => {
+                after_digit = false;
+                dots += 1;
+                true
+            }
+            _ => false,
+        });
+        if is_plain && after_digit && dots == 2 {
+            return false;
+        }
+    }
+    if strings::index_of_any(dependency, b"|+ \t\n\r\x0B\x0C").is_some() {
+        return false;
+    }
+    let parsed = Semver::Version::parse_utf8(dependency);
+    !parsed.valid && parsed.wildcard != Semver::query::Wildcard::None
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -531,24 +567,92 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
     Err(PackageNameError::InvalidPackageName)
 }
 
-/// A dependency name/alias becomes a directory under `node_modules/`. Names
-/// come from untrusted `package.json` / manifest keys, so reject anything that
-/// could resolve outside that directory. `@scope/name` stays valid.
+/// An untrusted name or alias becomes a directory under `node_modules/` and is printed.
 pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
-    if name.is_empty() {
+    if name.is_empty() || name.len() > 255 + 1 + 255 {
         return false;
     }
 
-    for component in strings::split(name, b"/") {
-        if component.is_empty() || component == b"." || component == b".." {
-            return false;
-        }
-        if strings::contains_any(component, b"\\:\0") {
-            return false;
+    // A single pass, because this runs for every dependency in a lockfile, on names of about a
+    // dozen bytes.
+    let is_safe_component =
+        |component: &[u8]| component.len() <= 255 && !matches!(component, b"" | b"." | b"..");
+    let mut component_start = 0;
+    for (i, &byte) in name.iter().enumerate() {
+        match byte {
+            b'/' => {
+                if !is_safe_component(&name[component_start..i]) {
+                    return false;
+                }
+                component_start = i + 1;
+            }
+            b'\\' | b':' => return false,
+            0xC2 if matches!(name.get(i + 1), Some(0x80..=0x9F)) => return false,
+            _ if byte.is_ascii_control() => return false,
+            _ => {}
         }
     }
+    is_safe_component(&name[component_start..])
+}
 
-    true
+/// Matches C0 controls, DEL and UTF-8 encoded C1 controls (`C2 80`..`C2 9F`), which terminals
+/// interpret.
+pub(crate) fn contains_control_character(name: &[u8]) -> bool {
+    name.iter().enumerate().any(|(i, &byte)| {
+        byte.is_ascii_control()
+            || (byte == 0xC2
+                && name
+                    .get(i + 1)
+                    .is_some_and(|next| (0x80..=0x9F).contains(next)))
+    })
+}
+
+/// A name that bun.lock's `"<name>@<resolution>"` keys can round-trip.
+pub(crate) fn is_safe_lockfile_package_name(name: &[u8]) -> bool {
+    is_safe_install_folder_name(name) && !strings::contains_char(&name[1..], b'@')
+}
+
+/// For a package whose package.json has no name. For example, `https://host/foo.tgz?token=x` gives
+/// `foo`.
+pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
+    let path = match strings::index_of_any(location, b"?#") {
+        Some(end) if strings::contains(location, b"://") => &location[..end],
+        _ => location,
+    };
+    let basename = bun_paths::basename(path);
+    let name = strings::without_suffix_comptime(
+        strings::without_suffix_comptime(basename, b".tgz"),
+        b".tar.gz",
+    );
+    if is_safe_lockfile_package_name(name) {
+        name
+    } else {
+        b"unnamed-package"
+    }
+}
+
+/// A `link:` target names a directory unless it is a package name (a `bun link` registration).
+pub(crate) fn is_link_path(target: &[u8]) -> bool {
+    !target.is_empty() && !strings::is_npm_package_name(target)
+}
+
+/// Why the resolver and both linkers refuse one (`Lockfile::is_trusted_folder_dependency`).
+pub(crate) const LINK_PATH_RULE: &str =
+    "only the root package.json, a workspace, or a top-level override may link to a path";
+
+/// The `./` keeps `is_link_path` true when the directory is read back.
+pub(crate) fn link_path_for_lockfile(folder: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if folder.is_empty() {
+        return b".".into();
+    }
+    if matches!(folder, b"." | b"..")
+        || folder.starts_with(b"./")
+        || folder.starts_with(b"../")
+        || bun_paths::is_absolute(folder)
+    {
+        return folder.into();
+    }
+    [b"./".as_slice(), folder].concat().into()
 }
 
 /// assumes version is valid
@@ -567,7 +671,6 @@ pub fn without_build_tag(version: &[u8]) -> &[u8] {
 pub(crate) type VersionExternal = [u8; 9];
 
 pub trait VersionExt {
-    fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn to_version(
         alias: String,
         alias_hash: PackageNameHash,
@@ -579,19 +682,6 @@ pub trait VersionExt {
 }
 
 impl VersionExt for Version {
-    fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        let tag_order = lhs.tag.cmp(rhs.tag);
-        if tag_order != Ordering::Equal {
-            return tag_order == Ordering::Less;
-        }
-
-        strings::cmp_strings_asc(
-            (),
-            lhs.literal.slice(string_buf),
-            rhs.literal.slice(string_buf),
-        )
-    }
-
     fn to_version(
         alias: String,
         alias_hash: PackageNameHash,
@@ -638,9 +728,7 @@ impl VersionExt for Version {
             tag,
             &sliced,
             Some(ctx.log),
-            ctx.package_manager
-                .as_deref_mut()
-                .map(|m| m as &mut dyn NpmAliasRegistry),
+            None,
         )
         .unwrap_or_default()
     }
@@ -669,11 +757,12 @@ impl VersionExt for Version {
                     true,
                 ) || self.npm().eql(rhs.npm(), lhs_buf, rhs_buf)
             }
-            Tag::Folder | Tag::DistTag => self.literal.eql(rhs.literal, lhs_buf, rhs_buf),
+            Tag::Folder | Tag::DistTag | Tag::Symlink => {
+                self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
+            }
             Tag::Git => Repository::eql(self.git(), rhs.git(), lhs_buf, rhs_buf),
             Tag::Github => Repository::eql(self.github(), rhs.github(), lhs_buf, rhs_buf),
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
-            Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
             Tag::Catalog => self.catalog().eql(*rhs.catalog(), lhs_buf, rhs_buf),
             _ => true,
@@ -766,9 +855,13 @@ impl TagExt for Tag {
             }
             // 1.2.3
             // 123.tar.gz
+            // 2x
             b'0'..=b'9' => {
                 if is_tarball(dependency) {
                     return Tag::Tarball;
+                }
+                if is_dist_tag_with_leading_digit(dependency) {
+                    return Tag::DistTag;
                 }
                 return Tag::Npm;
             }
@@ -823,7 +916,11 @@ impl TagExt for Tag {
                                 }
                             }
                             b'+' => {
-                                if url.starts_with(b"+ssh:") || url.starts_with(b"+file:") {
+                                // bun.lock writes a `git://` dependency's resolution as `git+git:`.
+                                if url.starts_with(b"+ssh:")
+                                    || url.starts_with(b"+file:")
+                                    || url.starts_with(b"+git:")
+                                {
                                     return Tag::Git;
                                 }
                                 if url.starts_with(b"+http") {
@@ -880,65 +977,38 @@ impl TagExt for Tag {
             // hello/world
             // hello.tar.gz
             // https://github.com/user/repo
+            // httplatest
             b'h' => {
-                if dependency.starts_with(b"http") {
+                if dependency.starts_with(b"http:") || dependency.starts_with(b"https:") {
                     let mut url = &dependency[b"http".len()..];
-                    if url.len() > 2 {
-                        match url[0] {
-                            b':' => {
-                                if url.starts_with(b"://") {
-                                    url = &url[b"://".len()..];
-                                }
-                            }
-                            b's' => {
-                                if url.starts_with(b"s://") {
-                                    url = &url[b"s://".len()..];
-                                }
-                            }
-                            _ => {}
-                        }
-
-                        if url.starts_with(b"github.com/") {
-                            let path = &url[b"github.com/".len()..];
-                            if is_github_tarball_path(path) {
-                                return Tag::Tarball;
-                            }
-                            if hosted_git_info::is_github_shorthand(path) {
-                                return Tag::Github;
-                            }
-                        }
-
-                        if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
-                        {
-                            return hgi_to_tag(&info);
-                        }
-
-                        return Tag::Tarball;
+                    if url.starts_with(b"://") {
+                        url = &url[b"://".len()..];
+                    } else if url.starts_with(b"s://") {
+                        url = &url[b"s://".len()..];
                     }
+
+                    if url.starts_with(b"github.com/") {
+                        let path = &url[b"github.com/".len()..];
+                        if is_github_tarball_path(path) {
+                            return Tag::Tarball;
+                        }
+                        if hosted_git_info::is_github_shorthand(path) {
+                            return Tag::Github;
+                        }
+                    }
+
+                    if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency) {
+                        return hgi_to_tag(&info);
+                    }
+
+                    return Tag::Tarball;
                 }
             }
+            // ssh://git@example.com/repo.git, but not sshlatest
             b's' => {
-                if dependency.starts_with(b"ssh") {
-                    let mut url = &dependency[b"ssh".len()..];
-                    if url.len() > 2 {
-                        if url[0] == b':' {
-                            if url.starts_with(b"://") {
-                                url = &url[b"://".len()..];
-                            }
-                        }
-
-                        if url.len() > 4 && &url[0..b"git@".len()] == b"git@" {
-                            url = &url[b"git@".len()..];
-                        }
-
-                        let _ = url; // not used after this point
-
-                        if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
-                        {
-                            return hgi_to_tag(&info);
-                        }
-                        return Tag::Git;
-                    }
+                // never a github shortcut (`hgi_to_tag`)
+                if dependency.starts_with(b"ssh:") {
+                    return Tag::Git;
                 }
             }
             // lisp.tgz
@@ -953,16 +1023,11 @@ impl TagExt for Tag {
             // newspeak/repo
             // npm:package@1.2.3
             b'n' => {
-                if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
-                    let remain =
-                        &dependency[b"npm:".len() + (dependency[b"npm:".len()] == b'@') as usize..];
-                    for (i, &c) in remain.iter().enumerate() {
-                        if c == b'@' {
-                            return Tag::infer(&remain[i + 1..]);
-                        }
-                    }
-
-                    return Tag::Npm;
+                if let Some(target) = dependency.strip_prefix(b"npm:") {
+                    return match split_npm_alias(target) {
+                        (_, Some(version)) => Tag::infer(version),
+                        (_, None) => Tag::Npm,
+                    };
                 }
             }
             // v1.2.3
@@ -984,7 +1049,7 @@ impl TagExt for Tag {
                     return Tag::DistTag;
                 }
                 return match dependency[1] {
-                    b'0'..=b'9' => Tag::Npm,
+                    b'0'..=b'9' if !is_dist_tag_with_leading_digit(dependency) => Tag::Npm,
                     _ => Tag::DistTag,
                 };
             }
@@ -1072,6 +1137,13 @@ pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u
     None
 }
 
+/// A literal can have leading whitespace, so classify and parse these bytes instead of the raw
+/// literal.
+#[inline]
+pub fn trim_literal(literal: &[u8]) -> &[u8] {
+    strings::trim_left(literal, b" \t\n\r")
+}
+
 #[inline]
 pub fn parse<'a, 'b>(
     alias: String,
@@ -1081,7 +1153,7 @@ pub fn parse<'a, 'b>(
     log: impl Into<Option<&'a mut bun_ast::Log>>,
     manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
-    let dep = strings::trim_left(dependency, b" \t\n\r");
+    let dep = trim_literal(dependency);
     parse_with_tag(
         alias,
         alias_hash.into(),
@@ -1102,7 +1174,7 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     log: impl Into<Option<&'a mut bun_ast::Log>>,
     package_manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
-    let dep = strings::trim_left(dependency, b" \t\n\r");
+    let dep = trim_literal(dependency);
     parse_with_tag(
         alias,
         alias_hash.into(),
@@ -1116,6 +1188,44 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     )
 }
 
+/// Splits the text after `npm:`. For example, `@scope/name@version` gives (`@scope/name`,
+/// `version`).
+fn split_npm_alias(target: &[u8]) -> (&[u8], Option<&[u8]>) {
+    let scope = target.starts_with(b"@") as usize;
+    match strings::index_of_char_usize(&target[scope..], b'@') {
+        Some(at) => (&target[..scope + at], Some(&target[scope + at + 1..])),
+        None => (target, None),
+    }
+}
+
+/// As in Yarn, `npm:^1.0.0` and `npm:1.0.0` are ranges for the dependency's own name. As in npm,
+/// `npm:x`, `npm:1` and `npm:1.x` are aliases, because `x`, `1` and `1.x` are valid package names.
+#[cold]
+fn is_range_after_npm_protocol(target: &[u8]) -> bool {
+    (strings::index_of_any(target, b"^~><=*| ").is_some()
+        || Semver::Version::parse_exact(SlicedString::init(target, target)).is_some())
+        && Tag::infer(target) == Tag::Npm
+}
+
+/// `npm:^1.0.0` -> `^1.0.0`. An alias such as `npm:name@^1.0.0` is returned unchanged.
+pub(crate) fn without_npm_protocol(literal: &[u8]) -> &[u8] {
+    match literal.strip_prefix(b"npm:") {
+        Some(target)
+            if split_npm_alias(target).1.is_none() && is_range_after_npm_protocol(target) =>
+        {
+            target
+        }
+        _ => literal,
+    }
+}
+
+/// Matches `npm:`, `npm:@1.0.0` and `npm:@scope/@1`. These still parse, because a lockfile may have
+/// one.
+pub(crate) fn nameless_npm_alias(literal: &[u8]) -> Option<&[u8]> {
+    let (name, _) = split_npm_alias(trim_literal(literal).strip_prefix(b"npm:")?);
+    is_scoped_package_name(name).is_err().then_some(name)
+}
+
 pub(crate) fn parse_with_tag(
     alias: String,
     alias_hash: Option<PackageNameHash>,
@@ -1125,30 +1235,24 @@ pub(crate) fn parse_with_tag(
     log_: Option<&mut bun_ast::Log>,
     package_manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
+    // `to_version` (bun.lockb) and `clone_with_different_buffers` pass the literal untrimmed.
+    let dependency = trim_literal(dependency);
     match tag {
         Tag::Npm => {
             let mut input = dependency;
 
             let mut is_alias = false;
-            let name = 'brk: {
-                if input.starts_with(b"npm:") {
+            let name = if let Some(target) = input.strip_prefix(b"npm:") {
+                let (name, version) = split_npm_alias(target);
+                if version.is_none() && is_range_after_npm_protocol(target) {
+                    input = target;
+                    alias
+                } else {
                     is_alias = true;
-                    let str = &input[b"npm:".len()..];
-                    let mut i: usize = (!str.is_empty() && str[0] == b'@') as usize;
-
-                    while i < str.len() {
-                        if str[i] == b'@' {
-                            input = &str[i + 1..];
-                            break 'brk sliced.sub(&str[0..i]).value();
-                        }
-                        i += 1;
-                    }
-
-                    input = &str[i..];
-
-                    break 'brk sliced.sub(&str[0..i]).value();
+                    input = version.unwrap_or_else(|| &target[target.len()..]);
+                    sliced.sub(name).value()
                 }
-
+            } else {
                 alias
             };
 
@@ -1181,46 +1285,27 @@ pub(crate) fn parse_with_tag(
                 tag: Tag::Npm,
             };
 
-            if is_alias {
+            if is_alias && nameless_npm_alias(dependency).is_none() {
                 if let Some(pm) = package_manager {
-                    pm.record_npm_alias(alias_hash.unwrap(), &result);
+                    pm.record_npm_alias(alias_hash.unwrap(), dependency);
                 }
             }
 
             Some(result)
         }
         Tag::DistTag => {
-            let mut tag_to_use = sliced.value();
+            let mut tag_to_use = sliced.sub(dependency).value();
 
-            let actual = if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
+            let actual = if let Some(target) = dependency.strip_prefix(b"npm:") {
                 // npm:@foo/bar@latest
-                sliced
-                    .sub('brk: {
-                        let mut i = b"npm:".len();
-
-                        // npm:@foo/bar@latest
-                        //     ^
-                        i += (dependency[i] == b'@') as usize;
-
-                        while i < dependency.len() {
-                            // npm:@foo/bar@latest
-                            //             ^
-                            if dependency[i] == b'@' {
-                                break;
-                            }
-                            i += 1;
-                        }
-
-                        tag_to_use = sliced.sub(&dependency[i + 1..]).value();
-                        break 'brk &dependency[b"npm:".len()..i];
-                    })
-                    .value()
+                let (name, dist_tag) = split_npm_alias(target);
+                tag_to_use = sliced
+                    .sub(dist_tag.unwrap_or_else(|| &target[target.len()..]))
+                    .value();
+                sliced.sub(name).value()
             } else {
                 alias
             };
-
-            // name should never be empty
-            debug_assert!(!actual.is_empty());
 
             Some(Version {
                 literal: sliced.value(),
@@ -1273,48 +1358,32 @@ pub(crate) fn parse_with_tag(
                 Ok(None) | Err(_) => return None,
             };
 
-            // Now we have parsed info, we need to find these substrings in the original dependency
-            // to create String objects that point to the original buffer
-            let owner_str: &[u8] = info.user().unwrap_or(b"");
-            let repo_str: &[u8] = info.project();
-            let committish_str: &[u8] = info.committish().unwrap_or(b"");
-
-            // Find owner in dependency string
-            let owner_idx = strings::index_of(dependency, owner_str);
-            let owner = if let Some(idx) = owner_idx {
-                sliced.sub(&dependency[idx..idx + owner_str.len()]).value()
-            } else {
-                String::from(b"")
-            };
-
-            // Find repo in dependency string
-            let repo_idx = strings::index_of(dependency, repo_str);
-            let repo = if let Some(idx) = repo_idx {
-                sliced.sub(&dependency[idx..idx + repo_str.len()]).value()
-            } else {
-                String::from(b"")
-            };
-
-            // Find committish in dependency string
-            let committish = if !committish_str.is_empty() {
-                let committish_idx = strings::index_of(dependency, committish_str);
-                if let Some(idx) = committish_idx {
-                    sliced
-                        .sub(&dependency[idx..idx + committish_str.len()])
-                        .value()
-                } else {
-                    String::from(b"")
+            // `info` is percent-decoded, and a `String` can only point into `dependency`.
+            let (before_fragment, fragment) =
+                strings::split_once_char(dependency, b'#').unwrap_or((dependency, b""));
+            let find = |part: &[u8]| {
+                if part.is_empty() {
+                    return Some(String::default());
                 }
-            } else {
-                String::from(b"")
+                let at = strings::index_of(before_fragment, part)?;
+                Some(sliced.sub(&before_fragment[at..at + part.len()]).value())
+            };
+            let committish = match info.committish() {
+                None => String::default(),
+                // `/tree/<committish>`
+                Some(in_path) if fragment.is_empty() => find(in_path)?,
+                // The URL parser drops these, and they must not end up in the request either.
+                Some(_) if contains_control_character(fragment) => return None,
+                // The fragment goes into the request as written, and GitHub decodes it.
+                Some(_) => sliced.sub(fragment).value(),
             };
 
             Some(Version {
                 literal: sliced.value(),
                 value: Value {
                     github: ManuallyDrop::new(Repository {
-                        owner,
-                        repo,
+                        owner: find(info.user().unwrap_or(b""))?,
+                        repo: find(info.project())?,
                         committish,
                         ..Default::default()
                     }),
@@ -1363,7 +1432,7 @@ pub(crate) fn parse_with_tag(
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "invalid or unsupported dependency \"{}\"",
-                            bstr::BStr::new(dependency)
+                            bun_core::fmt::for_terminal(bstr::BStr::new(dependency))
                         ),
                     );
                 }
@@ -1375,7 +1444,7 @@ pub(crate) fn parse_with_tag(
                 literal: sliced.value(),
                 value: Value {
                     tarball: TarballInfo {
-                        uri: URI::Local(sliced.value()),
+                        uri: URI::Local(sliced.sub(dependency).value()),
                         package_name: String::default(),
                     },
                 },
@@ -1484,7 +1553,10 @@ pub(crate) fn parse_with_tag(
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
-                        format_args!("Unsupported protocol {}", bstr::BStr::new(dependency)),
+                        format_args!(
+                            "Unsupported protocol {}",
+                            bun_core::fmt::for_terminal(bstr::BStr::new(dependency))
+                        ),
                     );
                 }
                 return None;
@@ -1492,7 +1564,7 @@ pub(crate) fn parse_with_tag(
 
             Some(Version {
                 value: Value {
-                    folder: sliced.value(),
+                    folder: sliced.sub(dependency).value(),
                 },
                 tag: Tag::Folder,
                 literal: sliced.value(),
@@ -1516,7 +1588,7 @@ pub(crate) fn parse_with_tag(
 
             Some(Version {
                 value: Value {
-                    symlink: sliced.value(),
+                    symlink: sliced.sub(dependency).value(),
                 },
                 tag: Tag::Symlink,
                 literal: sliced.value(),
@@ -1536,9 +1608,8 @@ pub(crate) fn parse_with_tag(
             })
         }
         Tag::Catalog => {
-            debug_assert!(dependency.starts_with(b"catalog:"));
-
-            let group = &dependency[b"catalog:".len()..];
+            // bun.lockb stores the tag beside the literal.
+            let group = dependency.strip_prefix(b"catalog:")?;
 
             let trimmed = strings::trim(group, &strings::WHITESPACE_CHARS);
 

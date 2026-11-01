@@ -60,12 +60,21 @@ function postgresAuthOkAndReady(socket: net.Socket) {
 
 test("postgres: connection refused is reported distinctly and fails fast", async () => {
   const port = await closedPort();
-  const start = Date.now();
-  const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`);
+  // Refused is not retried: with a retry budget this long, a retry would run into the test's timeout.
+  const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`, 600);
   expect(err.message).toBe("Failed to connect");
   expect(err.code).toBe("ERR_POSTGRES_CONNECTION_REFUSED");
-  // refused is not retried: nothing is listening, fail well inside the budget
-  expect(Date.now() - start).toBeLessThan(900);
+});
+
+// Native code makes the error with no stack frames, so the print has no source of Bun's own modules.
+test.each([
+  ["postgres", "PostgresError", "ERR_POSTGRES_CONNECTION_REFUSED"],
+  ["mysql", "MySQLError", "ERR_MYSQL_CONNECTION_REFUSED"],
+])("%s: connection refused prints as the name, the message and the code", async (adapter, name, code) => {
+  const port = await closedPort();
+  const err = await connectError(`${adapter}://user@127.0.0.1:${port}/database`);
+  expect(err).toBeInstanceOf(SQL.SQLError);
+  expect(Bun.inspect(err, { colors: false })).toBe(`${name}: Failed to connect\n code: "${code}"\n\n`);
 });
 
 test("postgres: connection closed before handshake completes is a connect failure", async () => {
@@ -181,12 +190,9 @@ test("postgres: established connection that closes keeps the plain message", asy
 
 test("mysql: connection refused is reported distinctly and fails fast", async () => {
   const port = await closedPort();
-  const start = Date.now();
-  const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`);
+  const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`, 600);
   expect(err.message).toBe("Failed to connect");
   expect(err.code).toBe("ERR_MYSQL_CONNECTION_REFUSED");
-  // refused is not retried: nothing is listening, fail well inside the budget
-  expect(Date.now() - start).toBeLessThan(900);
 });
 
 test("mysql: connection closed before handshake completes is a connect failure", async () => {

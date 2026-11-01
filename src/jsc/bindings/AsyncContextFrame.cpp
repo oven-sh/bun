@@ -68,6 +68,30 @@ JSValue AsyncContextFrame::withGraphContextIfNeeded(JSGlobalObject* globalObject
     return AsyncContextFrame::create(JSC::getVM(globalObject), zigGlobalObject->AsyncContextFrameStructure(), callback, graphFrame);
 }
 
+static void setCurrentAsyncContext(JSGlobalObject* globalObject, JSValue asyncContext)
+{
+    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, asyncContext);
+    // A nested ModuleGraphContextScope records the context it restores on exit. Record ours too, or that entry goes stale.
+    if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
+        Bun::noteEnteredFromEventLoop(zigGlobalObject, asyncContext);
+}
+
+AsyncContextScope::AsyncContextScope(JSGlobalObject* globalObject, JSValue snapshot)
+{
+    if (!snapshot || snapshot.isUndefinedOrNull())
+        return;
+    m_globalObject = globalObject;
+    m_previous = globalObject->m_asyncContextData.get()->getInternalField(0);
+    if (snapshot != m_previous)
+        setCurrentAsyncContext(globalObject, snapshot);
+}
+
+AsyncContextScope::~AsyncContextScope()
+{
+    if (m_globalObject)
+        setCurrentAsyncContext(m_globalObject, m_previous);
+}
+
 template<typename Visitor>
 void AsyncContextFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

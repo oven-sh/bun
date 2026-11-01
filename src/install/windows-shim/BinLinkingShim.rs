@@ -4,6 +4,7 @@
 //! The format is as follows:
 //!
 //! [WSTR:bin_path][u16'"'][u16:0](shebang?)[flags:u16]
+//! - bin_path starts at the parent of the shim's directory, unless `Flags::is_absolute_target`
 //!
 //! if shebang:
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
@@ -22,7 +23,7 @@
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
-// The encoding is an open-ended 13-bit value, so model it as a transparent u16
+// The encoding is an open-ended 12-bit value, so model it as a transparent u16
 // newtype rather than an exhaustive enum.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -32,10 +33,11 @@ impl VersionFlag {
     const CURRENT: VersionFlag = VersionFlag::V5;
 
     /// Fixed bugs where passing arguments did not always work.
-    const V5: VersionFlag = VersionFlag(5478);
+    /// `2739 << 4` == `5478 << 3`: see the assertions below `Flags`.
+    const V5: VersionFlag = VersionFlag(2739);
 
-    /// Maximum 13-bit value.
-    const MAX: VersionFlag = VersionFlag((1u16 << 13) - 1);
+    /// Maximum 12-bit value.
+    const MAX: VersionFlag = VersionFlag((1u16 << 12) - 1);
 
     #[inline]
     pub(crate) const fn bits(self) -> u16 {
@@ -43,7 +45,7 @@ impl VersionFlag {
     }
 }
 
-// Packed u16 bitfield (three bools + a 13-bit version tag): `#[repr(transparent)]`
+// Packed u16 bitfield (four bools + a 12-bit version tag): `#[repr(transparent)]`
 // newtype with manual shift accessors (LSB first).
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -55,13 +57,15 @@ impl Flags {
         is_node_or_bun: bool,
         is_node: bool,
         has_shebang: bool,
+        is_absolute_target: bool,
         version_tag: VersionFlag,
     ) -> Flags {
         Flags(
             (is_node_or_bun as u16)
                 | ((is_node as u16) << 1)
                 | ((has_shebang as u16) << 2)
-                | (version_tag.0 << 3),
+                | ((is_absolute_target as u16) << 3)
+                | (version_tag.0 << 4),
         )
     }
 
@@ -91,8 +95,12 @@ impl Flags {
         (self.0 & 0b100) != 0
     }
     #[inline]
+    pub(crate) const fn is_absolute_target(self) -> bool {
+        (self.0 & 0b1000) != 0
+    }
+    #[inline]
     pub(crate) const fn version_tag(self) -> VersionFlag {
-        VersionFlag(self.0 >> 3)
+        VersionFlag(self.0 >> 4)
     }
 
     #[inline]
@@ -101,11 +109,16 @@ impl Flags {
     }
 
     pub(crate) fn is_valid(self) -> bool {
-        let mask: u16 = Flags::new(false, false, false, VersionFlag::MAX).bits();
-        let compare_to: u16 = Flags::new(false, false, false, VersionFlag::CURRENT).bits();
+        let mask: u16 = Flags::new(false, false, false, false, VersionFlag::MAX).bits();
+        let compare_to: u16 = Flags::new(false, false, false, false, VersionFlag::CURRENT).bits();
         (self.0 & mask) == compare_to
     }
 }
+
+// Older launchers check `bits >> 3 == 5478`, so they accept a relative shim but not an absolute
+// one.
+const _: () = assert!(Flags::new(false, false, false, false, VersionFlag::V5).bits() == 5478 << 3);
+const _: () = assert!(Flags::new(false, false, false, true, VersionFlag::V5).bits() >> 3 != 5478);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Host-side encoding / embedding. None of this is compiled into the
@@ -193,8 +206,9 @@ mod host {
             e if e == w!(".mts") => Some(RunWithBun),
             e if e == w!(".tsx") => Some(RunWithBun),
             e if e == w!(".sh") => Some(RunWithBun),
-            e if e == w!(".cmd") => Some(RunWithCmd),
-            e if e == w!(".bat") => Some(RunWithCmd),
+            // Windows takes any spelling of these two for a batch file.
+            e if strings::eql_case_insensitive_t(e, b".cmd") => Some(RunWithCmd),
+            e if strings::eql_case_insensitive_t(e, b".bat") => Some(RunWithCmd),
             e if e == w!(".ps1") => Some(RunWithPowershell),
             _ => None,
         }
@@ -314,6 +328,13 @@ mod host {
                 while idx < line.len() && line[idx] == b' ' {
                     idx += 1;
                 }
+                // `env -S prog args` and `env -Sprog args`. The launcher is split at spaces anyway.
+                if line[idx..].starts_with(b"-S") {
+                    idx += b"-S".len();
+                    while idx < line.len() && line[idx] == b' ' {
+                        idx += 1;
+                    }
+                }
                 let rest = &line[idx..];
                 // tokenizer.next(): program token
                 let prog_start = idx;
@@ -338,8 +359,9 @@ mod host {
     }
 
     pub(crate) struct BinLinkingShim<'a> {
-        /// Relative to node_modules. Do not include slash
+        /// Relative to the parent of the shim's directory (no leading slash), or absolute.
         pub(crate) bin_path: &'a [u16],
+        pub(crate) is_absolute_target: bool,
         /// Information found within the target file's shebang
         pub(crate) shebang: Option<Shebang<'a>>,
     }
@@ -357,21 +379,14 @@ mod host {
             l
         }
 
-        /// The buffer must be exactly the correct length given by encoded_length.
+        /// The buffer must be exactly `encoded_length()` bytes.
         ///
         /// Returns `Err` when the shebang launcher does not encode to exactly
         /// `utf16_len` UTF-16 units (invalid UTF-8); the caller (`bin.rs`) reports
         /// that as an invalid bin.
-        pub(crate) fn encode_into(&self, buf: &mut [u8]) -> Result<(), bun_core::Error> {
-            debug_assert!(buf.len() == self.encoded_length());
+        pub(crate) fn encode_into(&self, mut wbuf: &mut [u16]) -> Result<(), bun_core::Error> {
+            debug_assert!(size_of_val(wbuf) == self.encoded_length());
             debug_assert!(self.bin_path[0] != b'/' as u16);
-
-            // `bytemuck::cast_slice_mut` performs a runtime alignment +
-            // size-multiple check and panics on mismatch — no
-            // `unsafe` needed. (The sole caller, `bin.rs`, passes a stack `[u8; 65536]`
-            // whose Rust-guaranteed alignment is 1; it should be changed to a `[u16; N]`
-            // buffer to make alignment a compile-time guarantee — tracked separately.)
-            let mut wbuf: &mut [u16] = bytemuck::cast_slice_mut(buf);
 
             wbuf[0..self.bin_path.len()].copy_from_slice(self.bin_path);
             wbuf = &mut wbuf[self.bin_path.len()..];
@@ -389,6 +404,7 @@ mod host {
                 is_node_or_bun,
                 /* is_node */ false,
                 /* has_shebang */ self.shebang.is_some(),
+                self.is_absolute_target,
                 VersionFlag::CURRENT,
             );
 
@@ -414,21 +430,17 @@ mod host {
                 wbuf[0] = b' ' as u16;
                 wbuf = &mut wbuf[1..];
 
-                // SAFETY: wbuf has at least 4 u16s (= 2 u32s) remaining per encoded_length();
-                // the buffer is only 2-byte aligned, so use unaligned writes.
-                unsafe {
-                    (wbuf.as_mut_ptr().cast::<u32>())
-                        .write_unaligned(u32::try_from(self.bin_path.len() * 2).expect("int cast"));
-                    (wbuf.as_mut_ptr().add(2).cast::<u32>()).write_unaligned((s.utf16_len) * 2 + 2); // include the spaces!
-                }
-                wbuf = &mut wbuf[(size_of::<u32>() * 2) / size_of::<u16>()..];
+                let lengths: [u32; 2] = [
+                    u32::try_from(self.bin_path.len() * 2).expect("int cast"),
+                    s.utf16_len * 2 + 2, // include the spaces!
+                ];
+                bun_core::slice_as_bytes_mut(&mut wbuf[..4])
+                    .copy_from_slice(bun_core::bytes_of(&lengths));
+                wbuf = &mut wbuf[4..];
             }
 
-            // SAFETY: Flags is #[repr(transparent)] over u16; one u16 slot remains.
-            unsafe {
-                (wbuf.as_mut_ptr().cast::<u16>()).write_unaligned(flags.bits());
-            }
-            wbuf = &mut wbuf[size_of::<u16>() / size_of::<u16>()..];
+            wbuf[0] = flags.bits();
+            wbuf = &mut wbuf[1..];
 
             if cfg!(debug_assertions) {
                 if wbuf.len() != 0 {

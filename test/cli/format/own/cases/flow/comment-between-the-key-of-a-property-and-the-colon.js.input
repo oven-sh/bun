@@ -1,0 +1,11 @@
+// @flow
+export type HostDispatcher = {
+  f /* flushSyncWork */: () => boolean | void,
+  r /* requestFormReset */: (form: HTMLFormElement) => void,
+  g /* a */: number,
+  h: /* a */ number,
+  i /* a */?: number,
+  +j /* a */: number,
+  k // a
+  : number,
+};

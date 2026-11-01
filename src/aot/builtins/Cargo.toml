@@ -1,0 +1,25 @@
+[package]
+name = "bun_aot_builtins"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[lib]
+path = "lib.rs"
+test = false
+bench = false
+doctest = false
+
+[features]
+linked_names = []
+
+[dependencies]
+bun_sema.workspace = true
+bun_removable_features.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bitflags.workspace = true
+smallvec.workspace = true
+
+[lints]
+workspace = true

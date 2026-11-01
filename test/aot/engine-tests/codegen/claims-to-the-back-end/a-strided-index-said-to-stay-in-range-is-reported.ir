@@ -1,0 +1,6 @@
+# sabotage=StridedIndexesStayInRange: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=DecidedComparisons sabotage=StridedIndexesStayInRange
+# CHECK: AOT claim check: ComparisonIsDecided
+# PROGRAM-OF: a-loop-reads-every-second-element-also-past-the-end-passes.ir

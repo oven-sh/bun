@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+a = b! /* comment 1 */! /* comment 2 */!;
+
+c = d!! /* comment */!.e;
+
+f = g! /* comment 1 */! /* comment 2 */! /* comment 3 */!;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a = b! /* comment 1 */! /* comment 2 */!;
+
+c = d!! /* comment */!.e;
+
+f = g! /* comment 1 */! /* comment 2 */! /* comment 3 */!;
+
+===================== End =====================

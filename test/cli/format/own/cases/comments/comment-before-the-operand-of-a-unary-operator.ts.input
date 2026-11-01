@@ -1,0 +1,17 @@
+void (
+  /* c */
+  (a() as unknown as B)
+);
+void (/* c */ a as B);
+!(/* c */ (a || b));
+!(
+  // c
+  (a || b)
+);
+typeof (/* c */ (a, b));
+-(/* c */ (a + b));
+void (/* c */ (a satisfies B));
+!(/* c */ (a ? b : c));
+!(/* c */ (a = b));
+!(/* c */ (() => {}));
+!(/* c */ (yield_));

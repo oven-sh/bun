@@ -27,7 +27,9 @@ test("ws.send callback works as expected", async () => {
   var ws = new WebSocket("ws://localhost:" + (httpServer.address() as AddressInfo).port);
 
   ws.on("message", msg => {});
-  await Promise.all([promise, promise2]);
+  const { promise: opened, resolve: onOpen } = Promise.withResolvers<void>();
+  ws.on("open", () => onOpen());
+  await Promise.all([promise, promise2, opened]);
   ws.close();
   wss.close();
 });

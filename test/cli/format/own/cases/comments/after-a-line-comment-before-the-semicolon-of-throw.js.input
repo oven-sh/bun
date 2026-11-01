@@ -1,0 +1,6 @@
+function a() {
+  return b // comment
+  ;/* comment */
+}
+throw c, d // comment
+;/* comment */

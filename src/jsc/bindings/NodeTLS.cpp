@@ -289,7 +289,9 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     }
     if (parseError) {
         // Reuse the shared ERR_OSSL_<LIB>_<REASON> decoration path
-        // (library/function/reason/code + opensslErrorStack), same as node:crypto.
+        // (library/function/reason/code), same as node:crypto. Node's
+        // LoadCertsFromBIO pops its errors, so there is no opensslErrorStack.
+        ERR_clear_error();
         throwCryptoError(globalObject, scope, parseError);
         return {};
     }
@@ -305,21 +307,6 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     auto* array = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), results);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
-}
-
-// Rust side is #[host_fn(export = ...)] which emits extern "sysv64" on
-// win-x64; BUN_DECLARE_HOST_FUNCTION carries SYSV_ABI so both sides agree.
-BUN_DECLARE_HOST_FUNCTION(Bun__getTLSDefaultCiphers);
-BUN_DECLARE_HOST_FUNCTION(Bun__setTLSDefaultCiphers);
-
-JSC_DEFINE_HOST_FUNCTION(getDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return Bun__getTLSDefaultCiphers(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return Bun__setTLSDefaultCiphers(globalObject, callFrame);
 }
 
 // (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.
@@ -357,6 +344,45 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
     sni_free(tree, [](void*) {});
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(selected ? values.at(selected - 1) : jsUndefined());
+}
+
+// (hash: ArrayBufferView) => void, where hash is the SHA-256 of a DER SubjectPublicKeyInfo.
+JSC_DEFINE_HOST_FUNCTION(addBlockedSPKIForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* hash = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->argument(0));
+    if (!hash) return ERR::INVALID_ARG_TYPE(scope, globalObject, "SPKI hash must be a buffer"_s);
+    if (hash->byteLength() != SHA256_DIGEST_LENGTH) return ERR::OUT_OF_RANGE(scope, globalObject, "SPKI hash must be 32 bytes"_s);
+    us_add_blocked_spki_for_testing(static_cast<const uint8_t*>(hash->vector()));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(clearBlockedSPKIsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    us_clear_blocked_spkis_for_testing();
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(putBoringSSLErrorForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    OPENSSL_PUT_ERROR(BN, BN_R_BITS_TOO_SMALL);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(takeBoringSSLErrorQueueForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* errors = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    while (uint32_t error = ERR_get_error()) {
+        char message[256];
+        ERR_error_string_n(error, message, sizeof(message));
+        errors->putDirectIndex(globalObject, errors->length(), jsString(vm, String::fromUTF8(message)));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(errors);
 }
 
 } // namespace Bun

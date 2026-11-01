@@ -1,0 +1,8 @@
+export class A {
+  async b(
+    @CurrentUser() user: SomeContextUser,
+    @CurrentWorkspace({ allowUndefined: true }) workspace: WorkspaceEntity | undefined,
+    @Context() context: { req: Request },
+    @CurrentWorkspace({ allowUndefined: true, andSomethingElse: false, more: 1 }) other: B,
+  ) {}
+}

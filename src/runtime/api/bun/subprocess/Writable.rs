@@ -1,4 +1,4 @@
-use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
 use bun_ptr::RefPtr;
@@ -9,7 +9,6 @@ use bun_sys::{self, Fd};
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
 use crate::webcore::file_sink::{self, FileSink};
-use crate::webcore::sink;
 use crate::webcore::streams::SourceHandle;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -102,7 +101,7 @@ impl<'a> Writable<'a> {
     pub(crate) fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
         if let Some(this_jsvalue) = process.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
-                file_sink::JSSink::set_destroy_callback(existing_value, 0);
+                file_sink::JSSink::forget_subprocess(existing_value);
             }
         }
 
@@ -397,12 +396,7 @@ impl<'a> Writable<'a> {
                         pipe.source.with_mut(|s| s.clear());
                     }
                     // The wrapper takes its own ref; `pipe_ref` drops after.
-                    pipe.to_js_with_destructor(
-                        global_this,
-                        Some(sink::destructor_ptr_subprocess(
-                            subprocess.as_ctx_ptr().cast::<c_void>(),
-                        )),
-                    )
+                    pipe.to_js_for_subprocess(global_this, NonNull::from(subprocess).cast())
                 }
             }
         }
@@ -413,7 +407,7 @@ impl<'a> Writable<'a> {
     pub(crate) fn finalize(subprocess: &Subprocess<'a>) {
         if let Some(this_jsvalue) = subprocess.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
-                file_sink::JSSink::set_destroy_callback(existing_value, 0);
+                file_sink::JSSink::forget_subprocess(existing_value);
             }
         }
 

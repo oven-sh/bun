@@ -1,5 +1,5 @@
 // `bun build --compile --compile-jit-policy <n>` / `compile: { jitPolicy: n }` bakes a JSC tier-up threshold scale into
-// the executable; `Bun.unsafe.setJITPolicy(scale)` changes it at run time (docs/bundler/executables.mdx "JIT policy").
+// the executable; `Bun.unsafe.setJITPolicy(scale)` changes it at run time (docs/compiler/executables.mdx "JIT policy").
 // Under BUN_JSC_verboseOSR=1 JSC logs "Startup JIT deferral scale set to <n>" when a scale > 1 takes effect and
 // "Ending startup JIT deferral window: embedder (scale was <n>)" when it returns to 1.
 import { describe, expect, test } from "bun:test";
@@ -132,9 +132,19 @@ describe("compile jitPolicy", () => {
   test("Bun.unsafe.setJITPolicy validates its argument", () => {
     // Outside a compiled executable the policy is already 1: a harmless no-op.
     expect(Bun.unsafe.setJITPolicy(1)).toBeUndefined();
-    expect(() => Bun.unsafe.setJITPolicy("x" as unknown as number)).toThrow(TypeError);
-    expect(() => Bun.unsafe.setJITPolicy(0.5)).toThrow(RangeError);
-    expect(() => Bun.unsafe.setJITPolicy(NaN)).toThrow(RangeError);
-    expect(() => Bun.unsafe.setJITPolicy(Infinity)).toThrow(RangeError);
+    for (const scale of [undefined, null, "2", 2n, {}, { valueOf: () => 2 }] as unknown as number[]) {
+      expect(() => Bun.unsafe.setJITPolicy(scale)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "scale must be a number" }),
+      );
+    }
+    for (const scale of [0, 0.5, 0.999, -1, NaN, Infinity]) {
+      expect(() => Bun.unsafe.setJITPolicy(scale)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "scale" is out of range. It must be a finite number >= 1. Received ${scale}`,
+        }),
+      );
+    }
   });
 });

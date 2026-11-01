@@ -13,8 +13,8 @@
 //! let cell = native_promise_context::create(global, ctx);
 //! promise.then_with_value(global, cell, on_resolve, on_reject)?;
 //!
-//! // In on_resolve/on_reject:
-//! let Some(ctx) = native_promise_context::take::<RequestContext>(arguments[1]) else { return; };
+//! // In on_resolve/on_reject, with `context: b.nativePromiseContext("crate::..::RequestContext")` in the schema:
+//! let Some(ctx) = context else { return; };
 //! // ... process ...
 //! ctx.deref_();
 //! ```
@@ -143,6 +143,7 @@ unsafe extern "C" {
         held: JSValue,
     ) -> JSValue;
     safe fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
+    safe fn Bun__NativePromiseContext__takeHeld(value: JSValue) -> JSValue;
 }
 
 /// The cell owns the caller's claim on `ctx` until `take()` transfers it back
@@ -165,6 +166,11 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
     NonNull::new(Bun__NativePromiseContext__take(cell).cast::<T>())
 }
 
+/// Clears the cell's `held` slot and returns its old value (`JSValue::ZERO` if it was empty).
+pub(crate) fn take_held(cell: JSValue) -> JSValue {
+    Bun__NativePromiseContext__takeHeld(cell)
+}
+
 /// Called from the C++ destructor when a cell is collected with a non-null
 /// pointer (i.e., `take()` was never called — the Promise was GC'd without
 /// settling).
@@ -174,8 +180,13 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
 /// deinit() which detaches responses, unrefs bodies, and calls back into
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.
+#[inline(never)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
+    bun_removable_features::removable_definition!(Serve, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(HtmlRewriter, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(S3Client, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(Cron, Bun__NativePromiseContext__destroy);
     let tag = Tag::from_raw(tag);
     clear_remembered_cell(ctx, tag);
     DeferredDerefTask::schedule(ctx, tag);

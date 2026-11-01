@@ -24,29 +24,30 @@ use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
 
-pub(crate) struct ServerComponentParseTask {
+/// `'a` is the bundle's, as for [`parse_task::ParseTask`].
+pub(crate) struct ServerComponentParseTask<'a> {
     pub task: ThreadPoolTask,
-    pub data: Data,
+    pub data: Data<'a>,
     // BACKREF (LIFETIMES.tsv) — written through in `on_complete`.
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
-    pub source: Source,
+    pub source: Source<'a>,
 }
 
 // `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
 // would leak. The size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-pub enum Data {
+pub enum Data<'a> {
     /// Generate server-side code for a "use client" module. Given the
     /// client ast, a "reference proxy" is created with identical exports.
-    ClientReferenceProxy(ReferenceProxy),
+    ClientReferenceProxy(ReferenceProxy<'a>),
 
     ClientEntryWrapper(ClientEntryWrapper),
 }
 
-pub struct ReferenceProxy {
-    pub(crate) other_source: Source,
+pub struct ReferenceProxy<'a> {
+    pub(crate) other_source: Source<'a>,
     pub(crate) named_exports: NamedExports,
 }
 
@@ -68,8 +69,9 @@ pub struct ClientEntryWrapper {
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
     // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
-    let task: &mut ServerComponentParseTask = unsafe {
-        &mut *(bun_core::from_field_ptr!(ServerComponentParseTask, task, thread_pool_task))
+    // The bundle's `'a` is erased to `'static`: see `parse_task::task_callback`.
+    let task: &mut ServerComponentParseTask<'static> = unsafe {
+        &mut *(bun_core::from_field_ptr!(ServerComponentParseTask<'static>, task, thread_pool_task))
     };
 
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
@@ -148,7 +150,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     worker.unget();
 }
 
-fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static>) {
+fn on_complete_mini(result: *mut parse_task::Result<'static>, _ctx: *mut BundleV2<'static>) {
     // `on_complete` already recovers `ctx` from `result.ctx`.
     // SAFETY: callback contract — `result` is the uniquely-owned Box leaked in
     // `run_from_thread_pool`; ownership transfers to `on_complete`.
@@ -156,10 +158,10 @@ fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static
 }
 
 fn task_callback(
-    task: &mut ServerComponentParseTask,
+    task: &mut ServerComponentParseTask<'static>,
     log: &mut Log,
     bump: &'static Arena,
-) -> Result<Success, OOM> {
+) -> Result<Success<'static>, OOM> {
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2; safe `Deref`.
     let ctx: &BundleV2 = task
         .ctx
@@ -201,7 +203,7 @@ fn task_callback(
     })
 }
 
-impl Default for ServerComponentParseTask {
+impl Default for ServerComponentParseTask<'_> {
     /// Callers (`bundle_v2.rs`) supply `data`/`ctx`/`source`
     /// via FRU and rely on this for the intrusive `task` link.
     fn default() -> Self {

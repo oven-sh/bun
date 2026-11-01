@@ -9,7 +9,7 @@
 //!
 //! Port of ValidateStaticComponents.ts.
 
-use std::collections::HashMap;
+use crate::collections::IdMap;
 
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
@@ -22,14 +22,13 @@ use crate::hir::{HirFunction, IdentifierId, InstructionValue, JsxTag};
 /// Called via `env.logErrors()` pattern in Pipeline.ts.
 pub(crate) fn validate_static_components(func: &HirFunction) -> CompilerError {
     let mut error = CompilerError::new();
-    let mut known_dynamic_components: HashMap<IdentifierId, Option<SourceLocation>> =
-        HashMap::new();
+    let mut known_dynamic_components: IdMap<IdentifierId, Option<SourceLocation>> = IdMap::new();
 
     for (_block_id, block) in &func.body.blocks {
         // Process phis: propagate dynamic component knowledge through phi nodes
         'phis: for phi in &block.phis {
             for (_pred, operand) in &phi.operands {
-                if let Some(loc) = known_dynamic_components.get(&operand.identifier) {
+                if let Some(loc) = known_dynamic_components.get(operand.identifier) {
                     known_dynamic_components.insert(phi.place.identifier, *loc);
                     continue 'phis;
                 }
@@ -50,14 +49,14 @@ pub(crate) fn validate_static_components(func: &HirFunction) -> CompilerError {
                     known_dynamic_components.insert(lvalue_id, *loc);
                 }
                 InstructionValue::LoadLocal { place, .. } => {
-                    if let Some(loc) = known_dynamic_components.get(&place.identifier) {
+                    if let Some(loc) = known_dynamic_components.get(place.identifier) {
                         known_dynamic_components.insert(lvalue_id, *loc);
                     }
                 }
                 InstructionValue::StoreLocal {
                     lvalue, value: val, ..
                 } => {
-                    if let Some(loc) = known_dynamic_components.get(&val.identifier) {
+                    if let Some(loc) = known_dynamic_components.get(val.identifier) {
                         let loc = *loc;
                         known_dynamic_components.insert(lvalue_id, loc);
                         known_dynamic_components.insert(lvalue.place.identifier, loc);
@@ -65,8 +64,7 @@ pub(crate) fn validate_static_components(func: &HirFunction) -> CompilerError {
                 }
                 InstructionValue::JsxExpression { tag, .. } => {
                     if let JsxTag::Place(tag_place) = tag {
-                        if let Some(location) = known_dynamic_components.get(&tag_place.identifier)
-                        {
+                        if let Some(location) = known_dynamic_components.get(tag_place.identifier) {
                             let location = *location;
                             let diagnostic = CompilerDiagnostic::new(
                                 ErrorCategory::StaticComponents,

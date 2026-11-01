@@ -22,7 +22,6 @@ using namespace JSC;
 
 // Keep this list sorted.
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro($$typeof) \
     macro(AbortSignal) \
     macro(Buffer) \
     macro(ReadableByteStreamController) \
@@ -37,19 +36,17 @@ using namespace JSC;
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
-    macro(_debugInfo) \
-    macro(_debugStack) \
-    macro(_debugTask) \
     macro(_events) \
-    macro(_owner) \
-    macro(_store) \
     macro(abort) \
     macro(addAbortAlgorithmToSignal) \
+    macro(armedTimeout) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
+    macro(asymmetricMatch) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
+    macro(bareStandardStreamPrototypes) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \
@@ -69,11 +66,14 @@ using namespace JSC;
     macro(data) \
     macro(decode) \
     macro(dest) \
+    macro(detail) \
     macro(dirname) \
+    macro(document) \
     macro(domain) \
     macro(drain) \
     macro(encoding) \
     macro(end) \
+    macro(env) \
     macro(errno) \
     macro(esmLoadSync) \
     macro(esmNamespaceForCjs) \
@@ -82,6 +82,7 @@ using namespace JSC;
     macro(esmRegistryHasEvaluated) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
+    macro(exchange) \
     macro(expires) \
     macro(exports) \
     macro(extname) \
@@ -91,7 +92,10 @@ using namespace JSC;
     macro(filename) \
     macro(flush) \
     macro(format) \
+    macro(globScan) \
+    macro(globScanSync) \
     macro(handleEvent) \
+    macro(hasWaitingResponses) \
     macro(headers) \
     macro(highWaterMark) \
     macro(host) \
@@ -101,19 +105,23 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(initialExports) \
     macro(internal) \
     macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isEqualNode) \
+    macro(isOpen) \
+    macro(isPrepared) \
     macro(isUncloneable) \
     macro(isUntransferable) \
     macro(join) \
     macro(json) \
     macro(kResistStopPropagation) \
-    macro(key) \
     macro(lazy) \
+    macro(lightStandardStreams) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \
@@ -133,18 +141,25 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(natives) \
+    macro(nodeName) \
+    macro(nodeType) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \
+    macro(onEndCallbacks) \
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
+    macro(ownReadableState) \
+    macro(ownWritableState) \
     macro(parse) \
     macro(partitioned) \
     macro(path) \
     macro(paths) \
     macro(peekPromiseSettledValue) \
     macro(peekPromiseStatus) \
+    macro(pipelinedResponses) \
     macro(pokePromiseAsHandled) \
     macro(port) \
     macro(prev) \
@@ -152,23 +167,31 @@ using namespace JSC;
     macro(preventCancel) \
     macro(preventClose) \
     macro(processBindingConstants) \
-    macro(props) \
     macro(pull) \
     macro(rawHeaders) \
     macro(read) \
     macro(readable) \
+    macro(readableMark) \
     macro(readableType) \
     macro(redirect) \
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
+    macro(requireCacheCompiledEntry) \
+    macro(requireCacheDidDelete) \
+    macro(requireCacheWillSet) \
+    macro(isHiddenFromRequireCache) \
+    macro(requireCommonJS) \
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
+    macro(resumeUnlessFlowing) \
+    macro(runTail) \
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(setColumnNameTransform) \
     macro(sharedFd) \
     macro(signal) \
     macro(size) \
@@ -190,18 +213,33 @@ using namespace JSC;
     macro(type) \
     macro(updateRef) \
     macro(url) \
-    macro(validated) \
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(webStreamClosedPromise) \
     macro(webStreamControllerError) \
     macro(writable) \
+    macro(writableMark) \
     macro(writableType) \
     macro(write) \
     macro(writer) \
     macro(written) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
+
+// Among the names above: those that only src/js reads and writes, never native code. A property under one of them is an
+// ordinary property that nothing lists: a Proxy reads and writes it on its target, without a trap. Keep this list sorted.
+#define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
+    macro(armedTimeout) \
+    macro(exchange) \
+    macro(hasWaitingResponses) \
+    macro(isOpen) \
+    macro(isPrepared) \
+    macro(ownReadableState) \
+    macro(ownWritableState) \
+    macro(pipelinedResponses) \
+    macro(readableMark) \
+    macro(resumeUnlessFlowing) \
+    macro(writableMark)
 
 class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);

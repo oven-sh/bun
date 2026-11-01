@@ -14,6 +14,7 @@ import {
   isDebug,
   isFlaky,
   isMacOS,
+  isRoot,
   isWindows,
   rss,
   runFixtureMaxRSS,
@@ -1113,8 +1114,9 @@ describe.concurrent("Bun.file", () => {
     }
   }
 
-  // on Windows the creator of the file will be able to read from it so this test is disabled on it
-  describe.skipIf(isWindows)("bad permissions throws", () => {
+  // on Windows the creator of the file will be able to read from it so this test is disabled on it;
+  // root can read it anywhere, so it is disabled there as well
+  describe.skipIf(isWindows || isRoot)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");
@@ -1814,6 +1816,37 @@ it("fetch() file:// rejects a host that is not this machine", async () => {
     (isWindows ? "\\ or / characters" : "/ characters");
   expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "%2F$1")}`)).toBe(encoded);
   expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "/sub/..%2f$1")}`)).toBe(encoded);
+});
+
+it("fetch() file:// rejects a path with an encoded NUL", async () => {
+  using dir = tempDir("fetch-file-nul", { "note.txt": "NOTE-TXT" });
+  const url = Bun.pathToFileURL(join(String(dir), "note.txt")).href;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `for (const url of process.argv.slice(1)) {
+        const outcome = fetch(url).then(
+          async r => r.status + " " + (await r.text()),
+          e => e.name + " " + e.code + ": " + e.message,
+        );
+        console.log(await outcome);
+      }`,
+      url,
+      url + "%00.png",
+      url + "%00",
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // Bun.file(url) and node:fs report the same error for this URL.
+  const rejected = (suffix: string) =>
+    "TypeError ERR_INVALID_ARG_VALUE: The argument 'path' must be a string, Uint8Array, or URL without null bytes. " +
+    `Received ${JSON.stringify(decodeURIComponent(new URL(url).pathname) + suffix)}`;
+  expect(stdout.split("\n")).toEqual(["200 NOTE-TXT", rejected("\0.png"), rejected("\0"), ""]);
+  expect(exitCode).toBe(0);
 });
 
 it("proxy: true is rejected, since it names no proxy", async () => {
@@ -2739,7 +2772,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";
@@ -2768,7 +2801,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";
@@ -4199,5 +4232,61 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
   });
   expect(authorizationLines).toEqual(["Bearer [redacted]"]);
   expect(stderr).not.toContain("sekret-token");
+  expect(exitCode).toBe(0);
+});
+
+it("verbose fetch logging escapes control characters coming from the peer", async () => {
+  // U+009B is the one-byte form of ESC [ (CSI), so "\u009b31m" written to a terminal as-is turns
+  // the rest of the line red. HTTP/1.1 lets a server put any byte >= 0x80 in a reason phrase or
+  // header value, which includes the UTF-8 encoding of U+009B.
+  let request = "";
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket, chunk) {
+        request += chunk.toString("latin1");
+        if (!request.includes("\r\n\r\n")) return;
+        socket.end(
+          Buffer.from(
+            "HTTP/1.1 500 Server \u009bError\r\n" +
+              "x-evil: a\u009b31mb\r\n" +
+              "content-length: 0\r\n" +
+              "connection: close\r\n" +
+              "\r\n",
+          ),
+        );
+      },
+    },
+  });
+
+  // Header values are byte strings, so the two Latin-1 characters "\u00c2\u009b" are sent as the
+  // bytes C2 9B, i.e. the same UTF-8 encoded U+009B the server sends back.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const res = await fetch(process.env.SERVER_URL, {
+         verbose: "curl",
+         headers: { "x-req": "v\\u00c2\\u009b31mq", authorization: "Bea\\u00c2\\u009brer sekret-token" },
+       });
+       console.log(res.status);`,
+    ],
+    env: { ...bunEnv, SERVER_URL: `http://127.0.0.1:${listener.port}/` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("500\n");
+  // The request line and the response status line are printed on their own lines; header lines
+  // are printed once per header in the "name: value" trace and once more in the curl command.
+  expect(stderr).toMatch(/^.*x-req: v\\u009b31mq$/im);
+  expect(stderr).toMatch(/^.*authorization: Bea\\u009brer \[redacted\]$/im);
+  expect(stderr).toMatch(/^< 500 Server \\u009bError$/m);
+  expect(stderr).toMatch(/^< x-evil: a\\u009b31mb$/m);
+  expect(stderr).toContain(`-H "x-req: v\\u009b31mq"`);
+  expect(stderr).not.toMatch(/[\x80-\x9f]/);
   expect(exitCode).toBe(0);
 });

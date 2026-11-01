@@ -1,0 +1,12 @@
+const show = require("./show.cjs");
+show("before a store", module);
+module.parent = 7;
+show("a number", module);
+console.log(module.parent === 7);
+module.parent = { mine: 1 };
+show("an object", module);
+console.log(module.parent?.mine);
+module.parent = undefined;
+show("undefined", module);
+module.parent = null;
+show("null", module);

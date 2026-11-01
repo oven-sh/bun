@@ -2,8 +2,9 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_core::{String, StringView};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
     OptionDefinition, OptionValueType, TokenSubtype, classify_token, find_option_by_short_name,
@@ -189,6 +190,7 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
     let exec_argv = super::process::get_exec_argv(global)?;
     let argv = super::process::get_argv(global)?;
     if argv.is_array() && exec_argv.is_array() {
+        let end = u32::try_from(argv.get_length(global)?).expect("int cast");
         let mut iter = exec_argv.array_iterator(global)?;
         while let Some(item) = iter.next()? {
             if item.is_string() {
@@ -200,16 +202,17 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
                 {
                     return Ok(ArgsSlice {
                         array: argv,
-                        start: 1,
-                        end: u32::try_from(argv.get_length(global)?).expect("int cast"),
+                        start: end.min(1),
+                        end,
                     });
                 }
             }
         }
+        // `process.argv` can have fewer than 2 items. Clamp the start like `ArrayPrototypeSlice` does.
         return Ok(ArgsSlice {
             array: argv,
-            start: 2,
-            end: u32::try_from(argv.get_length(global)?).expect("int cast"),
+            start: end.min(2),
+            end,
         });
     }
 
@@ -874,18 +877,19 @@ impl<'a> ParseArgsState<'a> {
     }
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
-pub(crate) fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, callframe, default_roots))
+pub(crate) fn parse_args<'a>(cx: &mut JsScope<'a>, config: JsLocal<'a>) -> JsResult<JSValue> {
+    let global = cx.global();
+    MarkedArgumentBuffer::new(|default_roots| {
+        parse_args_impl(global, config.to_js(), default_roots)
+    })
 }
 
 fn parse_args_impl(
     global: &JSGlobalObject,
-    callframe: &CallFrame,
+    config_value: JSValue,
     default_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
     // jsc.markBinding(@src()) — debug-only, dropped
-    let config_value = callframe.arguments_as_array::<1>()[0];
     //
     // Phase 0: parse the config object
     //

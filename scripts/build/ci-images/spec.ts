@@ -42,6 +42,8 @@ const files = {
 export const bakeInputs: readonly string[] = ["scripts/build/ci-images/spec.ts", ...Object.values(files)];
 
 const alpineRelease = "3.23";
+/** What an apt repository calls a release of Debian or Ubuntu. */
+const aptSuites: Record<string, string> = { "13": "trixie", "25.04": "plucky" };
 
 /** The file name of the image's record, on the machine and in a bake directory once the bake job has copied it out. */
 export const imageRecordName = "bun-image.txt";
@@ -68,6 +70,8 @@ export const locations = {
   /** `bun install`'s cache, filled while the image is baked. */
   installCache: { linux: "/var/cache/bun-install", windows: "C:\\bun-install-cache" },
   rust: { linux: "/opt/rust", darwin: "/opt/rust", windows: "C:\\Program Files\\Rust" },
+  /** Debian and Ubuntu. Everywhere else a package manager places LLVM. */
+  llvm: "/opt/llvm",
   bunNinja: { linux: "/opt/bun-ninja", darwin: "/opt/bun-ninja", windows: "C:\\Program Files\\bun-ninja" },
   /** Dependency sources for scripts/build/download.ts, fetched while the image is baked. */
   prefetch: { linux: "/opt/bun-prefetch", windows: "C:\\bun-prefetch" },
@@ -98,15 +102,108 @@ export const locations = {
  */
 const prefetchTriggerVersion = 1;
 
+/**
+ * Every version, and the sha256 of every file a bake downloads by that version.
+ * A sum is the one its publisher gives; the comment above it says where to find
+ * the next one. "GitHub's" is the one GitHub computes for each file of a release
+ * ("sha256:…" beside the file on the release's page, `digest` in the API). Where
+ * there is neither, it is the sum of the file as it was when the pin was written.
+ */
 export const pins = {
-  nodejs: { version: "26.3.0", nodeGypInstallVersion: "11" },
-  bun: { version: "1.4.2" },
-  curlH3: { version: "8.19.0" },
-  buildkiteAgent: { version: "3.114.0" },
-  cmake: { version: "3.30.5" },
-  llvm: { version: "23.1.1" },
+  nodejs: {
+    version: "26.12.1",
+    nodeGypInstallVersion: "11",
+    // SHASUMS256.txt beside the files; unofficial-builds.nodejs.org has its own for the musl builds.
+    sha256: {
+      headers: "a983cdcea96e85d137b9b807cc776bb5564fc9e3e1c9185d59bbfaa781efd08f",
+      "linux-x64": "0fd1eb7770598f52a21995edf6ed35fc690400fa437c2386af329519e9143132",
+      "linux-aarch64": "a6c01af459dd8972ab3fb08ee5da81244d26ba8c4944a62d5bbba8c597ae154f",
+      "linux-x64-musl": "8bf9cc0e7f8e3c7ec5368dca19242cad651b6b09d35bcdcf290ac3f80925e8dd",
+      "linux-aarch64-musl": "c3694551f6cb888fe0befb4cb2e13ffe45b0bb2528ec141e7c3a29a7d7974d13",
+      "darwin-x64": "b85c2ea4420ad0bc4abf2dc6cf1f55130ed681f1cabf60cf3f526e4c9e2712ff",
+      "darwin-aarch64": "1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8",
+      // node.lib: Scoop installs Node.js itself on Windows.
+      "windows-x64": "caad0090dc3add94c06abd01e395e8ec0f1586c10071bda1f99480445d695f6f",
+      "windows-aarch64": "45084cbfc0170d7a30b29ab1eeeb2b0d770995ade0a13a4cc82cf31189f95c9f",
+    },
+  },
+  bun: {
+    version: "1.4.4",
+    // The release's SHASUMS256.txt.
+    sha256: {
+      "linux-x64": "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c",
+      "linux-aarch64": "baa6bb36f51d6e58561e02bbea825038a9df454f673d6d776e8bbf86f8c7850e",
+      "linux-x64-musl": "a5a8ccc5e74dcb883fe974f125a7bdb3b41e5195ed1b870e73f17effd3eb2b2d",
+      "linux-aarch64-musl": "57f01b02ac7113c61c935f28f38c2eab849e3c970dab21f8b640a87b1ef65009",
+      "darwin-x64": "50a3491f73abc2fe81673171a85762d3bc2cc1680ccecadd983de99adf77977e",
+      "darwin-aarch64": "c240d7f0ccb90c263a849fcdb09b7ee62630d921348ed6aafda86b9d577bc510",
+      "windows-x64": "cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5",
+      "windows-aarch64": "2d57a0eec0cb44d95c918c3f9734f60455a1306ae5085d76fc68f44e3ee30d09",
+    },
+  },
+  curlH3: {
+    version: "8.19.0",
+    // GitHub's.
+    sha256: {
+      "linux-x64": "9c70e3ac08a6d8e211a891fe2fc871a9cd3314c291adb5bb1a38e7355ce98ff7",
+      "linux-aarch64": "46873008eae6b7eb586aa56ce8787bdb8c1eccb52faf7055b32b6470c1b84cd6",
+      "linux-x64-musl": "477cf25c53e438b5293610faadf4b932009973c08e8be3a283afa25189aa85da",
+      "linux-aarch64-musl": "592b12257e97de01f73f681800b6f7ba43347e5880100cca4d33c6fec3eb286b",
+      "darwin-x64": "2c1b01c09af832e0aab50027419ea1dda998d71da7a2b57f1c602ca8e2ee1cfa",
+      "darwin-aarch64": "5687120e22bee309b74979eff543eacb9a202ec69550b488111157f0e234a290",
+      "windows-x64": "a99b3bb9de19ca28456bca2a66cbf5f34d0f6f773116ef8769fc7f5780f181c4",
+      "windows-aarch64": "38272d548deeddb76fba9c629eca5a9331c3b142b2dccfb3d72a189e81620d29",
+    },
+  },
+  buildkiteAgent: {
+    version: "4.7.0",
+    // The release's buildkite-agent-<version>.SHA256SUMS.
+    sha256: {
+      "linux-x64": "6a71ae796642ffa15063a1e571f160a758287cb8b028a7c00a599081eecdd2f5",
+      "linux-aarch64": "dfc9a41609cad90e4bf6a5acafcdf73e41790620128f562c88c06b532e9ce99f",
+      "windows-x64": "8fa3e012e646d7203574e34e23e56c1c7f0a36bed496aeab63d7e53d590ac87b",
+      "windows-aarch64": "92c5bdf99002d5f6636d9ad54af438694daafb33f4ed16d65a62449664a196cf",
+    },
+  },
+  cmake: {
+    version: "3.30.5",
+    // The release's cmake-<version>-SHA-256.txt.
+    sha256: {
+      x64: "83de8839f3fb0d9caf982a0435da3fa8c4fbe2c817dfec99def310dc7e6a8404",
+      aarch64: "93c3b8920379585dece1314f113c6c9008eaedfe56023c78d856fc86dad5b8e2",
+    },
+  },
+  llvm: {
+    version: "23.1.1",
+    // GitHub's, of LLVM-<version>-Linux-X64.tar.xz and -ARM64.tar.xz.
+    sha256: {
+      x64: "832aeb58d105de1cabc7b982dd2c65de0610f7377df48ae8fc2dd8e97420a15c",
+      aarch64: "3fbaaa6a1f147557a4095b9911f8dc2d4c745a11863982f76ee20e248c190a80",
+    },
+    // The lld and llvm-mt of LLVM's Linux release are linked against ICU 70, which is Ubuntu 22.04's (jammy's).
+    icu: {
+      directory: "i/icu",
+      name: "libicu70",
+      version: "70.1-2",
+      sha256: {
+        x64: "58a154f6307289813da2276f900498ef536ae7c0522d2cf31a3c3c5cf62dfd9a",
+        aarch64: "ac68372cf4a976e6a206858fd9b28c68e49d37d650b9b8653270038a6e7bc174",
+      },
+    },
+  },
   rust: {
     rustup: "1.28.2",
+    // rustup-init.sha256 (.exe.sha256) beside each file.
+    rustupSha256: {
+      "linux-x64": "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c",
+      "linux-aarch64": "e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c",
+      "linux-x64-musl": "e6599a1c7be58a2d8eaca66a80e0dc006d87bbcf780a58b7343d6e14c1605cb2",
+      "linux-aarch64-musl": "a97c8f56d7462908695348dd8c71ea6740c138ce303715793a690503a94fc9a9",
+      "darwin-x64": "9c331076f62b4d0edeae63d9d1c9442d5fe39b37b05025ec8d41c5ed35486496",
+      "darwin-aarch64": "20ef5516c31b1ac2290084199ba77dbbcaa1406c45c1d978ca68558ef5964ef5",
+      "windows-x64": "88d8258dcf6ae4f7a80c7d1088e1f36fa7025a1cfd1343731b4ee6f385121fc0",
+      "windows-aarch64": "de9f7d29ccd39efa59a3dda3ec363b396e09b92681229b9b8f6aaa4c84285e9c",
+    },
     channel: "nightly-2026-09-15",
     components: ["rust-src", "rustfmt", "clippy", "miri", "llvm-tools"],
     targets: [
@@ -123,18 +220,112 @@ export const pins = {
       "x86_64-pc-windows-msvc",
     ],
   },
-  androidNdk: { version: "r27c", apiLevel: 28 },
-  // A FreeBSD release moves from download.freebsd.org to the archive when it reaches end of life.
-  freebsd: { version: "14.3", baseUrl: "https://archive.freebsd.org/old-releases" },
+  androidNdk: {
+    version: "r27c",
+    apiLevel: 28,
+    // Google only publishes a SHA-1, in dl.google.com/android/repository/repository2-3.xml. This is of the file that has it.
+    sha256: "59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc",
+  },
+  // download.freebsd.org has a release until its end of life, and then only archive.freebsd.org/old-releases does.
+  freebsd: {
+    version: "14.4",
+    baseUrl: "https://download.freebsd.org/releases",
+    // base.txz in the MANIFEST beside it.
+    sha256: {
+      x64: "769f60a6eea2938ad6b7943cfbcc17dfaf7d1f7ba59a32b869a00349302df853",
+      aarch64: "c456bf75ee3d0b4da0b0b527402b0a9e61497f02756b2cc5801b51e80b3f90c4",
+    },
+  },
   // The release WebKit's prebuilt is built on (glibc 2.31).
   glibcSysroot: {
-    ubuntu: { release: "20.04", codename: "focal" },
-    gccDebsUrl: "https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs",
+    ubuntu: {
+      release: "20.04",
+      // What docker.io/library/ubuntu:20.04 names: an index with an image for each architecture.
+      image: "sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214",
+    },
+    // libc's runtime and headers, at the newest versions of focal-updates and focal. The sums are their Packages indexes'.
+    debs: [
+      {
+        directory: "g/glibc",
+        name: "libc6",
+        version: "2.31-0ubuntu9.18",
+        sha256: {
+          x64: "1b2281aac4935dfea1f89dfc19e445fdbb45303202af60679ccb8bf035f081a0",
+          aarch64: "4ff60d84ad78f3aa598297dc6966549fa6489f57599f197562ad91547f388da0",
+        },
+      },
+      {
+        directory: "g/glibc",
+        name: "libc6-dev",
+        version: "2.31-0ubuntu9.18",
+        sha256: {
+          x64: "11029900f2315b93ce487792ae1bf15f0927e5e50880c091e6a440b14d4e164a",
+          aarch64: "a690787a4ed5ad1bb9ce6aebe0bef3300e483e7ed97d11a6af3cdb107e642292",
+        },
+      },
+      {
+        directory: "l/linux",
+        name: "linux-libc-dev",
+        version: "5.4.0-216.236",
+        sha256: {
+          x64: "70c9addd36aabd2d031d5ea0fc444f8b193027aef79ff3d8275d25800aed8ede",
+          aarch64: "9f487e7f3a9fff7f42f67172e139fd23c11b30e9b70bf6ae5a2e90b099547990",
+        },
+      },
+      {
+        directory: "libx/libxcrypt",
+        name: "libcrypt1",
+        version: "4.4.10-10ubuntu4",
+        sha256: {
+          x64: "231b4dbbe5865775f118cfa61394f1e16fa7102b6953a327e672499a20876d73",
+          aarch64: "89907b6c1b613c430a53ef10909934b9ce5854a396cd173360495f6f8e5e7ea4",
+        },
+      },
+      {
+        directory: "libx/libxcrypt",
+        name: "libcrypt-dev",
+        version: "4.4.10-10ubuntu4",
+        sha256: {
+          x64: "f0a41d8e8cf379dbbdfc43169f34851ed452b3581e72c6654f2e290caf4e1b20",
+          aarch64: "3cbd65247c73ec78e15e9364d3f15643591fe25849382251c77a49204f083e68",
+        },
+      },
+    ],
+    gccDebs: {
+      url: "https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs",
+      // GitHub's.
+      sha256: {
+        x64: "a2b3b6e10b175bbaaefeb3e9e703ca26a97ed6c1f19ca842d3e0b0c8f941e65b",
+        aarch64: "be19db90d94c52c6061280bbadcaad9b09db1e9f2e77a12f8c18c5425d2eb056",
+      },
+    },
   },
   muslSysroot: { alpineRelease },
-  windowsSysroot: { xwin: "0.9.0", sdk: "10.0.26100", crt: "14.44.17.14" },
+  windowsSysroot: {
+    xwin: "0.9.0",
+    // The .sha256 beside each file of the release.
+    xwinSha256: {
+      x64: "31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4cd",
+      aarch64: "41466ca41e16fe7fc1b82a67babc7c3811021bf32de354b90b34d8c4edb153e2",
+    },
+    sdk: "10.0.26100",
+    crt: "14.44.17.14",
+  },
   macosSdk: { sdk: "26.5", commandLineTools: "26.5" },
-  pythonFuse: { version: "1.0.9" },
+  // Docker's and Tailscale's own apt repositories keep every version they have served. `keySha256` is of the
+  // repository's signing key as it was when the pin was written.
+  docker: {
+    keySha256: "1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570",
+    debian: { engine: "29.8.1", containerd: "2.3.6", buildx: "0.37.1", compose: "5.5.1" },
+    // The last ones Docker built for Ubuntu 25.04.
+    ubuntu: { engine: "29.2.1", containerd: "2.2.1", buildx: "0.31.1", compose: "5.0.2" },
+  },
+  tailscale: {
+    version: "1.102.4",
+    keySha256: "3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39",
+  },
+  // PyPI's.
+  pythonFuse: { version: "1.0.9", sha256: "9ed59577c36ab218d700aa2839f021f12c252b357186057572b98e19bc2a8589" },
   // https://github.com/oven-sh/ninja/releases; the sums are the release's bun-ninja.json.
   bunNinja: {
     tag: "bun-ninja-5ecd8831",
@@ -164,16 +355,65 @@ export const pins = {
       aarch64: "1687f43bd120601f62e54b970b1cc06f83e95897357dc5c679b57ec9d2fb40a7",
     },
   },
-  pwsh: { version: "7.5.2" },
-  openssh: { version: "v9.8.1.0p1-Preview" },
-  ccache: { version: "4.12.2" },
-  visualStudio: { channel: "17" },
+  /**
+   * Scoop is installed from its repositories, not from a release. `mainBucket`
+   * is what pins the apps of `scoopPackages`: it is a commit of the manifests
+   * (github.com/ScoopInstaller/Main), and a manifest names one version of its
+   * app, that version's URLs and their hashes. To bump an app, move the commit.
+   */
+  scoop: {
+    // github.com/ScoopInstaller/Install; the sum is of install.ps1 at that commit.
+    installer: {
+      commit: "1e2f334083d609986d8c8bc9e31ae8e87c39fab4",
+      sha256: "94f983b190438311e006b957db7c8422709e0ba62a6c2ac04e278164108f2512",
+    },
+    core: "11c0c8a79e4cee8786aae4b1181f1a1441d0ad57",
+    mainBucket: "ac40cd17aa3d1db6806a4c41f8eaa2d4eb359e81",
+  },
+  pwsh: {
+    version: "7.5.2",
+    // The release's hashes.sha256.
+    sha256: {
+      x64: "c1280668cd5bd3834a80b91905d1484d440f62533f87749244f443960138384f",
+      aarch64: "af19ecc24ccc5fe04d260f474140be6a05536be4820def97f13c33d26e7392bd",
+    },
+  },
+  openssh: {
+    version: "v9.8.1.0p1-Preview",
+    // Of the files as they were when the pin was written: the release is older than GitHub's sums.
+    sha256: {
+      x64: "c7a1369cd73c8165be00c66e90291c4dd67784de7c3aa3af18c68ebedffa6ea9",
+      aarch64: "89587076e80b416c3810bf2005fea6f35d093fbfabd9e45c167d245c23801562",
+    },
+  },
+  ccache: {
+    version: "4.12.2",
+    // GitHub's.
+    sha256: {
+      x64: "82c1b130b25cc162531dc7a062dc5ea99349cd536bc9eba8a66d976802d66516",
+      aarch64: "21cdedf2314fce5ddb711d390e6befe79e2d3ec1e3272385af63727314020785",
+    },
+  },
+  /**
+   * A row of "Fixed version bootstrappers" in
+   * https://learn.microsoft.com/visualstudio/releases/2022/release-history.
+   * `directory` and `sha256` are the two parts of the Build Tools link's path.
+   */
+  visualStudio: {
+    version: "17.14.41",
+    directory: "bc92e2cb-33de-4a0c-995d-efa817f16b16",
+    sha256: "37bb0fb429d163ecebd272a865d11a37b906d152bef960da2ddb29c2e2fd6eeb",
+  },
   pdbAddr2line: { version: "0.11.2" },
   intelSde: {
     version: "9.58.0-2025-06-16",
     sha256: "EBB8B3B63FCB0B6C1F9721118BA4883703D2AED9E0DB2DEFED4E44FBA78D9CA9",
   },
-  nssm: { version: "2.24-103-gdee49fc" },
+  // Of Bun's own copy of the file.
+  nssm: {
+    version: "2.24-103-gdee49fc",
+    sha256: "dd65d65d805ce646148d7ba18a9fcd1a1e8402f9e3822981252a6544136aad22",
+  },
   windowsSystem: { disabledServices: ["WSearch", "wuauserv", "DiagTrack", "dmwappushservice", "PcaSvc", "SysMain"] },
 } as const;
 
@@ -273,7 +513,7 @@ export const images: readonly BakedImage[] = [
 const aptPackages = [
   // Tools the other steps and CI itself run.
   ...["apt-transport-https", "bash", "ca-certificates", "curl", "git", "gnupg", "htop", "unzip", "wget", "xz-utils"],
-  // lsb-release: apt.llvm.org's installer asks it for the release's name.
+  // lsb-release: scripts/agent.ts asks it for the distro and its release.
   // libatomic1: nodejs.org's binary links it. libc6-dbg: symbols for core dumps.
   ...["lsb-release", "libatomic1", "libc6-dbg"],
   // Building Bun and its dependencies.
@@ -311,6 +551,12 @@ const apkPackages = [
 ];
 
 /**
+ * Roots of the distro's ca-certificates package that the machines do not trust,
+ * by how their lines of /etc/ca-certificates.conf start.
+ */
+const droppedRoots = ["mozilla/Comodo_AAA", "mozilla/emSign"];
+
+/**
  * The macOS test machines. CI does not bake them: scripts/darwin-ci runs the
  * generated script in the Tart guest image it builds, or on a bare host.
  */
@@ -331,6 +577,9 @@ const scoopPackages = {
   x64: ["nasm", "mingw"],
 } as const;
 
+/** Roots that the Windows machines do not trust, by how their names start. */
+const droppedWindowsRoots = ["AAA Certificate Services", "emSign"];
+
 /** Where `bun run ci:images` and CI write an image's bake directory, from the repository's root. */
 export const bakeDirectory = (key: string) => `build/ci-images/${key}`;
 /** Hosts more than one tool downloads from. */
@@ -338,14 +587,34 @@ const mirrors = {
   /** Bun's own copies of what has no stable public URL. */
   bunArtifacts: "https://buncistore.blob.core.windows.net/artifacts",
   alpine: "https://dl-cdn.alpinelinux.org/alpine",
+  /** Ubuntu keeps every architecture but x86 apart. */
+  ubuntu: { x64: "http://archive.ubuntu.com/ubuntu", aarch64: "http://ports.ubuntu.com/ubuntu-ports" },
 } as const;
 
-/** apt.llvm.org, Alpine and Homebrew name LLVM's packages by its major. */
+/** Alpine and Homebrew name LLVM's packages by its major, and so does clang its own directories. */
 const llvmMajor = pins.llvm.version.split(".")[0]!;
+
+/**
+ * The programs of LLVM's Linux release that go on an image. The release also has
+ * Flang, MLIR, LLDB, BOLT and the libraries to link LLVM into another program,
+ * each program with all of LLVM inside it, and nothing here runs those.
+ */
+const llvmPrograms = [
+  ...[`clang-${llvmMajor}`, "clang", "clang++", "clang-cl", "clang-cpp", "clang-format", "clang-tidy"],
+  ...["lld", "ld.lld", "ld64.lld", "lld-link", "wasm-ld"],
+  ...["llvm-ar", "llvm-ranlib", "llvm-lib", "llvm-dlltool"],
+  ...["llvm-objcopy", "llvm-strip", "llvm-install-name-tool", "llvm-bitcode-strip"],
+  ...["llvm-nm", "llvm-readobj", "llvm-readelf", "llvm-objdump", "llvm-otool", "llvm-size", "llvm-strings"],
+  ...["llvm-cxxfilt", "llvm-undname", "llvm-symbolizer", "llvm-addr2line", "llvm-dwarfdump", "llvm-config"],
+  ...["llvm-cov", "llvm-profdata"],
+  // For macOS and Windows targets.
+  ...["dsymutil", "llvm-lipo", "llvm-rc", "llvm-windres", "llvm-mt", "llvm-ml", "llvm-cvtres", "llvm-pdbutil"],
+];
 
 /** The same CPU, as each publisher spells it. */
 const cpuName = { x64: "x86_64", aarch64: "aarch64" } as const;
 const debianArch = { x64: "amd64", aarch64: "arm64" } as const;
+const llvmArch = { x64: "X64", aarch64: "ARM64" } as const;
 const nodeArch = { x64: "x64", aarch64: "arm64" } as const;
 
 /** What the `prefetch` tool downloads is decided by the commit being built: a dependency bump does not rename an image. */
@@ -386,14 +655,68 @@ const limits = { openFiles: 1048576, processes: 1048576 };
 const bin = (image: Image, name: string) =>
   image.os === "windows" ? `C:/Windows/System32/${name}.exe` : `/usr/local/bin/${name}`;
 
+/** `linux-x64`, `linux-aarch64-musl`, `windows-x64`, `darwin-aarch64`: what a publisher builds a file for, and the key of its sum in `pins`. */
+const platform = (image: Image) =>
+  image.os === "linux" && image.abi === "musl"
+    ? (`linux-${image.arch}-musl` as const)
+    : (`${image.os}-${image.arch}` as const);
+
+function aptSuite(image: LinuxImage): string {
+  const suite = aptSuites[image.release];
+  if (!suite) throw new BuildError(`aptSuites has no name for ${image.distro} ${image.release}`);
+  return suite;
+}
+
 /** Packages from the distro's own repositories. */
 function packages(image: LinuxImage): Tool {
-  // add-apt-repository, which apt.llvm.org's installer uses on Ubuntu.
-  const apt = image.distro === "ubuntu" ? [...aptPackages, "software-properties-common"] : aptPackages;
   return {
     name: "packages",
     identity: packageDatabase,
-    steps: [image.distro === "alpine" ? apkAdd(apkPackages, { update: true }) : aptInstall(apt, { update: true })],
+    steps: [
+      image.distro === "alpine" ? apkAdd(apkPackages, { update: true }) : aptInstall(aptPackages, { update: true }),
+    ],
+  };
+}
+
+/**
+ * The system's trusted roots without `droppedRoots`. curl, git, wget and the
+ * agent read them. Bun and Node.js use lists of their own unless told otherwise.
+ */
+function caCertificates(): Tool {
+  const trusted = "/etc/ssl/certs";
+  // Names each file after the first that holds the first file's certificate, and fails if there is one.
+  const stillHeld = [
+    `/^-----BEGIN CERTIFICATE-----/ { body = ""; next }`,
+    `/^-----END CERTIFICATE-----/ {`,
+    `  if (NR == FNR) dropped = body`,
+    `  else if (body == dropped) { print FILENAME " still holds " ARGV[1]; held = 1 }`,
+    `  next`,
+    `}`,
+    `{ body = body $0 }`,
+    `END { exit held }`,
+  ].join("\n");
+  return {
+    name: "ca-certificates",
+    identity: observed(run("grep", "-c", "BEGIN CERTIFICATE", `${trusted}/ca-certificates.crt`)),
+    steps: [
+      comment("A line that starts with ! names a root that the package has and the machine does not trust."),
+      ...droppedRoots.map(root => run("sed", "-i", `s,^${root},!&,`, "/etc/ca-certificates.conf")),
+      run("update-ca-certificates"),
+      comment("A dropped root's file stays in /usr/share. A release without the file has nothing to look for."),
+      ...droppedRoots.map(root =>
+        forEachFile("root", text`/usr/share/ca-certificates/${root}${glob("*")}`, [
+          ifExists(variable("root"), [
+            run(
+              "awk",
+              stillHeld,
+              variable("root"),
+              text`${trusted}/${glob("*.crt")}`,
+              text`${trusted}/${glob("*.pem")}`,
+            ),
+          ]),
+        ]),
+      ),
+    ],
   };
 }
 
@@ -478,10 +801,11 @@ function agentAccount(): Tool {
 
 /** Node.js, its headers, and the node-gyp cache that lets native addons build offline. */
 function nodejs(image: Image): Tool {
-  const { version, nodeGypInstallVersion } = pins.nodejs;
+  const { version, nodeGypInstallVersion, sha256 } = pins.nodejs;
   const arch = nodeArch[image.arch];
   const headers = unpackedArchive({
     url: `https://nodejs.org/download/release/v${version}/node-v${version}-headers.tar.gz`,
+    sha256: sha256.headers,
     file: "headers.tar.gz",
     into: scratch("headers"),
     strip: 1,
@@ -500,7 +824,11 @@ function nodejs(image: Image): Tool {
       scoopInstall(`nodejs@${version}`),
       ...headers,
       comment("node.lib: what a native addon links against on Windows."),
-      download(`https://nodejs.org/dist/v${version}/win-${arch}/node.lib`, scratch("node.lib")),
+      download(
+        `https://nodejs.org/dist/v${version}/win-${arch}/node.lib`,
+        scratch("node.lib"),
+        sha256[platform(image)],
+      ),
       comment("Two caches: the one of the user who runs this, and the one of the agent's service account."),
       ...[environment("LOCALAPPDATA"), `${windowsAgentHome}/AppData/Local`].flatMap(base => {
         const cache = text`${base}/node-gyp/Cache/${version}`;
@@ -519,7 +847,13 @@ function nodejs(image: Image): Tool {
         ? `https://unofficial-builds.nodejs.org/download/release/v${version}/node-v${version}-linux-${arch}-musl.tar.gz`
         : `https://nodejs.org/dist/v${version}/node-v${version}-${image.os}-${arch}.tar.gz`;
     return [
-      ...unpackedArchive({ url, file: "node.tar.gz", into: scratch("node"), strip: 1 }),
+      ...unpackedArchive({
+        url,
+        sha256: sha256[platform(image)],
+        file: "node.tar.gz",
+        into: scratch("node"),
+        strip: 1,
+      }),
       ...["/usr/local/bin", "/usr/local/lib", "/usr/local/include"].map(path => directory(path)),
       copy(scratch("node/bin/."), "/usr/local/bin/"),
       copy(scratch("node/lib/node_modules"), "/usr/local/lib/"),
@@ -537,14 +871,14 @@ function nodejs(image: Image): Tool {
 }
 
 function bun(image: Image): Tool {
-  const triplet =
-    image.os === "linux" && image.abi === "musl" ? `bun-linux-${image.arch}-musl` : `bun-${image.os}-${image.arch}`;
+  const triplet = `bun-${platform(image)}`;
   return {
     name: "bun",
     identity: pinned(pins.bun.version),
     steps: [
       ...executableFromArchive({
         url: `https://github.com/oven-sh/bun/releases/download/bun-v${pins.bun.version}/${triplet}.zip`,
+        sha256: pins.bun.sha256[platform(image)],
         kind: "zip",
         member: `${triplet}/bun${image.os === "windows" ? ".exe" : ""}`,
         to: bin(image, "bun"),
@@ -562,13 +896,13 @@ function bun(image: Image): Tool {
  * the same one.
  */
 function bunNinja(image: Image): Tool {
-  const platform = `${image.os}-${image.arch}` as const;
+  const build = `${image.os}-${image.arch}` as const;
   return {
     name: "bun-ninja",
     identity: pinned(pins.bunNinja.tag),
     steps: unpackedArchive({
-      url: `https://github.com/oven-sh/ninja/releases/download/${pins.bunNinja.tag}/bun-ninja-${platform}.zip`,
-      sha256: pins.bunNinja.sha256[platform],
+      url: `https://github.com/oven-sh/ninja/releases/download/${pins.bunNinja.tag}/bun-ninja-${build}.zip`,
+      sha256: pins.bunNinja.sha256[build],
       file: "ninja.zip",
       into: locations.bunNinja[image.os],
       ...(image.os === "windows" ? {} : { only: ["ninja"] }),
@@ -594,6 +928,7 @@ function curlH3(image: Image): Tool {
     steps: [
       ...executableFromArchive({
         url,
+        sha256: pins.curlH3.sha256[platform(image)],
         kind: "tar.xz",
         member: windows ? "curl.exe" : "curl",
         // 7-Zip, which unpacks it on Windows, takes the whole archive out.
@@ -606,22 +941,44 @@ function curlH3(image: Image): Tool {
   };
 }
 
-function tailscale(): Tool {
+/** Tailscale publishes no package for Alpine, which has its own. */
+function tailscale(image: LinuxImage): Tool {
+  if (image.distro === "alpine") {
+    return {
+      name: "tailscale",
+      identity: packageDatabase,
+      steps: [apkAdd(["tailscale"]), service("tailscale", "enabled"), service("tailscale", "started")],
+    };
+  }
+  const { version, keySha256 } = pins.tailscale;
+  const repository = `https://pkgs.tailscale.com/stable/${image.distro}`;
+  const suite = aptSuite(image);
   return {
     name: "tailscale",
-    identity: packageDatabase,
-    steps: runInstallerScript({ url: "https://tailscale.com/install.sh", interpreter: "sh" }),
+    identity: pinned(version),
+    steps: [
+      ...aptRepository({
+        name: "tailscale",
+        key: { url: `${repository}/${suite}.noarmor.gpg`, sha256: keySha256, kind: "gpg" },
+        url: repository,
+        suite,
+        component: "main",
+      }),
+      aptInstall([`tailscale=${version}`], { update: true }),
+    ],
   };
 }
 
 function buildkiteAgent(image: BakedImage): Tool {
   const { version } = pins.buildkiteAgent;
+  const sha256 = pins.buildkiteAgent.sha256[`${image.os}-${image.arch}`];
   const release = `https://github.com/buildkite/agent/releases/download/v${version}`;
   const onWindows = [
     directory(`${windowsAgentHome}/bin`),
     directory(`${windowsAgentHome}/hooks`),
     ...executableFromArchive({
       url: `${release}/buildkite-agent-windows-${debianArch[image.arch]}-${version}.zip`,
+      sha256,
       kind: "zip",
       member: "buildkite-agent.exe",
       to: `${windowsAgentHome}/bin/buildkite-agent.exe`,
@@ -634,6 +991,7 @@ function buildkiteAgent(image: BakedImage): Tool {
   ];
   const onLinux = executableFromArchive({
     url: `${release}/buildkite-agent-linux-${debianArch[image.arch]}-${version}.tar.gz`,
+    sha256,
     kind: "tar.gz",
     member: "buildkite-agent",
     extractOnly: "./buildkite-agent",
@@ -644,20 +1002,24 @@ function buildkiteAgent(image: BakedImage): Tool {
 
 function cmake(image: LinuxImage): Tool {
   if (image.distro === "alpine") return { name: "cmake", identity: packageDatabase, steps: [apkAdd(["cmake"])] };
-  const { version } = pins.cmake;
+  const { version, sha256 } = pins.cmake;
   const url = `https://github.com/Kitware/CMake/releases/download/v${version}/cmake-${version}-linux-${cpuName[image.arch]}.sh`;
   return {
     name: "cmake",
     identity: pinned(version),
-    steps: [download(url, scratch("cmake.sh")), run("sh", scratch("cmake.sh"), "--skip-license", "--prefix=/usr")],
+    steps: [
+      download(url, scratch("cmake.sh"), sha256[image.arch]),
+      run("sh", scratch("cmake.sh"), "--skip-license", "--prefix=/usr"),
+    ],
   };
 }
 
 /**
- * clang, lld and the LLVM tools. Scoop installs the exact release on Windows.
- * Neither apt.llvm.org, Alpine nor Homebrew can be asked for a patch release,
- * only for a major; scripts/build/tools.ts is what decides whether the
- * compiler it finds is close enough to the pin.
+ * clang, lld and the LLVM tools: the exact release on Debian and Ubuntu, from
+ * LLVM's own build of it, and on Windows, from Scoop. LLVM has no build for
+ * musl or for an Intel Mac, and neither Alpine nor Homebrew can be asked for a
+ * patch release, only for a major; scripts/build/tools.ts is what decides
+ * whether the compiler it finds is close enough to the pin.
  */
 function llvm(image: Image): Tool {
   const { version } = pins.llvm;
@@ -703,35 +1065,33 @@ function llvm(image: Image): Tool {
       ],
     };
   }
-  const sequoia = "/usr/share/apt/default-sequoia.config";
   return {
     name: "llvm",
-    identity: packageDatabase,
+    identity: pinned(version),
     steps: [
-      comment(
-        "apt.llvm.org signs with a SHA-1 key, which apt's sqv verifier stopped accepting on 2026-02-01:\n" +
-          "https://github.com/llvm/llvm-project/issues/153385",
-      ),
-      ifExists("/usr/bin/sqv", [
-        ifExists(sequoia, [
-          directory("/etc/crypto-policies/back-ends"),
-          toFile(
-            run(
-              "sed",
-              "s/sha1.second_preimage_resistance = 2026-02-01/sha1.second_preimage_resistance = 2028-02-01/",
-              sequoia,
-            ),
-            "/etc/crypto-policies/back-ends/apt-sequoia.config",
-          ),
-        ]),
-      ]),
-      ...runInstallerScript({ url: "https://apt.llvm.org/llvm.sh", interpreter: "bash", arguments: [major, "all"] }),
-      comment("llvm-symbolizer, for ASAN reports."),
-      aptInstall([`llvm-${major}-tools`]),
-      comment("Debian only links some of the tools into /usr/bin without a version suffix."),
-      addToPath(`/usr/lib/llvm-${major}/bin`),
+      ...llvmRelease(image.arch, [...llvmPrograms.map(name => `bin/${name}`), `lib/clang/${major}`]),
+      ...installedDeb({
+        url: ubuntuDebUrl(pins.llvm.icu, image.arch),
+        sha256: pins.llvm.icu.sha256[image.arch],
+        file: "libicu.deb",
+      }),
+      addToPath(`${locations.llvm}/bin`),
     ],
   };
+}
+
+/** These files and directories of LLVM's Linux release for `arch`, where the image has LLVM. */
+function llvmRelease(arch: Arch, members: string[]): Step[] {
+  const { version, sha256 } = pins.llvm;
+  const root = `LLVM-${version}-Linux-${llvmArch[arch]}`;
+  return unpackedArchive({
+    url: `https://github.com/llvm/llvm-project/releases/download/llvmorg-${version}/${root}.tar.xz`,
+    sha256: sha256[arch],
+    file: `llvm-${arch}.tar.xz`,
+    into: locations.llvm,
+    strip: 1,
+    only: members.map(member => `${root}/${member}`),
+  });
 }
 
 /**
@@ -740,7 +1100,7 @@ function llvm(image: Image): Tool {
  * source lint keeps the two in step.
  */
 function rust(image: Image): Tool {
-  const { rustup, channel, components, targets } = pins.rust;
+  const { rustup, rustupSha256, channel, components, targets } = pins.rust;
   const cpu = cpuName[image.arch];
   const host =
     image.os === "linux"
@@ -754,6 +1114,7 @@ function rust(image: Image): Tool {
     download(
       `https://static.rust-lang.org/rustup/archive/${rustup}/${host}/rustup-init${image.os === "windows" ? ".exe" : ""}`,
       installer,
+      rustupSha256[platform(image)],
     ),
     ...(image.os === "windows" ? [] : [mode("+x", installer)]),
     run(
@@ -793,21 +1154,17 @@ function rust(image: Image): Tool {
   };
 }
 
-/** The x86-64 compiler runtime, so the arm64 build image can link for x64. */
+/** The x86-64 compiler runtime, so the arm64 build image can link for x64. A release of LLVM has only its own architecture's. */
 function crossCompilerRt(): Tool {
-  const major = llvmMajor;
   return {
     name: "cross-compiler-rt",
-    identity: packageDatabase,
-    steps: [
-      run("dpkg", "--add-architecture", "amd64"),
-      aptInstall([`libclang-rt-${major}-dev:amd64`], { update: true }),
-    ],
+    identity: pinned(pins.llvm.version),
+    steps: llvmRelease("x64", [`lib/clang/${llvmMajor}/lib/x86_64-unknown-linux-gnu`]),
   };
 }
 
 function androidNdk(): Tool {
-  const { version, apiLevel } = pins.androidNdk;
+  const { version, apiLevel, sha256 } = pins.androidNdk;
   const ndk = locations.androidNdk;
   const parent = ndk.slice(0, ndk.lastIndexOf("/"));
   const prebuilt = `${ndk}/toolchains/llvm/prebuilt/linux-x86_64`;
@@ -819,6 +1176,7 @@ function androidNdk(): Tool {
     steps: [
       ...unpackedArchive({
         url: `https://dl.google.com/android/repository/android-ndk-${version}-linux.zip`,
+        sha256,
         file: "ndk.zip",
         into: parent,
       }),
@@ -835,7 +1193,7 @@ function androidNdk(): Tool {
       setEnvironment("ANDROID_NDK_ROOT", ndk),
       comment(
         "clang looks for libclang_rt.builtins and libunwind in its own resource directory and nowhere else,\n" +
-          "so the NDK's are linked into it: in the flat layout apt.llvm.org's clang uses and in the per-triple one.",
+          "so the NDK's are linked into it: in the per-triple layout, and in the flat one clang looks in after it.",
       ),
       set("resource_dir", output(run("clang", "-print-resource-dir"))),
       set("ndk_clang", output(pipe(run("ls", `${prebuilt}/lib/clang/`), run("head", "-n1")))),
@@ -855,13 +1213,14 @@ function androidNdk(): Tool {
 }
 
 function freebsdSysroot(): Tool {
-  const { version, baseUrl } = pins.freebsd;
+  const { version, baseUrl, sha256 } = pins.freebsd;
   return {
     name: "freebsd-sysroot",
     identity: pinned(version),
     steps: (["x64", "aarch64"] as const).flatMap(arch =>
       unpackedArchive({
         url: `${baseUrl}/${debianArch[arch]}/${version}-RELEASE/base.txz`,
+        sha256: sha256[arch],
         file: `base-${arch}.tar.xz`,
         into: locations.freebsdSysroot[arch],
         only: ["./usr/include", "./usr/lib", "./lib"],
@@ -877,8 +1236,7 @@ function freebsdSysroot(): Tool {
  * over what is known on the machine.
  */
 function glibcSysroot(): Tool {
-  const { ubuntu } = pins.glibcSysroot;
-  const filenameOf = `$1=="Package:"&&$2==p{f=1} f&&$1=="Filename:"{print $2; exit}`;
+  const { ubuntu, debs, gccDebs } = pins.glibcSysroot;
   return {
     name: "glibc-sysroot",
     identity: observed(treeDigest(locations.glibcSysroot.x64, locations.glibcSysroot.aarch64)),
@@ -888,10 +1246,8 @@ function glibcSysroot(): Tool {
       ...(["x64", "aarch64"] as const).flatMap((arch): Step[] => {
         const deb = debianArch[arch];
         const triple = `${cpuName[arch]}-linux-gnu`;
-        const mirror = arch === "x64" ? "http://archive.ubuntu.com/ubuntu" : "http://ports.ubuntu.com/ubuntu-ports";
         const sysroot = locations.glibcSysroot[arch];
         const image = scratch(`image-${deb}`);
-        const index = scratch(`Packages-${deb}`);
         return [
           comment(
             `${deb}: ubuntu:${ubuntu.release}'s root filesystem. Device nodes cannot be made here and are not needed.`,
@@ -902,7 +1258,7 @@ function glibcSysroot(): Tool {
             "copy",
             "--override-arch",
             deb,
-            `docker://docker.io/library/ubuntu:${ubuntu.release}`,
+            `docker://docker.io/library/ubuntu@${ubuntu.image}`,
             text`dir:${image}`,
           ),
           forEachOutput(
@@ -910,19 +1266,9 @@ function glibcSysroot(): Tool {
             pipe(run("jq", "-r", ".layers[].digest", text`${image}/manifest.json`), run("sed", "s/^sha256://")),
             [tolerate(run("tar", "-xzf", text`${image}/${variable("layer")}`, "-C", sysroot))],
           ),
-          comment(
-            `${deb}: libc's runtime and headers from ${ubuntu.codename}; ${ubuntu.codename}-updates first, so its version is the one found.`,
-          ),
-          download(
-            `${mirror}/dists/${ubuntu.codename}-updates/main/binary-${deb}/Packages.gz`,
-            scratch(`updates-${deb}.gz`),
-          ),
-          download(`${mirror}/dists/${ubuntu.codename}/main/binary-${deb}/Packages.gz`, scratch(`release-${deb}.gz`)),
-          toFile(run("gzip", "-dc", scratch(`updates-${deb}.gz`), scratch(`release-${deb}.gz`)), index),
-          ...["libc6", "libc6-dev", "linux-libc-dev", "libcrypt1", "libcrypt-dev"].flatMap((name): Step[] => [
-            set("path", output(run("awk", "-v", `p=${name}`, filenameOf, index))),
-            failUnlessNotEmpty(variable("path"), `${ubuntu.codename} has no ${name} for ${deb}`),
-            download(text`${mirror}/${variable("path")}`, scratch("package.deb")),
+          comment(`${deb}: libc's runtime and headers.`),
+          ...debs.flatMap((libcDeb): Step[] => [
+            download(ubuntuDebUrl(libcDeb, arch), scratch("package.deb"), libcDeb.sha256[arch]),
             run("dpkg-deb", "-x", scratch("package.deb"), sysroot),
           ]),
           comment(`${deb}: absolute symlinks point at the host; keep them inside the sysroot.`),
@@ -940,7 +1286,8 @@ function glibcSysroot(): Tool {
             : []),
           comment(`${deb}: gcc-13's libstdc++ and libgcc, the same packages WebKit's image uses.`),
           ...unpackedArchive({
-            url: `${pins.glibcSysroot.gccDebsUrl}/gcc-13-${ubuntu.codename}-${deb}.tar.gz`,
+            url: `${gccDebs.url}/gcc-13-focal-${deb}.tar.gz`,
+            sha256: gccDebs.sha256[arch],
             file: `gcc-${deb}.tar.gz`,
             into: scratch(`gcc-${deb}`),
           }),
@@ -953,8 +1300,13 @@ function glibcSysroot(): Tool {
   };
 }
 
-/** Alpine's musl, headers and libstdc++ for both architectures. apk.static installs packages of any architecture into any root. */
+/**
+ * Alpine's musl, headers and libstdc++ for both architectures. apk.static
+ * installs packages of any architecture into any root. A release's repository
+ * has only the newest build of each package, so there is no version to ask for.
+ */
 function muslSysroot(image: LinuxImage): Tool {
+  const newest = unchecked("Alpine's repository has only the newest build of a package.");
   const repository = `${mirrors.alpine}/v${pins.muslSysroot.alpineRelease}/main`;
   const host = cpuName[image.arch];
   const versionOf = `/^P:apk-tools-static$/{f=1} f&&/^V:/{print substr($0,3); exit}`;
@@ -962,12 +1314,13 @@ function muslSysroot(image: LinuxImage): Tool {
     name: "musl-sysroot",
     identity: observed(treeDigest(locations.muslSysroot.x64, locations.muslSysroot.aarch64)),
     steps: [
-      download(`${repository}/${host}/APKINDEX.tar.gz`, scratch("APKINDEX.tar.gz")),
+      download(`${repository}/${host}/APKINDEX.tar.gz`, scratch("APKINDEX.tar.gz"), newest),
       set("version", output(pipe(run("tar", "-xzOf", scratch("APKINDEX.tar.gz"), "APKINDEX"), run("awk", versionOf)))),
       failUnlessNotEmpty(variable("version"), "the Alpine index has no apk-tools-static"),
       comment("An .apk is a gzipped tar."),
       ...unpackedArchive({
         url: text`${repository}/${host}/apk-tools-static-${variable("version")}.apk`,
+        sha256: newest,
         file: "apk-tools-static.tar.gz",
         into: scratch(),
         only: ["sbin/apk.static"],
@@ -998,7 +1351,7 @@ function muslSysroot(image: LinuxImage): Tool {
 
 /** The MSVC CRT, the Windows SDK and ATL, which xwin downloads from Microsoft. */
 function windowsSysroot(image: LinuxImage): Tool {
-  const { xwin, sdk, crt } = pins.windowsSysroot;
+  const { xwin, xwinSha256, sdk, crt } = pins.windowsSysroot;
   const sysroot = locations.windowsSysroot;
   const host = `${cpuName[image.arch]}-unknown-linux-musl`;
   return {
@@ -1007,6 +1360,7 @@ function windowsSysroot(image: LinuxImage): Tool {
     steps: [
       ...unpackedArchive({
         url: `https://github.com/Jake-Shadle/xwin/releases/download/${xwin}/xwin-${xwin}-${host}.tar.gz`,
+        sha256: xwinSha256[image.arch],
         file: "xwin.tar.gz",
         into: scratch("xwin"),
         strip: 1,
@@ -1068,44 +1422,73 @@ function macosSdk(): Tool {
   };
 }
 
+/** Docker publishes no package for Alpine, which has its own. */
 function docker(image: LinuxImage): Tool {
-  const install =
-    image.distro === "alpine"
-      ? [apkAdd(["docker", "docker-cli-compose"])]
-      : runInstallerScript({ url: "https://get.docker.com", interpreter: "sh" });
+  const ready = [service("docker", "enabled"), addUserToGroup(agentUser, "docker")];
+  if (image.distro === "alpine") {
+    return { name: "docker", identity: packageDatabase, steps: [apkAdd(["docker", "docker-cli-compose"]), ...ready] };
+  }
+  const { engine, containerd, buildx, compose } = pins.docker[image.distro];
+  const repository = `https://download.docker.com/linux/${image.distro}`;
+  const suite = aptSuite(image);
+  const build = `-1~${image.distro}.${image.release}~${suite}`;
   return {
     name: "docker",
-    identity: packageDatabase,
-    steps: [...install, service("docker", "enabled"), addUserToGroup(agentUser, "docker")],
+    identity: pinned(engine),
+    steps: [
+      ...aptRepository({
+        name: "docker",
+        key: { url: `${repository}/gpg`, sha256: pins.docker.keySha256, kind: "asc" },
+        url: repository,
+        suite,
+        component: "stable",
+      }),
+      aptInstall(
+        [
+          `docker-ce=5:${engine}${build}`,
+          `docker-ce-cli=5:${engine}${build}`,
+          `containerd.io=${containerd}${build}`,
+          `docker-buildx-plugin=${buildx}${build}`,
+          `docker-compose-plugin=${compose}${build}`,
+          // docker-ce only recommends these. Where the kernel has AppArmor on, no container starts without its parser,
+          // and Docker unpacks an image's layers with pigz when it is there.
+          ...["apparmor", "pigz"],
+        ],
+        { update: true },
+      ),
+      ...ready,
+    ],
   };
 }
 
-/** Google publishes Chrome for apt on amd64 only, at this one URL. */
+/** Google publishes Chrome for apt on amd64 only, and takes a version's file away some releases later. */
 function chrome(): Tool {
   return {
     name: "chrome",
     identity: packageDatabase,
-    steps: [
-      download("https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb", scratch("chrome.deb")),
-      run("apt-get", "install", "--yes", scratch("chrome.deb")),
-    ],
+    steps: installedDeb({
+      url: "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb",
+      sha256: unchecked("this URL is the current release, and no URL of one release lasts."),
+      file: "chrome.deb",
+    }),
   };
 }
 
 /** Alpine has no python-fuse package. */
 function pythonFuse(): Tool {
-  const { version } = pins.pythonFuse;
+  const { version, sha256 } = pins.pythonFuse;
   return {
     name: "python-fuse",
     identity: pinned(version),
     steps: [
       apkAdd(["python3-dev", "fuse-dev", "pkgconf", "py3-setuptools"]),
       ...unpackedArchive({
-        url: `https://github.com/libfuse/python-fuse/archive/refs/tags/v${version}.tar.gz`,
+        url: `https://files.pythonhosted.org/packages/source/f/fuse-python/fuse_python-${version}.tar.gz`,
+        sha256,
         file: "python-fuse.tar.gz",
         into: scratch(),
       }),
-      inDirectory(scratch(`python-fuse-${version}`), [
+      inDirectory(scratch(`fuse_python-${version}`), [
         run("python3", "setup.py", "build"),
         run("python3", "setup.py", "install"),
       ]),
@@ -1267,7 +1650,7 @@ function recordImage(image: BakedImage): Tool {
             toFile(run("cut", "-d", " ", "-f1", scratch("apk-list")), packageList),
           ]
         : [
-            // binary:Package says which architecture a package of another one is for (libc6:amd64 on the arm64 build image).
+            // binary:Package says which architecture a package of another one is for.
             toFile(run("dpkg-query", "--show", "--showformat", "${binary:Package} ${Version}\\n"), packageList),
           ];
   /** A file's lines into the record, each after `prefix`; a file with none fails the bake. */
@@ -1356,15 +1739,46 @@ function windowsSystem(): Tool {
   };
 }
 
+/**
+ * Windows' trusted roots without `droppedWindowsRoots`. curl.exe, PowerShell, Git
+ * and the agent read them. Bun and Node.js use lists of their own unless told otherwise.
+ */
+function disallowedRoots(): Tool {
+  return {
+    name: "disallowed-roots",
+    identity: observed(printLine(property(cmdlet("Get-ChildItem", {}, "Cert:\\LocalMachine\\Disallowed"), "Count"))),
+    steps: [disallowRoots(droppedWindowsRoots)],
+  };
+}
+
 function scoop(image: WindowsImage): Tool {
   const home = locations.scoop;
+  const { installer, core, mainBucket } = pins.scoop;
+  /** A directory of Scoop's, as it is at a commit of the repository it comes from. */
+  const atCommit = (directory: string, repository: string, commit: string) => [
+    ...unpackedArchive({
+      url: `https://github.com/ScoopInstaller/${repository}/archive/${commit}.zip`,
+      sha256: namedByCommit,
+      file: `${repository}.zip`,
+      into: scratch(),
+    }),
+    remove(`${home}/${directory}`),
+    move(scratch(`${repository}-${commit}`), `${home}/${directory}`),
+  ];
   return {
     name: "scoop",
     identity: packageDatabase,
     steps: [
       setEnvironment("SCOOP", home),
-      download("https://get.scoop.sh", scratch("install-scoop.ps1")),
+      download(
+        `https://raw.githubusercontent.com/ScoopInstaller/Install/${installer.commit}/install.ps1`,
+        scratch("install-scoop.ps1"),
+        installer.sha256,
+      ),
       runScript(scratch("install-scoop.ps1"), { RunAsAdmin: true, ScoopDir: home }),
+      comment("The installer takes the newest Scoop and the newest manifests, whatever its own commit."),
+      ...atCommit("apps/scoop/current", "Scoop", core),
+      ...atCommit("buckets/main", "Main", mainBucket),
       addToPath(`${home}/shims`),
       ...[...scoopPackages.all, ...(image.arch === "x64" ? scoopPackages.x64 : [])].map(name => scoopInstall(name)),
       comment("Git's own Unix tools (sh, tar, perl, …) and Cygwin's, for the scripts tests run."),
@@ -1374,6 +1788,8 @@ function scoop(image: WindowsImage): Tool {
       run("git", "config", "--system", "core.autocrlf", "false"),
       run("git", "config", "--system", "core.eol", "lf"),
       run("git", "config", "--system", "core.longpaths", "true"),
+      comment("Windows' trusted roots, not the list Git comes with."),
+      run("git", "config", "--system", "http.sslBackend", "schannel"),
     ],
   };
 }
@@ -1386,6 +1802,7 @@ function nssm(image: WindowsImage): Tool {
     identity: pinned(pins.nssm.version),
     steps: executableFromArchive({
       url: `${mirrors.bunArtifacts}/${root}.zip`,
+      sha256: pins.nssm.sha256,
       kind: "zip",
       member: `${root}/win64/nssm.exe`,
       to: bin(image, "nssm"),
@@ -1395,7 +1812,7 @@ function nssm(image: WindowsImage): Tool {
 
 /** PowerShell 7. The bake itself runs under Windows PowerShell 5.1. */
 function pwsh(image: WindowsImage): Tool {
-  const { version } = pins.pwsh;
+  const { version, sha256 } = pins.pwsh;
   const msi = scratch("pwsh.msi");
   return {
     name: "pwsh",
@@ -1404,6 +1821,7 @@ function pwsh(image: WindowsImage): Tool {
       download(
         `https://github.com/PowerShell/PowerShell/releases/download/v${version}/PowerShell-${version}-win-${nodeArch[image.arch]}.msi`,
         msi,
+        sha256[image.arch],
       ),
       runInstaller("the PowerShell installer", "msiexec", text`/i "${msi}" /quiet /norestart ADD_PATH=1`),
       refreshPath,
@@ -1421,6 +1839,7 @@ function openssh(image: WindowsImage): Tool {
     steps: [
       ...unpackedArchive({
         url: `https://github.com/PowerShell/Win32-OpenSSH/releases/download/${pins.openssh.version}/OpenSSH-${image.arch === "x64" ? "Win64" : "Arm64"}.zip`,
+        sha256: pins.openssh.sha256[image.arch],
         file: "OpenSSH.zip",
         into: scratch("unpacked"),
       }),
@@ -1476,7 +1895,7 @@ function openssh(image: WindowsImage): Tool {
 }
 
 function ccache(image: WindowsImage): Tool {
-  const { version } = pins.ccache;
+  const { version, sha256 } = pins.ccache;
   const root = `ccache-${version}-windows-${cpuName[image.arch]}`;
   return {
     name: "ccache",
@@ -1484,6 +1903,7 @@ function ccache(image: WindowsImage): Tool {
     steps: [
       ...unpackedArchive({
         url: `https://github.com/ccache/ccache/releases/download/v${version}/${root}.zip`,
+        sha256: sha256[image.arch],
         file: "ccache.zip",
         into: scratch("unpacked"),
       }),
@@ -1494,29 +1914,39 @@ function ccache(image: WindowsImage): Tool {
   };
 }
 
-/** The "Desktop development with C++" workload: MSVC, the Windows SDK and their build tools, at whatever versions this release channel serves today. */
+/**
+ * MSVC, the Windows SDK and their build tools. It is Build Tools and not the
+ * IDE's free edition because Microsoft only publishes an installer of one exact
+ * version for the former; the latter's always installs the newest.
+ */
 function visualStudio(): Tool {
-  const installer = scratch("vs_community.exe");
+  const { version, directory, sha256 } = pins.visualStudio;
+  const installer = scratch("vs_BuildTools.exe");
+  const components = [
+    // "Desktop development with C++".
+    "Microsoft.VisualStudio.Workload.VCTools",
+    // In Build Tools that workload recommends neither the arm64 compiler nor ATL.
+    "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+    "Microsoft.VisualStudio.Component.VC.ATL",
+    "Microsoft.VisualStudio.Component.VC.ATL.ARM64",
+  ];
   return {
     name: "visual-studio",
-    // The MSVC toolset and Windows SDK versions the installer chose, where it puts them by default: their
-    // import libraries and CRT objects are what a build on this machine links against.
-    identity: observed(
-      cmdlet("Get-ChildItem", {
-        Name: true,
-        Path: [
-          "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC",
-          "C:/Program Files (x86)/Windows Kits/10/Lib",
-        ],
-      }),
-    ),
+    identity: pinned(version),
     steps: [
-      download(`https://aka.ms/vs/${pins.visualStudio.channel}/release/vs_community.exe`, installer),
+      download(
+        `https://download.visualstudio.microsoft.com/download/pr/${directory}/${sha256}/vs_BuildTools.exe`,
+        installer,
+        sha256,
+      ),
       runInstaller(
         "the Visual Studio installer",
         installer,
-        "--passive --norestart --wait --force --locale en-US --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended",
+        `--passive --norestart --wait --force --locale en-US ${components.map(id => `--add ${id}`).join(" ")} --includeRecommended`,
         [0, 3010],
+        // dd_<program>_<time>.log and its _errors.log. Not dd_setup_<time>_<n>_<package>.log: there are hundreds,
+        // and an MSI's ends with every property of the machine and the user.
+        [printEndOfLogs(environment("TEMP"), /^dd_[a-z_]+_\d+(_errors)?\.log$/)],
       ),
     ],
   };
@@ -1582,6 +2012,7 @@ export function tools(image: Image): readonly Tool[] {
   if (image.os === "windows") {
     return [
       windowsSystem(),
+      disallowedRoots(),
       scoop(image),
       nodejs(image),
       llvm(image),
@@ -1606,6 +2037,7 @@ export function tools(image: Image): readonly Tool[] {
   const apt = image.distro !== "alpine";
   return [
     packages(image),
+    caCertificates(),
     ulimits(image),
     ...(apt ? [] : [cloudInitDhcpClient()]),
     agentAccount(),
@@ -1613,7 +2045,7 @@ export function tools(image: Image): readonly Tool[] {
     bun(image),
     bunNinja(image),
     curlH3(image),
-    tailscale(),
+    tailscale(image),
     buildkiteAgent(image),
     cmake(image),
     llvm(image),
@@ -2187,16 +2619,30 @@ const setEnvironment =
 
 // ----------------------------------------------------------------- downloads
 
+/**
+ * What a download is checked against: the file's sha256, from `pins`, or why
+ * this file cannot say one. A download cannot be written without either, and
+ * the reason is a comment above it in the script.
+ */
+type Checksum = string | { unchecked: string };
+const unchecked = (reason: string): Checksum => ({ unchecked: reason });
+/** GitHub makes the archive of a commit when it is asked for one, and does not promise the same bytes each time. */
+const namedByCommit = unchecked("the commit in the URL names the content.");
+
 /** curl, which every system has: Windows ships curl.exe, and has to be asked for it by that name, because Windows PowerShell 5.1 calls Invoke-WebRequest `curl`. */
 const download =
-  (url: Value, file: Value): Step =>
-  c =>
-    run(
+  (url: Value, file: Value, sha256: Checksum): Step =>
+  c => {
+    const curl = run(
       isPowerShell(c) ? "curl.exe" : "curl",
       ...["--fail", "--silent", "--show-error", "--location", "--retry", 3, "--output", file, url],
-    )(c);
+    );
+    return render(
+      typeof sha256 === "string" ? [curl, checksum(file, sha256)] : [comment(`Not checked: ${sha256.unchecked}`), curl],
+      c,
+    );
+  };
 
-/** Only where the publisher provides the sum. */
 const checksum =
   (file: Value, sha256: string): Step =>
   c => [
@@ -2238,8 +2684,7 @@ const unpack =
 /** A published archive, downloaded into the tool's scratch directory as `file` and unpacked into a directory. */
 function unpackedArchive(options: {
   url: Value;
-  /** Only where the publisher provides it. */
-  sha256?: string;
+  sha256: Checksum;
   /** Its name says its kind: Windows unpacks a .tar.xz by that name. */
   file: `${string}.${ArchiveKind}`;
   into: Value;
@@ -2249,8 +2694,7 @@ function unpackedArchive(options: {
   const archive = scratch(options.file);
   const kind = (["tar.gz", "tar.xz", "zip"] as const).find(kind => options.file.endsWith(`.${kind}`))!;
   return [
-    download(options.url, archive),
-    ...(options.sha256 ? [checksum(archive, options.sha256)] : []),
+    download(options.url, archive, options.sha256),
     directory(options.into),
     unpack(archive, options.into, {
       kind,
@@ -2263,7 +2707,7 @@ function unpackedArchive(options: {
 /** One executable out of a published archive, installed where every user finds it. */
 function executableFromArchive(options: {
   url: string;
-  sha256?: string;
+  sha256: Checksum;
   kind: ArchiveKind;
   /** The executable's path inside the archive. */
   member: string;
@@ -2274,7 +2718,7 @@ function executableFromArchive(options: {
   return [
     ...unpackedArchive({
       url: options.url,
-      ...(options.sha256 ? { sha256: options.sha256 } : {}),
+      sha256: options.sha256,
       file: `archive.${options.kind}`,
       into: scratch("unpacked"),
       ...(options.extractOnly ? { only: [options.extractOnly] } : {}),
@@ -2283,11 +2727,37 @@ function executableFromArchive(options: {
   ];
 }
 
-/** A publisher's own installer script, which changes under its URL, so there is nothing to pin. */
-function runInstallerScript(options: { url: string; interpreter: "sh" | "bash"; arguments?: Value[] }): Step[] {
+/** A .deb that is in none of the machine's repositories. apt installs it, and what it depends on from the distro. */
+function installedDeb(options: { url: string; sha256: Checksum; file: `${string}.deb` }): Step[] {
   return [
-    download(options.url, scratch("install.sh")),
-    run(options.interpreter, scratch("install.sh"), ...(options.arguments ?? [])),
+    download(options.url, scratch(options.file), options.sha256),
+    run("apt-get", "install", "--yes", scratch(options.file)),
+  ];
+}
+
+/** A package of Ubuntu's archive: the file's place in the pool, and its SHA256 in the release's Packages index. */
+type UbuntuDeb = { directory: string; name: string; version: string; sha256: Record<Arch, string> };
+const ubuntuDebUrl = (deb: UbuntuDeb, arch: Arch) =>
+  `${mirrors.ubuntu[arch]}/pool/main/${deb.directory}/${deb.name}_${deb.version}_${debianArch[arch]}.deb`;
+
+/**
+ * A publisher's own apt repository, for packages asked for as `name=version`.
+ * apt tells an armored key (.asc) from a binary one (.gpg) by the file's name.
+ */
+function aptRepository(options: {
+  name: string;
+  key: { url: string; sha256: string; kind: "asc" | "gpg" };
+  url: string;
+  suite: string;
+  component: string;
+}): Step[] {
+  const key = `/etc/apt/keyrings/${options.name}.${options.key.kind}`;
+  return [
+    directory("/etc/apt/keyrings"),
+    download(options.key.url, key, options.key.sha256),
+    writeFile(`/etc/apt/sources.list.d/${options.name}.list`, [
+      `deb [signed-by=${key}] ${options.url} ${options.suite} ${options.component}`,
+    ]),
   ];
 }
 
@@ -2331,7 +2801,8 @@ const scoopApps = (): Step =>
  * install worked is decided by the app's directory existing. Scoop also puts
  * an app's directories (node, clang, python have no shim) on the PATH of the
  * user who installs it; the agent's jobs run as another account, so they go on
- * the machine's PATH.
+ * the machine's PATH. Left to itself, `scoop install` first updates a Scoop that
+ * is three hours old, manifests included, which would undo `pins.scoop`.
  */
 const scoopInstall =
   (name: string): Step =>
@@ -2340,7 +2811,7 @@ const scoopInstall =
     const machinePath = `[Environment]::GetEnvironmentVariable("Path", "Machine")`;
     return [
       `$ErrorActionPreference = "SilentlyContinue"`,
-      `scoop install ${renderValue(name, c)} *>&1 | ForEach-Object { "$_" } | Write-Host`,
+      `scoop install --no-update-scoop ${renderValue(name, c)} *>&1 | ForEach-Object { "$_" } | Write-Host`,
       `$ErrorActionPreference = "Stop"`,
       `foreach ($directory in [Environment]::GetEnvironmentVariable("Path", "User").Split(";")) {`,
       `  if ($directory -like '${scoop}\\*' -and ${machinePath}.Split(";") -notcontains $directory) {`,
@@ -2440,6 +2911,38 @@ const firewallAllowInbound = (options: { name: string; displayName: string; port
     }),
   );
 
+/**
+ * Windows refuses a certificate of the machine's Disallowed store, whichever other store has it. A root is trusted
+ * without being in a store: Windows fetches one that Windows Update lists when a chain first ends in it.
+ */
+const disallowRoots =
+  (names: readonly string[]): Step =>
+  c => {
+    const x509 = "System.Security.Cryptography.X509Certificates";
+    const named = names.map(name => `$name -like ${renderValue(`${name}*`, c, true)}`).join(" -or ");
+    return [
+      ...render([discardOutput(run("certutil", "-generateSSTFromWU", scratch("roots.sst")))], c),
+      `$roots = New-Object ${x509}.X509Certificate2Collection`,
+      `$roots.Import(${renderValue(scratch("roots.sst"), c)})`,
+      `$roots.AddRange((Get-ChildItem 'Cert:\\LocalMachine\\Root', 'Cert:\\LocalMachine\\AuthRoot'))`,
+      `$dropped = $roots | Where-Object { $name = $_.GetNameInfo("SimpleName", $false); ${named} }`,
+      `$disallowed = Get-Item 'Cert:\\LocalMachine\\Disallowed'`,
+      `$disallowed.Open("ReadWrite")`,
+      `foreach ($root in $dropped) { $disallowed.Add($root) }`,
+      `$disallowed.Close()`,
+      // ExplicitDistrust is the status of a certificate that is in a Disallowed store. One that fails otherwise is not refused by it.
+      `foreach ($root in $dropped) {`,
+      `  foreach ($attempt in 1..3) {`,
+      `    $chain = New-Object ${x509}.X509Chain $true`,
+      `    $chain.ChainPolicy.RevocationMode = "NoCheck"`,
+      `    if (-not $chain.Build($root) -and $chain.ChainStatus.Status -contains "ExplicitDistrust") { break }`,
+      `    if ($attempt -eq 3) { throw "bootstrap: $($root.Subject) is not refused" }`,
+      `    Start-Sleep -Seconds 2`,
+      `  }`,
+      "}",
+    ];
+  };
+
 /** A task that runs as SYSTEM each time the machine starts. */
 const scheduledTaskAtStartup = (options: { name: string; program: string; arguments: string }): Step[] => [
   set("action", output(cmdlet("New-ScheduledTaskAction", { Execute: options.program, Argument: options.arguments }))),
@@ -2460,12 +2963,36 @@ const scheduledTaskAtStartup = (options: { name: string; program: string; argume
   ),
 ];
 
-/** An installer that reports through its exit code. 3010: installed, and a restart is needed; the bake ends with one. */
+/**
+ * An installer that reports through its exit code. 3010: installed, and a restart is needed; the bake ends with one.
+ * `onFailure` runs before the bake fails: the machine is deleted next, and what the installer wrote with it.
+ */
 const runInstaller =
-  (what: string, program: Value, argumentList: Value, okExitCodes: number[] = [0]): Step =>
+  (what: string, program: Value, argumentList: Value, okExitCodes: number[] = [0], onFailure: Step[] = []): Step =>
+  c => {
+    const failed = okExitCodes.map(code => `$process.ExitCode -ne ${code}`).join(" -and ");
+    const fail = `throw "bootstrap: ${what} exited with code $($process.ExitCode)"`;
+    return [
+      `$process = Start-Process ${renderValue(program, c)} -ArgumentList ${renderValue(argumentList, c)} -Wait -PassThru -NoNewWindow`,
+      ...(onFailure.length > 0
+        ? [`if (${failed}) {`, ...indent([...render(onFailure, c), fail]), "}"]
+        : [`if (${failed}) { ${fail} }`]),
+    ];
+  };
+
+/**
+ * The last lines of the logs in `directory` that `names` matches. Anyone can read a bake's output, so `names` says
+ * what may be shown rather than what may not, and two things are left out of it: lines about telemetry, which have
+ * ids of the machine and the user, and the query of a URL, which can be a key to what it downloads.
+ */
+const printEndOfLogs =
+  (directory: Value, names: RegExp): Step =>
   c => [
-    `$process = Start-Process ${renderValue(program, c)} -ArgumentList ${renderValue(argumentList, c)} -Wait -PassThru -NoNewWindow`,
-    `if (${okExitCodes.map(code => `$process.ExitCode -ne ${code}`).join(" -and ")}) { throw "bootstrap: ${what} exited with code $($process.ExitCode)" }`,
+    `foreach ($log in Get-ChildItem ${renderValue(directory, c)} -File | Where-Object { $_.Name -match ${renderValue(names.source, c, true)} } | Sort-Object LastWriteTime) {`,
+    `  "---- the end of $($log.Name)"`,
+    // A log that cannot be read must not replace the installer's exit code as the bake's error.
+    `  Get-Content $log.FullName -Tail 100 -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch 'telemetry' } | ForEach-Object { $_ -replace '(https?://[^\\s?]+)\\?\\S*', '$1?...' }`,
+    `}`,
   ];
 
 // --------------------------------------------------------------------- tools

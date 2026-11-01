@@ -6,6 +6,7 @@ import {
   bunExe,
   isLinux,
   isPosix,
+  isRoot,
   isWindows,
   nodeExe,
   runBunInstall,
@@ -376,6 +377,17 @@ describe("spawn()", () => {
       });
     });
     expect(result.trim()).toBe(tmpdir);
+  });
+
+  it("cwd can be a URL of another implementation", () => {
+    using dir = tempDir("child-process-cwd-url", {});
+    const { href, protocol, hostname, pathname } = Bun.pathToFileURL(String(dir));
+    const { stdout } = spawnSync(bunExe(), ["-e", "console.log(process.cwd())"], {
+      cwd: { href, protocol, hostname, pathname } as URL,
+      env: bunEnv,
+      encoding: "utf8",
+    });
+    expect(stdout.trim()).toBe(String(dir));
   });
 
   it("should allow us to write to stdin", async () => {
@@ -1321,7 +1333,6 @@ done
 });
 
 describe("uid/gid options", () => {
-  const isRoot = process.getuid?.() === 0;
   // 65534 is "nobody" on every Linux distro and on macOS.
   const NOBODY = 65534;
 
@@ -1470,6 +1481,31 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
     await once(c, "close");
     expect(c.exitCode).toBe(0);
   });
+});
+
+// The stderr pipe closes without any data before JS touches child.stderr, so the exit path creates its stream
+// without a native handle.
+it.skipIf(!isPosix)("emits 'close' when an unread stdio pipe closed without any data", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { spawn } = require("child_process");
+      const c = spawn("/bin/sh", ["-c", "echo hello"], { stdio: ["inherit", "pipe"] });
+      c.stdout.on("data", d => process.stdout.write("OUT:" + d));
+      c.on("close", () => {
+        c.stderr.unref();
+        c.stderr.ref();
+        console.log("closed", c.stderr.readableEnded, c.stderr.destroyed);
+      });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("OUT:hello\nclosed true true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // child.stdout.pause() must stop the native reader so the kernel pipe fills

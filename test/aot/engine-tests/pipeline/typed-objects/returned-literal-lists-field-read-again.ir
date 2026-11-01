@@ -1,0 +1,226 @@
+# -- source: returned-literal-lists-field-read-again.ts
+# // A returned literal lists a field read again behind a test for null.
+# declare const console: { log(...values: any[]): void };
+#
+# const sources: Record<string, string> = { first: "remote", second: "default", third: "override" };
+# const thisProcess: { lastServed: boolean | null } = { lastServed: null };
+#
+# function read(name: string): { isOn: boolean; source: string } {
+#   const source = sources[name];
+#   const isOn = name !== "third";
+#   if (source === "remote") {
+#     thisProcess.lastServed = isOn;
+#     return { isOn, source };
+#   }
+#   return thisProcess.lastServed === null ? { isOn, source: "disabled" } : { isOn: thisProcess.lastServed, source: "kept" };
+# }
+#
+# for (const name of ["second", "constructor", "third", "first", "second", "constructor", "missing"]) {
+#   const { isOn, source } = read(name);
+#   console.log(name, isOn, source);
+# }
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="returned-literal-lists-field-read-again.ts" displayPath="returned-literal-lists-field-read-again.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+typesite w0 module=m0 position=134 kind=Variable
+typesite w1 module=m0 position=233 kind=Variable
+typesite w2 module=m0 position=316 kind=Parameter
+typesite w3 module=m0 position=302 kind=Result
+typesite w4 module=m0 position=168 kind=Element
+typesite w5 module=m0 position=667 kind=Element
+typesite w6 module=m0 position=785 kind=CallResult
+typesite w7 module=m0 position=407 kind=Variable
+typesite w8 module=m0 position=384 kind=Element
+typesite w9 module=m0 position=465 kind=Field
+layout L0 module=m0 position=246 fields=[{key="lastServed" declared={type=null|boolean} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=331 fields=[{key="isOn" declared={type=boolean} flags=[IsRequired]}, {key="source" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
+layout L2 module=m0 position=168 fields=[{key="first" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="second" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="third" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType] ownFieldCount=3
+data d0 root=Object{layout=L0 members=[{key="lastServed" value=Null}]} module=m0
+data d1 root=Array{contents=undefined|null|string elements=[String{value="second"}, String{value="constructor"}, String{value="third"}, String{value="first"}, String{value="second"}, String{value="constructor"}, String{value="missing"}]} module=m0
+variable g0 name="sources" module=m0 declared={type=undefined|null|object|absent site=w0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="thisProcess" module=m0 declared={type=undefined|null|absent|L0 site=w1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewObject layout=L2 @168
+    v3 = String string="remote" @177
+    v4 = Convert v3 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} @177
+    PropDefine v2, v4 key="first" @170
+    v6 = String string="default" @195
+    v7 = Convert v6 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} @195
+    PropDefine v2, v7 key="second" @187
+    v9 = String string="override" @213
+    v10 = Convert v9 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} @213
+    PropDefine v2, v10 key="third" @206
+    v12 = FinishObject v2 @168
+    v13 = Convert v12 declared={type=undefined|null|object site=w0 flags=[OmitsNull, OmitsUndefined]} @168
+    PutModuleVariable v13 variable=g0 @134
+    v15 = Data data=d0 @279
+    v16 = Convert v15 declared={type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]} @279
+    PutModuleVariable v16 variable=g1 @233
+    v18 = Data data=d1 @675
+    v19 = IteratorOpen v18 @667
+    Jump -> next b2() @667
+  b2():
+    LoopHint @667
+    v21 = IteratorResume v19 @667
+    v22 = ResultAt v21 @667
+    v23 = ResultAt v21 index=1 @667
+    Branch v22 -> taken b3(), notTaken b4() @667
+  b3():
+    v24 = Undefined @667
+    Return v24 @667
+  b4():
+    Jump -> next b5() @667
+  b5() handler=b9():
+    v25 = Convert v23 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @667
+    v26 = Call v1, -, v25 calleeName="read" @785
+    v27 = Convert v26 declared={type=undefined|null|L1 site=w6 flags=[OmitsNull, OmitsUndefined]} @785
+    v28 = TypeTest v27 testedType=undefined|null @785
+    Branch v28 -> taken b6(| 0), notTaken b8(| 0) @785
+  b6(v29) handler=b9():
+    Jump -> next b7() @785
+  b7() frequency=Unlikely handler=b9():
+    v30 = NewRuntimeError runtimeError=NotDestructurable name="isOn" @785
+    Throw v30 @785
+  b8(v31) handler=b9():
+    v32 = PropGet v31 key="isOn" @785 @768
+    v33 = Convert v32 declared={type=boolean} illTypedCause=Assertion @768
+    v34 = PropGet v31 key="source" @785 @774
+    v35 = Convert v34 declared={type=undefined|null|string} illTypedCause=Assertion @774
+    v36 = Builtin builtin=GlobalThis @799
+    v37 = PropGet v36 key="console" [isFreeName] @799
+    v38 = Convert v37 declared={type=builtin(Console) flags=[IsExpected]} @799
+    v39 = PropGet v38 key="log" @799
+    v40 = Convert v39 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @799
+    v41 = Call v40, v38, v25, v33, v35 calleeKey="log" calleeName="console.log" @807
+    Jump -> next b2() @799
+  b9() role=IterationCleanup subject=v19:
+    v42 = CatchException @667
+    IteratorClose v19 completion=Throw @667
+    Rethrow v42 @667
+}
+function f1 name="read" module=m0 position=302 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L1 site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @302
+  b1():
+    v1 = GetModuleVariable variable=g0 @384
+    v2 = CheckInitialized v1 name="sources" @384
+    v3 = ElemGet v2, v0 @384
+    v4 = Convert v3 declared={type=undefined|null|string site=w8 flags=[OmitsNull]} illTypedCause=FromLooseType @384
+    v5 = String string="third" @423
+    v6 = StrictEq v0, v5 @414
+    v7 = LogicalNot v6 @414
+    v8 = Convert v7 declared={type=boolean site=w7} @414
+    v9 = String string="remote" @449
+    v10 = StrictEq v4, v9 @438
+    Branch v10 -> taken b2(| 0), notTaken b4(| 0) @438
+  b2(v11):
+    Jump -> next b3() @438
+  b3():
+    v12 = GetModuleVariable variable=g1 @465
+    v13 = CheckInitialized v12 name="thisProcess" @465
+    v14 = Convert v8 declared={type=null|boolean site=w9} @465
+    PropSet v13, v14 key="lastServed" @465
+    v16 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @515
+    v17 = NewObject -, v8, v16 layout=L1 fields=[0, 1] @507
+    v18 = FinishObject v17 @507
+    v19 = Convert v18 declared={type=undefined|null|L1 site=w3 flags=[OmitsNull, OmitsUndefined]} @507
+    Return v19 @507
+  b4(v20):
+    Jump -> next b5() @438
+  b5():
+    v21 = GetModuleVariable variable=g1 @538
+    v22 = CheckInitialized v21 name="thisProcess" @538
+    v23 = PropGet v22 key="lastServed" @538
+    v24 = TypeTest v23 testedType=null @538
+    Branch v24 -> taken b6(| 0), notTaken b8(| 0) @538
+  b6(v25):
+    Jump -> next b7() @538
+  b7():
+    v26 = String string="disabled" @588
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @588
+    v28 = NewObject -, v8, v27 layout=L1 fields=[0, 1] @572
+    v29 = FinishObject v28 @572
+    Jump -> next b10(v29) @572
+  b8(v30):
+    Jump -> next b9() @538
+  b9():
+    v31 = GetModuleVariable variable=g1 @611
+    v32 = CheckInitialized v31 name="thisProcess" @611
+    v33 = PropGet v32 key="lastServed" @611
+    v34 = Convert v33 declared={type=boolean} illTypedCause=Assertion @611
+    v35 = String string="kept" @643
+    v36 = Convert v35 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @643
+    v37 = NewObject -, v34, v36 layout=L1 fields=[0, 1] @603
+    v38 = FinishObject v37 @603
+    Jump -> next b10(v38) @603
+  b10(v39):
+    v40 = Convert v39 declared={type=undefined|null|L1 site=w3 flags=[OmitsNull, OmitsUndefined]} @603
+    Return v40 @603
+}
+function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=785 module=m0}, {callee=f4 callPosition=302 parent=1 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "second" = String string="second"
+# CHECK-NEXT: v1: "constructor" = String string="constructor"
+# CHECK-NEXT: v2: "third" = String string="third"
+# CHECK-NEXT: v3: "first" = String string="first"
+# CHECK-NEXT: v4: "second" = String string="second"
+# CHECK-NEXT: v5: "constructor" = String string="constructor"
+# CHECK-NEXT: v6: "missing" = String string="missing"
+# CHECK-NEXT: v7: true = Boolean boolean=true
+# CHECK-NEXT: v8: "disabled" = String string="disabled"
+# CHECK-NEXT: v9: undefined = CallBuiltin -, v0, v7, v8 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v10: true = Boolean boolean=true
+# CHECK-NEXT: v11: "disabled" = String string="disabled"
+# CHECK-NEXT: v12: undefined = CallBuiltin -, v1, v10, v11 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v13: false = Boolean
+# CHECK-NEXT: v14: "disabled" = String string="disabled"
+# CHECK-NEXT: v15: undefined = CallBuiltin -, v2, v13, v14 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v16: "remote" = String string="remote"
+# CHECK-NEXT: v17: true = Boolean boolean=true
+# CHECK-NEXT: v18: undefined = CallBuiltin -, v3, v17, v16 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v19: "kept" = String string="kept"
+# CHECK-NEXT: v20: undefined = CallBuiltin -, v4, v17, v19 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v21: "kept" = String string="kept"
+# CHECK-NEXT: v22: undefined = CallBuiltin -, v5, v17, v21 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v23: "kept" = String string="kept"
+# CHECK-NEXT: v24: undefined = CallBuiltin -, v6, v17, v23 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: Return v25
+# CHECK-NEXT: }

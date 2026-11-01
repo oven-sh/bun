@@ -320,6 +320,24 @@ describe("bundler", () => {
       },
       stdout: "function",
     },
+    {
+      // No file in the main chunk has an `await` keyword of its own. The
+      // `import()` in lazy.ts wraps tla.ts in an async `__esm` init, and the
+      // entry prints `await init_tla()` at its top level. The module record
+      // has to carry hasTLA, or the process exits before the value lands.
+      name: "AwaitedAsyncWrapperWithoutOwnAwait",
+      files: {
+        "/entry.ts": `
+          import { value } from "./tla.ts";
+          import { load } from "./lazy.ts";
+          console.log("value:", value);
+          load().then(m => console.log("lazy:", typeof m.value));
+        `,
+        "/lazy.ts": `export function load() { return import("./tla.ts"); }`,
+        "/tla.ts": `export const value = await Promise.resolve(7);`,
+      },
+      stdout: "value: 7\nlazy: number",
+    },
   ];
 
   for (const scenario of esmBytecodeScenarios) {

@@ -395,13 +395,11 @@ impl<'a> Parser<'a> {
         map[b'*' as usize] = MARK_DELIMITER;
         map[b'_' as usize] = MARK_DELIMITER;
         map[b'`' as usize] = MARK_HIDES;
+        map[b'<' as usize] = MARK_HIDES;
         map[b'[' as usize] = MARK_OPENER;
         map[b']' as usize] = MARK_CLOSER;
         if flags.footnotes {
             map[b'[' as usize] |= MARK_HIDES;
-        }
-        if !flags.no_html_spans {
-            map[b'<' as usize] = MARK_HIDES;
         }
         if flags.strikethrough {
             map[b'~' as usize] = MARK_DELIMITER;

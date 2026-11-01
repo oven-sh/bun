@@ -2790,6 +2790,23 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       },
     );
 
+    // The descriptor that the handle opens for itself stays above stdio, also where a stdio number is free. There it
+    // would be the standard input of the process, which nothing closes.
+    test.concurrent("a stream that is made while fd 0 is closed does not take that number", async () => {
+      const script = `
+        fs.closeSync(0);
+        const slave = new tty.ReadStream(4);
+        const atTheStart = tty.isatty(0);
+        slave.on("close", () => setImmediate(() => say({ atTheStart, afterDestroy: tty.isatty(0) })));
+        slave.destroy();
+      `;
+      expect(await withPair(script)).toEqual({
+        records: [{ atTheStart: false, afterDestroy: false }],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     // Nothing but its queue holds the handle. The master does not hold the loop, so a handle that is collected
     // with its queue ends the child at once, with the completions that ran until then.
     test.concurrent.each([

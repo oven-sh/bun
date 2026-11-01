@@ -73,9 +73,11 @@ describe("SavedProperties", () => {
     expect(Object.isFrozen(frozen)).toBe(true);
   });
 
-  test("a walk that throws keeps what it saved before", () => {
+  test("a walk that throws saves nothing, and a later walk can save the same objects", () => {
+    class Earlier {}
     class Before {}
     const saved = new SavedProperties();
+    saved.save({ Earlier }, true);
     const trap = new Proxy(
       {},
       {
@@ -84,10 +86,20 @@ describe("SavedProperties", () => {
         },
       },
     );
-    expect(() => saved.save({ Before, trap }, true)).toThrow("trap");
+    const root = { Before, trap };
+    expect(() => saved.save(root, true)).toThrow("trap");
     Before.prototype.left = 1;
+    Earlier.prototype.left = 1;
+    root.added = 1;
     saved.restore();
-    expect("left" in Before.prototype).toBe(false);
+    expect(Before.prototype.left).toBe(1);
+    expect(root.added).toBe(1);
+    expect("left" in Earlier.prototype).toBe(false);
+
+    saved.save({ Before }, true);
+    delete Before.prototype.left;
+    saved.restore();
+    expect(Before.prototype.left).toBe(1);
   });
 
   test("does not descend into the global object", () => {

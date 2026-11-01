@@ -126,11 +126,12 @@ class SavedProperties {
     this.#isTracked = isTracked;
   }
 
-  // Saves what is reachable from `root` and not saved yet. A walk that a proxy's trap stops keeps what it saved before.
+  // Saves what is reachable from `root` and not saved yet. A walk that a proxy's trap stops saves nothing.
   save(root: object, descendsIntoObjects: boolean) {
     if (this.#seen.$has(root)) return;
     const objects = this.#objects;
     const properties = this.#properties;
+    const start = objects.length;
     try {
       walk(root, descendsIntoObjects, this.#isTracked, this.#seen, object => {
         const saved: Properties = new Map();
@@ -138,21 +139,20 @@ class SavedProperties {
         $arrayPush(properties, saved);
         return saved;
       });
-    } finally {
-      this.#saveShapes();
+    } catch (error) {
+      for (let i = start; i < objects.length; i++) this.#seen.$delete(objects[i]);
+      objects.length = start;
+      properties.length = start;
+      throw error;
     }
+    this.#saveShapes();
   }
 
   // Forgets what isn't reachable from `root`. The rest keeps its saved properties.
   keepReachableFrom(root: object, descendsIntoObjects: boolean) {
     this.restore();
     const reachable = new Map<object, true>();
-    try {
-      walk(root, descendsIntoObjects, this.#isTracked, reachable, () => undefined);
-    } catch (error) {
-      this.#saveShapes();
-      throw error;
-    }
+    walk(root, descendsIntoObjects, this.#isTracked, reachable, () => undefined);
     const objects = this.#objects;
     const properties = this.#properties;
     let kept = 0;

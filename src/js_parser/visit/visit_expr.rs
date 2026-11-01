@@ -1583,11 +1583,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         e_.test = SideEffects::simplify_boolean(p, e_.test);
 
-        // A decided test that has side effects is folded away only where unused values are simplified.
-        let known = SideEffects::to_boolean(p, &e_.test.data).filter(|known| {
-            known.side_effects == SideEffects::NoSideEffects || p.should_simplify_unused_expr()
-        });
-        let Some(side_effects) = known else {
+        let Some(side_effects) = SideEffects::to_boolean(p, &e_.test.data) else {
             p.visit_expr(&mut e_.yes);
             p.visit_expr(&mut e_.no);
             return;

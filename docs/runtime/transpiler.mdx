@@ -222,11 +222,6 @@ interface TranspilerOptions {
   // Experimental whitespace minification
   minifyWhitespace?: boolean,
 
-  // Experimental minification: true turns on whitespace, syntax and identifiers
-  // `syntax` also removes a statement that has no side effects, such as a lone JSX element
-  // With target "bun", syntax is minified unless this is false or sets `syntax: false`
-  minify?: boolean | { whitespace?: boolean, syntax?: boolean, identifiers?: boolean },
-
   // Whether to inline constant values
   // Typically improves performance and decreases bundle size
   // Default: false

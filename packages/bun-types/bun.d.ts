@@ -3043,25 +3043,9 @@ declare module "bun" {
     /**
      * **Experimental**
      *
-     * Minify the output. `true` turns on `whitespace`, `syntax` and
-     * `identifiers`. An object sets each kind that it names.
+     * Enabled by default, use this to disable dead code elimination.
      *
-     * `syntax` also removes a statement that has no side effects, such as
-     * `1;` or a lone JSX element.
-     *
-     * With `target: "bun"` the transpiler prints what the Bun runtime runs,
-     * and the runtime minifies syntax. `minify: false` or `syntax: false`
-     * turns that off.
-     */
-    minify?: boolean | { whitespace?: boolean; syntax?: boolean; identifiers?: boolean };
-    /**
-     * **Experimental**
-     *
-     * Enabled by default. Folds constant expressions and removes code that a
-     * constant test never reaches. `false` keeps that code as written.
-     *
-     * It does not remove a statement that has no side effects. `minify.syntax`
-     * and `treeShaking` do.
+     * Some other transpiler options may still do some specific dead code elimination.
      */
     deadCodeElimination?: boolean;
 

@@ -4004,6 +4004,8 @@ console.log(resolve.length)
           { input: "1", written: "1;\n", simplified: "" },
           { input: "[1, 2, 3]", written: "[1, 2, 3];\n", simplified: "" },
           { input: "a === b", written: "a === b;\n", simplified: "a, b;\n" },
+          { input: "void foo()", written: "void foo();\n", simplified: "foo();\n" },
+          { input: "void a.b", written: "void a.b;\n", simplified: "a.b;\n" },
           { input: "(<div/>, foo())", written: `${div()}, foo();\n`, simplified: "foo();\n" },
           {
             input: "function f() { <div/>; return 1 }",
@@ -4011,7 +4013,6 @@ console.log(resolve.length)
             simplified: "function f() {\n  return 1;\n}\n",
           },
           { input: "x; let x = 1;", written: "x;\nlet x = 1;\n", simplified: "let x = 1;\n" },
-          { input: "(<div/>, true) ? a() : b()", written: `(${div()}, true) ? a() : b();\n`, simplified: "a();\n" },
         ];
         const expected = form => Object.fromEntries(statements.map(statement => [statement.input, statement[form]]));
         const transformEach = async options => {
@@ -4036,8 +4037,7 @@ console.log(resolve.length)
           ["by default", {}],
           ['with target: "node"', { target: "node" }],
           ["with minify: false", { minify: false }],
-          ['with target: "bun" and minify: false', { target: "bun", minify: false }],
-          ['with target: "bun" and minify: { syntax: false }', { target: "bun", minify: { syntax: false } }],
+          ["with deadCodeElimination: true", { deadCodeElimination: true }],
           ["with deadCodeElimination: false", { deadCodeElimination: false }],
         ])("is kept as written %s", async (_, options) => {
           expect(await transformEach(options)).toEqual({
@@ -4048,10 +4048,9 @@ console.log(resolve.length)
 
         it.each([
           ["minify: { syntax: true }", { minify: { syntax: true } }],
-          // Target "bun" transpiles as the runtime does, and the runtime minifies syntax.
-          ['target: "bun"', { target: "bun" }],
-          ['target: "bun" and minify: { whitespace: false }', { target: "bun", minify: { whitespace: false } }],
           ["treeShaking: true", { treeShaking: true }],
+          // Target "bun" turns syntax minification on.
+          ['target: "bun"', { target: "bun" }],
         ])("is simplified with %s", async (_, options) => {
           expect(await transformEach(options)).toEqual({
             transformSync: expected("simplified"),
@@ -4061,45 +4060,50 @@ console.log(resolve.length)
 
         it("goes when the visit folds it to a primitive, and only then", () => {
           const options = { loader: "js", define: { DEBUG: "false" } };
-          const inputs = ["!0;", "undefined;", "DEBUG && foo(); bar();"];
-          const print = transpiler => Object.fromEntries(inputs.map(input => [input, transpiler.transformSync(input)]));
+          const folded = {
+            "!0;": "!0;\n",
+            "-1;": "-1;\n",
+            "undefined;": "undefined;\n",
+            "1 ? 2 : 3;": "1 ? 2 : 3;\n",
+            "DEBUG && foo(); bar();": "false && foo();\nbar();\n",
+            "void /* @__PURE__ */ foo();": "void foo();\n",
+            "void x; let x = 1;": "void x;\nlet x = 1;\n",
+          };
+          const print = transpiler =>
+            Object.fromEntries(Object.keys(folded).map(input => [input, transpiler.transformSync(input)]));
           expect(print(new Bun.Transpiler(options))).toEqual({
             "!0;": "",
+            "-1;": "",
             "undefined;": "",
+            "1 ? 2 : 3;": "",
             "DEBUG && foo(); bar();": "bar();\n",
+            "void /* @__PURE__ */ foo();": "",
+            "void x; let x = 1;": "let x = 1;\n",
           });
-          expect(print(new Bun.Transpiler({ ...options, deadCodeElimination: false }))).toEqual({
-            "!0;": "!0;\n",
-            "undefined;": "undefined;\n",
-            "DEBUG && foo(); bar();": "false && foo();\nbar();\n",
-          });
+          expect(print(new Bun.Transpiler({ ...options, deadCodeElimination: false }))).toEqual(folded);
         });
 
-        it("a call through a decided conditional keeps its `this`", () => {
-          const print = options =>
-            new Bun.Transpiler({ loader: "js", ...options }).transformSync("((0, true) ? o.f : g)()");
-          expect({ written: print({}), minified: print({ minify: { syntax: true } }) }).toEqual({
-            written: "((0, true) ? o.f : g)();\n",
-            minified: "(0, o.f)();\n",
-          });
-        });
-
-        it('target: "bun" minifies syntax unless minify says not to', () => {
-          const print = options =>
-            new Bun.Transpiler({ loader: "js", target: "bun", ...options }).transformSync("x = [true, undefined];");
+        it("a string that stays prints as a template literal, which is never a directive", () => {
+          const transpiler = new Bun.Transpiler({ loader: "js" });
+          const inFunction = transpiler.transformSync('function f() { ;"use strict"; return this; }');
           expect({
-            "unset": print({}),
-            "minify: { whitespace: true }": print({ minify: { whitespace: true } }),
-            "minify: { syntax: true }": print({ minify: { syntax: true } }),
-            "minify: { syntax: false }": print({ minify: { syntax: false } }),
-            "minify: false": print({ minify: false }),
+            "in a script": transpiler.transformSync(';"use strict"; with (a) b;'),
+            "in a function": inFunction,
+            "after a statement": transpiler.transformSync('foo(); "x"; bar();'),
           }).toEqual({
-            "unset": "x = [!0, void 0];\n",
-            "minify: { whitespace: true }": "x=[!0,void 0];",
-            "minify: { syntax: true }": "x = [!0, void 0];\n",
-            "minify: { syntax: false }": "x = [true, undefined];\n",
-            "minify: false": "x = [true, undefined];\n",
+            "in a script": "`use strict`;\nwith (a)\n  b;\n",
+            "in a function": "function f() {\n  `use strict`;\n  return this;\n}\n",
+            "after a statement": "foo();\n`x`;\nbar();\n",
           });
+          // The function is not strict in the source, so `this` of a plain call is the global object.
+          expect(new Function(`${inFunction}; return f() === globalThis;`)()).toBe(true);
+        });
+
+        it("the test of a decided conditional is still reduced to its side effects", () => {
+          const transpiler = new Bun.Transpiler({ loader: "jsx", autoImportJSX: false });
+          expect(transpiler.transformSync("(<div/>, true) ? a() : b()")).toBe("a();\n");
+          // The arm that is not taken stays out of what scan() reports.
+          expect(transpiler.scan('x = (foo(), true) ? a() : import("./b")').imports).toEqual([]);
         });
 
         const kept =
@@ -4108,14 +4112,22 @@ console.log(resolve.length)
 
         describe.concurrent("bun build", () => {
           it.each([
-            ["--no-bundle keeps it", ["--no-bundle"], kept],
-            ["--no-bundle --target=node keeps it", ["--no-bundle", "--target=node"], kept],
-            ["--no-bundle --minify-syntax removes it", ["--no-bundle", "--minify-syntax"], gone],
-            // A bundle tree-shakes, so the statement goes with and without --minify-syntax.
-            ["a bundle removes it", [], `// entry.js\n${gone}`],
-            ["a bundle with --minify-syntax removes it", ["--minify-syntax"], `// entry.js\n${gone}`],
-          ])("%s", async (_, flags, output) => {
-            using dir = tempDir("transpiler-unused-statement", { "entry.js": kept });
+            ["--no-bundle keeps it", ["--no-bundle"], kept, kept],
+            ["--no-bundle --target=node keeps it", ["--no-bundle", "--target=node"], kept, kept],
+            ["--no-bundle --minify-syntax removes it", ["--no-bundle", "--minify-syntax"], kept, gone],
+            // Target "bun" turns tree shaking on.
+            ["--no-bundle --target=bun removes it", ["--no-bundle", "--target=bun"], kept, gone],
+            ["a bundle removes it", [], kept, `// entry.js\n${gone}`],
+            ["a bundle with --minify-syntax removes it", ["--minify-syntax"], kept, `// entry.js\n${gone}`],
+            // Of a dropped call only a statement that is nothing else goes.
+            [
+              "--no-bundle --drop=console leaves undefined where a call was part of a statement",
+              ["--no-bundle", "--drop=console"],
+              "x && console.log(1);\nconsole.log(2);\ny();\n",
+              "x && undefined;\ny();\n",
+            ],
+          ])("%s", async (_, flags, source, output) => {
+            using dir = tempDir("transpiler-unused-statement", { "entry.js": source });
             await using proc = Bun.spawn({
               cmd: [bunExe(), "build", ...flags, "entry.js"],
               env: bunEnv,
@@ -4129,14 +4141,14 @@ console.log(resolve.length)
           });
         });
 
-        it("Bun.build keeps it only when tree shaking is off", async () => {
+        it("Bun.build removes it with and without tree shaking", async () => {
           using dir = tempDir("transpiler-unused-statement-api", { "entry.js": kept });
           const build = async treeShaking => {
             const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], treeShaking });
             // The first line is a comment that names the file.
             return (await result.outputs[0].text()).replace(/^\/\/ .*\n/, "");
           };
-          expect({ off: await build(false), on: await build(true) }).toEqual({ off: kept, on: gone });
+          expect({ off: await build(false), on: await build(true) }).toEqual({ off: gone, on: gone });
         });
       });
     });
@@ -5828,10 +5840,17 @@ it("deeply nested expressions error instead of crashing the process", () => {
         if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
       }
     };
-    for (const shape of shapes) {
-      for (const n of [4000, 20000, 100000]) {
-        check(new Bun.Transpiler({ loader: "js" }), shape(n));
+    // A transpile keeps an unused statement. Tree shaking and minify.syntax simplify it.
+    for (const options of [{}, { treeShaking: true }, { minify: { syntax: true } }]) {
+      for (const shape of shapes) {
+        for (const n of [4000, 20000, 100000]) {
+          check(new Bun.Transpiler({ loader: "js", ...options }), shape(n));
+        }
       }
+    }
+    const jsxStatement = n => repeat("<a>", n) + repeat("</a>", n);
+    for (const n of [4000, 20000, 100000]) {
+      check(new Bun.Transpiler({ loader: "jsx" }), jsxStatement(n));
     }
     for (const shape of minifyShapes) {
       for (const n of [4000, 20000, 100000]) {
@@ -6060,9 +6079,15 @@ it("running a file with deeply nested unary operators does not crash the process
 });
 
 it("does not duplicate the branch when simplifying an unused ternary with a comma test", () => {
-  const transpiler = new Bun.Transpiler({ loader: "js", minify: { syntax: true } });
-  expect(transpiler.transformSync("(f(), g()) ? 1 : h();").trim()).toBe("f(), g() || h();");
-  expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("f(), g() && h();");
+  for (const options of [{ minify: { syntax: true } }, { treeShaking: true }]) {
+    const transpiler = new Bun.Transpiler({ loader: "js", ...options });
+    expect(transpiler.transformSync("(f(), g()) ? 1 : h();").trim()).toBe("f(), g() || h();");
+    expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("f(), g() && h();");
+  }
+  // A transpile keeps the statement as written.
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  expect(transpiler.transformSync("(f(), g()) ? 1 : h();").trim()).toBe("(f(), g()) ? 1 : h();");
+  expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("(f(), g()) ? h() : 1;");
 });
 
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {

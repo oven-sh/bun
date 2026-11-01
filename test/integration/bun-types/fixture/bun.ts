@@ -103,8 +103,3 @@ tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer
 declare const webview: Bun.WebView;
 tsd.expectType(webview.goBack()).is<Promise<void>>();
 tsd.expectType(webview.goForward()).is<Promise<void>>();
-
-new Bun.Transpiler({ target: "bun", minify: false });
-new Bun.Transpiler({ minify: { whitespace: true, syntax: false, identifiers: true } });
-// @ts-expect-error - each kind of minification is a boolean
-new Bun.Transpiler({ minify: { syntax: "yes" } });

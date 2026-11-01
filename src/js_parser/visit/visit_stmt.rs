@@ -1458,7 +1458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::SExpr,
     ) -> Result<(), Error> {
         let simplify = p.should_simplify_unused_expr();
-        // Without it, only a statement that the visit folds to a primitive goes (a define, --drop).
+        // A transpile removes only the statement that the visit folds to a primitive (a define, --drop).
         let trim_folded_primitive = !simplify
             && p.options.features.dead_code_elimination
             && !data.value.is_primitive_literal();
@@ -1522,6 +1522,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(());
             };
             data.value = simplified;
+        } else if p.options.features.dead_code_elimination
+            && let js_ast::ExprData::EString(string) = data.value.data
+            && !string.prefer_template
+        {
+            // At the head of a body a string would print as a directive. A template literal is never one.
+            let mut template = string.shallow_clone();
+            template.prefer_template = true;
+            data.value = p.new_expr(template, data.value.loc);
         }
 
         if p.should_unwrap_common_js_to_esm() {

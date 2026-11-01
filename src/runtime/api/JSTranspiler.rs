@@ -80,8 +80,7 @@ pub(crate) struct Config {
     pub(crate) dead_code_elimination: bool,
     pub(crate) minify_whitespace: bool,
     pub(crate) minify_identifiers: bool,
-    /// `None`: `minify` does not say, so the transpiler keeps what its target implies.
-    pub(crate) minify_syntax: Option<bool>,
+    pub(crate) minify_syntax: bool,
     pub(crate) no_macros: bool,
     pub(crate) repl_mode: bool,
 }
@@ -105,7 +104,7 @@ impl Default for Config {
             dead_code_elimination: true,
             minify_whitespace: false,
             minify_identifiers: false,
-            minify_syntax: None,
+            minify_syntax: false,
             no_macros: false,
             repl_mode: false,
         }
@@ -368,15 +367,15 @@ impl Config {
             match minify {
                 TranspilerMinify::All(minify) => {
                     self.minify_whitespace = *minify;
-                    self.minify_syntax = Some(*minify);
-                    self.minify_identifiers = *minify;
+                    self.minify_syntax = self.minify_whitespace;
+                    self.minify_identifiers = self.minify_syntax;
                 }
                 TranspilerMinify::Options(minify) => {
                     if let Some(whitespace) = minify.whitespace {
                         self.minify_whitespace = whitespace;
                     }
                     if let Some(syntax) = minify.syntax {
-                        self.minify_syntax = Some(syntax);
+                        self.minify_syntax = syntax;
                     }
                     if let Some(syntax) = minify.identifiers {
                         self.minify_identifiers = syntax;
@@ -981,9 +980,9 @@ impl JSTranspiler {
             config.dead_code_elimination && !config.repl_mode;
         transpiler.options.minify_whitespace = config.minify_whitespace;
 
-        // Target "bun" minifies syntax, as the runtime does. Only an explicit `minify` changes that.
-        if let Some(minify_syntax) = config.minify_syntax {
-            transpiler.options.minify_syntax = minify_syntax;
+        // Keep defaults for these
+        if config.minify_syntax {
+            transpiler.options.minify_syntax = true;
         }
 
         if config.minify_identifiers {

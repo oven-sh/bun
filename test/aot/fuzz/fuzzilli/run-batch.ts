@@ -972,13 +972,18 @@ async function stoppedAtAnUnusedReadBeforeTheDeclaration(
     (stdout + stderr).split(/ReferenceError|before initialization/).length;
   if (mentions(compiled) <= mentions(reference)) return false;
   layOut(folder, [text], extension, 1);
-  const rewritten = await spawn("rewrite", [bun, "build", "--no-bundle", `./programs/0${extension}`], folder, {}, 30);
+  // These flags are what `bun run` parses with. A plain `bun build --no-bundle` keeps an expression that nothing uses.
+  const rewritten = await spawn(
+    "rewrite",
+    [bun, "build", "--no-bundle", "--minify-syntax", "--target=bun", `./programs/0${extension}`],
+    folder,
+    {},
+    30,
+  );
   if (rewritten.exitCode !== 0) return false;
   const otherFiles = /^\/\/ @filename: [^]*/m.exec(text)?.[0] ?? "";
   const asJavaScript = extension.replace("t", "j");
-  // That text still has the test of a variable in front of an empty block, which reads nothing under `bun run`.
-  const withoutTestsOfNothing = rewritten.stdout.replace(/^\s*if \(!*[\w$]+\) \{\}\n/gm, "");
-  layOut(folder, [withoutTestsOfNothing + otherFiles], asJavaScript, 1);
+  layOut(folder, [rewritten.stdout + otherFiles], asJavaScript, 1);
   await build(folder, 1, asJavaScript, 1);
   if (!existsSync(join(folder, "batch"))) return false;
   const ran = await run("rewritten", [join(folder, "batch")], folder, asJavaScript, 1, [0], milliseconds * 20);

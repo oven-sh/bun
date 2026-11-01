@@ -26,11 +26,21 @@ describe("compile/aot/stored-into-itself", () => {
       using dir = tempDir("aot-stored-into-itself", { "main.mjs": program(base) });
       const folder = String(dir);
       const executable = join(folder, "main");
-      const build = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], folder, bunEnv);
-      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringContaining("Stopped while compiling"), exitCode: 0 });
+      const build = await run(
+        [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+        folder,
+        bunEnv,
+      );
+      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+        stderr: expect.not.stringContaining("Stopped while compiling"),
+        exitCode: 0,
+      });
       const plain = await run([bunExe(), "main.mjs"], folder, bunEnv);
       const compiled = await run([executable], folder, bunEnv);
-      expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: plain.exitCode });
+      expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+        stdout: plain.stdout,
+        exitCode: plain.exitCode,
+      });
       expect(compiled.stdout).toBe("ok\n");
     },
   );

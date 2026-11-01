@@ -40,6 +40,13 @@ impl Framework {
             Graph::Client => bun_ast::Target::Browser,
             Graph::Server | Graph::Ssr => bun_ast::Target::Bun,
         };
+        // The transpiler was made with the main fields of the default target, a browser.
+        out.options.main_fields =
+            <bun_ast::Target as bun_bundler::options::TargetExt>::default_main_fields_map()
+                [out.options.target]
+                .iter()
+                .map(|name| Box::from(*name))
+                .collect();
         out.options.public_path = match renderer {
             Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
             Graph::Server | Graph::Ssr => Box::default(),

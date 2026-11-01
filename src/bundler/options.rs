@@ -204,12 +204,10 @@ pub(crate) use bun_ast::Target;
 pub use bun_ast::target::TARGET_MAP;
 
 pub(crate) const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
-    b"browser",
-    b"module",
-    b"main",
-    // https://github.com/jsforum/jsforum/issues/5
-    // Older packages might use jsnext:main in place of module
-    b"jsnext:main",
+    Target::MAIN_FIELD_NAMES[0].as_bytes(),
+    Target::MAIN_FIELD_NAMES[1].as_bytes(),
+    Target::MAIN_FIELD_NAMES[2].as_bytes(),
+    Target::MAIN_FIELD_NAMES[3].as_bytes(),
 ];
 
 // Note that this means if a package specifies "module" and "main", the ES6
@@ -1343,7 +1341,7 @@ pub struct BundleOptions<'a> {
 
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
-    pub(crate) main_fields: Box<[Box<[u8]>]>,
+    pub main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
     /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored

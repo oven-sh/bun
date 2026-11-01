@@ -80,6 +80,36 @@ devTest('uses "development" condition', {
     await dev.fetch("/").equals("Environment: development");
   },
 });
+// A route is server code: it takes the "main" file of a package that also has a string "browser".
+// That does not depend on which reads the package first, the server graph or a preload.
+for (const [reader, bunfig] of [
+  ["the server graph", ""],
+  ["a preload", `preload = ["dual"]`],
+]) {
+  devTest(`a route takes the "main" file of a package when ${reader} reads it first`, {
+    framework: minimalFramework,
+    files: {
+      "bunfig.toml": bunfig,
+      "node_modules/dual/package.json": JSON.stringify({
+        name: "dual",
+        version: "1.0.0",
+        main: "./node.js",
+        browser: "./browser.js",
+      }),
+      "node_modules/dual/node.js": `module.exports = "node.js";`,
+      "node_modules/dual/browser.js": `module.exports = "browser.js";`,
+      "routes/index.ts": `
+        import file from 'dual';
+        export default function (req, meta) {
+          return new Response('dual: ' + file);
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("dual: node.js");
+    },
+  });
+}
 devTest("importing a file before it is created", {
   files: {
     "index.html": emptyHtmlFile({

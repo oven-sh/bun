@@ -28,6 +28,7 @@ use bun_jsc as jsc;
 #[cfg(windows)]
 use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_options_types::schema::api;
 #[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::{self, platform, resolve_path};
@@ -132,8 +133,11 @@ pub(crate) fn filter<'a>(
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
+    // The target selects the main fields and the "browser" maps when the transpiler is made.
+    let mut args = ctx.args.clone();
+    args.target = Some(api::Target::Bun);
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
-        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
+        match Transpiler::init(arena, log, args, Some(vm.transpiler.env)) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -144,7 +148,6 @@ pub(crate) fn filter<'a>(
             }
         },
     );
-    scan_transpiler.options.target = bun_ast::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
     scan_transpiler.options.packages = bun_bundler::options::PackagesOption::External;
@@ -153,13 +156,18 @@ pub(crate) fn filter<'a>(
     scan_transpiler.options.ignore_module_resolution_errors = true;
     scan_transpiler.options.output_dir = Box::default();
     scan_transpiler.options.tree_shaking = false;
+    // The target turned this on. It drops the import of a branch that a constant turns off.
+    scan_transpiler.options.minify_syntax = false;
+    // The target set `LoadAll`, which reads env files into the loader of the run and inlines the variables.
+    scan_transpiler.options.env.behavior = api::DotEnvBehavior::Disable;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the
     // fields we changed above.
-    scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
     scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
+    // The run takes "main" over "module" for an import too.
+    scan_transpiler.resolver.prefer_module_field = vm.transpiler.resolver.prefer_module_field;
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at

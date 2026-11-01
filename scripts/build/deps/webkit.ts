@@ -45,6 +45,7 @@ import {
   type Source,
   type SourceGroup,
 } from "../source.ts";
+import { toolIdentityFile } from "../tools.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Prebuilt URL computation
@@ -673,12 +674,13 @@ function webkitLayout(cfg: Config): WebKitBuild {
 /**
  * The files directly in `dir` with one of the extensions: a generator's own
  * modules and data, inputs of its step. (cmake names them in a flattened copy
- * of the scripts it makes; the steps here run them in place.)
+ * of the scripts it makes; the steps here run them in place.) No dot-file is
+ * one of them: an editor's lock (`.#name`) is a link to nothing.
  */
 function filesIn(wk: WebKitBuild, dir: string, ...exts: string[]): string[] {
   wk.listedDirs.push(dir);
   return readdirSync(dir)
-    .filter(f => exts.length === 0 || exts.some(e => f.endsWith(e)))
+    .filter(f => !f.startsWith(".") && (exts.length === 0 || exts.some(e => f.endsWith(e))))
     .sort()
     .map(f => join(dir, f));
 }
@@ -839,7 +841,10 @@ function webkitLocalIncludes(cfg: Config): string[] {
 //
 // Not built here. Linux uses the system's (headers on the default search
 // path, -licu* in bun.ts), or the static one $BUN_ICU_ROOT names, such as the
-// include/ and lib/ of a prebuilt WebKit. macOS links the SDK's libicucore, whose
+// include/ and lib/ of a prebuilt WebKit. A hardened build takes only the
+// headers and the data from there: hardened-icu.sh compiles the code with the
+// hardening flags, from the tarball the checkout's icu/source.json names, with
+// the checkout's icu/*.patch (icuPatches). macOS links the SDK's libicucore, whose
 // headers Apple does not ship: WebKit carries a matching set in Source/WTF/icu,
 // used with symbol renaming off (OptionsJSCOnly.cmake / FindICU.cmake). Android
 // has none: $BUN_ANDROID_ICU_ROOT names a static cross-built one (the NDK
@@ -863,6 +868,21 @@ function icuIncludes(wk: WebKitBuild): string[] {
   return root === undefined ? [] : [join(root, "include")];
 }
 
+/**
+ * The patches of a hardened build's ICU: every `icu/*.patch` of the checkout, the decompression hook first. WebKit has
+ * no list of them. Its Dockerfiles name each one, and nothing checks that those are still every patch in icu/, in this
+ * order (they are at 4d45755fed). The list is both the step's inputs and the script's arguments, so ninja reruns the
+ * step for a patch that is edited (an input) and for one that is added or removed (the command).
+ */
+function icuPatches(wk: WebKitBuild): string[] {
+  const dir = join(wk.W, "icu");
+  const hook = join(dir, "udata-decompress-hook.patch");
+  assert(existsSync(hook), "this WebKit checkout has no icu/udata-decompress-hook.patch", {
+    hint: "$BUN_ICU_ROOT's data is compressed item by item, and only an ICU with that patch reads it",
+  });
+  return [hook, ...filesIn(wk, dir, ".patch").filter(patch => patch !== hook)];
+}
+
 /** `libs` join bun's link; `outputs` are the ones a step of this graph produces, with ICU's headers as a side effect. */
 function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
   const { cfg } = wk;
@@ -879,9 +899,16 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
     const dir = join(wk.B, "icu");
     const script = join(cfg.cwd, "scripts", "build", "hardened-icu.sh");
     const libs = ["libicui18n.a", "libicuuc.a"].map(lib => join(dir, "lib", lib));
+    const patches = icuPatches(wk);
     gen(wk, {
       outputs: libs,
-      inputs: [script, join(wk.W, "icu", "source.json"), join(wk.W, "icu", "udata-decompress-hook.patch")],
+      inputs: [
+        script,
+        join(wk.W, "icu", "source.json"),
+        ...patches,
+        toolIdentityFile(cfg, "cc"),
+        toolIdentityFile(cfg, "cxx"),
+      ],
       cwd: wk.W,
       cmd: [
         "bash",
@@ -891,6 +918,8 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
         cfg.cc,
         cfg.cxx,
         cfg.ar,
+        ...patches,
+        "--",
         ...(cfg.crossTarget !== undefined ? [`--target=${cfg.crossTarget}`] : []),
         ...(cfg.sysroot !== undefined ? [`--sysroot=${cfg.sysroot}`] : []),
         ...computeCpuTargetFlags(cfg),

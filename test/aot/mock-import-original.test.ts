@@ -109,9 +109,6 @@ test.each(Object.keys(files).filter(name => name.endsWith(".test.ts")))("%s", as
   expect(plain.seen).toContain("SEEN real runs");
   expect(plain.seen.length).toBe(2);
   expect(plain.exitCode).toBe(0);
-  // TODO(bun), row 4263: as one program a compiled import() does not wait for a factory that settles in a later turn of the event loop, which the load of such an original takes. `.not.toEqual(plain)` goes red once it agrees.
-  const differsAsOneProgram = ["deep-mentioned.test.ts"];
-  if (differsAsOneProgram.includes(name)) expect(oneProgram).not.toEqual(plain);
-  else expect(oneProgram).toEqual(plain);
+  expect(oneProgram).toEqual(plain);
   expect(layers).toEqual(plain);
 });

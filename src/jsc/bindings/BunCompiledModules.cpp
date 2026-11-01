@@ -992,6 +992,14 @@ static bool loadsSynchronously(JSGlobalObject* globalObject, AOT::ModuleID modul
     return Bun__AOT__isLoadedSynchronously(globalObject, &pathArgument);
 }
 
+static JSPromise* factoriesThatWait(JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (globalObject->onLoadPlugins.factoriesOfCompiledMocks.isEmpty()) [[likely]]
+        return nullptr;
+    return sourceAfterFactories(globalObject, JSPromise::create(getVM(globalObject), globalObject->promiseStructure()), jsUndefined());
+}
+
 static void callInLaterTurn(JSGlobalObject* globalObject)
 {
     defaultGlobalObject(globalObject)->scriptExecutionContext()->postTaskAfterYield([](WebCore::ScriptExecutionContext& context) {
@@ -1038,6 +1046,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &stampOfFile,
     &loadsFileItself,
     &didStartImport,
+    &factoriesThatWait,
 };
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);

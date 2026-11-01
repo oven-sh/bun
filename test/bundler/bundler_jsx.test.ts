@@ -187,7 +187,13 @@ describe("bundler", () => {
       });
     });
 
-    test("Bun.Transpiler scanImports uses the effective JSX runtime", () => {
+    test.concurrent("Bun.Transpiler scanImports uses the effective JSX runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+      import { expect } from "bun:test";
       const transpiler = new Bun.Transpiler({ loader: "tsx" });
       expect(transpiler.scanImports("/* @jsxRuntime preserve */ export default <></>;")).toEqual([]);
       expect(transpiler.scanImports("export default <></>;")).toEqual([
@@ -195,7 +201,7 @@ describe("bundler", () => {
         { kind: "require-call", path: "react" },
       ]);
 
-      // "preserve" in tsconfig is not applied: `bun run` executes the output.
+      // "preserve" in tsconfig is not applied: \`bun run\` executes the output.
       const tsconfigPreserve = new Bun.Transpiler({
         loader: "tsx",
         tsconfig: JSON.stringify({ compilerOptions: { jsx: "preserve" } }),
@@ -204,6 +210,14 @@ describe("bundler", () => {
         { kind: "require-call", path: "react/jsx-dev-runtime" },
         { kind: "require-call", path: "react" },
       ]);
+        `,
+        ],
+        env: { ...bunEnv, NODE_ENV: "development", BUN_ENV: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     });
 
     test("Bun.Transpiler scanImports uses the jsxImportSource pragma", () => {

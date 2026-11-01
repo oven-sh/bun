@@ -1,6 +1,5 @@
 // Saves the own properties of an object, of every function reachable from it and of their prototypes, and puts them
-// back later. `bun test --isolate=modules` does this to globalThis after each file, and the DOM environments to the
-// classes of a package that every window shares.
+// back later: globalThis with `bun test --isolate=modules`, and the classes of a DOM package that every window shares.
 
 const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
   "TestEnvironment.cpp",
@@ -47,9 +46,7 @@ function isSame(current: PropertyDescriptor, saved: PropertyDescriptor) {
 }
 
 // Visits `root`, every function reachable from it and their prototypes, each once. An object that `root` holds is
-// visited only if `descendsIntoObjects`, or if it's a `prototype`. `found` returns where to put an object's properties.
-// The global object is visited only as the root: a window holds it as `global`, and what a file changes on it is
-// another snapshot's business, or gone with the file's global.
+// visited only if `descendsIntoObjects`, or if it's a `prototype`. The global object is visited only as the root.
 function walk(
   root: object,
   descendsIntoObjects: boolean,
@@ -131,8 +128,7 @@ class SavedProperties {
     this.#isTracked = isTracked;
   }
 
-  // Saves what is reachable from `root` and not saved yet. A walk that throws, from a trap of a proxy, keeps what
-  // it saved before.
+  // Saves what is reachable from `root` and not saved yet. A walk that a proxy's trap stops keeps what it saved before.
   save(root: object, descendsIntoObjects: boolean) {
     if (this.#seen.$has(root)) return;
     const objects = this.#objects;

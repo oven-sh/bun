@@ -33,9 +33,8 @@ interface Environment {
   close(): void | Promise<void>;
 }
 
-// The classes of a package, which a process loads once, so that every window has the same ones. With --isolate and
-// --isolate=modules a file's changes to them are put back before the next window is made, like its changes to
-// globalThis. That is after the file's last timer and close handler, and before the window binds its methods.
+// The classes of a package, which a process loads once and every window shares. With --isolate and --isolate=modules
+// a file's changes to them are put back before the next window is made, after the file's last timer.
 interface PackageClasses {
   // What the first root has is saved. The second root tells which of it is the package's and not the root's own.
   add(root: object, descendsIntoObjects: boolean): void;
@@ -379,8 +378,7 @@ function createHappyDOM({ classes }: Package, exports: any, options: any): Envir
     url: options.url || "http://localhost:3000",
     settings: { ...options.settings, disableErrorCapturing: true },
   });
-  // happy-dom's window has the package's classes, like `HTMLElement`, a subclass of some that is its own, and objects
-  // like `happyDOM` and `NodeFilter` whose prototypes are the package's too.
+  // The window has the package's classes, a subclass of some that is its own, and objects like `happyDOM` and `NodeFilter`.
   classes?.add(win, true);
   // prettier-ignore
   const globals = windowProperties(win, [

@@ -216,7 +216,8 @@ impl Resolver<'_, '_> {
             {
                 ExprState::Unresolved
             }
-            Some(module) => ExprState::Builtin(imported_namespace_value(module)),
+            // An await gives up the turn, whatever it waits for: nothing stands in for the expression.
+            Some(module) => ExprState::Builtin(imported_namespace_value(module).with_side_effects()),
             None => ExprState::Unresolved,
         }
     }

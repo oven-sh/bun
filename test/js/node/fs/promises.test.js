@@ -631,7 +631,7 @@ describe.concurrent("the write job's copy of the data", () => {
         `,
         call: `(fs.ftruncateSync(handle.fd, 0), ${call})`,
         done: `byteAt(out, written.length - 1) === written.at(-1)`,
-        verify: `(await handle.close(), fs.readFileSync(out).equals(written))`,
+        verify: `(await handle.close(), results.every(result => result.bytesWritten === written.length) && fs.readFileSync(out).equals(written))`,
         count,
       },
       bounds,

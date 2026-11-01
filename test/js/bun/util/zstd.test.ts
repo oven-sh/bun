@@ -895,18 +895,43 @@ describe.concurrent("async compression of a resizable ArrayBuffer that shrinks a
 // The job leaves no trace that the JS thread can poll for. So the fixture waits until every
 // other thread sleeps, which it can see on Linux only.
 it.concurrent.skipIf(!isLinux).each([
-  ["a string that is not ASCII", `Buffer.alloc(2 * 1024 * 1024, "a").toString("latin1") + "\\u4e2d"`],
   [
-    "a view of a resizable ArrayBuffer",
-    `new Uint8Array(new ArrayBuffer(2 * 1024 * 1024, { maxByteLength: 4 * 1024 * 1024 })).fill(0x61)`,
+    "zstdCompress",
+    "a string that is not ASCII",
+    `const data = Buffer.alloc(2 * 1024 * 1024, "a").toString("latin1") + "\\u4e2d";
+     const expected = Buffer.from(data);`,
+    `Bun.zstdCompress(data, { level: 1 })`,
+    `Bun.zstdDecompressSync(result)`,
   ],
-])("zstdCompress frees its copy of %s when the compression is done", async (_, data) => {
+  [
+    "zstdCompress",
+    "a view of a resizable ArrayBuffer",
+    `const data = new Uint8Array(new ArrayBuffer(2 * 1024 * 1024, { maxByteLength: 4 * 1024 * 1024 })).fill(0x61);
+     const expected = Buffer.from(data);`,
+    `Bun.zstdCompress(data, { level: 1 })`,
+    `Bun.zstdDecompressSync(result)`,
+  ],
+  [
+    "zstdDecompress",
+    "a view of a resizable ArrayBuffer",
+    // A frame of a few bytes, then a skippable frame that fills the view. So the input is large and the output is small.
+    `const expected = Buffer.from("hello");
+     const frame = Bun.zstdCompressSync(expected);
+     const data = new Uint8Array(new ArrayBuffer(2 * 1024 * 1024, { maxByteLength: 4 * 1024 * 1024 }));
+     data.set(frame);
+     const skippable = new DataView(data.buffer, frame.length, 8);
+     skippable.setUint32(0, 0x184d2a50, true);
+     skippable.setUint32(4, data.length - frame.length - 8, true);`,
+    `Bun.zstdDecompress(data)`,
+    `result`,
+  ],
+])("%s frees its copy of %s when the job is done", async (_api, _input, setup, call, output) => {
   // 48 copies of 2 MiB are 96 MiB, if every copy stays.
   await expectRssDeltaOfPendingCallsBelow(
     {
-      setup: `const data = ${data};`,
-      call: `Bun.zstdCompress(data, { level: 1 })`,
-      verify: `Buffer.from(Bun.zstdDecompressSync(results.at(-1))).equals(Buffer.from(data))`,
+      setup,
+      call,
+      verify: `results.every(result => Buffer.from(${output}).equals(expected))`,
       count: 48,
     },
     { release: 48, debug: 64 },

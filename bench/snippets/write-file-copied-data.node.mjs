@@ -19,7 +19,12 @@ const MB = 1024 * KB;
 const sources = {
   "ASCII": size => Buffer.alloc(size, "a").toString("latin1"),
   "Latin-1": size => Buffer.alloc(size / 2, 0xe9).toString("latin1"),
-  "UTF-16": size => Buffer.alloc((size / 3) * 2, "\u4e2d", "utf16le").toString("utf16le"),
+  // 3 bytes for each CJK character, and 1 byte for each "a" that fills the rest.
+  "UTF-16": size => {
+    const units = Buffer.alloc((Math.floor(size / 3) + (size % 3)) * 2, "\u4e2d", "utf16le");
+    units.fill("a", units.length - (size % 3) * 2, units.length, "utf16le");
+    return units.toString("utf16le");
+  },
   "base64": size => Buffer.alloc(size, "a").toString("base64"),
   "resizable view": size => new Uint8Array(new ArrayBuffer(size, { maxByteLength: 2 * size })).fill(0x61),
 };

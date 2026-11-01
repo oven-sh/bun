@@ -250,6 +250,7 @@ fn write_until_refused(fd: Fd, mut rest: &[u8]) -> Result<&[u8], i32> {
 }
 
 /// Writes all of `rest` before it returns, as a libuv stream with blocking writes does. 0, or a negative libuv errno.
+#[cfg(unix)]
 fn write_in_place(fd: Fd, rest: &[u8]) -> i32 {
     match sys::write_all_waiting(fd, rest) {
         Ok(()) => 0,
@@ -673,12 +674,19 @@ impl TTY {
             if self.flags.get().contains(Flags::CLOSED) {
                 return uv_errno(sys::E::EBADF as u16);
             }
-            let status = write_in_place(self.fd, data);
-            if status == 0 {
-                self.bytes_written
-                    .set(self.bytes_written.get().wrapping_add(data.len() as u64));
+            let mut rest = data;
+            while !rest.is_empty() {
+                match sys::write(self.fd, rest) {
+                    Ok(0) => return uv_errno(sys::E::EIO as u16),
+                    Ok(n) => {
+                        self.bytes_written
+                            .set(self.bytes_written.get().wrapping_add(n as u64));
+                        rest = &rest[n..];
+                    }
+                    Err(err) => return uv_errno(err.errno),
+                }
             }
-            status
+            0
         }
         #[cfg(unix)]
         {
@@ -743,6 +751,10 @@ impl TTY {
                 Some(fd) => fd,
                 None => {
                     let fd = sys::dup_at_least(own_fd, 3)?;
+                    // The caller closed its fd, and the dup took that number: it is the handle's now, and `close()` closes it once.
+                    if fd == self.fd {
+                        self.update_flags(|f| f.remove(Flags::OWNS_FD));
+                    }
                     q.poll_fd = Some(fd);
                     fd
                 }
@@ -758,16 +770,10 @@ impl TTY {
                 poll.register(ctx.platform_event_loop(), PollFlag::Writable, false)?;
                 poll.enable_keeping_process_alive(ctx);
             }
-            Ok::<Fd, sys::Error>(poll_fd)
+            Ok::<(), sys::Error>(())
         });
         match armed {
-            Ok(poll_fd) => {
-                // The caller closed its fd, and the dup took that number: it is the handle's now, and `close()` closes it once.
-                if poll_fd == self.fd {
-                    self.update_flags(|f| f.remove(Flags::OWNS_FD));
-                }
-                WritePoll::Armed
-            }
+            Ok(()) => WritePoll::Armed,
             Err(err) if err.get_errno() == UNPOLLABLE_KIND => {
                 self.update_flags(|f| f.insert(Flags::BLOCKING_WRITES));
                 WritePoll::Unpollable
@@ -848,13 +854,14 @@ impl TTY {
         this_value.ensure_still_alive();
     }
 
-    /// libuv reads before it writes in one wakeup: what the other side sent, and its hangup, reach `onread` before the failure of a write does.
+    /// libuv reads before it writes in one wakeup: what the other side sent, and its hangup, reach `onread` before the failure of a write does. At most 32 reads, as `uv__read()`.
     #[cfg(unix)]
     fn read_what_came(&self) {
-        loop {
+        for _ in 0..32 {
             let flags = self.flags.get();
+            // After `setBlocking(true)` a read with nothing to read would wait in place.
             if !flags.contains(Flags::READING)
-                || flags.intersects(Flags::READER_DONE | Flags::CLOSED)
+                || flags.intersects(Flags::READER_DONE | Flags::CLOSED | Flags::BLOCKING_ASKED)
             {
                 return;
             }

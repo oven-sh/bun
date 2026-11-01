@@ -185,7 +185,7 @@ declare global {
       readStop(): number;
       /** Node's `writeBuffer(req, data)`. 0: the write is complete. Negative: a libuv errno. 1: the handle finishes the write from the loop and then calls `onwritecomplete(status)`, where Node answers a `WriteWrap` and calls its `oncomplete(status)`. */
       writeBuffer(req: null, data: Uint8Array): number;
-      /** Called once for each `writeBuffer()` that answered 1, in the order of the calls. */
+      /** Called once for each `writeBuffer()` that answered 1, in the order of the calls, and never inside that call. */
       onwritecomplete?: (this: StreamWrapHandle, status: number) => void;
       /** libuv's `write_queue_size`: the bytes that wait for the loop. */
       readonly writeQueueSize?: number;
@@ -536,6 +536,7 @@ interface InternalServerHandler<Data> extends InternalSocketHandler<Data> {
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeShift = Array.prototype.shift;
 const MathMax = Math.max;
 const MathMin = Math.min;
 const reportError = globalThis.reportError;
@@ -1394,9 +1395,11 @@ function handleReadStartAhead(self: $Node.Socket, handle: SocketHandle) {
 }
 function onStreamRead(this: $Node.StreamWrapHandle, nread: number, buffer?: Buffer) {
   const self: $Node.Socket | undefined = this[owner_symbol];
-  if (!self || self.destroyed) return;
+  if (!self) return;
+  // Node restarts the idle timer for every call, the end of input and an error too.
+  self._unrefTimer();
+  if (self.destroyed) return;
   if (nread > 0) {
-    self._unrefTimer();
     self.bytesRead += nread;
     // A socket built with the `onread` option hands chunks to that callback.
     const deliver = self[kOnreadDeliver];
@@ -1427,7 +1430,8 @@ const kWriteReqs = Symbol("kWriteReqs");
 const kLastWriteQueueSize = Symbol("kLastWriteQueueSize");
 // After Node's onWriteComplete: the handle calls it with a status alone, and the stream callback and its async context come from kWriteReqs. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L45-L70
 function onStreamWriteComplete(this: $Node.StreamWrapHandle, status: number) {
-  const req = this[kWriteReqs]?.shift();
+  const reqs = this[kWriteReqs];
+  const req = reqs && ArrayPrototypeShift.$call(reqs);
   if (!req) return;
   let err: Error | null = null;
   if (status < 0) {
@@ -3635,7 +3639,7 @@ Socket.prototype._write = function _write(
     // Node's WriteWrap is an AsyncResource that the write creates.
     const req = { callback, frame: require("internal/async_context_frame").current() };
     const reqs = socket[kWriteReqs];
-    if (reqs) reqs.push(req);
+    if (reqs) ArrayPrototypePush.$call(reqs, req);
     else socket[kWriteReqs] = [req];
     socket.onwritecomplete = onStreamWriteComplete;
     this[kLastWriteQueueSize] = data.byteLength;

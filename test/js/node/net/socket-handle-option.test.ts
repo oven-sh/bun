@@ -387,22 +387,52 @@ test("the handle completes the writes of two sockets in the order of the writes"
 // https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L872-L887
 test("'timeout' waits while the write queue of the handle moves", () => {
   const { handle, later } = handleThatFinishesLater();
-  const socket = new Socket({ handle, manualStart: true } as never) as Socket & { _onTimeout(): void };
-  const timeouts: string[] = [];
-  socket.on("timeout", () => timeouts.push("timeout"));
+  const socket = new Socket({ handle, manualStart: true } as never) as Socket & {
+    _onTimeout(): void;
+    _unrefTimer(): void;
+  };
+  const log: string[] = [];
+  socket.on("timeout", () => log.push("timeout"));
+  const unrefTimer = socket._unrefTimer;
+  socket._unrefTimer = function () {
+    log.push("the timer restarts");
+    return unrefTimer.call(this);
+  };
 
   socket.write("hello");
+  log.length = 0;
   handle.writeQueueSize = 3;
   socket._onTimeout();
-  timeouts.push("the queue moved");
+  log.push("the queue moved");
   socket._onTimeout();
-  timeouts.push("the queue stood still");
+  log.push("the queue stood still");
   handle.writeQueueSize = 0;
   later.shift()!(0);
+  log.push("the write is complete");
   socket._onTimeout();
-  timeouts.push("the write is complete");
 
-  expect(timeouts).toEqual(["the queue moved", "timeout", "the queue stood still", "timeout", "the write is complete"]);
+  expect(log).toEqual([
+    "the timer restarts",
+    "the queue moved",
+    "timeout",
+    "the queue stood still",
+    "the timer restarts",
+    "the write is complete",
+    "timeout",
+  ]);
+  socket.destroy();
+});
+
+// A queue that is as long as the chunk has not moved: Node compares the two numbers and knows no more.
+test("'timeout' fires for a write that waits while nothing of it has gone out", () => {
+  const { handle } = handleThatFinishesLater();
+  const socket = new Socket({ handle, manualStart: true } as never) as Socket & { _onTimeout(): void };
+  let timeouts = 0;
+  socket.on("timeout", () => timeouts++);
+  socket.write("hello");
+  handle.writeQueueSize = 5;
+  socket._onTimeout();
+  expect(timeouts).toBe(1);
   socket.destroy();
 });
 

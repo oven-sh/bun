@@ -1210,7 +1210,14 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
     }
 #endif
 
-    return open(pathbuf, mode | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+    int reopened = open(pathbuf, mode | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+    // Above stdio: a reopen that lands on a closed fd 0 to 2 would be a stdio descriptor of the process, which nothing closes.
+    if (reopened >= 0 && reopened <= STDERR_FILENO) {
+        int moved = fcntl(reopened, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+        close(reopened);
+        reopened = moved;
+    }
+    return reopened;
 }
 
 #endif

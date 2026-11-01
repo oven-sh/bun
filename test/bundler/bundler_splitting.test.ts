@@ -513,6 +513,16 @@ describe("bundler", () => {
     if (hashed) api.writeFile(`/out/${entry}.js`, `import "./${hashed}";`);
   };
 
+  const outputsWith = (api: BundlerTestBundleAPI, marker: string) =>
+    [...new Bun.Glob("**/*").scanSync(api.outdir)]
+      .map(file => file.replaceAll("\\", "/"))
+      .filter(file => api.readFile("/out/" + file).includes(marker));
+  const noChunkImports = (api: BundlerTestBundleAPI, entry: string) => {
+    const importsEntry = new RegExp(`(from|import)\\s*\\(?"\\./${entry}\\.js"`);
+    for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toMatch(importsEntry);
+  };
+  const noChunkImportsIndex = (api: BundlerTestBundleAPI) => noChunkImports(api, "index");
+
   // An entry point takes a fold only with [hash] in its name, so a fold test runs with both kinds of name.
   function itFolds(
     id: string,
@@ -527,8 +537,7 @@ describe("bundler", () => {
       ...options,
       onAfterBundle(api) {
         pinned(api);
-        const importsEntry = new RegExp(`(from|import)\\s*\\(?"\\./${entry}\\.js"`);
-        for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toMatch(importsEntry);
+        noChunkImports(api, entry);
       },
     });
     itBundled(id + "HashedEntry", {
@@ -580,6 +589,685 @@ describe("bundler", () => {
       expect(jsOutputs(api)).toEqual(["index.js", "route.js"]);
     },
   });
+
+  // No chunk may import index.js, so the code that its `import()` targets share is in a hashed chunk, which index.js imports.
+  // That chunk runs ahead of the code in index.js, so it also holds the files of index.js that run ahead of the shared code.
+  const setupBeforeShared = {
+    "/index.js": /* js */ `
+      import "./setup.js";
+      import { Store } from "./store.js";
+      console.log("index", new Store().name);
+      import("./settings.js");
+    `,
+    "/setup.js": `globalThis.APP = { name: "app" };`,
+    "/store.js": /* js */ `
+      const NAME = globalThis.APP.name;
+      export class Store { name = NAME; }
+    `,
+    "/settings.js": /* js */ `
+      import { Store } from "./store.js";
+      console.log("settings", new Store().name);
+    `,
+  };
+  itFolds("splitting/EntrySetupImportRunsBeforeSharedCode", {
+    files: setupBeforeShared,
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "index.js", "settings.js"]);
+      expect(outputsWith(api, `"index"`)).toEqual(["index.js"]);
+      expect(outputsWith(api, "globalThis.APP = ")).toEqual([chunkContaining(api, "class Store")]);
+    },
+    folded(api) {
+      expect(jsOutputs(api)).toEqual(["index.entry.js", "settings.js"]);
+    },
+    run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+  });
+  const sharedPackage = {
+    "/settings.js": `import "shared";\n` + setupBeforeShared["/settings.js"],
+    "/node_modules/shared/index.js": `console.log("shared"); module.exports = { config: {} };`,
+  };
+  // `stdout`: what the unbundled program prints, unless a comment says what stays behind.
+  // `entryFile`: the first code that is left in index.js, if any.
+  for (const [name, files, stdout, entryFile, options] of [
+    // Tree shaking may drop shared.js when it is unused. It still reads what setup.js wrote.
+    [
+      "SharedCodeThatCanBeDropped",
+      {
+        "/index.js": /* js */ `
+          import "./setup.js";
+          import { value } from "./shared.js";
+          console.log("index", value);
+          import("./settings.js");
+        `,
+        "/shared.js": `export const value = typeof APP !== "undefined";`,
+        "/settings.js": `import { value } from "./shared.js"; console.log("settings", value);`,
+      },
+      "index true\nsettings true",
+      `"index"`,
+      {},
+    ],
+    [
+      "SetsUpSharedModule",
+      {
+        "/setup.js": `import { config } from "./config.js"; config.name = "app";`,
+        "/config.js": `export const config = {};`,
+        "/store.js": `import { config } from "./config.js"; const NAME = config.name; export class Store { name = NAME; }`,
+      },
+      "index app\nsettings app",
+      `"index"`,
+      {},
+    ],
+    [
+      "SetsUpSharedCommonJSPackage",
+      {
+        ...sharedPackage,
+        "/setup.js": `import shared from "shared"; shared.config.name = "app";`,
+        "/store.js": `import shared from "shared"; const NAME = shared.config.name; export class Store { name = NAME; }`,
+      },
+      "shared\nindex app\nsettings app",
+      `"index"`,
+      {},
+    ],
+    [
+      "BetweenSharedFiles",
+      {
+        "/index.js": setupBeforeShared["/index.js"] + `import "./between.js"; import "./late.js"; import "./last.js";`,
+        "/between.js": `console.log("between"); globalThis.BETWEEN = 1;`,
+        "/late.js": `console.log("late", globalThis.BETWEEN);`,
+        "/last.js": `console.log("last");`,
+        "/settings.js": `import "./late.js";\n` + setupBeforeShared["/settings.js"],
+      },
+      "between\nlate 1\nlast\nindex app\nsettings app",
+      `"last"`,
+      {},
+    ],
+    [
+      "InImportCycle",
+      {
+        "/setup.js": `import { log } from "./logger.js"; globalThis.APP = { name: "app" }; log("setup");`,
+        "/logger.js": `import "./setup.js"; console.log("logger"); export const log = m => console.log(m);`,
+      },
+      "logger\nsetup\nindex app\nsettings app",
+      `"index"`,
+      {},
+    ],
+    // `handlers` names `format`, which names `Store`, so the order of settings.js (store.js, then format.js) looks safer.
+    [
+      "PrecedesSharedFilesInImportCycle",
+      {
+        "/store.js": /* js */ `
+          import { format } from "./format.js";
+          const NAME = globalThis.APP.name;
+          console.log("store");
+          export class Store { name = NAME; toString() { return format(this); } }
+        `,
+        "/format.js": /* js */ `
+          import { Store } from "./store.js";
+          export function format(value) { return value instanceof Store ? value.name : String(value); }
+          globalThis.handlers = { format };
+          console.log("format");
+        `,
+        "/settings.js": `import "./format.js";\n` + setupBeforeShared["/settings.js"],
+      },
+      "format\nstore\nindex app\nsettings app",
+      `"index"`,
+      {},
+    ],
+    [
+      "ImportedByOtherFile",
+      {
+        "/index.js": `import "./main.js"; console.log("index");`,
+        "/main.js": setupBeforeShared["/index.js"].replace(`"index"`, `"main"`),
+      },
+      "main app\nindex\nsettings app",
+      `"main"`,
+      {},
+    ],
+    // The import of a type prints nothing.
+    [
+      "HasTypeImport",
+      {
+        "/index.ts": setupBeforeShared["/index.js"].replace("./setup.js", "./setup.ts"),
+        "/setup.ts": `import { Config } from "./types";\nglobalThis.APP = { name: "app" } as Config;`,
+        "/types.ts": `export interface Config { name: string }`,
+      },
+      "index app\nsettings app",
+      `"index"`,
+      { entryPoints: ["/index.ts"] },
+    ],
+    [
+      "HasImportCallOfExternalModule",
+      { "/setup.js": `globalThis.APP = { name: "app" }; globalThis.ext = () => import("ext");` },
+      "index app\nsettings app",
+      `"index"`,
+      { external: ["ext"], target: "browser" },
+    ],
+    [
+      "RequiresSplitModule",
+      {
+        "/setup.js": `export {}; globalThis.APP = { name: "app" }; require("./required.js");`,
+        "/required.js": `console.log("required"); export const r = 1;`,
+      },
+      "required\nindex app\nsettings app",
+      `"index"`,
+      {},
+    ],
+    // font.woff2 is a file of index.js that stays there. It runs nothing, and setup.js does not import it.
+    [
+      "FollowsStylesheetWithAsset",
+      {
+        "/index.js": `import "./globals.css";\n` + setupBeforeShared["/index.js"],
+        "/globals.css": `@font-face { font-family: "f"; src: url("./font.woff2"); }`,
+        "/font.woff2": "a font",
+      },
+      "index app\nsettings app",
+      `"index"`,
+      { target: "browser", loader: { ".woff2": "file" } },
+    ],
+    // A builtin module has no side effects, so it has no place in the order.
+    ...(["bun", "node"] as const).map(
+      target =>
+        [
+          "FollowsBuiltinModule/" + target,
+          { "/index.js": `import fs from "node:fs";\n` + setupBeforeShared["/index.js"] + `console.log(typeof fs);` },
+          "index app\nobject\nsettings app",
+          `"index"`,
+          { target },
+        ] as const,
+    ),
+    // meta.js stays in index.js, behind store.js. setup.js ran ahead of it, and still does.
+    [
+      "PrecedesFileThatStays",
+      {
+        "/index.js": setupBeforeShared["/index.js"].replace(
+          `import "./setup.js";`,
+          `import "./setup.js"; import "./meta.js";`,
+        ),
+        "/meta.js": `console.log("meta", typeof import.meta.url);`,
+      },
+      "meta string\nindex app\nsettings app",
+      `"meta"`,
+      {},
+    ],
+    // ext loads ahead of all of index.js, where late.js stays, behind shared-late.js.
+    [
+      "PrecedesExternalImportBehindSharedCode",
+      {
+        "/index.js": setupBeforeShared["/index.js"] + `import "ext"; import "./late.js"; import "./shared-late.js";`,
+        "/late.js": `console.log("late", globalThis.EXT);`,
+        "/shared-late.js": `console.log("shared-late");`,
+        "/settings.js": `import "./shared-late.js";\n` + setupBeforeShared["/settings.js"],
+      },
+      "shared-late\next\nlate 1\nindex app\nsettings app",
+      `"late"`,
+      { external: ["ext"] },
+    ],
+    // Neither loads a file, so setup.js cannot tell where it is, and nothing runs ahead of it.
+    [
+      "HasRequireOfMissingFile",
+      {
+        "/setup.js": `export {}; try { require("./missing.js"); } catch { console.log("missing"); } globalThis.APP = { name: "app" };`,
+      },
+      "missing\nindex app\nsettings app",
+      `"index"`,
+      { target: "browser" },
+    ],
+    [
+      "FollowsDisabledImport",
+      {
+        "/index.js": `import "fs";\n` + setupBeforeShared["/index.js"] + `console.log(typeof import.meta.url);`,
+        "/package.json": `{ "browser": { "fs": false } }`,
+      },
+      "index app\nstring\nsettings app",
+      `"index"`,
+      { target: "browser" },
+    ],
+    // The walk of index.js goes through the package to b.js, which only admin.js loads.
+    [
+      "OtherEntryLoadsOtherFileOfPackage",
+      {
+        "/index.js": `import { a } from "pure"; console.log(a);\n` + setupBeforeShared["/index.js"],
+        "/admin.js": `import { b } from "pure"; console.log(b);`,
+        "/node_modules/pure/package.json": `{ "name": "pure", "sideEffects": false }`,
+        "/node_modules/pure/index.js": `export * from "./a.js"; export * from "./b.js";`,
+        "/node_modules/pure/a.js": `export const a = "a";`,
+        "/node_modules/pure/b.js": `export const b = "b";`,
+      },
+      "a\nindex app\nsettings app",
+      `"index"`,
+      { entryPoints: ["/index.js", "/admin.js"] },
+    ],
+    ["WithMinChunkSize", {}, "index app\nsettings app", `"index"`, { minChunkSize: 1024 * 1024 }],
+    // index.js runs what it imports itself. Its file goes along when one of these must run ahead of the shared code.
+    [
+      "FollowsCommonJSPackage",
+      { ...sharedPackage, "/index.js": `import "shared";\n` + setupBeforeShared["/index.js"] },
+      "shared\nindex app\nsettings app",
+      undefined,
+      {},
+    ],
+    [
+      "FollowsCommonJSPackageInBrowserBuild",
+      { ...sharedPackage, "/index.js": `import "shared";\n` + setupBeforeShared["/index.js"] },
+      "shared\nindex app\nsettings app",
+      undefined,
+      { target: "browser" },
+    ],
+    [
+      "IsCommonJS",
+      {
+        "/index.js": setupBeforeShared["/index.js"].replace("./setup.js", "./setup.cjs"),
+        "/setup.cjs": `globalThis.APP = { name: "app" };`,
+      },
+      "index app\nsettings app",
+      undefined,
+      {},
+    ],
+    [
+      "FollowsExternalPackage",
+      {
+        "/index.js": `import "ext";\n` + setupBeforeShared["/index.js"],
+        "/setup.js": `globalThis.APP = { name: "app" + globalThis.EXT };`,
+      },
+      "ext\nindex app1\nsettings app1",
+      undefined,
+      { external: ["ext"] },
+    ],
+    [
+      "IsExternalPackage",
+      {
+        "/index.js": setupBeforeShared["/index.js"].replace("./setup.js", "ext"),
+        "/store.js": `const NAME = "app" + globalThis.EXT; export class Store { name = NAME; }`,
+      },
+      "ext\nindex app1\nsettings app1",
+      undefined,
+      { external: ["ext"] },
+    ],
+    [
+      "ImportsEntryFile",
+      { "/setup.js": `import "./index.js"; globalThis.APP = { name: "app" };` },
+      "index app\nsettings app",
+      undefined,
+      {},
+    ],
+  ] as const) {
+    itBundled("splitting/EntryFileRunsBeforeSharedCode/" + name, {
+      files: { ...setupBeforeShared, ...files },
+      runtimeFiles: { "/out/node_modules/ext/index.js": `console.log("ext"); globalThis.EXT = 1;` },
+      entryPoints: ["/index.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      onAfterBundle(api) {
+        noChunkImportsIndex(api);
+        expect(outputsWith(api, entryFile ?? `"index"`)).toEqual([
+          entryFile ? "index.js" : chunkContaining(api, "class Store"),
+        ]);
+      },
+      run: { file: "/out/index.js", stdout },
+    });
+  }
+  itBundled("splitting/EntrySetupImportsRunInOrderBeforeSharedCode", {
+    files: {
+      ...setupBeforeShared,
+      "/index.js": /* js */ `
+        import { name } from "./setup.js";
+        import { Store } from "./store.js";
+        import "ext";
+        import "shared";
+        import "./after.js";
+        console.log("index", new Store().name, name, import.meta.main);
+        import("./settings.js");
+      `,
+      "/setup.js": /* js */ `
+        import { prefix } from "./util.js";
+        import "./setup.css";
+        export const name = prefix + "app";
+        globalThis.APP = { name };
+        console.log("setup");
+      `,
+      "/setup.css": `.setup { color: red }`,
+      "/util.js": `console.log("util"); export const prefix = "the ";`,
+      "/after.js": `console.log("after", globalThis.EXT);`,
+      ...sharedPackage,
+    },
+    runtimeFiles: { "/out/node_modules/ext/index.js": `console.log("ext"); globalThis.EXT = 1;` },
+    external: ["ext"],
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: {
+      file: "/out/index.js",
+      stdout: "util\nsetup\next\nshared\nafter 1\nindex the app the app true\nsettings the app",
+    },
+  });
+  // The `import` of such a package counts where it is, not where its binding is used.
+  itBundled("splitting/PackageWithoutSideEffectsRunsBeforeEntrySetupImport", {
+    files: {
+      ...setupBeforeShared,
+      "/index.js": /* js */ `
+        import { registry } from "pure";
+        import "./setup.js";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name, registry.size);
+        import("./settings.js");
+      `,
+      "/setup.js": `globalThis.REGISTRY.set("a", 1); globalThis.APP = { name: "app" };`,
+      "/node_modules/pure/package.json": `{ "name": "pure", "sideEffects": false }`,
+      "/node_modules/pure/index.js": `export * from "./registry.js";`,
+      "/node_modules/pure/registry.js": `export const registry = (globalThis.REGISTRY ??= new Map());`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "index app 1\nsettings app" },
+  });
+  // The namespace of a.js names x.js, which a.js imports behind store.js.
+  itBundled("splitting/FileThatEntryReexportsBehindSharedCodeStaysBehindIt", {
+    files: {
+      "/index.js": /* js */ `
+        import "./setup.js";
+        import * as a from "./a.js";
+        console.log("index", Object.keys(a).join());
+        import("./settings.js");
+      `,
+      "/setup.js": `console.log("setup");`,
+      "/a.js": `import "./store.js"; export { x } from "./x.js";`,
+      "/x.js": `console.log("x", globalThis.APP); export const x = 1;`,
+      "/store.js": `globalThis.APP = 1; console.log("store");`,
+      "/settings.js": `import "./store.js"; console.log("settings");`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "setup\nstore\nx 1\nindex x\nsettings" },
+  });
+  // shared.js has no side effects, so --min-chunk-size could fold its chunk into the chunk of the package, which admin.js loads too.
+  itBundled("splitting/MinChunkSizeKeepsEntryFilesFromOtherEntry", {
+    files: {
+      "/index.js": /* js */ `
+        import "./setup.js";
+        import { value } from "./shared.js";
+        import pkg from "pkg";
+        console.log("index", value, pkg);
+        import("./settings.js");
+      `,
+      "/setup.js": `console.log("setup"); globalThis.APP = 1;`,
+      "/shared.js": `export const value = typeof APP;`,
+      "/settings.js": `import { value } from "./shared.js"; import pkg from "pkg"; console.log("settings", value, pkg);`,
+      "/admin.js": `import pkg from "pkg"; console.log("admin", pkg);`,
+      // Padded, so that admin.js could afford the fold.
+      "/node_modules/pkg/index.js": `module.exports = "pkg"; // ${Buffer.alloc(8 * 1024, "padding ").toString()}`,
+    },
+    entryPoints: ["/index.js", "/admin.js"],
+    splitting: true,
+    minChunkSize: 1024 * 1024,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "setup\nindex number pkg\nsettings number pkg" },
+      { file: "/out/admin.js", stdout: "admin pkg" },
+    ],
+  });
+  // `require()` resolves from the chunk of the runtime, which stays in index.js while index.js uses it.
+  for (const target of ["bun", "node"] as const) {
+    itBundled("splitting/EntryFileRequiresFromItsDirectory/" + target, {
+      files: {
+        ...setupBeforeShared,
+        "/index.js":
+          setupBeforeShared["/index.js"] + `console.log(require("./plugins/" + globalThis.APP.name + ".cjs"));`,
+      },
+      runtimeFiles: { "/out/plugins/app.cjs": `module.exports = "plugin";` },
+      entryPoints: ["/index.js"],
+      chunkNaming: "chunks/[name]-[hash].[ext]",
+      splitting: true,
+      target,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout: "index app\nplugin\nsettings app" },
+    });
+  }
+  // Node takes a .js file without `import` or `export` for CommonJS, which is not strict.
+  itBundled("splitting/ChunkWithoutExportsIsAnESModule", {
+    files: {
+      "/index.js": `import "./setup.js"; import "./shared.js"; import("./lazy.js");`,
+      "/setup.js": `console.log("setup", (function () { return this; })());`,
+      "/shared.js": `console.log("shared");`,
+      "/lazy.js": `import "./shared.js"; console.log("lazy");`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "node",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/" + chunkContaining(api, `"shared"`)).toMatch(/export\s*\{\s*\}/);
+    },
+    run: { file: "/out/index.js", stdout: "setup undefined\nshared\nlazy" },
+  });
+  // setup.js stays in index.js, and util.js runs nothing, so it has no reason to move.
+  itBundled("splitting/EntryFileThatOnlyDeclaresStaysWithFileThatStays", {
+    files: {
+      ...setupBeforeShared,
+      "/index.js": `import { helper } from "./util.js"; helper();\n` + setupBeforeShared["/index.js"],
+      "/util.js": `export function helper() {}`,
+      "/setup.js": `globalThis.APP = { name: import.meta.file };`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(outputsWith(api, "function helper")).toEqual(["index.js"]);
+    },
+  });
+  // In the chunk of store.js, setup.js would change more than its order with store.js. So it stays in index.js.
+  for (const [name, files, options] of [
+    ["ReadsImportMeta", { "/setup.js": `globalThis.APP = { name: import.meta.file };` }, {}],
+    // logo.png is a file of index.js, with the path of the asset in it.
+    [
+      "ImportsAsset",
+      {
+        "/setup.js": `import logo from "./logo.png"; globalThis.APP = { name: logo };`,
+        "/logo.png": "an image",
+      },
+      { loader: { ".png": "file" } },
+    ],
+    // Each resolves at runtime, from the file that holds it.
+    [
+      "HasImportCallWithComputedSpecifier",
+      {
+        "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = lang => import("./locales/" + lang + ".js");`,
+      },
+      {},
+    ],
+    [
+      "HasImportCallWithOptionsThatRunCode",
+      {
+        "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = () => import("./settings.js", globalThis.opts);`,
+      },
+      {},
+    ],
+    [
+      "HasImportCallWithComputedSpecifierAndOptionsThatRunCode",
+      {
+        "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = lang => import("./locales/" + lang + ".js", globalThis.opts);`,
+      },
+      {},
+    ],
+    [
+      "HasRequireWithComputedSpecifier",
+      { "/setup.js": `export {}; globalThis.APP = { name: "app" }; globalThis.load = lang => require("./" + lang);` },
+      {},
+    ],
+    [
+      "HasRequireResolveWithComputedSpecifier",
+      {
+        "/setup.js": `export {}; globalThis.APP = { name: "app" }; globalThis.at = lang => require.resolve("./" + lang);`,
+      },
+      {},
+    ],
+    [
+      "ImportsRelativeExternalFile",
+      { "/setup.js": `import "./local.js"; globalThis.APP = { name: "app" };` },
+      { external: ["*local.js"] },
+    ],
+    // plugin.js can be there at runtime.
+    [
+      "HasImportCallOfMissingFile",
+      {
+        "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = () => import("./plugin.js").catch(() => null);`,
+      },
+      {},
+    ],
+    [
+      "ImportsExternalDirectory",
+      { "/setup.js": `import ".."; globalThis.APP = { name: "app" };` },
+      { external: [".."] },
+    ],
+    [
+      "HasImportCallOfRelativeExternalFile",
+      { "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = () => import("../local.js");` },
+      { external: ["*local.js"] },
+    ],
+    // The code that it evaluates can hold an `import()`.
+    ["HasDirectEval", { "/setup.js": `export const name = eval("'app'"); globalThis.APP = { name };` }, {}],
+    // setup.js needs the runtime, which stays in index.js: its `__require` resolves from there.
+    [
+      "UsesRuntimeThatHoldsRequire",
+      {
+        "/index.js": setupBeforeShared["/index.js"] + `globalThis.load = name => require("./plugins/" + name);`,
+        "/setup.js": `import app from "./app.cjs"; globalThis.APP = app;`,
+        "/app.cjs": `module.exports = { name: "app" };`,
+      },
+      {},
+    ],
+    // index.js and lazy.js share the runtime alone.
+    [
+      "NoSharedCodeRuns",
+      {
+        "/index.js": `import "./setup.js"; { using x = { [Symbol.dispose]() {} }; } import("./lazy.js");`,
+        "/lazy.js": `{ using x = { [Symbol.dispose]() {} }; } console.log("lazy");`,
+      },
+      { target: "node" },
+    ],
+    [
+      "FollowsFileThatStays",
+      {
+        "/index.js": `import "./meta.js";\n` + setupBeforeShared["/index.js"],
+        "/meta.js": `console.log(import.meta.url);`,
+      },
+      {},
+    ],
+    // index.js reads import.meta, so it stays, with what it runs ahead of setup.js.
+    [
+      "FollowsCommonJSFileOfFileThatStays",
+      {
+        "/index.js": `import "./first.cjs";\n` + setupBeforeShared["/index.js"] + `console.log(import.meta.main);`,
+        "/first.cjs": `console.log("first");`,
+      },
+      {},
+    ],
+    [
+      "FollowsExternalImportOfFileThatStays",
+      { "/index.js": `import "ext";\n` + setupBeforeShared["/index.js"] + `console.log(import.meta.main);` },
+      { external: ["ext"] },
+    ],
+    // store.js starts the package too. In its chunk, ext would load ahead of the package.
+    [
+      "FollowsExternalImportBehindCommonJSPackage",
+      {
+        ...sharedPackage,
+        "/index.js": `import "shared"; import "ext";\n` + setupBeforeShared["/index.js"],
+        "/store.js": `import "shared";\n` + setupBeforeShared["/store.js"],
+      },
+      { external: ["ext"] },
+    ],
+    // In the chunk of store.js and late.js, ext would load ahead of store.js.
+    [
+      "FollowsExternalImportBehindSharedCode",
+      {
+        "/index.js": /* js */ `
+          import { Store } from "./store.js";
+          import "ext";
+          import "./setup.js";
+          import "./late.js";
+          console.log("index", new Store().name);
+          import("./settings.js");
+        `,
+        "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+        "/late.js": `console.log("late");`,
+        "/settings.js": `import "./late.js";\n` + setupBeforeShared["/settings.js"],
+      },
+      { external: ["ext"] },
+    ],
+    [
+      "FollowsSharedCode",
+      {
+        "/index.js": /* js */ `
+          import { Store } from "./store.js";
+          import "./setup.js";
+          console.log("index", new Store().name);
+          import("./settings.js");
+        `,
+        "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      },
+      {},
+    ],
+    // The chunk that admin.js shares has one place among the imports of index.js.
+    [
+      "FileSharedWithOtherEntry",
+      {
+        "/index.js": `import { has } from "./has.js"; console.log(has);\n` + setupBeforeShared["/index.js"],
+        "/admin.js": `import { has } from "./has.js"; console.log(has);`,
+        "/has.js": `export const has = typeof APP !== "undefined";`,
+      },
+      { entryPoints: ["/index.js", "/admin.js"] },
+    ],
+    [
+      "FileOfOtherEntry",
+      { "/index.js": setupBeforeShared["/index.js"] + `import "./other.js";`, "/other.js": `console.log("other");` },
+      { entryPoints: ["/index.js", "/other.js"] },
+    ],
+    [
+      "RequireOfSplitModule",
+      {
+        "/index.js": setupBeforeShared["/index.js"] + `import "./required.js";`,
+        "/store.js": setupBeforeShared["/store.js"] + `require("./required.js");`,
+        "/required.js": `console.log("required"); export const r = 1;`,
+      },
+      {},
+    ],
+    ["EntryHasExports", { "/index.js": setupBeforeShared["/index.js"] + `export const x = 1;` }, {}],
+  ] as const) {
+    itBundled("splitting/EntrySetupImportStaysInEntryFile/" + name, {
+      files: { ...setupBeforeShared, ...files },
+      entryPoints: ["/index.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      onAfterBundle(api) {
+        expect(outputsWith(api, "globalThis.APP = ")).toEqual(["index.js"]);
+      },
+    });
+  }
 
   itFolds("splitting/FoldsSharedIntoEntry", {
     files: {
@@ -4300,6 +4988,39 @@ describe("bundler", () => {
       { file: "/test.js", stdout: "load []\nnav 6 6\nr0:a1a2a3a4a5a6\nagain []" },
       { file: "/no-document.js", stdout: "r0:a1a2a3a4a5a6 leaf" },
     ],
+  });
+  // boot.js is in the chunk of util.js, which runs ahead of the `__chunks()` call in index.js.
+  itBundled("splitting/ModulePreloadFromChunkThatRunsBeforeEntry", {
+    files: {
+      "/index.js": /* js */ `
+        import "./boot.js";
+        import { util } from "./util.js";
+        console.log("index", util);
+        globalThis.later = [() => import("./route.js"), () => import("./other.js")];
+      `,
+      "/boot.js": `globalThis.devtools = import("./devtools.js");`,
+      "/util.js": `console.log("util"); export const util = "util";`,
+      "/route.js": `import { util } from "./util.js"; console.log("route", util);`,
+      "/devtools.js": `import { dep } from "./dep.js"; console.log("devtools", dep);`,
+      "/other.js": `import { dep } from "./dep.js"; console.log("other", dep);`,
+      "/dep.js": `export const dep = "dep";`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        await import("./out/index.js");
+        console.log(JSON.stringify(links.map(link => link.replace(/-\\w{8}\\.js$/, ".js"))));
+        await devtools;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").not.toContain("globalThis.devtools");
+    },
+    run: { file: "/test.js", stdout: 'util\nindex util\n["modulepreload index.js"]\ndevtools dep' },
   });
   itBundled("splitting/ModulePreloadSyntaxShapes", {
     files: {

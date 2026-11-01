@@ -1702,17 +1702,12 @@ describe("JWK import validation", () => {
     const { kty, n, e } = jwk;
     const importJwk = (members: JsonWebKey) =>
       crypto.subtle.importKey("jwk", { ...jwk, ...members }, algorithm, true, ["sign"]);
-    const changed = (encoded?: string) => {
-      const bytes = Buffer.from(encoded!, "base64url");
-      bytes[0] ^= 1;
-      return bytes.toString("base64url");
-    };
 
     expect({
       unchanged: await rejection(importJwk({})),
-      n: await rejection(importJwk({ n: changed(n) })),
-      p: await rejection(importJwk({ p: changed(jwk.p) })),
-      q: await rejection(importJwk({ q: changed(jwk.q) })),
+      n: await rejection(importJwk({ n: jwk.d })),
+      p: await rejection(importJwk({ p: jwk.q })),
+      q: await rejection(importJwk({ q: jwk.p })),
       oth: await rejection(importJwk({ oth: [] })),
       publicOth: await rejection(crypto.subtle.importKey("jwk", { kty, n, e, oth: [] }, algorithm, true, ["verify"])),
     }).toEqual({

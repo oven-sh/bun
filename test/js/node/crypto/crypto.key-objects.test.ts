@@ -14,6 +14,7 @@ import {
   generateKeyPair,
   generateKeyPairSync,
   generateKeySync,
+  type JsonWebKey,
   type JsonWebKeyInput,
   KeyObject,
   privateDecrypt,
@@ -647,24 +648,35 @@ describe("crypto.KeyObjects", () => {
     );
   });
 
-  test("keys from a private RSA jwk need the n that is p times q, and no oth", () => {
+  test("an RSA jwk needs strings for its members, the n that is p times q, and no oth", () => {
     const jwk = createPrivateKey(privatePem).export({ format: "jwk" });
     const { kty, n, e } = jwk;
     expect(createPrivateKey({ key: jwk, format: "jwk" }).export({ format: "jwk" })).toEqual(jwk);
     expect(createPublicKey({ key: jwk, format: "jwk" }).export({ format: "jwk" })).toEqual({ kty, n, e });
 
-    const changed = (encoded?: string) => {
-      const bytes = Buffer.from(encoded!, "base64url");
-      bytes[0] ^= 1;
-      return bytes.toString("base64url");
-    };
     const invalid = expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "Invalid JWK RSA key" });
-    for (const wrong of [{ n: changed(n) }, { p: changed(jwk.p) }, { q: changed(jwk.q) }, { p: "" }, { oth: [] }]) {
+    const wrongMembers = [
+      { n: jwk.d },
+      { p: jwk.q },
+      { q: jwk.p },
+      { p: "" },
+      { oth: [] },
+      { n: undefined },
+      { e: 5 },
+      { d: null },
+      { p: undefined },
+      { qi: 5 },
+      { p: undefined, q: undefined, dp: undefined, dq: undefined, qi: undefined },
+    ];
+    for (const wrong of wrongMembers) {
       for (const create of [createPrivateKey, createPublicKey]) {
-        expect(() => create({ key: { ...jwk, ...wrong }, format: "jwk" })).toThrow(invalid);
+        expect(() => create({ key: { ...jwk, ...wrong } as JsonWebKey, format: "jwk" })).toThrow(invalid);
       }
     }
     expect(() => createPublicKey({ key: { kty, n, e, oth: [] }, format: "jwk" })).toThrow(invalid);
+    expect(() => createPrivateKey({ key: { kty, n, e }, format: "jwk" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "JWK does not contain private key material" }),
+    );
   });
 
   test("private encrypted should work", async () => {

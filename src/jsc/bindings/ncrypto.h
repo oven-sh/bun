@@ -402,6 +402,7 @@ public:
 
     const PublicKey getPublicKey() const;
     const PrivateKey getPrivateKey() const;
+    // Check that n is the product of all private-key prime factors.
     bool checkPrimeProduct() const;
     const std::optional<PssParams> getPssParams() const;
 

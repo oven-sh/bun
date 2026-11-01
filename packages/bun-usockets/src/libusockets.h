@@ -432,7 +432,12 @@ void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
     char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
     char **out_ca, size_t *out_ca_len, const char **err_reason);
-/* After us_listen_socket_close(ls) the resolver still runs for accepted connections, with NULL in place of `ls`. */
+/* The resolver returns the SSL_CTX for this handshake, or NULL with
+ * *abort_handshake = 0 to keep the default context of the connection. For a
+ * listener that has a resolver, the names of us_listen_socket_add_server_name
+ * are not looked up: the resolver alone selects, and can look a name up itself
+ * with us_listen_socket_find_server_name_ctx.
+ * After us_listen_socket_close(ls) the resolver still runs for accepted connections, with NULL in place of `ls`. */
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
     struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket)) nonnull_fn_decl;
 /* Resume a handshake suspended by an async SNICallback (the dynamic resolver

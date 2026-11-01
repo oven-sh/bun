@@ -592,13 +592,12 @@ impl Listener {
 
         if ssl_enabled {
             // Register the dynamic SNI dispatch when the JS config provided a
-            // `serverName` handler - `us_select_cert_cb` invokes it FIRST for
-            // every ClientHello carrying a servername (the user callback takes
-            // precedence over the static SNI tree, Node semantics) and
-            // installs whichever context it returns on the in-flight SSL. A
-            // null return falls back to the static tree (addContext entries),
-            // then the default context; an asynchronous resolution suspends
-            // the handshake until resumeSNI.
+            // `serverName` handler - `us_select_cert_cb` invokes it for every
+            // ClientHello carrying a servername (the user callback replaces
+            // the static SNI tree, Node semantics) and installs whichever
+            // context it returns on the in-flight SSL. A null return keeps the
+            // default context; an asynchronous resolution suspends the
+            // handshake until resumeSNI.
             if !this_ref.handlers.on_server_name().is_empty() {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
                 bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);
@@ -1922,14 +1921,13 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
 }
 
 /// `openssl.c`'s `us_select_cert_cb` (the early select-certificate callback)
-/// calls this FIRST for every ClientHello carrying a servername - the user
-/// SNICallback takes precedence over the static SNI tree (Node semantics) -
+/// calls this for every ClientHello carrying a servername - the user
+/// SNICallback replaces the static SNI tree (Node semantics) -
 /// so the JS callback can pick a context for the requested hostname. The
 /// returned `SSL_CTX*` applies to the in-flight handshake only - the caller
 /// installs it with `SSL_set_SSL_CTX`, which takes its own reference, and
 /// nothing is cached in the SNI tree, so the callback runs per-connection the
-/// way Node's does. A null return falls back to the static tree
-/// (addContext entries), then the default context. An asynchronous
+/// way Node's does. A null return keeps the default context. An asynchronous
 /// SNICallback sets `*abort_handshake = 2` instead: the handshake suspends
 /// (select-certificate retry) until the JS resolution calls
 /// `handle.resumeSNI(...)` -> `us_socket_sni_resolve()`.

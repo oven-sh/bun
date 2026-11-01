@@ -84,6 +84,11 @@ describe("bun exec", () => {
     expect(val.stdout.toString()).toContain("Bun is a fast JavaScript runtime");
   });
 
+  test("bun that is not in PATH gets no BUN_BE_BUN", async () => {
+    const { stdout } = await $`bun -p "typeof process.env.BUN_BE_BUN"`.env({ ...bunEnv, PATH: "" }).quiet();
+    expect(stdout.toString()).toBe("undefined\n");
+  });
+
   test("works with latin1 paths", async () => {
     const tempdir = tmpdirSync();
     const abs = join(tempdir, "Í", "hi");

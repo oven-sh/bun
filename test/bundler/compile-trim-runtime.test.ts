@@ -17,6 +17,12 @@ const { folder, build } = sharedBuilds("compile-trim-runtime", {
     if (process.argv[2] === "deep") console.log({ a: { b: { c: 1 } } });
   `,
   "helper.ts": `export function double(x: number): number { return x * 2; }`,
+  "runs-bun-in-shell.ts": `
+    import { $ } from "bun";
+    console.log("started");
+    const { stdout, stderr, exitCode } = await $\`bun -p 1+1\`.nothrow().quiet();
+    console.log(JSON.stringify({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }));
+  `,
   "entry.ts": `import { double } from "./helper"; console.log(double(21));`,
   "on-disk.ts": `export const fromDisk: string = [1, 2, 3].map((x: number) => x * 2).join(",");`,
   "near-removed-features.ts": `
@@ -327,6 +333,25 @@ test.concurrent("--trim requires --compile", async () => {
         "check: this executable doesn't include the type checker\n" +
         "compile.aot isn't available in this build of Bun\n" +
         "true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/14459
+  test("`bun` in Bun Shell is not found when PATH has no bun, and the program does not run again", async () => {
+    const inShell = await build("runs-bun-in-shell.ts", "--trim");
+    expect(await run([inShell.executable], folder, { ...bunEnv, PATH: "", Path: "" })).toEqual({
+      stdout:
+        "started\n" +
+        JSON.stringify({
+          stdout: "",
+          stderr:
+            "bun: command not found: bun\n" +
+            "bun: this executable doesn't include the Bun command line. Install bun, or add it to PATH.\n",
+          exitCode: 1,
+        }) +
+        "\n",
       stderr: "",
       exitCode: 0,
     });

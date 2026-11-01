@@ -2,6 +2,8 @@
 
 const { createRequire } = require("node:module");
 const types = require("node:util/types");
+const SavedProperties = require("internal/test/saved_properties");
+type SavedProperties = InstanceType<typeof SavedProperties>;
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 const isInPreload = $bindgen("environment.bind.ts", "isInPreload");
@@ -29,6 +31,21 @@ interface Environment {
   keys: string[];
   forgetLastFile?(): void;
   close(): void | Promise<void>;
+}
+
+// The classes of a package, which a process loads once and every window shares. Put back before the next window is made.
+interface PackageClasses {
+  // What the first root has is saved. The second root tells which of it is the package's and not the root's own.
+  add(root: object, descendsIntoObjects: boolean): void;
+  // Puts back the classes of every package: they share the builtins of the global they were loaded into.
+  restore(): void;
+}
+
+interface Package {
+  packagePath: string;
+  requireFromTest: NodeJS.Require;
+  load(): any;
+  classes?: PackageClasses;
 }
 
 // Always copied from the window, even when `globalThis` already has them.
@@ -262,9 +279,11 @@ function acceptBinaryDataOfOtherRealms(win: any) {
   }
 }
 
-function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any): Environment | string {
+function createJSDOM({ requireFromTest, classes }: Package, exports: any, options: any): Environment | string {
   const { CookieJar, JSDOM, ResourceLoader, VirtualConsole } = exports;
   if (typeof JSDOM !== "function") return "the package does not export JSDOM";
+  // jsdom makes the classes of each window. A file reaches the package's through `jsdom.constructor`.
+  classes?.add(exports, false);
   const {
     html = "<!DOCTYPE html>",
     userAgent,
@@ -349,7 +368,7 @@ function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any
   return { ...globals, forgetLastFile, close: () => win.close() };
 }
 
-function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environment | string {
+function createHappyDOM({ classes }: Package, exports: any, options: any): Environment | string {
   const Window = exports.GlobalWindow || exports.Window;
   if (typeof Window !== "function") return "the package does not export Window";
   const win = new Window({
@@ -358,6 +377,8 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
     url: options.url || "http://localhost:3000",
     settings: { ...options.settings, disableErrorCapturing: true },
   });
+  // The window has the package's classes, a subclass of some that is its own, and objects like `happyDOM` and `NodeFilter`.
+  classes?.add(win, true);
   // prettier-ignore
   const globals = windowProperties(win, [
     "Request", "Response", "MessagePort", "fetch", "Headers", "AbortController", "AbortSignal", "URL",
@@ -381,6 +402,35 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
 const kept = new $Map<string, Environment>();
 // require() of a module with top-level await throws only the first time, so rethrow that error for every file.
 const failedToLoad = new $Map<string, unknown>();
+const classesOfPackages = new $Map<string, PackageClasses>();
+const savedClassesOfPackages: SavedProperties[] = [];
+
+// Underscore-prefixed properties hold internal state. Reading `console._stdout` opens the stream.
+function isNotInternal(_: object, key: PropertyKey) {
+  return typeof key !== "string" || key.$charCodeAt(0) !== 95;
+}
+
+function restoreClassesOfPackages() {
+  for (let i = 0; i < savedClassesOfPackages.length; i++) savedClassesOfPackages[i].restore();
+}
+
+function classesOf(packagePath: string): PackageClasses {
+  let classes = classesOfPackages.$get(packagePath);
+  if (classes) return classes;
+  const saved = new SavedProperties(isNotInternal);
+  $arrayPush(savedClassesOfPackages, saved);
+  let roots = 0;
+  classes = {
+    add(root, descendsIntoObjects) {
+      if (roots === 0) saved.save(root, descendsIntoObjects);
+      else if (roots === 1) saved.keepReachableFrom(root, descendsIntoObjects);
+      roots++;
+    },
+    restore: restoreClassesOfPackages,
+  };
+  classesOfPackages.$set(packagePath, classes);
+  return classes;
+}
 
 function isClosed(window: Environment["window"]) {
   return window.closed || !window.document;
@@ -395,7 +445,7 @@ function openWindowForJSDOMToKeep({ JSDOM }: any) {
   } catch {}
 }
 
-function find(name: string, file: string, outlivesTestFiles: boolean) {
+function find(name: string, file: string, outlivesTestFiles: boolean): Package | string {
   const requireFromTest = createRequire(file);
   let packagePath: string;
   try {
@@ -406,6 +456,8 @@ function find(name: string, file: string, outlivesTestFiles: boolean) {
   return {
     packagePath,
     requireFromTest,
+    // Without --isolate the files share a window, and what they change on the package stays by design.
+    classes: outlivesTestFiles ? classesOf(packagePath) : undefined,
     load() {
       if (failedToLoad.$has(packagePath)) throw failedToLoad.$get(packagePath);
       const isLoaded = packagePath in requireFromTest.cache;
@@ -436,7 +488,7 @@ function open(
   if (typeof found === "string") return found;
   // happy-dom's window has the classes of the global that the package is loaded into.
   if (name === "happy-dom") lasting?.acceptBinaryDataOfTestFiles();
-  const { packagePath, requireFromTest } = found;
+  const { packagePath } = found;
 
   const id = `${packagePath}\n${optionsText ?? ""}`;
   const last = kept.$get(id);
@@ -450,7 +502,8 @@ function open(
   } catch (error) {
     return `its options are not JSON: ${(error as Error).message}`;
   }
-  const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(requireFromTest, found.load(), options ?? {});
+  found.classes?.restore();
+  const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(found, found.load(), options ?? {});
   if (keep && typeof environment !== "string") kept.$set(id, environment);
   return environment;
 }

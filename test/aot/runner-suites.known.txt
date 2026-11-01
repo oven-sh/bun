@@ -21,7 +21,6 @@ test/cli/test/bun-test.test.ts: --react-compiler > include and exclude, in worke
 test/cli/test/bun-test.test.ts: --react-compiler > the flag
 test/cli/test/bun-test.test.ts: --react-compiler > the flag, in workers
 test/cli/test/bun-test.test.ts: --react-compiler > the flag, with --isolate
-test/cli/test/bun-test.test.ts: --react-compiler > the original of a mocked module is compiled
 test/cli/test/bun-test.test.ts: --react-compiler > true
 test/cli/test/bun-test.test.ts: a test file that can never finish loading > --watch reports it and keeps watching
 test/cli/test/bun-test.test.ts: a test file that can never finish loading > names at most five modules
@@ -79,6 +78,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > vi.mock() leaves it real for them, as in Vitest ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > vi.mock() leaves it real for them, as in Vitest ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > vi.mock() leaves it real for them, as in Vitest []
+test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > is the file in __mocks__
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > only vi.importActual() of the mocked module itself loads the original
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > vi.importMock, jest.requireMock and jest.createMockFromModule do not mock the module
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing

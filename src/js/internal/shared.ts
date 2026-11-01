@@ -185,17 +185,14 @@ function guardCallback(callback: (...args: any[]) => unknown) {
 }
 
 const nodeModulesRE = /[\\/]node_modules[\\/]/;
-// The call sites below `startFunction`. Like node's native helpers, it reads no property of Error.
-const captureCallSites: (frameLimit: number, startFunction: Function) => NodeJS.CallSite[] = $newCppFunction(
-  "FormatStackTraceForJS.cpp",
-  "jsFunctionCaptureCallSites",
-  2,
-);
+// The call sites below `startFunction`, read with no property of Error, as node's native helpers. Made at the first call, so that loading this module makes no function.
+let captureCallSites: (frameLimit: number, startFunction: Function) => NodeJS.CallSite[];
 
 // Port of node's IsInsideNodeModules: first real user frame inside node_modules?
 // Guarded so a tampered prototype never escapes to callers like url.parse.
 // https://github.com/nodejs/node/blob/main/src/node_util.cc
 function isInsideNodeModules(frameLimit: number = 10): boolean {
+  captureCallSites ??= $newCppFunction("FormatStackTraceForJS.cpp", "jsFunctionCaptureCallSites", 2);
   const frames = captureCallSites(frameLimit, isInsideNodeModules);
   try {
     for (const frame of frames) {
@@ -461,7 +458,6 @@ export default {
   once,
   getLazy,
   guardCallback,
-  captureCallSites,
   isInsideNodeModules,
   resistStopPropagation,
 

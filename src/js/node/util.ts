@@ -8,7 +8,7 @@ const {
   validateObject,
   validateInteger,
 } = require("internal/validators");
-const { resistStopPropagation, ErrnoException, captureCallSites } = require("internal/shared");
+const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
@@ -632,6 +632,7 @@ function diff(actual, expected) {
   return require("internal/util/diff").diff(actual, expected);
 }
 
+let captureCallSites: (frameLimit: number, startFunction: Function) => NodeJS.CallSite[];
 function getCallSites(frameCount = 10, options) {
   // If options is not provided check if frameCount is an object
   if (options === undefined) {
@@ -652,6 +653,7 @@ function getCallSites(frameCount = 10, options) {
   // Using kDefaultMaxCallStackSizeToCapture as reference
   validateInteger(frameCount, "frameCount", 1, 200);
 
+  captureCallSites ??= $newCppFunction("FormatStackTraceForJS.cpp", "jsFunctionCaptureCallSites", 2);
   return toCallSiteObjects(captureCallSites(frameCount, getCallSites));
 }
 

@@ -486,6 +486,8 @@ export const notCalled: Record<string, string> = {
   ),
   "native:NewCppFunction:BunProcess.cpp:Process_functionWriteToStandardSink":
     "native code hands it to a function of builtins/stdio, which hands it to nobody",
+  "native:NewCppFunction:FormatStackTraceForJS.cpp:jsFunctionCaptureCallSites":
+    "only internal/shared and node:util hold it, and they hand its list to nobody",
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": ofOneModule("node:tls"),
   "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties": ofOneModule("internal/util/inspect"),
   "%NpmJscNpmManifestTestHelpers%.parseManifest": "it reads a manifest that `bun install` has stored",

@@ -147,7 +147,18 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!key_opsValue.isUndefined()) {
-        result.key_ops = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(lexicalGlobalObject, key_opsValue);
+        // A `sequence<DOMString>` in the specification. Like Node's validateKeyOps(), skip an operation that is
+        // not known, and reject a repeated one before the operations are compared with the usages.
+        auto operations = convert<IDLSequence<IDLDOMString>>(lexicalGlobalObject, key_opsValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        Vector<CryptoKeyUsage> keyOps;
+        for (size_t i = 0; i < operations.size(); i++) {
+            if (std::ranges::contains(operations.span().first(i), operations[i]))
+                result.hasDuplicateKeyOps = true;
+            else if (auto usage = parseEnumerationFromString<CryptoKeyUsage>(operations[i]))
+                keyOps.append(*usage);
+        }
+        result.key_ops = WTF::move(keyOps);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue ktyValue;

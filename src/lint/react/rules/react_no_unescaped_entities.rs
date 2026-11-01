@@ -10,12 +10,12 @@ pub struct NoUnescapedEntities {
     defaults: Entities,
 }
 
-const UNESCAPED_ENTITY: Message = Message::new("unescapedEntity", "HTML entity, `{{entity}}` , must be escaped.");
-const UNESCAPED_ENTITY_ALTS: Message =
-    Message::new("unescapedEntityAlts", "`{{entity}}` can be escaped with {{alts}}.");
-const REPLACE_WITH_ALT: Message = Message::new("replaceWithAlt", "Replace with `{{alt}}`.");
-const NO_UNESCAPED_ENTITIES: Message = Message::new("", "`{{unescaped}}` can be escaped with {{escaped}}");
-const REPLACE: Message = Message::new("", "Replace with `{{alt}}`");
+const UNESCAPED_ENTITY: &Message = &Message::new("unescapedEntity", "HTML entity, `{{entity}}` , must be escaped.");
+const UNESCAPED_ENTITY_ALTS: &Message =
+    &Message::new("unescapedEntityAlts", "`{{entity}}` can be escaped with {{alts}}.");
+const REPLACE_WITH_ALT: &Message = &Message::new("replaceWithAlt", "Replace with `{{alt}}`.");
+const NO_UNESCAPED_ENTITIES: &Message = &Message::new("", "`{{unescaped}}` can be escaped with {{escaped}}");
+const REPLACE: &Message = &Message::new("", "Replace with `{{alt}}`");
 
 const DEFAULTS: [(&str, &[&str]); 4] = [
     (">", &["&gt;"]),

@@ -1,9 +1,10 @@
 // One folder for all tests of a file, and one build for each command line that they ask for.
-import { afterAll, expect, setDefaultTimeout } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes } from "harness";
 import { statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
+import { raiseDefaultTimeout } from "./default-timeout";
 import { run } from "./run";
 import { withoutDebugInformation } from "./without-debug-information";
 
@@ -20,7 +21,7 @@ export type Build = {
 };
 
 // A test waits for its builds, and they wait for a core.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 let free = availableParallelism();
 const waiting: (() => void)[] = [];

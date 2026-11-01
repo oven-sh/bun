@@ -10,20 +10,6 @@ fn import_pattern(host: &MemoryHost, prefix: &str, suffix: &str) -> String {
     resolve_computed_in(host, "/p/main.ts", prefix, suffix, Import)
 }
 
-fn import_pattern_with_limit(host: &MemoryHost, limit: u32, prefix: &str) -> String {
-    let options = CodeOptions {
-        max_computed_candidates: limit,
-        ..bun_run()
-    };
-    let pattern = ComputedPattern {
-        importer: "/p/main.ts",
-        prefix,
-        suffix: "",
-        kind: Import,
-    };
-    resolve_computed_with(host, &options, pattern)
-}
-
 fn installed_package(manifest: &str, names: &[&str]) -> MemoryHost {
     let paths: Vec<String> = (names.iter())
         .map(|name| format!("/p/node_modules/pkg/{name}"))
@@ -396,13 +382,105 @@ fn files_sort_before_host_modules() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn matching_paths_key_makes_package_prefix_unknown() {
-    let matching = configured_project(r#"{"paths": {"pkg/*": ["./src/*"]}}"#);
-    assert_eq!(import_pattern(&matching, "pkg/", ""), "All(ConfigPaths)");
-    let catch_all = configured_project(r#"{"paths": {"*": ["./src/*"]}}"#);
-    assert_eq!(import_pattern(&catch_all, "pkg/", ""), "All(ConfigPaths)");
-    let base_url = configured_project(r#"{"baseUrl": "."}"#);
-    assert_eq!(import_pattern(&base_url, "pkg/", ""), "All(ConfigPaths)");
+fn paths_and_base_url_add_folders_of_the_project_to_the_installed_package() {
+    let configs = [
+        r#"{"paths": {"pkg/*": ["./d/*"]}}"#,
+        r#"{"paths": {"*": ["./d/unused/*", "./*"]}}"#,
+        r#"{"paths": {"*": ["./*"], "@/*": ["./*"], "exact": ["./d/b.ts"]}}"#,
+        r#"{"baseUrl": "."}"#,
+        r#"{"baseUrl": "./d", "paths": {"other/*": ["./src/*"]}}"#,
+    ];
+    for config in configs {
+        let host = configured_project(config);
+        let found = import_pattern(&host, "pkg/", "");
+        assert_eq!(found, "/p/node_modules/pkg/a.js", "{config}");
+    }
+
+    let through = |written: &str| HostResolution::Path(format!("/p/{written}").into_bytes());
+    let catch_all = configured_project(r#"{"paths": {"*": ["./*"]}}"#)
+        .claim("d/b.ts", through("d/b.ts"))
+        .claim("d/b", through("d/b.ts"));
+    assert_eq!(import_pattern(&catch_all, "d/", ""), "/p/d/b.ts");
+    let base_url = configured_project(r#"{"baseUrl": "."}"#).claim("d/b", through("d/b.ts"));
+    assert_eq!(import_pattern(&base_url, "d/", ""), "/p/d/b.ts");
+    let alias =
+        configured_project(r#"{"paths": {"@/*": ["./d/*"]}}"#).claim("@/b", through("d/b.ts"));
+    assert_eq!(import_pattern(&alias, "@/", ""), "/p/d/b.ts");
+    assert_eq!(import_pattern(&alias, "@", ""), "/p/d/b.ts");
+    let whole = configured_project(r#"{"paths": {"pkg/exact": ["./d/b.ts"]}}"#)
+        .claim("pkg/exact", through("d/b.ts"));
+    assert_eq!(
+        import_pattern(&whole, "pkg/", ""),
+        "/p/d/b.ts, /p/node_modules/pkg/a.js"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn executable_takes_in_no_installed_package_where_the_config_makes_the_name_uncertain() {
+    let executable = CodeOptions {
+        builds_executable: true,
+        ..CodeOptions::bun_run(b"/p")
+    };
+    let resolve = |host: &MemoryHost, prefix| {
+        let pattern = ComputedPattern {
+            importer: "/p/main.ts",
+            prefix,
+            suffix: "",
+            kind: Import,
+        };
+        resolve_computed_with(host, &executable, pattern)
+    };
+    for config in [r#"{"paths": {"*": ["./*"]}}"#, r#"{"baseUrl": "."}"#] {
+        let in_project = HostResolution::Path(b"/p/d/b.ts".to_vec());
+        let host = configured_project(config).claim("d/b", in_project);
+        assert_eq!(resolve(&host, "pkg/"), "All(ConfigPaths)", "{config}");
+        assert_eq!(resolve(&host, "d/"), "/p/d/b.ts", "{config}");
+        let in_place = import_pattern(&host, "pkg/", "");
+        assert_eq!(in_place, "/p/node_modules/pkg/a.js", "{config}");
+    }
+    let other_key = configured_project(r#"{"paths": {"other/*": ["./src/*"]}}"#);
+    assert_eq!(resolve(&other_key, "pkg/"), "/p/node_modules/pkg/a.js");
+    let no_config = empty_files(&["/p/main.ts", "/p/node_modules/pkg/a.js"]);
+    assert_eq!(resolve(&no_config, "pkg/"), "/p/node_modules/pkg/a.js");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn inherited_paths_start_from_the_config_that_writes_them() {
+    let host = MemoryHost::new(&[
+        ("/p/tsconfig.json", r#"{"extends": "./config/base.json"}"#),
+        (
+            "/p/config/base.json",
+            r#"{"compilerOptions": {"paths": {"lib/*": ["./x/*"]}}}"#,
+        ),
+        ("/p/config/x/c.ts", ""),
+        ("/p/x/wrong.ts", ""),
+    ])
+    .claim("lib/c", HostResolution::Path(b"/p/config/x/c.ts".to_vec()))
+    .claim("lib/wrong", HostResolution::Path(b"/p/x/wrong.ts".to_vec()));
+    assert_eq!(import_pattern(&host, "lib/", ""), "/p/config/x/c.ts");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn paths_that_name_no_folder_or_have_another_form_make_the_prefix_unknown() {
+    let cases = [
+        (r#"{"paths": {"@/*": ["./*"]}}"#, "@/"),
+        (r#"{"paths": {"@/*": ["../*"]}}"#, "@/"),
+        (r#"{"paths": {"*": ["./*"]}}"#, "pk"),
+        (r#"{"baseUrl": "."}"#, "pk"),
+        (r#"{"baseUrl": "./d"}"#, "pk"),
+        (r#"{"paths": {"pkg/*": ["./packages/*/src"]}}"#, "pkg/"),
+        (r#"{"paths": {"pkg/*": ["./d/pre-*"]}}"#, "pkg/"),
+        (r#"{"paths": {"pkg/*": ["./d/b.ts"]}}"#, "pkg/"),
+        (r#"{"paths": {"pkg/*.js": ["./d/*"]}}"#, "pkg/"),
+    ];
+    for (config, prefix) in cases {
+        let host = configured_project(config);
+        let found = import_pattern(&host, prefix, "");
+        assert_eq!(found, "All(ConfigPaths)", "{config} {prefix}");
+    }
 
     let other_key = configured_project(r#"{"paths": {"other/*": ["./src/*"]}}"#);
     assert_eq!(
@@ -464,35 +542,68 @@ fn uncompiled_host_module_makes_answer_unknown() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn one_file_over_limit_makes_answer_unknown() {
-    let at_limit = empty_files(&["/p/main.ts", "/p/d/a.ts", "/p/d/b.ts"]);
+fn path_that_leads_out_of_the_package_of_the_importer_is_a_name_made_at_run_time() {
+    let host = MemoryHost::new(&[
+        ("/w/package.json", r#"{ "name": "workspace" }"#),
+        ("/w/beside.ts", ""),
+        ("/w/app/package.json", r#"{ "name": "app" }"#),
+        ("/w/app/top.ts", ""),
+        ("/w/app/src/main.ts", ""),
+        ("/w/app/src/a.ts", ""),
+    ]);
+    let from_main = |prefix| resolve_computed_in(&host, "/w/app/src/main.ts", prefix, "", Import);
+    assert_eq!(from_main("./"), "/w/app/src/a.ts, /w/app/src/main.ts");
     assert_eq!(
-        import_pattern_with_limit(&at_limit, 2, "./d/"),
-        "/p/d/a.ts, /p/d/b.ts"
+        from_main("../"),
+        "/w/app/package.json, /w/app/src/a.ts, /w/app/src/main.ts, /w/app/top.ts"
     );
-    let over_limit = empty_files(&["/p/main.ts", "/p/d/a.ts", "/p/d/b.ts", "/p/d/c.ts"]);
+    assert_eq!(from_main("../../"), "All(NoConstantPrefix)");
+    assert_eq!(from_main("/"), "All(NoConstantPrefix)");
+    // A folder that is named is meant, wherever it lies. The walk stays out of the package below it.
+    assert_eq!(from_main("/w/"), "/w/beside.ts, /w/package.json");
     assert_eq!(
-        import_pattern_with_limit(&over_limit, 2, "./d/"),
-        "All(TooManyCandidates)"
+        from_main("../../app/src/"),
+        "/w/app/src/a.ts, /w/app/src/main.ts"
     );
     assert_eq!(
-        import_pattern_with_limit(&over_limit, 1, "./d/a"),
-        "/p/d/a.ts"
+        from_main("/w/app/src/"),
+        "/w/app/src/a.ts, /w/app/src/main.ts"
     );
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn one_directory_over_limit_makes_answer_unknown() {
-    let host = empty_files(&["/p/main.ts", "/p/d/x/a.ts", "/p/d/y/b.ts"]);
+fn walk_from_a_path_stays_out_of_the_folders_of_other_packages() {
+    let host = MemoryHost::new(&[
+        ("/p/package.json", r#"{ "name": "app" }"#),
+        ("/p/main.ts", ""),
+        ("/p/d/a.ts", ""),
+        ("/p/d/esm/package.json", r#"{ "type": "module" }"#),
+        ("/p/d/esm/b.ts", ""),
+        ("/p/d/other/package.json", r#"{ "name": "other" }"#),
+        ("/p/d/other/c.ts", ""),
+    ]);
     assert_eq!(
-        import_pattern_with_limit(&host, 3, "./d/"),
-        "/p/d/x/a.ts, /p/d/y/b.ts"
+        import_pattern(&host, "./d/", ".ts"),
+        "/p/d/a.ts, /p/d/esm/b.ts"
     );
+    // The prefix lies inside it already.
     assert_eq!(
-        import_pattern_with_limit(&host, 2, "./d/"),
-        "All(TooManyCandidates)"
+        import_pattern(&host, "./d/other/", ".ts"),
+        "/p/d/other/c.ts"
     );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn every_file_and_folder_that_matches_is_a_candidate_however_many() {
+    let names: Vec<String> = (0..3000)
+        .map(|n| format!("/p/d/x{}/f{n}.ts", n % 1500))
+        .collect();
+    let mut paths = vec!["/p/main.ts"];
+    paths.extend(names.iter().map(String::as_str));
+    let found = import_pattern(&empty_files(&paths), "./d/", "");
+    assert_eq!(found.split(", ").count(), 3000);
 }
 
 #[test]

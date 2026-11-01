@@ -1,0 +1,5 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`inline > counts together with file snapshots 1`] = `"file 1"`;
+
+exports[`inline > counts together with file snapshots 3`] = `"file 2"`;

@@ -161,7 +161,7 @@ function reset(make: (() => unknown) | null): void {
 }
 function counts(entriesBefore: number, start: number): string {
   const inRuntime = entries() - entriesBefore;
-  const elapsed = Math.round(performance.now() - start);
+  const elapsed = Math.round(Date.now() - start);
   return made + " generators" + (cleaned ? ", " + cleaned + " cleaned up, " + outOfOrder + " out of order" : "") + ", " + (inRuntime < 5 + made / 20 ? "few entries" : inRuntime + " ENTRIES") + " " + elapsed + "ms";
 }
 function clearCounts(): void {
@@ -173,7 +173,7 @@ function measure(label: string, depth: number, start: (depth: number) => Numbers
   for (const [ending, make] of endings.slice(0, numberOfEndings)) {
     clearCounts();
     const entriesBefore = entries();
-    const begin = performance.now();
+    const begin = Date.now();
     const outcomes = new Set<string>();
     for (let round = 0; round < rounds; round++) {
       reset(make);
@@ -238,7 +238,7 @@ function measureSuspended(label: string, start: (depth: number) => Numbers): voi
   for (const [way, make, end] of ways) {
     clearCounts();
     const entriesBefore = entries();
-    const begin = performance.now();
+    const begin = Date.now();
     const outcomes = new Set<string>();
     for (let round = 0; round < rounds; round++) {
       reset(make);
@@ -296,7 +296,7 @@ async function measureLater(label: string, depth: number, start: (depth: number)
   for (const [ending, make] of endings) {
     clearCounts();
     const entriesBefore = entries();
-    const begin = performance.now();
+    const begin = Date.now();
     const outcomes = new Set<string>();
     for (let round = 0; round < rounds; round++) {
       reset(make);

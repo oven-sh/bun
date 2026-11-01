@@ -416,33 +416,27 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="literal"
-# CHECK: module=m0 position=1069 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="1" site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L2 site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f49} {
+# CHECK: module=m0 position=1069 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="1" site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L2 site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f35 layout=L2} inlineFrames=[{}, {callee=f35 callPosition=1069 module=m0}] {
 # CHECK-NEXT: b0(v0: "1"):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f49
-# CHECK-NEXT: v2: i32 = ResultAt v1
-# CHECK-NEXT: v3: number|unspecified = ResultAt v1 index=1
-# CHECK-NEXT: v4: number = ResultAt v1 index=2
-# CHECK-NEXT: v5: anything|unspecified = ResultAt v1 index=3
-# CHECK-NEXT: Switch v2 cases=[1] -> case b1(), otherwise b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v6: fact = Specified
-# CHECK-NEXT: v7: number = AssumeType v3, v6 provenType=number
-# CHECK-NEXT: v8: L2 = NewObject -, v7, v4 layout=L2 fields=[0, 1] allocationSite=7 allocationClass=2
-# CHECK-NEXT: Jump -> next b3(v8)
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v9: fact = Specified
-# CHECK-NEXT: v10: anything = AssumeType v5, v9 provenType=anything
-# CHECK-NEXT: v11: 0 = Integer
-# CHECK-NEXT: v12: L2 = NewObject -, v11, v4 layout=L2 fields=[0, 1] allocationSite=7 allocationClass=2
-# CHECK-NEXT: PropSet v12, v10 key="x"
-# CHECK-NEXT: Jump -> next b3(v12)
-# CHECK-NEXT: b3(v14: L2):
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: null|boolean|number|string|object = CallBuiltin -, v0, v1 overload=JSONParse/0 accessSite=15
+# CHECK-NEXT: v3: null|boolean|number|string|object ~ number = Expect v2 expectedType=number
+# CHECK-NEXT: v4: 2 = Integer integer=2
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: L2 = NewObject -, v5, v4 layout=L2 fields=[0, 1] allocationSite=7 allocationClass=2
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v3 testedType=number
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v8: number):
+# CHECK-NEXT: PutSlot v6, v6, v8 key="x" receivers=[L2] level=Expected
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: b2(v10: null|boolean|string|object) frequency=Rare:
+# CHECK-NEXT: PropSet v6, v10 key="x"
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pixel"
-# CHECK: module=m0 position=1253 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|string site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f51} {
-# CHECK-NEXT: b0(v0: undefined|string):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f51
+# CHECK: module=m0 position=1253 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="\"\""|"\"1\""|"-0"|"1"|"1.5"|"1e400"|"[1]"|"[]"|"null"|"true"|"{\"valueOf\":1}"|"{}" site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f54} {
+# CHECK-NEXT: b0(v0: "\"\""|"\"1\""|"-0"|"1"|"1.5"|"1e400"|"[1]"|"[]"|"null"|"true"|"{\"valueOf\":1}"|"{}"):
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f54
 # CHECK-NEXT: v2: i32 = ResultAt v1
 # CHECK-NEXT: v3: number|unspecified = ResultAt v1 index=1
 # CHECK-NEXT: v4: 2 = ResultAt v1 index=2
@@ -520,8 +514,8 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v8: null|boolean|number|string|object ~ number = Upcast v7 castType=anything
 # CHECK-NEXT: v9: null|boolean|number|string|object ~ i32 = Upcast v8 castType=null|boolean|number|string|object
 # CHECK-NEXT: v10: object = GetConstructPrototype v4 layout=L0
-# CHECK-NEXT: v11: object ~ L0|L1 = NewObject v10 layout=L0 allocationSite=11 allocationClass=0
-# CHECK-NEXT: v12: L0|L1 = AssumeType v11 provenType=L0|L1
+# CHECK-NEXT: v11: object ~ L1 = NewObject v10 layout=L0 allocationSite=11 allocationClass=0
+# CHECK-NEXT: v12: L0|L1 ~ L1 = AssumeType v11 provenType=L0|L1
 # CHECK-NEXT: v13: boolean = HasNoFieldOutsideSlot v12
 # CHECK-NEXT: Branch v13 -> taken b1(| 0), notTaken b4()
 # CHECK-NEXT: b1(v14: guard):
@@ -541,19 +535,26 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: PropSet v12, v9 key="y" accessSite=33
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v23: L0|L1 ~ L1 = Upcast v12 castType=object
-# CHECK-NEXT: v24: L1 = AssumeType v23 provenType=L1
-# CHECK-NEXT: v25: boolean = HasNoFieldOutsideSlot v24
-# CHECK-NEXT: Branch v25 -> taken b7(| 0), notTaken b9()
-# CHECK-NEXT: b7(v26: guard):
-# CHECK-NEXT: v27: boolean ~ true = TypeTest v3 testedType=undefined|null|string
-# CHECK-NEXT: Branch v27 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v28: undefined|null|string):
-# CHECK-NEXT: PutSlot v24, v26, v28 key="label" receivers=[L1] level=Expected accessSite=39
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v23: L1 = AssumeType v12 provenType=L1
+# CHECK-NEXT: v24: boolean = HasNoFieldOutsideSlot v23
+# CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b9()
+# CHECK-NEXT: b7(v25: guard):
+# CHECK-NEXT: v26: boolean ~ true = TypeTest v3 testedType=undefined|null|string
+# CHECK-NEXT: Branch v26 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v27: undefined|null|string):
+# CHECK-NEXT: PutSlot v23, v25, v27 key="label" receivers=[L1] level=Expected accessSite=39
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: PropSet v24, v3 key="label" accessSite=39
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: PropSet v23, v3 key="label" accessSite=39
+# CHECK-NEXT: Return v23
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="literal"
+# CHECK: module=m0 position=1069 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="1" site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=null|boolean|number|string|object}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} creator=ResultWorker{origin=f3} {
+# CHECK-NEXT: b0(v0: "1"):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: null|boolean|number|string|object = CallBuiltin -, v0, v1 overload=JSONParse/0 accessSite=15
+# CHECK-NEXT: v3: null|boolean|number|string|object ~ number = Expect v2 expectedType=number
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Pixel"
 # CHECK: module=m0 position=219 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=2 captures=[{type=f8}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers takesNewTarget=true} {
@@ -577,52 +578,23 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Labeled"
 # CHECK: module=m0 position=385 kind=DerivedConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=L1} parameters=[{type=number site=w20 flags=[IsExpected]}, {type=undefined|null|string site=w21 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] functionTypes=[f21] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f10 parameterMap=[{}, {original=0}, {original=1}, {original=2}, {original=3}]} creator=Version{provenVersion=f10} constructedClass=L1
-# CHECK-LABEL: function {{*}}name="literal"
-# CHECK: module=m0 position=1069 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="1" site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32}, {type=number|unspecified}, {type=number}, {type=anything|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} creator=ResultWorker{origin=f3} {
-# CHECK-NEXT: b0(v0: "1"):
+# CHECK-LABEL: function {{*}}name="pixel"
+# CHECK: module=m0 position=1253 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="\"\""|"\"1\""|"-0"|"1"|"1.5"|"1e400"|"[1]"|"[]"|"null"|"true"|"{\"valueOf\":1}"|"{}" site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32}, {type=number|unspecified}, {type=2}, {type=null|boolean|string|object|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{original=0}]} creator=ResultWorker{origin=f5} inlineFrames=[{}, {callee=f49 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0(v0: "\"\""|"\"1\""|"-0"|"1"|"1.5"|"1e400"|"[1]"|"[]"|"null"|"true"|"{\"valueOf\":1}"|"{}"):
 # CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: null|boolean|number|string|object = CallBuiltin -, v0, v1 overload=JSONParse/0 accessSite=15
-# CHECK-NEXT: v3: null|boolean|number|string|object ~ number = Expect v2 expectedType=number
+# CHECK-NEXT: v2: null|boolean|number|string|object = CallBuiltin -, v0, v1 overload=JSONParse/0 accessSite=19
+# CHECK-NEXT: v3: null|boolean|number|string|object ~ number = Upcast v2 castType=anything
 # CHECK-NEXT: v4: 2 = Integer integer=2
 # CHECK-NEXT: v5: boolean ~ true = TypeTest v3 testedType=number
 # CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2(| 0)
 # CHECK-NEXT: b1(v6: number):
-# CHECK-NEXT: v7: number = Upcast v6 castType=number|unspecified
-# CHECK-NEXT: v8: 2 = Upcast v4 castType=number
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: anything|unspecified = Unspecified valueType=anything
-# CHECK-NEXT: v11: fact = Specified
-# CHECK-NEXT: v12: number = AssumeType v7, v11 provenType=number
-# CHECK-NEXT: v13: undefined = Results v9, v12, v8, v10
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: null|boolean|string|object|unspecified = Unspecified valueType=null|boolean|string|object
+# CHECK-NEXT: v9: undefined = Results v7, v6, v4, v8
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: b2(v10: null|boolean|string|object) frequency=Rare:
+# CHECK-NEXT: v11: 2 = Integer integer=2
+# CHECK-NEXT: v12: number|unspecified = Unspecified valueType=number
+# CHECK-NEXT: v13: undefined = Results v11, v12, v4, v10
 # CHECK-NEXT: Return v13
-# CHECK-NEXT: b2(v14: null|boolean|string|object) frequency=Rare:
-# CHECK-NEXT: v15: null|boolean|string|object = Upcast v14 castType=anything|unspecified
-# CHECK-NEXT: v16: 2 = Upcast v4 castType=number
-# CHECK-NEXT: v17: 2 = Integer integer=2
-# CHECK-NEXT: v18: number|unspecified = Unspecified valueType=number
-# CHECK-NEXT: v19: fact = Specified
-# CHECK-NEXT: v20: null|boolean|string|object = AssumeType v15, v19 provenType=anything
-# CHECK-NEXT: v21: undefined = Results v17, v18, v16, v20
-# CHECK-NEXT: Return v21
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="pixel"
-# CHECK: module=m0 position=1253 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|string site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32}, {type=number|unspecified}, {type=2}, {type=null|boolean|string|object|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{original=0}]} creator=ResultWorker{origin=f5} inlineFrames=[{}, {callee=f44 callPosition=4294967295 isConstruction=true module=m0}] {
-# CHECK-NEXT: b0(v0: undefined|string):
-# CHECK-NEXT: v1: string = ToString v0 calledBuiltin=JSONParse
-# CHECK-NEXT: v2: undefined = Undefined
-# CHECK-NEXT: v3: null|boolean|number|string|object = CallBuiltin -, v1, v2 overload=JSONParse/0 accessSite=19
-# CHECK-NEXT: v4: null|boolean|number|string|object ~ number = Upcast v3 castType=anything
-# CHECK-NEXT: v5: 2 = Integer integer=2
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v7: number):
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: null|boolean|string|object|unspecified = Unspecified valueType=null|boolean|string|object
-# CHECK-NEXT: v10: undefined = Results v8, v7, v5, v9
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b2(v11: null|boolean|string|object) frequency=Rare:
-# CHECK-NEXT: v12: 2 = Integer integer=2
-# CHECK-NEXT: v13: number|unspecified = Unspecified valueType=number
-# CHECK-NEXT: v14: undefined = Results v12, v13, v5, v11
-# CHECK-NEXT: Return v14
 # CHECK-NEXT: }

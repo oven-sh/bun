@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""calls-by-value.py <seed>: random strict TypeScript programs about calls by value: functions of every kind (declarations, arrows that capture,
-methods taken off their object, static methods, bound functions, defaults, rest and optional parameters, host functions, functions with properties, classes called without new,
-functions that read `this` or `arguments`) handed to typed callback parameters, kept in members, arrays and maps, and called with every argument count, by call | apply | spread |
-optional call, by the built-ins that take callbacks, from sites that see one kind and sites that see all."""
+"""calls-by-value.py <seed>: Random strict TypeScript programs about indirect calls: functions of every kind
+(declarations, capturing arrows, detached methods, static methods, bound functions, with defaults, rest and optional
+parameters) stored in values and called.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

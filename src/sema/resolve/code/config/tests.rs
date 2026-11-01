@@ -48,7 +48,7 @@ fn assert_keys_of_paths(host: &MemoryHost, options: &CodeOptions, cases: &[[&str
     with_resolver(host, options, |resolver| {
         for &[from, expected] in cases {
             let found = match resolver.enclosing_code_config(from.as_bytes()) {
-                Some(config) => text(&bstr::join(" ", config.paths)),
+                Some(config) => text(&bstr::join(" ", config.paths.iter().map(|it| it.0))),
                 None => NO_CONFIG.to_owned(),
             };
             assert_eq!(found, expected, "from {from}");

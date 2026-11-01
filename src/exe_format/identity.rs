@@ -96,6 +96,7 @@ impl RuntimeDescription {
     pub const ENGINE: [u8; 8] = *b"BUNAOTRT";
     pub const HOST: [u8; 8] = *b"BUNAOTHO";
     pub const BUILTIN_TABLE: [u8; 8] = *b"BUNAOTTB";
+    pub const LEFT_OUT: [u8; 8] = *b"BUNAOTLO";
 
     pub fn read(file: &mut builtins::Image<'_>) -> Result<RuntimeDescription, SectionError> {
         let location = find_known_section(file, KnownSection::RuntimeDescription)?;
@@ -158,6 +159,27 @@ impl HostDescription {
         let revision = revision.get(..40)?;
         let length = bun_core::strings::index_of_char_usize(revision, 0).unwrap_or(40);
         Some(&revision[..length])
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct LeftOutOfBuild(pub u32);
+
+impl LeftOutOfBuild {
+    pub const FOREIGN_CALLS: u32 = 1 << 0;
+    pub const CODE_FROM_STRINGS: u32 = 1 << 1;
+
+    pub fn read(record: &[u8]) -> Option<LeftOutOfBuild> {
+        let word = record.get(DESCRIPTION_RECORD_HEAD..DESCRIPTION_RECORD_HEAD + 4)?;
+        Some(LeftOutOfBuild(crate::builtins::u32_at(word, 0)))
+    }
+
+    pub fn has_foreign_calls(self) -> bool {
+        self.0 & LeftOutOfBuild::FOREIGN_CALLS == 0
+    }
+
+    pub fn has_code_from_strings(self) -> bool {
+        self.0 & LeftOutOfBuild::CODE_FROM_STRINGS == 0
     }
 }
 
@@ -557,6 +579,21 @@ mod tests {
             section: [&RuntimeDescription::ENGINE[..], &4u32.to_le_bytes()].concat(),
         };
         assert_eq!(too_small.record(RuntimeDescription::ENGINE), None);
+    }
+
+    #[test]
+    fn what_a_build_leaves_out_is_the_word_behind_the_head_of_its_record() {
+        let record =
+            |word: u32| description_record(RuntimeDescription::LEFT_OUT, &word.to_le_bytes());
+        let read = |word: u32| LeftOutOfBuild::read(&record(word)).unwrap();
+        assert!(read(0).has_foreign_calls());
+        assert!(!read(LeftOutOfBuild::FOREIGN_CALLS).has_foreign_calls());
+        assert!(read(!LeftOutOfBuild::FOREIGN_CALLS).has_foreign_calls());
+        assert_eq!(LeftOutOfBuild::read(&record(0)[..14]), None);
+        assert!(LeftOutOfBuild::default().has_foreign_calls());
+        assert!(read(LeftOutOfBuild::FOREIGN_CALLS).has_code_from_strings());
+        assert!(!read(LeftOutOfBuild::CODE_FROM_STRINGS).has_code_from_strings());
+        assert!(read(LeftOutOfBuild::CODE_FROM_STRINGS).has_foreign_calls());
     }
 
     #[test]

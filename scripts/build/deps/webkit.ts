@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "8c6c963e3c49fe39942d9625d1fc924128fad26e";
+export const WEBKIT_VERSION = "4d45755fed4aeef19e95beb90d3d0c884a2812bd";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -192,7 +192,6 @@ export function webkitEngineSources(cfg: Config): EngineSources {
       schemaInputs: [schema, schemaGenerator],
       schemaGeneratedDirectory: undefined,
       schemaOutputs: [],
-      schemaUsers: [],
       builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations), join(builtinsGenerator, "engine.ts")],
       builtinTableOutputs: [],
       builtinsLeftOut: [],
@@ -213,7 +212,6 @@ export function webkitEngineSources(cfg: Config): EngineSources {
     ],
     schemaGeneratedDirectory: aotGeneratedDirectory(wk),
     schemaOutputs: aotGeneratedFiles(lists, "SCHEMA"),
-    schemaUsers: handwrittenAotFiles(wk.JSC),
     builtinTableInputs: [
       ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS"),
       ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS"),
@@ -1823,7 +1821,7 @@ function jscGroup(
   llintAssembly: string,
 ): SourceGroup {
   const { cfg, JSC } = wk;
-  const forSize = cfg.release && cfg.unix ? compiledForSize : new Map<string, string>();
+  const forSize = cfg.release ? compiledForSize : new Map<string, string>();
   const generated = aotGeneratedDirectory(wk) + sep;
   // A bundle takes the header of its first source: whatever the others need beyond it they include themselves.
   const aotPrefixOf = (source: string): AotPrefix | undefined => {
@@ -1858,10 +1856,14 @@ function jscGroup(
         const prefix = aotPrefixOf(path);
         const bundled = bundledAotSources.get(path);
         if (prefix !== undefined) {
-          // A switch of aot/ that has no default names every enumerator (aot/AOT.cmake has the same flag).
+          // Unrolling loops whose trip count is not known adds 2% to this code and no speed. Under ThinLTO loops are
+          // unrolled in the link, so this counts where the objects are machine code.
+          if (cfg.release && attribute === undefined) extra.push("-mllvm=-unroll-runtime=false");
+          // A switch of aot/ that has no default names every enumerator, and nothing points into a temporary beyond its statement
+          // (aot/AOT.cmake has the same flags).
           return {
             path,
-            cflags: [...extra, "-Werror=switch"],
+            cflags: [...extra, "-Werror=switch", "-Werror=dangling"],
             pch: join(JSC, prefix.header),
             ...(bundled !== undefined && { bundled }),
           };
@@ -1903,8 +1905,11 @@ export interface JSCProgram {
   cxxflags: string[];
   ldflags: string[];
   libs?: string[];
-  /** Dependencies of bun that it is linked with, beside WebKit and mimalloc. */
-  deps?: Array<"zstd">;
+  /** Its sources in C, and their flags. */
+  cSources?: string[];
+  cflags?: string[];
+  /** Dependencies of bun whose sources it compiles for itself. Its compiles wait until they are fetched. */
+  sourcesFrom?: Array<"zstd">;
   /**
    * Headers to precompile for the program's sources, with its flags, each on top of the one before. A source takes
    * the last one whose `files` matches its path, or that has none.
@@ -1942,6 +1947,101 @@ function outOfMemoryHook(cfg: Config, program: string): string {
 }
 
 /**
+ * The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts), and that ICU calls a weak hook
+ * on each item that it loads (icu/udata-decompress-hook.patch). Bun defines the hook
+ * (src/jsc/bindings/bun_icu_decompress.cpp), and so does the shell (jsc.cpp). testaot has none of its own. Without one
+ * ICU knows no locale there, and the compiler, which asks Intl at build time how a locale writes a number or a date, is
+ * told nothing.
+ */
+function icuDataHook(cfg: Config, program: string): string {
+  const source = join(depBuildDir(cfg, "WebKit"), "programs", program, "ICUData.cpp");
+  writeIfChanged(
+    source,
+    `#define ZSTD_STATIC_LINKING_ONLY
+#include <zstd.h>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <mutex>
+#include <unordered_map>
+
+extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
+extern "C" __attribute__((weak)) const unsigned bun_icu_zstd_dict_size;
+
+extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* length)
+{
+    // An item that is not compressed has 0xda 0x27 at bytes 2 and 3, so its first word is never zstd's magic number.
+    uint32_t magic;
+    if (!item)
+        return item;
+    std::memcpy(&magic, item, sizeof(magic));
+    if (magic != ZSTD_MAGICNUMBER)
+        return item;
+
+    static std::mutex lock;
+    static auto& decompressed = *new std::unordered_map<const void*, void*>;
+    static ZSTD_DCtx* context = ZSTD_createDCtx();
+    static ZSTD_DDict* dictionary = &bun_icu_zstd_dict_size && bun_icu_zstd_dict_size
+        ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
+        : nullptr;
+
+    std::lock_guard<std::mutex> locker(lock);
+    size_t compressedSize = ZSTD_findFrameCompressedSize(item, *length > 0 ? static_cast<size_t>(*length) : 1u << 20);
+    if (ZSTD_isError(compressedSize))
+        return item;
+    unsigned long long size = ZSTD_getFrameContentSize(item, compressedSize);
+    if (size == ZSTD_CONTENTSIZE_UNKNOWN || size == ZSTD_CONTENTSIZE_ERROR)
+        return item;
+
+    void*& kept = decompressed[item];
+    if (!kept) {
+        void* buffer = std::malloc(static_cast<size_t>(size));
+        if (!buffer)
+            return item;
+        size_t result = dictionary
+            ? ZSTD_decompress_usingDDict(context, buffer, size, item, compressedSize, dictionary)
+            : ZSTD_decompressDCtx(context, buffer, size, item, compressedSize);
+        if (ZSTD_isError(result)) {
+            std::free(buffer);
+            return item;
+        }
+        kept = buffer;
+    }
+    *length = static_cast<int32_t>(size);
+    return kept;
+}
+`,
+  );
+  return source;
+}
+
+/**
+ * `program` with what reads those frames: zstd's decoder, as zstd itself puts it into one file, compiled for this program
+ * alone, as shell/CMakeLists.txt compiles it for the shell. Not the objects bun links: those carry what the build asks
+ * of bun's libraries (in a hardened bun they keep their arrays on a second stack, which bun's run time sets up), and
+ * these programs are linked without that run time.
+ */
+function withZstdDecoder(cfg: Config, program: JSCProgram): JSCProgram {
+  const zstd = join(cfg.vendorDir, "zstd");
+  const source = join(depBuildDir(cfg, "WebKit"), "programs", program.name, "ZstdDecoder.c");
+  const decoder = join(zstd, "build", "single_file_libs", "zstddeclib-in.c");
+  writeIfChanged(source, `#include "${decoder.replaceAll("\\", "/")}"\n`);
+  const include = `-I${join(zstd, "lib")}`;
+  return {
+    ...program,
+    cxxflags: [...program.cxxflags, include],
+    cSources: [source],
+    cflags: [...groupCompileFlags(cfg, cfg.buildDir, {}).c, include],
+    sourcesFrom: ["zstd"],
+  };
+}
+
+/** testaot as `program` says, reading the data of a prebuilt WebKit's ICU. */
+function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
+  return withZstdDecoder(cfg, { ...program, sources: [...program.sources, icuDataHook(cfg, program.name)] });
+}
+
+/**
  * WebKit's own executables worth having beside a local build
  * (shell/CMakeLists.txt): the `jsc` shell; `testFFI`, JSC's bun:ffi C++/ABI
  * test program, which test/js/bun/jsc-stress/testFFI.test.ts runs; `testb3`,
@@ -1954,16 +2054,21 @@ function outOfMemoryHook(cfg: Config, program: string): string {
  */
 export function jscPrograms(cfg: Config): JSCProgram[] {
   if (prebuiltHasProgramObjects(cfg)) {
-    return ["jsc", "testaot"].map(name => ({
-      name,
-      sources: [outOfMemoryHook(cfg, name)],
-      cxxflags: groupCompileFlags(cfg, cfg.buildDir, {}).cxx,
-      ldflags: [
-        ...standaloneExeLinkFlags(cfg),
-        ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),
-      ],
-      libs: [resolve(prebuiltDestDir(cfg), programObjects(cfg, name))],
-    }));
+    return ["jsc", "testaot"].map(name => {
+      const program: JSCProgram = {
+        name,
+        sources: [outOfMemoryHook(cfg, name)],
+        cxxflags: groupCompileFlags(cfg, cfg.buildDir, {}).cxx,
+        ldflags: [
+          ...standaloneExeLinkFlags(cfg),
+          ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),
+        ],
+        libs: [resolve(prebuiltDestDir(cfg), programObjects(cfg, name))],
+      };
+      // The objects of jsc hold the shell's own hook.
+      const hasCompressedData = cfg.windows || (cfg.linux && cfg.abi !== "android");
+      return name === "testaot" && hasCompressedData ? readingPrebuiltIcuData(cfg, program) : program;
+    });
   }
   if (cfg.webkit !== "local") return [];
   const wk = webkitLayout(cfg);
@@ -1990,7 +2095,7 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
     .filter(f => f.startsWith("testb3_") && f.endsWith(".cpp"))
     .sort()
     .map(f => `b3/${f}`);
-  const jscShell = program(
+  let jscShell = program(
     "jsc",
     ["jsc.cpp", "tools/JSDollarVMShell.cpp", ...shell, ...embedder],
     cfg.darwin ? ["-ledit"] : [],
@@ -1998,9 +2103,16 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
   // The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts). jsc.cpp has the hook that
   // reads it, as shell/CMakeLists.txt builds it with BUN_ICU_ZSTD_SOURCE_DIR.
   if (linuxIcuRoot(cfg) !== undefined) {
-    jscShell.cxxflags = [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1", `-I${join(cfg.vendorDir, "zstd", "lib")}`];
-    jscShell.deps = ["zstd"];
+    jscShell = withZstdDecoder(cfg, { ...jscShell, cxxflags: [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1"] });
   }
+  const testaot = program(
+    "testaot",
+    [
+      ...lists.values("JavaScriptCore_AOT_TEST_SOURCES"),
+      ...lists.values("JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES"),
+    ],
+    [],
+  );
   return [
     jscShell,
     program("testFFI", ["ffi/tests/testFFI.cpp", ...embedder], []),
@@ -2009,14 +2121,7 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
     program("testmasm", ["assembler/testmasm.cpp", ...embedder], []),
     program("testRegExp", ["testRegExp.cpp", ...embedder], []),
     {
-      ...program(
-        "testaot",
-        [
-          ...lists.values("JavaScriptCore_AOT_TEST_SOURCES"),
-          ...lists.values("JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES"),
-        ],
-        [],
-      ),
+      ...(linuxIcuRoot(cfg) !== undefined ? readingPrebuiltIcuData(cfg, testaot) : testaot),
       pch: [
         { header: join(wk.JSC, "aot", "tests", "AOTTestPrefix.h") },
         { header: join(wk.JSC, "aot", "tests", "AOTCompilerTestPrefix.h") },

@@ -410,6 +410,7 @@ fn without_query(specifier: &[u8]) -> &[u8] {
 }
 
 /// Whether an ASCII letter or a non-ASCII byte follows the last `.` of `specifier`.
+/// Mostly a cheap way to rule out "../", ".." and "./".
 fn letter_follows_last_dot(specifier: &[u8]) -> bool {
     bun_core::strings::last_index_of_char(specifier, b'.')
         .and_then(|dot| specifier.get(dot + 1))
@@ -417,21 +418,10 @@ fn letter_follows_last_dot(specifier: &[u8]) -> bool {
 }
 
 pub(crate) fn has_extension_or_namespace(specifier: &[u8]) -> bool {
-    if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
-        let ext = &specifier[last_dot + 1..];
-        // '.' followed by either a letter or a non-ascii character
-        // maybe there are non-ascii file extensions?
-        // we mostly want to cheaply rule out "../" and ".." and "./"
-        if !ext.is_empty()
-            && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
-        {
-            return true;
-        }
-    }
-    if namespace_colon(specifier).is_some() {
+    if letter_follows_last_dot(specifier) || namespace_colon(specifier).is_some() {
         return true;
     }
-    // A query cannot make the answer no: the test above, on the specifier without it.
+    // A query cannot make the answer no: the letter test again, on the specifier without it.
     let path = without_query(specifier);
     if path.len() < specifier.len() && letter_follows_last_dot(path) {
         return true;

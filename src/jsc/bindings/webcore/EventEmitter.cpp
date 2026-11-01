@@ -14,6 +14,8 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/TZoneMallocInlines.h>
+#include "InternalModuleRegistry.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 
@@ -127,12 +129,6 @@ bool EventEmitter::removeAllListeners(const Identifier& eventType)
     return false;
 }
 
-bool EventEmitter::hasActiveEventListeners(const Identifier& eventType) const
-{
-    auto* data = eventTargetData();
-    return data && data->eventListenerMap.containsActive(eventType);
-}
-
 bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     if (!scriptExecutionContext())
@@ -195,29 +191,63 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
 bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-
     auto* data = eventTargetData();
     if (!data)
         return false;
 
-    auto* listenersVector = data->eventListenerMap.find(eventType);
-    if (!listenersVector) [[unlikely]] {
-        if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
-            Ref<EventEmitter> protectedThis(*this);
-            auto* thisObject = protectedThis->m_thisObject.get();
-            if (!thisObject)
-                return false;
+    if (eventType == scriptExecutionContext()->vm().propertyNames->error) [[unlikely]]
+        return fireErrorEventListeners(*data, arguments);
 
-            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
-            return false;
+    auto* listenersVector = data->eventListenerMap.find(eventType);
+    if (!listenersVector) [[unlikely]]
+        return false;
+
+    return invokeEventListeners(*data, eventType, *listenersVector, arguments);
+}
+
+// The `errorMonitor` export of node:events. Until that module is loaded, no code can name the symbol.
+static JSC::Symbol* errorMonitorOfNodeEvents(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSValue events = globalObject->internalModuleRegistry()->internalField(Bun::InternalModuleRegistry::Field::NodeEvents).get();
+    if (!events || !events.isObject())
+        return nullptr;
+    JSValue errorMonitor = asObject(events)->getDirect(vm, Identifier::fromString(vm, "errorMonitor"_s));
+    return errorMonitor ? dynamicDowncast<JSC::Symbol>(errorMonitor) : nullptr;
+}
+
+// Like emitError in src/js/node/events.ts: the events.errorMonitor listeners run first, whether or not 'error' has a handler.
+bool EventEmitter::fireErrorEventListeners(EventEmitterData& data, const MarkedArgumentBuffer& arguments)
+{
+    Ref<EventEmitter> protectedThis(*this);
+    VM& vm = scriptExecutionContext()->vm();
+
+    if (auto* symbol = errorMonitorOfNodeEvents(scriptExecutionContext()->jsGlobalObject())) {
+        auto errorMonitor = Identifier::fromUid(symbol->privateName());
+        if (auto* monitors = data.eventListenerMap.find(errorMonitor)) [[unlikely]]
+            invokeEventListeners(data, errorMonitor, *monitors, arguments);
+    }
+
+    auto& errorIdentifier = vm.propertyNames->error;
+    auto* listenersVector = data.eventListenerMap.find(errorIdentifier);
+    if (!listenersVector) {
+        if (arguments.size() > 0) {
+            if (auto* thisObject = m_thisObject.get())
+                Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
         }
         return false;
     }
 
-    bool prevFiringEventListeners = data->isFiringEventListeners;
-    data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
-    data->isFiringEventListeners = prevFiringEventListeners;
+    return invokeEventListeners(data, errorIdentifier, *listenersVector, arguments);
+}
+
+bool EventEmitter::invokeEventListeners(EventEmitterData& data, const Identifier& eventType, SimpleEventListenerVector& listeners, const MarkedArgumentBuffer& arguments)
+{
+    bool prevFiringEventListeners = data.isFiringEventListeners;
+    data.isFiringEventListeners = true;
+    auto fired = innerInvokeEventListeners(eventType, listeners, arguments);
+    data.isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }
 
@@ -271,22 +301,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
         auto* exception = exceptionPtr.get();
 
-        if (exception) [[unlikely]] {
-            auto errorIdentifier = vm.propertyNames->error;
-            auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
-            if (!hasErrorListener || eventType == errorIdentifier) {
-                // If the event type is error, report the exception to the console.
-                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
-            } else if (hasErrorListener) {
-                MarkedArgumentBuffer expcep;
-                JSValue errorValue = exception->value();
-                if (!errorValue) {
-                    errorValue = JSC::jsUndefined();
-                }
-                expcep.append(errorValue);
-                fireEventListeners(errorIdentifier, WTF::move(expcep));
-            }
-        }
+        if (exception) [[unlikely]]
+            Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
     }
 
     return fired;

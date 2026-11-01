@@ -141,44 +141,49 @@ export function join(first: string, second: string): string {
     expect(readdirSync(join(String(dir), "out"))).toEqual(["index.js"]);
   });
 
-  // `defaults` has no written type: its type is from the declaration file of `src/limits.ts`.
-  test("a chunk in a directory has the types of a module above it, and of a value there without a written type", async () => {
-    using dir = tempDir("build-dts-nested", {
-      "tsconfig.json": project["tsconfig.json"],
-      "package.json": project["package.json"],
-      "src/index.ts": `export { clamp } from "./limits";\n`,
-      "src/limits.ts": `export interface Limits {
+  // The chunk of `src/sub/index.ts` is in a directory of the outdir. `src` also holds the sources.
+  test.each(["out", "src"])(
+    "a chunk in a directory has the types of its own modules and of a module above it: --outdir %s",
+    async outdir => {
+      using dir = tempDir("build-dts-nested", {
+        "tsconfig.json": project["tsconfig.json"],
+        "package.json": project["package.json"],
+        "src/index.ts": `export { clamp } from "./limits";\n`,
+        "src/limits.ts": `export interface Limits {
   most: number;
 }
-export const defaults = { most: 10 };
 export function clamp(n: number, limits: Limits): number {
   return Math.min(n, limits.most);
 }
 `,
-      "src/sub/index.ts": `import type { defaults } from "../limits";
-import { clamp } from "../limits";
+        "src/sub/index.ts": `import { clamp } from "../limits";
 import { clamp as clampText } from "./limits";
-export function both(n: number, limits: typeof defaults): string {
+export function both(n: number, limits: { most: number }): string {
   return clampText(String(clamp(n, limits)), { most: "z" });
 }
 `,
-      "src/sub/limits.ts": `export interface TextLimits {
+        "src/sub/limits.ts": `export interface TextLimits {
   most: string;
 }
 export function clamp(text: string, limits: TextLimits): string {
   return text < limits.most ? text : limits.most;
 }
 `,
-    });
-    const built = await bun(String(dir), "build", "./src/index.ts", "./src/sub/index.ts", "--outdir", "out", "--dts");
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(readFileSync(join(String(dir), "out/sub/index.aot.ts"), "utf8")).toBe(`// src/limits.ts
+      });
+      const built = await bun(
+        String(dir),
+        "build",
+        "./src/index.ts",
+        "./src/sub/index.ts",
+        "--outdir",
+        outdir,
+        "--dts",
+      );
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(readFileSync(join(String(dir), outdir, "sub/index.aot.ts"), "utf8")).toBe(`// src/limits.ts
 interface Limits {
   most: number;
 }
-declare const defaults: {
-    most: number;
-};
 function clamp(n: number, limits: Limits): number {
   return Math.min(n, limits.most);
 }
@@ -192,11 +197,68 @@ function clamp2(text: string, limits: TextLimits): string {
 }
 
 // src/sub/index.ts
-function both(n: number, limits: typeof defaults): string {
+function both(n: number, limits: { most: number }): string {
   return clamp2(String(clamp(n, limits)), { most: "z" });
 }
 export {
   both
+};
+`);
+    },
+  );
+
+  // `src/util.ts` is only `require()`d, so the type checker has no module for it. `util.ts` above it has its name.
+  test("a source without a module of the type checker has the types that it is written with", async () => {
+    using dir = tempDir("build-dts-required", {
+      "tsconfig.json": project["tsconfig.json"],
+      "package.json": project["package.json"],
+      "util.ts": `export interface Options {
+  n: number;
+}
+export function util(options: Options): string {
+  return String(options.n);
+}
+`,
+      "src/util.ts": `export interface Flagged {
+  n: string;
+}
+export function util(options: Flagged): string {
+  return options.n;
+}
+`,
+      "index.ts": `import { util } from "./util";
+declare const require: (name: string) => any;
+const other = require("./src/util");
+export function run(n: number): string {
+  return util({ n }) + other.util({ n: "x" });
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./index.ts", "--outdir", "src", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "src/index.aot.ts"), "utf8")).toBe(`// src/util.ts
+interface Flagged {
+  n: string;
+}
+function util2(options: Flagged): string {
+  return options.n;
+}
+
+// util.ts
+interface Options {
+  n: number;
+}
+function util(options: Options): string {
+  return String(options.n);
+}
+
+// index.ts
+const other = ({});
+function run(n: number): string {
+  return util({ n }) + util2({ n: "x" });
+}
+export {
+  run
 };
 `);
   });

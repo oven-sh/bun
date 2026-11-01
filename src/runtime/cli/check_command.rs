@@ -680,7 +680,7 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
     }))
 }
 
-/// The name that the type checker has for a file of the bundle. A key in `Bun.build`'s `files` may be relative.
+/// The name under which the type checker is given a file of the bundle. A key in `Bun.build`'s `files` may be relative.
 fn checker_path(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     bun_sema_driver::host::from_native(join_abs_string::<Auto>(cwd, &[path]))

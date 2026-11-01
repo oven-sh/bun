@@ -19,8 +19,6 @@ use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 struct Source<'a> {
     path: &'a [u8],
     text: &'a [u8],
-    /// Only a file can be a module of the bundle.
-    is_file: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -2864,16 +2862,15 @@ fn add_types(
         text: javascript,
     };
     let modules = bundle.modules;
-    let is_source_of = |module: &ModuleTypes, source: &Source<'_>| {
-        source.is_file && &module.path[..] == source.path
-    };
     let mut texts: Vec<(&[u8], &[u8], Option<&ModuleTypes>)> = sources
         .iter()
         .map(|source| {
             (
                 source.path,
                 source.text,
-                modules.iter().find(|module| is_source_of(module, source)),
+                modules
+                    .iter()
+                    .find(|module| &module.path[..] == source.path),
             )
         })
         .collect();
@@ -2881,7 +2878,7 @@ fn add_types(
         modules
             .iter()
             .chain(bundle.emitted_declarations)
-            .filter(|module| !sources.iter().any(|source| is_source_of(module, source)))
+            .filter(|module| !sources.iter().any(|source| source.path == &module.path[..]))
             .map(|module| (&module.path[..], &module.text[..], Some(module))),
     );
     let mut files = Vec::new();
@@ -4076,28 +4073,36 @@ fn add_types_by_source_map(
             held: texts.len(),
         });
     }
+    let module_of = |path: &[u8]| {
+        bundle
+            .modules
+            .iter()
+            .find(|module| module.path[..] == *path)
+    };
     let sources: Vec<Source<'_>> = (output.sources.iter().zip(&texts))
-        .map(|(source, &text)| {
-            let (path, is_file) = match source {
-                MappedSource::File(path) => (path, true),
-                MappedSource::NotFile(name) => (name, false),
-            };
-            Source {
-                path,
+        .map(|(source, &text)| match source {
+            // What the type checker noted of a module are offsets in the text that it read.
+            MappedSource::File(path) => match module_of(path) {
+                Some(module) if module.text[..] != *text => {
+                    Err(TypedFilesError::SourceNotAsChecked { path: path.clone() })
+                }
+                _ => Ok(Source { path, text }),
+            },
+            // Every module has a path from the root, so this is the path of none.
+            MappedSource::NotFile(name) => Ok(Source {
+                path: bun_core::strings::trim_leading_char(name, b'/'),
                 text,
-                is_file,
-            }
+            }),
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     let mappings = source_map
         .get(b"mappings")
         .and_then(Json::as_str)
         .ok_or(TypedFilesError::SourceMapWithoutMappings)?;
     let typed = add_types(output.path, output.javascript, mappings, &sources, bundle)?;
-    let is_module = |path: &[u8]| bundle.modules.iter().any(|module| module.path[..] == *path);
     Ok(TypedText {
         source: match output.sources.first() {
-            Some(MappedSource::File(path)) if is_module(path) => Some(path.clone()),
+            Some(MappedSource::File(path)) if module_of(path).is_some() => Some(path.clone()),
             _ => None,
         },
         ..typed
@@ -4470,9 +4475,9 @@ pub struct Output<'a> {
 
 /// What one entry of the `sources` of a source map names.
 pub enum MappedSource {
-    /// A file, by the path that `ModuleTypes::path` is when the file is a module of the bundle.
+    /// A file, by the path under which the type checker was given it: `ModuleTypes::path` if it found a module there.
     File(Vec<u8>),
-    /// Not a file, such as what a plugin made in a namespace of its own. It is no module of the bundle.
+    /// Not a file, such as what a plugin made in a namespace of its own. No `ModuleTypes` are of it.
     NotFile(Vec<u8>),
 }
 
@@ -4488,6 +4493,9 @@ pub enum TypedFilesError {
     SourceMapOfOtherSources {
         named: usize,
         held: usize,
+    },
+    SourceNotAsChecked {
+        path: Vec<u8>,
     },
     SourceMapWithoutMappings,
     NotNamedJavaScript {
@@ -4517,6 +4525,11 @@ impl core::fmt::Display for TypedFilesError {
             TypedFilesError::SourceMapOfOtherSources { named, held } => write!(
                 f,
                 "the source map holds the text of {held} of its sources and the bundler names {named} of them"
+            ),
+            TypedFilesError::SourceNotAsChecked { path } => write!(
+                f,
+                "the text of {} in the bundle is not the text that was type checked",
+                BStr::new(path)
             ),
             TypedFilesError::SourceMapWithoutMappings => {
                 f.write_str("the source map has no mappings")

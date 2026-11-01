@@ -4421,10 +4421,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_pipe_pending_count();
         pub(super) fn uv_pipe_pending_instances();
         pub(super) fn uv_pipe_pending_type();
-        pub(super) fn uv_poll_init();
-        pub(super) fn uv_poll_init_socket();
-        pub(super) fn uv_poll_start();
-        pub(super) fn uv_poll_stop();
         pub(super) fn uv_print_active_handles();
         pub(super) fn uv_print_all_handles();
         pub(super) fn uv_process_get_pid();
@@ -4880,10 +4876,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_pipe_pending_count,
             uv_pipe_pending_instances,
             uv_pipe_pending_type,
-            uv_poll_init,
-            uv_poll_init_socket,
-            uv_poll_start,
-            uv_poll_stop,
             uv_print_active_handles,
             uv_print_all_handles,
             uv_process_get_pid,

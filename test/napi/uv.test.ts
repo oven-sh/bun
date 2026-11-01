@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDirWithFiles } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
@@ -200,7 +200,7 @@ describe.if(!isWindows)("uv stubs", () => {
   });
 
   // The loop-backed functions (uv_default_loop, uv_queue_work, and the async,
-  // idle, prepare, check and timer handles) and their header-only helpers run in
+  // idle, prepare, check, timer and poll handles) and their header-only helpers run in
   // a child process. The child's exit is part of the test: a ref'd handle or a
   // queued request must keep it alive, and an unref'd handle must not. `script`
   // can use `addon` and `report`, which prints one line per event from the addon.
@@ -251,6 +251,25 @@ describe.if(!isWindows)("uv stubs", () => {
       workName: "work",
       unknownHandleNameIsNull: true,
       unknownReqNameIsNull: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_strerror, uv_err_name and their _r forms return libuv's text", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testStrerror()));`);
+    expect(stderr).toBe("");
+    // The addon passes UV_EBADF and -123456, which libuv doesn't define.
+    const unknown = "Unknown system error -123456";
+    expect(JSON.parse(stdout)).toEqual({
+      strerror: "bad file descriptor",
+      strerrorR: "bad file descriptor",
+      // A 4-byte buffer.
+      strerrorRSmallBuffer: "bad",
+      errName: "EBADF",
+      errNameR: "EBADF",
+      errNameRSmallBuffer: "EBA",
+      unknownStrerrorR: unknown,
+      unknownErrNameR: unknown,
     });
     expect(exitCode).toBe(0);
   });
@@ -689,6 +708,192 @@ describe.if(!isWindows)("uv stubs", () => {
     `);
     expect(stdout).toBe("");
     expect(stderr).toContain("thrown from inside timer_cb");
+    expect(exitCode).toBe(1);
+  });
+
+  // enum uv_poll_event
+  const UV_READABLE = 1;
+  const UV_WRITABLE = 2;
+
+  test.concurrent("uv_poll_t is level-triggered, and a start on a started handle replaces its events", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testPoll(report)));`);
+    expect(stderr).toBe("");
+    const { state, events } = stateAndEvents(stdout);
+    // [the fd is non-blocking after uv_poll_init, uv_poll_start, uv_is_active, uv_has_ref]
+    expect(state).toEqual([1, 0, 1, 1]);
+    expect(events).toBe(
+      [
+        `poll 0 ${UV_READABLE}`,
+        // The first callback left the byte unread.
+        `poll 0 ${UV_READABLE}`,
+        `read 1 ${"x".charCodeAt(0)}`,
+        "both 0 1",
+        `poll 0 ${UV_WRITABLE}`,
+        "stopped 0 0",
+        "close poll 1 0",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // poll_once_cb in uv_impl.c
+  const pollOnceEvents = `poll 0 ${UV_READABLE}\nread 1 ${"y".charCodeAt(0)}\nclose poll 1 0\n`;
+
+  test.concurrent("a started uv_poll_t keeps the process alive until its fd is ready", async () => {
+    // Another thread writes to the socket after the script has returned.
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testPollFromThread(report);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(pollOnceEvents);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a uv_poll_t in a Worker fires on the Worker's loop", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        \`
+          const { parentPort } = require("node:worker_threads");
+          require(${JSON.stringify(addonPath)}).testPollFromThread((event, a, b) => parentPort.postMessage([event, a, b].join(" ")));
+        \`,
+        { eval: true },
+      );
+      worker.on("message", message => console.log(message));
+      worker.on("exit", code => console.log("worker exited", code));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(pollOnceEvents + "worker exited 0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_poll_t reports readable when the peer closes its end", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testPollHangup(report);`);
+    expect(stderr).toBe("");
+    // The read returns 0.
+    expect(stdout).toBe(`poll 0 ${UV_READABLE}\nread 0 0\nclose poll 1 0\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_poll_t reports readable when the write end of its empty pipe closes", async () => {
+    // Linux reports only EPOLLHUP for this fd, not EPOLLIN.
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testPollPipeHangup(report);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`poll 0 ${UV_READABLE}\nread 0 0\nclose poll 1 0\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a second uv_poll_start on a started uv_poll_t replaces its callback", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testPollReplaceCallback(report);`);
+    expect(stderr).toBe("");
+    // The replaced callback would report "replaced".
+    expect(stdout).toBe(`poll 0 ${UV_READABLE}\nread 1 ${"x".charCodeAt(0)}\nclose poll 1 0\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a uv_poll_t that another poll_cb restarts gets no event from the same batch", async () => {
+    // The immediate runs after the batch in which both fds were ready, and before the next poll.
+    const { stdout, stderr, exitCode } = await runInChild(`
+      addon.testPollRestartInBatch((event, a, b) => {
+        report(event, a, b);
+        if (event === "restarted") setImmediate(() => console.log("immediate"));
+      });
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      [
+        `first 0 ${UV_READABLE}`,
+        "restarted 0 0",
+        "immediate",
+        `second 0 ${UV_READABLE}`,
+        "close poll 1 0",
+        "close poll 1 0",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("the microtasks of a poll_cb run before the next poll_cb of the same batch", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      let polls = 0;
+      addon.testPollPair((event, a, b) => {
+        report(event, a, b);
+        if (event !== "poll") return;
+        const poll = ++polls;
+        queueMicrotask(() => console.log("microtask of poll", poll));
+      });
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      [
+        `poll 0 ${UV_READABLE}`,
+        "microtask of poll 1",
+        `poll 0 ${UV_READABLE}`,
+        "microtask of poll 2",
+        "close poll 1 0",
+        "close poll 1 0",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // kqueue reports a closed pipe as writable with EV_EOF, not as an error.
+  test.concurrent.skipIf(!isLinux)("uv_poll_t stops and reports UV_EBADF when the fd has an error", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testPollError(report);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      [`poll 0 ${UV_WRITABLE}`, `poll ${-constants.errno.EBADF} 0`, "active 0 0", "close poll 1 0", ""].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an unref'd uv_poll_t lets the process exit", async () => {
+    // The handle stays started, so the test fails if the child hangs.
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testPollUnref()));`);
+    expect(stderr).toBe("");
+    // [uv_poll_start, uv_has_ref, uv_has_ref after uv_unref, uv_is_active]
+    expect(JSON.parse(stdout)).toEqual([0, 1, 0, 1]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_poll_init and uv_poll_start return libuv's error codes", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testPollErrors()));`);
+    expect(stderr).toBe("");
+    const { EINVAL, EBADF, EEXIST, ENOTSUP } = constants.errno;
+    expect(JSON.parse(stdout)).toEqual([
+      -EINVAL, // uv_poll_init without a loop
+      -EBADF, // uv_poll_init with fd -1
+      -EBADF, // uv_poll_init with a closed fd
+      0, // uv_poll_init of handle A
+      0, // uv_poll_init_socket of handle B on the same fd, which A doesn't watch yet
+      -EINVAL, // uv_poll_start with a bit that isn't a uv_poll_event
+      -ENOTSUP, // uv_poll_start with UV_PRIORITIZED
+      -ENOTSUP, // uv_poll_start with only UV_DISCONNECT, which is never reported
+      -EINVAL, // uv_poll_start without a callback
+      0, // uv_is_active(A) after the failed starts
+      0, // uv_poll_start(A) with UV_READABLE | UV_DISCONNECT
+      -EEXIST, // uv_poll_start(B): A watches the fd
+      -EEXIST, // uv_poll_init of handle C on the fd that A watches
+      0, // uv_poll_start(A) with no events, which stops it
+      0, // uv_is_active(A)
+      0, // uv_poll_start(B): nothing watches the fd now
+      0, // uv_poll_stop(B)
+      -EINVAL, // uv_poll_start on an idle handle
+      -EINVAL, // uv_poll_stop on an idle handle
+      -EINVAL, // uv_poll_start(A) after uv_close
+      0, // uv_poll_stop(A) after uv_close
+      1, // uv_is_closing(A)
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an exception thrown by JS called from poll_cb is reported as uncaught", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      addon.testPollFromThread(() => { throw new Error("thrown from inside poll_cb"); });
+    `);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("thrown from inside poll_cb");
     expect(exitCode).toBe(1);
   });
 

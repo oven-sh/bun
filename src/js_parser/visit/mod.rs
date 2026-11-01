@@ -280,7 +280,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind: LocalKind,
         is_export: bool,
     ) -> usize {
-        let was_const = kind == LocalKind::KConst;
         // A namespace member isn't a module export.
         let can_replace_exports =
             IS_POSSIBLY_DECL_TO_REMOVE && self.enclosing_namespace_arg_ref.is_none();
@@ -587,12 +586,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
                     VisitDeclOpts {
                         was_anonymous_named_expr,
-                        could_be_const_value: was_const && !is_after,
+                        kind,
                         could_be_macro: if Self::ALLOW_MACROS {
                             prev_macro_call_count != self.macro_call_count
                         } else {
@@ -617,12 +615,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
                             continue 'outer;
                         }
-                        let is_after = self.vis_scope().is_after_const_local_prefix;
                         self.visit_decl(
                             decl,
                             VisitDeclOpts {
                                 was_anonymous_named_expr: false,
-                                could_be_const_value: was_const && !is_after,
+                                kind,
                                 could_be_macro: false,
                             },
                         );
@@ -639,98 +636,140 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         j
     }
 
-    pub(crate) fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
-        match binding.data {
-            BData::BObject(bound_object) => {
-                let bound_object = bound_object.get();
-                if let ExprData::EObject(mut object) = expr.data {
-                    if object.was_originally_macro {
-                        for property in bound_object.properties() {
-                            if property.flags.contains(flags::Property::IsSpread) {
-                                return;
-                            }
-                        }
-                        let mut end: u32 = 0;
-                        for property in bound_object.properties() {
-                            if let Some(name) = property.key.as_string_literal(self.arena) {
-                                if let Some(query) = object.as_property(name) {
-                                    match query.expr.data {
-                                        ExprData::EObject(_) | ExprData::EArray(_) => {
-                                            self.visit_binding_and_expr_for_macro(
-                                                property.value,
-                                                query.expr,
-                                            );
-                                        }
-                                        _ => {
-                                            if self.options.features.inlining {
-                                                if let BData::BIdentifier(id) = property.value.data
-                                                {
-                                                    self.const_values
-                                                        .put(id.r#ref, query.expr)
-                                                        .expect("oom");
-                                                }
-                                            }
-                                        }
-                                    }
-                                    let i = query.i as usize;
-                                    if i >= end as usize {
-                                        object.properties.slice_mut().swap(i, end as usize);
-                                        end += 1;
-                                    }
-                                }
-                            }
-                        }
-                        object.properties.truncate(end as usize);
+    /// Records the `const` leaves of a destructured macro result and narrows it to the bound parts.
+    pub(crate) fn visit_binding_and_expr_for_macro(
+        &mut self,
+        binding: Binding,
+        expr: Expr,
+        kind: LocalKind,
+        has_default: bool,
+    ) -> Expr {
+        match (binding.data, expr.data) {
+            (BData::BObject(bound), ExprData::EObject(object)) if object.was_originally_macro => {
+                let bound = bound.get();
+                let is_flat =
+                    |key: &Expr| matches!(key.data, ExprData::EString(key) if key.next.is_none());
+                let mut narrow = true;
+                for property in bound.properties() {
+                    if property.flags.contains(flags::Property::IsSpread) {
+                        return expr;
                     }
+                    // A key that is not one flat string can read any property.
+                    narrow &= is_flat(&property.key);
                 }
-            }
-            BData::BArray(bound_array) => {
-                let bound_array = bound_array.get();
-                if let ExprData::EArray(mut array) = expr.data {
-                    if array.was_originally_macro && !bound_array.has_spread {
-                        let bound_items = bound_array.items();
-                        let trunc_n = array.items.len().min(bound_items.len());
-                        array.items.truncate(trunc_n);
-                        let n = array.items.len_u32() as usize;
-                        for (item, child_expr) in bound_items[..n]
-                            .iter()
-                            .zip(array.items.slice_mut().iter_mut())
-                        {
-                            if matches!(item.binding.data, BData::BMissing(_)) {
-                                *child_expr = self.new_expr(E::Missing {}, expr.loc);
-                                continue;
-                            }
-                            self.visit_binding_and_expr_for_macro(item.binding, *child_expr);
+                let mut kept = G::PropertyList::init_capacity(bound.properties().len());
+                let mut kept_from: BumpVec<'a, u32> = BumpVec::new_in(self.arena);
+                for property in bound.properties() {
+                    if !is_flat(&property.key) {
+                        continue;
+                    }
+                    let Some(name) = property.key.as_string_literal(self.arena) else {
+                        continue;
+                    };
+                    let Some(query) = object.as_property(name) else {
+                        continue;
+                    };
+                    let value = self.visit_binding_and_expr_for_macro(
+                        property.value,
+                        query.expr,
+                        kind,
+                        property.default_value.is_some(),
+                    );
+                    if !narrow {
+                        continue;
+                    }
+                    match kept_from.iter().position(|&from| from == query.i) {
+                        // The pattern binds this key again. Keep the whole value.
+                        Some(at) => kept[at].value = Some(query.expr),
+                        None => {
+                            let mut copy =
+                                object.properties.slice()[query.i as usize].shallow_clone();
+                            copy.value = Some(value);
+                            kept_from.push(query.i);
+                            kept.push(copy);
                         }
                     }
                 }
+                if !narrow {
+                    return expr;
+                }
+                self.new_expr(
+                    E::Object {
+                        properties: kept,
+                        is_single_line: object.is_single_line,
+                        was_originally_macro: true,
+                        close_brace_loc: object.close_brace_loc,
+                        ..Default::default()
+                    },
+                    expr.loc,
+                )
             }
-            BData::BIdentifier(id) => {
+            (BData::BArray(bound), ExprData::EArray(array))
+                if array.was_originally_macro && !bound.has_spread =>
+            {
+                let bound_items = bound.get().items();
+                let n = array.items.len().min(bound_items.len());
+                let mut items = ExprNodeList::init_capacity(n);
+                for (item, child) in bound_items[..n].iter().zip(&array.items.slice()[..n]) {
+                    items.push(if matches!(item.binding.data, BData::BMissing(_)) {
+                        self.new_expr(E::Missing {}, expr.loc)
+                    } else {
+                        self.visit_binding_and_expr_for_macro(
+                            item.binding,
+                            *child,
+                            kind,
+                            item.default_value.is_some(),
+                        )
+                    });
+                }
+                self.new_expr(
+                    E::Array {
+                        items,
+                        is_single_line: array.is_single_line,
+                        was_originally_macro: true,
+                        close_bracket_loc: array.close_bracket_loc,
+                        ..Default::default()
+                    },
+                    expr.loc,
+                )
+            }
+            (BData::BIdentifier(id), _) => {
                 if self.options.features.inlining {
-                    self.const_values.put(id.r#ref, expr).expect("oom");
+                    self.admit_const_value(id.r#ref, kind, has_default, expr);
                 }
+                expr
             }
-            BData::BMissing(_) => {}
+            _ => expr,
+        }
+    }
+
+    /// The only writer of `const_values`.
+    #[inline]
+    fn admit_const_value(&mut self, ref_: Ref, kind: LocalKind, has_default: bool, value: Expr) {
+        if let Some(value) = js_ast::ConstValue::new(kind, has_default, value) {
+            self.const_values.put(ref_, value).expect("oom");
         }
     }
 
     pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl, opts: VisitDeclOpts) {
         let VisitDeclOpts {
             was_anonymous_named_expr,
-            could_be_const_value,
+            kind,
             could_be_macro,
         } = opts;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
-                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
+                // A macro result is exempt from the const-local prefix and does not end it.
+                let is_macro = Self::ALLOW_MACROS && could_be_macro;
+                if kind == LocalKind::KConst
+                    && (is_macro || !self.vis_scope().is_after_const_local_prefix)
+                {
                     if let Some(val) = decl.value {
-                        if val.can_be_const_value() {
-                            self.const_values.put(id_ref, val).expect("oom");
-                        }
+                        self.admit_const_value(id_ref, kind, false, val);
                     }
-                } else {
+                } else if !is_macro {
                     self.vis_scope().is_after_const_local_prefix = true;
                 }
                 // SAFETY: original_name is arena-owned, valid for 'a.
@@ -746,7 +785,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
                     if could_be_macro && let Some(value) = decl.value {
-                        self.visit_binding_and_expr_for_macro(decl.binding, value);
+                        decl.value = Some(self.visit_binding_and_expr_for_macro(
+                            decl.binding,
+                            value,
+                            kind,
+                            false,
+                        ));
                     }
                 }
             }
@@ -1866,11 +1910,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | StmtData::SDebugger(_)
                         | StmtData::STypeScript(_) => continue,
                         StmtData::SLocal(mut local) => {
-                            // "using" / "await using" declarations have disposal
-                            // side-effects on scope exit. Their refs can end up in
-                            // `const_values` via the macro path in `visitDecl`
-                            // (`could_be_macro`), so skip them here to avoid
-                            // silently dropping the declaration.
+                            // `using` has disposal side effects on scope exit and is never in `const_values`.
                             if local.kind.is_using() {
                                 continue;
                             }

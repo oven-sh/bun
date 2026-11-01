@@ -27,7 +27,9 @@ use self::code_load::{
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
-use crate::check::aot::{BuiltinTypeSymbols, COMPILER_DECLARATIONS_PATH};
+use crate::check::aot::{
+    BuiltinTypeSymbols, COMPILER_DECLARATIONS_PATH, MODULES_IN_OTHER_IMAGES_PATH,
+};
 use crate::check::errors::{SuggestionLookup, is_close};
 use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
@@ -868,7 +870,6 @@ struct ModuleSummary<'s> {
     may_be_leaf: bool,
     /// See `Module::is_read_by_every_task`.
     lists_declarations_for_every_task: bool,
-    /// It may be a leaf, and a build checks it in no case: a source file that no code loads. Its text is still its own.
     may_be_unread: bool,
     /// And it imports from no ambient module that re-exports from a relative name.
     is_unread_unless_reached: bool,
@@ -1767,6 +1768,57 @@ struct SubTask {
     package: Option<u32>,
 }
 
+struct FileNumbers<'s> {
+    arena: &'s Arena,
+    by_path: ByPath<'s>,
+    by_name: FxHashMap<&'s [u8], FileId>,
+}
+
+impl<'s> FileNumbers<'s> {
+    fn add(
+        &mut self,
+        path: &[u8],
+        is_lib: bool,
+        modules: &mut Vec<Option<ArenaBox<'s, Module<'s>>>>,
+        depths: &mut Vec<u32>,
+        found: &mut Found<'s>,
+    ) -> FileId {
+        let is_case_sensitive = self.by_path.is_case_sensitive;
+        let known = match is_case_sensitive {
+            true => self.by_path.files.get(path),
+            false => self.by_name.get(path),
+        };
+        if let Some(&id) = known {
+            return id;
+        }
+        let path = slice_in(path, self.arena);
+        let interned_path = file_path(path, is_case_sensitive, self.arena);
+        let id = FileId(modules.len() as u32);
+        let first = *self.by_path.files.entry(interned_path.text).or_insert(id);
+        modules.push(None);
+        depths.push(u32::MAX);
+        if !is_case_sensitive {
+            self.by_name.insert(path, id);
+        }
+        found.files.push(FoundFile {
+            path: interned_path,
+            is_lib,
+            package: None,
+            first,
+            is_read: first == id,
+            parse: None,
+            is_loaded: false,
+            named: None,
+        });
+        id
+    }
+
+    fn forget_all(&mut self) {
+        self.by_path.files.clear();
+        self.by_name.clear();
+    }
+}
+
 /// The bookkeeping of `Files::load` about the files it has found, besides the files themselves.
 #[derive(Default)]
 struct Found<'s> {
@@ -2004,6 +2056,9 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 return SymFlags::all();
             };
             let target = self.export_symbol_of_value_symbol_if_exported(target);
+            if self.stands_for_modules_in_other_images(target) {
+                return SymFlags::all();
+            }
             if self.flags(target).contains(SymFlags::ALIAS) {
                 if target == symbol || seen_symbols.contains(&target) {
                     break;
@@ -5352,6 +5407,7 @@ pub(crate) fn get_excluded_symbol_flags(flags: SymFlags) -> SymFlags {
 #[derive(Copy, Clone)]
 pub enum RootFileNames<'a> {
     Listed(&'a [Vec<u8>]),
+    ListedAndFound(&'a [Vec<u8>], &'a dyn Fn() -> Option<Vec<Vec<u8>>>),
     /// Called once, beside the load of the code files of a compile build.
     Unlisted(&'a dyn Fn(&mut dyn FnMut(&[u8])) -> Vec<Vec<u8>>),
 }
@@ -5451,63 +5507,39 @@ impl<'s> Files<'s> {
         let build =
             compile.map(|compile| CodeLoadContext::new(session, &resolver, options, compile));
         let is_case_sensitive = host.is_case_sensitive();
-        let mut by_path = ByPath {
-            files: map_in(arena),
-            is_case_sensitive,
+        let mut numbers = FileNumbers {
+            arena,
+            by_path: ByPath {
+                files: map_in(arena),
+                is_case_sensitive,
+            },
+            by_name: FxHashMap::default(),
         };
-        // `parseTaskData.tasks`: the tasks by file name, where a file can have several.
-        let mut by_name: FxHashMap<&'s [u8], FileId> = FxHashMap::default();
         let mut all_found = Found::default();
         let mut modules: Vec<Option<ArenaBox<Module>>> = Vec::new();
         // `parseTaskData.lowestDepth`, indexed by `FoundFile::first`: the lowest number of steps
         // into packages (`increaseDepth`) that a task for the file has run at.
         let mut depths: Vec<u32> = Vec::new();
-        // `taskDataByPath.LoadOrStore`
-        let mut add = |path: &[u8],
-                       is_lib: bool,
-                       modules: &mut Vec<Option<ArenaBox<'s, Module<'s>>>>,
-                       depths: &mut Vec<u32>,
-                       found: &mut Found<'s>|
-         -> FileId {
-            let known = match is_case_sensitive {
-                true => by_path.files.get(path),
-                false => by_name.get(path),
-            };
-            if let Some(&id) = known {
-                return id;
-            }
-            let path = slice_in(path, arena);
-            let interned_path = file_path(path, is_case_sensitive, arena);
-            let id = FileId(modules.len() as u32);
-            let first = *by_path.files.entry(interned_path.text).or_insert(id);
-            modules.push(None);
-            depths.push(u32::MAX);
-            if !is_case_sensitive {
-                by_name.insert(path, id);
-            }
-            found.files.push(FoundFile {
-                path: interned_path,
-                is_lib,
-                package: None,
-                first,
-                // Another spelling of a name is only read if `collectFiles` reaches it first.
-                is_read: first == id,
-                parse: None,
-                is_loaded: false,
-                named: None,
-            });
-            id
-        };
 
         let early_prefetch: OnceLock<Prefetch> = OnceLock::new();
-        let mut find_root_files = Some(|| {
+        let mut find_root_files = |listed_anew: Option<&'s [Vec<u8>]>| {
+            if listed_anew.is_some() {
+                numbers.forget_all();
+                all_found = Found::default();
+                modules.clear();
+                depths.clear();
+            }
             let waits_for_its_name = |path: &[u8]| {
                 options.roots_read_when_named.contains(path)
                     || compile.is_some_and(|it| it.host.is_seen_only_by_name(path))
             };
-            let (roots, listed_roots): (&[Vec<u8>], Option<&'s [Vec<u8>]>) = match root_file_names {
-                RootFileNames::Listed(roots) => (roots, None),
-                RootFileNames::Unlisted(list) => {
+            type Roots<'a, 's> = (&'a [Vec<u8>], Option<&'s [Vec<u8>]>);
+            let (roots, listed_roots): Roots<'_, 's> = match (listed_anew, root_file_names) {
+                (Some(roots), _) => (roots, Some(roots)),
+                (None, RootFileNames::Listed(roots) | RootFileNames::ListedAndFound(roots, _)) => {
+                    (roots, None)
+                }
+                (None, RootFileNames::Unlisted(list)) => {
                     let prefetch = early_prefetch.get_or_init(Prefetch::expecting_seeds);
                     let mut load_early = |path: &[u8]| {
                         if !waits_for_its_name(path) {
@@ -5538,7 +5570,8 @@ impl<'s> Files<'s> {
                         libs_without_file.push((because(reason, &path), message));
                     }
                     None => {
-                        let file = add(&path, true, &mut modules, &mut depths, &mut all_found);
+                        let file =
+                            numbers.add(&path, true, &mut modules, &mut depths, &mut all_found);
                         match waits_for_its_name(&path) {
                             true => drop(waiting_roots.insert(file)),
                             false => starts.push(file),
@@ -5555,7 +5588,8 @@ impl<'s> Files<'s> {
                     // Nothing is read.
                     Ok(None) => {}
                     Ok(Some(found)) => {
-                        let file = add(&found, false, &mut modules, &mut depths, &mut all_found);
+                        let file =
+                            numbers.add(&found, false, &mut modules, &mut depths, &mut all_found);
                         // The root files are the first of `rootTasks`, and the first task for a file name is the one that is loaded (`loadedTask`): it has no `libFile`.
                         all_found.files[file.idx()].is_lib = false;
                         if waits_for_its_name(&found) {
@@ -5597,7 +5631,7 @@ impl<'s> Files<'s> {
             // Its entry in `taskDataByPath`.
             let mut automatic_task = None;
             if has_automatic_task && host.is_file(&containing_file) {
-                let task = add(
+                let task = numbers.add(
                     &containing_file,
                     false,
                     &mut modules,
@@ -5621,7 +5655,8 @@ impl<'s> Files<'s> {
                     automatic_tracer.as_ref(),
                 ) {
                     Some((path, is_external, package_id)) => {
-                        let file = add(&path, false, &mut modules, &mut depths, &mut all_found);
+                        let file =
+                            numbers.add(&path, false, &mut modules, &mut depths, &mut all_found);
                         automatic.push(SubTask {
                             file,
                             increases_depth: is_external,
@@ -5657,12 +5692,12 @@ impl<'s> Files<'s> {
                 automatic,
                 seeds,
             }
-        });
+        };
         let mut root_files = None;
         let mut code_files = build.as_ref().map(|build| {
             build.load_code_files(spawn_background_readers, &early_prefetch, &mut || {
-                if let Some(mut find_root_files) = find_root_files.take() {
-                    host.run_regions_inline(&mut || root_files = Some(find_root_files()));
+                if root_files.is_none() {
+                    host.run_regions_inline(&mut || root_files = Some(find_root_files(None)));
                     let prefetch = early_prefetch.get_or_init(Prefetch::expecting_seeds);
                     let seeds = root_files.iter().flat_map(|found: &RootFiles| &found.seeds);
                     for &(path, is_lib) in seeds {
@@ -5672,6 +5707,29 @@ impl<'s> Files<'s> {
                 }
             })
         });
+        let mut root_files = match root_files {
+            Some(found) => found,
+            None => {
+                let found = find_root_files(None);
+                if let Some(prefetch) = early_prefetch.get() {
+                    for &(path, is_lib) in &found.seeds {
+                        prefetch.add_seed(path, is_lib);
+                    }
+                    prefetch.finish_seeds();
+                }
+                found
+            }
+        };
+        if let RootFileNames::ListedAndFound(_, list_with_found) = root_file_names
+            && let Some(roots) = list_with_found()
+        {
+            root_files = find_root_files(Some(session.keep(roots)));
+            if let Some(prefetch) = early_prefetch.get() {
+                for &(path, is_lib) in &root_files.seeds {
+                    prefetch.add_seed(path, is_lib);
+                }
+            }
+        }
         let RootFiles {
             roots,
             listed_roots,
@@ -5685,19 +5743,13 @@ impl<'s> Files<'s> {
             automatic_tracer,
             mut automatic,
             seeds,
-        } = match (root_files, find_root_files) {
-            (Some(found), _) => found,
-            (None, Some(mut find_root_files)) => {
-                let found = find_root_files();
-                if let Some(prefetch) = early_prefetch.get() {
-                    for &(path, is_lib) in &found.seeds {
-                        prefetch.add_seed(path, is_lib);
-                    }
-                    prefetch.finish_seeds();
-                }
-                found
-            }
-            (None, None) => unreachable!(),
+        } = root_files;
+        let mut add = |path: &[u8],
+                       is_lib: bool,
+                       modules: &mut Vec<Option<ArenaBox<'s, Module<'s>>>>,
+                       depths: &mut Vec<u32>,
+                       found: &mut Found<'s>| {
+            numbers.add(path, is_lib, modules, depths, found)
         };
         let has_root_files = !roots.is_empty() || compile.is_some();
         let root_file_count = all_found.files.len();
@@ -6213,6 +6265,11 @@ impl<'s> Files<'s> {
             &prefetch,
             &mut put_in_order,
         );
+        let FileNumbers {
+            mut by_path,
+            by_name,
+            ..
+        } = numbers;
         drop(by_name);
         // The task for the automatic type directives isn't a file.
         if let Some(task) = automatic_task {
@@ -6459,7 +6516,8 @@ impl<'s> Files<'s> {
             if bound.export_stars.iter().any(is_type_only) {
                 has_type_only_stars.store(true, Ordering::Relaxed);
             }
-            let may_be_unread = may_be_leaf
+            let may_be_unread = module.adds_no_globals
+                && !is_alternative_container
                 && code_files.is_some()
                 && module.compiled.is_none()
                 && matches!(hir.kind, FileKind::Ts | FileKind::Tsx);
@@ -10649,9 +10707,11 @@ impl<'s> Files<'s> {
     /// `IsTypeOnlyImportOrExportDeclaration`
     pub fn is_type_only_import_or_export_declaration(&self, file: FileId, decl: Decl) -> bool {
         let hir = self.hir(file);
+        let is_type_only =
+            |import: ImportId| hir[import].type_only && hir[import].loaded_as.is_none();
         match decl {
-            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => hir[import].type_only,
-            Decl::ImportSpec(s) => hir[s].type_only || hir[hir[s].import].type_only,
+            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => is_type_only(import),
+            Decl::ImportSpec(s) => hir[s].type_only || is_type_only(hir[s].import),
             Decl::ImportEquals(import) => hir[import].flags.contains(Flags::TYPE_ONLY),
             Decl::ExportSpec(s) => hir[s].type_only || hir[hir[s].export].type_only,
             Decl::ExportStarAs(statement) => matches!(
@@ -10729,6 +10789,11 @@ impl<'s> Files<'s> {
                 });
             (!is_rejected).then_some((file, decl))
         })
+    }
+
+    pub fn stands_for_modules_in_other_images(&self, module: Sym) -> bool {
+        self.is_shorthand_ambient_module_symbol(module)
+            && self.module(module.file).path.text == MODULES_IN_OTHER_IMAGES_PATH
     }
 
     /// `isShorthandAmbientModuleSymbol`: true if `ValueDeclaration`, which is the first of several

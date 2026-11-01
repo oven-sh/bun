@@ -1,12 +1,14 @@
 // `__dirname` and `__filename` hold the folder of the build, as with `bun build --compile`. Where that folder is on the machine, a program finds there what `bun build --compile` finds.
 // Where it is not, on the machine that the executable is shipped to, what the executable holds answers under those paths: its modules, and what --asset embedded.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
-import { beforeAll, describe, test } from "./supported";
+// One by one: the cases move and remove one folder that they share.
+import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 const program = `const fs = require("node:fs"), path = require("node:path");
 const show = async (what, answer) => {

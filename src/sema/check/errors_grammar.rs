@@ -328,7 +328,7 @@ impl Checker<'_, '_> {
         }
         let (code, class) = if hir.text(node) != known::r#await {
             let code = self.strict_mode_message(file, node, [1213, 1214, 1212]);
-            (code, self.strict_mode_name_error_class(file, node))
+            (code, self.strict_mode_error_class(file, node))
         } else if hir.has_module_syntax && hir.is_in_top_level_context(node) {
             // A compile build sets `has_module_syntax` in a CommonJS file too.
             if self.is_compiled_as_commonjs(file) {
@@ -383,7 +383,7 @@ impl Checker<'_, '_> {
         };
         if is_visited {
             let code = self.strict_mode_message(file, context, [1210, 1215, 1100]);
-            let class = self.strict_mode_name_error_class(file, name);
+            let class = self.strict_mode_error_class(file, name);
             let text = Arg::Atom(hir.text(name));
             self.error(file, name, code, &[text]).class = class;
         }

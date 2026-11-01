@@ -12,6 +12,7 @@ import {
 import { describeFiller } from "../../scripts/build/trim/report";
 import type { TrimTable } from "../../scripts/build/trim/table";
 import type { BuiltinEntry } from "../../scripts/build/trim/types";
+import { declare } from "../aot/harness/capabilities";
 
 export const repositoryRoot: string = join(import.meta.dir, "..", "..");
 
@@ -264,3 +265,5 @@ export function removedOnlyWith(name: string): string[] {
   }
   return chosen.slice(1).map(each => each.name);
 }
+
+declare("a Bun that trims", () => (canTrim ? undefined : "this build of Bun doesn't support --trim"));

@@ -3,6 +3,7 @@ mod cleanup;
 mod tests;
 
 use bun_sema::hir::{ExprId, StmtId, StmtKind};
+use bun_sema::import_sites::ends_in_call_that_reads_frame_of_caller;
 use smallvec::SmallVec;
 
 use super::{FunctionLowering, convert};
@@ -330,7 +331,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-pub(crate) fn allows_tail_call(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
+/// Whether the last call of `value`, which the function returns, is a tail call.
+pub(crate) fn allows_tail_call_of(
+    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
+    value: ExprId,
+) -> bool {
+    let file = &lowering.file;
+    let keeps_frame = file.inputs.options.runs_tests
+        && ends_in_call_that_reads_frame_of_caller(file.hir, file.bound, value);
+    !keeps_frame && allows_tail_call(lowering)
+}
+
+fn allows_tail_call(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
     let function = lowering.builder.function();
     let has_ordinary_return = matches!(
         function.kind,

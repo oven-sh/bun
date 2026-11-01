@@ -2,19 +2,31 @@
 //
 //   bun test/aot/run-parallel.ts test/aot/parallel/classes/super-call.ts ..
 //   bun test/aot/run-parallel.ts --jobs=4 --files-from=<a file with one path a line>      as scripts/runner.node.ts starts it
-//   --no-erased       leaves out the second build, see below
+//   --no-erased       leaves out every build but the first, see below
+//   --no-alone        leaves out the builds of each program alone
+//   --alone-under="--aot-validate"   of the builds of each program alone only one, with these flags, for every program
 //   --each-alone      every program is built by itself: what an executable leaves out goes by all it holds, so beside others a program keeps what it would lose alone
 //   --root=<folder>   the programs lie under that folder, not under ./parallel
 //   --memory=<MB>     what all that runs at once may hold together. Without it: seven eighths of what the machine has available at the start
+//   --seconds=<n>     the time limit of a run. Default: 90, or 240 under ASAN
 //   --more-flags="--aot-validate --aot-check=moved-loads"   every build takes these flags too: the programs under the compiler's own checks. A check counts, prints and
 //                     keeps more than a build without it: what a program says that a build or a run counts or prints is not asked, and no `// Todo:` is held to fail
 //   --checks-at-run-time   an executable that has passed runs once more with the checks of the run time on (BUN_JSC_validateAOTRuntime): they end it with a line
-//                     "AOT validation: .." where something that the compiler relies on does not hold, also where the answer is right. That line fails the program;
-//                     what the second run prints is not compared. AOT_CHECKS_AT_RUN_TIME=1 in the environment says the same, for whoever does not start this file himself
+//                     "AOT validation: .." where something that the compiler relies on does not hold, also where the answer is right. That line fails the program,
+//                     and so does a second run that does not exit and print as the first. AOT_CHECKS_AT_RUN_TIME=1 in the environment says the same, for whoever does not start this file himself
 //   --deal            builds and runs nothing: prints the first builds of the programs, a line each: { ms, files }. scripts/runner.node.ts deals whole builds to the shards
+//
+// For every build CI takes, of the programs of --files-from, those that ./parallel/every-build.txt names, each in its first build alone. The others count as skipped.
+// harness/every-build.ts says who takes all of them. A program that is named on the command line is run.
 //
 // A program with a TypeScript file is built twice, the second time with --aot-erase-types: types never change what a program prints.
 // Not one that names much of Bun's library: nearly all of it is the library, which keeps its types.
+//
+// Then every program is built alone, as whoever has written it builds it, and held against plain Bun again: of twelve programs that were once compiled wrongly
+// all twelve showed it alone, and four beside thirty others. And alone under --aot-validate: a validating build is another build, and one has answered wrongly,
+// with exit code 0 and no line of the validator, where the product was right. Alone under each of the compiler's other checks (`buildsAlone` below) a run takes
+// a tenth of the programs, by the name of the program and the number of the day, which it prints: AOT_DAY=<n> takes the same tenth.
+// As under --more-flags, a build with a check is not asked what the program says that a build or a run counts or prints.
 //
 // Many programs are the entry points of one executable. Each is compiled as it is when it is built alone, and each runs in a process
 // of its own, which BUN_AOT_START_AT tells where to start.
@@ -42,6 +54,10 @@
 //                                      `// Todo: Not every time: <why>`: it is skipped either way
 //   // Todo on win32 x64: <why>        the same where process.platform and process.arch are those two, and nothing anywhere else. There it goes before a `// Todo:`
 //   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
+//   // Todo alone: <why>               none of its builds alone passes today. The others are held as ever. It fails once one of them passes: the line goes out
+//   // Todo alone under --aot-validate: <why>   the same for the one build alone with those flags. `Not every time: <why>`: it is held to nothing
+//   // Todo alone under a check: <why>  the same for every build alone that has flags
+//   // Never alone: <why>              what it prints hangs on the folders above it, which an executable built in its own folder does not have: none of the builds alone
 //   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. Under --more-flags it is built and run, and what it prints is not compared
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
 //                                      ImageFunctionsAndJumpsInTheirPlace: ImageFunctionsEmitted and JumpOnlyFunctionsRemoved added up. A Bun with assertions generates checks
@@ -91,6 +107,7 @@ import {
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { runsTheListAlone } from "./harness/every-build";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
 import { withoutCoreDump } from "./harness/without-core-dump";
 import "./harness/without-installing-packages";
@@ -113,19 +130,24 @@ type Program = {
   isBuiltErased: boolean;
   isAlone: boolean;
   printsWhatIsSaved: boolean;
+  isNeverAlone: boolean;
   runsByItself: boolean;
   weight: number;
   namesModules: boolean;
   writesToBuiltIn: boolean;
   exitCode: number;
   todo?: string;
+  todoOfWays: (way: string) => string | undefined;
   statistics: Bound[];
   counts: Bound[];
   boundsNotRead: string[];
   asksTheShell: boolean;
   output?: string;
   buildErrors?: string;
-  way: "compiled" | "erased";
+  way: "compiled" | "erased" | `alone${string}`;
+  /** Of a build alone: whether it has a check of the compiler in it, and why it does not pass today. */
+  hasCheck?: boolean;
+  todoOfWay?: string;
 };
 
 // A weight of one is what a small program takes of a build that it shares.
@@ -205,14 +227,52 @@ const option = (name: string) =>
   process.argv.find(argument => argument.startsWith(`--${name}=`))?.slice(name.length + 3);
 const root = resolve(option("root") ?? join(import.meta.dir, "parallel"));
 const listed = option("files-from");
-const files = listed
+const given = listed
   ? readFileSync(listed, "utf8").split(/\r?\n/).filter(Boolean)
   : process.argv.slice(2).filter(argument => !argument.startsWith("--"));
+const takesTheListAlone = runsTheListAlone && !!listed && !option("root");
+/** A program, or with `/` at its end a folder of them: below ./parallel. */
+const inEveryBuild = takesTheListAlone
+  ? readFileSync(join(root, "every-build.txt"), "utf8")
+      .split(/\r?\n/)
+      .filter(line => line && !line.startsWith("#"))
+  : [];
+const programsInEveryBuild = new Set(inEveryBuild);
+const foldersInEveryBuild = inEveryBuild.filter(line => line.endsWith("/"));
+const isInEveryBuild = (file: string) => {
+  const path = relative(root, resolve(file)).replaceAll("\\", "/");
+  return programsInEveryBuild.has(path) || foldersInEveryBuild.some(folder => path.startsWith(folder));
+};
+const files = takesTheListAlone ? given.filter(isInEveryBuild) : given;
 const jobs = Number(option("jobs")) || availableParallelism();
-const erases = !process.argv.includes("--no-erased");
+const erases = !takesTheListAlone && !process.argv.includes("--no-erased");
 const eachAlone = process.argv.includes("--each-alone");
 const checksAtRunTime = process.argv.includes("--checks-at-run-time") || process.env.AOT_CHECKS_AT_RUN_TIME === "1";
 const moreFlags = option("more-flags")?.split(/\s+/).filter(Boolean) ?? [];
+const isASAN = (() => {
+  try {
+    return require("bun:internal-for-testing").isASANEnabled() as boolean;
+  } catch {
+    return basename(process.execPath).includes("asan");
+  }
+})();
+/** `cost`: against a build alone without a check. */
+const buildsAlone =
+  !erases || moreFlags.length || process.argv.includes("--no-alone")
+    ? []
+    : option("alone-under") !== undefined
+      ? [{ flags: option("alone-under")!.split(/\s+/).filter(Boolean), oneIn: 1, cost: 1 }]
+      : [
+          { flags: [], oneIn: 1, cost: 1 },
+          { flags: ["--aot-validate"], oneIn: 1, cost: 2.2 },
+          { flags: ["--aot-check=verify-each-pass"], oneIn: 10, cost: 5.3 },
+          { flags: ["--aot-testing=CheckProofsAtRunTime"], oneIn: 10, cost: 1.2 },
+          { flags: ["--aot-testing=CheckProofsAtRunTime", "--aot-check=ClaimsOfFlow"], oneIn: 10, cost: 1.3 },
+          { flags: ["--aot-check=MovedLoads"], oneIn: 10, cost: 1.2 },
+          // --aot-validate looks at B3 where its phases begin and end. This looks behind each of them. Under ASAN the largest programs would pass the time limit of a build.
+          ...(isASAN ? [] : [{ flags: ["--aot-validate", "--aot-check=ValidateBackEnd"], oneIn: 10, cost: 2.1 }]),
+        ];
+const day = Number(process.env.AOT_DAY) || Math.floor(Date.now() / 86_400_000);
 // A driver that is killed outright leaves its folder. Every build writes into the folder, and none takes hours.
 for (const name of readdirSync(tmpdir())) {
   if (!name.startsWith("aot-parallel-")) continue;
@@ -227,13 +287,6 @@ const say = (line: object) => {
   saidAt = performance.now();
   console.log(JSON.stringify(line));
 };
-const isASAN = (() => {
-  try {
-    return require("bun:internal-for-testing").isASANEnabled() as boolean;
-  } catch {
-    return basename(process.execPath).includes("asan");
-  }
-})();
 // What a stored output and the search for `error` lines rely on. Both runs get the same environment: a program may print it.
 const { FORCE_COLOR: _, ...inherited } = process.env;
 const environment = {
@@ -396,11 +449,35 @@ async function withSlotsOfBuild<T>(weight: number, work: (threads: number) => Pr
 const isWindows = process.platform === "win32";
 /** In seconds, for a run or the build of one program, and for each further program of a build. A build that is ended for nothing is made twice, so the limit is several times what a busy machine takes. */
 const timeLimit = (cmd: string[], programs = 1) =>
-  (isASAN || cmd.some(flag => /^--aot-(validate$|verify-each-pass$|check=.*\bverify-each-pass\b)/.test(flag))
-    ? 240
-    : 90) +
+  ((cmd[1] !== "build" && Number(option("seconds"))) ||
+    (isASAN || cmd.some(flag => /^--aot-(validate$|verify-each-pass$|check=.*\bverify-each-pass\b)/.test(flag))
+      ? 240
+      : 90)) +
   (isASAN ? 30 : 15) * (programs - 1);
 const secondsToAnswer = 3;
+
+/** CPU time and the state and wait channel of each thread, from /proc. */
+function describeThreads(pid: number) {
+  if (process.platform !== "linux") return "";
+  try {
+    let seconds = 0;
+    const states = new Map<string, number>();
+    for (const thread of readdirSync(`/proc/${pid}/task`)) {
+      const read = (file: string) => readFileSync(`/proc/${pid}/task/${thread}/${file}`, "utf8").trim();
+      // The fields after the parenthesized name: state first, utime and stime (in 1/100 s) at 11 and 12.
+      const stat = read("stat");
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      seconds += (Number(fields[11]) + Number(fields[12])) / 100;
+      const waitChannel = read("wchan");
+      const state = `${fields[0]}${waitChannel && waitChannel !== "0" ? ` ${waitChannel}` : ""}`;
+      states.set(state, (states.get(state) ?? 0) + 1);
+    }
+    const threads = [...states].sort((a, b) => b[1] - a[1]).map(([state, count]) => `${count} ${state}`);
+    return ` (CPU time ${seconds.toFixed(1)} s; threads: ${threads.join(", ")})`;
+  } catch {
+    return "";
+  }
+}
 
 /** Each child leads a process group of its own, which holds whatever it starts. */
 const running = new Set<number>();
@@ -488,7 +565,9 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
   const answers = cmd[1] === "build" && !isWindows;
   using held = memory.watch({ pid, leadsAGroup: true }, cmd[1] !== "build", answers);
   let ranOver = false;
+  let threadsAtLimit = "";
   const end = (signal: "SIGTERM" | "SIGKILL") => {
+    if (!ranOver) threadsAtLimit = describeThreads(pid);
     ranOver = true;
     endGroup(pid, signal);
   };
@@ -509,8 +588,8 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
       overLimit: held.exceeded
         ? held.held
         : ranOver
-          ? `it ran over ${seconds} s`
-          : cmd[1] === "build" && exitCode !== 0 && stderr.includes("ENOSPC")
+          ? `it ran over ${seconds} s${threadsAtLimit}`
+          : exitCode !== 0 && stderr.includes("ENOSPC")
             ? `the disk is full: ${Math.round(leftOnDisk() / 2 ** 20)} MB are left for ${folder}`
             : undefined,
     };
@@ -567,10 +646,22 @@ const shown = (output: Output) => ({
   stderr: output.stderr.slice(0, longestTextShown),
 });
 
+const withoutLinesOfImage = (stderr: string) =>
+  stderr.replace(/^\[aot\] (?!type-mismatch \S+ \S+ (?!internal:|bun:|node:)).*\r?\n/gm, "");
+
 const waysLeft = new Map<string, number>();
 const verdicts = new Map<string, Record<string, unknown>[]>();
-/** A file has one verdict: the first way that fails, or else the first. */
+/** A file has one verdict: of the ways that fail the first build, or else whichever failed first; or else the first. */
 function settle(program: Program, verdict: Record<string, unknown>) {
+  if (program.todoOfWay !== undefined)
+    verdict =
+      verdict.state === "fail" || program.todoOfWay.startsWith("Not every time:")
+        ? { state: "todo" }
+        : {
+            state: "fail",
+            stage: "todo",
+            message: `${program.way}: it passes: its \`// Todo alone ..:\` line goes out`,
+          };
   const all = [...(verdicts.get(program.file) ?? []), { file: program.file, way: program.way, ...verdict }];
   verdicts.set(program.file, all);
   if (all.length < waysLeft.get(program.file)!) return;
@@ -589,18 +680,19 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   }
   hasFailed ||= failed;
   say({
-    ...(all.find(({ state }) => state === "fail") ?? {
-      ...all[0],
-      compileMs: sum("compileMs"),
-      runMs: sum("runMs"),
-      plainMs: sum("plainMs"),
-      // Of the way that asked.
-      ...Object.fromEntries(
-        ["shellMs", "countsNotAsked"].flatMap(name =>
-          all.filter(verdict => name in verdict).map(verdict => [name, verdict[name]]),
+    ...(all.find(({ state, way }) => state === "fail" && way === "compiled") ??
+      all.find(({ state }) => state === "fail") ?? {
+        ...all.find(({ state }) => state !== "todo"),
+        compileMs: sum("compileMs"),
+        runMs: sum("runMs"),
+        plainMs: sum("plainMs"),
+        // Of the way that asked.
+        ...Object.fromEntries(
+          ["shellMs", "countsNotAsked"].flatMap(name =>
+            all.filter(verdict => name in verdict).map(verdict => [name, verdict[name]]),
+          ),
         ),
-      ),
-    }),
+      }),
     ways: Object.fromEntries(all.map(({ way, state }) => [way, state])),
   });
 }
@@ -614,7 +706,12 @@ function fail(program: Program, stage: string, message: string, actual?: Output,
   settle(program, {
     state: "fail",
     stage,
-    message: program.way === "erased" ? `with --aot-erase-types: ${message}` : message,
+    message:
+      program.way === "erased"
+        ? `with --aot-erase-types: ${message}`
+        : program.way === "compiled"
+          ? message
+          : `${program.way}: ${message}`,
     expected: expected && shown(actual ? leavingOutTheSame(expected, actual) : expected),
     actual: actual && shown(expected ? leavingOutTheSame(actual, expected) : actual),
   });
@@ -674,6 +771,7 @@ function read(file: string): Program {
     isBuiltErased: !lines("Erased types").some(line => line.startsWith("not built")),
     isAlone: eachAlone || lines("Alone").length > 0,
     printsWhatIsSaved: lines("Prints what the compiler saves").length > 0,
+    isNeverAlone: lines("Never alone").length > 0,
     runsByItself: lines("Runs by itself").length > 0,
     weight: tookMs.has(path)
       ? Math.max(8, Math.round(tookMs.get(path)! / msOfWeight))
@@ -687,6 +785,10 @@ function read(file: string): Program {
       (isASAN ? lines("Todo under ASAN")[0] : undefined) ??
       lines(`Todo on ${process.platform} ${process.arch}`)[0] ??
       lines("Todo")[0],
+    todoOfWays: way =>
+      lines(`Todo ${way}`)[0] ??
+      (way === "alone" ? undefined : lines("Todo alone under a check")[0]) ??
+      lines("Todo alone")[0],
     statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
     counts: bounds.filter(({ kind }) => kind !== "STATISTIC"),
     boundsNotRead: boundLines.filter(line => !readBound(line)),
@@ -1052,10 +1154,7 @@ async function run(programs: Program[]): Promise<void> {
         // The executable ran compiled code and did not fall back to the source it holds.
         if (!compiled.output.stderr.includes("[aot] module: "))
           return fail(program, "run", "it did not run compiled code", compiled.output, plain?.output);
-        compiled.output.stderr = compiled.output.stderr.replace(
-          /^\[aot\] (?!type-mismatch \S+ \S+ (?!internal:|bun:|node:)).*\r?\n/gm,
-          "",
-        );
+        compiled.output.stderr = withoutLinesOfImage(compiled.output.stderr);
         const unmet = counts ? unmetBounds(counted, program.counts, "executable") : [];
         if (unmet.length) return fail(program, "count", unmet.join("; "), compiled.output, plain?.output);
         const ofEach = await Promise.all(codeBytes.map(({ promise }) => promise));
@@ -1077,9 +1176,14 @@ async function run(programs: Program[]): Promise<void> {
             start([executable], cwd, { ...env, ...program.envOfExecutable, BUN_JSC_validateAOTRuntime: "1" }),
           );
           const said = /^.*AOT validation:.*$/m.exec(checked.output.stderr)?.[0];
-          return said ? fail(program, "checks", said, checked.output) : settle(program, result);
+          if (said) return fail(program, "checks", said, checked.output);
+          checked.output.stderr = withoutLinesOfImage(checked.output.stderr);
+          if (program.printsWhatIsSaved || Bun.deepEquals(compared(checked.output), compared(compiled.output)))
+            return settle(program, result);
+          const message = "with the checks of the run time on it does not exit and print as without them";
+          fail(program, "checks", message, checked.output, compiled.output);
         };
-        if (moreFlags.length && program.printsWhatIsSaved) return settleChecked(passes);
+        if ((moreFlags.length || program.hasCheck) && program.printsWhatIsSaved) return settleChecked(passes);
         if (stored !== undefined) {
           if (asText(compared(compiled.output)) === stored) return settleChecked(passes);
           return fail(program, "compare", "it does not print what its last comment says", compiled.output, {
@@ -1154,6 +1258,16 @@ const whySkipped = refusal
     : "only a canary build of Bun reads BUN_AOT_START_AT";
 // Whoever deals asks what belongs together. What a Bun cannot build is said where the programs are run.
 const deals = process.argv.includes("--deal");
+if (files.length < given.length) {
+  const leftOut = given.filter(file => !isInEveryBuild(file));
+  const message = "not in every build: AOT_WHOLE=1, or [aot whole] in the message of the commit, takes it";
+  // Whoever deals wants each program once.
+  if (deals)
+    for (let at = 0; at < leftOut.length; at += 250)
+      console.log(JSON.stringify({ ms: 0, files: leftOut.slice(at, at + 250) }));
+  else for (const file of leftOut) say({ file, state: "skip", message });
+  if (!files.length) process.exit(0);
+}
 if (whySkipped && !deals) {
   for (const file of files) say({ file, state: "skip", message: whySkipped });
   console.error(`SKIPPED all ${files.length} programs: ${whySkipped}`);
@@ -1199,6 +1313,10 @@ const hasTypes = ({ path }: Program) =>
     ? readdirSync(dirname(path), { recursive: true, encoding: "utf8" }).some(isTypeScript)
     : isTypeScript(path);
 const asWritten = files.map(read);
+const isDrawn = ({ path }: Program, flags: string[], oneIn: number) =>
+  (BigInt(Bun.hash(`${relative(root, path).replaceAll("\\", "/")} ${flags.join(" ")}`)) + BigInt(day)) %
+    BigInt(oneIn) ===
+  0n;
 const all = [
   ...asWritten,
   ...(erases
@@ -1209,7 +1327,42 @@ const all = [
         )
         .map(program => ({ ...program, way: "erased" as const }))
     : []),
+  ...buildsAlone.flatMap(({ flags, oneIn }) =>
+    asWritten
+      .filter(
+        program =>
+          program.buildErrors === undefined &&
+          !program.isNeverAlone &&
+          !(isBuiltAlone(program) && flags.every(flag => program.flags.includes(flag))) &&
+          isDrawn(program, flags, oneIn),
+      )
+      .map(program => {
+        const way = ["alone", ...(flags.length ? ["under", ...flags] : [])].join(" ") as Program["way"];
+        return {
+          ...program,
+          way,
+          hasCheck: flags.length > 0,
+          todoOfWay: program.todoOfWays(way),
+          isAlone: true,
+          // Its files are named from its own folder on.
+          output: isBuiltAlone(program)
+            ? program.output
+            : program.output?.replaceAll(
+                `/$bunfs/root/${relative(root, dirname(program.path)).replaceAll("\\", "/")}/`,
+                "/$bunfs/root/",
+              ),
+          flags: [...program.flags, ...flags.filter(flag => !program.flags.includes(flag))],
+          statistics: [],
+          counts: [],
+          boundsNotRead: [],
+          buildPrints: [],
+          asksTheShell: false,
+        };
+      }),
+  ),
 ];
+if (buildsAlone.some(({ oneIn }) => oneIn > 1))
+  console.error(`DAY ${day}: some builds alone take a part of the programs. AOT_DAY=${day} takes the same part.`);
 for (const { file } of all) waysLeft.set(file, (waysLeft.get(file) ?? 0) + 1);
 // Two entry points that differ in the extension alone have one name in an executable.
 const withoutExtension = (path: string) => path.replace(/\.[a-z]+$/, "");
@@ -1239,10 +1392,19 @@ const batches = [...groups.values()].flatMap(group => {
 });
 batches.sort((one, other) => expectedTimeOf(other) - expectedTimeOf(one));
 expectedTimeOfAll = batches.reduce((sum, batch) => sum + expectedTimeOf(batch), 0);
+// Every shard must deal alike, at whatever hour it starts: a build that a day draws counts for each program by its share.
+const weightOfBuildsAlone = (programs: Program[]) =>
+  programs.reduce((sum, { weight }) => sum + (weight > 1 ? 15 : 3), 0) *
+  buildsAlone.reduce((sum, { cost, oneIn }) => sum + cost / oneIn, 0);
 if (deals) {
   for (const batch of batches)
     if (batch[0].way === "compiled")
-      console.log(JSON.stringify({ ms: weightOf(batch) * msOfWeight, files: batch.map(({ file }) => file) }));
+      console.log(
+        JSON.stringify({
+          ms: (weightOf(batch) + weightOfBuildsAlone(batch)) * msOfWeight,
+          files: batch.map(({ file }) => file),
+        }),
+      );
   process.exit(0);
 }
 const runs = batches.map(run);

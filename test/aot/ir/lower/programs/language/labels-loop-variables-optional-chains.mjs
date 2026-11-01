@@ -51,7 +51,7 @@ console.log("a loop stores to a variable named async:", await walks());
 
 // GENERATED: walks tag Made
 // CHECK-LABEL: function {{*}}name="walks"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

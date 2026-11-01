@@ -1,8 +1,7 @@
-use std::cmp::Reverse;
-
-use bun_core::strings::{index_of, index_of_char_usize, last_index_of_char};
+use bun_core::strings::{contains_char, index_of, index_of_char_usize, last_index_of_char};
 use bun_sema::fold::FoldedValue;
 use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, PatKind, StmtId, StmtKind};
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 
 use crate::lower::FileLowering;
 
@@ -42,26 +41,20 @@ impl FileLowering<'_, '_, '_, '_> {
                 return;
             }
             let start = self.type_ranges.map_offset(start);
-            let end = self.type_ranges.map_offset(end);
+            let end = match begins_statement {
+                true => start,
+                false => self.type_ranges.map_end(end),
+            };
             if (start < end || begins_statement) && start >= end_of_last {
                 push_number(&mut packed, start - end_of_last);
                 push_number(&mut packed, end - start);
                 end_of_last = end;
             }
         };
-        // Where the line begins, or the last statement in it that was told apart.
-        let mut start_of_stretch = 0;
-        let mut end_of_searched = 0;
+        let mut line = LongLine::new(&hir.text, 0);
         for statement in hir.ids(hir.body) {
-            let start = hir[statement].start.max(end_of_searched);
-            let in_front = &hir.text[end_of_searched as usize..start as usize];
-            if let Some(line_feed) = last_index_of_char(in_front, b'\n') {
-                start_of_stretch = end_of_searched + line_feed as u32 + 1;
-            }
-            end_of_searched = start;
-            if start - start_of_stretch >= FAR_INTO_A_LINE {
+            if let Some(start) = line.tell_apart(hir[statement].start, hir[statement].loc.end) {
                 add(start, start);
-                start_of_stretch = start;
             }
             if !self.may_fail_in_body(statement) {
                 continue;
@@ -96,7 +89,7 @@ impl FileLowering<'_, '_, '_, '_> {
             .filter(|(function, _)| function.is_in_list)
             .filter_map(|(_, place)| place.map(|(start, end, _)| (start, end)))
             .collect();
-        in_lists.sort_unstable_by_key(|&(start, end)| (start, Reverse(end)));
+        in_lists.sort_by_u64(|&(start, end)| number_of_pair(start, !end));
         // One that lies in another.
         in_lists.dedup_by(|in_list, around| in_list.1 <= around.1);
         in_lists
@@ -169,7 +162,45 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-const FAR_INTO_A_LINE: u32 = 4096;
+pub(super) const FAR_INTO_A_LINE: u32 = 4096;
+
+// Cuts a long line into stretches at the starts of statements, which come in the order of the text.
+// A stretch is short, or it is one statement: a short statement does not share its stretch with a long one beside it.
+pub(super) struct LongLine<'a> {
+    text: &'a [u8],
+    // Where the line begins, or the last statement in it that was told apart.
+    start_of_stretch: u32,
+    end_of_searched: u32,
+}
+
+impl<'a> LongLine<'a> {
+    pub(super) fn new(text: &'a [u8], start: u32) -> Self {
+        LongLine {
+            text,
+            start_of_stretch: start,
+            end_of_searched: start,
+        }
+    }
+
+    // Where a stretch begins, if one begins with this statement.
+    pub(super) fn tell_apart(&mut self, start: u32, end: u32) -> Option<u32> {
+        let start = start.max(self.end_of_searched);
+        let in_front = &self.text[self.end_of_searched as usize..start as usize];
+        if let Some(line_feed) = last_index_of_char(in_front, b'\n') {
+            self.start_of_stretch = self.end_of_searched + line_feed as u32 + 1;
+        }
+        self.end_of_searched = start;
+        let far = self.start_of_stretch + FAR_INTO_A_LINE;
+        if start == self.start_of_stretch || end < far {
+            return None;
+        }
+        if start < far && contains_char(&self.text[start as usize..far as usize], b'\n') {
+            return None;
+        }
+        self.start_of_stretch = start;
+        Some(start)
+    }
+}
 
 // What stands between two methods of a class. It begins where a token has ended, so `/` begins a comment here.
 fn is_only_space_and_comments(mut text: &[u8]) -> bool {
@@ -188,7 +219,7 @@ fn is_only_space_and_comments(mut text: &[u8]) -> bool {
     }
 }
 
-fn push_number(bytes: &mut Vec<u8>, mut number: u32) {
+pub(super) fn push_number(bytes: &mut Vec<u8>, mut number: u32) {
     while number >= 0x80 {
         bytes.push(number as u8 | 0x80);
         number >>= 7;

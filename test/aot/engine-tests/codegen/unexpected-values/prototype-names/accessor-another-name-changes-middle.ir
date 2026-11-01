@@ -1,5 +1,6 @@
 # The loop reads an optional field, then an accessor of another name that the class has from the start, then the field again.
 # In one round the accessor, a conversion by valueOf or a conversion by toString puts the field's name on the prototype: the read right behind it must see that.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -123,5 +124,5 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 171, patchpoints: 24, rare instructions: 155, polls: 2
+# CHECK-NEXT: instructions: 167, patchpoints: 24, rare instructions: 54, polls: 2
 # CHECK-NEXT: end of function f0

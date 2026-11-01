@@ -188,13 +188,44 @@ fn set_reports_interruptions(reports: bool) {
 
 /// Under AddressSanitizer the crash handler leaves the signals alone. The sanitizer reports some and calls back when it
 /// ends the process. The others end the process without a word.
-#[cfg(unix)]
+#[cfg(all(unix, bun_asan))]
 fn report_what_the_sanitizer_leaves() {
+    use core::ffi::c_void;
     extern "C" fn write_at_death() {
         write_where_this_thread_stopped(&mut stderr_writer());
     }
-    extern "C" fn handle_crash(signal: c_int) {
+    type Handler = extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void);
+    extern "C" fn handle_crash(signal: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
         write_at_death();
+        let mut writer = stderr_writer();
+        // SAFETY: the kernel hands a valid record to a handler that asked for one.
+        let info = unsafe { &*info };
+        let code = info.si_code;
+        // SAFETY: both are words of the record. Which of them holds goes by the code.
+        let (address, sender) = unsafe { (info.si_addr() as usize, info.si_pid()) };
+        // SAFETY: it has no conditions.
+        let this_process = unsafe { libc::getpid() };
+        let is_raised_by_instruction = (1..0x10000).contains(&code);
+        let _ = if is_raised_by_instruction {
+            write!(
+                writer,
+                "Signal {signal}, code {code}, at address 0x{address:x}.\n"
+            )
+        } else if sender == this_process {
+            write!(writer, "Signal {signal} was sent by this process.\n")
+        } else {
+            write!(writer, "Signal {signal} was sent by process {sender}.\n")
+        };
+        #[cfg(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))]
+        if is_raised_by_instruction {
+            crate::fault_registers::write_to(context, None, &mut |text| {
+                let _ = writer.write_all(text);
+            });
+        }
+        let _ = context;
         raise_with_default_action(signal);
     }
     if !bun_core::Environment::ENABLE_ASAN {
@@ -216,10 +247,13 @@ fn report_what_the_sanitizer_leaves() {
         {
             continue;
         }
-        // SAFETY: the handler has the signature that `signal` calls and is never unloaded.
-        unsafe { libc::signal(signal, handle_crash as extern "C" fn(c_int) as usize) };
+        let mut action: libc::sigaction = bun_core::ffi::zeroed();
+        action.sa_sigaction = handle_crash as Handler as usize;
+        action.sa_flags = libc::SA_SIGINFO;
+        // SAFETY: the handler has the signature that SA_SIGINFO asks for and is never unloaded.
+        unsafe { libc::sigaction(signal, &raw const action, core::ptr::null_mut()) };
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(all(unix, bun_asan)))]
 fn report_what_the_sanitizer_leaves() {}

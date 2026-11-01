@@ -208,21 +208,21 @@ attempt("an object literal that reads itself", () => {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=[[f_10]] flags=[IsFromCompiler] variableName="outcome"}] thisType={type=[[L_8]] flags=[IsExpected]} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=[[f_10]] flags=[IsFromCompiler] variableName="outcome"}] thisType={type=[[L_8]] site=[[w_11]]} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: [[f_10]], v1: [[L_8]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Data data=[[d_12]]
+// CHECK-NEXT: v2 = Data data=[[d_13]]
 // CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|Array<never> flags=[IsExpected]}
 // CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v5 = NewClosure v1 function=[[f_13]]
-// CHECK-NEXT: v6 = NewClosure v1 function=[[f_14]]
-// CHECK-NEXT: v7 = NewClosure v1 function=[[f_15]]
-// CHECK-NEXT: v8 = NewClosure v1 function=[[f_16]]
-// CHECK-NEXT: v9 = NewClosure v1 function=[[f_17]]
-// CHECK-NEXT: v10 = NewClosure v1 function=[[f_18]]
-// CHECK-NEXT: v11 = NewArray v5, v6, v7, v8, v9, v10 contents=undefined|null|[[f_19]]
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|[[f_19]]> flags=[IsExpected]}
+// CHECK-NEXT: v5 = NewClosure v1 function=[[f_14]]
+// CHECK-NEXT: v6 = NewClosure v1 function=[[f_15]]
+// CHECK-NEXT: v7 = NewClosure v1 function=[[f_16]]
+// CHECK-NEXT: v8 = NewClosure v1 function=[[f_17]]
+// CHECK-NEXT: v9 = NewClosure v1 function=[[f_18]]
+// CHECK-NEXT: v10 = NewClosure v1 function=[[f_19]]
+// CHECK-NEXT: v11 = NewArray v5, v6, v7, v8, v9, v10 contents=undefined|null|[[f_20]]
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|[[f_20]]> flags=[IsExpected]}
 // CHECK-NEXT: v13 = IteratorOpen v12
 // CHECK-NEXT: Jump -> next b2()
 // CHECK-NEXT: b2():
@@ -234,16 +234,16 @@ attempt("an object literal that reads itself", () => {
 // CHECK-NEXT: b3():
 // CHECK-NEXT: v18 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
 // CHECK-NEXT: v19 = PropGet v18 key="join"
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|[[f_20]] flags=[IsExpected]}
+// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|[[f_21]] flags=[IsExpected]}
 // CHECK-NEXT: v21 = String string=" ; "
 // CHECK-NEXT: v22 = Call v20, v18, v21 calleeKey="join" calleeName="results.join"
 // CHECK-NEXT: ReturnCall v22 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
 // CHECK-NEXT: b4():
 // CHECK-NEXT: Jump -> next b5()
 // CHECK-NEXT: b5() handler=b6():
-// CHECK-NEXT: v23 = Convert v17 declared={type=undefined|null|[[f_19]] flags=[IsExpected]}
+// CHECK-NEXT: v23 = Convert v17 declared={type=undefined|null|[[f_20]] flags=[IsExpected]}
 // CHECK-NEXT: v24 = PropGet v4 key="push"
-// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|[[f_21]] flags=[IsExpected]}
+// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|[[f_22]] flags=[IsExpected]}
 // CHECK-NEXT: v26 = Call v0, -, v23 calleeName="outcome"
 // CHECK-NEXT: v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: v28 = Call v25, v4, v27 calleeKey="push" calleeName="results.push"
@@ -258,8 +258,8 @@ attempt("an object literal that reads itself", () => {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_22]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_22]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_22]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_23]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_23]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_23]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }

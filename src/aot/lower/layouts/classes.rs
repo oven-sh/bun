@@ -614,13 +614,26 @@ pub(in crate::lower) fn define_class_layout(
     }
     let node = file.hir[class];
     let base_class = file.find_base_class(reference);
+    // Nothing makes a class whose statement is not lowered: the load of its module fails, or nothing needs the class.
+    // The program may then have no module of the file of the parent, and nobody defines the layout of the parent.
+    let is_defined = |file: &FileLowering<'_, '_, '_, '_>, parent: ClassRef| {
+        constructor.is_some() || file.has_module(parent.file)
+    };
+    let is_parent_left_out = base_class.is_some_and(|base| !is_defined(file, base));
+    let base_class = base_class.filter(|_| !is_parent_left_out);
     let base = match base_class {
         Some(base) => Some(file.class_layout(base)),
         // Each member more of the family of EventEmitter is one more place where its fields may lie, and an access tests few places.
-        None if file.source != SourceKind::Program => None,
+        None if file.source != SourceKind::Program || is_parent_left_out => None,
         // Where the type of the heritage is no class, its binding says what it is: a constructor function, or what a module of Bun's exports.
         None => {
             let parent = file.queries.class_parent(reference);
+            let parent = parent.filter(|&parent| match parent {
+                ClassParent::Declared(ClassDeclaration::Class(parent)) => is_defined(file, parent),
+                ClassParent::Declared(ClassDeclaration::Function(_)) | ClassParent::Library(_) => {
+                    true
+                }
+            });
             parent.and_then(|parent| file.find_layout_of_parent(parent))
         }
     };

@@ -1,6 +1,6 @@
 // One value may be an instance of any of 300 classes, which reach it one a round, and 1,000 statements each read a
 // property of their own off it.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
@@ -8,6 +8,7 @@ import { unsupported } from "./harness/compiler";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
+import { describe, test } from "./listed";
 
 const classes = 300;
 const reads = 1000;

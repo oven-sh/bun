@@ -1,0 +1,16 @@
+# The same in selected code: for the passes that run behind the selection.
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass
+# RUN: pass InlineHeads
+# CHECK: = Call v0
+# CHECK: = Call v1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="callsTwiceBesideAnObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Call v0, -
+    v4 = Call v1, -, v2
+    Return v4
+}

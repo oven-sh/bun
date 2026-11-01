@@ -1,4 +1,5 @@
 # A callback of map spreads what is not iterable and every pass is verified.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # OPTIONS: check=VerifyEachPass
 # RUN: lower-to-air size f13
@@ -478,5 +479,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # -- generated: f13
 # CHECK-LABEL: function f13 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 50, patchpoints: 8, rare instructions: 85, polls: 1
+# CHECK-NEXT: instructions: 50, patchpoints: 8, rare instructions: 92, polls: 1
 # CHECK-NEXT: end of function f13

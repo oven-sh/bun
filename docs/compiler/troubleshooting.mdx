@@ -37,6 +37,9 @@ The errors are TypeScript 7's, whichever version of `typescript` you have instal
 | `TS100009: ... compiled without its types`      | None needed. See below                                                            |
 | `TS100014: this assignment always throws`       | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only) |
 | `TS100064: this import path isn't a constant`   | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `TS100064: the program hands a require() to`    | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| `TS100078: ... runs from source, not compiled`  | [None needed](/compiler/compatibility#under-bun-test---aot)                       |
+| `TS100079: ... any file ... may load again`     | Move that line out of the test run, or run its test file on its own               |
 | `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                        |
 | `--aot does not apply to a package.json script` | Put `--aot` inside the script                                                     |
 | `can't run code compiled by this Bun`           | Pass a `bun` of the same revision                                                 |

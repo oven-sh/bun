@@ -1,0 +1,12 @@
+# The other way round: a run that answers "unchanged" and has taken away a value that stood in no block. The check went through the values that there were, and read the one that is gone.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass FoldConstants
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Add v0, v1
+    Return v2
+}

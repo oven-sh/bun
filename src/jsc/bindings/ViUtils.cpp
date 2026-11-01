@@ -10,6 +10,10 @@
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#if ENABLE(AOT)
+#include "BunCompiledModules.h"
+#include <JavaScriptCore/JSCellButterfly.h>
+#endif
 
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
 extern "C" bool ViUtils__isLoadingPreload(Zig::GlobalObject*);
@@ -317,6 +321,40 @@ JSC_DEFINE_HOST_FUNCTION(jsViDynamicImportDidSettle, (JSGlobalObject * globalObj
     return JSValue::encode(jsUndefined());
 }
 
+#if ENABLE(AOT)
+JSC_DECLARE_HOST_FUNCTION(jsViLookAgainAtImport);
+
+static void lookAgainAtImport(JSGlobalObject* globalObject, JSPromise* import, JSPromise* promise)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(import);
+    arguments.append(promise);
+    auto* packed = JSCellButterfly::tryCreateFromArgList(vm, arguments);
+    if (!packed) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    auto* lookAgain = JSFunction::create(vm, globalObject, 2, String(), jsViLookAgainAtImport, ImplementationVisibility::Private);
+    Bun__Timer__setTimeout(globalObject, JSValue::encode(lookAgain), JSValue::encode(packed), JSValue::encode(jsNumber(0)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsViLookAgainAtImport, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto* import = uncheckedDowncast<JSPromise>(callFrame->argument(0));
+    auto* promise = uncheckedDowncast<JSPromise>(callFrame->argument(1));
+    if (import->status() == JSPromise::Status::Pending)
+        lookAgainAtImport(globalObject, import, promise);
+    else
+        fulfillOnceImportsSettle(globalObject, promise);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(jsViFulfillUnlessImporting, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -325,6 +363,13 @@ JSC_DEFINE_HOST_FUNCTION(jsViFulfillUnlessImporting, (JSGlobalObject * globalObj
     auto* promise = uncheckedDowncast<JSPromise>(callFrame->argument(0));
     JSPromise* pending = pendingDynamicImport(defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+    if (hasCompiledModules() && pending && !pending->isHandled()) [[unlikely]] {
+        lookAgainAtImport(globalObject, pending, promise);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
+#endif
     if (pending) {
         auto* didSettle = JSFunction::create(vm, globalObject, 2, String(), jsViDynamicImportDidSettle, ImplementationVisibility::Private);
         pending->performPromiseThenWithContext(vm, globalObject, didSettle, didSettle, jsUndefined(), promise);

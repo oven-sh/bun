@@ -5,6 +5,7 @@ use bun_sema::check::aot::{
 use bun_sema::hir::MemberId;
 use bun_sema::program::{FileId, Sym};
 
+use crate::builtins::RuntimeModule;
 use crate::modules::SyntheticExportId;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -101,6 +102,13 @@ pub enum VariableKey {
     },
     /// What `require` answered in the initializer of a name that holds it in place of the copy that a bundler's helper makes. Nothing is stored where the helper made the copy.
     RequiredAnswer(Sym),
+    /// What `createRequire` made in the initializer of a name, where it was given the file itself. Nothing where it was given something else.
+    RequireMadeForOwnFile(Sym),
+    /// The mock that stands in place of a file whose body has not run, and nothing while none does. Of a file that a test may mock: the host stores its
+    /// object there, and every import from the file asks the object while it stands.
+    MockOf(FileId),
+    /// The same for a module of Bun's own that a test may mock.
+    MockOfRuntimeModule(RuntimeModule),
 }
 
 impl FunctionKey {
@@ -160,11 +168,17 @@ impl VariableKey {
         match *self {
             VariableKey::Symbol(symbol) => Some(symbol.file),
             VariableKey::ClassSlot { class, .. } => Some(class.file),
-            VariableKey::ModuleExports(file) | VariableKey::ModulePath { file, .. } => Some(file),
+            VariableKey::ModuleExports(file)
+            | VariableKey::ModulePath { file, .. }
+            | VariableKey::MockOf(file) => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),
-            VariableKey::RequiredAnswer(holder) => Some(holder.file),
-            VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => None,
+            VariableKey::RequiredAnswer(holder) | VariableKey::RequireMadeForOwnFile(holder) => {
+                Some(holder.file)
+            }
+            VariableKey::SyntheticExport(_)
+            | VariableKey::Copy(_)
+            | VariableKey::MockOfRuntimeModule(_) => None,
         }
     }
 }

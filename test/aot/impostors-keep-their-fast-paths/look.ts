@@ -141,10 +141,14 @@ export async function countTurn(
   return {
     compiled: sum(perTurn.filter(share => !isOutsideCompiledCode(share.where))),
     outside: sum(perTurn.filter(share => isOutsideCompiledCode(share.where))),
-    stubs: perTurn
-      .filter(share => share.where.startsWith("stub ") && share.instructions >= instructionsOfStubThatCounts)
-      .map(share => share.where.slice(5))
-      .sort(),
+    // Both forms of a stub have one fast path. Which of them a site calls goes by register allocation.
+    stubs: [
+      ...new Set(
+        perTurn
+          .filter(share => share.where.startsWith("stub ") && share.instructions >= instructionsOfStubThatCounts)
+          .map(share => share.where.slice(5).replace(/\.KeepsNo(Registers|FPRs)$/, "")),
+      ),
+    ].sort(),
     shares: perTurn.map(share => `${share.where} ${Math.round(share.instructions)}`),
     stdout: counted.stdout,
   };

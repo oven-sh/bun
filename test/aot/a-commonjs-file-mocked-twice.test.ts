@@ -35,9 +35,7 @@ test("every line is as in plain bun test", async () => {
     seenWith("TestRunLayers:2,TestRunPartFiles:1", "--aot"),
   ]);
   expect(plain.lines.length).toBe(20);
-  expect(plain.lines).toContain(
-    "18 a failed import between: another importer | THROWS SyntaxError Export named 'other' not found in module 'd.cjs'.",
-  );
+  expect(plain.lines).toContain("18 a failed import between: another importer | second's");
   expect(oneProgram).toEqual(plain);
   expect(layers).toEqual(plain);
 }, 120_000);

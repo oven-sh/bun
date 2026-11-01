@@ -781,6 +781,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     unsafe { (*vm).is_in_preload = true };
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    bun_jsc::compiled_program::will_run_preloads(unsafe { &*(*vm).global });
     // Note: copy the raw ptr into a guard-owned local so the defer body
     // doesn't borrow the fn param — later `(*vm).pending_internal_promise = …`
     // would otherwise alias the guard's capture.
@@ -788,6 +790,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     scopeguard::defer! {
         // SAFETY: per fn contract.
         unsafe { (*vm_for_guard).is_in_preload = false };
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        bun_jsc::compiled_program::did_run_preloads(unsafe { &*(*vm_for_guard).global });
     }
     // SAFETY: per fn contract.
     let kept_for_this_run = core::mem::take(unsafe { &mut (*vm).preloads_kept_for_reload });
@@ -895,7 +899,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             // SAFETY: per fn contract.
             unsafe {
                 (*vm).preload_hash = bun_watcher::Watcher::get_hash(path_text);
-                (*vm).transpiler.options.test_file_imports_vitest = false;
+                (*vm).transpiler.options.test_file_imports_vitest =
+                    crate::test_runner::jest::compiled_entry_point_imports_vitest(path_text);
             }
             bun_core::StringView::from_bytes(path_text)
         };
@@ -4204,6 +4209,7 @@ fn __bun_fetch_builtin_module(
             .get(spec)
             .filter(|file| !graph.is_asset_of_compiled_program(spec, file))
             .filter(|_| !bun_jsc::compiled_program::is_compiled_module(spec))
+            .filter(|_| !bun_jsc::compiled_program::is_entry_point_beside_thread(spec))
     }) {
         use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
@@ -4760,6 +4766,11 @@ fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
     } else {
         bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
     };
+    if loader == Loader::Napi
+        && bun_jsc::compiled_program::lets_test_run_load_addon(global, specifier)
+    {
+        return None;
+    }
     let refusal = if loaded == Loaded::Code {
         bun_jsc::compiled_program::error_if_code_outside_image_is_refused(global, code, specifier)
     } else {

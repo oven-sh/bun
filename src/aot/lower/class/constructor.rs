@@ -1,7 +1,10 @@
 use bun_sema::bind::{Binding, Bound, ClassOwner, CodeUnit, Decl, ScopeId};
 use bun_sema::hir::{self, ClassId, ExprId, ExprKind, FnId, ParamId, PatKind};
 
-use super::{ClassElement, ClassPlan, InitializerCall, InjectionPoint, fields, is_derived_class};
+use super::{
+    ClassElement, ClassPlan, ClassTransform, InitializerCall, InjectionPoint, fields,
+    is_derived_class,
+};
 use crate::ir::generated::{
     BlockFrequency, Function, FunctionFlags, FunctionKind, HomeObjectKind, RuntimeErrorKind,
     SourceRange,
@@ -35,7 +38,7 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         header.text = SourceRange {
             start: self.type_ranges.map_offset(node.text_start),
-            end: self.type_ranges.map_offset(end),
+            end: self.type_ranges.map_end(end),
         };
         header.kind = match is_derived_class(hir, class) {
             true => FunctionKind::DerivedConstructor,
@@ -142,8 +145,14 @@ pub(super) fn declare_constructor(
                 ClassElement::AssignedField { member } => Some(file.hir[member].name_pos),
                 _ => None,
             });
+        // Where decorated members leave work to the constructor, it writes one as well, which its source map takes back to `class`.
+        let has_work_of_decorated_members = plan.transform == ClassTransform::Standard
+            && (!plan.injected_elements.is_empty()
+                || (plan.initializer_call == InitializerCall::AtInjectionPoint
+                    && !plan.instance_elements.is_empty()));
         let position = match first_assigned {
             Some(field) => find_body_brace(file.hir, class).unwrap_or(field),
+            None if has_work_of_decorated_members => file.hir[class].text_start,
             None => class_position(&file.hir[class]),
         };
         let mut header =

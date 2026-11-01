@@ -2,14 +2,17 @@
 // types, names and whole expressions. None of that runs, none of it asks for a file or a package, and a mistake in it stops no build.
 // Every tag that the parser knows, with texts behind it that would be code if they were read as code, at every kind of place, in each kind
 // of JavaScript file: the executable prints what `bun run` prints. A call that ran says which case it stands in.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
+import { runsWholeGrids } from "./harness/ways";
 import { withoutDebugInformation } from "./harness/without-debug-information";
-import { describe, test } from "./supported";
+// One by one: a case calls afterAll(), which bun:test refuses in a concurrent one.
+import { describe, testOneByOne as test } from "./supported";
 
 const tags = [
   "author",
@@ -194,7 +197,8 @@ describe("compile/aot/no tag in a comment is compiled as code", () => {
     600_000,
   );
 
-  test.each(["js", "mjs", "cjs", "jsx"])(
+  // Each kind is an executable above, and in front of the cure the four failed alike here: one is the witness.
+  test.each(["js", "mjs", "cjs", "jsx"].filter(kind => runsWholeGrids || kind === "js"))(
     "%s in a test run",
     async kind => {
       const total = tags.length * texts.length * 18;

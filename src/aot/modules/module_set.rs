@@ -157,13 +157,10 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         true => compiled_files.clone(),
         false => find_files_required_from_loader(input, scans, &compiled_files),
     };
-    let stands_for_string = |file: FileId| {
-        parsed_source(files, file).is_some_and(|it| matches!(it.loader, Loader::Text | Loader::Md))
-    };
     for file in required_from_loader {
         if let Some(interop) = interops[file.idx()]
             .as_mut()
-            .filter(|it| stands_for_string(file) && it.kind == ModuleKind::Data)
+            .filter(|it| stands_for_string(input, file) && it.kind == ModuleKind::Data)
         {
             interop.require_result = RequireResult::Namespace;
         }
@@ -188,7 +185,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
             it.kind == ModuleKind::Data && it.require_result != RequireResult::Namespace
         }) {
-            interop.answers_loader_with_namespace = stands_for_string(file);
+            interop.answers_loader_with_namespace = stands_for_string(input, file);
         }
     }
     let mut other_modules = Vec::new();
@@ -283,6 +280,11 @@ fn find_forms(
     forms
 }
 
+fn stands_for_string(input: &BindInput<'_, '_>, file: FileId) -> bool {
+    parsed_source(input.files, file)
+        .is_some_and(|it| matches!(it.loader, Loader::Text | Loader::Md))
+}
+
 /// The file is parsed into a value. Any other file stands for something in an executable, which `require()` answers: its path, an addon.
 fn is_parsed_into_value(input: &BindInput<'_, '_>, file: FileId) -> bool {
     parsed_source(input.files, file).is_some_and(|source| {
@@ -296,6 +298,7 @@ fn is_parsed_into_value(input: &BindInput<'_, '_>, file: FileId) -> bool {
                 | Loader::Xml
                 | Loader::Text
                 | Loader::Md
+                | Loader::Css
         )
     })
 }
@@ -352,7 +355,8 @@ fn is_named_with_query(input: &BindInput<'_, '_>, module: ModuleRef) -> bool {
     parsed_source(input.files, file).is_some_and(|source| source.file_with_query.is_some())
 }
 
-// `require()` answers the namespace object of a file that the loader of ES modules already holds, and it holds all that an entry point imports before any code runs.
+// `require()` answers the namespace object of a file that the loader of ES modules already holds. The loader takes what an entry point imports level by level, and no ES module runs before it holds them all.
+// A CommonJS file that one of them imports runs where the loader comes to it. It holds the levels above by then: whether it holds a file of that level or below by the first `require()` shows when the program runs.
 fn answer_require_with_namespace_of_imported_data(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -362,22 +366,35 @@ fn answer_require_with_namespace_of_imported_data(
     let [entry_point] = input.sources.entry_points() else {
         return;
     };
-    let mut pending: Vec<FileId> = vec![entry_point.file];
+    let mut level = vec![entry_point.file];
     let mut is_seen = vec![false; interops.len()];
-    while let Some(file) = pending.pop() {
-        if core::mem::replace(&mut is_seen[file.idx()], true) {
-            continue;
+    is_seen[entry_point.file.idx()] = true;
+    let mut has_code_run = false;
+    while !level.is_empty() {
+        has_code_run |= level
+            .iter()
+            .any(|file| interops[file.idx()].is_some_and(|it| it.kind == ModuleKind::CommonJs));
+        let mut next = Vec::new();
+        for file in level {
+            let (Some(interop), Some(scan)) = (&mut interops[file.idx()], scans.find(file)) else {
+                continue;
+            };
+            if interop.kind == ModuleKind::Data && is_parsed_into_value(input, file) {
+                // Held or not, `{ default }` is the answer for a file that stands for a string.
+                interop.require_result = match has_code_run && !stands_for_string(input, file) {
+                    true => RequireResult::NamespaceIfImported,
+                    false => RequireResult::Namespace,
+                };
+            }
+            for request in &scan.requests {
+                if let ModuleRef::File(target) = request.target
+                    && !core::mem::replace(&mut is_seen[target.idx()], true)
+                {
+                    next.push(target);
+                }
+            }
         }
-        let (Some(interop), Some(scan)) = (&mut interops[file.idx()], scans.find(file)) else {
-            continue;
-        };
-        if interop.kind == ModuleKind::Data && is_parsed_into_value(input, file) {
-            interop.require_result = RequireResult::Namespace;
-        }
-        pending.extend(scan.requests.iter().filter_map(|it| match it.target {
-            ModuleRef::File(target) => Some(target),
-            _ => None,
-        }));
+        level = next;
     }
 }
 

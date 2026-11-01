@@ -1,0 +1,11 @@
+const unknown = JSON.parse('{"f":{"b":7},"z":0,"n":1,"k":"keys","set":"set","del":"delete"}');
+const o = { z: 0 };
+Object[unknown.k](o);
+const before = Object.keys(o).length;
+o.d = 4;
+o.c = 3;
+o.b = 2;
+o.a = 1;
+let order = "";
+for (const k in o) order += k;
+console.log(before | 0, order + "", o.a | 0);

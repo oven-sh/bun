@@ -34,17 +34,29 @@ exports.default = "d";
 // CHECK-NEXT: v11 = GetModuleVariable variable=[[g_5]]
 // CHECK-NEXT: v12 = Convert v11 declared={type=[[L_6]] flags=[IsExpected]}
 // CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[L_6]] flags=[IsExpected]}
-// CHECK-NEXT: v14 = Call v4, -, v13 calleeName="_interop"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|[[L_7]]|[[L_8]] flags=[IsExpected]}
-// CHECK-NEXT: v16 = PropGet v15 key="default"
-// CHECK-NEXT: v17 = PropGet v16 key="length"
-// CHECK-NEXT: v18 = Call v9, v7, v17 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v19 = Undefined
-// CHECK-NEXT: Return v19
+// CHECK-NEXT: v14 = ToBoolean v13
+// CHECK-NEXT: Branch v14 -> taken b2(), notTaken b4()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v15 = PropGet v13 key="__esModule"
+// CHECK-NEXT: v16 = ToBoolean v15
+// CHECK-NEXT: Branch v16 -> taken b3(), notTaken b4()
+// CHECK-NEXT: b3():
+// CHECK-NEXT: Jump -> next b5(v13)
+// CHECK-NEXT: b4():
+// CHECK-NEXT: v17 = NewObject -, v13 layout=[[L_7]] fields=[0]
+// CHECK-NEXT: v18 = FinishObject v17
+// CHECK-NEXT: Jump -> next b5(v18)
+// CHECK-NEXT: b5(v19):
+// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|number|string|symbol|bigint|[[L_8]]|[[L_9]] flags=[IsExpected]}
+// CHECK-NEXT: v21 = PropGet v20 key="default"
+// CHECK-NEXT: v22 = PropGet v21 key="length"
+// CHECK-NEXT: v23 = Call v9, v7, v22 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v24 = Undefined
+// CHECK-NEXT: Return v24
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="_interop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_7]] flags=[IsExpected]}] results=[{type=undefined|null|number|string|symbol|bigint|[[L_7]]|[[L_8]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_7]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_8]] flags=[IsExpected]}] results=[{type=undefined|null|number|string|symbol|bigint|[[L_8]]|[[L_9]] flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_8]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = ToBoolean v0
@@ -64,10 +76,10 @@ exports.default = "d";
 // CHECK-NEXT: b7(v7):
 // CHECK-NEXT: Jump -> next b8(v7)
 // CHECK-NEXT: b8(v8):
-// CHECK-NEXT: v9 = NewObject -, v8 layout=[[L_8]] fields=[0]
+// CHECK-NEXT: v9 = NewObject -, v8 layout=[[L_9]] fields=[0]
 // CHECK-NEXT: v10 = FinishObject v9
 // CHECK-NEXT: Jump -> next b9(v10)
 // CHECK-NEXT: b9(v11):
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|number|string|symbol|bigint|[[L_7]]|[[L_8]] flags=[IsExpected]}
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|number|string|symbol|bigint|[[L_8]]|[[L_9]] flags=[IsExpected]}
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }

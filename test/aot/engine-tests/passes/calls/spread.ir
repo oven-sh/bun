@@ -221,12 +221,12 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
 # -- generated: f6 f7 attempt
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=159 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=f6|f7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=159 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"not callable"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined" flags=[OmitsNull, OmitsUndefined]}, {type=f6|f7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f6 module=
-# CHECK: m0 position=1664 kind=Arrow flags=[IsChecked] captures=[{type=undefined|L3|f3|f4|builtin(MathMax)}, {type=undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>}] thisType={type=anything} results=[{type=number}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|L3|f3|f4|builtin(MathMax), v1: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>):
+# CHECK: m0 position=1664 kind=Arrow flags=[IsChecked] captures=[{type=undefined|L3|f3|f4|builtin(MathMax)}, {type=undefined|null|int|"ab"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>}] thisType={type=anything} results=[{type=number}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|L3|f3|f4|builtin(MathMax), v1: undefined|null|int|"ab"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>):
 # CHECK-NEXT: v2: undefined|L3|f3|f4|builtin(MathMax) ~ undefined|f3|f4|builtin(MathMax) = Upcast v0 castType=anything
-# CHECK-NEXT: v3: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|Array<int|fractional, proven> = Upcast v1 castType=anything
+# CHECK-NEXT: v3: undefined|null|int|"ab"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab"|Array<int|fractional, proven> = Upcast v1 castType=anything
 # CHECK-NEXT: v4: boolean = TypeTest v3 testedType=Array
 # CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v5: Array<int|fractional, proven>):
@@ -236,7 +236,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: anything = CallList v2, -, v5 calleeName="f" accessSite=11 callees=[f3, f4, builtin(MathMax), ..]
 # CHECK-NEXT: ReturnCall v7 casts=[{declared={type=number} resolution=Assume}]
 # CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v8: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v8: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<int, proven, pristine[Storage, Names, Dense]> allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v9: boolean = TypeTest v3 testedType=Array<int|fractional>
 # CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b6()
 # CHECK-NEXT: b4(v10: Array<int|fractional, proven>) frequency=Rare:
@@ -244,9 +244,9 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b6()
 # CHECK-NEXT: b5(v12: guard) frequency=Rare:
 # CHECK-NEXT: AppendElements v8, v10, v12
-# CHECK-NEXT: Jump -> next b33()
+# CHECK-NEXT: Jump -> next b36()
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v14: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|Array<int|fractional, proven> = Upcast v1 castType=undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v14: undefined|null|int|"ab"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab"|Array<int|fractional, proven> = Upcast v1 castType=undefined|null|int|"ab"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>
 # CHECK-NEXT: v15: boolean = TypeTest v14 testedType=Array<int|fractional>
 # CHECK-NEXT: Branch v15 -> taken b7(| 0), notTaken b11(| 0)
 # CHECK-NEXT: b7(v16: Array<int|fractional, proven>) frequency=Rare:
@@ -259,42 +259,42 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v21: int[0, 4294967295] = CallBuiltin v16 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v22: boolean = Less v19, v21
-# CHECK-NEXT: Branch v22 -> taken b10(| 0), notTaken b33()
+# CHECK-NEXT: Branch v22 -> taken b10(| 0), notTaken b36()
 # CHECK-NEXT: b10(v23: int[0, 4294967294]) frequency=Rare:
 # CHECK-NEXT: v24: undefined|int|fractional = ElemGet v16, v23 [keyIsIntegral]
 # CHECK-NEXT: v25: 1 = Integer integer=1
 # CHECK-NEXT: v26: int[1, 4294967295] = Add v23, v25
 # CHECK-NEXT: AppendElement v8, v24
 # CHECK-NEXT: Jump -> next b9(v26)
-# CHECK-NEXT: b11(v28: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined") frequency=Rare:
+# CHECK-NEXT: b11(v28: undefined|null|int|"ab"|L0|L1|L2|f5|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab") frequency=Rare:
 # CHECK-NEXT: v29: boolean = TypeTest v28 testedType=string
 # CHECK-NEXT: Branch v29 -> taken b12(| 0), notTaken b18(| 0)
-# CHECK-NEXT: b12(v30: "ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined") frequency=Rare:
+# CHECK-NEXT: b12(v30: "ab") frequency=Rare:
 # CHECK-NEXT: v31: 0 = Integer
 # CHECK-NEXT: Jump -> next b13(v31)
-# CHECK-NEXT: b13(v32: int[0, 13]) frequency=Rare:
+# CHECK-NEXT: b13(v32: int[0, 3]) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v34: int[2, 12] = GetStringLength v30
+# CHECK-NEXT: v34: 2 = Integer integer=2
 # CHECK-NEXT: v35: boolean = Less v32, v34
-# CHECK-NEXT: Branch v35 -> taken b14(| 0), notTaken b33()
-# CHECK-NEXT: b14(v36: int[0, 11]) frequency=Rare:
+# CHECK-NEXT: Branch v35 -> taken b14(| 0), notTaken b36()
+# CHECK-NEXT: b14(v36: int[0, 1]) frequency=Rare:
 # CHECK-NEXT: v37: undefined|int[0, 1114111] = CallBuiltin v30, v36 overload=StringPrototypeCodePointAt/0
 # CHECK-NEXT: v38: 65535 = Integer integer=65535
 # CHECK-NEXT: v39: boolean = Greater v37, v38
 # CHECK-NEXT: Branch v39 -> taken b15(), notTaken b16()
 # CHECK-NEXT: b15() frequency=Rare:
 # CHECK-NEXT: v40: 2 = Integer integer=2
-# CHECK-NEXT: v41: int[2, 13] = Add v36, v40
+# CHECK-NEXT: v41: int[2, 3] = Add v36, v40
 # CHECK-NEXT: Jump -> next b17(v41)
 # CHECK-NEXT: b16() frequency=Rare:
 # CHECK-NEXT: v42: 1 = Integer integer=1
-# CHECK-NEXT: v43: int[1, 12] = Add v36, v42
+# CHECK-NEXT: v43: int[1, 2] = Add v36, v42
 # CHECK-NEXT: Jump -> next b17(v43)
-# CHECK-NEXT: b17(v44: int[1, 13]) frequency=Rare:
+# CHECK-NEXT: b17(v44: int[1, 3]) frequency=Rare:
 # CHECK-NEXT: v45: string = Substring v30, v36, v44
 # CHECK-NEXT: AppendElement v8, v45
 # CHECK-NEXT: Jump -> next b13(v44)
-# CHECK-NEXT: b18(v47: undefined|null|int|L0|L1|L2|f5|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Rare:
+# CHECK-NEXT: b18(v47: undefined|null|int|L0|L1|L2|f5|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Rare:
 # CHECK-NEXT: v48: boolean ~ false = TypeTest v47 testedType=Generator
 # CHECK-NEXT: Branch v48 -> taken b19(| 0), notTaken b24(| 0)
 # CHECK-NEXT: b19(v49: Generator<anything, pristine[Storage, Names]>) frequency=Rare:
@@ -315,14 +315,14 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b22() frequency=Rare:
 # CHECK-NEXT: v59: 1 = Integer integer=1
 # CHECK-NEXT: v60: boolean = StrictEq v54, v59
-# CHECK-NEXT: Branch v60 -> taken b33(), notTaken b23()
+# CHECK-NEXT: Branch v60 -> taken b36(), notTaken b23()
 # CHECK-NEXT: b23() frequency=Rare:
 # CHECK-NEXT: AppendElement v8, v53
 # CHECK-NEXT: Jump -> next b20()
-# CHECK-NEXT: b24(v62: undefined|null|int|L0|L1|L2|f5|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Rare:
-# CHECK-NEXT: v63: boolean ~ false = TypeTest v62 testedType=Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>>
+# CHECK-NEXT: b24(v62: undefined|null|int|L0|L1|L2|f5|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Rare:
+# CHECK-NEXT: v63: boolean ~ false = TypeTest v62 testedType=Map<int, int>
 # CHECK-NEXT: Branch v63 -> taken b25(| 0), notTaken b28(| 0)
-# CHECK-NEXT: b25(v64: Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: b25(v64: Map<int, int, proven, pristine[Storage, Names]>) frequency=Rare:
 # CHECK-NEXT: v65: anything = CollectionTable v64
 # CHECK-NEXT: v66: 0 = Integer
 # CHECK-NEXT: Jump -> next b26(v65, v66)
@@ -331,53 +331,68 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v70: undefined = MapNext v64, v67, v68
 # CHECK-NEXT: v71: boolean = ResultAt v70
 # CHECK-NEXT: v72: int[0, 2147483647] = ResultAt v70 index=1
-# CHECK-NEXT: v73: undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = ResultAt v70 index=2
-# CHECK-NEXT: v74: undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = ResultAt v70 index=3
-# CHECK-NEXT: Branch v71 -> taken b27(), notTaken b33()
+# CHECK-NEXT: v73: undefined|int = ResultAt v70 index=2
+# CHECK-NEXT: v74: undefined|int = ResultAt v70 index=3
+# CHECK-NEXT: Branch v71 -> taken b27(), notTaken b36()
 # CHECK-NEXT: b27() frequency=Rare:
-# CHECK-NEXT: v75: anything = CollectionTable v64
-# CHECK-NEXT: v76: 1 = Integer integer=1
-# CHECK-NEXT: v77: int[1, 2147483648] = Add v72, v76
-# CHECK-NEXT: v78: Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>> = NewArray v73, v74 contents=undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElement v8, v78
-# CHECK-NEXT: Jump -> next b26(v75, v77)
-# CHECK-NEXT: b28(v80: undefined|null|int|L0|L1|L2|f5|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Rare:
-# CHECK-NEXT: Jump -> next b29(v80)
-# CHECK-NEXT: b29(v81: undefined|null|int|L0|L1|L2|f5|Array<int|fractional, proven>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|Array<int|fractional, proven>) frequency=Rare:
-# CHECK-NEXT: RequireLengthFitsList v81
-# CHECK-NEXT: v83: int|L0|L1|L2|f5|Array<int|fractional, proven>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ Array<int|fractional, proven> = RequireObjectCoercible v81 nullishAccess=Spread
-# CHECK-NEXT: v84: anything = PropGet v83 key=@@iterator
-# CHECK-NEXT: v85: boolean = TypeTest v84 testedType=function
-# CHECK-NEXT: Branch v85 -> taken b30(| 0), notTaken b36()
-# CHECK-NEXT: b30(v86: function) frequency=Rare:
-# CHECK-NEXT: v87: anything = Call v86, v83
-# CHECK-NEXT: v88: boolean = TypeTest v87 testedType=object
-# CHECK-NEXT: Branch v88 -> taken b31(| 0), notTaken b35(| 0)
-# CHECK-NEXT: b31(v89: object) frequency=Rare:
-# CHECK-NEXT: v90: anything = PropGet v89 key="next"
+# CHECK-NEXT: v75: fact = Specified
+# CHECK-NEXT: v76: int = AssumeType v73, v75 provenType=int
+# CHECK-NEXT: v77: int = AssumeType v74, v75 provenType=int
+# CHECK-NEXT: v78: anything = CollectionTable v64
+# CHECK-NEXT: v79: 1 = Integer integer=1
+# CHECK-NEXT: v80: int[1, 2147483648] = Add v72, v79
+# CHECK-NEXT: v81: Array<int> = NewArray v76, v77 contents=int
+# CHECK-NEXT: AppendElement v8, v81
+# CHECK-NEXT: Jump -> next b26(v78, v80)
+# CHECK-NEXT: b28(v83: undefined|null|int|L0|L1|L2|f5|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Rare:
+# CHECK-NEXT: Jump -> next b29(v83)
+# CHECK-NEXT: b29(v84: undefined|null|int|L0|L1|L2|f5|Array<int|fractional, proven>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|Array<int|fractional, proven>) frequency=Rare:
+# CHECK-NEXT: RequireLengthFitsList v84
+# CHECK-NEXT: v86: int|L0|L1|L2|f5|Array<int|fractional, proven>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ Array<int|fractional, proven> = RequireObjectCoercible v84 nullishAccess=Spread
+# CHECK-NEXT: v87: anything = PropGet v86 key=@@iterator
+# CHECK-NEXT: v88: boolean = TypeTest v87 testedType=function
+# CHECK-NEXT: Branch v88 -> taken b30(| 0), notTaken b40()
+# CHECK-NEXT: b30(v89: function) frequency=Rare:
+# CHECK-NEXT: v90: anything = Call v89, v86
+# CHECK-NEXT: v91: boolean = TypeTest v90 testedType=object
+# CHECK-NEXT: Branch v91 -> taken b31(| 0), notTaken b39(| 0)
+# CHECK-NEXT: b31(v92: object) frequency=Rare:
+# CHECK-NEXT: v93: anything = PropGet v92 key="next"
+# CHECK-NEXT: v94: boolean = TypeTest v93 testedType=builtin(ArrayIteratorPrototypeNext)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
 # CHECK-NEXT: Jump -> next b32()
 # CHECK-NEXT: b32() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v92: anything = Call v90, v89
-# CHECK-NEXT: v93: object = RequireObject v92 runtimeError=SpreadResultNotObject
-# CHECK-NEXT: v94: anything = PropGet v93 key="done"
-# CHECK-NEXT: v95: boolean = ToBoolean v94
-# CHECK-NEXT: Branch v95 -> taken b33(), notTaken b34()
+# CHECK-NEXT: Branch v94 -> taken b33(), notTaken b35()
 # CHECK-NEXT: b33() frequency=Rare:
-# CHECK-NEXT: v96: anything = CallList v2, -, v8 calleeName="f" accessSite=11 callees=[f3, f4, builtin(MathMax), ..]
-# CHECK-NEXT: ReturnCall v96 casts=[{declared={type=number} resolution=Assume}]
+# CHECK-NEXT: v96: undefined = CallDirect v92, v93 function=f14 [isNeverInlined]
+# CHECK-NEXT: v97: boolean = ResultAt v96
+# CHECK-NEXT: Branch v97 -> taken b36(), notTaken b34()
 # CHECK-NEXT: b34() frequency=Rare:
-# CHECK-NEXT: v97: anything = PropGet v93 key="value"
-# CHECK-NEXT: AppendElement v8, v97
-# CHECK-NEXT: Jump -> next b32()
-# CHECK-NEXT: b35(v99: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
-# CHECK-NEXT: v100: boolean|number|string|symbol|bigint = RequireObjectCoercible v99 name="next"
-# CHECK-NEXT: v101: anything = PropGet v100 key="next"
-# CHECK-NEXT: v102: anything = Call v101, v100
-# CHECK-NEXT: v103: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
-# CHECK-NEXT: Throw v103
+# CHECK-NEXT: v98: anything = ResultAt v96 index=1
+# CHECK-NEXT: Jump -> next b38(v98)
+# CHECK-NEXT: b35() frequency=Rare:
+# CHECK-NEXT: v99: anything = Call v93, v92
+# CHECK-NEXT: v100: object = RequireObject v99 runtimeError=SpreadResultNotObject
+# CHECK-NEXT: v101: anything = PropGet v100 key="done"
+# CHECK-NEXT: v102: boolean = ToBoolean v101
+# CHECK-NEXT: Branch v102 -> taken b36(), notTaken b37()
 # CHECK-NEXT: b36() frequency=Rare:
-# CHECK-NEXT: v104: never = ThrowNotIterable v83 [isSpread]
+# CHECK-NEXT: v103: anything = CallList v2, -, v8 calleeName="f" accessSite=11 callees=[f3, f4, builtin(MathMax), ..]
+# CHECK-NEXT: ReturnCall v103 casts=[{declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b37() frequency=Rare:
+# CHECK-NEXT: v104: anything = PropGet v100 key="value"
+# CHECK-NEXT: Jump -> next b38(v104)
+# CHECK-NEXT: b38(v105: anything) frequency=Rare:
+# CHECK-NEXT: AppendElement v8, v105
+# CHECK-NEXT: Jump -> next b32()
+# CHECK-NEXT: b39(v107: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
+# CHECK-NEXT: v108: boolean|number|string|symbol|bigint = RequireObjectCoercible v107 name="next"
+# CHECK-NEXT: v109: anything = PropGet v108 key="next"
+# CHECK-NEXT: v110: anything = Call v109, v108
+# CHECK-NEXT: v111: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
+# CHECK-NEXT: Throw v111
+# CHECK-NEXT: b40() frequency=Rare:
+# CHECK-NEXT: v112: never = ThrowNotIterable v86 [isSpread]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
@@ -390,8 +405,8 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=159 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=f6|f7}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f2} {
-# CHECK-NEXT: b0(v0: undefined|null|string, v1: f6|f7) handler=b4():
+# CHECK: module=m0 position=159 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"not callable"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined" flags=[OmitsNull, OmitsUndefined]}, {type=f6|f7}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f2} {
+# CHECK-NEXT: b0(v0: "array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"not callable"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined", v1: f6|f7) handler=b4():
 # CHECK-NEXT: v2: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g1
 # CHECK-NEXT: v3: ": " = String string=": "
 # CHECK-NEXT: v4: string = Add v0, v3
@@ -399,7 +414,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v6: f6) handler=b4():
 # CHECK-NEXT: v7: undefined|L3|f3|f4|builtin(MathMax) = GetCapture v6 function=f6
-# CHECK-NEXT: v8: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = GetCapture v6 function=f6 index=1
+# CHECK-NEXT: v8: undefined|null|int|"ab"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<int, int, proven, pristine[Storage, Names]>|Set<int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = GetCapture v6 function=f6 index=1
 # CHECK-NEXT: v9: number = CallDirect v7, v8 function=f6 accessSite=8
 # CHECK-NEXT: Jump -> next b3(v9)
 # CHECK-NEXT: b2() handler=b4():

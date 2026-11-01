@@ -117,7 +117,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn lower_tail_expression(&mut self, expression: ExprId) -> ValueId {
-        let tail = if control::allows_tail_call(self) {
+        let tail = if control::allows_tail_call_of(self, expression) {
             Tail::Yes { casts: None }
         } else {
             Tail::No

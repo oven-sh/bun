@@ -4,8 +4,8 @@ use super::storage::RuntimeDeclarationsIn;
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
-    StoreKind, SymbolStore, stability,
+    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName, PrivateNameId,
+    RuntimeBindings, RuntimeBindingsIn, StoreKind, SymbolStore, has_mapped_arguments, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{
@@ -76,6 +76,33 @@ impl<S: Storage> BoundIn<S> {
     pub fn function_flags(&self, function: FnId) -> FunctionFlags {
         let flags = self.runtime.function_flags.get(function.idx());
         flags.copied().unwrap_or_default()
+    }
+
+    pub fn is_mapped_argument(&self, hir: &File, symbol: SymbolId) -> bool {
+        let scope = self.scopes.get(self.symbol_scope(symbol).idx());
+        let Some(ScopeKind::Fn(function)) = scope.map(|scope| scope.kind) else {
+            return false;
+        };
+        let flags = self.function_flags(function);
+        if !flags.contains(FunctionFlags::USES_ARGUMENTS)
+            || !has_mapped_arguments(hir, CodeUnit::Function(function))
+        {
+            return false;
+        }
+        let other_ways = FunctionFlags::HANDS_ARGUMENTS_ON
+            | FunctionFlags::HAS_ARGUMENTS_VARIABLE
+            | FunctionFlags::HAS_DIRECT_EVAL;
+        let references = &self.runtime.references;
+        let stores = &references.stores[..];
+        let first_store = stores.partition_point(|store| store.symbol < symbol);
+        let mut declared = self.runtime.declarations.declared_symbols.iter();
+        let mut own_declarations = self.symbol(symbol).decls.iter();
+        declared
+            .any(|&(declaration, target)| target == symbol && matches!(declaration, Decl::Fn(_)))
+            || own_declarations.any(|declaration| matches!(declaration, Decl::Var(_)))
+            || flags.intersects(other_ways)
+            || has_bit(&references.eval_visible_symbols, symbol.idx())
+            || (stores.get(first_store)).is_some_and(|store| store.symbol == symbol)
     }
 
     /// Unless each of its parameters is a plain name, a function keeps what text evaluated in its body declares in an environment of its own, inside the environment of its parameters and `arguments`. With expressions among the parameters the variables of the body's own code are kept there too; without, they are the parameters of their names.
@@ -154,7 +181,7 @@ impl<S: Storage> BoundIn<S> {
     }
 
     /// `var v` beside `export var v` in a file declares the exported binding again.
-    fn file_binding(&self, declared: SymbolId) -> SymbolId {
+    pub fn file_binding(&self, declared: SymbolId) -> SymbolId {
         if declared.is_none() {
             return declared;
         }
@@ -176,7 +203,7 @@ impl<S: Storage> BoundIn<S> {
             | Decl::Enum(_)
             | Decl::Module(_)
             | Decl::ExportExpr(_) => find_symbol(&declarations.declared_symbols, decl)
-                .unwrap_or_else(|| declaration_symbol(self, decl)),
+                .unwrap_or_else(|| self.file_binding(declaration_symbol(self, decl))),
             Decl::ImportDefault(import) => {
                 symbol_at(&declarations.import_default_symbols, import.idx())
             }
@@ -233,6 +260,23 @@ impl RuntimeBindings<'_> {
 
     pub fn implicit_references(&self) -> &[ImplicitReference] {
         &self.references.implicit_references
+    }
+
+    pub fn implicit_references_of_element(&self, element: ExprId) -> &[ImplicitReference] {
+        let element_of = |reference: &ImplicitReference| match (reference.kind, reference.node) {
+            (ImplicitReferenceKind::DecoratorMetadata(_), _) => None,
+            (_, NodeData::Expr(element)) => Some(element),
+            _ => None,
+        };
+        let references = self.implicit_references();
+        let start = references.partition_point(|it| element_of(it).is_some_and(|at| at < element));
+        let len = references[start..].partition_point(|it| element_of(it) == Some(element));
+        &references[start..start + len]
+    }
+
+    pub fn is_named_implicitly(&self, symbol: SymbolId) -> bool {
+        let mut references = self.implicit_references().iter();
+        references.any(|reference| reference.binding == Binding::Symbol(symbol))
     }
 
     pub fn redeclared_commonjs_variables(&self) -> &[(SymbolId, CommonJsVariable)] {

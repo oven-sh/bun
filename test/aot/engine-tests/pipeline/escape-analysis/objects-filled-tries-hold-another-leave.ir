@@ -35,7 +35,7 @@
 
 module m0 path="objects-filled-tries-hold-another-leave.js" displayPath="objects-filled-tries-hold-another-leave.js" body=f0 namespaceLayout=L(m0)
 entry module=m0
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything|absent}}] ownFieldCount=1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything|absent} variableName="outer"}] ownFieldCount=1
 layout L1 kind=Instance name="Pair" module=m0 position=102 constructor=f2 fields=[{key="rest" declared={type=undefined|null|Array flags=[IsExpected]}}, {key="head" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=2
 layout L2 module=m0 position=446 fields=[{key="read" declared={type=undefined|null|function|f3 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {

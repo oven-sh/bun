@@ -85,11 +85,26 @@ impl Walk<'_, '_> {
         };
         match self.bound.binding_kind(symbol) {
             BindingKind::Var => self.order.note_variable_read(name, place),
-            BindingKind::Function => match self.find_declared_function(symbol) {
-                Some(function) => self.can_run_at(function, place),
-                None => self.order.first_run.fill(0),
-            },
+            BindingKind::Function => self.visit_named_function(symbol, place),
             _ => {}
+        }
+    }
+
+    fn visit_named_function(&mut self, symbol: SymbolId, place: Place) {
+        match self.find_declared_function(symbol) {
+            Some(function) => self.can_run_at(function, place),
+            None => self.order.first_run.fill(0),
+        }
+    }
+
+    fn visit_element(&mut self, element: ExprId, place: Place) {
+        let bound = self.bound;
+        for reference in bound.runtime.implicit_references_of_element(element) {
+            if let Binding::Symbol(symbol) = reference.binding
+                && bound.binding_kind(symbol) == BindingKind::Function
+            {
+                self.visit_named_function(symbol, place);
+            }
         }
     }
 
@@ -125,11 +140,11 @@ impl Walk<'_, '_> {
                             functions.push(function);
                             continue;
                         }
-                        TreeNode::Expr(e) => {
-                            if let ExprKind::Ident(_) = hir[e].kind {
-                                self.visit_name(e, place);
-                            }
-                        }
+                        TreeNode::Expr(e) => match hir[e].kind {
+                            ExprKind::Ident(_) => self.visit_name(e, place),
+                            ExprKind::Jsx(_) => self.visit_element(e, place),
+                            _ => {}
+                        },
                         TreeNode::Class(_) | TreeNode::Pattern(_) => {}
                     }
                     push_children(hir, node, &mut stack);

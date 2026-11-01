@@ -5,10 +5,10 @@ use bun_core::strings::{index_of, index_of_any, index_of_char_usize};
 use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, end_of_expr, start_inside_parentheses,
-    start_of,
+    BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, PropKind, end_of_expr,
+    start_inside_parentheses, start_of,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{is_identifier_name, needs_no_escape};
 use crate::lower::FileLowering;
@@ -373,10 +373,16 @@ impl FileLowering<'_, '_, '_, '_> {
         let rewritten = transpiled.rewritten_expressions();
         let rewritten = rewritten.filter(|&it| !is_name_or_number(it));
         let keys = transpiled.keys_printed_as_names().iter().copied();
+        let shorthands = hir.props.iter();
+        let shorthands = shorthands.filter(|property| property.kind == PropKind::Shorthand);
+        let shorthand_values: FxHashSet<ExprId> = shorthands.map(|it| it.value).collect();
         let mut replaced: Vec<(ReplacedText, ExprId)> = names_and_numbers
             .chain(rewritten)
             .chain(keys)
-            .filter_map(|it| Some((self.find_text_printed_in_place_of(it)?, it)))
+            .filter_map(|it| {
+                let text = self.find_text_printed_in_place_of(it, &shorthand_values)?;
+                Some((text, it))
+            })
             .collect();
         // The bracket, one mark, and one more for each indentation of its line.
         let brackets = transpiled.quoted_brackets_over_lines().iter();
@@ -622,7 +628,11 @@ impl FileLowering<'_, '_, '_, '_> {
         whole
     }
 
-    fn find_text_printed_in_place_of(&self, expression: ExprId) -> Option<ReplacedText> {
+    fn find_text_printed_in_place_of(
+        &self,
+        expression: ExprId,
+        shorthand_values: &FxHashSet<ExprId>,
+    ) -> Option<ReplacedText> {
         let hir = self.hir;
         // The hole of `[a, , c]` has no text: it ends in front of where it starts.
         if matches!(hir[expression].kind, ExprKind::Missing) {
@@ -632,6 +642,18 @@ impl FileLowering<'_, '_, '_, '_> {
             && self.find_rewrite(expression).is_none()
         {
             return self.find_name_printed_for_key(expression, obj, index, chain);
+        }
+        if let ExprKind::Binary { left, right, .. } = hir[expression].kind
+            && let Some(Rewrite::OtherOperator { written, printed }) = self.find_rewrite(expression)
+        {
+            let from = end_of_expr(hir, left);
+            let between = hir.text.get(from as usize..start_of(hir, right) as usize)?;
+            let start = from + index_of(between, written)? as u32;
+            return Some(ReplacedText {
+                start,
+                end: start + written.len() as u32,
+                printed: PrintedText::Bytes(printed.to_vec()),
+            });
         }
         let (start, end) = (start_of(hir, expression), end_of_expr(hir, expression));
         // `0x10`, `1_000` and `10000` are printed `16`, `1000` and `1e4`.
@@ -657,6 +679,25 @@ impl FileLowering<'_, '_, '_, '_> {
         let is_hole = operand.is_some_and(|operand| matches!(hir[operand].kind, ExprKind::Missing));
         if let Some(operand) = operand.filter(|_| !is_hole) {
             // `const r = (a, b)`: `b` is printed in the place of `r`. The piece for the brackets and all in them does not lie in what stands between them.
+            // `{ a }` is printed `{ a: 1 }`. Nothing fails in a literal, so no place of an error leads there.
+            let is_literal = matches!(
+                hir[operand].kind,
+                ExprKind::Null
+                    | ExprKind::True
+                    | ExprKind::False
+                    | ExprKind::Number(_)
+                    | ExprKind::String(_)
+                    | ExprKind::BigInt(_)
+            );
+            if is_literal && shorthand_values.contains(&expression) {
+                let name = &hir.text[start as usize..end as usize];
+                let value = &hir.text[hir[operand].pos as usize..hir[operand].end as usize];
+                return Some(ReplacedText {
+                    start,
+                    end,
+                    printed: PrintedText::Bytes([name, b": ", value].concat()),
+                });
+            }
             return Some(ReplacedText {
                 start,
                 end,
@@ -673,6 +714,11 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => return None,
         };
         let mut printed = Vec::new();
+        // `{ a }` is printed `{ a: 1 }`.
+        if shorthand_values.contains(&expression) {
+            printed.extend_from_slice(&hir.text[start as usize..end as usize]);
+            printed.extend_from_slice(b": ");
+        }
         let is_in_brackets = self.place_of(expression) == Place::Target;
         if !self.append_literal(value, is_in_brackets, &mut printed) {
             return None;

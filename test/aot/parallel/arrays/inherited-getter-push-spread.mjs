@@ -1,0 +1,18 @@
+const unknown = JSON.parse('{"z":0,"n":1,"sp":"setPrototypeOf","dp":"defineProperty","list":[5,6]}');
+let state = "before";
+const sproto = Object.create(Array.prototype, {
+  1: {
+    get() {
+      state = "after";
+      return 9;
+    },
+    configurable: true,
+  },
+});
+const src = [1, , 3];
+Object[unknown.sp](src, sproto);
+const t = [0];
+state = "again";
+t.push(...src);
+const seen = state + "";
+console.log(seen, t.length | 0, t[2] | 0);

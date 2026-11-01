@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { tempDirWithBunTypes as tempDir } from "harness";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
+import { afterAll, beforeAll, describe, test } from "../aot/listed";
 import { canTrim } from "./compile-trim-features";
 import {
   built,

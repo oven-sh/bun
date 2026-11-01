@@ -1,11 +1,12 @@
 // With the React Compiler on, the code of a component file is the compiler's output, which --aot compiles as untyped code, and the file
 // as it is written only says what the types are. Each program in ./react-compiler runs under plain Bun and as an --aot executable that
 // ./react-compiler/build.ts has built, and prints the same. ./react-compiler/react-stand-in has the three modules that the output imports.
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, told, unsupported } from "./harness/commands";
+import { afterAll, test } from "./harness/default-timeout";
 
 const programs = join(import.meta.dir, "react-compiler");
 
@@ -22,6 +23,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     "names-that-only-types-in-a-component-use",
     "outside-variables-that-a-component-only-assigns",
     "list-of-two-spreads-in-a-component",
+    "import-meta-glob",
   ])(
     "%s",
     name =>

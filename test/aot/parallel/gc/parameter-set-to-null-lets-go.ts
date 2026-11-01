@@ -1,5 +1,6 @@
 // A parameter is a variable like any other: once the function has set it to null, what the caller passed is collected while the function still runs.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {

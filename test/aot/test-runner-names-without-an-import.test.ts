@@ -3,7 +3,8 @@
 import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { describe, testOneByOne as test } from "./supported";
 
 const files = {
   "tsconfig.json": `{ "compilerOptions": { "target": "ESNext", "module": "ESNext", "strict": true, "typeRoots": ["./no-types-here"] } }`,

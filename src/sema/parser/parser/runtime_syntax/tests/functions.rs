@@ -23,9 +23,7 @@ fn strictness_comes_from_own_body() {
         ),
     ];
     for &(text, expected) in cases {
-        assert_eq!(function_strictness(text, true), expected, "{text}");
-        let sloppy = vec![false; expected.len()];
-        assert_eq!(function_strictness(text, false), sloppy, "{text}");
+        assert_eq!(function_strictness(text), expected, "{text}");
     }
 }
 
@@ -33,81 +31,53 @@ fn strictness_comes_from_own_body() {
 fn strictness_comes_from_enclosing_code() {
     let text = r#"function f() { "use strict"; function g() {} return () => 1 }
         function h() {}"#;
-    assert_eq!(function_strictness(text, true), [true, true, true, false]);
-    assert_eq!(function_strictness(text, false), [false; 4]);
-    for keeps_function_directives in [true, false] {
-        let strictness = |text| function_strictness(text, keeps_function_directives);
-        let text = "class A extends (function () {}) { m() {} get x() { return 1 } y = () => 1 }
-            function f() {}";
-        assert_eq!(strictness(text), [true, true, true, true, false]);
-        assert_eq!(strictness("declare function f(): void"), [false]);
-        assert_eq!(strictness(r#""use strict"; function f() {}"#), [true]);
-        assert_eq!(strictness("function f() {} export {}"), [true]);
-    }
+    assert_eq!(function_strictness(text), [true, true, true, false]);
+    let text = "class A extends (function () {}) { m() {} get x() { return 1 } y = () => 1 }
+        function f() {}";
+    assert_eq!(function_strictness(text), [true, true, true, true, false]);
+    assert_eq!(function_strictness("declare function f(): void"), [false]);
+    assert_eq!(
+        function_strictness(r#""use strict"; function f() {}"#),
+        [true]
+    );
+    assert_eq!(function_strictness("function f() {} export {}"), [true]);
 }
 
 #[test]
-fn dropped_directive_leaves_strictness_of_file_and_classes() {
-    let cases: &[(&str, &[bool], &[bool])] = &[
+fn directive_beside_strictness_of_file_and_classes() {
+    let cases: &[(&str, &[bool])] = &[
         (
             r#"function f() { "use strict"; class A { m() {} } function g() {} }"#,
             &[true, true, true],
-            &[true, false, false],
         ),
         (
             r#"class A { m() { "use strict"; return () => 1 } } function f() { "use strict" }"#,
             &[true, true, true],
-            &[true, true, false],
         ),
-        (
-            r#""use strict"; function f() { "use strict" }"#,
-            &[true],
-            &[true],
-        ),
-        (
-            r#"function f() { "use strict" } export {}"#,
-            &[true],
-            &[true],
-        ),
+        (r#""use strict"; function f() { "use strict" }"#, &[true]),
+        (r#"function f() { "use strict" } export {}"#, &[true]),
     ];
-    for &(text, kept, dropped) in cases {
-        assert_eq!(function_strictness(text, true), kept, "{text}");
-        assert_eq!(function_strictness(text, false), dropped, "{text}");
+    for &(text, expected) in cases {
+        assert_eq!(function_strictness(text), expected, "{text}");
     }
 }
 
 #[test]
 fn function_directive_is_rare_syntax() {
-    use rare::{DIRECTIVE_IN_FUNCTION, DROPPED_STRICT_DIRECTIVE};
-    for (text, if_kept, if_dropped) in [
-        (
-            r#"function f() { "use strict" }"#,
-            DIRECTIVE_IN_FUNCTION,
-            DROPPED_STRICT_DIRECTIVE,
-        ),
+    use rare::DIRECTIVE_IN_FUNCTION;
+    for (text, expected) in [
+        (r#"function f() { "use strict" }"#, DIRECTIVE_IN_FUNCTION),
         (
             r#"function f() { "a"; "use strict" }"#,
             DIRECTIVE_IN_FUNCTION,
-            DROPPED_STRICT_DIRECTIVE,
         ),
-        (
-            r#"class A { m() { "use strict" } }"#,
-            DIRECTIVE_IN_FUNCTION,
-            DROPPED_STRICT_DIRECTIVE,
-        ),
-        (r#"function f() { "a" }"#, DIRECTIVE_IN_FUNCTION, 0),
-        (r#"function f() { x; "use strict" }"#, 0, 0),
-        (r#""use strict"; function f() {}"#, 0, 0),
+        (r#"class A { m() { "use strict" } }"#, DIRECTIVE_IN_FUNCTION),
+        (r#"function f() { "a" }"#, DIRECTIVE_IN_FUNCTION),
+        (r#"function f() { x; "use strict" }"#, 0),
+        (r#""use strict"; function f() {}"#, 0),
     ] {
-        for (keeps_function_directives, expected) in [(true, if_kept), (false, if_dropped)] {
-            let options = Options {
-                keeps_function_directives,
-                ..compiled_javascript()
-            };
-            let (file, _) = parsed(text, options);
-            let found = file.rare_syntax & (DIRECTIVE_IN_FUNCTION | DROPPED_STRICT_DIRECTIVE);
-            assert_eq!(found, expected, "{text}");
-        }
+        let (file, _) = parsed(text, compiled_javascript());
+        assert_eq!(file.rare_syntax & DIRECTIVE_IN_FUNCTION, expected, "{text}");
     }
 }
 
@@ -200,20 +170,17 @@ fn signature_text_starts_at_first_token() {
 
 #[test]
 fn accessor_body_sets_strictness() {
-    for (text, kept, dropped) in [
+    for (text, expected) in [
         (
             r#"interface A { get a() { "use strict"; return 1 } get b() { return 1 } }"#,
             [true, false],
-            [false, false],
         ),
         (
             r#""use strict"; type A = { get a() { return 1 } set a(b) {} }"#,
             [true, true],
-            [true, true],
         ),
     ] {
-        assert_eq!(function_strictness(text, true), kept, "{text}");
-        assert_eq!(function_strictness(text, false), dropped, "{text}");
+        assert_eq!(function_strictness(text), expected, "{text}");
     }
 }
 
@@ -221,7 +188,7 @@ fn accessor_body_sets_strictness() {
 fn component_strictness() {
     let with_own_directive = "component A() { 'use strict'; }\ncomponent B() {}";
     let in_strict_file = "'use strict';\ncomponent A() {}\ncomponent B() {}";
-    for (text, keeps_function_directives, expected) in [
+    for (text, compiles, expected) in [
         (with_own_directive, true, [true, false]),
         (with_own_directive, false, [false, false]),
         (in_strict_file, false, [true, true]),
@@ -230,7 +197,7 @@ fn component_strictness() {
             is_javascript: true,
             is_jsx: true,
             dialect: Dialect::flow_parser(false),
-            keeps_function_directives,
+            compiles,
             ..Options::default()
         };
         let (file, _) = parsed(text, options);

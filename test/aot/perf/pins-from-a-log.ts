@@ -1,9 +1,7 @@
 // Writes the pins of a platform that has none from the logs of a run there: ./idioms.test.ts prints a line `IDIOM <name> <typed> <untyped>` for each idiom that it measures, and
-// ./pinned-everyday-idioms.ts a line `EVERYDAY <name> <typed> <untyped>`, ./pinned-applications.ts a line `APPLICATION <name> <instructions>`, ./generated-code.ts a line
-// `GENERATED-IDIOM <name> <pin>` or `GENERATED-OPERATION <name> <pin>`.
+// ./pinned-everyday-idioms.ts a line `EVERYDAY <name> <typed> <untyped>`, ./pinned-applications.ts a line `APPLICATION <name> <instructions>`.
 //
 //   bun test/aot/perf/pins-from-a-log.ts linux-arm64 <log> ..     writes ./pins.linux-arm64.json, ./everyday-pins.linux-arm64.json and ./application-pins.linux-arm64.json,
-//                                                                 ./generated-code-of-idioms.linux-arm64.txt and ./generated-code-of-operations.linux-arm64.txt,
 //                                                                 each if the logs have lines for it
 //
 // Where an idiom was measured more than once the larger number is pinned: AOT_PERF=lower brings a pin down, and nothing brings one up.
@@ -46,18 +44,4 @@ if (applications.size) {
     JSON.stringify(Object.fromEntries([...applications].sort(([a], [b]) => (a < b ? -1 : 1))), null, 2) + "\n",
   );
   console.log(`application-pins.${platform}.json: ${applications.size} rows`);
-}
-
-// What is read off the generated code is the same in every run.
-for (const [word, file] of [
-  ["GENERATED-IDIOM", `generated-code-of-idioms.${platform}.txt`],
-  ["GENERATED-OPERATION", `generated-code-of-operations.${platform}.txt`],
-]) {
-  const pins = new Map(
-    [...text.matchAll(new RegExp(`\\b${word} (\\S+)\\t(\\{.*\\})`, "g"))].map(([, name, pin]) => [name, pin]),
-  );
-  if (pins.size === 0) continue;
-  const lines = [...pins].sort(([a], [b]) => (a < b ? -1 : 1)).map(([name, pin]) => `${name}\t${pin}\n`);
-  writeFileSync(join(import.meta.dir, file), lines.join(""));
-  console.log(`${file}: ${pins.size} programs`);
 }

@@ -128,7 +128,7 @@ pub(super) fn analyze<R>(
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(source.as_bytes());
@@ -151,6 +151,7 @@ pub(super) fn analyze<R>(
         is_library: false,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     then(&FindInput {

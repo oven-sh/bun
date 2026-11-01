@@ -1,4 +1,4 @@
-// require() of one file in several arms of a function, in loops and under try: the file runs once. So does a file that throws: every later require throws the same error. Under `bun run` such a file runs again at every require, so the expected output is written down.
+// require() of one file in several arms of a function, in loops and under try: the file runs once. A file that throws runs again at every require.
 const { log } = require("./log.js");
 const arms = way => {
   let sum = 0;
@@ -23,13 +23,3 @@ let total = 0;
 for (let i = 0; i < 20000; i++) total += arms(i & 1);
 log.push("many " + total);
 console.log(log.join("\n"));
-/* Output:
-main runs
-two runs
-one runs
-arms 10,8,10
-broken runs
-broken, with 5 lines in the log | broken, with 5 lines in the log | then broken, with 5 lines in the log | last broken, with 5 lines in the log | inside the handler broken, with 5 lines in the log
-broken, with 5 lines in the log | broken, with 5 lines in the log | then broken, with 5 lines in the log | last broken, with 5 lines in the log | inside the handler broken, with 5 lines in the log
-many 180000
-*/

@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { accountsFor, closed, completeness, everyMemberOf, retainsFeature, type Use } from "./runtime-use-expectations";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./listed";
 import { declared, of, runtimeUse } from "./runtime-use-harness";
 
 const groups: [name: string, body: () => void][] = [];

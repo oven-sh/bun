@@ -51,7 +51,7 @@ const found = () =>
   (readdirSync(root, { recursive: true, withFileTypes: true }) as Dirent[])
     .filter(entry => entry.isFile() && /\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name) && !entry.parentPath.split(/[\\/]/).includes("node_modules"))
     .map(entry => relative(process.cwd(), resolve(entry.parentPath, entry.name)).replaceAll("\\", "/"));
-const files = (option("--list") ? readFileSync(option("--list")!, "utf8").split("\n").filter(file => file) : found())
+const files = (option("--list") ? readFileSync(option("--list")!, "utf8").split("\n").map(line => line.split("\t")[0]).filter(file => file) : found())
   .filter(file => !only || only.test(file))
   .sort()
   .slice(Number(option("--from")) || 0, Number(option("--to")) || undefined);

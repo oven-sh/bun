@@ -1,10 +1,11 @@
 // Asking the compiler what it did changes nothing of what it does: a build with a report, or with its explanations, writes the same executable, byte for byte.
 // To explain how a value came somewhere the flow analysis keeps more than it needs to compile, and what it keeps may not decide what it finds.
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { spawned, unsupported, withoutDebugInformation } from "./harness/commands";
+import { afterAll, test } from "./harness/default-timeout";
 
 const root = String(tempDir("aot-asking-for-a-report", {}));
 afterAll(() => rmSync(root, { recursive: true, force: true }));

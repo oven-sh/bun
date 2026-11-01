@@ -3,7 +3,7 @@
 // behind the CommonJS files beside it. A run that is built in layers does not see, while it builds a layer, the files above that load the layer's entry points. It took
 // each such entry point for required: sloppy, and evaluated in another order.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { foldersOfOneRun } from "./harness/folders-of-one-run";
 import { test } from "./supported";
 
 const says = (name: string) => `
@@ -24,26 +24,30 @@ const testFiles = {
   "a file of the project imports a package": `import { test } from "bun:test";\nimport "./project.ts";\ntest("t", () => {});`,
 };
 
-async function linesOf(testFile: string, isCommonJS: boolean, flags: string[], words?: string) {
-  using dir = tempDir("aot-one-format-over-layers", { ...files, [isCommonJS ? "a.test.cjs" : "a.test.ts"]: testFile });
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  await using run = Bun.spawn({
-    cmd: [bunExe(), "test", ...flags, "--isolate"],
-    cwd: String(dir),
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
-  return { lines: stderr.split("\n").filter(line => line.startsWith("OUT")), exitCode };
-}
-
-test.concurrent.each(Object.entries(testFiles))(
-  "loaded by %s",
-  async (name, testFile) => {
-    const plain = await linesOf(testFile, name === "require", []);
-    expect(plain.lines.length).toBe(2);
-    expect(await linesOf(testFile, name === "require", ["--aot"])).toEqual(plain);
-    expect(await linesOf(testFile, name === "require", ["--aot"], "TestRunLayers:2")).toEqual(plain);
-  },
-  240_000,
+// About the layers: every case runs in both forms. What loads a file is asked of that file alone, and each case has its own, so they share the run of a form.
+const linesOf = foldersOfOneRun(
+  "aot-one-format-over-layers",
+  Object.fromEntries(
+    Object.entries(testFiles).map(([name, testFile]) => [
+      name,
+      { ...files, [name === "require" ? "a.test.cjs" : "a.test.ts"]: testFile },
+    ]),
+  ),
 );
+
+test.concurrent.each(Object.keys(testFiles))("loaded by %s: plain Bun", async name => {
+  expect((await linesOf(name, [])).lines.length).toBe(2);
+});
+
+test.concurrent.each(
+  Object.keys(testFiles).flatMap(name =>
+    (
+      [
+        ["as the run builds itself", undefined],
+        ["two layers", "TestRunLayers:2"],
+      ] as const
+    ).map(([form, words]) => [name, form, words] as const),
+  ),
+)("loaded by %s: %s", async (name, _, words) => {
+  expect(await linesOf(name, ["--aot"], words)).toEqual(await linesOf(name, []));
+});

@@ -1,7 +1,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { runsWholeGrids } from "./harness/ways";
+import { beforeAll, test } from "./supported";
 
 // stars.mjs is `export * from "./a.mjs"; export * from "./b.mjs"`, and both export `same`: stars.mjs does not export it. Code that the loader
 // reads from disk and links to the compiled stars.mjs is told that the name is ambiguous, which is not the same as a name that nobody exports:
@@ -65,37 +67,44 @@ async function runTests(folder: string, flags: string[], words = ""): Promise<Re
   return { printed: stdout.replace(/^bun test .*\n/, ""), byFile, exitCode };
 }
 
-test("the loader says of the name what it says under bun test", async () => {
-  using dir = tempDir("a-name-that-two-stars-export", files);
-  const folder = String(dir);
+let dir: ReturnType<typeof tempDir> | undefined;
+const plain: Record<string, Report> = {};
+beforeAll(async () => {
+  dir = tempDir("a-name-that-two-stars-export", files);
+  for (const flag of ["", "--isolate"]) plain[flag] = await runTests(String(dir), flag ? [flag] : []);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test.each([
+  ["in one realm", ""],
+  ["a realm to a file", "--isolate"],
+])("what the loader says of the name under bun test: %s", (_, flag) => {
   const ambiguousIn = (path: string) =>
     `SyntaxError: Export named 'same' cannot be resolved due to ambiguous multiple bindings in module '${path}'.`;
-  // Over layers every test file has a realm of its own, as under --isolate.
-  const runs: [string[], string[]][] = [
-    [[], ["", "TestRunLayers:0"]],
-    [["--isolate"], ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]],
-  ];
-  for (const [flags, allWords] of runs) {
-    const plain = await runTests(folder, flags);
-    expect(plain.byFile).toEqual({
-      "a-copy-from-disk-with-a-further-star.test.mjs:": ["(pass) runs"],
-      "good.test.mjs:": ["(pass) runs"],
-      "imports-a-name-that-nobody-exports.test.mjs:": [
-        "SyntaxError: Export named 'nobodyHasIt' not found in module './src/stars.mjs'.",
-      ],
-      "imports-the-name-through-a-further-star.test.mjs:": [ambiguousIn("./src/nested.mjs")],
-      "imports-the-name.test.mjs:": [ambiguousIn("./src/stars.mjs")],
-    });
-    expect(plain.printed).toContain("good: onlyA,onlyB onlyA,onlyB 3\n");
-    expect(plain.printed).toContain("compiled: onlyA,onlyB,onlyC undefined onlyA,onlyB,onlyC undefined\n");
-    expect(plain.printed).toContain(
-      "from disk: false onlyA,onlyB,onlyC undefined\nfrom disk: false onlyA,onlyB,onlyC undefined\n",
-    );
-    for (const words of allWords)
-      expect({ flags, words, ...(await runTests(folder, ["--aot", ...flags], words)) }).toEqual({
-        flags,
-        words,
-        ...plain,
-      });
-  }
-}, 480_000);
+  expect(plain[flag].byFile).toEqual({
+    "a-copy-from-disk-with-a-further-star.test.mjs:": ["(pass) runs"],
+    "good.test.mjs:": ["(pass) runs"],
+    "imports-a-name-that-nobody-exports.test.mjs:": [
+      "SyntaxError: Export named 'nobodyHasIt' not found in module './src/stars.mjs'.",
+    ],
+    "imports-the-name-through-a-further-star.test.mjs:": [ambiguousIn("./src/nested.mjs")],
+    "imports-the-name.test.mjs:": [ambiguousIn("./src/stars.mjs")],
+  });
+  expect(plain[flag].printed).toContain("good: onlyA,onlyB onlyA,onlyB 3\n");
+  expect(plain[flag].printed).toContain("compiled: onlyA,onlyB,onlyC undefined onlyA,onlyB,onlyC undefined\n");
+  expect(plain[flag].printed).toContain(
+    "from disk: false onlyA,onlyB,onlyC undefined\nfrom disk: false onlyA,onlyB,onlyC undefined\n",
+  );
+});
+
+// Over layers every test file has a realm of its own, as under --isolate. A run as small as this builds itself as one program, so the word for that changes nothing.
+test.each(
+  [
+    ["as the run builds itself, in one realm", "", ""],
+    ["one program, in one realm", "", "TestRunLayers:0"],
+    ["one program, a realm to a file", "--isolate", "TestRunLayers:0"],
+    ["two layers", "--isolate", "TestRunLayers:2,TestRunPartFiles:1"],
+  ].filter(([form]) => runsWholeGrids || form !== "one program, in one realm"),
+)("the loader says of the name what it says under bun test: %s", async (_, flag, words) => {
+  expect(await runTests(String(dir), ["--aot", ...(flag ? [flag] : [])], words)).toEqual(plain[flag]);
+});

@@ -1,4 +1,5 @@
 # Sums of counters that come near the ends of int32 and run through many stretches.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -180,5 +181,5 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 205, patchpoints: 15, rare instructions: 68, polls: 5
+# CHECK-NEXT: instructions: 209, patchpoints: 15, rare instructions: 68, polls: 5
 # CHECK-NEXT: end of function f0

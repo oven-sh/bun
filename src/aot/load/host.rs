@@ -36,20 +36,24 @@ use crate::load::data_modules::{parse_data_module, report_blank_json};
 use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
-use crate::load::evaluated_texts::EvaluatedTexts;
+use crate::load::evaluated_texts::{EvaluatedTexts, find_source_url};
 use crate::load::externals::{contains, is_external};
+use crate::load::import_meta_glob;
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, loader_by_query,
     loader_named_by_path, parses_text_as_data, script_kind_of, to_host_loader,
     to_host_loader_of_attribute, to_host_loader_of_query,
 };
 use crate::load::macros;
+use crate::load::made_own_require;
+use crate::load::manual_mocks::find_manual_mocks;
 use crate::load::modules_with_queries::ModulesWithQueries;
 use crate::load::named_loads::{
-    find_library_modules_named_in_choices, find_loads_of_files_missing_at_build,
+    FilesOfTests, find_library_modules_named_in_choices, find_loads_of_files_missing_at_build,
 };
 use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, PluginResolution};
 use crate::load::react_compiler::{self, ReactCompiler};
+use crate::load::replaced_modules::shares_place_in_loader;
 use crate::load::runtime_declarations;
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::runtime_types;
@@ -61,7 +65,7 @@ use crate::load::test_runner_names;
 use crate::load::worker_files::find_file_named_as_in_executable;
 use crate::load::{is_host_path, is_in_node_modules};
 use crate::module_keys::{is_url_with_text, places_of_form};
-use crate::options::Options;
+use crate::options::{EntryText, Options};
 use crate::statistics::LimitValues;
 
 const BUNDLE_MODULE: &[u8] = b"bun:bundle";
@@ -124,11 +128,18 @@ pub(crate) struct LoadHost<'a> {
     plugins: PluginModules<'a>,
     modules_with_queries: ModulesWithQueries,
     evaluated_texts: EvaluatedTexts,
+    /// The files of the project that take something from the test runner. A file is finished before the texts that it holds are read.
+    take_from_test_runner: Guarded<FxHashSet<Vec<u8>>>,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
+    /// As `entry_point_paths`, of `LoadOptions::entry_points_added_by_build`.
+    added_entry_point_paths: Vec<Vec<u8>>,
+    files_of_tests: Option<FilesOfTests>,
     /// As `entry_point_paths`, of `begin_at`.
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
+    /// As `LoadOptions::entry_texts`, of `begin_at_texts`.
+    found_entry_texts: Guarded<Vec<EntryText>>,
     /// Sorted. The entry points whose names say nothing about them and that aren't text.
     binary_entry_point_paths: Vec<Vec<u8>>,
     /// Entry points that are named as declaration files and hold statements that run. `bun run` runs them.
@@ -182,7 +193,7 @@ fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
     hir.ids(hir.body).len() != 0 && !hir.only_declares()
@@ -206,6 +217,11 @@ impl<'a> LoadHost<'a> {
         *self.found_entry_point_paths.lock() = paths;
     }
 
+    /// The load that runs begins at these texts too, and at no others beside `LoadOptions::entry_texts`. From here on the name of each leads to its module.
+    pub(crate) fn begin_at_texts(&self, texts: Vec<EntryText>) {
+        *self.found_entry_texts.lock() = texts;
+    }
+
     /// What takes a while to free, for whoever frees it beside other work.
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
         self.plugins.into_leftovers()
@@ -216,6 +232,18 @@ impl<'a> LoadHost<'a> {
         let options = input.options;
         let load = &options.load;
         let entry_point_paths = collect_entry_point_paths(disk, options, &options.entry_points);
+        let added = &options.load.entry_points_added_by_build;
+        let added_entry_point_paths = collect_entry_point_paths(disk, options, added);
+        let files_of_tests = options.aot.only_tests_load_code_from_disk.then(|| {
+            let listed = match load.files_of_tests.is_empty() {
+                true => &options.entry_points,
+                false => &load.files_of_tests,
+            };
+            FilesOfTests::new(
+                collect_entry_point_paths(disk, options, listed),
+                &collect_entry_point_paths(disk, options, &load.test_files),
+            )
+        });
         let is_binary = |path: &&Vec<u8>| {
             loader_named_by_path(&load.loaders, path).is_none()
                 && (disk.read(path)).is_some_and(|contents| appears_to_be_binary(&contents, true))
@@ -241,12 +269,17 @@ impl<'a> LoadHost<'a> {
             plugins: PluginModules::new(provider, disk, messages, &load.in_memory_files),
             modules_with_queries: ModulesWithQueries::default(),
             evaluated_texts: EvaluatedTexts::new(),
-            react_compiler: ReactCompiler::new(load.react_compiler, provider, messages),
+            take_from_test_runner: Guarded::new(FxHashSet::default()),
+            react_compiler: ReactCompiler::new(load.react_compiler, provider, messages)
+                .with_filter(load.react_compiler_filter),
             binary_entry_point_paths: binary_entry_point_paths.collect(),
             entry_points_that_run_despite_their_names,
             entry_point_paths,
+            added_entry_point_paths,
+            files_of_tests,
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
+            found_entry_texts: Guarded::new(Vec::new()),
             extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
             background_reads: Guarded::new(Vec::new()),
@@ -328,9 +361,53 @@ impl<'a> LoadHost<'a> {
                 && self.is_among(&self.found_entry_point_paths.lock(), path))
     }
 
+    /// A Worker starts from it, or data names it. The runner does not start it.
+    fn is_entry_point_added_by_build(&self, path: &[u8]) -> bool {
+        self.is_among(&self.added_entry_point_paths, path)
+            || (self.has_found_entry_points.load(Ordering::Relaxed)
+                && self.is_among(&self.found_entry_point_paths.lock(), path))
+    }
+
     fn runs_despite_its_name(&self, path: &[u8]) -> bool {
         is_declaration_file_name(path)
             && self.is_among(&self.entry_points_that_run_despite_their_names, path)
+    }
+
+    /// A text may hold a text in turn.
+    fn find_file_that_holds_text(&self, path: &[u8]) -> Option<Vec<u8>> {
+        let mut holder = None;
+        let mut path = path.to_vec();
+        while self.evaluated_texts.contains(&path) {
+            let folder = &path[..bun_core::strings::last_index_of_char(&path, b'/').unwrap_or(0)];
+            path = self.evaluated_texts.holder_in_folder(folder)?;
+            holder = Some(path.clone());
+        }
+        holder
+    }
+
+    pub(crate) fn is_of_tests(&self, path: &[u8]) -> bool {
+        let mut buffer = path_buffer_pool::get();
+        let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
+        (self.files_of_tests.as_ref()).is_some_and(|files| files.holds(&path))
+    }
+
+    fn is_test_file(&self, path: &[u8]) -> bool {
+        let mut buffer = path_buffer_pool::get();
+        let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
+        (self.files_of_tests.as_ref()).is_some_and(|files| files.is_test_file(&path))
+    }
+
+    /// The entry points of a layer below the test files are the files that those import.
+    fn is_test_file_or_preload(&self, path: &[u8]) -> bool {
+        let Some(files) = &self.files_of_tests else {
+            return !self.input.options.load.every_export_is_asked_for && self.is_entry_point(path);
+        };
+        let mut buffer = path_buffer_pool::get();
+        files.lists(&to_path_in(
+            path,
+            self.disk.is_case_sensitive(),
+            &mut buffer[..],
+        ))
     }
 
     fn is_among(&self, sorted_paths: &[Vec<u8>], path: &[u8]) -> bool {
@@ -629,6 +706,49 @@ impl Host for LoadHost<'_> {
     }
 }
 
+impl LoadHost<'_> {
+    fn import_names_or_compile_components<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        request: &mut TransformRequest<'_, 's>,
+        source: &mut ParsedSource,
+    ) -> TreeChange {
+        // A file that gets the names keeps its components as they are written.
+        let (load, aot) = (&self.input.options.load, &self.input.options.aot);
+        let by_workers_too = &load.loaded_by_workers_too;
+        let may_load_in_worker = !self.is_test_file_or_preload(request.path)
+            || self.is_entry_point_added_by_build(request.path)
+            || (by_workers_too.binary_search_by(|path| path[..].cmp(request.path))).is_ok();
+        // The files above a layer load its entry points, the runner those of any other build.
+        let is_started_by_runner =
+            self.is_entry_point(request.path) && (!aot.shares_realms || aot.is_part_of_test_files);
+        if load.runs_tests
+            && source.kind == SourceKind::Program
+            && test_runner_names::import_used_names(
+                arena,
+                atoms,
+                request,
+                test_runner_names::FileOfTestRun {
+                    has_globals_of_vitest: load.has_globals_of_vitest,
+                    is_entry_point: self.is_entry_point(request.path),
+                    may_load_below_vitest: load.entry_point_imports_vitest && !is_started_by_runner,
+                    may_load_in_worker,
+                    has_names_of_every_runner: false,
+                },
+            ) == TreeChange::Changed
+        {
+            source.binds_names_of_test_runner = !may_load_in_worker;
+            return TreeChange::Changed;
+        }
+        // `bun test` leaves the test files and the preloads as they are written.
+        if load.runs_tests && self.is_test_file_or_preload(request.path) {
+            return TreeChange::Unchanged;
+        }
+        self.react_compiler.transform(arena, atoms, request, source)
+    }
+}
+
 impl CodeHost for LoadHost<'_> {
     delegate_runtime_config_parsers_to_disk!(disk);
 
@@ -643,6 +763,12 @@ impl CodeHost for LoadHost<'_> {
         let mut entry_texts = self.input.options.load.entry_texts.iter();
         if !is_import && let Some(text) = entry_texts.find(|it| it.name == request.specifier) {
             return HostResolution::Path(self.plugins.add_entry_text(text));
+        }
+        if !is_import {
+            let found = self.found_entry_texts.lock();
+            if let Some(text) = found.iter().find(|it| it.name == request.specifier) {
+                return HostResolution::Path(self.plugins.add_entry_text(text));
+            }
         }
         // The first of the programs of the realm holds Bun's own modules. A file with a query is an instance of its own, which the loader makes.
         // `bun` is the object `Bun` wherever a text names it: no loader is asked, so no mock stands in its place.
@@ -742,7 +868,25 @@ impl CodeHost for LoadHost<'_> {
         {
             return found;
         }
-        self.input.provider.find_file(self, search)
+        let found = self.input.provider.find_file(self, search);
+        let is_chai_of_test_run = options.load.runs_tests && search.specifier == b"chai";
+        if !is_chai_of_test_run || !matches!(found, FoundCode::NotFound(_)) {
+            return found;
+        }
+        // `NamesOfChai`. pnpm links chai next to vitest, not into the project's node_modules.
+        let vitest = FileSearch {
+            specifier: b"vitest/package.json",
+            ..*search
+        };
+        let FoundCode::File { path, .. } = self.input.provider.find_file(self, &vitest) else {
+            return found;
+        };
+        let path = self.disk.realpath(&path);
+        let next_to_vitest = FileSearch {
+            directory: dirname::<Posix>(&path),
+            ..*search
+        };
+        self.input.provider.find_file(self, &next_to_vitest)
     }
 
     fn resolve_runtime_module(&self, specifier: &[u8]) -> HostResolution {
@@ -760,9 +904,27 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn is_form_in_other_program(&self, path: &[u8], type_attribute: &[u8]) -> bool {
-        let images_below = &self.input.options.aot.images_below;
-        places_of_form(to_native(path), type_attribute)
-            .is_some_and(|places| images_below.holds_module(&places.path_of_form))
+        let aot = &self.input.options.aot;
+        let path = to_native(path);
+        // Which of two types of one file comes first shows when a test file runs, where the test file asks for one and a file of a program below for the other.
+        // So neither program holds the file: the loader of the run time does, as under `bun test`.
+        let typed_by_tests = &aot.replaced_by_tests.data_files_imported_with_types;
+        let is_typed_by_tests = || {
+            typed_by_tests
+                .binary_search_by(|it| it[..].cmp(path))
+                .is_ok()
+        };
+        let is_asked_by_test_files =
+            aot.is_part_of_test_files || (aot.shares_realms && is_typed_by_tests());
+        // A page or a file with code that is read as text stays in the program: the run time makes something else of such a file.
+        if is_asked_by_test_files
+            && shares_place_in_loader(type_attribute)
+            && parses_text_as_data(self.default_loader(path))
+        {
+            return true;
+        }
+        places_of_form(path, type_attribute)
+            .is_some_and(|places| aot.images_below.holds_module(&places.path_of_form))
     }
 
     fn is_left_to_loader(&self, path: &[u8]) -> bool {
@@ -1025,7 +1187,7 @@ impl CodeHost for LoadHost<'_> {
                 experimental_decorators: false,
                 every_file_is_a_module: false,
                 reads_jsdoc: false,
-                keeps_function_directives: false,
+                ignores_pure_comments: false,
             };
             return ParsedCode {
                 hir: parse_for_compile(arena, &options, IN_PLACE_OF_NO_PROGRAM, atoms),
@@ -1106,7 +1268,7 @@ impl CodeHost for LoadHost<'_> {
                 && !script_kind.is_javascript(),
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
-            keeps_function_directives: source_kind == SourceKind::EvaluatedText
+            ignores_pure_comments: source_kind == SourceKind::EvaluatedText
                 || hir::find_transpiled_mark(text).is_some(),
         };
         let mut hir = parse_for_compile(arena, &compile_options, text, atoms);
@@ -1195,20 +1357,35 @@ impl CodeHost for LoadHost<'_> {
         payload: &mut Option<HostPayload>,
     ) -> TreeChange {
         let source = parsed_source_mut(payload);
-        // A tree is changed once, so a file that gets the names keeps its components as they are written.
-        let load = &self.input.options.load;
-        if load.runs_tests
-            && source.kind == SourceKind::Program
-            && test_runner_names::import_used_names(
-                arena,
-                atoms,
-                request,
-                load.has_globals_of_vitest,
+        if source.kind == SourceKind::EvaluatedText && source.source_url_of_text.is_none() {
+            let (text, comments) = (&request.hir.text, &request.hir.comments);
+            source.source_url_of_text = find_source_url(text, comments).map(Box::from);
+        }
+        if source.kind == SourceKind::Program
+            && made_own_require::keep_own_require(request) == TreeChange::Changed
+        {
+            return TreeChange::ChangedAndUnfinished;
+        }
+        // It goes by the shape of the tree alone. The imports that it writes for eager entries are imports like any other to what follows: a hoisted mock goes above
+        // them too. That asks for their bindings.
+        let (provider, messages) = (self.input.provider, self.input.messages);
+        let runs_tests = self.input.options.load.runs_tests;
+        if !std::mem::replace(&mut source.has_expanded_globs, true)
+            && import_meta_glob::expand_calls(
+                provider, messages, arena, atoms, request, source, runs_tests,
             ) == TreeChange::Changed
         {
-            return TreeChange::Changed;
+            return TreeChange::ChangedAndUnfinished;
         }
-        self.react_compiler.transform(arena, atoms, request, source)
+        let changed = self.import_names_or_compile_components(arena, atoms, request, source);
+        if changed == TreeChange::Unchanged {
+            return changed;
+        }
+        // A component comes back from its compiler as it was written.
+        import_meta_glob::expand_calls(
+            provider, messages, arena, atoms, request, source, runs_tests,
+        );
+        changed
     }
 
     fn finish_file(
@@ -1218,13 +1395,34 @@ impl CodeHost for LoadHost<'_> {
     ) -> Vec<HostResolution> {
         let source = parsed_source_mut(payload);
         let needs_declarations = self.react_compiler.needs_declarations(source);
+        // No executable holds a file of the project that takes something from the test runner, wherever it lies. A package that asks `typeof jest` to find out where it runs
+        // is given the name too, and the executable holds it.
+        // A text that a file evaluates has a path of its own, which lies nowhere: `new Function("fake", "Date.now = fake")`. It goes by the file that holds it.
+        let holder = self.find_file_that_holds_text(request.path);
+        let is_in_package = is_in_node_modules(holder.as_deref().unwrap_or(request.path));
+        let takes = match &holder {
+            Some(holder) => self.take_from_test_runner.lock().contains(holder),
+            None => {
+                let takes = !is_in_package && builtin_uses::takes_from_test_runner(request);
+                if takes {
+                    (self.take_from_test_runner.lock()).insert(request.path.to_vec());
+                }
+                takes
+            }
+        };
+        let place = holder.as_deref().unwrap_or(request.path);
+        let is_of_tests = takes || self.is_of_tests(place);
+        let is_of_tests_by_itself = takes || self.is_test_file(place);
         let input = BuiltinUseInput {
             names: self.input.builtin_names,
             platform: self.input.platform,
             replaced: &self.input.options.load.replaced_builtins,
             replaced_members_sought: match self.input.options.load.runs_tests {
-                false => ReplacedMembersSought::None,
-                true if is_in_node_modules(request.path) => ReplacedMembersSought::Written,
+                false => ReplacedMembersSought::NamesAdded,
+                true if is_in_package => ReplacedMembersSought::Written,
+                true if self.files_of_tests.is_some() && !is_of_tests => {
+                    ReplacedMembersSought::WrittenOrNamedUnlessOfProduct
+                }
                 true => ReplacedMembersSought::WrittenOrNamed,
             },
             is_served_by_other_images: self.input.options.aot.imports_are_in_other_images,
@@ -1257,6 +1455,9 @@ impl CodeHost for LoadHost<'_> {
             source.library_modules_written_as_values = named.written_as_values;
         }
         source.loads_by_unknown_name = named.loads_by_unknown_name;
+        source.is_of_tests = AtomicBool::new(is_of_tests);
+        source.is_of_tests_by_itself = is_of_tests_by_itself;
+        source.is_in_package = is_in_package;
         source.unknown_names_at = named.unknown_names_at;
         // Without the option the run time refuses code that is not in the program.
         if self.input.options.aot.loads_code_from_disk {
@@ -1271,6 +1472,12 @@ impl CodeHost for LoadHost<'_> {
             );
         }
         source.imports_given_unknown_names = named.imports_given_unknown_names;
+        if self.input.options.load.runs_tests {
+            let started_in = from_native(&self.input.options.code.working_directory);
+            let mocks = find_manual_mocks(request, &started_in, &|path| self.is_file(path));
+            source.manual_mocks.clone_from(&mocks);
+            answers.extend(mocks.into_iter().map(HostResolution::Path));
+        }
         answers
     }
 }

@@ -358,6 +358,7 @@ impl<'s> Workbench<'s> {
                 package_specifier: self.atoms.intern(&jsx.import_source),
                 is_development: jsx.is_development,
             }),
+            own_name: b"",
         };
         let bind_options = BindOptions {
             runtime: Some(RuntimeBindOptions::default()),
@@ -404,7 +405,7 @@ fn with_workbench<R>(text: &str, then: impl for<'s> FnOnce(&mut Workbench<'s>) -
         experimental_decorators: false,
         every_file_is_a_module: true,
         reads_jsdoc: true,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut tree = parse_for_compile(arena, &parse_options, text.as_bytes(), &atoms);
     tree.text = Cow::Borrowed(text.as_bytes());

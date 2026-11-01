@@ -411,7 +411,7 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: kindOf constructTwice DerivedPlain f7 f8 f9 extend Derived f16
 # CHECK-LABEL: function {{*}}name="kindOf"
-# CHECK: module=m0 position=512 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|"Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array"|f7|f8|f9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=512 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type="Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array"}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f9 callPosition=4294967295 module=m0}, {callee=f8 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f9 callPosition=4294967295 module=m0}, {callee=f8 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|object):
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=BigInt64Array|BigUint64Array|DataView|Float16Array|Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8Array|Uint8ClampedArray
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
@@ -432,48 +432,86 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v5 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v10: boolean = Less v7, v9
-# CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b14()
+# CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b24()
 # CHECK-NEXT: b6(v11: int[0, 4294967294]):
 # CHECK-NEXT: v12: boolean = IsInBounds v5, v11
-# CHECK-NEXT: Branch v12 -> taken b7(| 0), notTaken b10()
+# CHECK-NEXT: Branch v12 -> taken b7(| 0), notTaken b15()
 # CHECK-NEXT: b7(v13: guard):
 # CHECK-NEXT: v14: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v5, v11, v13 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
 # CHECK-NEXT: v15: 1 = Integer integer=1
 # CHECK-NEXT: v16: int[1, 4294967295] = Add v11, v15
 # CHECK-NEXT: v17: 0 = Integer
 # CHECK-NEXT: v18: boolean = IsInBounds v14, v17
-# CHECK-NEXT: Branch v18 -> taken b8(| 0), notTaken b11(v16, v14)
+# CHECK-NEXT: Branch v18 -> taken b8(| 0), notTaken b16(v16, v14)
 # CHECK-NEXT: b8(v19: guard):
 # CHECK-NEXT: v20: "Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v14, v17, v19 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
 # CHECK-NEXT: v21: 1 = Integer integer=1
 # CHECK-NEXT: v22: boolean = IsInBounds v14, v21
-# CHECK-NEXT: Branch v22 -> taken b9(| 0), notTaken b12(v20, v16, v14)
-# CHECK-NEXT: b9(v23: guard) handler=b13(v16):
+# CHECK-NEXT: Branch v22 -> taken b9(| 0), notTaken b17(v20, v16, v14)
+# CHECK-NEXT: b9(v23: guard):
 # CHECK-NEXT: v24: "Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v14, v21, v23 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
-# CHECK-NEXT: v25: anything = Call v24, -, v0 calleeName="probe" accessSite=10 callees=[f7, f8, f9]
-# CHECK-NEXT: Return v20
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v26: undefined|Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v5, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v27: 1 = Integer integer=1
-# CHECK-NEXT: v28: int[1, 4294967295] = Add v11, v27
-# CHECK-NEXT: v29: fact = Specified
-# CHECK-NEXT: v30: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v26, v29 provenType=Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b11(v28, v30)
-# CHECK-NEXT: b11(v31: int[1, 4294967295], v32: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
-# CHECK-NEXT: v33: 0 = Integer
-# CHECK-NEXT: v34: undefined|"Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v32, v33 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: Jump -> next b12(v34, v31, v32)
-# CHECK-NEXT: b12(v35: undefined|"Date"|"Map"|"Set"|f7|f8|f9 ~ "Date"|"Map"|"Set"|f7|f8|f9, v36: int[1, 4294967295], v37: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely handler=b13(v36):
-# CHECK-NEXT: v38: 1 = Integer integer=1
-# CHECK-NEXT: v39: undefined|"Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v37, v38 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v40: anything = Call v39, -, v0 calleeName="probe" accessSite=10 callees=[f7, f8, f9]
-# CHECK-NEXT: Return v35
-# CHECK-NEXT: b13(v41: int[1, 4294967295]) role=CatchHandler:
-# CHECK-NEXT: Jump -> next b5(v41)
+# CHECK-NEXT: v25: f7|f8|f9 = AssumeType v24 provenType=f7|f8|f9
+# CHECK-NEXT: v26: boolean = TypeTest v25 testedType=f7
+# CHECK-NEXT: Branch v26 -> taken b10(), notTaken b11(| 0)
+# CHECK-NEXT: b10() handler=b23(v16):
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: anything = CallBuiltin v0, v27 overload=MapPrototypeGet/0 builtinCallForm=AnyReceiver accessSite=20 @0:3 tail
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b11(v29: f8|f9):
+# CHECK-NEXT: v30: boolean = TypeTest v29 testedType=f8
+# CHECK-NEXT: Branch v30 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b12() handler=b23(v16):
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: boolean = CallBuiltin v0, v31 overload=SetPrototypeHas/0 builtinCallForm=AnyReceiver accessSite=22 @0:2 tail
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b13() handler=b23(v16):
+# CHECK-NEXT: v33: number = CallBuiltin v0 overload=DatePrototypeGetTime/0 builtinCallForm=AnyReceiver accessSite=27 @0:1 tail
+# CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v42: boolean = PropHas v0 key="derived" accessSite=9 receivers=[]
-# CHECK-NEXT: v43: "DerivedPlain" = String string="DerivedPlain"
-# CHECK-NEXT: Return v43
+# CHECK-NEXT: v34: fact = Specified
+# CHECK-NEXT: v35: "Date"|"Map"|"Set" = AssumeType v20, v34 provenType="Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array"
+# CHECK-NEXT: Return v35
+# CHECK-NEXT: b15() frequency=Unlikely:
+# CHECK-NEXT: v36: undefined|Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v5, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v37: 1 = Integer integer=1
+# CHECK-NEXT: v38: int[1, 4294967295] = Add v11, v37
+# CHECK-NEXT: v39: fact = Specified
+# CHECK-NEXT: v40: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v36, v39 provenType=Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b16(v38, v40)
+# CHECK-NEXT: b16(v41: int[1, 4294967295], v42: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v43: 0 = Integer
+# CHECK-NEXT: v44: undefined|"Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v42, v43 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: Jump -> next b17(v44, v41, v42)
+# CHECK-NEXT: b17(v45: undefined|"Date"|"Map"|"Set"|f7|f8|f9 ~ "Date"|"Map"|"Set"|f7|f8|f9, v46: int[1, 4294967295], v47: Array<"Date"|"Map"|"Set"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v48: 1 = Integer integer=1
+# CHECK-NEXT: v49: undefined|"Date"|"Map"|"Set"|f7|f8|f9 = GetArrayElement v47, v48 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v50: f7|f8|f9 = AssumeType v49 provenType=f7|f8|f9
+# CHECK-NEXT: v51: boolean = TypeTest v50 testedType=f7
+# CHECK-NEXT: Branch v51 -> taken b18(), notTaken b19(| 0)
+# CHECK-NEXT: b18() frequency=Unlikely handler=b23(v46):
+# CHECK-NEXT: v52: 0 = Integer
+# CHECK-NEXT: v53: anything = CallBuiltin v0, v52 overload=MapPrototypeGet/0 builtinCallForm=AnyReceiver accessSite=20 @0:6 tail
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b19(v54: f8|f9) frequency=Unlikely:
+# CHECK-NEXT: v55: boolean = TypeTest v54 testedType=f8
+# CHECK-NEXT: Branch v55 -> taken b20(), notTaken b21()
+# CHECK-NEXT: b20() frequency=Unlikely handler=b23(v46):
+# CHECK-NEXT: v56: 0 = Integer
+# CHECK-NEXT: v57: boolean = CallBuiltin v0, v56 overload=SetPrototypeHas/0 builtinCallForm=AnyReceiver accessSite=22 @0:5 tail
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b21() frequency=Unlikely handler=b23(v46):
+# CHECK-NEXT: v58: number = CallBuiltin v0 overload=DatePrototypeGetTime/0 builtinCallForm=AnyReceiver accessSite=27 @0:4 tail
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b22() frequency=Unlikely:
+# CHECK-NEXT: v59: fact = Specified
+# CHECK-NEXT: v60: "Date"|"Map"|"Set" = AssumeType v45, v59 provenType="Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array"
+# CHECK-NEXT: Return v60
+# CHECK-NEXT: b23(v61: int[1, 4294967295]) role=CatchHandler:
+# CHECK-NEXT: Jump -> next b5(v61)
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v62: boolean = PropHas v0 key="derived" accessSite=9 receivers=[]
+# CHECK-NEXT: v63: "DerivedPlain" = String string="DerivedPlain"
+# CHECK-NEXT: Return v63
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="constructTwice"
 # CHECK: module=m0 position=2132 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string|function|f5|f6|f14|builtin(Array)|builtin(Date)|builtin(Map)|builtin(Object)|builtin(Set)|builtin(Uint8Array)|builtin(MathMax) flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 parent=2 module=m0}, {callee=f16 callPosition=4294967295 parent=2 module=m0}, {callee=f1 callPosition=4294967295 parent=1 module=m0}, {callee=f11 callPosition=4294967295 parent=4 isConstruction=true module=m0}] {
@@ -503,9 +541,9 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v16: "Uint8Array" = String string="Uint8Array"
 # CHECK-NEXT: Jump -> next b8(v16)
 # CHECK-NEXT: b7() frequency=Unlikely handler=b9():
-# CHECK-NEXT: v17: undefined|"Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array"|f7|f8|f9 = CallDirect v14 function=f1 accessSite=12 [isAfterInlinedHead]
+# CHECK-NEXT: v17: "Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array" = CallDirect v14 function=f1 accessSite=12 [isAfterInlinedHead]
 # CHECK-NEXT: Jump -> next b8(v17)
-# CHECK-NEXT: b8(v18: undefined|"Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array"|f7|f8|f9 ~ "Uint8Array"):
+# CHECK-NEXT: b8(v18: "Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array" ~ "Uint8Array"):
 # CHECK-NEXT: Jump -> next b10(v18)
 # CHECK-NEXT: b9() role=CatchHandler:
 # CHECK-NEXT: v19: anything = CatchValue
@@ -525,9 +563,9 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v28: "Uint8Array" = String string="Uint8Array"
 # CHECK-NEXT: Jump -> next b14(v28)
 # CHECK-NEXT: b13() frequency=Unlikely handler=b15():
-# CHECK-NEXT: v29: undefined|"Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array"|f7|f8|f9 = CallDirect v26 function=f1 accessSite=12 [isAfterInlinedHead]
+# CHECK-NEXT: v29: "Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array" = CallDirect v26 function=f1 accessSite=12 [isAfterInlinedHead]
 # CHECK-NEXT: Jump -> next b14(v29)
-# CHECK-NEXT: b14(v30: undefined|"Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array"|f7|f8|f9 ~ "Uint8Array"):
+# CHECK-NEXT: b14(v30: "Array"|"Date"|"DerivedPlain"|"Map"|"Set"|"Uint8Array" ~ "Uint8Array"):
 # CHECK-NEXT: Jump -> next b16(v30)
 # CHECK-NEXT: b15() role=CatchHandler:
 # CHECK-NEXT: v31: anything = CatchValue
@@ -549,25 +587,11 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Throw v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
-# CHECK: m0 position=354 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: anything = CallBuiltin v0, v1 overload=MapPrototypeGet/0 builtinCallForm=AnyReceiver accessSite=20 @0 tail
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
+# CHECK: m0 position=354 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f8 module=
-# CHECK: m0 position=408 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: boolean = CallBuiltin v0, v1 overload=SetPrototypeHas/0 builtinCallForm=AnyReceiver accessSite=22 @0 tail
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
+# CHECK: m0 position=408 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f9 module=
-# CHECK: m0 position=463 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: number = CallBuiltin v0 overload=DatePrototypeGetTime/0 builtinCallForm=AnyReceiver accessSite=27 @0 tail
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: }
+# CHECK: m0 position=463 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="extend"
 # CHECK: module=m0 position=1152 kind=Arrow length=1 thisType={type=anything} parameters=[{type=builtin(Map)}] results=[{type=f18}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: builtin(Map)):
@@ -621,18 +645,18 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="Derived"
 # CHECK: module=m0 position=1500 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f12}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f12} creator=Entrypoint{target=f12 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f12, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: never = ThrowNewError message="'Derived' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v4: never = ThrowNewError message="'Derived' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Derived"
 # CHECK: module=m0 position=1654 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f13}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f13} creator=Entrypoint{target=f13 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f13, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: never = ThrowNewError message="'Derived' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v4: never = ThrowNewError message="'Derived' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Derived"
 # CHECK: module=m0 position=1206 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f18}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f18} creator=Entrypoint{target=f18 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f18, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: never = ThrowNewError message="'Derived' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v4: never = ThrowNewError message="'Derived' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

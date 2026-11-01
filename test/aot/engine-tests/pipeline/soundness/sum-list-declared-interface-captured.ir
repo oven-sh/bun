@@ -130,13 +130,13 @@ function f2 name="addOne" module=m0 position=433 flags=[IsChecked, HasExplicitNa
     v29 = Undefined @681
     Return v29 @681
 }
-function f3 name="read" module=m0 position=580 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="read" module=m0 position=580 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=anything variableName="sum"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @580
   b1():
     Return v0 @606
 }
-function f4 module=m0 position=691 kind=Arrow flags=[IsChecked] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 module=m0 position=691 kind=Arrow flags=[IsChecked] captures=[{type=anything variableName="sum"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @691
   b1():

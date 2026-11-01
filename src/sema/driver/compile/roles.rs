@@ -1,4 +1,4 @@
-use super::effects::{can_lose_trust, requested_diagnostics};
+use super::effects::{can_lose_trust, requested_diagnostics_of_file};
 use super::queue::{ROLE_ROUNDS, run_queue};
 use super::{
     BuildDiagnostic, CompileRequest, Demotion, DemotionCause, FileWork, LoadedProgram, RoleDecision,
@@ -44,18 +44,23 @@ pub fn decide_roles<'s>(
         };
     }
     candidates.shared_sort_by_key(|&file| files.rank_of_file(file));
+    loaded.note_check_for_roles();
     let report = run_queue(
         loaded,
         host,
         request,
         candidates.clone(),
         &FileWork {
-            requested: &|file| requested_diagnostics(loaded.origin(file), files.role(file)),
+            requested: &|file| {
+                requested_diagnostics_of_file(files, file, loaded.origin(file), files.role(file))
+            },
             after_file: None,
             after_commit: &|_| {},
             beside_file: None,
             frees_tree: &|_| false,
             is_last_pass: &|| false,
+            note_cycles_entered: None,
+            cycles_entered_before: &Default::default,
             first_round: ROLE_ROUNDS,
             left_out_bodies: request.left_out_bodies,
         },

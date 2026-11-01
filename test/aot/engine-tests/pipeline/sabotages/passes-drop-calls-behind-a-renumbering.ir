@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls behind a pass that numbers the values anew: the call that goes is named by the number that it had in front of the pass: the build stops
+# FORM: Prepared
+# RUN: pass CompactBlocks
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-behind-a-renumbering-left-alone.ir

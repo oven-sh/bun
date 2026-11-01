@@ -112,6 +112,6 @@ a decorator of a class | mark@6:23 < marksClass@43:3 < declaresDecoratedClass@61
 a decorator of a field | mark@6:23 < marksField@46:3 < declaresDecoratedField@70:5 < show@16:3 < @101:1
 a call that makes a decorator | mark@6:23 < makesDecorator@49:3 < declaresDecoratorThatIsCalled@76:6 < show@16:3 < @102:1
 a field of a class without decorators | mark@6:23 < <anonymous>@103:53 < show@16:3 < @103:1
-a decorated field | mark@6:23 < <anonymous>@104:33 < show@16:3 < @104:1
+a decorated field | mark@6:23 < new DecoratedField@85:1 < <anonymous>@104:33 < show@16:3 < @104:1
 a decorated field of a class with a constructor | mark@6:23 < new DecoratedFieldAndConstructor@92:14 < <anonymous>@105:63 < show@16:3 < @105:1
 */

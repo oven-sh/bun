@@ -1,0 +1,8 @@
+interface Base { kind: 1 | 2 }
+interface A extends Base { kind: 1; a: number }
+interface B extends Base { kind: 2; b: number }
+interface N extends Base {}
+class N { constructor(kind: 1 | 2) { this.kind = kind; } }
+const x = new N(1) as unknown as A;
+const y = new N(2) as unknown as B;
+console.log(Object.keys(x).join(), Object.keys(y).join());

@@ -1,8 +1,9 @@
 use super::answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
-    ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, ObjectMember, ObjectMemberKind,
-    PositionTypes, QueryStatistics, SignatureShape, TypeDisplayName, WrittenType,
+    ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove, ObjectMember,
+    ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics, SignatureShape,
+    TypeDisplayName, WrittenType,
 };
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
@@ -39,6 +40,7 @@ pub struct QueryInputs<'c> {
     pub builtin_types: &'c BuiltinTypeSymbols,
     pub named_values: &'c dyn NamedValues,
     pub max_inference_nodes: u64,
+    pub limits: QueryLimits,
 }
 
 pub struct Queries<'c, 'p, 's> {
@@ -78,6 +80,8 @@ pub(super) struct Memo<'c> {
     /// Of the two types that `members_typed_otherwise` was asked about last.
     most_recent_checked_members: [Option<(TypeId, Vec<CheckedMember>)>; 2],
     pub(super) names_typed_by_this: FxHashMap<Sym, (&'c [Atom], usize)>,
+    pub(super) methods_typed_by_this: FxHashMap<Sym, &'c [Atom]>,
+    pub(super) classes_compared_with_an_heir: FxHashSet<Sym>,
     signature_results: FxHashMap<SigId, CheckedType>,
     signatures: FxHashMap<SigId, SignatureShape<'c>>,
     function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
@@ -148,7 +152,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn with_queries<R>(
         &mut self,
         file: FileId,
-        inputs: QueryInputs<'_>,
+        inputs: &QueryInputs<'_>,
         then: impl FnOnce(&mut Queries<'_, 'p, 's>) -> R,
     ) -> R {
         debug_assert!(
@@ -159,6 +163,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.check_source_file_silently(file);
         }
         self.class_members_by_name.is_on = true;
+        let answered_lowering = std::mem::replace(&mut self.answers_lowering, true);
         let (memo_of_checker, arena) = self.aot_answers.take();
         let closed_cycles_before = self.closed_cycle_count();
         let union_members_compared_before = self.union_members_compared();
@@ -168,7 +173,7 @@ impl<'p, 's> Checker<'p, 's> {
             c: self,
             file,
             arena: &arena,
-            inputs,
+            inputs: *inputs,
             memo: Memo::default(),
             kept: memo_of_checker,
             statistics: QueryStatistics::default(),
@@ -189,6 +194,7 @@ impl<'p, 's> Checker<'p, 's> {
         // SAFETY: `Queries::arena`, which is that arena, is the only source of its references.
         let memo_of_checker = unsafe { memo_of_checker.outliving_its_borrow() };
         self.aot_answers.put_back(memo_of_checker, arena);
+        self.answers_lowering = answered_lowering;
         answer
     }
 
@@ -528,6 +534,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     pub fn is_stack_low(&self) -> bool {
         self.c.is_stack_low()
+    }
+
+    pub(super) fn limit(&self, limit: QueryLimit) -> u64 {
+        self.inputs.limits.get(limit)
+    }
+
+    pub(super) fn note_walk_ended_by(&mut self, limit: QueryLimit) {
+        let hits = &mut self.statistics.limit_hits[limit as usize];
+        *hits = hits.saturating_add(1);
     }
 
     pub fn statistics(&self) -> QueryStatistics {
@@ -1234,11 +1249,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         object_type: TypeId,
         base: TypeId,
-    ) -> Result<Vec<MemberTypedOtherwise>, GaveUp> {
+    ) -> Result<(Vec<MemberTypedOtherwise>, Option<MethodsAbove>), GaveUp> {
+        let unstable_answers = self.unstable_answers;
         let by_names =
             self.ask(|queries| queries.compute_members_typed_otherwise(object_type, base));
-        if let Some(found) = by_names? {
-            return Ok(found);
+        if let Some((found, methods)) = by_names? {
+            return Ok((
+                found,
+                methods.filter(|_| self.unstable_answers == unstable_answers),
+            ));
         }
         // In such a row the base is the class that was asked about just before, and classes that extend one class follow one another.
         let (in_base, base_is_kept) = self.checked_members_for_now(base)?;
@@ -1260,6 +1279,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     kind_in_base: member.kind,
                     checked,
                     in_base,
+                    is_method_above: false,
                 });
             }
         }
@@ -1267,7 +1287,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             is_kept.then_some((object_type, members)),
             base_is_kept.then_some((base, in_base)),
         ];
-        Ok(found)
+        Ok((found, None))
+    }
+
+    pub fn note_methods_followed(&mut self, methods: MethodsAbove) {
+        let compared = &mut self.memo.classes_compared_with_an_heir;
+        compared.insert(methods.class);
     }
 
     /// The list, and whether the same question gets the same answer later.

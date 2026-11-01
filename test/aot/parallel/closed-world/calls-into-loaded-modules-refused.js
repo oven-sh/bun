@@ -43,16 +43,16 @@ attempt("a Worker of node:worker_threads from text", () => typeof call(construct
 /* Output:
 the modules by their constant names: true
 process.getBuiltinModule: true
-vm.createContext: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-vm.runInNewContext: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-vm.runInThisContext: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-vm.runInContext: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+vm.createContext: refused: '..' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+vm.runInNewContext: refused: '..' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+vm.runInThisContext: refused: '..' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+vm.runInContext: refused: '..' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 vm.Script: refused: Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly.
 vm.compileFunction: refused: Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly.
-vm.SourceTextModule: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+vm.SourceTextModule: refused: '..' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 module._compile: refused: Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly.
-ffi.dlopen: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-ffi.linkSymbols: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-ffi.CFunction: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+ffi.dlopen: refused: '..' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+ffi.linkSymbols: refused: '..' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+ffi.CFunction: refused: '..' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 a Worker of node:worker_threads from text: object
 */

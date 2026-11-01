@@ -17,6 +17,21 @@ fn is_in_ranges(ranges: &[(u32, u32)], position: u32) -> bool {
     (ranges.iter()).any(|&(start, end)| (start..end).contains(&position))
 }
 
+fn keep_outermost(ranges: &mut Vec<(u32, u32)>) {
+    ranges.shared_sort_unstable();
+    let mut max_end = 0;
+    ranges.retain(|&(_, end)| {
+        let is_nested = end <= max_end;
+        max_end = max_end.max(end);
+        !is_nested
+    });
+}
+
+pub(in crate::check) fn is_in_outermost(ranges: &[(u32, u32)], position: u32) -> bool {
+    let after = ranges.partition_point(|&(start, _)| start <= position);
+    after != 0 && position < ranges[after - 1].1
+}
+
 impl Checker<'_, '_> {
     fn is_dead_node(&self, file: FileId, node: Node) -> bool {
         let data = self.hir(file).data(node);
@@ -43,13 +58,7 @@ impl Checker<'_, '_> {
             self.collect_dead_code_ranges(file, &mut ranges);
         }
         sorted_ranges.extend_from_slice(&ranges);
-        sorted_ranges.shared_sort_unstable();
-        let mut max_end = 0;
-        sorted_ranges.retain(|&(_, end)| {
-            let is_nested = end <= max_end;
-            max_end = max_end.max(end);
-            !is_nested
-        });
+        keep_outermost(&mut sorted_ranges);
         self.dead_code = DeadCodeRanges {
             ranges,
             sorted_ranges,
@@ -62,9 +71,17 @@ impl Checker<'_, '_> {
     }
 
     pub(in crate::check) fn is_in_dead_code(&self, position: u32) -> bool {
-        let ranges = &self.dead_code.sorted_ranges;
-        let after = ranges.partition_point(|&(start, _)| start <= position);
-        after != 0 && position < ranges[after - 1].1
+        is_in_outermost(&self.dead_code.sorted_ranges, position)
+    }
+
+    pub(in crate::check) fn dead_code_of(&self, file: FileId) -> Vec<(u32, u32)> {
+        let mut ranges = Vec::new();
+        self.collect_dead_code_ranges(file, &mut ranges);
+        self.push_imports_used_only_in_dead_code(file, &mut ranges);
+        self.push_replaced_functions(file, &mut ranges);
+        self.push_left_out_functions_of(file, &mut ranges);
+        keep_outermost(&mut ranges);
+        ranges
     }
 
     fn collect_dead_code_ranges(&self, file: FileId, dead_code: &mut Vec<(u32, u32)>) {

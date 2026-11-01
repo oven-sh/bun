@@ -34,6 +34,7 @@ mod evaluated_text;
 mod exposure;
 mod folding;
 mod imports;
+mod module_cache;
 mod module_objects;
 mod module_values;
 mod parts_of_a_file;
@@ -187,7 +188,7 @@ fn with_parts<R>(
         experimental_decorators: setup.emits_decorator_metadata,
         every_file_is_a_module: false,
         reads_jsdoc: true,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(source.as_bytes());
@@ -212,6 +213,7 @@ fn with_parts<R>(
         is_library: false,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     assert!(

@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -61,7 +61,7 @@ const shapes: Record<string, { imports: string[]; text: string }> = {
 };
 
 const throws = `() => { console.log("the factory is called"); throw new RangeError("from the factory"); }`;
-const cases: Record<string, { factory?: string; mocked?: string; again?: true; steps: string[] }> = {
+const cases: Record<string, { factory?: string; mocked?: string; steps: string[] }> = {
   "the-same-module-again": { steps: ["import names.ts", "import names.ts", "import names.ts"] },
   "by-require": { steps: ["require names.ts", "require names.ts", "require names.ts"] },
   "by-one-after-the-other": { steps: ["require names.ts", "import names.ts", "require names.ts"] },
@@ -80,16 +80,11 @@ const cases: Record<string, { factory?: string; mocked?: string; again?: true; s
   "the-mocked-module-in-between": {
     steps: ["import names.ts", "import mocked.ts", "import names.ts", "import mocked.ts"],
   },
-  "another-importer": {
-    again: true,
-    steps: ["import names.ts", "import other.ts", "import names.ts", "import other.ts"],
-  },
+  "another-importer": { steps: ["import names.ts", "import other.ts", "import names.ts", "import other.ts"] },
   "a-module-above": {
-    again: true,
     steps: ["import above-names.ts", "import above-names.ts", "import names.ts", "import names.ts", "require names.ts"],
   },
   "the-importer-below-the-root-is-loaded-once-more": {
-    again: true,
     steps: [
       "import top.ts",
       "import above.ts",
@@ -103,7 +98,6 @@ const cases: Record<string, { factory?: string; mocked?: string; again?: true; s
     ],
   },
   "a-require-comes-first": {
-    again: true,
     steps: [
       "import above.ts",
       "require namespace.ts",
@@ -113,19 +107,15 @@ const cases: Record<string, { factory?: string; mocked?: string; again?: true; s
     ],
   },
   "all-by-require": {
-    again: true,
     steps: ["require above.ts", "require namespace.ts", "import namespace.ts", "import above.ts", "require above.ts"],
   },
   "a-statement-imports-it-anew": {
-    again: true,
     steps: ["import namespace.ts", "import above.ts", "import namespace.ts", "require namespace.ts", "import above.ts"],
   },
   "a-statement-imports-it-anew-by-require": {
-    again: true,
     steps: ["require namespace.ts", "require above.ts", "require namespace.ts", "import namespace.ts"],
   },
   "a-statement-imports-it-anew-and-finds-no-name": {
-    again: true,
     steps: [
       "import names.ts",
       "import above-names.ts",
@@ -140,11 +130,8 @@ const cases: Record<string, { factory?: string; mocked?: string; again?: true; s
     steps: ["import top.ts", "mock-again", "import top.ts", "import namespace.ts", "require namespace.ts"],
   },
   "a-module-beside-the-mocked-one": { steps: ["import with-beside.ts", "import beside.ts", "import with-beside.ts"] },
-  "a-ring": { again: true, steps: ["import ring-a.ts", "import ring-a.ts", "import ring-b.ts", "import ring-b.ts"] },
-  "taken-out-of-the-cache": {
-    again: true,
-    steps: ["import names.ts", "evict names.ts", "import names.ts", "import names.ts"],
-  },
+  "a-ring": { steps: ["import ring-a.ts", "import ring-a.ts", "import ring-b.ts", "import ring-b.ts"] },
+  "taken-out-of-the-cache": { steps: ["import names.ts", "evict names.ts", "import names.ts", "import names.ts"] },
   "a-factory-that-answers-no-object": {
     factory: `() => { console.log("the factory is called"); }`,
     steps: ["import names.ts", "import names.ts", "import names.ts"],
@@ -169,13 +156,7 @@ function write(folder: string, shape: string) {
   for (const imported of shapes[shape].imports) write(folder, imported);
 }
 
-const hasAssertions = isASAN || isDebug;
-if (hasAssertions)
-  console.error(
-    "SKIPPED: a-load-above-a-mock-whose-factory-failed.test.ts: the cases in which a statement comes to the mocked module again: there plain `bun test` fails an assertion of the module loader, which only a build without assertions passes",
-  );
-const casesOfThisBuild = Object.entries(cases).filter(([, { again }]) => !again || !hasAssertions);
-const tests = casesOfThisBuild.map(([name, { factory = throws, mocked = `./src/${name}/mocked.ts`, steps }]) => {
+const tests = Object.entries(cases).map(([name, { factory = throws, mocked = `./src/${name}/mocked.ts`, steps }]) => {
   const lines = steps.map(step => {
     const [how, shape] = step.split(" ");
     if (shape) write(name, shape);
@@ -228,10 +209,9 @@ test.each([
   expect(plain.printed.join("\n")).toContain(
     `# a-namespace\nthe factory is called\nimport namespace.ts ${error}\nimport namespace.ts ${error}\nimport namespace.ts ${error}\n#`,
   );
-  if (!hasAssertions)
-    expect(plain.printed.join("\n")).toContain(
-      `import above.ts ${error}\nthe body of the-importer-below-the-root-is-loaded-once-more/namespace.ts runs\nimport namespace.ts ${error}\nimport namespace.ts ${error}\nrequire namespace.ts undefined\n`,
-    );
+  expect(plain.printed.join("\n")).toContain(
+    `import above.ts ${error}\nimport namespace.ts ${error}\nimport namespace.ts ${error}\nrequire namespace.ts ${error}\n`,
+  );
   expect(plain.printed).toContain("the same error true,true,true,true");
   expect(await printedBy(String(directory), words, "--aot")).toEqual(plain);
 });

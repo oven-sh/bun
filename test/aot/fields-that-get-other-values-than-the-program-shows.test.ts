@@ -1,11 +1,12 @@
 // Objects of ten makers whose fields the program shows small integers, and which get whatever a text holds that the build cannot read: large numbers, fractions, -0, texts, null, nothing, objects.
 // It happens to many objects one after the other, in every order of the fields, while accessors and read-only properties come and go above them, while they get other prototypes, become prototypes,
 // are frozen, get fields defined on them by a class that returns them from its parent's constructor, and while collections run. One program holds all of it, each case with declarations of its own. It runs under plain Bun and as an --aot executable, with its types and without, and prints the same.
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, describe, test } from "./listed";
 
 // Every second case names each key that it uses and never lists the keys of its objects.
 const namesItsKeys = (n: number) => n % 2 === 0;

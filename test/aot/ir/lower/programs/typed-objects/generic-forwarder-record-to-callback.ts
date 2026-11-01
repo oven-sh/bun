@@ -94,7 +94,7 @@ console.log(await run({ id: 4 }, later, { input: "k" }));
 // CHECK-NEXT: ReturnCall v25 casts=[{declared={type=undefined|null|string site=[[w_26]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_22]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_27]] site=[[w_28]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_29]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|[[L_27]] site=[[w_28]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_29]]] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_27]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -1,4 +1,5 @@
 // What a function made and reads no more behind an await is collected while the functions that it awaits wait. Asked from the innermost of them.
+// Todo alone under --aot-validate --aot-check=ValidateBackEnd: Not every time: a build that validates the back end keeps registers alive for longer, and the collector finds the object in one: lines print that it is kept
 let last;
 let sink = 0;
 function make(n) {

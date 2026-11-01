@@ -62,6 +62,20 @@ pub(super) enum Fault {
     CopiesWhatHoldsIt(u64, u64),
 }
 
+impl core::fmt::Display for Fault {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Fault::EndsInAPiece => f.write_str("the list of printed text ends inside a piece"),
+            Fault::CopiesWhatHoldsIt(start, end) => {
+                write!(
+                    f,
+                    "the piece of printed text at {start}..{end} copies what holds it"
+                )
+            }
+        }
+    }
+}
+
 /// An executable finds what an error quotes in the text that it keeps, so the engine moves every piece through the cuts.
 /// Whoever follows a copy prints the pieces in what is copied: a piece that lies there itself would be followed without end.
 /// `pieces`: `FileLowering::find_text_printed_in_place`.
@@ -93,15 +107,16 @@ pub(super) fn find_fault(mut pieces: &[u8], cuts: &[u8]) -> Option<Fault> {
     read().unwrap_or(Some(Fault::EndsInAPiece))
 }
 
-pub(super) fn find_fault_in_program(program: &Program) -> Option<(usize, Fault)> {
-    let mut modules = program.modules.iter().enumerate();
-    modules.find_map(|(index, module)| {
+pub(super) fn find_faults_in_program(program: &Program) -> Vec<(usize, Fault)> {
+    let modules = program.modules.iter().enumerate();
+    let faults = modules.filter_map(|(index, module)| {
         let pieces = &module.positions.text_printed_in_place;
         Some((
             index,
             find_fault(pieces, &module.types_cut_from_function_text)?,
         ))
-    })
+    });
+    faults.collect()
 }
 
 #[cfg(test)]

@@ -295,6 +295,7 @@ fn incomplete_files_stop_build() {
             path: b"/project/a.ts".to_vec(),
             is_nested_too_deeply,
             deepest_nesting,
+            nested_too_deeply_at: None,
         };
         diagnostics.add_incomplete_files(&[incomplete]);
         let is_internal = diagnostics.has_internal_errors();

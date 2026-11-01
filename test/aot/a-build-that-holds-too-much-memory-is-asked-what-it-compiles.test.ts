@@ -11,7 +11,16 @@ test.skipIf(!isLinux)(
   async () => {
     using dir = tempDir("a-build-that-holds-too-much-memory", {
       "tsconfig.json": "{}",
-      "small.js": `console.log("small");\n/* Output:\nsmall\n*/\n`,
+      // This build never ends by itself: however late the driver looks, it is still there.
+      "small.js": `// Flags: --aot-sabotage=FunctionPassNeverEnds
+function stopsTheCompiler(count) {
+  return count + 1;
+}
+console.log(stopsTheCompiler(process.argv.length));
+/* Output:
+3
+*/
+`,
     });
     const root = String(dir);
     const driver = join(import.meta.dir, "run-parallel.ts");
@@ -25,7 +34,7 @@ test.skipIf(!isLinux)(
       .filter(Boolean)
       .map(line => JSON.parse(line))
       .filter(({ state }) => state !== "compiling");
-    expect({ ...verdict, message: verdict.message.split("\n")[0].replace(/\d+/g, "N") }).toMatchObject({
+    expect({ ...verdict, message: verdict?.message?.split("\n")[0].replace(/\d+/g, "N") }).toMatchObject({
       state: "fail",
       stage: "compile",
       message:

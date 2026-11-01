@@ -1,6 +1,7 @@
 # Six loops over a DataView. Each reads a method of DataView.prototype that nothing has read before: one loop makes no turn, one throws in its first turn in front of a second method,
 # one reads a method only from its fourth turn on, one leaves in front of the read, one stands in another loop, one reads in its test. Behind each loop another method is read, so that
 # the own keys of DataView.prototype tell which of the loops read what, and when.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot
 # RUN: lower-to-air size f0
@@ -646,5 +647,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f33 visibility=Private
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 324, patchpoints: 78, rare instructions: 443, polls: 4
+# CHECK-NEXT: instructions: 295, patchpoints: 75, rare instructions: 474, polls: 4
 # CHECK-NEXT: end of function f0

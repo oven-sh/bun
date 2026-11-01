@@ -2095,6 +2095,11 @@ conditional-types.ts:10 shape `Ping<T>` = TypeVariable(none)
 
 # The members of a mapped type are evaluated when they are asked for: that recursion ends by itself.
 absent: conditional-types.ts:11 shape `Deep<T>` = TypeVariable(none)
+
+# It is as costly as what its type parameters stand for.
+conditional-types.ts:13 shape `Same<Plain<T>>` = TypeVariable("text" | 0)
+conditional-types.ts:13 shape `Same<Nest<N>>` = TypeVariable(none)
+conditional-types.ts:13 shape `Second<T, Nest<N>>` = TypeVariable(none)
 //// type-shape/conditional-types.ts
 // A deferred conditional type is a type variable. Its constraint is what the checker computes, except where evaluating the type can come back to the type itself.
 type Wrap<T> = { value: T };
@@ -2107,6 +2112,8 @@ function plain<T>(value: Plain<T>) {}
 function nest<N extends number>(value: Nest<N>, keys: keyof Nest<N>) {}
 function ping<T extends number>(value: Ping<T>) {}
 function deep<T>(value: Deep<T>) {}
+type Same<T> = T extends infer R ? R : never; type Second<A, B> = A extends string ? B : never;
+function same<T, N extends number>(plain: Same<Plain<T>>, nest: Same<Nest<N>>, second: Second<T, Nest<N>>) {}
 export {};
 //// type-shape/empty-object.queries.txt
 # A type without members says nothing; an optional member is enough to be an object.

@@ -1,10 +1,11 @@
 // The program reads every member of `process`, takes one more step, and prints the keys in order.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunExe } from "harness";
 import { canTrim } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
+import { describe, test } from "./listed";
 
 const steps = {
   "after reading every member": "",

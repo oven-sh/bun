@@ -6,15 +6,17 @@ use crate::builtins::BuiltinId;
 use crate::ir::generated::{
     ModuleFlags, ModuleKind, NameClass, OpenedName, ReplaceableBuiltin, SourceStamp,
 };
-use crate::ir::{Id, ModuleId};
+use crate::ir::parallel::map_each;
+use crate::ir::{Id, ModuleId, StringId};
 use crate::link::{
     self, LinkError, LinkInput, LinkProject, LinkUnit, Linked, ProgramKeys, ProgramModule,
     ProgramVariableKey,
 };
+use crate::load::locked_builtin_defines::is_folded_in_test_runs;
 use crate::load::sources::parsed_source;
 use crate::load::{ProgramFile, ProjectId};
 use crate::module_keys::stamp_of_file;
-use crate::statistics::Stage;
+use crate::statistics::{Stage, StepClock};
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
@@ -55,6 +57,10 @@ pub(super) fn describe_link_error(loaded: &LoadedBuild<'_, '_>, error: &LinkErro
                 }
                 ProgramVariableKey::SyntheticExport { module, name } => {
                     format!("the export `{}` of {}", name_of(name), module_of(module))
+                }
+                ProgramVariableKey::MockOfRuntimeModule(module) => {
+                    let module = module_of(ProgramModule::Runtime(module));
+                    format!("the mock that stands in place of {module}")
                 }
                 ProgramVariableKey::Declared(declared) => match declared.key.home_file() {
                     Some(file) => {
@@ -129,6 +135,7 @@ impl Build<'_> {
         mut units: Vec<LinkUnit>,
     ) -> Result<FrontEndOutput, Stage> {
         self.clock.start(Stage::LinkAndEmit);
+        let mut steps = StepClock::new(Stage::LinkAndEmit, "stage");
         let types_in_function_texts: FxHashMap<ProgramFile, PackedTypeRanges> = (units.iter_mut())
             .filter_map(LinkUnit::take_types_in_function_text)
             .collect();
@@ -156,9 +163,11 @@ impl Build<'_> {
             projects,
             limits: &self.limits,
             reports_type_mismatches: self.options.aot.reports_type_mismatches,
+            has_programs_below: self.options.aot.imports_are_in_other_images,
             in_parallel: &in_parallel,
             beside: &beside,
         };
+        steps.end("before the link");
         let linked = link::link_while(input, &mut |keys: &ProgramKeys| {
             texts = Some(collect_source_texts(
                 &loaded,
@@ -208,6 +217,7 @@ impl Build<'_> {
                 return Err(Stage::LinkAndEmit);
             }
         };
+        steps.end("link_while, all of it");
         let application = loaded.project(ProjectId::Application);
         let replaced = self.options.load.replaced_builtins.iter();
         let mut replaced: Vec<BuiltinId> = replaced
@@ -218,8 +228,10 @@ impl Build<'_> {
             let files = application.loaded.files();
             let sources = files.compiled_files().iter();
             let sources = sources.filter_map(|&file| parsed_source(files, file));
+            let sources = sources.filter(|it| !it.finds_builtins_read_only());
             replaced.extend(sources.flat_map(|source| source.builtins.replaced_members()));
         }
+        replaced.retain(|&member| !is_folded_in_test_runs(member));
         replaced.shared_sort_unstable();
         replaced.dedup();
         let numbers = replaced.iter().map(|&member| member as u32);
@@ -232,13 +244,14 @@ impl Build<'_> {
             .filter_map(|name| Some((BuiltinId::from_wire(name.holder)?, &name.name[..])))
             .collect();
         // The front end asks nothing of these names, so what the files spell goes straight to the engine.
-        if self.options.load.runs_tests {
-            let files = application.loaded.files();
-            let sources = files.compiled_files().iter();
-            let sources = sources.filter_map(|&file| parsed_source(files, file));
-            let spelled = sources.flat_map(|source| source.builtins.names_added().iter());
-            opened.extend(spelled.map(|&(holder, name)| (holder, files.atoms.bytes(name))));
-        }
+        let files = application.loaded.files();
+        let sources = files.compiled_files().iter();
+        let sources = sources.filter_map(|&file| parsed_source(files, file));
+        let spelled = sources.flat_map(|source| match source.finds_builtins_read_only() {
+            true => source.builtins.names_added_in_executable().iter(),
+            false => source.builtins.names_added().iter(),
+        });
+        opened.extend(spelled.map(|&(holder, name)| (holder, files.atoms.bytes(name))));
         opened.shared_sort_unstable();
         opened.dedup();
         for (holder, name) in opened {
@@ -250,23 +263,33 @@ impl Build<'_> {
             }
         }
         // A test may write a file of the program anew before anything has loaded it, and `bun test` reads what is there by then.
+        steps.end("built-ins replaced and names added");
         if self.options.aot.runs_in_place {
-            for (index, module) in program.modules.iter().enumerate() {
-                if !module.flags.contains(ModuleFlags::MAY_BE_EVICTED) {
-                    continue;
-                }
-                let path = bun_core::ZBox::from_bytes(program.strings.get(module.path));
-                if let Ok(stat) = bun_sys::stat(&path) {
-                    let stat = bun_sys::PosixStat::init(&stat);
+            // The system is asked about each file: thousands of calls, which wait for nothing but one another.
+            const ASKED_TOGETHER: usize = 256;
+            let modules = program.modules.iter().enumerate();
+            let may_be_evicted: Vec<(usize, StringId)> = modules
+                .filter(|(_, module)| module.flags.contains(ModuleFlags::MAY_BE_EVICTED))
+                .map(|(index, module)| (index, module.path))
+                .collect();
+            let strings = &program.strings;
+            let lots: Vec<&[(usize, StringId)]> = may_be_evicted.chunks(ASKED_TOGETHER).collect();
+            let stamps = map_each(lots, &in_parallel, &|lot: &[(usize, StringId)]| {
+                let stamps = lot.iter().filter_map(|&(index, path)| {
+                    let path = bun_core::ZBox::from_bytes(strings.get(path));
+                    let stat = bun_sys::PosixStat::init(&bun_sys::stat(&path).ok()?);
                     let stamp = stamp_of_file(stat.mtim.sec, stat.mtim.nsec, stat.size);
-                    program.source_stamps.push(SourceStamp {
+                    Some(SourceStamp {
                         module: ModuleId::new(index),
                         low: stamp as u32,
                         high: (stamp >> 32) as u32,
-                    });
-                }
-            }
+                    })
+                });
+                stamps.collect::<Vec<SourceStamp>>()
+            });
+            program.source_stamps.extend(stamps.into_iter().flatten());
         }
+        steps.end("a stamp for each module's file");
         self.statistics.add_counters(application.view(), counters);
         let (entry_points, folders) = paths.expect("link has called it");
         debug_assert_eq!(entry_points.len(), program.entries.len());
@@ -309,6 +332,7 @@ impl Build<'_> {
             (graph, left_out, known_helpers, builtin_types)
         });
         self.leftovers.push(Box::new(bound));
+        steps.end("the output");
         Ok(output)
     }
 }

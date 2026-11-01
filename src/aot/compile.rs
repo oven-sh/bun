@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod barrel_tests;
 mod bind_stage;
+#[cfg(test)]
+mod files_of_tests_tests;
 mod import_graph;
 #[cfg(test)]
 mod imported_constant_tests;
@@ -66,7 +68,11 @@ use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
 use crate::load::loaders::loader_by_path;
 use crate::load::plugin_modules::is_path_of_entry_text;
-use crate::load::replaced_by_tests::{ReadsLibrary, scan_files_of_tests};
+use crate::load::replaced_builtins::{LeftOpenByText, ProductFiles};
+use crate::load::replaced_by_tests::{
+    ReadsLibrary, find_what_adding_matchers_writes, find_what_starting_worker_writes,
+    scan_files_of_tests,
+};
 use crate::load::source_provider::SourceProvider;
 use crate::load::worker_files::{WorkerFile, may_start_workers};
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
@@ -78,7 +84,7 @@ use crate::options::{
 };
 use crate::report::{ModuleLocator, SourceTexts};
 use crate::statistics::{
-    LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics, logs_stages,
+    LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics, StepClock, logs_stages,
 };
 use bstr::BStr;
 use bun_ast::{Kind, Loader, Log, Msg};
@@ -185,6 +191,8 @@ pub(crate) struct StartedWorkers {
     pub files: Vec<WorkerFile>,
     /// `CodeThatStartsWorkers::names`
     pub names: Vec<EntryPointPaths>,
+    /// `CodeThatStartsWorkers::starts_of_files`
+    pub starts_of_files: Vec<(Vec<u8>, FileId, u32)>,
     /// What `find_embedded_code_files` found.
     pub copies: Vec<WorkerFile>,
     /// Files that a Worker may start from and that the build did not compile for it.
@@ -239,12 +247,12 @@ pub struct BuildFailed {
     pub has_early_errors: bool,
     /// No failure: the files of a test run replace these members of built-in objects, and were loaded as if they were locked. See `compile`.
     pub replaced_builtins: Vec<u32>,
-    /// No failure: `replaced_modules::packages_mock_modules_that_they_do_not_spell`, and the files were loaded as if no mock could reach them.
-    pub mocks_any_module: bool,
     /// No failure yet: every error of a test run stands in one of these files, which are no test files and fail where a test loads them. See `compile`.
     pub left_to_loader: Vec<Vec<u8>>,
     /// `None`: the build ended before it had followed what its files load. A file that the loader cannot read either loads nothing.
     pub loads_below_files_left_to_loader: Option<Arc<LoadsBelowFilesLeftToLoader>>,
+    /// No failure: `LoadOptions::loaded_by_workers_too`. See `compile`.
+    pub loaded_by_workers_too: Vec<Vec<u8>>,
 }
 
 impl fmt::Debug for BuildFailed {
@@ -296,7 +304,9 @@ pub(crate) struct Build<'a> {
     pub(crate) is_one_program: bool,
     /// `BuildFailed::replaced_builtins`.
     pub(crate) replaced_builtins_spelled: Vec<u32>,
-    /// `BuildFailed::mocks_any_module`.
+    /// `BuildFailed::loaded_by_workers_too`.
+    pub(crate) loaded_by_workers_too: Vec<Vec<u8>>,
+    /// `replaced_modules::packages_mock_modules_that_they_do_not_spell`.
     pub(crate) packages_mock_any_module: bool,
     /// Of a build of one program: `KnownWorkerFiles::splits` and `KnownWorkerFiles::left_out`.
     pub(crate) known_worker_files: Option<(bool, Vec<Vec<u8>>)>,
@@ -309,6 +319,8 @@ pub(crate) struct Build<'a> {
     pub(crate) started_workers: StartedWorkers,
     /// `Compilation::replaced_builtins`, of the programs linked so far.
     pub(crate) replaced_builtins: ReplacedByTests,
+    /// A test run in which no file of the tests can load what was not compiled.
+    pub(crate) stays_in_compiled_files: bool,
     pub(crate) brings_bun_types: bool,
     pub(crate) has_withdrawn_trust: bool,
 }
@@ -805,6 +817,23 @@ fn find_library_code_lacked(
     held.find_lacked(&needed)
 }
 
+fn log_unseen_code(engine: &EngineResult) {
+    if !logs_stages() {
+        return;
+    }
+    let records = engine.unseen_code();
+    let count = |cause| records.iter().filter(|it| it.cause == cause).count();
+    bun_core::print_errorln!(
+        "AOT flow | code that the build does not see | loads code by name {} | loads compiled files by name {} | evaluates text {} | imports uncompiled code {} | runs unseen code {} | an option admits code {}",
+        count(UnseenCodeCause::LoadsCodeByName),
+        count(UnseenCodeCause::LoadsModuleByName),
+        count(UnseenCodeCause::EvaluatesText),
+        count(UnseenCodeCause::ImportsUncompiledModule),
+        count(UnseenCodeCause::RunsUnseenCode),
+        count(UnseenCodeCause::OptionAdmitsCode),
+    );
+}
+
 // The engine did not analyze the program, so its lists of what is used are empty and say nothing.
 fn has_followed_nothing(found: &FlowFindings<'_>) -> bool {
     let mut causes = found.unseen_code.iter().map(|record| record.cause);
@@ -1093,12 +1122,17 @@ fn find_load_options_to_compile_again_with(
 ) -> Option<LoadOptions> {
     let mut load = options.load.clone();
     match compiled {
-        Err(failure) if !failure.replaced_builtins.is_empty() || failure.mocks_any_module => {
+        Err(failure) if !failure.replaced_builtins.is_empty() => {
             load.replaced_builtins
                 .extend_from_slice(&failure.replaced_builtins);
             load.replaced_builtins.shared_sort_unstable();
             load.replaced_builtins.dedup();
-            load.mocks_any_module |= failure.mocks_any_module;
+        }
+        Err(failure) if !failure.loaded_by_workers_too.is_empty() => {
+            load.loaded_by_workers_too
+                .extend_from_slice(&failure.loaded_by_workers_too);
+            load.loaded_by_workers_too.shared_sort_unstable();
+            load.loaded_by_workers_too.dedup();
         }
         // First: the types that the build brings are not to blame for a file that cannot be read.
         Err(failure)
@@ -1163,6 +1197,7 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
                 load.ways_named_that_nobody_reads.parent,
             ),
             ("takes the run time as any", load.takes_runtime_as_any),
+            ("mocks any module", load.mocks_any_module),
         ]
     };
     let changed: Vec<&str> = (flags(before).iter().zip(flags(after)))
@@ -1174,10 +1209,13 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
         .filter_map(|&function| table::runtime_function(RuntimeFunction(function)))
         .map(|data| format!("{}:{}", data.file, data.export_name))
         .collect::<Vec<_>>();
+    let text_of_member = |member: u32| match builtin_of(member) {
+        Some(builtin) => table::text_of(builtin),
+        None => format!("(member {member})"),
+    };
     let unlocked: Vec<String> = (after.replaced_builtins.iter())
         .filter(|member| before.replaced_builtins.binary_search(member).is_err())
-        .filter_map(|&member| builtin_of(member))
-        .map(table::text_of)
+        .map(|&member| text_of_member(member))
         .collect();
     if !unlocked.is_empty() {
         bun_core::print_errorln!(
@@ -1187,13 +1225,34 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
     }
     let opened: Vec<String> = (after.opened_names.iter())
         .filter(|name| before.opened_names.binary_search(name).is_err())
-        .filter_map(|name| Some((builtin_of(name.holder)?, BStr::new(&name.name))))
-        .map(|(holder, name)| format!("{}.{name}", table::text_of(holder)))
+        .map(|name| format!("{}.{}", text_of_member(name.holder), BStr::new(&name.name)))
         .collect();
     if !opened.is_empty() {
         bun_core::print_errorln!(
             "AOT build starts over | names opened on built-ins: {}",
             opened.join(" "),
+        );
+    }
+    let left_to_loader: Vec<String> = (after.left_to_loader.iter())
+        .filter(|file| !before.left_to_loader.contains(file))
+        .map(|file| BStr::new(file).to_string())
+        .collect();
+    if !left_to_loader.is_empty() {
+        bun_core::print_errorln!(
+            "AOT build starts over | files left to the loader added: {} | {}",
+            left_to_loader.len(),
+            left_to_loader[..left_to_loader.len().min(8)].join(" "),
+        );
+    }
+    let by_workers_too: Vec<String> = (after.loaded_by_workers_too.iter())
+        .filter(|file| !before.loaded_by_workers_too.contains(file))
+        .map(|file| BStr::new(file).to_string())
+        .collect();
+    if !by_workers_too.is_empty() {
+        bun_core::print_errorln!(
+            "AOT build starts over | files of the tests that Workers load read the names of the test runner by their realm: {} | {}",
+            by_workers_too.len(),
+            by_workers_too[..by_workers_too.len().min(8)].join(" "),
         );
     }
     let added = (after.replaced_exports.iter())
@@ -1225,6 +1284,16 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
             examples.join(" "),
         );
     }
+    let names_reason = !(unlocked.is_empty()
+        && opened.is_empty()
+        && left_to_loader.is_empty()
+        && by_workers_too.is_empty()
+        && examples.is_empty()
+        && changed.is_empty()
+        && code(before) == code(after));
+    if !names_reason {
+        bun_core::print_errorln!("AOT build starts over | THIS LOG HAS NO WORD FOR THE REASON");
+    }
     bun_core::print_errorln!(
         "AOT build starts over | in all: replaced exports {} > {} | library modules, exports, functions lacked {:?} > {:?} | {} | {}",
         before.replaced_exports.len(),
@@ -1248,7 +1317,29 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
         return None;
     }
     let threads = options.thread_count().get();
-    let mut found = scan_files_of_tests(&options.entry_points, threads, ReadsLibrary::No, None);
+    let product = match options.aot.only_tests_load_code_from_disk {
+        true => ProductFiles::ReplaceNothing,
+        false => ProductFiles::AreReadAsTestsAre,
+    };
+    // A layer of packages begins at files of packages. What the product imports replaces nothing.
+    let of_product = &options.load.package_files_that_product_imports;
+    let files = options.entry_points.iter();
+    let files = files.filter(|path| of_product.binary_search(path).is_err());
+    let is_test_file: FxHashSet<&[u8]> = (options.load.test_files.iter())
+        .map(Vec::as_slice)
+        .collect();
+    let (test_files, others): (Vec<Vec<u8>>, Vec<Vec<u8>>) = files
+        .cloned()
+        .partition(|path| is_test_file.contains(path.as_slice()));
+    let mut found = scan_files_of_tests(
+        &test_files,
+        &others,
+        &[],
+        threads,
+        ReadsLibrary::No,
+        product,
+        None,
+    );
     found
         .members
         .extend_from_slice(&options.load.replaced_builtins);
@@ -1271,12 +1362,15 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
     found.modules_replaced_in_text.shared_sort_unstable();
     found.modules_replaced_in_text.dedup();
     let spies_on_unknown_objects =
-        options.load.spies_on_unknown_objects || found.text_spies_under_any_name;
+        options.load.spies_on_unknown_objects || found.left_open_by_text != LeftOpenByText::Nothing;
+    let mocks_any_module = options.load.mocks_any_module
+        || found.left_open_by_text == LeftOpenByText::MocksOfAnyModule;
     if found.members == options.load.replaced_builtins
         && found.names_added == options.load.opened_names
         && found.names_spied_in_text == options.load.names_spied_in_text
         && found.modules_replaced_in_text == options.load.modules_replaced_in_text
         && spies_on_unknown_objects == options.load.spies_on_unknown_objects
+        && mocks_any_module == options.load.mocks_any_module
     {
         return None;
     }
@@ -1287,6 +1381,42 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
     options.load.names_spied_in_text = found.names_spied_in_text;
     options.load.modules_replaced_in_text = found.modules_replaced_in_text;
     options.load.spies_on_unknown_objects = spies_on_unknown_objects;
+    options.load.mocks_any_module = mocks_any_module;
+    Some(options)
+}
+
+fn with_builtins_that_starting_worker_writes<'a>(options: &Options<'a>) -> Option<Options<'a>> {
+    let runs_unseen_code = options.aot.loads_code_from_disk || options.can_load_code_at_run_time();
+    if !runs_unseen_code || options.load.runs_tests || options.aot.checks_only {
+        return None;
+    }
+    let mut members = find_what_starting_worker_writes();
+    members.extend_from_slice(&options.load.replaced_builtins);
+    members.shared_sort_unstable();
+    members.dedup();
+    if members == options.load.replaced_builtins {
+        return None;
+    }
+    let all: Vec<usize> = (0..options.entry_points.len()).collect();
+    let mut options = options_with_entry_points(options, &all);
+    options.load.replaced_builtins = members;
+    Some(options)
+}
+
+fn with_builtins_that_adding_matchers_writes<'a>(options: &Options<'a>) -> Option<Options<'a>> {
+    if !options.load.runs_tests || options.aot.checks_only {
+        return None;
+    }
+    let mut members = find_what_adding_matchers_writes();
+    members.extend_from_slice(&options.load.replaced_builtins);
+    members.shared_sort_unstable();
+    members.dedup();
+    if members == options.load.replaced_builtins {
+        return None;
+    }
+    let all: Vec<usize> = (0..options.entry_points.len()).collect();
+    let mut options = options_with_entry_points(options, &all);
+    options.load.replaced_builtins = members;
     Some(options)
 }
 
@@ -1323,6 +1453,10 @@ fn with_what_test_build_learned<'a>(options: &Options<'a>) -> Option<Options<'a>
         .extend_from_slice(&learned.left_to_loader);
     load.left_to_loader.shared_sort_unstable();
     load.left_to_loader.dedup();
+    load.loaded_by_workers_too
+        .extend_from_slice(&learned.loaded_by_workers_too);
+    load.loaded_by_workers_too.shared_sort_unstable();
+    load.loaded_by_workers_too.dedup();
     for below in &learned.loads_below_files_left_to_loader {
         let known = &mut load.loads_below_files_left_to_loader;
         if !known.iter().any(|known| Arc::ptr_eq(known, below)) {
@@ -1359,6 +1493,16 @@ pub fn compile(
     SharedByLoads::begin_build();
     let mut changed: Option<Options<'_>> = with_builtins_that_entry_points_replace(options);
     if let Some(options) = with_what_test_build_learned(changed.as_ref().unwrap_or(options)) {
+        changed = Some(options);
+    }
+    if let Some(options) =
+        with_builtins_that_starting_worker_writes(changed.as_ref().unwrap_or(options))
+    {
+        changed = Some(options);
+    }
+    if let Some(options) =
+        with_builtins_that_adding_matchers_writes(changed.as_ref().unwrap_or(options))
+    {
         changed = Some(options);
     }
     let mut compiled = loop {
@@ -1432,6 +1576,11 @@ fn compile_with_options(
             Some(_) => compile_program(options, ProgramPlace::Only, known, provider, log),
         };
         if took_in_too_much.get() {
+            if logs_stages() {
+                bun_core::print_errorln!(
+                    "AOT build starts over | the load took in too much: the next one takes in no file that a Worker starts from"
+                );
+            }
             load_takes_files_in = false;
             log.msgs.truncate(said_before.0);
             (log.warnings, log.errors) = (said_before.1, said_before.2);
@@ -1464,10 +1613,14 @@ fn compile_with_options(
                         left_out.said.append_to(log);
                         return Ok(compiled);
                     }
-                    Err(found) => left_out.add_worker_files(options, &found),
+                    Err(found) => {
+                        log_worker_files_that_build_starts_over_for(&found);
+                        left_out.add_worker_files(options, &found)
+                    }
                 }
             }
             Err(_) if !of_the_one_program.is_empty() => {
+                log_worker_files_that_build_starts_over_for(&of_the_one_program);
                 left_out.add_worker_files(options, &of_the_one_program)
             }
             Err(failure) if !holds_worker_files => return Err(failure),
@@ -1481,6 +1634,16 @@ fn compile_with_options(
                 {
                     return Err(failure);
                 }
+                if logs_stages() {
+                    let names: Vec<String> = (left_out.names.iter().rev().take(8))
+                        .map(|name| BStr::new(name).to_string())
+                        .collect();
+                    bun_core::print_errorln!(
+                        "AOT build starts over | what Workers start from and is no program is left out: {} in all | {}",
+                        left_out.names.len(),
+                        names.join(" "),
+                    );
+                }
                 options_without_entry_points(options, &left_out.names)
             }
         };
@@ -1490,6 +1653,20 @@ fn compile_with_options(
         remove_program_files_of_further_entry_points(&longer);
         with_worker_files = Some(longer);
     }
+}
+
+fn log_worker_files_that_build_starts_over_for(files: &[WorkerFile]) {
+    if !logs_stages() {
+        return;
+    }
+    let names: Vec<String> = (files.iter().take(8))
+        .map(|file| BStr::new(&file.source_path).to_string())
+        .collect();
+    bun_core::print_errorln!(
+        "AOT build starts over | files that Workers start from become entry points: {} | {}",
+        files.len(),
+        names.join(" "),
+    );
 }
 
 /// The file, or one that it imports, is no program or is not found. What else is wrong with the code that a Worker starts from stops the build, as it does in any entry point.
@@ -1611,6 +1788,8 @@ fn options_with_worker_files<'a>(options: &Options<'a>, files: &[WorkerFile]) ->
         let prefix = &options.paths.module_prefix[..];
         let name = file.embedded_path.strip_prefix(prefix);
         longer.entry_points.push(file.source_path.clone());
+        let added = &mut longer.load.entry_points_added_by_build;
+        added.push(file.source_path.clone());
         let names = &mut longer.paths.entry_point_names;
         names.push(name.unwrap_or(&file.embedded_path).to_vec());
         longer.load.entry_texts.extend(file.entry_text());
@@ -1896,8 +2075,19 @@ fn compile_written_entry_points(
     compile_program(options, ProgramPlace::Only, known, provider, log)
 }
 
+/// `--aot-out`, or for measuring the word `TestRunProgramFile:<path>`: the same for a test run that is built as one program.
+fn program_file_path<'a>(options: &'a Options<'_>) -> Option<&'a [u8]> {
+    let of_test_run = || {
+        let words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS.get_not_empty()?;
+        let mut words = bun_core::strings::split(words, b",");
+        words.find_map(|word| word.strip_prefix(b"TestRunProgramFile:"))
+    };
+    let written = options.aot.ir_output_path.as_deref();
+    written.or_else(|| of_test_run().filter(|_| options.load.runs_tests))
+}
+
 fn remove_program_files_of_further_entry_points(options: &Options<'_>) {
-    if let Some(path) = options.aot.ir_output_path.as_deref() {
+    if let Some(path) = program_file_path(options) {
         for index in 1..options.entry_points.len() {
             let _ = bun_sys::unlink(&ZBox::from_bytes(numbered_program_file(path, index)));
         }
@@ -2143,7 +2333,7 @@ fn compile_programs<'a>(
     build.known_worker_files =
         known_worker_files.map(|known| (known.splits, known.left_out.to_vec()));
     build.takes_in_worker_files = known_worker_files.and_then(|known| known.takes_in);
-    let body_placement = match options.aot.ir_output_path {
+    let body_placement = match program_file_path(options) {
         Some(_) => BodyPlacement::InProgramBytes,
         None => BodyPlacement::External,
     };
@@ -2159,10 +2349,10 @@ fn compile_programs<'a>(
             let (is_one_program, brought_bun_types) =
                 (build.is_one_program, build.brings_bun_types);
             let replaced_builtins = core::mem::take(&mut build.replaced_builtins_spelled);
-            let mocks_any_module = build.packages_mock_any_module;
+            let by_workers_too = core::mem::take(&mut build.loaded_by_workers_too);
             let mut failure = build.finish::<()>(Err(stage), log).unwrap_err();
             failure.replaced_builtins = replaced_builtins;
-            failure.mocks_any_module = mocks_any_module;
+            failure.loaded_by_workers_too = by_workers_too;
             failure.is_one_program = is_one_program;
             failure.brought_bun_types = brought_bun_types;
             return Err(failure);
@@ -2214,6 +2404,9 @@ fn compile_programs<'a>(
         };
         if options.aot.checks_only {
             engine_options.check_only();
+        }
+        if build.stays_in_compiled_files {
+            engine_options.refuse_code_outside_image();
         }
         let own = match (place, programs) {
             (ProgramPlace::OneOfSeveral(index), Some(all)) => {
@@ -2382,9 +2575,9 @@ fn compile_programs<'a>(
             errors_with_bun_types,
             has_early_errors: false,
             replaced_builtins: Vec::new(),
-            mocks_any_module: false,
             left_to_loader: Vec::new(),
             loads_below_files_left_to_loader: None,
+            loaded_by_workers_too: Vec::new(),
         }),
     }
 }
@@ -2457,15 +2650,15 @@ fn fail(
         brought_bun_types: false,
         errors_with_bun_types,
         replaced_builtins: Vec::new(),
-        mocks_any_module: false,
         left_to_loader: Vec::new(),
         loads_below_files_left_to_loader: None,
+        loaded_by_workers_too: Vec::new(),
     }
 }
 
 impl<'a> Build<'a> {
     pub(crate) fn mocks_any_module(&self) -> bool {
-        self.options.load.mocks_any_module
+        self.options.load.mocks_any_module || self.packages_mock_any_module
     }
 
     pub(crate) fn new(
@@ -2507,6 +2700,7 @@ impl<'a> Build<'a> {
             is_preloading: false,
             is_one_program: false,
             replaced_builtins_spelled: Vec::new(),
+            loaded_by_workers_too: Vec::new(),
             packages_mock_any_module: false,
             known_worker_files: None,
             files_of_the_one_program: Vec::new(),
@@ -2514,6 +2708,7 @@ impl<'a> Build<'a> {
             took_in_too_much: false,
             started_workers: StartedWorkers::default(),
             replaced_builtins: ReplacedByTests::default(),
+            stays_in_compiled_files: false,
             brings_bun_types: false,
             has_withdrawn_trust: false,
         }
@@ -2586,6 +2781,7 @@ impl<'a> Build<'a> {
         &mut self,
     ) -> Result<Vec<(ProgramPlace, FrontEndOutput)>, Stage> {
         let mut linked_at = None;
+        let mut steps_behind_link = None;
         let mut outputs = Vec::new();
         let output = self.load_in_new_sessions(AssetReads::FinishedLater, &mut |build, loaded| {
             let application = loaded.project(ProjectId::Application).loaded.files();
@@ -2621,6 +2817,7 @@ impl<'a> Build<'a> {
             build.stop_if_errors(Stage::Lower)?;
             let output = build.link(loaded, bound, units);
             linked_at = Some(Instant::now());
+            steps_behind_link = Some(StepClock::new(Stage::LinkAndEmit, "behind the link"));
             // The host loads what `preload` names into the global of the Worker. An object has that option only in a program that
             // writes a property of its name.
             if starts_workers && matches!(&output, Ok(output) if output.writes_preload) {
@@ -2635,7 +2832,13 @@ impl<'a> Build<'a> {
             outputs.push((build.place, output?));
             Ok(())
         });
+        if let Some(steps) = &mut steps_behind_link {
+            steps.end("what was loaded is let go");
+        }
         drop_thread_caches(self.caches);
+        if let Some(steps) = &mut steps_behind_link {
+            steps.end("the threads' caches are dropped");
+        }
         if let Some(linked_at) = linked_at {
             self.count_time(StatisticId::ReleaseLoadedProjectsNanoseconds, linked_at);
         }
@@ -2659,31 +2862,54 @@ impl<'a> Build<'a> {
         let body_remap = core::mem::take(&mut output.body_remap);
         let in_parallel = self.parallel_runner();
         let started = Instant::now();
+        let mut steps = StepClock::new(Stage::LinkAndEmit, "emit");
         // Emit asks nothing of the sessions, and few threads have something to free.
         let sessions = core::mem::take(&mut self.retired_sessions);
         let runner_of_drops = self.parallel_runner();
-        let writes_program_file = self.options.aot.ir_output_path.is_some();
+        let writes_program_file = program_file_path(self.options).is_some();
         put_types_cut_from_function_texts_into(&mut program, &output.texts);
         // A test run quotes from the files, so nothing moves its pieces.
-        if !self.options.load.runs_tests
-            && let Some((module, fault)) = pieces_printed_in_place::find_fault_in_program(&program)
-        {
-            let path = output
-                .texts
-                .get(ModuleId::new(module))
-                .map(|source| &source.path[..]);
-            let mut message = b"the list of what is printed in place of the text of ".to_vec();
-            message.extend_from_slice(path.unwrap_or_default());
-            message.extend_from_slice(format!(": {fault:?}").as_bytes());
-            self.diagnostics.add_fault_of_emitted_program(message);
-            return Err(Stage::LinkAndEmit);
+        let faults = match self.options.load.runs_tests {
+            true => Vec::new(),
+            false => {
+                let words = &self.options.aot.option_words;
+                let mut lists = (program.modules.iter_mut())
+                    .map(|module| &mut module.positions.text_printed_in_place);
+                if (words.iter()).any(|it| **it == *b"sabotage=ListsOfPiecesEndInAPiece")
+                    && let Some(list) = lists.find(|list| !list.is_empty())
+                {
+                    list.push(1);
+                }
+                pieces_printed_in_place::find_faults_in_program(&program)
+            }
+        };
+        // The list buys the wording of what an error quotes: a fault in one costs the file that, and nobody a build.
+        // Where Bun has assertions it stops the build, so that our tests find it.
+        for (module, fault) in faults {
+            let source = output.texts.get(ModuleId::new(module));
+            let path = source.map_or(&[][..], |source| &source.path[..]);
+            if cfg!(debug_assertions) {
+                let message = [path, b": ", fault.to_string().as_bytes()].concat();
+                self.diagnostics.add_fault_of_emitted_program(message);
+                return Err(Stage::LinkAndEmit);
+            }
+            let fault = fault.to_string();
+            self.diagnostics
+                .add_text_quoted_as_written(path, fault.as_bytes());
+            program.modules[module]
+                .positions
+                .text_printed_in_place
+                .clear();
         }
+        steps.end("before the program is written");
         let ((), emitted) = run_beside(
             &self.beside_runner(),
             move || {
+                let mut steps = StepClock::new(Stage::LinkAndEmit, "emit, beside the writing");
                 for session in sessions {
                     session.drop_in_parallel(&runner_of_drops);
                 }
+                steps.end("the sessions are dropped");
             },
             || match body_placement {
                 BodyPlacement::InProgramBytes => {
@@ -2699,8 +2925,10 @@ impl<'a> Build<'a> {
                 }
             },
         );
+        steps.end("the program is written, the sessions are dropped");
         self.leftovers.push(Box::new(program));
         drop_thread_caches(self.caches);
+        steps.end("the threads' caches are dropped");
         self.count_time(StatisticId::EmitNanoseconds, started);
         match emitted {
             Ok(bytes) => {
@@ -2717,7 +2945,7 @@ impl<'a> Build<'a> {
     }
 
     fn write_program_file(&mut self, bytes: &ProgramBytes) -> Result<(), Stage> {
-        let Some(path) = self.options.aot.ir_output_path.as_deref() else {
+        let Some(path) = program_file_path(self.options) else {
             return Ok(());
         };
         // The program of the first entry point has the path as it is written.
@@ -2782,6 +3010,7 @@ impl<'a> Build<'a> {
         WHOLE_ENGINE_RUNS.set(WHOLE_ENGINE_RUNS.get() + u64::from(!has_ended_behind_flow_analysis));
 
         let returned = Instant::now();
+        log_unseen_code(&engine);
         self.statistics.add_values(engine.statistics());
         self.diagnostics.add_engine_records(
             &engine,

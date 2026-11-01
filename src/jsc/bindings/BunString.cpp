@@ -211,7 +211,7 @@ namespace Bun {
 
 static UniquedStringImpl* nameOfProgram(JSC::VM& vm, const EncodedSlice& text)
 {
-    if (!text.ptr || Zig::isTaggedUTF16Ptr(text.ptr) || Zig::isTaggedUTF8Ptr(text.ptr))
+    if (!vm.hasCompiledCode() || !text.ptr || Zig::isTaggedUTF16Ptr(text.ptr) || Zig::isTaggedUTF8Ptr(text.ptr))
         return nullptr;
     return JSC::AOT::PropertyWalk::tryFindName(vm, { byteCast<Latin1Character>(Zig::untag(text.ptr)), text.len });
 }

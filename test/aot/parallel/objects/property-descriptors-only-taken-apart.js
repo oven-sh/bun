@@ -5,7 +5,7 @@
 // CALLS- valueIfThere operationAOTGetOwnPropertyDescriptor\b
 // CALLS+ handedOn operationAOTGetOwnPropertyDescriptor\b
 // CALLS+ written operationAOTGetOwnPropertyDescriptor\b
-// CALLS+ joined operationAOTGetOwnPropertyDescriptor\b
+// CALLS- joined operationAOTGetOwnPropertyDescriptor\b
 function show(value) {
   if (typeof value === "function") return "function " + value.name;
   if (typeof value === "symbol") return value.toString();

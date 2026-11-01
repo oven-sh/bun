@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { isHardened } from "./hardened";
 import { withoutCoreDump } from "./harness/commands";
 import { run as runProcess } from "./harness/run";
-import { beforeAll, describe, test } from "./supported";
+// One by one: later cases read the list that the run of an earlier one wrote.
+import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 // An executable built with --aot-validate compares what each native function does with what the table of built-ins says of it. An entry of the table
 // is checked only as far as the calls go that a test makes: a call that the function refuses shows nothing of what it writes. So where

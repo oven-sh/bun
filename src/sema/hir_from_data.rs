@@ -22,6 +22,7 @@ pub enum DataModule<'a> {
         default: &'a DataValue<'a>,
         exports_keys: bool,
     },
+    MarkedDefault(&'a DataValue<'a>),
     RuntimeRequire {
         specifier: Atom,
         loader_type: Option<Atom>,

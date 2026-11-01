@@ -1,0 +1,23 @@
+# The same where the pass numbers the values anew: a block that nothing jumps to goes, and the gaps in the numbers are closed.
+# The call behind it has another number behind the pass than in front of it.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass CompactBlocks
+# CHECK: outcome: Changed
+# CHECK-NOT: = Call v1
+# CHECK: v2{{*}} = Call v0
+# CHECK: v3{{*}} = Call v0, -, v0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="aBlockThatNothingJumpsTo" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b2()
+  b1():
+    v2 = Call v1, -
+    v3 = Call v1, -, v2
+    Return v3
+  b2():
+    v4 = Call v0, -
+    v5 = Call v0, -, v0
+    Return v5
+}

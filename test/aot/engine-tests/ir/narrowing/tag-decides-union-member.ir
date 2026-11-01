@@ -136,7 +136,7 @@ function f5 module=m0 position=4314 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK-NEXT: Int64 b@36 = Extract(b@35, <<0, v3:NewObject)
 # CHECK-NEXT: Void b@39 = Fence(Fence|Reads:jscRoot, v3:NewObject)
 # CHECK-NEXT: Int32 b@40 = Const32(1, v5:Integer)
-# CHECK-NEXT: Void b@41 = Store8($1(b@40), b@36, offset = 16, ControlDependent|Writes:ObjectFields.0, v6:PutSlot)
+# CHECK-NEXT: Void b@41 = Store($1(b@40), b@36, offset = 16, ControlDependent|Writes:ObjectFields.0, v6:PutSlot)
 # CHECK-NEXT: Void b@42 = Return(b@36, Terminal)
 # CHECK-NEXT: BB#5: ; frequency = 0.001952
 # CHECK-NEXT: Predecessors: #0, #1

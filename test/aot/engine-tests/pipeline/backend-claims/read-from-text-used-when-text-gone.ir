@@ -626,7 +626,7 @@ function f10 name="next" module=m1 position=25 kind=Method role=Library flags=[H
 runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # -- generated: f0 textOf madeFarDown digested ends whereAsked onEveryTurn
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f7 callPosition=2778 module=m0}, {callee=f6 callPosition=2718 module=m0}, {callee=f6 callPosition=2682 module=m0}, {callee=f5 callPosition=2635 module=m0}, {callee=f4 callPosition=2584 module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f16 callPosition=2778 module=m0}, {callee=f6 callPosition=2718 module=m0}, {callee=f6 callPosition=2682 module=m0}, {callee=f15 callPosition=2635 module=m0}, {callee=f14 callPosition=2584 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Array<string> = NewArray contents=string allocationSite=0
 # CHECK-NEXT: v1: Array<string, proven, pristine[Storage, Names]> = AssumeType v0 provenType=Array<string, proven, pristine[Storage, Names]>
@@ -673,37 +673,34 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: v36: int[1, 20000] = Upcast v33 castType=anything
 # CHECK-NEXT: v37: fact = Specified
 # CHECK-NEXT: v38: int[1, 20000] = AssumeType v36, v37 provenType=int
-# CHECK-NEXT: v39: 1 = Integer integer=1
-# CHECK-NEXT: v40: 0 = Integer
-# CHECK-NEXT: v41: string = CallDirect v40, v38, v39, v16 function=f4 accessSite=31 [isNeverInlined] @1102:5 tail
-# CHECK-NEXT: v42: undefined = CallBuiltin -, v38, v41 overload=ConsoleLog/0 accessSite=3
-# CHECK-NEXT: v43: 3 = Integer integer=3
-# CHECK-NEXT: v44: 0 = Integer
-# CHECK-NEXT: v45: string = CallDirect v44, v38, v43, v16 function=f5 accessSite=38 [isNeverInlined] @1436:4 tail
-# CHECK-NEXT: v46: undefined = CallBuiltin -, v38, v45 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v47: 4 = Integer integer=4
-# CHECK-NEXT: v48: true = Boolean boolean=true
-# CHECK-NEXT: v49: 0 = Integer
-# CHECK-NEXT: v50: number = CallDirect v49, v38, v47, v16, v48 function=f6 accessSite=47 [isNeverInlined] @1821:3 tail
-# CHECK-NEXT: v51: 5 = Integer integer=5
-# CHECK-NEXT: v52: false = Boolean
-# CHECK-NEXT: v53: 0 = Integer
-# CHECK-NEXT: v54: number = CallDirect v53, v38, v51, v16, v52 function=f6 accessSite=47 [isNeverInlined] @1821:2 tail
-# CHECK-NEXT: v55: undefined = CallBuiltin -, v38, v50, v54 overload=ConsoleLog/0 accessSite=12
-# CHECK-NEXT: v56: 6 = Integer integer=6
-# CHECK-NEXT: v57: 0 = Integer
-# CHECK-NEXT: v58: number = CallDirect v57, v38, v56, v16 function=f7 accessSite=53 [isNeverInlined] @2180:1 tail
-# CHECK-NEXT: v59: undefined = CallBuiltin -, v38, v58 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: v39: 0 = Integer
+# CHECK-NEXT: v40: string = CallDirect v39, v38, v16 function=f14 accessSite=31 [isNeverInlined] @1102:5 tail
+# CHECK-NEXT: v41: undefined = CallBuiltin -, v38, v40 overload=ConsoleLog/0 accessSite=3
+# CHECK-NEXT: v42: 0 = Integer
+# CHECK-NEXT: v43: string = CallDirect v42, v38, v16 function=f15 accessSite=38 [isNeverInlined] @1436:4 tail
+# CHECK-NEXT: v44: undefined = CallBuiltin -, v38, v43 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v45: 4 = Integer integer=4
+# CHECK-NEXT: v46: true = Boolean boolean=true
+# CHECK-NEXT: v47: 0 = Integer
+# CHECK-NEXT: v48: number = CallDirect v47, v38, v45, v16, v46 function=f6 accessSite=47 [isNeverInlined] @1821:3 tail
+# CHECK-NEXT: v49: 5 = Integer integer=5
+# CHECK-NEXT: v50: false = Boolean
+# CHECK-NEXT: v51: 0 = Integer
+# CHECK-NEXT: v52: number = CallDirect v51, v38, v49, v16, v50 function=f6 accessSite=47 [isNeverInlined] @1821:2 tail
+# CHECK-NEXT: v53: undefined = CallBuiltin -, v38, v48, v52 overload=ConsoleLog/0 accessSite=12
+# CHECK-NEXT: v54: 0 = Integer
+# CHECK-NEXT: v55: number = CallDirect v54, v38, v16 function=f16 accessSite=53 [isNeverInlined] @2180:1 tail
+# CHECK-NEXT: v56: undefined = CallBuiltin -, v38, v55 overload=ConsoleLog/0 accessSite=16
 # CHECK-NEXT: Jump -> next b4(v35)
 # CHECK-NEXT: b7():
 # CHECK-NEXT: Jump -> next b1(v13)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v60: undefined = Undefined
-# CHECK-NEXT: Return v60
+# CHECK-NEXT: v57: undefined = Undefined
+# CHECK-NEXT: Return v57
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="textOf"
-# CHECK: module=m0 position=363 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int|whole, v1: int, v2: int):
+# CHECK: module=m0 position=363 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=int|whole}, {type=int[0, 23]}, {type=int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int|whole, v1: int[0, 23], v2: int):
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: v4: boolean = TypeTest v0 testedType=i32
 # CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b4()
@@ -717,9 +714,9 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: b3(v10: int[0, 2147483646]):
 # CHECK-NEXT: v11: 7 = Integer integer=7
 # CHECK-NEXT: v12: int[0, 15032385522] = Mul v10, v11
-# CHECK-NEXT: v13: int|whole = Add v1, v12
+# CHECK-NEXT: v13: int[0, 15032385545] = Add v1, v12
 # CHECK-NEXT: v14: 26 = Integer integer=26
-# CHECK-NEXT: v15: int|whole = Mod v13, v14
+# CHECK-NEXT: v15: int[0, 25] = Mod v13, v14
 # CHECK-NEXT: v16: int|whole = Add v2, v15
 # CHECK-NEXT: v17: string = CallBuiltin -, v16 overload=StringFromCharCode/0 accessSite=17
 # CHECK-NEXT: StringBuilderAppend v6, v17
@@ -735,9 +732,9 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: b6() frequency=Unlikely:
 # CHECK-NEXT: v24: 7 = Integer integer=7
 # CHECK-NEXT: v25: int|whole ~ 0 = Mul v21, v24
-# CHECK-NEXT: v26: int|whole = Add v1, v25
+# CHECK-NEXT: v26: int|whole ~ int[0, 23] = Add v1, v25
 # CHECK-NEXT: v27: 26 = Integer integer=26
-# CHECK-NEXT: v28: int|whole = Mod v26, v27
+# CHECK-NEXT: v28: int|whole ~ int[0, 23] = Mod v26, v27
 # CHECK-NEXT: v29: int|whole = Add v2, v28
 # CHECK-NEXT: v30: string = CallBuiltin -, v29 overload=StringFromCharCode/0 accessSite=17
 # CHECK-NEXT: StringBuilderAppend v20, v30
@@ -748,8 +745,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: Return v34
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="madeFarDown"
-# CHECK: module=m0 position=525 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int}, {type=int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=599 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: int|whole, v1: int, v2: int, v3: int):
+# CHECK: module=m0 position=525 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int[1, 6]}, {type=int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=599 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: int|whole, v1: int, v2: int[1, 6], v3: int):
 # CHECK-NEXT: Jump -> next b1(v0)
 # CHECK-NEXT: b1(v4: int|whole):
 # CHECK-NEXT: LoopHint [replacesTailCalls]
@@ -784,97 +781,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: Jump -> next b1(v24)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="digested"
-# CHECK: module=m0 position=1033 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int}, {type=int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=1345 module=m0}, {callee=f2 callPosition=1156 module=m0}] {
-# CHECK-NEXT: b0(v0: int|whole, v1: int, v2: int, v3: int):
-# CHECK-NEXT: Jump -> next b1(v0)
-# CHECK-NEXT: b1(v4: int|whole):
-# CHECK-NEXT: LoopHint [replacesTailCalls]
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: boolean = Greater v4, v6
-# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: int|whole = Sub v4, v8
-# CHECK-NEXT: Jump -> next b1(v9)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v10: 299 = Integer integer=299
-# CHECK-NEXT: v11: string = CallDirect v10, v1, v2, v3 function=f2 accessSite=19 [isNeverInlined] @640:2 tail
-# CHECK-NEXT: v12: 0 = Integer
-# CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: Jump -> next b4(v12, v13)
-# CHECK-NEXT: b4(v14: int[0, 1000000006], v15: int[0, 2147483647]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v17: int[0, 2147483647] = GetStringLength v11
-# CHECK-NEXT: v18: boolean = Less v15, v17
-# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v19: int[0, 2147483646]):
-# CHECK-NEXT: v20: 31 = Integer integer=31
-# CHECK-NEXT: v21: int[0, 31000000186] = Mul v14, v20
-# CHECK-NEXT: v22: int[0, 65535] = GetStringCodeUnit v11, v19
-# CHECK-NEXT: v23: int[0, 31000065721] = Add v21, v22
-# CHECK-NEXT: v24: 1000000007 = Integer integer=1000000007
-# CHECK-NEXT: v25: int[0, 1000000006] = Mod v23, v24
-# CHECK-NEXT: v26: int[1, 2147483647] = Increment v19
-# CHECK-NEXT: Jump -> next b4(v25, v26)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v27: ":" = String string=":"
-# CHECK-NEXT: v28: " " = String string=" "
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: v30: number = CallDirect v29, v1, v3 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
-# CHECK-NEXT: v31: string = Strcat v17, v27, v14, v28, v30
-# CHECK-NEXT: Return v31
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1033 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=1}, {type=int}] results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="ends"
-# CHECK: module=m0 position=1371 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int}, {type=int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=1655 module=m0}, {callee=f2 callPosition=1486 module=m0}] {
-# CHECK-NEXT: b0(v0: int|whole, v1: int, v2: int, v3: int):
-# CHECK-NEXT: Jump -> next b1(v0)
-# CHECK-NEXT: b1(v4: int|whole):
-# CHECK-NEXT: LoopHint [replacesTailCalls]
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: boolean = Greater v4, v6
-# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: int|whole = Sub v4, v8
-# CHECK-NEXT: Jump -> next b1(v9)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v10: 299 = Integer integer=299
-# CHECK-NEXT: v11: string = CallDirect v10, v1, v2, v3 function=f2 accessSite=19 [isNeverInlined] @640:2 tail
-# CHECK-NEXT: v12: 0 = Integer
-# CHECK-NEXT: v13: int[0, 2147483647] = GetStringLength v11
-# CHECK-NEXT: v14: boolean = Less v12, v13
-# CHECK-NEXT: Branch v14 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v15: int[0, 65535] = GetStringCodeUnit v11, v12
-# CHECK-NEXT: Jump -> next b6(v15)
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v16: whole = Double number=NaN
-# CHECK-NEXT: Jump -> next b6(v16)
-# CHECK-NEXT: b6(v17: int[0, 65535]|whole ~ int[0, 65535]):
-# CHECK-NEXT: v18: 1 = Integer integer=1
-# CHECK-NEXT: v19: int[-1, 2147483646] = Sub v13, v18
-# CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: v21: int[0, 4294967295] = URShift v19, v20
-# CHECK-NEXT: v22: boolean = Less v21, v13
-# CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v23: int[0, 2147483646]):
-# CHECK-NEXT: v24: int[0, 65535] = GetStringCodeUnit v11, v23
-# CHECK-NEXT: Jump -> next b9(v24)
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v25: whole = Double number=NaN
-# CHECK-NEXT: Jump -> next b9(v25)
-# CHECK-NEXT: b9(v26: int[0, 65535]|whole ~ int[0, 65535]):
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: number = CallDirect v27, v1, v3 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
-# CHECK-NEXT: v29: " " = String string=" "
-# CHECK-NEXT: v30: " " = String string=" "
-# CHECK-NEXT: v31: " " = String string=" "
-# CHECK-NEXT: v32: string = Strcat v17, v29, v26, v30, v13, v31, v28
-# CHECK-NEXT: Return v32
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1371 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=3}, {type=int}] results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="whereAsked"
-# CHECK: module=m0 position=1741 flags=[HasExplicitName] length=5 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int}, {type=int}, {type=boolean}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=2015 module=m0}, {callee=f2 callPosition=1886 module=m0}] {
-# CHECK-NEXT: b0(v0: int|whole, v1: int ~ i32, v2: int, v3: int, v4: boolean):
+# CHECK: module=m0 position=1741 flags=[HasExplicitName] length=5 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int[4, 5]}, {type=int}, {type=boolean}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=2015 module=m0}, {callee=f2 callPosition=1886 module=m0}] {
+# CHECK-NEXT: b0(v0: int|whole, v1: int ~ i32, v2: int[4, 5], v3: int, v4: boolean):
 # CHECK-NEXT: Jump -> next b1(v0)
 # CHECK-NEXT: b1(v5: int|whole):
 # CHECK-NEXT: LoopHint [replacesTailCalls]
@@ -935,8 +847,102 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: Return v40
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="onEveryTurn"
-# CHECK: module=m0 position=2108 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int}, {type=int}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=2400 module=m0}, {callee=f2 callPosition=2237 module=m0}] {
-# CHECK-NEXT: b0(v0: int|whole, v1: int, v2: int, v3: int):
+# CHECK: module=m0 position=2108 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=6}, {type=int}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="digested"
+# CHECK: module=m0 position=1033 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4 parameterMap=[{original=0}, {original=1}, {original=3}]} inlineFrames=[{}, {callee=f3 callPosition=1345 module=m0}, {callee=f2 callPosition=1156 module=m0}] {
+# CHECK-NEXT: b0(v0: int|whole, v1: int, v3: int):
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b1(v0)
+# CHECK-NEXT: b1(v4: int|whole):
+# CHECK-NEXT: LoopHint [replacesTailCalls]
+# CHECK-NEXT: v6: 0 = Integer
+# CHECK-NEXT: v7: boolean = Greater v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: v9: int|whole = Sub v4, v8
+# CHECK-NEXT: Jump -> next b1(v9)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v10: 299 = Integer integer=299
+# CHECK-NEXT: v11: string = CallDirect v10, v1, v2, v3 function=f2 accessSite=19 [isNeverInlined] @640:2 tail
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: 0 = Integer
+# CHECK-NEXT: Jump -> next b4(v12, v13)
+# CHECK-NEXT: b4(v14: int[0, 1000000006], v15: int[0, 2147483647]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v17: int[0, 2147483647] = GetStringLength v11
+# CHECK-NEXT: v18: boolean = Less v15, v17
+# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: b5(v19: int[0, 2147483646]):
+# CHECK-NEXT: v20: 31 = Integer integer=31
+# CHECK-NEXT: v21: int[0, 31000000186] = Mul v14, v20
+# CHECK-NEXT: v22: int[0, 65535] = GetStringCodeUnit v11, v19
+# CHECK-NEXT: v23: int[0, 31000065721] = Add v21, v22
+# CHECK-NEXT: v24: 1000000007 = Integer integer=1000000007
+# CHECK-NEXT: v25: int[0, 1000000006] = Mod v23, v24
+# CHECK-NEXT: v26: int[1, 2147483647] = Increment v19
+# CHECK-NEXT: Jump -> next b4(v25, v26)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v27: ":" = String string=":"
+# CHECK-NEXT: v28: " " = String string=" "
+# CHECK-NEXT: v29: 0 = Integer
+# CHECK-NEXT: v30: number = CallDirect v29, v1, v3 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
+# CHECK-NEXT: v31: string = Strcat v17, v27, v14, v28, v30
+# CHECK-NEXT: Return v31
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="ends"
+# CHECK: module=m0 position=1371 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=0}, {original=1}, {original=3}]} inlineFrames=[{}, {callee=f3 callPosition=1655 module=m0}, {callee=f2 callPosition=1486 module=m0}] {
+# CHECK-NEXT: b0(v0: int|whole, v1: int, v3: int):
+# CHECK-NEXT: v2: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b1(v0)
+# CHECK-NEXT: b1(v4: int|whole):
+# CHECK-NEXT: LoopHint [replacesTailCalls]
+# CHECK-NEXT: v6: 0 = Integer
+# CHECK-NEXT: v7: boolean = Greater v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: v9: int|whole = Sub v4, v8
+# CHECK-NEXT: Jump -> next b1(v9)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v10: 299 = Integer integer=299
+# CHECK-NEXT: v11: string = CallDirect v10, v1, v2, v3 function=f2 accessSite=19 [isNeverInlined] @640:2 tail
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: int[0, 2147483647] = GetStringLength v11
+# CHECK-NEXT: v14: boolean = Less v12, v13
+# CHECK-NEXT: Branch v14 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v15: int[0, 65535] = GetStringCodeUnit v11, v12
+# CHECK-NEXT: Jump -> next b6(v15)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v16: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b6(v16)
+# CHECK-NEXT: b6(v17: int[0, 65535]|whole ~ int[0, 65535]):
+# CHECK-NEXT: v18: 1 = Integer integer=1
+# CHECK-NEXT: v19: int[-1, 2147483646] = Sub v13, v18
+# CHECK-NEXT: v20: 0 = Integer
+# CHECK-NEXT: v21: int[0, 4294967295] = URShift v19, v20
+# CHECK-NEXT: v22: boolean = Less v21, v13
+# CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v23: int[0, 2147483646]):
+# CHECK-NEXT: v24: int[0, 65535] = GetStringCodeUnit v11, v23
+# CHECK-NEXT: Jump -> next b9(v24)
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v25: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b9(v25)
+# CHECK-NEXT: b9(v26: int[0, 65535]|whole ~ int[0, 65535]):
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: number = CallDirect v27, v1, v3 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
+# CHECK-NEXT: v29: " " = String string=" "
+# CHECK-NEXT: v30: " " = String string=" "
+# CHECK-NEXT: v31: " " = String string=" "
+# CHECK-NEXT: v32: string = Strcat v17, v29, v26, v30, v13, v31, v28
+# CHECK-NEXT: Return v32
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="onEveryTurn"
+# CHECK: module=m0 position=2108 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=int}, {type=int}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=0}, {original=1}, {original=3}]} inlineFrames=[{}, {callee=f3 callPosition=2400 module=m0}, {callee=f2 callPosition=2237 module=m0}] {
+# CHECK-NEXT: b0(v0: int|whole, v1: int, v3: int):
+# CHECK-NEXT: v2: 6 = Integer integer=6
 # CHECK-NEXT: Jump -> next b1(v0)
 # CHECK-NEXT: b1(v4: int|whole):
 # CHECK-NEXT: LoopHint [replacesTailCalls]

@@ -564,9 +564,9 @@ function f7 name="Plain" module=m0 position=545 kind=BaseConstructor flags=[HasN
   b0(v0: anything, v1: boolean):
     Jump -> next b1() @545
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @505
-    v3 = NewObject v2 layout=L0 @505
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @505
+    v2 = GetConstructPrototype v0 layout=L0 @545
+    v3 = NewObject v2 layout=L0 @545
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @545
     v5 = CallDirect v4 function=f15 @545
     v6 = ToBoolean v1 @571
     Branch v6 -> taken b2(| 0), notTaken b4(| 0) @571
@@ -616,9 +616,9 @@ function f9 name="Hidden" module=m0 position=873 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: boolean):
     Jump -> next b1() @873
   b1():
-    v2 = GetConstructPrototype v0 layout=L1 @832
-    v3 = NewObject v2 layout=L1 @832
-    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @832
+    v2 = GetConstructPrototype v0 layout=L1 @873
+    v3 = NewObject v2 layout=L1 @873
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @873
     v5 = CallDirect v4 function=f16 @873
     v6 = ToBoolean v1 @899
     Branch v6 -> taken b2(| 0), notTaken b4(| 0) @899
@@ -668,9 +668,9 @@ function f11 name="PlainGuest" module=m0 position=1080 kind=BaseConstructor flag
   b0(v0: anything, v1: boolean):
     Jump -> next b1() @1080
   b1():
-    v2 = GetConstructPrototype v0 layout=L2 @1035
-    v3 = NewObject v2 layout=L2 @1035
-    v4 = Convert v3 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1035
+    v2 = GetConstructPrototype v0 layout=L2 @1080
+    v3 = NewObject v2 layout=L2 @1080
+    v4 = Convert v3 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1080
     v5 = CallDirect v4 function=f17 @1080
     v6 = ToBoolean v1 @1106
     Branch v6 -> taken b2(| 0), notTaken b4(| 0) @1106
@@ -720,9 +720,9 @@ function f13 name="HiddenGuest" module=m0 position=1416 kind=BaseConstructor fla
   b0(v0: anything, v1: boolean):
     Jump -> next b1() @1416
   b1():
-    v2 = GetConstructPrototype v0 layout=L3 @1370
-    v3 = NewObject v2 layout=L3 @1370
-    v4 = Convert v3 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1370
+    v2 = GetConstructPrototype v0 layout=L3 @1416
+    v3 = NewObject v2 layout=L3 @1416
+    v4 = Convert v3 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1416
     v5 = CallDirect v4 function=f18 @1416
     v6 = ToBoolean v1 @1442
     Branch v6 -> taken b2(| 0), notTaken b4(| 0) @1442

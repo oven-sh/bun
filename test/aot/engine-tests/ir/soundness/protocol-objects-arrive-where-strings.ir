@@ -89,5 +89,5 @@ function f1 name="main" module=m0 position=93 flags=[HasExplicitName] thisType={
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@10: dereferenceableBytes = 409600
 # CHECK-NEXT: b@19: dereferenceableBytes = 8
-# CHECK-NEXT: b@24: dereferenceableBytes = 8
+# CHECK-NEXT: b@24: dereferenceableBytes = 16
 # CHECK-NEXT: end of function f1

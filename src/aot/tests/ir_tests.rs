@@ -39,6 +39,8 @@ const UPDATE_VARIABLE: &str = "AOT_IR_UPDATE";
 const SHARE_VARIABLE: &str = "AOT_IR_SHARE";
 /// The program sets it for the copies that it starts: a copy runs the files whose numbers it reads, a line each.
 const READS_FILE_NUMBERS_VARIABLE: &str = "AOT_IR_READS_FILE_NUMBERS";
+/// libtest's own variable. Under `-Z panic-abort-tests` libtest runs each test in a subprocess with a null stdin, unless this names the test.
+const SECONDARY_TEST_INVOKER_VARIABLE: &str = "__RUST_TEST_INVOKE";
 /// What a copy prints behind the lines of a file.
 const END_OF_FILE_MARK: &str = "DONE";
 const PROJECT_FILE: &str = "tsconfig.json";
@@ -236,6 +238,7 @@ impl ProgramCopy {
         let mut process = Process::new(&program)
             .args([area, "--exact", "--nocapture", "--test-threads=1"])
             .env(READS_FILE_NUMBERS_VARIABLE, "1")
+            .env(SECONDARY_TEST_INVOKER_VARIABLE, area)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -602,8 +605,10 @@ fn run_test_text(path: &Path, text: &str) -> TestOutcome {
         None => Project::of_file(path),
     };
     let outcomes = run_all(&file, &project, &mut outcome.failures);
+    let roots = [tree.as_ref().map(|tree| tree.0.clone()), Some(test_root())];
     if std::env::var_os(UPDATE_VARIABLE).is_some()
-        && let Some(updated) = write_generated_lines(text, &file, &outcomes)
+        && !generated_lines_match(text, &file, &outcomes)
+        && let Some(updated) = write_generated_lines(text, &file, &outcomes, &roots)
     {
         if let Err(error) = std::fs::write(path, &updated) {
             return fail_whole_file(format!("cannot be written: {error}"));
@@ -626,6 +631,36 @@ fn run_test_text(path: &Path, text: &str) -> TestOutcome {
     }
     outcome.failures.sort_by_key(|failure| failure.line);
     outcome
+}
+
+/// False if nothing is written below `GENERATED` yet.
+fn generated_lines_match(text: &str, file: &TestFile, outcomes: &[Option<CommandOutcome>]) -> bool {
+    let Some(generated) = &file.generated else {
+        return true;
+    };
+    let mut written = text.lines().skip(generated.line as usize);
+    if written.all(|line| line.trim().is_empty()) {
+        return false;
+    }
+    file.runs.iter().zip(outcomes).all(|(run, outcome)| {
+        let Some(Ok(result)) = outcome else {
+            return true;
+        };
+        let lines = file.check_lines_for(&run.prefix);
+        match_check_lines(lines, &hide_function_texts(&result.output)).is_ok()
+    })
+}
+
+const ROOT_PLACEHOLDER: char = '\u{e000}';
+
+fn replace_root_paths(output: &str, roots: &[Option<PathBuf>]) -> String {
+    let mut replaced = output.to_owned();
+    for root in roots.iter().flatten() {
+        if let Some(root) = root.to_str().filter(|root| !root.is_empty()) {
+            replaced = replaced.replace(root, &String::from(ROOT_PLACEHOLDER));
+        }
+    }
+    replaced
 }
 
 fn is_token_byte(byte: u8) -> bool {
@@ -700,7 +735,8 @@ fn pattern_of(line: &str, ids: &mut Vec<String>) -> String {
             continue;
         }
         // The two marks of a pattern, where the text has them.
-        match rest.starts_with(b"{{") || rest.starts_with(b"[[") {
+        let is_root = line.trim()[at..].starts_with(ROOT_PLACEHOLDER);
+        match is_root || rest.starts_with(b"{{") || rest.starts_with(b"[[") {
             true => pattern.push_str("{{*}}"),
             false => pattern.push_str(
                 &line.trim()[at..]
@@ -765,6 +801,7 @@ fn write_generated_lines(
     text: &str,
     file: &TestFile,
     outcomes: &[Option<CommandOutcome>],
+    roots: &[Option<PathBuf>],
 ) -> Option<String> {
     let generated = file.generated.as_ref()?;
     let kept = text.split_inclusive('\n').take(generated.line as usize);
@@ -774,7 +811,7 @@ fn write_generated_lines(
     }
     for (run, outcome) in file.runs.iter().zip(outcomes) {
         if let Some(Ok(result)) = outcome {
-            let output = hide_function_texts(&result.output);
+            let output = replace_root_paths(&hide_function_texts(&result.output), roots);
             generate_check_lines(&run.prefix, &output, &generated.functions, &mut updated);
         }
     }
@@ -1329,6 +1366,35 @@ mod tests {
             "x=[[f_0]] position={{*}} text={{*}} casts={{*}}[{{*}}{a}}]] L2.b"
         );
         assert!(support::check_lines::parse_check_pattern(&pattern).is_ok());
+    }
+
+    #[test]
+    fn generated_pattern_replaces_root_paths() {
+        let roots = [Some(PathBuf::from("/tmp/bun-aot-ir-71-4")), None];
+        let output = "v6 = String string=\"/tmp/bun-aot-ir-71-4/main.cjs\" @12";
+        let pattern = pattern_of(&replace_root_paths(output, &roots), &mut Vec::new());
+        assert_eq!(pattern, "v6 = String string=\"{{*}}/main.cjs\"");
+        assert!(support::check_lines::parse_check_pattern(&pattern).is_ok());
+    }
+
+    fn outcome_that_prints(output: &str) -> Vec<Option<CommandOutcome>> {
+        let result = CommandResult {
+            output: output.to_owned(),
+            ..CommandResult::default()
+        };
+        vec![Some(Ok(result))]
+    }
+
+    #[test]
+    fn matching_generated_lines_are_not_rewritten() {
+        let head = "// RUN: lower\nf();\n// GENERATED: *\n";
+        let printed =
+            outcome_that_prints("function f7 name=\"a\" {\n  b0():\n    Return v0 @3\n}\n");
+        let matches = |text: &str| generated_lines_match(text, &parse_test_file(text), &printed);
+        assert!(matches(&format!("{head}// CHECK: Return v0\n")));
+        assert!(!matches(&format!("{head}// CHECK: Return v1\n")));
+        assert!(!matches(head));
+        assert!(matches("// RUN: lower\nf();\n// CHECK: Return v1\n"));
     }
 
     #[test]

@@ -137,11 +137,11 @@ function f2 name="Server" module=m0 position=213 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @213
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @207
-    v2 = NewObject v1 layout=L0 @207
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @207
-    v4 = CallDirect v3 function=f4 @207
-    Return v3 @207
+    v1 = GetConstructPrototype v0 layout=L0 @213
+    v2 = NewObject v1 layout=L0 @213
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @213
+    v4 = CallDirect v3 function=f4 @213
+    Return v3 @213
 }
 function f3 name="serve" module=m0 position=250 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0 site=w4} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0):

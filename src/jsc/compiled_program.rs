@@ -50,6 +50,8 @@ unsafe extern "C" {
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__isCompiledProgramFileInSomeForm(path: &bun_core::String) -> bool;
     safe fn Bun__AOT__willRunEntryPointAgain(global: &JSGlobalObject, path: &bun_core::String);
+    safe fn Bun__AOT__willRunPreloads(global: &JSGlobalObject);
+    safe fn Bun__AOT__didRunPreloads(global: &JSGlobalObject);
     safe fn Bun__AOT__mayHoldPathStartingWith(start: &bun_core::String) -> bool;
     safe fn Bun__AOT__isLeftToCodeOutsideImage(
         specifier: &bun_core::String,
@@ -87,6 +89,10 @@ unsafe extern "C" {
         code: crate::ErrCode,
         path: &bun_core::String,
     ) -> JSValue;
+    safe fn Bun__AOT__letsTestRunLoadAddon(
+        global: &JSGlobalObject,
+        path: &bun_core::String,
+    ) -> bool;
 }
 
 #[cfg(bun_locked_environment)]
@@ -136,10 +142,10 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     }
 }
 
-/// BunCompiledModules.cpp. Zero: there is no such file.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__AOT__stampOfFile(path: &bun_core::String) -> u64 {
-    let Ok(stat) = bun_sys::stat(&bun_core::ZBox::from_bytes(path.to_utf8().slice())) else {
+pub unsafe extern "C" fn Bun__AOT__stampOfFile(path: *const u8, length: usize) -> u64 {
+    // SAFETY: see above.
+    let Ok(stat) = bun_sys::stat(unsafe { bun_core::ZStr::from_raw(path, length) }) else {
         return 0;
     };
     let stat = bun_sys::PosixStat::init(&stat);
@@ -280,9 +286,27 @@ pub fn will_run_entry_point_again(global: &JSGlobalObject, key: &[u8]) {
     }
 }
 
+pub fn will_run_preloads(global: &JSGlobalObject) {
+    if compiled_program().is_some() {
+        Bun__AOT__willRunPreloads(global);
+    }
+}
+
+pub fn did_run_preloads(global: &JSGlobalObject) {
+    if compiled_program().is_some() {
+        Bun__AOT__didRunPreloads(global);
+    }
+}
+
 pub fn is_compiled_module(path: &[u8]) -> bool {
     compiled_program().is_some()
         && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
+}
+
+pub fn is_entry_point_beside_thread(path: &[u8]) -> bool {
+    bun_core::runs_no_compiled_program()
+        && (find_entry_point_by_module_path(path).is_some()
+            || find_entry_point_by_source_path(path).is_some())
 }
 
 // On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
@@ -420,6 +444,10 @@ pub fn error_if_code_outside_image_is_refused(
     compiled_program()?;
     let error = Bun__AOT__errorIfCodeOutsideImageIsRefused(global, code, path);
     (!error.is_empty()).then_some(error)
+}
+
+pub fn lets_test_run_load_addon(global: &JSGlobalObject, path: &bun_core::String) -> bool {
+    compiled_program().is_some() && Bun__AOT__letsTestRunLoadAddon(global, path)
 }
 
 pub(crate) fn refuses_code_at(global: &JSGlobalObject, path: &[u8]) -> bool {
@@ -820,13 +848,14 @@ pub(crate) fn has_image_for_each_entry_point() -> bool {
 /// Whether a Worker that starts from text runs it apart from the compiled program. That takes the interpreter, the transpiler and the
 /// text of Bun's own modules. Where the program itself loads code that no build has seen, such a Worker is one more realm of the program.
 pub(crate) fn runs_worker_of_text_apart() -> bool {
-    let Some(program) = program_of_executable() else {
-        return false;
-    };
+    program_of_executable()
+        .is_some_and(|program| can_run_worker_apart(program) && !loads_code_outside_image(program))
+}
+
+fn can_run_worker_apart(program: &CompiledProgram) -> bool {
     let admits_inspector = admitted_code_of(program)
         .is_some_and(|admitted| admitted.contains(AdmittedCode::INSPECTOR));
     !admits_inspector
-        && !loads_code_outside_image(program)
         && bun_removable_features::can_run_uncompiled_code()
         && bun_core::code_generation_from_strings_by_flags()
             != bun_core::CodeGenerationFromStrings::Strict
@@ -834,8 +863,8 @@ pub(crate) fn runs_worker_of_text_apart() -> bool {
 
 /// Whether a Worker that starts from a file on disk runs it apart from the compiled program, as one that starts from text does.
 pub(crate) fn runs_worker_from_disk_apart() -> bool {
-    program_of_executable().is_some_and(|program| program.allows_code_from_disk)
-        && runs_worker_of_text_apart()
+    program_of_executable()
+        .is_some_and(|program| program.allows_code_from_disk && can_run_worker_apart(program))
 }
 
 /// BunCompiledModules.cpp. `path` is the text that the Worker of this thread starts from, and only what `--trim` removed keeps it from running: see `runs_worker_of_text_apart`.
@@ -878,8 +907,7 @@ pub extern "C" fn Bun__AOT__isLoadedSynchronously(
     path: &bun_core::String,
 ) -> bool {
     let vm = global.bun_vm();
-    vm.main() == Some(path.to_utf8().slice())
-        || global.has_plugins()
+    vm.is_test_entry_point(path)
         || !vm.transpiler_store.enabled
         || crate::node_compile_cache::is_enabled()
 }

@@ -28,7 +28,22 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             VariableKey::PrivateState { part, .. } => self.create_private_state_variable(part),
             VariableKey::ModuleExports(_) => self.create_untyped_variable(known::exports),
-            VariableKey::RequiredAnswer(_) => {
+            VariableKey::MockOf(_) => {
+                let mut declared = DeclaredType::untyped();
+                declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
+                let mut flags = VariableFlags::IS_REPLACEABLE | VariableFlags::HOLDS_MOCK;
+                if self.inputs.modules.originals_beside_mocks_may_run() {
+                    flags |= VariableFlags::ORIGINAL_MAY_RUN;
+                }
+                Variable {
+                    name: None,
+                    declared,
+                    initialization: VariableInitialization::Uninitialized,
+                    flags,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
+            VariableKey::RequiredAnswer(_) | VariableKey::RequireMadeForOwnFile(_) => {
                 let mut declared = DeclaredType::untyped();
                 declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
                 Variable {
@@ -47,7 +62,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     ..self.create_untyped_variable(known::exports)
                 }
             }
-            VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => {
+            VariableKey::SyntheticExport(_)
+            | VariableKey::Copy(_)
+            | VariableKey::MockOfRuntimeModule(_) => {
                 unreachable!("link defines the variable of an export")
             }
         };

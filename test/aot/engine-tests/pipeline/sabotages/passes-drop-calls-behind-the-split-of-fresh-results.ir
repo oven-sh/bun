@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls behind a pass over the whole program: a call of an unknown function is gone. The pass sends a call of a known function to another version of it, and answers for that call alone: the build stops
+# FORM: Prepared
+# RUN: pass SplitFreshResults
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-left-alone.ir

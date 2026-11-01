@@ -64,6 +64,7 @@ members = [
   "src/event_loop",
   "src/executable",
   "src/exe_format",
+  "src/sort_by_number",
   "src/trim",
   "src/trim/removable_features",
   "src/highway",
@@ -443,6 +444,7 @@ bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
+bun_sort_by_number = { path = "src/sort_by_number" }
 bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
@@ -522,6 +524,10 @@ opt-level = 3
 opt-level = 3
 
 [profile.release.package.bun_react_compiler]
+opt-level = "s"
+
+# The front end of `bun build --compile --aot`. At "s" Bun is 0.7 to 1.4 MB smaller (Linux x64: 1,048 KB). A build takes 0.1 to 0.6% more instructions, the most on large programs, and no more time.
+[profile.release.package.bun_aot]
 opt-level = "s"
 
 # The runners behind `--run-typescript-tests`, `--run-prettier-tests` and `--run-eslint-tests`. Only canary and debug

@@ -7,7 +7,8 @@ import { unsupported } from "./harness/commands";
 import { registry } from "./harness/registry";
 import { run } from "./harness/run";
 import { envOf, files, passing, runTests, twoFiles } from "./harness/test-run-in-parts";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 // `sabotage=StoredValuesAreNeverRead` loses values on purpose, and the compiler stops at the read in `leftOf` with an internal error that names the file.
 // The word loses them in every file, so the other files read nothing that was stored.

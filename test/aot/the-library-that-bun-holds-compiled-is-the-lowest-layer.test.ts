@@ -120,7 +120,7 @@ async function seenIn(bun: string, words: string | undefined, ...flags: string[]
   return {
     seen: linesThatStartWith("SEEN "),
     lock: linesThatStartWith("LOCK "),
-    form: stderr.match(/^AOT test run \| .*$/m)?.[0] ?? "",
+    form: stderr.match(/^AOT test run \| (?:layers|one program|programs without layers)\b.*$/m)?.[0] ?? "",
     warnings: stderr.split("\n").filter(line => line.startsWith("warn: ") || line.startsWith("error: ")),
     exitCode,
   };
@@ -148,10 +148,13 @@ test.skipIf(!isLinux)(
     if (twoLayers.form.includes("this Bun loads one program a realm")) return;
     const compiled = "SEEN compiled | compiled,compiled,compiled,compiled,compiled,compiled";
     const withoutHow = (seen: string[]) => seen.filter(line => !line.startsWith("SEEN compiled"));
+    const refusedIfItRuns =
+      "warn: TS100014: this assignment throws if it runs: built-in objects are read-only in a compiled executable";
     expect(plain.exitCode).toBe(0);
     for (const layers of [twoLayers, oneLayer]) {
       expect(layers.form).toEndWith("| over Bun's own code as this Bun holds it");
-      expect(layers.warnings).toEqual([]);
+      // The store and the deletion in refused.test.js.
+      expect(layers.warnings).toEqual([refusedIfItRuns, refusedIfItRuns]);
       expect(layers.seen).toContain(compiled);
       expect(withoutHow(layers.seen)).toEqual(withoutHow(plain.seen));
       // The library rests on no lock that a run can open, and the run still has every lock that its own programs rest on.

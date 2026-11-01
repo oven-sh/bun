@@ -1,10 +1,11 @@
 // An executable built with --compile-exec-argv answers with --aot, and with --aot --trim, as it does without.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv } from "harness";
 import { canTrim } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
+import { describe, test } from "./listed";
 
 // What each option changes is printed, so an option that is lost shows. Of a warning the first line is printed: the lines
 // below it name positions, which are those of the source with --aot and those of the bundle without.

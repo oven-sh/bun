@@ -1,4 +1,5 @@
 # A spread of a given object fills fields typed as records.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f4
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -162,5 +163,5 @@ function f11 module=m2 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f4
 # CHECK-LABEL: function f4 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 1270, patchpoints: 116, rare instructions: 465, polls: 1
+# CHECK-NEXT: instructions: 1282, patchpoints: 122, rare instructions: 462, polls: 1
 # CHECK-NEXT: end of function f4

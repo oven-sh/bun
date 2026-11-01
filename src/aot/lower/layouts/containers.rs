@@ -8,7 +8,7 @@ use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Decl, Parent, S
 use bun_sema::check::aot::ObjectOrigin;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
-    self, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, StmtId, StmtKind,
+    self, BinOp, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, StmtId, StmtKind,
 };
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::SharedSort;
@@ -515,11 +515,20 @@ fn find_module_name(text: &ModuleText<'_, '_>, access: ExprId) -> Option<ExprId>
 // `module.exports = value` or `exports = module.exports = value` as a statement of the body.
 fn find_replacement(text: &ModuleText<'_, '_>, statement: StmtId) -> Option<Replacement> {
     let hir = text.hir;
-    let StmtKind::Expr(expression) = hir[statement].kind else {
+    let StmtKind::Expr(mut expression) = hir[statement].kind else {
         return None;
     };
     if text.decisions.is_dead_stmt(statement) {
         return None;
+    }
+    // `module.exports = value, module.exports.__esModule = true, ..`: what stands first is evaluated first.
+    while let ExprKind::Binary {
+        op: BinOp::Comma,
+        left,
+        ..
+    } = hir[hir.skip_type_assertions(expression)].kind
+    {
+        expression = left;
     }
     let (target, value) = find_plain_store(text, expression)?;
     let (module_name, exports_name, value) = match find_module_name(text, target) {

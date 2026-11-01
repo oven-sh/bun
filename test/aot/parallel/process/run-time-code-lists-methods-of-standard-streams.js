@@ -1,3 +1,4 @@
+// Alone: beside a program that names a standard stream the executable holds what makes one
 // The program names no standard stream, so nothing that makes one is in the executable. Names stay: code evaluated at run time finds every method of plain Bun's streams,
 // on the object that holds it there, with its name, its length and whether it is listed. What plain Bun's streams lack is absent, and nothing here throws.
 const join = (...parts) => parts.join(process.argv.length > 99 ? "x" : "");

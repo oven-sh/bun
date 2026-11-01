@@ -72,6 +72,8 @@ test("it says what plain Bun says, as one program and in layers", async () => {
     "the export is found | SyntaxError Export named 'imported' not found in module 'star.mjs'.",
   );
   expect(plain.lines).toContain("a mock adds the name | loaded added,3 kept,the mock's");
+  expect(plain.lines).toContain("a mock leaves the name out | loaded a,");
+  expect(plain.lines).toContain("a mock leaves both out | loaded a,");
   expect(await said(["--aot"], "TestRunLayers:0")).toEqual(plain);
   expect(await said(["--aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
 }, 240_000);

@@ -1,4 +1,5 @@
 // A function reads a name between two suspensions and never again, and collections run at the second. An executable lets go of what the name holds behind its last use, whether a closure
+// Todo alone under --aot-validate --aot-check=ValidateBackEnd: Not every time: a build that validates the back end keeps registers alive for longer, and the collector finds the object in one: lines print that it is kept
 // shares the name or not, and also while the function waits for an arrow function that is made and called in the operand of the `await`: docs/compiler/compatibility.mdx, "Memory".
 // Plain Bun prints another output.
 let last;

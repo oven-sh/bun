@@ -1,5 +1,6 @@
 # The neighbors of the number fields: fields declared as an object, a string, an array, a function or an instance, each `| null`, whose visible stores are references and null, so that a narrow slot for a reference looks enough.
 # Hidden stores put numbers of every kind, booleans, undefined, bigints, symbols and references of other types there. Whatever was stored must come back, in its place among the keys, also after collections,
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f3
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -771,17 +772,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f28 visibility=Private
 # -- generated: f0 typedView
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 525, patchpoints: 93, rare instructions: 457, polls: 4
+# CHECK-NEXT: instructions: 510, patchpoints: 97, rare instructions: 447, polls: 4
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="typedView"
-# CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 3, patchpoints: 2
-# CHECK-NEXT: end of function f3
-# CHECK-LABEL: function {{*}}name="typedView"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 51, patchpoints: 10, rare instructions: 81
-# CHECK-NEXT: end of function f30
-# CHECK-LABEL: function {{*}}name="typedView"
-# CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 44, patchpoints: 19
-# CHECK-NEXT: end of function f31
+# CHECK-NEXT: instructions: 69, patchpoints: 8, rare instructions: 83
+# CHECK-NEXT: end of function f3

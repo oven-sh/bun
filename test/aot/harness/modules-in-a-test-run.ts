@@ -768,6 +768,41 @@ const projects: Record<string, Record<string, string>> = {
       });`,
     "wants-absent.mjs": `import { z } from "./local/hands-on-a-package.cjs"; console.log(z);`,
   },
+  // The loader holds a file once an import() of it has settled. Until then require() answers with the parsed value, and the first answer stays.
+  "a require() of a data file between the call of an import() of it and its end": {
+    "at-the-top.json": `{ "n": 1 }`,
+    "in-a-test.json": `{ "n": 2 }`,
+    "own.json": `{ "n": 3 }`,
+    "awaited.json": `{ "n": 4 }`,
+    "required-first.json": `{ "n": 5 }`,
+    "req.cjs": `
+      exports.atTheTop = () => require("./at-the-top.json");
+      exports.inATest = () => require("./in-a-test.json");
+      exports.awaited = () => require("./awaited.json");
+      exports.requiredFirst = () => require("./required-first.json");`,
+    "between.test.ts": `${head}
+      const req = require("./req.cjs");
+      const tag = (value: unknown) => Object.prototype.toString.call(value);
+      const pending = import("./at-the-top.json");
+      console.log("at the top, import() not awaited, then require:", tag(req.atTheTop()));
+      await pending;
+      console.log("  and again after it settled:", tag(req.atTheTop()));
+      test("in a test", async () => {
+        const pending = import("./in-a-test.json");
+        console.log("in a test, import() not awaited, then require:", tag(req.inATest()));
+        await pending;
+        console.log("  and again after it settled:", tag(req.inATest()));
+        const own = import("./own.json");
+        console.log("the require() of the test file itself:", tag(require("./own.json")));
+        await own;
+        console.log("  and again after it settled:", tag(require("./own.json")));
+        const names = await import("./awaited.json");
+        console.log("awaited, then require:", tag(req.awaited()), req.awaited() === names);
+        console.log("require first:", tag(req.requiredFirst()));
+        await import("./required-first.json");
+        console.log("  and again after an import:", tag(req.requiredFirst()));
+      });`,
+  },
   "a module below a graph that failed runs for the next graph that imports it": {
     "first.mjs": `
       import { next } from "./shared.mjs";
@@ -803,6 +838,36 @@ const projects: Record<string, Record<string, string>> = {
         );
         await import("./third.mjs");
         await import("./fourth.mjs");
+      });`,
+  },
+  // unmarked.cjs names none of module, exports and require. Behind import() it goes by the "type" of the package and runs in its turn, behind the CommonJS files,
+  // which run while the graph is loaded. While an ES module is being required it goes by its extension and runs where it stands.
+  "a file whose text does not say what it is goes by who loads the module that imports it": {
+    "imported-root.mjs": `
+      import "./imported-first.cjs";
+      import "./imported-unmarked.cjs";
+      import "./imported-last.cjs";`,
+    "imported-first.cjs": `(globalThis.imported ??= []).push("first"); exports.x = 1;`,
+    "imported-unmarked.cjs": `(globalThis.imported ??= []).push("unmarked");`,
+    "imported-last.cjs": `(globalThis.imported ??= []).push("last"); exports.x = 1;`,
+    "required-root.mjs": `
+      import "./required-first.cjs";
+      import "./required-unmarked.cjs";
+      import "./required-last.cjs";`,
+    "required-first.cjs": `(globalThis.required ??= []).push("first"); exports.x = 1;`,
+    "required-unmarked.cjs": `(globalThis.required ??= []).push("unmarked");`,
+    "required-last.cjs": `(globalThis.required ??= []).push("last"); exports.x = 1;`,
+    "imported.test.ts": `${head}
+      test("import()", async () => {
+        await import("./imported-root.mjs");
+        const ran = (globalThis as any).imported;
+        console.log("behind import() it runs behind the file that follows it:", ran.indexOf("unmarked") > ran.indexOf("last"));
+      });`,
+    "required.test.ts": `${head}
+      test("require()", () => {
+        require("./required-root.mjs");
+        const ran = (globalThis as any).required;
+        console.log("behind require() it runs behind the file that follows it:", ran.indexOf("unmarked") > ran.indexOf("last"));
       });`,
   },
   "a require() that has answered before answers anew behind an eviction and a mock": {
@@ -916,6 +981,16 @@ const projects: Record<string, Record<string, string>> = {
         console.log("written out", (await import("node:path")) === (await import(made("node:path"))), (await import("node:events")).default === (await import(made("events"))).default);
       });`,
   },
+  // In parallel what is printed is sorted before it is compared, so the order stands in one line too.
+  "a module that waits for bun": {
+    "helpers/waits.js": `const say = globalThis.say = word => { (globalThis.order ??= []).push(word); console.log(word); };
+      say("waits: start");\nconst bun = await import("bun");\nsay("waits: behind " + typeof bun.version);`,
+    "helpers/beside.js": `globalThis.say("beside");`,
+    "order.test.js": `${head}
+      import "./helpers/waits.js";
+      import "./helpers/beside.js";
+      test("order", () => console.log(globalThis.order.join(" | ")));`,
+  },
   "built-in modules that only the test file names": {
     "builtins.test.js": `${head}
       import { basename } from "node:path";
@@ -927,6 +1002,10 @@ const projects: Record<string, Record<string, string>> = {
   },
 };
 
+// Two processes print at once, and nobody knows whose line comes first. Every other way prints in one order, and that order is compared.
+const inOrderOfRun = (lines: string[], flags: string[]) =>
+  flags.some(flag => flag.startsWith("--parallel")) ? lines.sort() : lines;
+
 async function runTests(directory: string, words: string | undefined, ...flags: string[]) {
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
@@ -934,7 +1013,7 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   // A crash prints only there, and the comparison below would hide it.
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   const printed = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
-  return { stdout: printed.sort(), results: results.sort(), exitCode };
+  return { stdout: inOrderOfRun(printed, flags), results: inOrderOfRun(results, flags), exitCode };
 }
 
 // A run of few test files is one program. The words ask for what a large run gets: the packages in one image, the other shared files in a second, and each test file in one of its own.
@@ -977,6 +1056,7 @@ const shareARunInLayers = [
   "require() of a file of data that another test file's modules import",
   "built-in modules that only the test file names",
   "a name that a test file imports twice",
+  "a module that waits for bun",
 ];
 
 // The results of each folder, and what the whole run printed.
@@ -992,9 +1072,9 @@ async function runFolders(directory: string, words: string | undefined, ...flags
     const [, result, name] = line.match(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/) ?? [];
     if (result) results.getOrInsertComputed(folder, () => []).push(`${result} ${name}`);
   }
-  for (const list of results.values()) list.sort();
+  for (const [folder, list] of results) results.set(folder, inOrderOfRun(list, flags));
   const printed = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
-  return { results, stdout: printed.sort(), exitCode };
+  return { results, stdout: inOrderOfRun(printed, flags), exitCode };
 }
 
 function declareProjectsThatShareARun(way: string, names: string[], flags: string[], words: string) {

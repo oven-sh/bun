@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { run } from "../aot/harness/run";
+import { describe, test } from "../aot/listed";
 
 const files = {
   "app.ts": "console.log(JSON.stringify(process.argv.slice(2)));\n",

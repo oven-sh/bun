@@ -1,5 +1,5 @@
 // A guard of one field is held across a call on the word of the callee's summary; the callee is then taken in. Once its body was pasted with its accesses by name,
-// which count as unknown code, and the build stopped: GuardNotAvailable. One of link-attacks' random programs, as it was made.
+// which count as unknown code, and the build stopped: GuardNotAvailable. A random program of a fuzzer, as it was made.
 // Made by test/aot/generate-relations-at-random.ts, seed 7301: helpers that do by chance what a function can do with what it is handed. What is still held at the end is printed as a graph.
 const kept = [];
 const keptFunctions = [];
@@ -309,12 +309,20 @@ await new Promise(resolve => setTimeout(resolve, 1));
 churn(90);
 await new Promise(resolve => setTimeout(resolve, 1));
 churn(90);
+// Whether the collector has taken an object that nobody reaches is chance. What the program still reaches is alive, and that alone is counted.
+const reached = new Set();
+const toVisit = [slot, holder.held, ...bag.values(), ...kept, ...caught];
+while (toVisit.length > 0) {
+  const o = toVisit.pop();
+  if (o === null || o === undefined || reached.has(o)) continue;
+  reached.add(o);
+  toVisit.push(o.a, o.b);
+}
 const alive = new Map();
 for (const [helper, parameter, reference] of watched) {
-  if (reference.deref() === undefined) continue;
+  if (!reached.has(reference.deref())) continue;
   const name = "h" + helper + " parameter " + parameter;
   alive.set(name, (alive.get(name) ?? 0) + 1);
 }
-// One object more or less may be alive for a word that still lies on the stack.
-for (const [name, count] of alive) if (count > 1) console.log("KEPT " + name);
+for (const [name, count] of alive) console.log("KEPT " + name + ": " + count);
 for (const [name, count] of answers) console.log("ANSWERED " + name + ": " + count);

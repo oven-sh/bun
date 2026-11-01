@@ -196,7 +196,7 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f53 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f30]
 # -- generated: Point attempt
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=2414 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f11|f12|f13|f14|f15|f16|f17|f18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=2414 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f11|f12|f13|f14|f15|f16|f17|f18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Point"
 # CHECK: module=m0 position=666 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=1}, {type=2}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
 # CHECK-LABEL: function {{*}}name="Point"
@@ -215,27 +215,4 @@ function f53 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Point"
-# CHECK: module=m0 position=666 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=L0} parameters=[{type=1}, {type=2}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f5} constructedClass=L0 {
-# CHECK-NEXT: b0(v0: L0, v1: anything, v2: 1, v3: 2):
-# CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=2414 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f11|f12|f13|f14|f15|f16|f17|f18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4 parameterMap=[{original=1}]} {
-# CHECK-NEXT: b0(v1: f11|f12|f13|f14|f15|f16|f17|f18) handler=b1():
-# CHECK-NEXT: v2: anything = Call v1 calleeName="act" accessSite=9 callees=[f11, f12, f13, f14, f15, f16, f17, f18]
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b1() role=CatchHandler:
-# CHECK-NEXT: v3: anything = CatchValue
-# CHECK-NEXT: v4: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
-# CHECK-NEXT: v5: boolean = HasInPrototypeChain v3, v4
-# CHECK-NEXT: v6: "TypeError " = String string="TypeError "
-# CHECK-NEXT: v7: anything ~ undefined|null|TypeError = Upcast v3 castType=anything
-# CHECK-NEXT: v8: anything = PropGet v7 key="message" accessSite=11
-# CHECK-NEXT: v9: anything ~ undefined|null|string = Expect v8 expectedType=undefined|null|string
-# CHECK-NEXT: v10: string = Add v6, v9
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: }
+# CHECK: module=m0 position=666 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=L0} parameters=[{type=1}, {type=2}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f5} constructedClass=L0

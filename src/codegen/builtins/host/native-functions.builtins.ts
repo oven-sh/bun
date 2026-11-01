@@ -1,6 +1,7 @@
 // The native functions that Bun's own modules make with $newCppFunction, each from the code of the function.
 import * as b from "bun-builtins-table";
 import { framesOfModuleGraphsCell, moduleGraphsCell } from "./native-cells.ts";
+import { answering } from "./native-code.ts";
 
 const cpp = (file: string, symbol: string): b.BuiltinPath => `native:NewCppFunction:${file}:${symbol}`;
 
@@ -151,7 +152,24 @@ const testOf = (name: string) => {
   return { ...testsKindOfCell, answersWhetherInstance: { value: b.union(first, ...others) } };
 };
 
+const answersOfNativeFunctions: readonly (readonly [b.BuiltinPath, b.TableType])[] = [
+  [cpp("BunDebugger.cpp", "jsFunction_closeNodeInspector"), b.undefined],
+  [
+    cpp("BunDebugger.cpp", "jsFunction_openNodeInspector"),
+    b.union(b.string, b.null, b.undefined, b.instance("EvalError")),
+  ],
+  [cpp("BunDebugger.cpp", "jsFunction_postNodeInspectorControl"), b.bool],
+  [cpp("BunDebugger.cpp", "jsFunction_waitForNodeInspectorConnection"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage"), b.union(b.string, b.null)],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler"), b.string],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage"), b.undefined],
+  [cpp("Worker.cpp", "jsFunctionPostMessage"), b.undefined],
+];
+
 export default b.declarations(
+  answersOfNativeFunctions.flatMap(([path, returns]) => b.static(path, answering(returns, b.hostCall))),
   typeTestsOfNode.flatMap(name => b.static(`node:util/types.${name}`, { ...testOf(name), implementation: b.generic })),
   // Nothing leads from the realm to a member of a module: its native code tells which function it is. That of these two belongs to the functions below.
   typeTestsOfNode
@@ -191,7 +209,7 @@ export default b.declarations(
   // It lists the own keys of the holder and asks first `except` and then the holder for the property under each: no getter of either runs. Of each function that the holder has for a value it reads `length`, and those without parameters it calls on the receiver. Of an object that such a call answers it asks whether it has @@iterator.
   b.static(cpp("BunCompiledModules.cpp", "jsFunctionCallOwnFunctionsWithoutParameters"), {
     args: { holder: b.object, except: b.object, receiver: b.any.optional },
-    returns: b.instance("Array").fresh.dense,
+    returns: newArrayOf(b.union(b.string, b.symbol, b.callable)).dense,
     capability: "js",
     throws: true,
     uses: {
@@ -298,7 +316,7 @@ export default b.declarations(
     returns: b.union(b.builtin("bun:test"), b.object),
     capability: "js",
     throws: true,
-    uses: { filename: b.inspected },
+    uses: { filename: converted },
     implementation: b.hostCall,
   }),
   b.static(cpp("NodeTLS.cpp", "getBundledRootCertificates"), listsCertificates),

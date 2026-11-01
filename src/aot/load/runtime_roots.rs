@@ -6,7 +6,9 @@ use crate::builtins::table::runtime_function;
 use crate::builtins::{Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
 use crate::compile::mentions_worker_constructor;
 use crate::load::named_loads::{
+    files_of_tests_load_by_unknown_path, files_of_tests_may_load_code_from_disk,
     find_library_modules_that_unknown_names_may_stand_for, loads_by_unknown_path,
+    writes_own_code_anew,
 };
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::sources::parsed_source;
@@ -21,6 +23,10 @@ pub(crate) struct RuntimeRoots {
     pub imports_cluster: bool,
     pub imports_uncompiled_code: bool,
     pub loads_by_unknown_path: bool,
+    /// Of a test run: a file that no executable would hold does.
+    pub leaves_compiled_files: bool,
+    /// Or it evaluates text or hands a loader about, and what comes of that loads what it likes.
+    pub files_of_tests_may_leave: bool,
     /// All that the files of the application ask of Bun's own code. Any export may be read off a module that they import.
     pub asks: RuntimeUses,
     /// The program holds all of Bun's own code that can be got at without a name that the build sees.
@@ -43,6 +49,10 @@ pub(crate) struct FurtherLibraryCode<'a> {
     /// `AotOptions::is_part_of_test_files`, over other images. A test file runs once: a copy of a built-in function that is compiled for its callers here costs more than it saves.
     /// So it calls the built-in functions of the first image through the objects of the realm, and holds only those that no object holds.
     pub holds_test_files_alone: bool,
+    /// `CodeOptions::working_directory` of a test run, which compares a file that the run has written with the disk before it loads it. Nothing else does.
+    pub working_directory_of_test_run: Option<&'a [u8]>,
+    /// `AotOptions::only_tests_load_code_from_disk`
+    pub only_tests_load_code_from_disk: bool,
 }
 
 pub(crate) fn collect_runtime_roots(
@@ -93,8 +103,19 @@ pub(crate) fn collect_runtime_roots(
     named.dedup();
     asks.modules_read_whole.extend(&named);
     host_loaded.extend(named.iter().copied());
-    let loads_by_unknown_path =
-        !further.is_served_by_other_images && loads_by_unknown_path(application);
+    let writes_own_code_anew = || {
+        let started_in = further.working_directory_of_test_run;
+        started_in.is_some_and(|started_in| writes_own_code_anew(application, started_in))
+    };
+    let writes_own_code_anew = writes_own_code_anew();
+    let loads_by_unknown_path = !further.is_served_by_other_images
+        && (loads_by_unknown_path(application) || writes_own_code_anew);
+    let files_of_tests_may_leave = further.only_tests_load_code_from_disk
+        && (writes_own_code_anew || files_of_tests_may_load_code_from_disk(application));
+    let leaves_compiled_files = loads_by_unknown_path
+        && (!further.only_tests_load_code_from_disk
+            || writes_own_code_anew
+            || files_of_tests_load_by_unknown_path(application));
     host_loaded.extend(&further.lacked_before.modules);
     functions.extend(&further.lacked_before.functions);
     asks.add(further.lacked_before);
@@ -137,6 +158,8 @@ pub(crate) fn collect_runtime_roots(
         imports_cluster,
         imports_uncompiled_code,
         loads_by_unknown_path,
+        leaves_compiled_files,
+        files_of_tests_may_leave,
         asks,
         keeps_code_without_names,
         holds_guessed_code,
@@ -269,6 +292,8 @@ mod tests {
                 serves_unseen_code: false,
                 is_served_by_other_images: false,
                 holds_test_files_alone: false,
+                working_directory_of_test_run: None,
+                only_tests_load_code_from_disk: false,
             };
             collect_runtime_roots(input.files, runtime_modules, input.platform, further)
         })

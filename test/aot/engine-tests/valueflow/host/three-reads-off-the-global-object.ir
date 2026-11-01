@@ -1,0 +1,16 @@
+# globalThis[name][name][name]
+# Nothing is called and nothing is written, so no code that nobody has seen can run.
+# RUN: valueflow-solve unseen
+# CHECK: unseen-code no
+# CHECK-NEXT: modules-by-name no
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = ElemGet v0, v1
+    v3 = ElemGet v2, v1
+    v4 = ElemGet v3, v1
+    Return
+}

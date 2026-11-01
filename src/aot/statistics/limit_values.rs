@@ -1,3 +1,5 @@
+use bun_sema::check::aot::{QueryLimit, QueryLimits};
+
 use crate::ir::generated::{Architecture, DegradesTo, LimitId};
 
 pub const HOST_ARCHITECTURE: Architecture = if cfg!(target_arch = "x86_64") {
@@ -26,6 +28,10 @@ impl LimitValues {
         self.values[limit as usize]
     }
 
+    pub fn for_queries(&self) -> QueryLimits {
+        QueryLimits(QueryLimit::ALL.map(|limit| self.get(limit_of_queries(limit))))
+    }
+
     /// `LimitId::All` lowers every limit that leaves the build whole, each to no less than its smallest value.
     pub fn lower(&mut self, lowered: LimitId, value: u64) {
         assert!(can_be_lowered(lowered), "{lowered:?}");
@@ -37,6 +43,17 @@ impl LimitValues {
                 self.values[limit as usize] = self.get(limit).min(value.max(limit.smallest()));
             }
         }
+    }
+}
+
+pub fn limit_of_queries(limit: QueryLimit) -> LimitId {
+    match limit {
+        QueryLimit::ConstructorParentsFollowed => LimitId::MaxConstructorParentsFollowed,
+        QueryLimit::HelpersFollowedToPrototypeLink => LimitId::MaxHelpersFollowedToPrototypeLink,
+        QueryLimit::FunctionsGivenThis => LimitId::MaxFunctionsGivenThis,
+        QueryLimit::CallsReadForParameter => LimitId::MaxCallsReadForParameter,
+        QueryLimit::TermsReadForProduct => LimitId::MaxTermsReadForProduct,
+        QueryLimit::DeclaredSignatureDepth => LimitId::MaxDeclaredSignatureDepth,
     }
 }
 

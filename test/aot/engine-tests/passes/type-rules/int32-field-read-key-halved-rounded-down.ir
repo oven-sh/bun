@@ -1,9 +1,106 @@
 # Halves int32 fields that are read under a key which is a parameter, an enum member or a name of the type, out of interfaces, classes, copies and nested objects, rounds the halves down, and passes, stores, returns and declares them as int32.
+# -- source: int32-field-read-under-a-key-is-halved-and-rounded-down.ts
+# // Halves int32 fields that are read under a key which is a parameter, an enum member or a name of the type, out of interfaces, classes, copies and nested objects, rounds the halves down, and passes, stores, returns and declares them as int32.
+# import type { int32 } from "bun";
+#
+# interface Point {
+#   x: int32;
+#   y: int32;
+# }
+# interface Line {
+#   from: Point;
+#   to: Point;
+# }
+# enum Axis {
+#   X = "x",
+#   Y = "y",
+# }
+# class Cell {
+#   x: int32 = -7;
+#   y: int32 = 2147483647;
+# }
+#
+# function take(n: int32): int32 {
+#   return n;
+# }
+#
+# function passed(point: Point, key: "x" | "y") {
+#   return take(Math.floor(point[key] / 2));
+# }
+# function stored(point: Point, key: "x" | "y", into: Point) {
+#   into.x = Math.floor(point[key] / 2);
+#   into.y = Math.floor(point[key] / 2) + 1;
+#   return into.x + into.y;
+# }
+# function returned(point: Point, key: keyof Point): int32 {
+#   return Math.floor(point[key] / 2);
+# }
+# function declared(point: Point, key: keyof Point) {
+#   const half: int32 = Math.floor(point[key] / 2) + 1;
+#   return half;
+# }
+# function underEnumMember(point: Point): int32 {
+#   return Math.floor(point[Axis.Y] / 2);
+# }
+# function ofClass(cell: Cell, key: "x" | "y"): int32 {
+#   return Math.floor(cell[key] / 2);
+# }
+# function ofNestedObject(line: Line, key: "x" | "y"): int32 {
+#   return take(Math.floor(line.to[key] / 2) + 1);
+# }
+# function ofCopy(point: Point, key: "x" | "y"): int32 {
+#   const copy = { ...point };
+#   const typed: Point = { ...point };
+#   return take(Math.floor(copy[key] / 2)) ^ take(Math.floor(typed[key] / 2));
+# }
+# function ofPattern(point: Point, key: "x" | "y"): int32 {
+#   const { [key]: value } = point;
+#   return Math.floor(value / 2);
+# }
+# function ofVariable(point: Point, key: "x" | "y"): int32 {
+#   const value = point[key];
+#   return Math.floor(value / 2) + 1;
+# }
+# function ofOptionalRead(point: Point, key: "x" | "y"): int32 {
+#   return Math.floor(point?.[key] / 2);
+# }
+# function ofEitherRead(point: Point, key: "x" | "y", first: boolean): int32 {
+#   return Math.floor((first ? point[key] : point.x) / 2);
+# }
+#
+# const points: Point[] = [
+#   { x: 12, y: 5 },
+#   { x: -1, y: -2147483648 },
+#   { x: 0, y: 2147483647 },
+#   { x: 1, y: -3 },
+# ];
+# const keys: ("x" | "y")[] = ["x", "y"];
+# for (const point of points) {
+#   for (const key of keys) {
+#     console.log(
+#       passed(point, key),
+#       stored(point, key, { x: 0, y: 0 }),
+#       returned(point, key),
+#       declared(point, key),
+#       underEnumMember(point),
+#       ofClass(new Cell(), key),
+#       ofNestedObject({ from: points[0], to: point }, key),
+#       ofCopy(point, key),
+#       ofPattern(point, key),
+#       ofVariable(point, key),
+#       ofOptionalRead(point, key),
+#       ofEitherRead(point, key, true),
+#       ofEitherRead(point, key, false),
+#     );
+#   }
+# }
+# -- end of source
 # FORM: AsRead
 # RUN: lower-to-air size f3 f9
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
-module m0 path="int32-field-read-key-halved-rounded-down.ts" displayPath="int32-field-read-key-halved-rounded-down.ts" body=f0 namespaceLayout=L(m0)
+module m0 path="int32-field-read-under-a-key-is-halved-and-rounded-down.ts" displayPath="int32-field-read-under-a-key-is-halved-and-rounded-down.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 entry module=m0
 typesite w0 module=m0 position=478 kind=Parameter
 typesite w1 module=m0 position=464 kind=Result
@@ -95,6 +192,8 @@ typesite w86 module=m0 position=1592 kind=CallResult
 typesite w87 module=m0 position=1684 kind=Variable
 typesite w88 module=m0 position=1713 kind=CallResult
 typesite w89 module=m0 position=1814 kind=CallResult
+typesite w90 module=m0 position=1965 kind=PropertyRead
+typesite w91 module=m0 position=1932 kind=CallResult
 layout L0 kind=Instance name="Cell" module=m0 position=412 constructor=f14 fields=[{key="x" declared={type=i32 site=w41 flags=[IsInt32Promise]} flags=[IsRequired]}, {key="y" declared={type=i32 site=w42 flags=[IsInt32Promise]} flags=[IsRequired]}] ownFieldCount=2
 layout L1 name="Point" module=m0 position=289 fields=[{key="x" declared={type=i32 flags=[IsInt32Promise]} flags=[IsRequired]}, {key="y" declared={type=i32 flags=[IsInt32Promise]} flags=[IsRequired]}] ownFieldCount=2
 layout L2 name="Line" module=m0 position=333 fields=[{key="from" declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="to" declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
@@ -105,326 +204,457 @@ variable g0 name="take" module=m0 declared={type=f1 flags=[IsFromCompiler]} init
 variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = NewClosure function=f2
-    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f3
-    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f4
-    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = NewClosure function=f5
-    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v8 = NewClosure function=f6
-    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v10 = NewClosure function=f7
-    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v12 = NewClosure function=f8
-    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v14 = NewClosure function=f9
-    v15 = Convert v14 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v16 = NewClosure function=f10
-    v17 = Convert v16 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v18 = NewClosure function=f11
-    v19 = Convert v18 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v20 = NewClosure function=f12
-    v21 = Convert v20 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v22 = NewClosure function=f13
-    v23 = Convert v22 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v24 = NewClosure function=f14
-    v25 = NewClass v24 layout=L0
-    PutModuleVariable v25 variable=g1
-    v27 = FinishClass v25 layout=L0
-    v28 = Convert v27 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v29 = Data data=d0
-    v30 = Convert v29 declared={type=undefined|null|Array<undefined|null|L0|L1> site=w2 flags=[OmitsNull, OmitsUndefined]}
-    v31 = Data data=d1
-    v32 = Convert v31 declared={type=undefined|null|Array<undefined|null|"x"|"y"> site=w3 flags=[OmitsNull, OmitsUndefined]}
-    v33 = IteratorOpen v30
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v34 = IteratorResume v33
-    v35 = ResultAt v34
-    v36 = ResultAt v34 index=1
-    Branch v35 -> taken b2(), notTaken b3()
+    v0 = Undefined @0
+    v1 = NewClosure function=f2 @0
+    v2 = Convert v1 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v3 = NewClosure function=f3 @0
+    v4 = Convert v3 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v5 = NewClosure function=f4 @0
+    v6 = Convert v5 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v7 = NewClosure function=f5 @0
+    v8 = Convert v7 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v9 = NewClosure function=f6 @0
+    v10 = Convert v9 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v11 = NewClosure function=f7 @0
+    v12 = Convert v11 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v13 = NewClosure function=f8 @0
+    v14 = Convert v13 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v15 = NewClosure function=f9 @0
+    v16 = Convert v15 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v17 = NewClosure function=f10 @0
+    v18 = Convert v17 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v19 = NewClosure function=f11 @0
+    v20 = Convert v19 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v21 = NewClosure function=f12 @0
+    v22 = Convert v21 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v23 = NewClosure function=f13 @0
+    v24 = Convert v23 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v25 = NewClosure function=f14 @406
+    v26 = NewClass v25 layout=L0 @406
+    PutModuleVariable v26 variable=g1 @406
+    v28 = FinishClass v26 layout=L0 @406
+    v29 = Convert v28 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType @406
+    v30 = Convert v28 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType @406
+    v31 = Integer integer=1 @2007
+    v32 = Convert v31 declared={type=i32 flags=[IsInt32Promise]} @2091
+    v33 = Integer integer=-3 @2007
+    v34 = Convert v33 declared={type=i32 flags=[IsInt32Promise]} @2097
+    v35 = Integer @2007
+    v36 = Convert v35 declared={type=i32 flags=[IsInt32Promise]} @2064
+    v37 = Integer integer=2147483647 @2007
+    v38 = Convert v37 declared={type=i32 flags=[IsInt32Promise]} @2070
+    v39 = Integer integer=-1 @2007
+    v40 = Convert v39 declared={type=i32 flags=[IsInt32Promise]} @2035
+    v41 = Integer integer=-2147483648 @2007
+    v42 = Convert v41 declared={type=i32 flags=[IsInt32Promise]} @2042
+    v43 = Integer integer=12 @2007
+    v44 = Convert v43 declared={type=i32 flags=[IsInt32Promise]} @2016
+    v45 = Integer integer=5 @2007
+    v46 = Convert v45 declared={type=i32 flags=[IsInt32Promise]} @2023
+    v47 = Data data=d0 @2007
+    v48 = Convert v47 declared={type=undefined|null|Array<undefined|null|L0|L1> site=w2 flags=[OmitsNull, OmitsUndefined]} @2007
+    v49 = Data data=d1 @2134
+    v50 = Convert v49 declared={type=undefined|null|Array<undefined|null|"x"|"y"> site=w3 flags=[OmitsNull, OmitsUndefined]} @2134
+    v51 = IteratorOpen v48 @2157
+    Jump -> next b2() @2157
   b2():
-    v37 = Undefined
-    Return v37
+    LoopHint @2157
+    v53 = IteratorResume v51 @2157
+    v54 = ResultAt v53 @2157
+    v55 = ResultAt v53 index=1 @2157
+    Branch v54 -> taken b3(), notTaken b4() @2157
   b3():
-    Jump -> next b4()
-  b4() handler=b10():
-    v38 = Convert v36 declared={type=undefined|null|L0|L1 site=w43 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v39 = IteratorOpen v32
-    Jump -> next b5()
-  b5() handler=b10():
-    LoopHint
-    v41 = IteratorResume v39
-    v42 = ResultAt v41
-    v43 = ResultAt v41 index=1
-    Branch v42 -> taken b6(), notTaken b7()
-  b6() handler=b10():
-    Jump -> next b1()
-  b7() handler=b10():
-    Jump -> next b8()
-  b8() handler=b9():
-    v44 = Convert v43 declared={type=undefined|null|"x"|"y" site=w44 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v45 = Builtin builtin=GlobalThis
-    v46 = PropGet v45 key="console" [isFreeName]
-    v47 = Convert v46 declared={type=builtin(Console) flags=[IsExpected]}
-    v48 = PropGet v47 key="log"
-    v49 = Convert v48 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v50 = Call v1, -, v38, v44 calleeName="passed"
-    v51 = Convert v50 declared={type=i32 site=w45}
-    v52 = Data data=d2
-    v53 = Call v3, -, v38, v44, v52 calleeName="stored"
-    v54 = Convert v53 declared={type=number site=w46}
-    v55 = Call v5, -, v38, v44 calleeName="returned"
-    v56 = Convert v55 declared={type=i32 site=w47 flags=[IsInt32Promise]}
-    v57 = Call v7, -, v38, v44 calleeName="declared"
-    v58 = Convert v57 declared={type=i32 site=w48}
-    v59 = Call v9, -, v38 calleeName="underEnumMember"
-    v60 = Convert v59 declared={type=i32 site=w49 flags=[IsInt32Promise]}
-    v61 = Construct v28 calleeName="Cell"
-    v62 = Convert v61 declared={type=undefined|null|L0 site=w50 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
-    v63 = Call v11, -, v62, v44 calleeName="ofClass"
-    v64 = Convert v63 declared={type=i32 site=w51 flags=[IsInt32Promise]}
-    v65 = Integer
-    v66 = ElemGet v30, v65
-    v67 = Convert v66 declared={type=undefined|null|L0|L1 site=w52 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v68 = NewObject -, v67, v38 layout=L2 fields=[0, 1]
-    v69 = FinishObject v68
-    v70 = Call v13, -, v69, v44 calleeName="ofNestedObject"
-    v71 = Convert v70 declared={type=i32 site=w53 flags=[IsInt32Promise]}
-    v72 = Call v15, -, v38, v44 calleeName="ofCopy"
-    v73 = Convert v72 declared={type=i32 site=w54 flags=[IsInt32Promise]}
-    v74 = Call v17, -, v38, v44 calleeName="ofPattern"
-    v75 = Convert v74 declared={type=i32 site=w55 flags=[IsInt32Promise]}
-    v76 = Call v19, -, v38, v44 calleeName="ofVariable"
-    v77 = Convert v76 declared={type=i32 site=w56 flags=[IsInt32Promise]}
-    v78 = Call v21, -, v38, v44 calleeName="ofOptionalRead"
-    v79 = Convert v78 declared={type=i32 site=w57 flags=[IsInt32Promise]}
-    v80 = Boolean boolean=true
-    v81 = Call v23, -, v38, v44, v80 calleeName="ofEitherRead"
-    v82 = Convert v81 declared={type=i32 site=w58 flags=[IsInt32Promise]}
-    v83 = Boolean
-    v84 = Call v23, -, v38, v44, v83 calleeName="ofEitherRead"
-    v85 = Convert v84 declared={type=i32 site=w59 flags=[IsInt32Promise]}
-    v86 = Call v49, v47, v51, v54, v56, v58, v60, v64, v71, v73, v75, v77, v79, v82, v85 calleeKey="log" calleeName="console.log"
-    Jump -> next b5()
-  b9() role=IterationCleanup subject=v39 handler=b10():
-    v87 = CatchException
-    Rethrow v87
-  b10() role=IterationCleanup subject=v33:
-    v88 = CatchException
-    Rethrow v88
+    v56 = Undefined @2157
+    Return v56 @2157
+  b4():
+    Jump -> next b5() @2157
+  b5() handler=b11():
+    v57 = Convert v55 declared={type=undefined|null|L0|L1 site=w43 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @2157
+    v58 = IteratorOpen v50 @2189
+    Jump -> next b6() @2189
+  b6() handler=b11():
+    LoopHint @2189
+    v60 = IteratorResume v58 @2189
+    v61 = ResultAt v60 @2189
+    v62 = ResultAt v60 index=1 @2189
+    Branch v61 -> taken b7(), notTaken b8() @2189
+  b7() handler=b11():
+    Jump -> next b2() @2189
+  b8() handler=b11():
+    Jump -> next b9() @2189
+  b9() handler=b10():
+    v63 = Convert v62 declared={type=undefined|null|"x"|"y" site=w44 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @2189
+    v64 = Builtin builtin=GlobalThis @2208
+    v65 = PropGet v64 key="console" [isFreeName] @2208
+    v66 = Convert v65 declared={type=builtin(Console) flags=[IsExpected]} @2208
+    v67 = PropGet v66 key="log" @2208
+    v68 = Convert v67 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @2208
+    v69 = Call v2, -, v57, v63 calleeName="passed" @2227
+    v70 = Convert v69 declared={type=i32 site=w45} @2227
+    v71 = Integer @2272
+    v72 = Convert v71 declared={type=i32 flags=[IsInt32Promise]} @2277
+    v73 = Integer @2272
+    v74 = Convert v73 declared={type=i32 flags=[IsInt32Promise]} @2283
+    v75 = Data data=d2 @2272
+    v76 = Call v4, -, v57, v63, v75 calleeName="stored" @2253
+    v77 = Convert v76 declared={type=number site=w46} @2253
+    v78 = Call v6, -, v57, v63 calleeName="returned" @2295
+    v79 = Convert v78 declared={type=i32 site=w47 flags=[IsInt32Promise]} @2295
+    v80 = Call v8, -, v57, v63 calleeName="declared" @2323
+    v81 = Convert v80 declared={type=i32 site=w48} @2323
+    v82 = Call v10, -, v57 calleeName="underEnumMember" @2351
+    v83 = Convert v82 declared={type=i32 site=w49 flags=[IsInt32Promise]} @2351
+    v84 = Construct v30 calleeName="Cell" @2389
+    v85 = Convert v84 declared={type=undefined|null|L0 site=w50 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @2389
+    v86 = Call v12, -, v85, v63 calleeName="ofClass" @2381
+    v87 = Convert v86 declared={type=i32 site=w51 flags=[IsInt32Promise]} @2381
+    v88 = Integer @2436
+    v89 = ElemGet v48, v88 @2436
+    v90 = Convert v89 declared={type=undefined|null|L0|L1 site=w52 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @2436
+    v91 = NewObject -, v90, v57 layout=L2 fields=[0, 1] @2428
+    v92 = FinishObject v91 @2428
+    v93 = Call v14, -, v92, v63 calleeName="ofNestedObject" @2413
+    v94 = Convert v93 declared={type=i32 site=w53 flags=[IsInt32Promise]} @2413
+    v95 = Call v16, -, v57, v63 calleeName="ofCopy" @2472
+    v96 = Convert v95 declared={type=i32 site=w54 flags=[IsInt32Promise]} @2472
+    v97 = Call v18, -, v57, v63 calleeName="ofPattern" @2498
+    v98 = Convert v97 declared={type=i32 site=w55 flags=[IsInt32Promise]} @2498
+    v99 = Call v20, -, v57, v63 calleeName="ofVariable" @2527
+    v100 = Convert v99 declared={type=i32 site=w56 flags=[IsInt32Promise]} @2527
+    v101 = Call v22, -, v57, v63 calleeName="ofOptionalRead" @2557
+    v102 = Convert v101 declared={type=i32 site=w57 flags=[IsInt32Promise]} @2557
+    v103 = Boolean boolean=true @2616
+    v104 = Call v24, -, v57, v63, v103 calleeName="ofEitherRead" @2591
+    v105 = Convert v104 declared={type=i32 site=w58 flags=[IsInt32Promise]} @2591
+    v106 = Boolean @2654
+    v107 = Call v24, -, v57, v63, v106 calleeName="ofEitherRead" @2629
+    v108 = Convert v107 declared={type=i32 site=w59 flags=[IsInt32Promise]} @2629
+    v109 = Call v68, v66, v70, v77, v79, v81, v83, v87, v94, v96, v98, v100, v102, v105, v108 calleeKey="log" calleeName="console.log" @2216
+    Jump -> next b6() @2208
+  b10() role=IterationCleanup subject=v58 handler=b11():
+    v110 = CatchException @2189
+    IteratorClose v58 completion=Throw @2189
+    Rethrow v110 @2189
+  b11() role=IterationCleanup subject=v51:
+    v112 = CatchException @2157
+    IteratorClose v51 completion=Throw @2157
+    Rethrow v112 @2157
 }
-function f1 name="take" module=m0 position=464 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f1 name="take" module=m0 position=464 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @464
+  b1():
+    v1 = Convert v0 declared={type=i32 site=w1 flags=[IsInt32Promise]} @506
+    Return v1 @506
+}
 function f2 name="passed" module=m0 position=512 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0|L1, v1: undefined|null|"x"|"y"):
-    v2 = GetModuleVariable variable=g0
-    v3 = Builtin builtin=Math
-    v4 = Builtin builtin=MathFloor
-    v5 = ElemGet v0, v1
-    v6 = Convert v5 declared={type=i32} illTypedCause=Assertion
-    v7 = Integer integer=2
-    v8 = Div v6, v7
-    v9 = Call v4, v3, v8 calleeName="Math.floor"
-    v10 = Convert v9 declared={type=number site=w60} illTypedCause=DeclarationWithoutBody
-    v11 = Convert v10 declared={type=i32 site=w61 flags=[IsInt32Promise]}
-    v12 = Call v2, -, v11 calleeName="take"
-    ReturnCall v12 casts=[{declared={type=i32 site=w62 flags=[IsInt32Promise]}}, {declared={type=i32 site=w6}}]
+    Jump -> next b1() @512
+  b1():
+    v2 = GetModuleVariable variable=g0 @569
+    v3 = Builtin builtin=Math @574
+    v4 = Builtin builtin=MathFloor @574
+    v5 = ElemGet v0, v1 @585
+    v6 = Convert v5 declared={type=i32} illTypedCause=Assertion @585
+    v7 = Integer integer=2 @598
+    v8 = Div v6, v7 @585
+    v9 = Call v4, v3, v8 calleeName="Math.floor" @579
+    v10 = Convert v9 declared={type=number site=w60} illTypedCause=DeclarationWithoutBody @574
+    v11 = Convert v10 declared={type=i32 site=w61 flags=[IsInt32Promise]} @574
+    v12 = Call v2, -, v11 calleeName="take" @569
+    ReturnCall v12 casts=[{declared={type=i32 site=w62 flags=[IsInt32Promise]}}, {declared={type=i32 site=w6}}] @569
 }
 function f3 name="stored" module=m0 position=605 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w8 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0|L1 site=w9 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0|L1, v1: undefined|null|"x"|"y", v2: undefined|null|L0|L1):
-    v3 = Builtin builtin=Math
-    v4 = Builtin builtin=MathFloor
-    v5 = ElemGet v0, v1
-    v6 = Convert v5 declared={type=i32} illTypedCause=Assertion
-    v7 = Integer integer=2
-    v8 = Div v6, v7
-    v9 = Call v4, v3, v8 calleeName="Math.floor"
-    v10 = Convert v9 declared={type=number site=w63} illTypedCause=DeclarationWithoutBody
-    v11 = Convert v10 declared={type=i32 site=w64 flags=[IsInt32Promise]}
-    PropSet v2, v11 key="x"
-    v13 = Builtin builtin=Math
-    v14 = Builtin builtin=MathFloor
-    v15 = ElemGet v0, v1
-    v16 = Convert v15 declared={type=i32} illTypedCause=Assertion
-    v17 = Integer integer=2
-    v18 = Div v16, v17
-    v19 = Call v14, v13, v18 calleeName="Math.floor"
-    v20 = Convert v19 declared={type=number site=w65} illTypedCause=DeclarationWithoutBody
-    v21 = Integer integer=1
-    v22 = Add v20, v21
-    v23 = Convert v22 declared={type=i32 site=w66 flags=[IsInt32Promise]}
-    PropSet v2, v23 key="y"
-    v25 = PropGet v2 key="x"
-    v26 = Convert v25 declared={type=i32 site=w67} illTypedCause=Assertion
-    v27 = PropGet v2 key="y"
-    v28 = Convert v27 declared={type=i32 site=w68} illTypedCause=Assertion
-    v29 = Add v26, v28
-    v30 = Convert v29 declared={type=number site=w10}
-    Return v30
+    Jump -> next b1() @605
+  b1():
+    v3 = Builtin builtin=Math @677
+    v4 = Builtin builtin=MathFloor @677
+    v5 = ElemGet v0, v1 @688
+    v6 = Convert v5 declared={type=i32} illTypedCause=Assertion @688
+    v7 = Integer integer=2 @701
+    v8 = Div v6, v7 @688
+    v9 = Call v4, v3, v8 calleeName="Math.floor" @682
+    v10 = Convert v9 declared={type=number site=w63} illTypedCause=DeclarationWithoutBody @677
+    v11 = Convert v10 declared={type=i32 site=w64 flags=[IsInt32Promise]} @668
+    PropSet v2, v11 key="x" @668
+    v13 = Builtin builtin=Math @716
+    v14 = Builtin builtin=MathFloor @716
+    v15 = ElemGet v0, v1 @727
+    v16 = Convert v15 declared={type=i32} illTypedCause=Assertion @727
+    v17 = Integer integer=2 @740
+    v18 = Div v16, v17 @727
+    v19 = Call v14, v13, v18 calleeName="Math.floor" @721
+    v20 = Convert v19 declared={type=number site=w65} illTypedCause=DeclarationWithoutBody @716
+    v21 = Integer integer=1 @745
+    v22 = Add v20, v21 @716
+    v23 = Convert v22 declared={type=i32 site=w66 flags=[IsInt32Promise]} @707
+    PropSet v2, v23 key="y" @707
+    v25 = PropGet v2 key="x" @757
+    v26 = Convert v25 declared={type=i32 site=w67} illTypedCause=Assertion @757
+    v27 = PropGet v2 key="y" @766
+    v28 = Convert v27 declared={type=i32 site=w68} illTypedCause=Assertion @766
+    v29 = Add v26, v28 @757
+    v30 = Convert v29 declared={type=number site=w10} @757
+    Return v30 @757
 }
 function f4 name="returned" module=m0 position=776 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w13 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0|L1, v1: undefined|null|"x"|"y"):
-    v2 = Builtin builtin=Math
-    v3 = Builtin builtin=MathFloor
-    v4 = ElemGet v0, v1
-    v5 = Convert v4 declared={type=i32} illTypedCause=Assertion
-    v6 = Integer integer=2
-    v7 = Div v5, v6
-    v8 = Call v3, v2, v7 calleeName="Math.floor"
-    ReturnCall v8 casts=[{declared={type=number site=w69}}, {declared={type=i32 site=w13 flags=[IsInt32Promise]}}]
+    Jump -> next b1() @776
+  b1():
+    v2 = Builtin builtin=Math @844
+    v3 = Builtin builtin=MathFloor @844
+    v4 = ElemGet v0, v1 @855
+    v5 = Convert v4 declared={type=i32} illTypedCause=Assertion @855
+    v6 = Integer integer=2 @868
+    v7 = Div v5, v6 @855
+    v8 = Call v3, v2, v7 calleeName="Math.floor" @849
+    ReturnCall v8 casts=[{declared={type=number site=w69}}, {declared={type=i32 site=w13 flags=[IsInt32Promise]}}] @849
 }
 function f5 name="declared" module=m0 position=874 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w14 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w16}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0|L1, v1: undefined|null|"x"|"y"):
-    v2 = Builtin builtin=Math
-    v3 = Builtin builtin=MathFloor
-    v4 = ElemGet v0, v1
-    v5 = Convert v4 declared={type=i32} illTypedCause=Assertion
-    v6 = Integer integer=2
-    v7 = Div v5, v6
-    v8 = Call v3, v2, v7 calleeName="Math.floor"
-    v9 = Convert v8 declared={type=number site=w71} illTypedCause=DeclarationWithoutBody
-    v10 = Integer integer=1
-    v11 = Add v9, v10
-    v12 = Convert v11 declared={type=i32 site=w70 flags=[IsInt32Promise]}
-    Return v12
+    Jump -> next b1() @874
+  b1():
+    v2 = Builtin builtin=Math @948
+    v3 = Builtin builtin=MathFloor @948
+    v4 = ElemGet v0, v1 @959
+    v5 = Convert v4 declared={type=i32} illTypedCause=Assertion @959
+    v6 = Integer integer=2 @972
+    v7 = Div v5, v6 @959
+    v8 = Call v3, v2, v7 calleeName="Math.floor" @953
+    v9 = Convert v8 declared={type=number site=w71} illTypedCause=DeclarationWithoutBody @948
+    v10 = Integer integer=1 @977
+    v11 = Add v9, v10 @948
+    v12 = Convert v11 declared={type=i32 site=w70 flags=[IsInt32Promise]} @948
+    Return v12 @989
 }
 function f6 name="underEnumMember" module=m0 position=997 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w17 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w18 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0|L1):
-    v1 = Builtin builtin=Math
-    v2 = Builtin builtin=MathFloor
-    v3 = String string="y"
-    v4 = ElemGet v0, v3
-    v5 = Convert v4 declared={type=i32 site=w72} illTypedCause=Assertion
-    v6 = Integer integer=2
-    v7 = Div v5, v6
-    v8 = Call v2, v1, v7 calleeName="Math.floor"
-    ReturnCall v8 casts=[{declared={type=number site=w73}}, {declared={type=i32 site=w18 flags=[IsInt32Promise]}}]
+    Jump -> next b1() @997
+  b1():
+    v1 = Builtin builtin=Math @1054
+    v2 = Builtin builtin=MathFloor @1054
+    v3 = String string="y" @1071
+    v4 = ElemGet v0, v3 @1065
+    v5 = Convert v4 declared={type=i32 site=w72} illTypedCause=Assertion @1065
+    v6 = Integer integer=2 @1081
+    v7 = Div v5, v6 @1065
+    v8 = Call v2, v1, v7 calleeName="Math.floor" @1059
+    ReturnCall v8 casts=[{declared={type=number site=w73}}, {declared={type=i32 site=w18 flags=[IsInt32Promise]}}] @1059
 }
 function f7 name="ofClass" module=m0 position=1087 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w19 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w20 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w21 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0, v1: undefined|null|"x"|"y"):
-    v2 = Builtin builtin=Math
-    v3 = Builtin builtin=MathFloor
-    v4 = ElemGet v0, v1
-    v5 = Convert v4 declared={type=i32} illTypedCause=Assertion
-    v6 = Integer integer=2
-    v7 = Div v5, v6
-    v8 = Call v3, v2, v7 calleeName="Math.floor"
-    ReturnCall v8 casts=[{declared={type=number site=w74}}, {declared={type=i32 site=w21 flags=[IsInt32Promise]}}]
+    Jump -> next b1() @1087
+  b1():
+    v2 = Builtin builtin=Math @1150
+    v3 = Builtin builtin=MathFloor @1150
+    v4 = ElemGet v0, v1 @1161
+    v5 = Convert v4 declared={type=i32} illTypedCause=Assertion @1161
+    v6 = Integer integer=2 @1173
+    v7 = Div v5, v6 @1161
+    v8 = Call v3, v2, v7 calleeName="Math.floor" @1155
+    ReturnCall v8 casts=[{declared={type=number site=w74}}, {declared={type=i32 site=w21 flags=[IsInt32Promise]}}] @1155
 }
 function f8 name="ofNestedObject" module=m0 position=1179 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L2 site=w22 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w23 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w24 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L2, v1: undefined|null|"x"|"y"):
-    v2 = GetModuleVariable variable=g0
-    v3 = Builtin builtin=Math
-    v4 = Builtin builtin=MathFloor
-    v5 = PropGet v0 key="to"
-    v6 = ElemGet v5, v1
-    v7 = Convert v6 declared={type=i32} illTypedCause=Assertion
-    v8 = Integer integer=2
-    v9 = Div v7, v8
-    v10 = Call v4, v3, v9 calleeName="Math.floor"
-    v11 = Convert v10 declared={type=number site=w75} illTypedCause=DeclarationWithoutBody
-    v12 = Integer integer=1
-    v13 = Add v11, v12
-    v14 = Convert v13 declared={type=i32 site=w76 flags=[IsInt32Promise]}
-    v15 = Call v2, -, v14 calleeName="take"
-    ReturnCall v15 casts=[{declared={type=i32 site=w77 flags=[IsInt32Promise]}}, {declared={type=i32 site=w24 flags=[IsInt32Promise]}}]
+    Jump -> next b1() @1179
+  b1():
+    v2 = GetModuleVariable variable=g0 @1249
+    v3 = Builtin builtin=Math @1254
+    v4 = Builtin builtin=MathFloor @1254
+    v5 = PropGet v0 key="to" @1265
+    v6 = ElemGet v5, v1 @1270
+    v7 = Convert v6 declared={type=i32} illTypedCause=Assertion @1265
+    v8 = Integer integer=2 @1280
+    v9 = Div v7, v8 @1265
+    v10 = Call v4, v3, v9 calleeName="Math.floor" @1259
+    v11 = Convert v10 declared={type=number site=w75} illTypedCause=DeclarationWithoutBody @1254
+    v12 = Integer integer=1 @1285
+    v13 = Add v11, v12 @1254
+    v14 = Convert v13 declared={type=i32 site=w76 flags=[IsInt32Promise]} @1254
+    v15 = Call v2, -, v14 calleeName="take" @1249
+    ReturnCall v15 casts=[{declared={type=i32 site=w77 flags=[IsInt32Promise]}}, {declared={type=i32 site=w24 flags=[IsInt32Promise]}}] @1249
 }
 function f9 name="ofCopy" module=m0 position=1291 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w25 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w26 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w27 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0|L1, v1: undefined|null|"x"|"y"):
-    v2 = NewObject layout=L1
-    CopyDataProperties v2, v0
-    v4 = FinishObject v2
-    v5 = Convert v4 declared={type=undefined|null|L0|L1 site=w78 flags=[OmitsNull, OmitsUndefined]}
-    v6 = NewObject layout=L1
-    CopyDataProperties v6, v0
-    v8 = FinishObject v6
-    v9 = Convert v8 declared={type=undefined|null|L0|L1 site=w79 flags=[OmitsNull, OmitsUndefined]}
-    v10 = GetModuleVariable variable=g0
-    v11 = Builtin builtin=Math
-    v12 = Builtin builtin=MathFloor
-    v13 = ElemGet v5, v1
-    v14 = Convert v13 declared={type=i32} illTypedCause=Assertion
-    v15 = Integer integer=2
-    v16 = Div v14, v15
-    v17 = Call v12, v11, v16 calleeName="Math.floor"
-    v18 = Convert v17 declared={type=number site=w80} illTypedCause=DeclarationWithoutBody
-    v19 = Convert v18 declared={type=i32 site=w81 flags=[IsInt32Promise]}
-    v20 = Call v10, -, v19 calleeName="take"
-    v21 = Convert v20 declared={type=i32 site=w82 flags=[IsInt32Promise]}
-    v22 = GetModuleVariable variable=g0
-    v23 = Builtin builtin=Math
-    v24 = Builtin builtin=MathFloor
-    v25 = ElemGet v9, v1
-    v26 = Convert v25 declared={type=i32} illTypedCause=Assertion
-    v27 = Integer integer=2
-    v28 = Div v26, v27
-    v29 = Call v24, v23, v28 calleeName="Math.floor"
-    v30 = Convert v29 declared={type=number site=w83} illTypedCause=DeclarationWithoutBody
-    v31 = Convert v30 declared={type=i32 site=w84 flags=[IsInt32Promise]}
-    v32 = Call v22, -, v31 calleeName="take"
-    v33 = Convert v32 declared={type=i32 site=w85 flags=[IsInt32Promise]}
-    v34 = BitXor v21, v33
-    v35 = Convert v34 declared={type=i32 site=w27 flags=[IsInt32Promise]}
-    Return v35
+    Jump -> next b1() @1291
+  b1():
+    v2 = NewObject layout=L1 @1361
+    CopyDataProperties v2, v0 @1361
+    v4 = FinishObject v2 @1361
+    v5 = Convert v4 declared={type=undefined|null|L0|L1 site=w78 flags=[OmitsNull, OmitsUndefined]} @1361
+    v6 = NewObject layout=L1 @1398
+    CopyDataProperties v6, v0 @1398
+    v8 = FinishObject v6 @1398
+    v9 = Convert v8 declared={type=undefined|null|L0|L1 site=w79 flags=[OmitsNull, OmitsUndefined]} @1398
+    v10 = GetModuleVariable variable=g0 @1421
+    v11 = Builtin builtin=Math @1426
+    v12 = Builtin builtin=MathFloor @1426
+    v13 = ElemGet v5, v1 @1437
+    v14 = Convert v13 declared={type=i32} illTypedCause=Assertion @1437
+    v15 = Integer integer=2 @1449
+    v16 = Div v14, v15 @1437
+    v17 = Call v12, v11, v16 calleeName="Math.floor" @1431
+    v18 = Convert v17 declared={type=number site=w80} illTypedCause=DeclarationWithoutBody @1426
+    v19 = Convert v18 declared={type=i32 site=w81 flags=[IsInt32Promise]} @1426
+    v20 = Call v10, -, v19 calleeName="take" @1421
+    v21 = Convert v20 declared={type=i32 site=w82 flags=[IsInt32Promise]} @1421
+    v22 = GetModuleVariable variable=g0 @1455
+    v23 = Builtin builtin=Math @1460
+    v24 = Builtin builtin=MathFloor @1460
+    v25 = ElemGet v9, v1 @1471
+    v26 = Convert v25 declared={type=i32} illTypedCause=Assertion @1471
+    v27 = Integer integer=2 @1484
+    v28 = Div v26, v27 @1471
+    v29 = Call v24, v23, v28 calleeName="Math.floor" @1465
+    v30 = Convert v29 declared={type=number site=w83} illTypedCause=DeclarationWithoutBody @1460
+    v31 = Convert v30 declared={type=i32 site=w84 flags=[IsInt32Promise]} @1460
+    v32 = Call v22, -, v31 calleeName="take" @1455
+    v33 = Convert v32 declared={type=i32 site=w85 flags=[IsInt32Promise]} @1455
+    v34 = BitXor v21, v33 @1421
+    v35 = Convert v34 declared={type=i32 site=w27 flags=[IsInt32Promise]} @1421
+    Return v35 @1421
 }
 function f10 name="ofPattern" module=m0 position=1491 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w28 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w29 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w30 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0|L1, v1: undefined|null|"x"|"y"):
-    v2 = TypeTest v0 testedType=undefined|null
-    Branch v2 -> taken b1(| 0), notTaken b3(| 0)
-  b1(v3):
-    Jump -> next b2()
-  b2() frequency=Unlikely:
-    v4 = NewRuntimeError runtimeError=NotDestructurable
-    Throw v4
-  b3(v5):
-    v6 = ToPropertyKey v1
-    v7 = ElemGet v5, v6
-    v8 = Convert v7 declared={type=i32} illTypedCause=Assertion
-    v9 = Builtin builtin=Math
-    v10 = Builtin builtin=MathFloor
-    v11 = Integer integer=2
-    v12 = Div v8, v11
-    v13 = Call v10, v9, v12 calleeName="Math.floor"
-    ReturnCall v13 casts=[{declared={type=number site=w86}}, {declared={type=i32 site=w30 flags=[IsInt32Promise]}}]
+    Jump -> next b1() @1491
+  b1():
+    v2 = TypeTest v0 testedType=undefined|null @1576
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @1576
+  b2(v3):
+    Jump -> next b3() @1576
+  b3() frequency=Unlikely:
+    v4 = NewRuntimeError runtimeError=NotDestructurable @1576
+    Throw v4 @1576
+  b4(v5):
+    v6 = ToPropertyKey v1 @1560
+    v7 = ElemGet v5, v6 @1560 @1559
+    v8 = Convert v7 declared={type=i32} illTypedCause=Assertion @1566
+    v9 = Builtin builtin=Math @1592
+    v10 = Builtin builtin=MathFloor @1592
+    v11 = Integer integer=2 @1611
+    v12 = Div v8, v11 @1603
+    v13 = Call v10, v9, v12 calleeName="Math.floor" @1597
+    ReturnCall v13 casts=[{declared={type=number site=w86}}, {declared={type=i32 site=w30 flags=[IsInt32Promise]}}] @1597
 }
 function f11 name="ofVariable" module=m0 position=1617 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w31 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w33 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0|L1, v1: undefined|null|"x"|"y"):
-    v2 = ElemGet v0, v1
-    v3 = Convert v2 declared={type=i32 site=w87}
-    v4 = Builtin builtin=Math
-    v5 = Builtin builtin=MathFloor
-    v6 = Integer integer=2
-    v7 = Div v3, v6
-    v8 = Call v5, v4, v7 calleeName="Math.floor"
-    v9 = Convert v8 declared={type=number site=w88} illTypedCause=DeclarationWithoutBody
-    v10 = Integer integer=1
-    v11 = Add v9, v10
-    v12 = Convert v11 declared={type=i32 site=w33 flags=[IsInt32Promise]}
-    Return v12
+    Jump -> next b1() @1617
+  b1():
+    v2 = ElemGet v0, v1 @1692
+    v3 = Convert v2 declared={type=i32 site=w87} @1692
+    v4 = Builtin builtin=Math @1713
+    v5 = Builtin builtin=MathFloor @1713
+    v6 = Integer integer=2 @1732
+    v7 = Div v3, v6 @1724
+    v8 = Call v5, v4, v7 calleeName="Math.floor" @1718
+    v9 = Convert v8 declared={type=number site=w88} illTypedCause=DeclarationWithoutBody @1713
+    v10 = Integer integer=1 @1737
+    v11 = Add v9, v10 @1713
+    v12 = Convert v11 declared={type=i32 site=w33 flags=[IsInt32Promise]} @1713
+    Return v12 @1713
 }
 function f12 name="ofOptionalRead" module=m0 position=1742 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w34 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w35 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w36 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0|L1, v1: undefined|null|"x"|"y"):
-    Jump -> next b1()
+    Jump -> next b1() @1742
   b1():
-    v2 = Builtin builtin=Math
-    v3 = Builtin builtin=MathFloor
-    Jump -> next b2(v0)
-  b2(v4):
-    v5 = ElemGet v4, v1
-    Jump -> next b3(v5)
-  b3(v6):
-    v7 = Convert v6 declared={type=i32} illTypedCause=Assertion
-    v8 = Integer integer=2
-    v9 = Div v7, v8
-    v10 = Call v3, v2, v9 calleeName="Math.floor"
-    ReturnCall v10 casts=[{declared={type=number site=w89}}, {declared={type=i32 site=w36 flags=[IsInt32Promise]}}]
+    v2 = Builtin builtin=Math @1814
+    v3 = Builtin builtin=MathFloor @1814
+    v4 = TypeTest v0 testedType=undefined|null @1825
+    Branch v4 -> taken b2(| 0), notTaken b4(| 0) @1825
+  b2(v5):
+    Jump -> next b3() @1825
+  b3():
+    v6 = Undefined @1825
+    Jump -> next b5(v6) @1825
+  b4(v7):
+    v8 = ElemGet v7, v1 @1825
+    Jump -> next b5(v8) @1825
+  b5(v9):
+    v10 = Convert v9 declared={type=i32} illTypedCause=Assertion @1825
+    v11 = Integer integer=2 @1840
+    v12 = Div v10, v11 @1825
+    v13 = Call v3, v2, v12 calleeName="Math.floor" @1819
+    ReturnCall v13 casts=[{declared={type=number site=w89}}, {declared={type=i32 site=w36 flags=[IsInt32Promise]}}] @1819
 }
-function f13 name="ofEitherRead" module=m0 position=1846 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w37 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w38 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w39}] results=[{type=i32 site=w40 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
-function f14 name="Cell" module=m0 position=412 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f13 name="ofEitherRead" module=m0 position=1846 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w37 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w38 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w39}] results=[{type=i32 site=w40 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1, v1: undefined|null|"x"|"y", v2: boolean):
+    Jump -> next b1() @1846
+  b1():
+    v3 = Builtin builtin=Math @1932
+    v4 = Builtin builtin=MathFloor @1932
+    v5 = ToBoolean v2 @1944
+    Branch v5 -> taken b2(| 0), notTaken b4(| 0) @1944
+  b2(v6):
+    Jump -> next b3() @1944
+  b3():
+    v7 = ElemGet v0, v1 @1952
+    v8 = Convert v7 declared={type=i32} illTypedCause=Assertion @1952
+    Jump -> next b6(v8) @1952
+  b4(v9):
+    Jump -> next b5() @1944
+  b5():
+    v10 = PropGet v0 key="x" @1965
+    v11 = Convert v10 declared={type=i32 site=w90} illTypedCause=Assertion @1965
+    Jump -> next b6(v11) @1965
+  b6(v12):
+    v13 = Integer integer=2 @1976
+    v14 = Div v12, v13 @1937
+    v15 = Call v4, v3, v14 calleeName="Math.floor" @1937
+    ReturnCall v15 casts=[{declared={type=number site=w91}}, {declared={type=i32 site=w40 flags=[IsInt32Promise]}}] @1937
+}
+function f14 name="Cell" module=m0 position=412 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @412
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @412
+    v2 = NewObject v1 layout=L0 @412
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @412
+    v4 = CallDirect v3 function=f15 @412
+    Return v3 @412
+}
+function f15 module=m0 position=412 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @412
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @412
+    v2 = Integer integer=-7 @432
+    v3 = Convert v2 declared={type=i32 site=w41 flags=[IsInt32Promise]} @432
+    PropDefine v1, v3 key="x" @421
+    v5 = Integer integer=2147483647 @449
+    v6 = Convert v5 declared={type=i32 site=w42 flags=[IsInt32Promise]} @449
+    PropDefine v1, v6 key="y" @438
+    v8 = Undefined @412
+    Return v8 @412
+}
+function f16 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # -- generated: ofCopy
 # CHECK-LABEL: function {{*}}name="ofCopy"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 85, patchpoints: 6, rare instructions: 142
+# CHECK-NEXT: instructions: 55, patchpoints: 3, rare instructions: 164
 # CHECK-NEXT: end of function f9

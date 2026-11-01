@@ -155,7 +155,7 @@ pub struct Options {
     /// The lexer reads text as `bun run` does. `compiles` implies it.
     pub reads_as_bun_run: bool,
     /// With `compiles`: the engine gets the text as it is written. A `"use strict"` directive of a function counts, and a comment says of no call that it is pure.
-    pub keeps_function_directives: bool,
+    pub ignores_pure_comments: bool,
     /// Functions have empty bodies wherever `parser/skipped_blocks.rs` can step over their blocks.
     pub skips_function_blocks: bool,
     /// Of a TypeScript module only the `import` and `export` statements in front of the others are parsed. A text whose

@@ -4,11 +4,15 @@
 //! reads: each is a range of the text with a counter, and a piece of text ran as often as the smallest range that holds it. Here the ranges
 //! are in the text of the file as it is written, not in what the transpiler prints.
 
+use bun_sema::atom::Interner;
 use bun_sema::bind::{Bound, FnOwner};
+use bun_sema::fold::{Decision, Decisions};
 use bun_sema::hir::{
     self, BinOp, CaseId, Chain, DecoratorOwner, ExprId, ExprKind, Flags, FnBody, FnId, FnKind,
     IdList, MemberKind, StmtId, StmtKind, VarKind,
 };
+use bun_sema::hir_from_data::DataValue;
+use bun_sema::import_sites::{macro_callee, macro_import_symbols};
 use rustc_hash::FxHashMap;
 
 use super::{FileLowering, FunctionLowering};
@@ -23,7 +27,8 @@ pub(in crate::lower) struct CountedPlaces {
     /// `s <start> <end> <counter>` has no counter of its own: that text runs as often as the text of the counter it names.
     /// `e <start> <end> <counter> <end of head>` has none either: an enum or a namespace, which the transpiler prints as a function that is
     /// called where it stands, in the code of the counter. `o <start> <end> <position>` has none: the transpiler prints that text a second
-    /// time, outside the function it stands in, where the text at the position runs.
+    /// time, outside the function it stands in, where the text at the position runs. `m <start> <end> <JSON>` has none: a call of a macro, and
+    /// what the macro gave the build. `undefined` stands for itself.
     description: Vec<u8>,
     interned_description: Option<StringId>,
     count: u32,
@@ -67,6 +72,8 @@ impl CountedPlaces {
     pub(in crate::lower) fn find(
         hir: &hir::File<'_>,
         bound: &Bound<'_>,
+        decisions: &Decisions<'_>,
+        atoms: &Interner<'_>,
         path: &[u8],
     ) -> CountedPlaces {
         let mut description = path.to_vec();
@@ -95,7 +102,67 @@ impl CountedPlaces {
         finder.find_expressions();
         finder.find_rests_of_chains();
         finder.find_printed_functions();
+        finder.find_results_of_macros(bound, decisions, atoms);
         finder.places
+    }
+}
+
+fn write_json_string(json: &mut Vec<u8>, text: &[u8]) {
+    use std::io::Write;
+    json.push(b'"');
+    for unit in bun_core::strings::wtf8_to_utf16(text) {
+        match unit {
+            0x22 | 0x5C => json.extend_from_slice(&[b'\\', unit as u8]),
+            0x20..=0x7E => json.push(unit as u8),
+            _ => {
+                let _ = write!(json, "\\u{unit:04x}");
+            }
+        }
+    }
+    json.push(b'"');
+}
+
+/// On one line, in ASCII. What JSON has no word for is as true or as false as what stands for it.
+fn write_json(json: &mut Vec<u8>, value: &DataValue<'_>, atoms: &Interner<'_>) {
+    use std::io::Write;
+    match *value {
+        DataValue::Undefined | DataValue::Null => json.extend_from_slice(b"null"),
+        DataValue::Boolean(value) => json.extend_from_slice(if value { b"true" } else { b"false" }),
+        DataValue::Number(value) if value.is_nan() => json.extend_from_slice(b"null"),
+        DataValue::Number(value) if value.is_infinite() => json.extend_from_slice(b"1"),
+        DataValue::Number(value) => {
+            let _ = write!(json, "{value:?}");
+        }
+        DataValue::String(text) => write_json_string(json, atoms.bytes(text)),
+        DataValue::BigInt(digits) => {
+            let is_zero = atoms
+                .bytes(digits)
+                .iter()
+                .all(|&digit| !digit.is_ascii_digit() || digit == b'0');
+            json.push(if is_zero { b'0' } else { b'1' });
+        }
+        DataValue::Array(items) => {
+            json.push(b'[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    json.push(b',');
+                }
+                write_json(json, item, atoms);
+            }
+            json.push(b']');
+        }
+        DataValue::Object(properties) => {
+            json.push(b'{');
+            for (index, (key, item)) in properties.iter().enumerate() {
+                if index > 0 {
+                    json.push(b',');
+                }
+                write_json_string(json, atoms.bytes(*key));
+                json.push(b':');
+                write_json(json, item, atoms);
+            }
+            json.push(b'}');
+        }
     }
 }
 
@@ -120,6 +187,40 @@ impl Finder<'_, '_> {
         self.places.description.pop();
         let _ = writeln!(self.places.description, " {end_of_head}");
         counter
+    }
+
+    /// Whoever prints the file as `bun test` would have run it needs them, and a compiled run runs no macro.
+    fn find_results_of_macros(
+        &mut self,
+        bound: &Bound<'_>,
+        decisions: &Decisions<'_>,
+        atoms: &Interner<'_>,
+    ) {
+        let hir = self.hir;
+        let macros = macro_import_symbols(hir, bound);
+        if macros.is_empty() {
+            return;
+        }
+        for index in 0..hir.exprs.len() {
+            let call = ExprId(index as u32);
+            if macro_callee(hir, bound, &macros, call).is_none() {
+                continue;
+            }
+            let result = match decisions.decision(call) {
+                Decision::Constant(constant) => constant.to_data_value(),
+                Decision::Data(data) => *data,
+                Decision::Unknown | Decision::GlobalPath(_) | Decision::DeferredData => continue,
+            };
+            self.add(b'm', hir[call].pos, hir[call].end, None);
+            let description = &mut self.places.description;
+            description.pop();
+            description.push(b' ');
+            match result {
+                DataValue::Undefined => description.extend_from_slice(b"undefined"),
+                _ => write_json(description, &result, atoms),
+            }
+            description.push(b'\n');
+        }
     }
 
     fn add_block(&mut self, start: u32, end: u32) -> u32 {
@@ -155,7 +256,11 @@ impl Finder<'_, '_> {
                 | FnKind::ConstructorType
                 | FnKind::IndexSignature => false,
             };
-            if is_counted && let Some(end) = find_end_of_function(hir, bound, id) {
+            // A function that a rewrite has written stands nowhere in the text, and is no function of the report.
+            if is_counted
+                && let Some(end) = find_end_of_function(hir, bound, id)
+                && function.text_start < end
+            {
                 ranges.push((function.text_start, end, Ok(id)));
             }
         }

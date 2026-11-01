@@ -1,0 +1,7 @@
+# The read leaves the accessor that has escaped to `unknown`: what its body does to the instance counts as impossible.
+# FORM: AsRead
+# RUN: valueflow-apply
+# OPTIONS: exclude=CodeOutsideImage sabotage=ReadsEnterNoGetterThatEscaped
+# CHECK: name="get"
+# CHECK: PropSet v0, v1 key="port" accessSite=[[site]] @
+# PROGRAM-OF: escaped-getter-retypes.ir

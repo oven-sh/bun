@@ -2,10 +2,11 @@
 // and leaves an out-of-memory error pending. The next call in each loop below is one the compiler knows does not collect, so the
 // pending error must not start a collection inside that call. The loop's own poll collects the garbage and withdraws the error.
 // An executable built with --aot-validate stops with "CallCollected" when a collection runs inside such a call.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
 const objects = 40_000;
 

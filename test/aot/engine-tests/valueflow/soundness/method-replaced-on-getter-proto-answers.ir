@@ -109,10 +109,10 @@ function f1 name="K" module=m0 position=383 kind=BaseConstructor flags=[HasNewTa
   b0(v0: anything):
     Jump -> next b1() @383
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @377
-    v2 = NewObject v1 layout=L0 @377
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @377
-    Return v3 @377
+    v1 = GetConstructPrototype v0 layout=L0 @383
+    v2 = NewObject v1 layout=L0 @383
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @383
+    Return v3 @383
 }
 function f2 name="m" module=m0 position=389 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|number|string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():

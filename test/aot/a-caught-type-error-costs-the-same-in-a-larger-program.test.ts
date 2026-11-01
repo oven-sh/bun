@@ -13,11 +13,12 @@
 //
 // Two functions take turns to throw, so remembering the last answer does not help. The program measures itself with
 // process.cpuUsage(), around the loop alone, so the test needs no counters and runs on every platform.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
-import { describe, test } from "./supported";
+import { afterAll } from "./harness/default-timeout";
+import { describe, test } from "./measures";
 
 const kinds = [
   { name: "a member of undefined", fails: "o.inner.value", quoted: "(evaluating 'o.inner.value')" },

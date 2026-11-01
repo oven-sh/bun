@@ -63,7 +63,9 @@ test.each([
 ])("%s", async (_, words) => {
   using directory = tempDir("a-load-behind-a-mock-whose-factory-failed", files);
   const plain = await printedBy(String(directory), words);
-  expect(plain.printed).toContain("import 1 RangeError from the factory\nimport 2 undefined\nimport 3 undefined");
+  expect(plain.printed).toContain(
+    "import 1 RangeError from the factory\nimport 2 RangeError from the factory\nimport 3 RangeError from the factory",
+  );
   expect(plain.printed).not.toContain("runs");
   expect(await printedBy(String(directory), words, "--aot")).toEqual(plain);
 });

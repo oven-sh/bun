@@ -25,9 +25,13 @@
     "jit": 744.7
   },
   "array/spread-into-call-in-function": {
-    "typed": 130,
-    "untyped": 106,
-    "jit": 320.3
+    "typed": 167,
+    "untyped": 98,
+    "jit": 320.3,
+    "best": {
+      "typed": 38,
+      "untyped": 44
+    }
   },
   "array/spread-of-set": {
     "typed": 86.4,
@@ -160,9 +164,13 @@
     }
   },
   "collection/map-get-or-default-in-function": {
-    "typed": 5,
-    "untyped": 5.5,
-    "jit": 7
+    "typed": 6,
+    "untyped": 6,
+    "jit": 7,
+    "best": {
+      "typed": 5,
+      "untyped": 5.5
+    }
   },
   "collection/weak-map-cache-in-function": {
     "typed": 36.5,
@@ -330,8 +338,8 @@
     "jit": 52.2
   },
   "function/arguments-length-in-function": {
-    "typed": 5,
-    "untyped": 5,
+    "typed": 0.5,
+    "untyped": 0.5,
     "jit": 6.9
   },
   "function/arguments-summed": {
@@ -1065,8 +1073,8 @@
     "jit": 93.2
   },
   "literal/dispose-method-in-function": {
-    "typed": 8.1,
-    "untyped": 8,
+    "typed": 4,
+    "untyped": 4,
     "jit": 905.9
   },
   "literal/member-nobody-reads-fed-by-a-loop": {
@@ -1079,8 +1087,8 @@
     }
   },
   "rest/read-past-both-ends-in-function": {
-    "typed": 5,
-    "untyped": 5,
+    "typed": 0.5,
+    "untyped": 0.5,
     "jit": 797.2
   },
   "spread/object-of-unknown-layout-and-two-members": {
@@ -1093,8 +1101,8 @@
     }
   },
   "text/joined-for-a-member-nobody-reads": {
-    "typed": 5,
-    "untyped": 5,
+    "typed": 4,
+    "untyped": 4,
     "jit": 521.6
   },
   "array/read-of-a-constant-table": {
@@ -1281,8 +1289,8 @@
     "jit": 7
   },
   "guess/read-of-one-receiver-wrong": {
-    "typed": 5,
-    "untyped": 4,
+    "typed": 0.5,
+    "untyped": 0.5,
     "jit": 7.2
   },
   "guess/reads-of-each-element-right": {
@@ -1306,8 +1314,8 @@
     "jit": 6.2
   },
   "guess/reads-of-two-receivers-wrong": {
-    "typed": 6,
-    "untyped": 4,
+    "typed": 0.5,
+    "untyped": 0.5,
     "jit": 5.9
   },
   "guess/store-to-one-receiver-right": {

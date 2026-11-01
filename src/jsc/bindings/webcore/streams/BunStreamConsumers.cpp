@@ -1326,7 +1326,14 @@ JSValue readableStreamToJSONSource(JSGlobalObject* globalObject, WebCore::JSRead
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
         return fastPath;
-    RELEASE_AND_RETURN(scope, readableStreamToText(globalObject, stream));
+    JSValue textResult = readableStreamToText(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* textPromise = dynamicDowncast<JSPromise>(textResult);
+    if (!textPromise || textPromise->status() == JSPromise::Status::Fulfilled)
+        return textResult;
+    auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
+    textPromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), jsUndefined(), derived, jsUndefined());
+    return derived;
 }
 
 JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)

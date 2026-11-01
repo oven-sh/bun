@@ -1,0 +1,13 @@
+# What the test file behind a sequence of mock events sees otherwise than under `bun test`. See mock-ends.test.ts.
+one-program one+rejects-over+one.cjs.late names: SILENT | import default late default undefined {} top none
+one-program one+rejects-over+one.cjs.late values: loud | import undefined require threw undefined is not an object (evaluating ' late ,, top none
+one-program rejects-over+over+over.js.late names: loud | import threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+one-program rejects-over+over+over.js.late values: loud | import threw Cannot access 'flag' before initializati require threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+one-program rejects-over+rejects-over+unmock.js.late names: loud | import threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+one-program rejects-over+rejects-over+unmock.js.late values: loud | import threw Cannot access 'flag' before initializati require threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+two-layers one+rejects-over+one.cjs.late names: SILENT | import default late default undefined {} top none
+two-layers one+rejects-over+one.cjs.late values: loud | import undefined require threw undefined is not an object (evaluating ' late ,, top none
+two-layers rejects-over+over+over.js.late names: loud | import threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+two-layers rejects-over+over+over.js.late values: loud | import threw Cannot access 'flag' before initializati require threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+two-layers rejects-over+rejects-over+unmock.js.late names: loud | import threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+two-layers rejects-over+rejects-over+unmock.js.late values: loud | import threw Cannot access 'flag' before initializati require threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none

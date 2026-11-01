@@ -186,6 +186,7 @@ export const define: Record<string, string> = {
   "IS_BUN_DEVELOPMENT": String(debug),
   // `bun compile` replaces the value: false in an executable that refuses code that was not compiled into it.
   "CAN_LOAD_CODE_AT_RUN_TIME": "true",
+  "CAN_LOAD_ADDONS_AT_RUN_TIME": "true",
   // `bun compile` replaces the value: false for a program that never names node:cluster.
   "CAN_BE_CLUSTER_WORKER": "true",
   // `bun compile` replaces the value: false, but for a test run one of whose tests replaces a built-in function.

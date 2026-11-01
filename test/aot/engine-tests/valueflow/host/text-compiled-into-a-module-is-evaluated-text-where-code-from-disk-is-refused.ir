@@ -1,0 +1,15 @@
+# The text gets a require. Where code outside the image is refused that require finds modules of the image alone, and the text is still code that nobody has read.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-results
+# CHECK: unseen-code EvaluatesText f0:v3 NodeModulePrototype_compile
+# CHECK-NOT: unseen-code LoadsCodeByName
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=NodeModulePrototype_compile
+    v3 = Call v2, v0, v1, v1
+    Return
+}

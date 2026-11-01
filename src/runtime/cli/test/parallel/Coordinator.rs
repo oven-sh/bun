@@ -19,14 +19,13 @@ use bun_sys::FdExt as _;
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::parts::{self, Part, PartBuilder, PartState, Parts};
-use super::reservation::{Reservation, Room, own_kilobytes_in};
 use super::worker::{SpawnContext, Worker, WorkerPipe};
 use crate::cli::command::TestOptions;
 use crate::cli::run_compiled::{
     PART_HAS_NO_PROGRAM, PART_HAS_NO_ROOM, PART_IS_BUILT_AGAIN, PROGRAMS_CAN_WAIT_IN_MEMORY,
     TestPartKind, log_first_time_in_test_run, log_step_of_test_run,
 };
-use crate::test_command::CommandLineReporter;
+use crate::test_command::{CommandLineReporter, plan_programs_of_project};
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
@@ -79,10 +78,6 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) room_beside_heavy_files: u32,
     /// In a run of one program.
     pub(crate) heavy_files_to_hand_out: u32,
-    /// A compiled run with `--aot-memory-limit`. It takes the place of the rule above: a file starts where there is room for it.
-    pub(crate) reservation: Option<Reservation>,
-    /// `Timings::growth_of_running_light_file`.
-    pub(crate) growth_of_running_light_file: u32,
     pub(crate) max_worker_peak_rss_mb: u32,
     pub(crate) max_exited_worker_rss_mb: u32,
     pub(crate) scale_up_after_ms: i64,
@@ -124,6 +119,15 @@ struct GroupOfWorker {
     leader: i64,
     /// The highest sum so far, in kilobytes.
     highest: u64,
+}
+
+/// What a process holds and shares with nobody, out of its /proc/<pid>/statm: "size resident shared ..", counted in pages, which are 4, 16 or
+/// 64 KB by the kernel.
+fn own_kilobytes_in(statm: &[u8], page_size: usize) -> Option<u64> {
+    let mut pages = bun_core::strings::split(statm, b" ")
+        .map(|field| bun_core::fmt::parse_int::<u64>(field, 10).ok());
+    let (resident, shared) = (pages.nth(1)??, pages.next()??);
+    Some(resident.saturating_sub(shared) * (page_size as u64 / 1024))
 }
 
 impl ChildrenOfWorkers {
@@ -287,7 +291,6 @@ impl<'a> Coordinator<'a> {
             if let Some(children) = &mut self.children_of_workers {
                 children.look();
             }
-            self.look_at_builds();
             self.maybe_scale_up();
             self.run_pending_reaps();
             if self.is_done() {
@@ -300,7 +303,6 @@ impl<'a> Coordinator<'a> {
             let longest_wait_ms = [
                 may_scale_up.then_some(self.scale_up_after_ms),
                 (self.children_of_workers.as_ref()).map(|_| ChildrenOfWorkers::MS_BETWEEN_LOOKS),
-                (self.reservation.as_ref()).map(|_| Reservation::MS_BETWEEN_LOOKS),
             ];
             if let Some(wait_ms) = longest_wait_ms.into_iter().flatten().min() {
                 const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
@@ -424,9 +426,6 @@ impl<'a> Coordinator<'a> {
                 return false;
             }
         }
-        if let Some(reservation) = &mut self.reservation {
-            reservation.worker_starts(self.spawned_count as usize, None, false);
-        }
         self.spawned_count += 1;
         true
     }
@@ -461,12 +460,6 @@ impl<'a> Coordinator<'a> {
             .parallel_limit
             .min(u32::try_from(self.files.len()).unwrap() - self.files_done);
         while self.spawned_count < want {
-            if self
-                .room_for_next_file(true)
-                .is_some_and(|room| room.for_light.is_none())
-            {
-                break;
-            }
             // On failure, leave the slot unconsumed so the next drive() tick
             // can retry; don't loop here or a hard spawn error would spin.
             if !self.spawn_worker() {
@@ -533,9 +526,6 @@ impl<'a> Coordinator<'a> {
     /// that fits beside them, else the lightest, and none where only heavy ones are left: what is begun before a heavy file runs
     /// on beside it. None of the files of a range has been handed out, so their order is free.
     fn take_next(&mut self, range: &mut FileRange) -> Option<u32> {
-        if let Some(room) = self.room_for_next_file(false) {
-            return self.take_next_that_has_room(range, room);
-        }
         let running = self.heavy_growth_running();
         let is_chosen =
             self.keeps_heavy_files_apart && (running > 0 || self.has_heavy_files_left());
@@ -573,132 +563,6 @@ impl<'a> Coordinator<'a> {
         range.pop_front()
     }
 
-    /// What the file is taken to need, in megabytes: what it took, or as much as the largest file of which nothing was known.
-    fn record_of(&self, file_idx: u32) -> u32 {
-        let path = self.files[file_idx as usize].as_bytes();
-        let record = (self.reporter.timings.as_ref()).and_then(|t| t.growth_of(path));
-        let of_unknown =
-            || (self.reservation.as_ref()).map_or(0, Reservation::largest_without_record);
-        record.unwrap_or_else(of_unknown)
-    }
-
-    fn builds_of_test_files(&self) -> impl Iterator<Item = &PartBuilder> {
-        let builders = self.parts.iter().flat_map(|parts| parts.builders.iter());
-        (builders.map(|builder| &**builder))
-            .filter(|builder| parts::layer_of(builder.part).is_none())
-    }
-
-    fn look_at_builds(&mut self) {
-        if self.reservation.is_none() {
-            return;
-        }
-        let processes = self
-            .builds_of_test_files()
-            .filter_map(|build| build.process.as_ref());
-        let builds: Vec<i64> = processes.map(|process| process.pid as i64).collect();
-        if let Some(reservation) = &mut self.reservation {
-            reservation.look(&builds);
-        }
-    }
-
-    /// The heaviest file that waits for nothing but room, or will in a moment.
-    fn heaviest_file_that_waits(&self) -> u32 {
-        if let Some(parts) = &self.parts {
-            return parts.heaviest_on_its_way();
-        }
-        if self.heavy_files_to_hand_out == 0 {
-            return 0;
-        }
-        // The caller may hold a `&mut Worker` of the slice: see `find_steal_victim`.
-        let base: *const Worker = self.workers.as_ptr();
-        let files = (0..self.workers.len()).flat_map(|i| {
-            // SAFETY: `i < len`; a read of one field through the raw pointer.
-            let range = unsafe { (*base.add(i)).range };
-            range.lo..range.hi
-        });
-        files
-            .map(|file_idx| self.heavy_growth_of(file_idx))
-            .max()
-            .unwrap_or(0)
-    }
-
-    fn has_light_files_left(&self) -> bool {
-        if let Some(parts) = &self.parts {
-            return parts.has_light_files_left();
-        }
-        // The caller may hold a `&mut Worker` of the slice: see `find_steal_victim`.
-        let base: *const Worker = self.workers.as_ptr();
-        // SAFETY: `i < len`; a read of one field through the raw pointer.
-        let left = (0..self.workers.len()).map(|i| unsafe { (*base.add(i)).range.len() });
-        left.sum::<u32>() > self.heavy_files_to_hand_out
-    }
-
-    /// With `--aot-memory-limit`: the most that a file may take to start now.
-    /// One heavy file has the right of way: while none runs and one is ready, the others leave its room free, so it does not wait
-    /// for the end of the run. A further heavy file starts where the workers that have no file can still each run an average light
-    /// one: else a few heavy files would keep most of the workers out.
-    fn room_for_next_file(&self, in_new_worker: bool) -> Option<Room> {
-        let reservation = self.reservation.as_ref()?;
-        if in_new_worker && !reservation.may_start_worker() {
-            return Some(Room::default());
-        }
-        let builds = self.builds_of_test_files().count() as u32;
-        let rest = reservation.rest_of_new_worker();
-        let (idle, not_started) = reservation.workers_without_file();
-        let (idle, not_started) = match in_new_worker {
-            true => (idle, not_started.saturating_sub(1)),
-            false => (idle.saturating_sub(1), not_started),
-        };
-        let company = match self.has_light_files_left() {
-            true => (idle + not_started) * self.growth_of_running_light_file + not_started * rest,
-            false => 0,
-        };
-        let heaviest_that_waits = match self.heaviest_file_that_waits() {
-            0 => (0, 0),
-            growth => (growth, growth + if self.parts.is_some() { rest } else { 0 }),
-        };
-        let (beside_heavy, beside_light) = match reservation.runs_heavy_file() {
-            true => (company, 0),
-            false => (0, heaviest_that_waits.1),
-        };
-        let of_worker = if in_new_worker { rest } else { 0 };
-        Some(Room {
-            for_heavy: reservation.room_beside(of_worker + beside_heavy, builds),
-            for_light: reservation.room_beside(of_worker + beside_light, builds),
-            heaviest_that_waits,
-        })
-    }
-
-    /// The heaviest of the heavy files for which there is room, else the first of the others. None of the files of a range has been
-    /// handed out, so one may be taken out of the middle; the rest keep their order.
-    fn take_next_that_has_room(&mut self, range: &mut FileRange, room: Room) -> Option<u32> {
-        let heavy = (range.lo..range.hi)
-            .filter(|idx| self.is_heavy(*idx) && room.has_for_heavy(self.record_of(*idx)))
-            .max_by_key(|idx| self.record_of(*idx));
-        let next = heavy.or_else(|| {
-            let mut light = (range.lo..range.hi)
-                .filter(|idx| !self.is_heavy(*idx) && room.has_for_light(self.record_of(*idx)));
-            // Nobody knows what a worker holds until one has ended a file: the sooner the better.
-            match self.reservation.as_ref()?.knows_rest_of_workers() {
-                true => light.next(),
-                false => light.min_by_key(|file_idx| {
-                    let path = self.files[*file_idx as usize].as_bytes();
-                    (self.reporter.timings.as_ref())
-                        .and_then(|t| t.get(path))
-                        .unwrap_or(u32::MAX)
-                }),
-            }
-        })?;
-        if self.is_heavy(next) {
-            self.heavy_files_to_hand_out = self.heavy_files_to_hand_out.saturating_sub(1);
-        }
-        self.files[range.lo as usize..=next as usize].rotate_right(1);
-        if let Some(costs) = &mut self.costs {
-            costs[range.lo as usize..=next as usize].rotate_right(1);
-        }
-        range.pop_front()
-    }
-
     /// A worker that found only heavy files, and no room for one, waits. It asks again and again: a heavy file may have ended.
     fn assign_work_to_waiting_workers(&mut self) {
         if !self.keeps_heavy_files_apart || self.parts.is_some() {
@@ -717,9 +581,6 @@ impl<'a> Coordinator<'a> {
     fn assign_work(&mut self, w: &mut Worker) {
         if self.stop_reason.is_some() {
             return w.shutdown(&mut self.frame);
-        }
-        if let Some(reservation) = &mut self.reservation {
-            reservation.worker_asks(w.idx as usize);
         }
         if self.parts.is_some() {
             let part = w.part as usize;
@@ -916,9 +777,6 @@ impl<'a> Coordinator<'a> {
                 if w.inflight != Some(idx) {
                     return;
                 }
-                if let (Some(reservation), Some(process)) = (&mut self.reservation, &w.process) {
-                    reservation.worker_has_run_test(w.idx as usize, process.pid as i64);
-                }
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.tests.push(Box::from(rd.p));
                 }
@@ -958,7 +816,6 @@ impl<'a> Coordinator<'a> {
                 let rd_growth = rd.u32();
                 let largest_child = rd.u32();
                 self.max_worker_peak_rss_mb = self.max_worker_peak_rss_mb.max(rd.u32());
-                let rest = rd.u32();
                 let exit_code_left = rd.u32();
                 let first_loads = rd.str();
                 // Of the two views of the children, one sees the short-lived and one sees those that run at once.
@@ -1007,16 +864,7 @@ impl<'a> Coordinator<'a> {
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
                 self.record_timing(idx, w.dispatched_at);
-                if let Some(reservation) = &mut self.reservation {
-                    let path = self.files[idx as usize].as_bytes();
-                    let record = (self.reporter.timings.as_ref()).and_then(|t| t.growth_of(path));
-                    reservation.file_ends(w.idx as usize, rest, record.is_none().then_some(growth));
-                }
-                // A worker that can measure holds something itself. What it measured is written down where it is nothing too: a file
-                // without a record is one that nobody has measured.
-                if let Some(timings) =
-                    (self.reporter.timings.as_mut()).filter(|_| growth > 0 || rest > 0)
-                {
+                if let Some(timings) = self.reporter.timings.as_mut().filter(|_| growth > 0) {
                     timings.record_growth(self.files[idx as usize].as_bytes(), growth);
                 }
 
@@ -1076,10 +924,6 @@ impl<'a> Coordinator<'a> {
     }
 
     fn dispatch_to(&mut self, w: &mut Worker, idx: u32) {
-        let (record, is_heavy) = (self.record_of(idx), self.is_heavy(idx));
-        if let Some(reservation) = &mut self.reservation {
-            reservation.file_starts(w.idx as usize, record, is_heavy);
-        }
         let file = self.files[idx as usize].as_bytes();
         let failures_until_bail = match self.ends_as_in_one_process {
             true => self.bail.saturating_sub(self.reporter.jest.summary.fail),
@@ -1144,9 +988,6 @@ impl<'a> Coordinator<'a> {
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
-        if let Some(reservation) = &mut self.reservation {
-            reservation.worker_ends(slot);
-        }
         w.read_output_written_so_far();
         self.flush_captured(w);
         // Exited before the IPC handshake. `inflight` is None for these, so
@@ -1646,6 +1487,23 @@ impl<'a> Coordinator<'a> {
                 parts.print_messages_of_test_files(&messages);
                 continue;
             }
+            // As for a layer. It is said once.
+            if exit_code == Some(PART_HAS_NO_ROOM)
+                && PROGRAMS_CAN_WAIT_IN_MEMORY
+                && !part.is_in_memory
+            {
+                part.state = PartState::Waiting;
+                part.file = None;
+                if !core::mem::replace(&mut parts.temporary_directory_is_full, true) {
+                    self.break_dots();
+                    bun_core::pretty_error!(
+                        "<r><yellow>warn<r>: the temporary directory {} has no room for the test files, compiled. They are kept in memory\n",
+                        bstr::BStr::new(bun_resolver::fs::RealFS::tmpdir_path()),
+                    );
+                    Output::flush();
+                }
+                continue;
+            }
             let mut buf = [0u8; 32];
             let file_count = parts.list[index].range.len();
             if file_count > 1 {
@@ -1700,25 +1558,15 @@ impl<'a> Coordinator<'a> {
             parts.next_to_build(
                 self.workers.iter().filter(is_free).count() as u32,
                 time_of.as_ref().map(|f| f as &dyn Fn(FileRange) -> u64),
-                self.reservation.is_some(),
             )
         }) {
-            // A build of test files takes room like a file.
-            if let (None, Some(room), Some(reservation)) = (
-                parts::layer_of(index),
-                self.room_for_next_file(false),
-                &self.reservation,
-            ) && !room.has_for_light(reservation.largest_build())
-            {
-                return;
-            }
             let parts = self.parts.as_mut().expect("has parts");
             let parts_ptr = &raw mut **parts;
             let layer = parts::layer_of(index);
             let kind = parts.kind_of(index);
             let below = parts.programs_below(layer.unwrap_or(parts.layers.len()));
             let is_above_library = parts.stands_on_library_of_this_bun;
-            let in_memory = layer.is_some() && parts.temporary_directory_is_full;
+            let in_memory = parts.temporary_directory_is_full;
             let pipe = match layer {
                 Some(layer) if parts.begins_beside_build_below(layer) => {
                     let Ok(pipe) = bun_sys::pipe() else {
@@ -1772,6 +1620,16 @@ impl<'a> Coordinator<'a> {
                         }
                         None => log_first_time_in_test_run("the first build of test files begins"),
                     }
+                    if kind == TestPartKind::SharedPackages {
+                        let memory_limit = self.reporter.jest.test_options.aot_memory_limit;
+                        let programs = plan_programs_of_project(self.vm.as_mut(), memory_limit);
+                        log_step_of_test_run(format_args!(
+                            "the files of the project are read for the builds above the packages"
+                        ));
+                        if let Some(programs) = programs {
+                            parts.set_programs_of_project(programs);
+                        }
+                    }
                 }
                 Err(error) => {
                     Output::err(error, "failed to start the build of test files", ());
@@ -1813,36 +1671,22 @@ impl<'a> Coordinator<'a> {
                 }
             });
             let time_of = time_of.as_ref().map(|f| f as &dyn Fn(FileRange) -> u64);
-            let room = self.room_for_next_file(true);
-            // The file of the part, from the given one on, that a worker would get now.
-            let first_with_room = |part: &Part, first: u32| -> Option<u32> {
-                let room = room.as_ref()?;
-                let mut light =
-                    (first..part.range.hi).filter(|idx| room.has_for_light(self.record_of(*idx)));
-                match part.heavy_growth {
-                    0 => light.next(),
-                    growth => room.has_for_heavy(growth).then_some(first),
-                }
+            let is_free = |w: &&Worker| {
+                !w.alive
+                    && w.process.is_none()
+                    && !w.reap_pending
+                    && w.exit_status.is_none()
+                    && w.startup_failures < MAX_STARTUP_FAILURES
             };
-            let has_room_for = |part: &Part, first: u32| first_with_room(part, first).is_some();
-            let has_room_for =
-                (room.as_ref()).map(|_| &has_room_for as &dyn Fn(&Part, u32) -> bool);
-            let next = match self.reporter.jest.test_options.parallel {
-                0 => parts.next_in_order(),
-                _ => parts.next_for_worker(&waiting, time_of, has_room_for),
+            let free_workers = self.workers.iter().filter(is_free).count() as u32;
+            // One worker runs the files in plain's order. With `--timings` the parts are cut by time, and the order is theirs.
+            let next = match self.ends_as_in_one_process && time_of.is_none() {
+                true => parts.next_in_order(),
+                false => parts.next_for_worker(&waiting, free_workers, time_of),
             };
             let Some(index) = next else {
                 break;
             };
-            // Room is set aside from here on: the worker asks for its file only when it has started.
-            let part = &parts.list[index as usize];
-            let set_aside = first_with_room(part, part.range.lo)
-                .map(|file_idx| (self.record_of(file_idx), part.heavy_growth > 0));
-            if let (Some(reservation), Some((record, is_heavy))) =
-                (&mut self.reservation, set_aside)
-            {
-                reservation.worker_starts(slot, Some(record), is_heavy);
-            }
             self.start_worker_on_part(slot, index);
             slot += 1;
         }
@@ -1892,9 +1736,6 @@ impl<'a> Coordinator<'a> {
             }
             Err(e) => {
                 w.startup_failures += 1;
-                if let Some(reservation) = &mut self.reservation {
-                    reservation.worker_ends(slot);
-                }
                 Output::err(e, "failed to spawn test worker", ());
             }
         }
@@ -2200,5 +2041,20 @@ pub(crate) mod abort_handler {
                 bun_sys::windows::FALSE,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::own_kilobytes_in;
+
+    #[test]
+    fn pages_are_counted_at_the_size_that_the_kernel_has() {
+        let statm = b"30000 1500 500 10 0 900 0\n";
+        assert_eq!(own_kilobytes_in(statm, 4 << 10), Some(4_000));
+        assert_eq!(own_kilobytes_in(statm, 16 << 10), Some(16_000));
+        assert_eq!(own_kilobytes_in(statm, 64 << 10), Some(64_000));
+        assert_eq!(own_kilobytes_in(b"30000 500 1500", 4 << 10), Some(0));
+        assert_eq!(own_kilobytes_in(b"", 4 << 10), None);
     }
 }

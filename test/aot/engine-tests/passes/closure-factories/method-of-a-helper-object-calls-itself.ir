@@ -233,13 +233,13 @@ function f5 module=m0 position=854 kind=Arrow thisType={type=anything} results=[
     v1 = Convert v0 declared={type=number flags=[IsExpected]} @860
     Return v1 @860
 }
-function f6 module=m0 position=340 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f6 module=m0 position=340 kind=Arrow captures=[{type=anything variableName="value"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @340
   b1():
     Return v0 @346
 }
-function f7 module=m0 position=474 captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f7 module=m0 position=474 captures=[{type=anything variableName="name"}, {type=anything variableName="times"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
     Jump -> next b1() @474
   b1():
@@ -669,12 +669,12 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f6 module=
-# CHECK: m0 position=340 kind=Arrow captures=[{type=int}] thisType={type=anything} results=[{type=int}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=340 kind=Arrow captures=[{type=int variableName="value"}] thisType={type=anything} results=[{type=int}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: int):
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
-# CHECK: m0 position=474 captures=[{type="r"}, {type=int|whole}] thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=474 captures=[{type="r" variableName="name"}, {type=int|whole variableName="times"}] thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: "r", v1: int|whole):
 # CHECK-NEXT: v2: string = Add v0, v1
 # CHECK-NEXT: Return v2

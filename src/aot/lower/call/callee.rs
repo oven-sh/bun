@@ -20,6 +20,7 @@ use super::Callee;
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, StringId, ValueId};
+use crate::load::test_runner_names::written_name_of_local;
 use crate::lower::member::{self, KeyConversion, PropertyName};
 use crate::lower::operator::needs_parentheses;
 use crate::lower::statement::Printed;
@@ -1224,7 +1225,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn append_identifier(&self, identifier: ExprId, name: Atom, path: &mut Vec<u8>) {
         if !self.append_short_binding_name(self.bound.binding(identifier), path) {
-            path.extend_from_slice(self.queries.atom_bytes(name));
+            path.extend_from_slice(written_name_of_local(self.queries.atom_bytes(name)));
         }
     }
 }

@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // A mock that is made while nothing is loaded stores nothing: its factory waits for the first load. What the first require() behind it answers
 // stays in the module object in require.cache: neither a require() of the name as it is spelled nor an import() of the module behind that changes it.
@@ -54,11 +55,11 @@ function casesIn(project: typeof byName, name: string, orders: string[]) {
     );
 }
 
-// In none of these orders is anything loaded when the mock is made, so require() never answers the object that the factory made.
+// In none of these orders is anything loaded when the mock is made. Every require() answers the very object that the factory made, or its `default` where the object says that it is an ES module.
 function expectAnswersOfPlainBun(plain: string[]) {
   expect(plain.filter(line => !line.includes(": pass "))).toEqual([]);
-  expect(plain.filter(line => /[rR]=made\b/.test(line))).toEqual([]);
-  expect(plain.filter(line => line.startsWith("b ") && !/ [rR]=default$/.test(line))).toEqual([]);
+  expect(plain.filter(line => !line.startsWith("b ") && / [rR]=(?!made\b)/.test(line))).toEqual([]);
+  expect(plain.filter(line => line.startsWith("b ") && / [rR]=(?!default\b)/.test(line))).toEqual([]);
 }
 
 // One with code whose exports say `__esModule`, one with code, one of native code.

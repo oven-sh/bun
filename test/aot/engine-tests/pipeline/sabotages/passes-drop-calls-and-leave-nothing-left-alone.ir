@@ -1,0 +1,12 @@
+# The same where the call is all that the function holds: behind the sabotage the function has no value left.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RetypeValues
+# CHECK: = Call v0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="onlyCalls" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Call v0, -
+    Return
+}

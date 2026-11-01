@@ -1,4 +1,5 @@
 # The return value of a generator is dropped by for of and kept by yield star.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -380,5 +381,5 @@ runtimefunction id=GeneratorPrototypeThrow function=f22 visibility=Private
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 216, patchpoints: 38, rare instructions: 69, polls: 4
+# CHECK-NEXT: instructions: 218, patchpoints: 38, rare instructions: 69, polls: 4
 # CHECK-NEXT: end of function f0

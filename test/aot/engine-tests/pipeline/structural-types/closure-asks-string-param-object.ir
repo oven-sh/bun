@@ -99,7 +99,7 @@ function f3 module=m0 position=312 kind=Arrow flags=[IsChecked] thisType={type=a
     v1 = Convert v0 declared={type=number site=w6} @318
     Return v1 @318
 }
-function f4 module=m0 position=201 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=boolean site=w13}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 module=m0 position=201 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined] variableName="x"}] thisType={type=anything} results=[{type=boolean site=w13}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
     Jump -> next b1() @201
   b1():
@@ -174,7 +174,7 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f4 module=
-# CHECK: m0 position=201 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|string site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=boolean site=w13}] functionTypes=[f6] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f9 fallback=f11} {
+# CHECK: m0 position=201 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|string site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="x"}] thisType={type=anything} results=[{type=boolean site=w13}] functionTypes=[f6] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f9 fallback=f11} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|string
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()

@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls behind a pass over the whole program: a call of an unknown function is gone. The pass takes whole functions away that nothing reaches, and nothing out of a function that stays: the build stops
+# FORM: Prepared
+# RUN: pass RemoveUnreachableFunctions
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-left-alone.ir

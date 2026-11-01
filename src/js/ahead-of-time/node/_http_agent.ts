@@ -13,7 +13,6 @@ const kWaitForProxyTunnel: typeof http.kWaitForProxyTunnel = http.kWaitForProxyT
 const kPerRequestCheckServerIdentity: typeof http.kPerRequestCheckServerIdentity = http.kPerRequestCheckServerIdentity;
 const shared = require("internal/shared");
 const { kEmptyObject, once } = shared;
-const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
 const netSymbols = require("internal/net/symbols");
@@ -713,68 +712,13 @@ function shouldUseEnvProxy() {
   return true;
 }
 
-// An agent counts as used from where it is made, so this one is made at the first read. It is made of what there is now.
-const usesEnvProxy = shouldUseEnvProxy();
-const { env } = process;
-const proxyEnvOfGlobalAgent = usesEnvProxy
-  ? {
-      http_proxy: env.http_proxy,
-      HTTP_PROXY: env.HTTP_PROXY,
-      https_proxy: env.https_proxy,
-      HTTPS_PROXY: env.HTTPS_PROXY,
-      no_proxy: env.no_proxy,
-      NO_PROXY: env.NO_PROXY,
-    }
-  : undefined;
-const maxSocketsOfGlobalAgent = Agent.defaultMaxSockets;
-const graphFrameOfGlobalAgent = AsyncContextFrame.currentGraphFrame();
-const captureRejectionsOfGlobalAgent = EventEmitter.captureRejections;
-const prototypeOfGlobalAgent = Agent.prototype;
-const onOfGlobalAgent = EventEmitter.prototype.on;
-const eventsOfGlobalAgent = Object.create(null);
-let globalAgent!: $Node.Agent;
-let isGlobalAgentMade = false;
-
-function createGlobalAgent() {
-  const frame = AsyncContextFrame.exchange(graphFrameOfGlobalAgent);
-  const captureRejections = EventEmitter.captureRejections;
-  EventEmitter.captureRejections = captureRejectionsOfGlobalAgent;
-  try {
-    const agent = {
-      __proto__: prototypeOfGlobalAgent,
-      on: onOfGlobalAgent,
-      _events: eventsOfGlobalAgent,
-      _eventsCount: 0,
-    } as unknown as $Node.Agent;
-    Agent.$call(agent, {
-      keepAlive: true,
-      scheduling: "lifo",
-      timeout: 5000,
-      proxyEnv: proxyEnvOfGlobalAgent,
-    });
-    delete (agent as { on?: unknown }).on;
-    agent[kShapeMode] = false;
-    agent.maxSockets = maxSocketsOfGlobalAgent;
-    if (usesEnvProxy) agent.options.proxyEnv = process.env;
-    return agent;
-  } finally {
-    EventEmitter.captureRejections = captureRejections;
-    AsyncContextFrame.exchange(frame);
-  }
-}
-
 export default {
   Agent,
-  get globalAgent() {
-    if (!isGlobalAgentMade) {
-      isGlobalAgentMade = true;
-      globalAgent = createGlobalAgent();
-    }
-    return globalAgent;
-  },
-  set globalAgent(value) {
-    isGlobalAgentMade = true;
-    globalAgent = value;
-  },
+  globalAgent: new Agent({
+    keepAlive: true,
+    scheduling: "lifo",
+    timeout: 5000,
+    proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
+  }),
   shouldUseEnvProxy,
 };

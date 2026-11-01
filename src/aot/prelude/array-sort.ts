@@ -16,6 +16,7 @@ declare function $putOwnDoubleIndex(a: unknown[], k: number, value: number): voi
 declare function $putOwnInt32Index(a: unknown[], k: number, value: number): void;
 declare function $truncateNewArray<T>(out: T[], n: number): T[];
 declare function $newContiguousArray<T>(n: number): T[];
+declare function $newArrayLike<T>(n: number, a: unknown[] | undefined): T[];
 declare function $putContiguousIndex(out: unknown[], k: number, value: unknown): void;
 declare function $tryPutIndex(a: unknown[], k: number, value: unknown): boolean;
 // The first `count` values of `from` into an array that this file made for them, numbers boxed. False where `from` has a hole or undefined among them, or storage of another kind.
@@ -359,7 +360,7 @@ function putRestOfSortedValues<T>(
 
 // Puts `count` sorted values back, then undefined as often as it was met, then holes up to `length`.
 function putSortedValues<T>(array: T[], length: number, from: T[], count: number, undefinedCount: number): void {
-  // Storage for numbers has been that since before the values were taken out of it.
+  // Storage for doubles may be younger than the values: no number, and it is false.
   const areStored: boolean = $tryPutElements(array, from, count);
   const index = areStored ? count : 0;
   if (index < length) putRestOfSortedValues<T>(array, length, from, count, index, undefinedCount);
@@ -531,25 +532,58 @@ export function sortWhereNobodySeesTheComparator<T>(array: T[], comparator: unkn
   return array;
 }
 
+// Storage of another kind need not be as long as the list, as behind `a[300_000_000] = 1`, and the list may be longer than storage in one piece can be.
+// The copy grows with what is found, and a result that is longer than the copy is made as the program's own `new Array(length)` is. Array itself is not named here:
+// whoever sorts would hold all that stands behind that name.
+function toSortedListOfOtherStorage<T>(array: T[], length: number, comparator: unknown): T[] {
+  let capacity = 16;
+  let from: T[] = $newContiguousArray<T>(capacity);
+  let count = 0;
+  for (let index = 0; index < length; index++) {
+    const value = array[index];
+    if (value === undefined) continue;
+    if (count === capacity) {
+      from = moveToLongerArray<T>(from, count);
+      capacity = count * 2;
+    }
+    $putContiguousIndex(from, count, value);
+    count = (count + 1) | 0;
+  }
+  sortValues<T>(from, count, comparator);
+  if (length <= capacity) {
+    for (let index = count; index < length; index++) $putOwnContiguousIndex(from, index, undefined);
+    return $truncateNewArray<T>(from, length);
+  }
+  const out = $newArrayLike<unknown>(length, undefined);
+  for (let index = 0; index < count; index++) out[index] = $getOwnContiguousIndex<T>(from, index);
+  for (let index = count; index < length; index++) out[index] = undefined;
+  return out as T[];
+}
+
 export function toSorted<T>(this: T[], comparator: unknown): T[] {
   if (!isCallable(comparator)) return (this as any).toSorted(comparator);
   const length = this.length;
-  const from: T[] = $newContiguousArray<T>(length);
-  let count = 0;
   if (isContiguousArray(this)) {
+    const from: T[] = $newContiguousArray<T>(length);
+    let count = 0;
     for (let index = 0; index < length; index++) {
       const value = $getContiguousIndex<T>(this, index);
       if (value === undefined) continue;
       $putOwnContiguousIndex(from, count, value);
       count = (count + 1) | 0;
     }
-  } else {
-    for (let index = 0; index < length; index++) {
-      const value = this[index];
-      if (value === undefined) continue;
-      $putOwnContiguousIndex(from, count, value);
-      count = (count + 1) | 0;
-    }
+    sortValues<T>(from, count, comparator);
+    for (let index = count; index < length; index++) $putOwnContiguousIndex(from, index, undefined);
+    return $truncateNewArray<T>(from, length);
+  }
+  if (!isDoubleArray(this)) return toSortedListOfOtherStorage<T>(this, length, comparator);
+  const from: T[] = $newContiguousArray<T>(length);
+  let count = 0;
+  for (let index = 0; index < length; index++) {
+    const value = this[index];
+    if (value === undefined) continue;
+    $putOwnContiguousIndex(from, count, value);
+    count = (count + 1) | 0;
   }
   sortValues<T>(from, count, comparator);
   for (let index = count; index < length; index++) $putOwnContiguousIndex(from, index, undefined);

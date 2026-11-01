@@ -531,7 +531,7 @@ static JSC::FunctionExecutable* ${linkFromText}(JSC::VM& vm)
 JSC::BuiltinCode ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
 {
 #if ENABLE(AOT)
-    if (JSC::AOT::hasBuiltinFunction(vm, ${idOf(basename, fn.name)}))
+    if (JSC::AOT::Image::isRegistered() && JSC::AOT::hasBuiltinFunction(vm, ${idOf(basename, fn.name)}))
         return { nullptr, ${idOf(basename, fn.name)}, ${linkFromText} };
 #endif
     return { ${linkFromText}(vm), 0 };

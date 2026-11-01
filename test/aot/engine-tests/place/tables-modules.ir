@@ -71,8 +71,14 @@ function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: sourceStamps 0 0
 # CHECK-NEXT: moduleFailures 2 16
 # CHECK-NEXT: modulesByPath 5 10
+# CHECK-NEXT: modulesByHashOfPath 5 20
+# CHECK-NEXT: firstModulesByHashOfPath 4 8
 # CHECK-NEXT: directoriesOfModulesByPath 1 4
 # CHECK-NEXT: modulesOfUncompiledCode 0 0
+# CHECK-NEXT: modulesThatLoadCompiledFilesAlone 0 0
+# CHECK-NEXT: modulesThatFindBuiltinsReadOnly 0 0
+# CHECK-NEXT: modulesReachedUnderOtherNames 0 0
+# CHECK-NEXT: asyncFunctionsWithoutAwait 0 0
 # CHECK-NEXT: importsOfHeldFiles 0 0
 # The variable of the library's file m3 is left out.
 # CHECK-NEXT: namedVariables 8 8

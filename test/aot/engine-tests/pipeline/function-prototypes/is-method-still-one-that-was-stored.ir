@@ -254,7 +254,7 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 classes Reader nest
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=CommonJsModule thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f43 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK: m0 kind=CommonJsModule thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f43 callPosition=4294967295 isConstruction=true module=m0}, {callee=f7 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=1
 # CHECK-NEXT: v1: f2 = NewClosure function=f2 allocationSite=2
@@ -349,8 +349,8 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="Reader"
 # CHECK: module=m0 position=2467 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f9}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f9, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L3 = CallDirect v2 function=f9
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: v3: L3 = CallDirect v2 function=f9 @2467
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed @2467
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Reader"
 # CHECK: module=m0 position=2467 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L3} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f9} constructedClass=L3

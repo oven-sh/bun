@@ -116,8 +116,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v73 = Undefined @935
     Return v73 @935
 }
-function f1 name="sum" module=m0 position=166 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string|Array):
+function f1 name="sum" module=m0 position=166 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
     Jump -> next b1() @166
   b1():
     v1 = Integer @199
@@ -135,18 +135,19 @@ function f1 name="sum" module=m0 position=166 flags=[HasExplicitName] length=1 t
     Jump -> next b4() @218
   b4():
     v12 = ElemGet v0, v11 @249
-    v13 = Add v5, v12 @249
-    v14 = Convert v13 declared={type=number flags=[IsExpected]} @240
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @249
+    v14 = Add v5, v13 @249
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @240
     Jump -> next b5() @240
   b5():
-    v15 = Increment v11 @249
-    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @235
-    Jump -> next b2(v14, v16) @235
-  b6(v17):
+    v16 = Increment v11 @249
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]} @235
+    Jump -> next b2(v15, v17) @235
+  b6(v18):
     Jump -> next b7() @218
   b7():
-    v18 = Convert v5 declared={type=number flags=[IsExpected]} @265
-    Return v18 @265
+    v19 = Convert v5 declared={type=number flags=[IsExpected]} @265
+    Return v19 @265
 }
 function f2 name="attempt" module=m0 position=274 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function):
@@ -166,11 +167,11 @@ function f3 name="Held" module=m0 position=95 kind=BaseConstructor flags=[HasNew
   b0(v0: anything):
     Jump -> next b1() @95
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @89
-    v2 = NewObject v1 layout=L0 @89
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @89
-    v4 = CallDirect v3 function=f8 @89
-    Return v3 @89
+    v1 = GetConstructPrototype v0 layout=L0 @95
+    v2 = NewObject v1 layout=L0 @95
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @95
+    v4 = CallDirect v3 function=f8 @95
+    Return v3 @95
 }
 function f4 module=m0 position=419 flags=[HasThis] length=2 thisType={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|number|string flags=[IsExpected]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|number|string|symbol|bigint|object, v1: undefined|null|string, v2: anything):

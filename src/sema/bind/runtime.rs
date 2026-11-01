@@ -158,6 +158,7 @@ bitflags::bitflags! {
         const HAS_DIRECT_EVAL = 1 << 2;
         const HAS_ARGUMENTS_VARIABLE = 1 << 3;
         const HAS_REST_PATTERN_OR_DEFAULT = 1 << 4;
+        const HANDS_ARGUMENTS_ON = 1 << 5;
     }
 }
 
@@ -218,6 +219,7 @@ pub struct ImplicitReference {
     pub kind: ImplicitReferenceKind,
     pub name: Atom,
     pub binding: Binding,
+    pub member: Atom,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

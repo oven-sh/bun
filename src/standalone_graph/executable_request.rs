@@ -193,10 +193,57 @@ pub(crate) fn graph_bytes(request: &GraphRequest<'_>) -> crate::Result<GraphByte
 }
 
 /// `[u64 LE length][graph]`: what the section of an executable holds.
-pub fn to_graph_bytes(request: &GraphRequest<'_>) -> crate::Result<Vec<u8>> {
-    let graph = graph_bytes(request)?;
+pub struct PlaceOfProgram<'a> {
+    pub mapped_at: u64,
+    pub first_below: Option<FirstProgramBelow<'a>>,
+}
+
+pub struct FirstProgramBelow<'a> {
+    pub image: &'a [u8],
+    pub file: Fd,
+    pub offset: u64,
+}
+
+fn write_into_program_below(
+    first: &FirstProgramBelow<'_>,
+    bytes: &[u8],
+    offset: u64,
+) -> crate::Result<()> {
+    let offset = (first.offset + offset) as i64;
+    let written = bun_sys::File::borrow(&first.file).pwrite_all(bytes, offset);
+    if let Err(error) = &written {
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let path = bun_sys::get_fd_path(first.file, &mut buffer);
+        let path = path.map_or(&b"a file without a path"[..], |path| &*path);
+        bun_core::Output::err_generic(
+            "the headers of this program's texts could not be written into the program below it, {}: {}",
+            (
+                bstr::BStr::new(path),
+                <&'static str>::from(error.get_errno()),
+            ),
+        );
+    }
+    Ok(written?)
+}
+
+pub fn to_graph_bytes(
+    request: &GraphRequest<'_>,
+    place: Option<&PlaceOfProgram<'_>>,
+) -> crate::Result<Vec<u8>> {
+    let mut graph = graph_bytes(request)?;
     if graph.bytes.is_empty() {
         return Err(crate::Error::CorruptedCompiledProgram);
+    }
+    if let (Some(image), Some(place)) = (graph.image, place) {
+        let address = place.mapped_at + size_of::<u64>() as u64;
+        crate::executable_file::relocate_images(&mut graph.bytes, image, address);
+        let written = &graph.bytes[image.offset as usize..(image.offset + image.length) as usize];
+        if let Some(first) = &place.first_below
+            && let Some((offset, headers)) =
+                bun_aot::engine::place_of_string_headers_behind(first.image, written)
+        {
+            write_into_program_below(first, &written[headers], offset as u64)?;
+        }
     }
     let mut bytes: Vec<u8> = Vec::with_capacity(size_of::<u64>() + graph.bytes.len());
     bytes.extend_from_slice(&(graph.bytes.len() as u64).to_le_bytes());
@@ -228,4 +275,34 @@ pub fn write_executable(request: &mut ExecutableRequest<'_>) -> crate::Result<Ex
     )?;
     let details = matches!(result, CompileResult::Success).then_some(additions.details);
     Ok(ExecutableOutcome { result, details })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compiled_program::tests::TemporaryFolder;
+
+    #[test]
+    fn a_write_into_the_program_below_that_is_refused_fails_the_build() {
+        let folder = TemporaryFolder::create("program-below");
+        let path = folder.write("program", &[0; 64]);
+        let write_through = |flags| {
+            let file = bun_sys::File::open(&path, flags, 0).unwrap();
+            let first = FirstProgramBelow {
+                image: &[],
+                file: file.handle,
+                offset: 8,
+            };
+            let result = write_into_program_below(&first, b"headers", 4);
+            let _ = file.close();
+            result
+        };
+        assert!(write_through(bun_sys::O::RDWR).is_ok());
+        let written = bun_sys::File::read_from(Fd::cwd(), path.as_bytes()).unwrap();
+        assert_eq!(&written[12..19], b"headers");
+        assert!(matches!(
+            write_through(bun_sys::O::RDONLY),
+            Err(crate::Error::Sys(_))
+        ));
+    }
 }

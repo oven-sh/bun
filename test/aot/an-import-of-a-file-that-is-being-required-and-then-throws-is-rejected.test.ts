@@ -1,12 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./harness/default-timeout";
 
 const nameOfExecutable = isWindows ? "executable.exe" : "executable";
 
 // file.cjs is being require()d. While it runs, something calls import("./file.cjs"). Then it throws. The throw takes the file out of
 // require.cache and the loader of ES modules has not come to it yet, so `bun run` runs it again for the import(), which is rejected.
-// In an executable no body runs twice: the error that the file keeps stands for the second run, so the file throws the same both times here.
 // Where Bun reads the text of an imported file itself and not on another thread, the loader has the file inside the call, and the import() is fulfilled.
 const ask = (who: string) =>
   `import("./file.cjs").then(() => console.log("${who}: imported file.cjs"), error => console.log("${who}: file.cjs is rejected,", error.message));`;

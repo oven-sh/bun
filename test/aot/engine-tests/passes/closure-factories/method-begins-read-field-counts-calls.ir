@@ -95,7 +95,7 @@ function f2 module=m0 position=190 flags=[HasThis] length=3 thisType={type=undef
     v11 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]} @399
     Return v11 @399
 }
-function f3 module=m0 position=291 length=1 captures=[{type=anything}, {type=anything}, {type=anything}, {type=number flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 module=m0 position=291 length=1 captures=[{type=anything variableName="key"}, {type=anything variableName="depth"}, {type=anything variableName="tag"}, {type=number flags=[IsExpected] variableName="mine"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything, v2: anything, v3: number, v4: anything):
     Jump -> next b1() @291
   b1():
@@ -216,4 +216,4 @@ function f3 module=m0 position=291 length=1 captures=[{type=anything}, {type=any
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f3 module=
-# CHECK: m0 position=291 length=1 captures=[{type="alpha"|"beta"}, {type=2}, {type=undefined|"h"}, {type=int|whole}] thisType={type=anything} parameters=[{type="m"}] results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: m0 position=291 length=1 captures=[{type="alpha"|"beta" variableName="key"}, {type=2 variableName="depth"}, {type=undefined|"h" variableName="tag"}, {type=int|whole variableName="mine"}] thisType={type=anything} parameters=[{type="m"}] results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

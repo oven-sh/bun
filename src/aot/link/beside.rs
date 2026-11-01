@@ -83,6 +83,7 @@ function unused(): string {
                 projects: *projects,
                 limits: &limits,
                 reports_type_mismatches: false,
+                has_programs_below: false,
                 in_parallel: &forward,
                 beside,
             });
@@ -101,6 +102,7 @@ function unused(): string {
                     projects: *projects,
                     limits: &limits,
                     reports_type_mismatches: false,
+                    has_programs_below: false,
                     in_parallel: &forward,
                     beside,
                 };

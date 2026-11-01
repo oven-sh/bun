@@ -27,6 +27,8 @@ export interface Member {
   flags?: string[];
   /** Environment of the plain Bun run only. */
   plainEnv?: Record<string, string>;
+  /** Why plain Bun prints different things from run to run without `plainEnv`. The executable may print any of them. */
+  unstablePlainOutput?: string;
   /**
    * Lines in which plain Bun deviates from the specification: a line that starts with a key must end with its value.
    * The executable may print either.
@@ -110,8 +112,18 @@ const drawn = (
       }
     : undefined;
 
-const drawnMember = (runner: Runner, seed: number, member: Member, title: string) =>
-  drawn(runner, seed, asProgram(member.make(), member.flags, member.plainEnv), member.name, title, member.specified);
+const drawnMember = (runner: Runner, seed: number, member: Member, title: string) => {
+  const program = asProgram(member.make(), member.flags, member.plainEnv);
+  const { unstablePlainOutput } = member;
+  return drawn(
+    runner,
+    seed,
+    program && { ...program, ...(unstablePlainOutput && { unstablePlainOutput }) },
+    member.name,
+    title,
+    member.specified,
+  );
+};
 
 /** `title` says in a few words what the programs test. It is the group of their findings. */
 export function family(title: string, members: Member[]): Drawn {

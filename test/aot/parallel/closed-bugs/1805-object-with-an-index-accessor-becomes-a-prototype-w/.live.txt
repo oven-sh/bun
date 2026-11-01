@@ -1,0 +1,6 @@
+[object Object]
+0
+3
+null
+
+exit 0

@@ -365,7 +365,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b7(v20)
 # CHECK-NEXT: b5(v21: undefined|f8):
 # CHECK-NEXT: v22: boolean = TypeTest v21 testedType=f8
-# CHECK-NEXT: Branch v22 -> taken b6(| 0), notTaken b32()
+# CHECK-NEXT: Branch v22 -> taken b6(| 0), notTaken b31()
 # CHECK-NEXT: b6(v23: f8):
 # CHECK-NEXT: v24: f7 = GetCapture v23 function=f8
 # CHECK-NEXT: v25: int|whole = CallDirect v24, v14 function=f8 accessSite=9
@@ -386,7 +386,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b11(v36)
 # CHECK-NEXT: b9(v37: undefined|f10):
 # CHECK-NEXT: v38: boolean = TypeTest v37 testedType=f10
-# CHECK-NEXT: Branch v38 -> taken b10(| 0), notTaken b31()
+# CHECK-NEXT: Branch v38 -> taken b10(| 0), notTaken b30()
 # CHECK-NEXT: b10(v39: f10):
 # CHECK-NEXT: v40: f7 = GetCapture v39 function=f10
 # CHECK-NEXT: v41: string = CallDirect v40, v2 function=f10 accessSite=12
@@ -423,7 +423,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b18(v63)
 # CHECK-NEXT: b16(v64: undefined|f8):
 # CHECK-NEXT: v65: boolean = TypeTest v64 testedType=f8
-# CHECK-NEXT: Branch v65 -> taken b17(| 0), notTaken b30()
+# CHECK-NEXT: Branch v65 -> taken b17(| 0), notTaken b29()
 # CHECK-NEXT: b17(v66: f8):
 # CHECK-NEXT: v67: f7 = GetCapture v66 function=f8
 # CHECK-NEXT: v68: int|whole = CallDirect v67, v59 function=f8 accessSite=20
@@ -463,7 +463,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b25(v93)
 # CHECK-NEXT: b23(v94: undefined|f10):
 # CHECK-NEXT: v95: boolean = TypeTest v94 testedType=f10
-# CHECK-NEXT: Branch v95 -> taken b24(| 0), notTaken b29()
+# CHECK-NEXT: Branch v95 -> taken b24(| 0), notTaken b32()
 # CHECK-NEXT: b24(v96: f10):
 # CHECK-NEXT: v97: f7 = GetCapture v96 function=f10
 # CHECK-NEXT: v98: string = CallDirect v97, v47 function=f10 accessSite=24
@@ -477,39 +477,40 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v105: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1 side=Static}]
 # CHECK-NEXT: Branch v105 -> taken b26(), notTaken b27()
 # CHECK-NEXT: b26():
-# CHECK-NEXT: v106: 2 = Integer integer=2
-# CHECK-NEXT: PutSlotOrAdd v104, -, v106 key="n" receivers=[L1] level=Proven accessSite=44
-# CHECK-NEXT: v108: 1 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v104, -, v108 key="extra" receivers=[L1] level=Proven accessSite=45
+# CHECK-NEXT: ReleaseHint v47
+# CHECK-NEXT: v107: 2 = Integer integer=2
+# CHECK-NEXT: PutSlotOrAdd v104, -, v107 key="n" receivers=[L1] level=Proven accessSite=44
+# CHECK-NEXT: v109: 1 = Integer integer=1
+# CHECK-NEXT: PutSlotOrAdd v104, -, v109 key="extra" receivers=[L1] level=Proven accessSite=45
 # CHECK-NEXT: Jump -> next b28(v103)
 # CHECK-NEXT: b27() frequency=Rare:
-# CHECK-NEXT: v110: Array<undefined> = NewArray contents=undefined
-# CHECK-NEXT: v111: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v110 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]> @430:5 tail
-# CHECK-NEXT: v112: object = CallDirect v47, v47, v111 function=f7 [isConstruction] @430:5 tail
-# CHECK-NEXT: Jump -> next b28(v112)
-# CHECK-NEXT: b28(v113: object ~ L1):
-# CHECK-NEXT: v114: string = CallDirect v113 function=f1 accessSite=26
-# CHECK-NEXT: StringBuilderAppend v71, v114
-# CHECK-NEXT: v116: string = StringBuilderFinish v71
-# CHECK-NEXT: v117: undefined = CallBuiltin -, v116 overload=ConsoleLog/0 accessSite=27
-# CHECK-NEXT: v118: undefined = Undefined
-# CHECK-NEXT: Return v118
+# CHECK-NEXT: v111: Array<undefined> = NewArray contents=undefined
+# CHECK-NEXT: v112: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v111 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]> @430:5 tail
+# CHECK-NEXT: v113: object = CallDirect v47, v47, v112 function=f7 [isConstruction] @430:5 tail
+# CHECK-NEXT: Jump -> next b28(v113)
+# CHECK-NEXT: b28(v114: object ~ L1):
+# CHECK-NEXT: v115: string = CallDirect v114 function=f1 accessSite=26
+# CHECK-NEXT: StringBuilderAppend v71, v115
+# CHECK-NEXT: v117: string = StringBuilderFinish v71
+# CHECK-NEXT: v118: undefined = CallBuiltin -, v117 overload=ConsoleLog/0 accessSite=27
+# CHECK-NEXT: v119: undefined = Undefined
+# CHECK-NEXT: Return v119
 # CHECK-NEXT: b29() frequency=Unlikely:
-# CHECK-NEXT: StringBuilderDiscard v71
 # CHECK-NEXT: v120: undefined = Undefined
-# CHECK-NEXT: v121: never = Call v120, v47 calleeKey="kind" calleeName="Twice.kind" accessSite=24 callees=[f6, f10]
+# CHECK-NEXT: v121: never = Call v120, v59 calleeKey="twice" calleeName="twice" accessSite=20 callees=[f4, f8, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b30() frequency=Unlikely:
 # CHECK-NEXT: v122: undefined = Undefined
-# CHECK-NEXT: v123: never = Call v122, v59 calleeKey="twice" calleeName="twice" accessSite=20 callees=[f4, f8, ..]
+# CHECK-NEXT: v123: never = Call v122, v2 calleeKey="kind" calleeName="Made.kind" accessSite=12 callees=[f6, f10]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b31() frequency=Unlikely:
 # CHECK-NEXT: v124: undefined = Undefined
-# CHECK-NEXT: v125: never = Call v124, v2 calleeKey="kind" calleeName="Made.kind" accessSite=12 callees=[f6, f10]
+# CHECK-NEXT: v125: never = Call v124, v14 calleeKey="twice" calleeName="made.twice" accessSite=9 callees=[f4, f8, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b32() frequency=Unlikely:
-# CHECK-NEXT: v126: undefined = Undefined
-# CHECK-NEXT: v127: never = Call v126, v14 calleeKey="twice" calleeName="made.twice" accessSite=9 callees=[f4, f8, ..]
+# CHECK-NEXT: StringBuilderDiscard v71
+# CHECK-NEXT: v127: undefined = Undefined
+# CHECK-NEXT: v128: never = Call v127, v47 calleeKey="kind" calleeName="Twice.kind" accessSite=24 callees=[f6, f10]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"

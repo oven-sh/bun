@@ -55,6 +55,8 @@ fn with_scanner(source: &str, check: impl FnOnce(&mut FileScanner<'_, '_>, &[Imp
             runs_tests: program.input.runs_tests,
             loads_code_from_disk: program.input.loads_code_from_disk,
             mocks_any_module: false,
+            asks_loader_where_bundler_does: false,
+            asks_loader_for_names_not_found: false,
             hir: files.hir(main),
             compiled,
             named_in_choices: &[],
@@ -649,6 +651,7 @@ fn import_statement_hands_its_type_to_the_loader() {
         import c from '{UNCOMPILED_MODULE}' with {{ type: 'TEXT' }};
         import d from '{UNCOMPILED_MODULE}' with {{ type: 'no loader' }};
         export {{ e }} from '{UNCOMPILED_MODULE}' with {{ type: 'toml' }};
+        export * as f from '{UNCOMPILED_MODULE}' with {{ type: 'text' }};
         import('{UNCOMPILED_MODULE}', {{ with: {{ type: 'toml' }} }});"
     );
     with_program(&[("main.js", main.as_str())], |program| {
@@ -662,7 +665,7 @@ fn import_statement_hands_its_type_to_the_loader() {
         let answers = program.site_answers("main.js");
         let answers: Vec<_> = answers.iter().map(|&(_, answer)| answer).collect();
         let (toml, text) = (Some(Loader::Toml), Some(Loader::Text));
-        let expected = [toml, None, text, None, None, None].map(external);
+        let expected = [toml, None, text, None, toml, text, None].map(external);
         assert_eq!(answers, expected);
         // One module for each type, and the one that no attribute asks for comes first.
         let modules = [None, toml, text].map(external);

@@ -3,9 +3,11 @@ import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
 import { test } from "./supported";
 
 // The cases share the layers below them, so each writes on an object of its own and none puts a member back by a store.
-const project = casesOfOneRun("a-test-replaces-a-member-through-the-receiver-of-reflect-set", {
-  "package.json": `{ "name": "p", "type": "module" }`,
-});
+const project = casesOfOneRun(
+  "a-test-replaces-a-member-through-the-receiver-of-reflect-set",
+  { "package.json": `{ "name": "p", "type": "module" }` },
+  [[[]], [["--debug-aot"], "TestRunLayers:2"], [["--debug-aot"], "TestRunLayers:0"]],
+);
 
 function runsAsPlain(title: string, expected: string, body: string) {
   const name = project.add(

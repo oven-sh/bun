@@ -2,8 +2,9 @@
 // From the store on Bun asks the function at every require(). The look through the test files reads no package, so over layers only the program that holds the package
 // knew of the store: a file of the project that requires a file of the project went to the file that the build had bound, and the function was never asked.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { test } from "./supported";
+import { foldersOfOneRun } from "./harness/folders-of-one-run";
+import { runsWholeGrids } from "./harness/ways";
+import { beforeAll, describe, test } from "./supported";
 
 const resolver = (holder: string) => `
   const seen = [];
@@ -50,16 +51,20 @@ const packages = {
     };`,
 };
 
-async function linesOf(text: string, flags: string[], words?: string) {
-  using dir = tempDir("aot-package-stores-a-loader-function", {
-    "package.json": `{ "name": "p" }`,
-    "node_modules/hook/package.json": `{ "name": "hook", "main": "index.js" }`,
-    "node_modules/hook/index.js": text,
-    "src/late-a.js": `exports.name = "late-a";\n`,
-    "src/late-b.js": `exports.name = "late-b";\n`,
-    "src/late-c.js": `exports.name = "late-c";\n`,
-    "src/user.js": `exports.load = () => [require("./late-a.js").name, require("./late-b.js").name].join();\n`,
-    "a.test.cjs": `
+const linesOf = foldersOfOneRun(
+  "aot-package-stores-a-loader-function",
+  Object.fromEntries(
+    Object.entries(packages).map(([name, text]) => [
+      name,
+      {
+        "package.json": `{ "name": "p" }`,
+        "node_modules/hook/package.json": `{ "name": "hook", "main": "index.js" }`,
+        "node_modules/hook/index.js": text,
+        "src/late-a.js": `exports.name = "late-a";\n`,
+        "src/late-b.js": `exports.name = "late-b";\n`,
+        "src/late-c.js": `exports.name = "late-c";\n`,
+        "src/user.js": `exports.load = () => [require("./late-a.js").name, require("./late-b.js").name].join();\n`,
+        "a.test.cjs": `
       const { test } = require("bun:test");
       const { install, seen } = require("hook");
       const user = require("./src/user.js");
@@ -68,22 +73,18 @@ async function linesOf(text: string, flags: string[], words?: string) {
         console.error("OUT in a file of the project:", user.load(), "|", seen.splice(0).join());
         console.error("OUT in the test file:", require("./src/late-b.js").name, "|", seen.splice(0).join());
       });`,
-  });
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  await using run = Bun.spawn({
-    cmd: [bunExe(), "test", ...flags, "--isolate"],
-    cwd: String(dir),
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
-  return { lines: stderr.split("\n").filter(line => /^(OUT|error)/.test(line)), exitCode };
-}
+      },
+    ]),
+  ),
+);
 
-test.concurrent.each(Object.entries(packages))(
-  "%s",
-  async (_, text) => {
-    const plain = await linesOf(text, []);
+describe.each(Object.keys(packages))("%s", name => {
+  let plain: Awaited<ReturnType<typeof linesOf>>;
+  beforeAll(async () => {
+    plain = await linesOf(name, []);
+  });
+
+  test("plain Bun", () => {
     expect(plain).toEqual({
       lines: [
         "OUT in a file of the project: late-a,late-c | late-a.js,late-b.js",
@@ -91,9 +92,15 @@ test.concurrent.each(Object.entries(packages))(
       ],
       exitCode: 0,
     });
-    expect(await linesOf(text, ["--aot"])).toEqual(plain);
-    expect(await linesOf(text, ["--aot"], "TestRunLayers:2")).toEqual(plain);
-    expect(await linesOf(text, ["--aot"], "TestRunLayers:3")).toEqual(plain);
-  },
-  240_000,
-);
+  });
+
+  // About the layers: every package runs in every form. A build that finds the store in one package knows it of the whole program: as one program a package is alone, so
+  // that each store has to be found. Over layers the fault was that the programs above were not told, and there the packages share a run.
+  test.concurrent.each([
+    ["as the run builds itself", undefined, true],
+    ["two layers", "TestRunLayers:2", runsWholeGrids],
+    ["three layers", "TestRunLayers:3", runsWholeGrids],
+  ] as const)("%s", async (_, words, alone) => {
+    expect(await linesOf(name, ["--aot"], words, alone)).toEqual(plain);
+  });
+});

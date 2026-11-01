@@ -152,8 +152,67 @@ fn mapped_argument_index_of_duplicate() {
 }
 
 #[test]
+fn parameter_is_mapped_only_where_that_can_be_told() {
+    let mapped = |body: &str, name: &str| {
+        let source = format!("function probe(once, other) {{ {body} }} module.exports = probe;");
+        let mut is_mapped = false;
+        analyze_source("main.cjs", &source, |probe| {
+            let function = probe.function("probe");
+            assert_eq!(probe.arguments_object(function), ArgumentsObject::Mapped);
+            is_mapped = matches!(probe.form_of(name), BindingForm::MappedArgument { .. });
+        });
+        is_mapped
+    };
+    for only_reads in [
+        "return [arguments.length, arguments[0], arguments[other], () => once];",
+        "return () => arguments[0] + arguments.callee.name + once;",
+        "return new arguments[1](function () { return once; });",
+        "return typeof arguments[1] + (() => once)();",
+    ] {
+        assert!(!mapped(only_reads, "once"), "{only_reads}");
+    }
+    // The engine takes the object away where nothing else holds it.
+    assert!(mapped("return arguments.length + once;", "once"));
+    for tells in [
+        "arguments[0] = 1;",
+        "arguments[other] = 1;",
+        "arguments[0]++;",
+        "delete arguments[0];",
+        "[arguments[0]] = [1];",
+        "for (arguments[0] in other);",
+        "arguments[1]();",
+        "arguments[1]?.();",
+        "arguments[1]``;",
+        "other(arguments);",
+        "var same = arguments;",
+        "(() => { arguments[0] = 1; })();",
+        "eval(other); arguments.length;",
+        "var arguments; arguments.length;",
+        "once = 1; arguments[0];",
+        "(() => { once = 1; })(); arguments[0];",
+        "once++; arguments[0];",
+        "function once() {} arguments[0];",
+        "var once = 1; arguments[0];",
+        "var [once] = other; arguments[0];",
+        "var { once } = other; arguments[0];",
+        "for (var once = 1; other; ); arguments[0];",
+        "for (var once of other); arguments[0];",
+        "for (var once in other); arguments[0];",
+        "if (other) { var once = 1; } arguments[0];",
+    ] {
+        assert!(
+            mapped(&format!("{tells} return () => once;"), "once"),
+            "{tells}"
+        );
+    }
+    let one_stored = "other = 1; return () => arguments[0] + once + other;";
+    assert!(!mapped(one_stored, "once"));
+    assert!(mapped(one_stored, "other"));
+}
+
+#[test]
 fn mapped_argument_in_closure_shares_arguments_object() {
-    let source = "function probe(once) { return [arguments.length, () => once]; } \
+    let source = "function probe(once) { return [arguments, () => once]; } \
                   module.exports = probe;";
     analyze_source("main.cjs", source, |probe| {
         let function = probe.function("probe");

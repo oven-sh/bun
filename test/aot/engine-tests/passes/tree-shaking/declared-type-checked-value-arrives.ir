@@ -117,10 +117,10 @@ function f1 name="Unnamed" module=m0 position=621 kind=BaseConstructor flags=[Ha
   b0(v0: anything):
     Jump -> next b1() @621
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @615
-    v2 = NewObject v1 layout=L0 @615
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @615
-    Return v3 @615
+    v1 = GetConstructPrototype v0 layout=L0 @621
+    v2 = NewObject v1 layout=L0 @621
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @621
+    Return v3 @621
 }
 function f2 module=m0 position=621 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: function):
@@ -140,10 +140,10 @@ function f3 name="Named" module=m0 position=677 kind=BaseConstructor flags=[HasN
   b0(v0: anything):
     Jump -> next b1() @677
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @671
-    v2 = NewObject v1 layout=L1 @671
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @671
-    Return v3 @671
+    v1 = GetConstructPrototype v0 layout=L1 @677
+    v2 = NewObject v1 layout=L1 @677
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @677
+    Return v3 @677
 }
 function f4 module=m0 position=677 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: function):

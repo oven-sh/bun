@@ -3544,7 +3544,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f22 visibility=Private
 # CHECK-NEXT: Jump -> next b2(v17)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="b"
-# CHECK: module=m0 position=2023 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=int[1, 9007199254740992] site=w51}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
+# CHECK: module=m0 position=2023 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=int[1, 9007199254740992] site=w51}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] {
 # CHECK-NEXT: b0(v0: env L0):
 # CHECK-NEXT: v1: int[0, 9007199254740992] ~ int[0, 2147483647] = GetEnvironmentField v0 layout=L0
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=i32
@@ -3646,6 +3646,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f22 visibility=Private
 # CHECK-NEXT: v13: int|whole = Increment v12
 # CHECK-NEXT: v14: int[1, 9007199254740992] = AssumeType v13 provenType=int[1, 9007199254740992]
 # CHECK-NEXT: PutEnvironmentField v3, v14 layout=L0
-# CHECK-NEXT: v16: int[1, 9007199254740992] = Upcast v14 castType=int[1, 9007199254740992] @2023 tail
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }

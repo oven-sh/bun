@@ -1,0 +1,38 @@
+# What a pass answers decides what the runner does behind it. A build that verifies each pass holds a run that answers "unchanged" against the body as it was.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass PlanArrayCapacities
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=Array<undefined|number, proven>}] results=[{type=anything}] {
+    v1 = Integer
+    v2 = Double number=0.5
+    Jump -> next b1(v2, v1)
+  b1(v3: number, v4: int[0, 4294967295]):
+    LoopHint
+    v6 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b6()
+  b2(v8):
+    v9 = HasArrayStorage v0 arrayStorage=Double
+    Branch v9 -> taken b3(| 0), notTaken b7()
+  b3(v10):
+    v11 = IsElementPresent v0, v8, v10 arrayStorage=Double [keyIsIntegral]
+    Branch v11 -> taken b4(| 0), notTaken b5()
+  b4(v12):
+    v13 = AllGuards v10, v12
+    v14 = GetArrayElement v0, v8, v13 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v15 = Add v3, v14
+    v16 = Increment v8
+    Jump -> next b1(v15, v16)
+  b5() frequency=Rare:
+    v17 = ElemGet v0, v8 [keyIsIntegral]
+    Return v17
+  b6():
+    Return v3
+  b7() frequency=Rare:
+    ConvertToDoubleStorage v0
+    Jump -> next b5()
+}

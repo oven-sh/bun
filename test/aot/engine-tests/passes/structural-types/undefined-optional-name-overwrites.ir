@@ -1,4 +1,5 @@
 # An undefined under an optional name overwrites a required member.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f16
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -674,9 +675,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f44 visibility=Private
 # -- generated: f0 f16
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 630, patchpoints: 105, rare instructions: 864, polls: 3
+# CHECK-NEXT: instructions: 678, patchpoints: 101, rare instructions: 651, polls: 2
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function f16 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 90, patchpoints: 5, rare instructions: 99
+# CHECK-NEXT: instructions: 20, patchpoints: 2, rare instructions: 11
 # CHECK-NEXT: end of function f16

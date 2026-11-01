@@ -74,6 +74,9 @@ fn can_have_illegal_decorators(kind: Kind) -> bool {
 /// Whether `bun run` stops at the modifier or decorator of `location` that TypeScript reports `code` for.
 fn is_syntax_error_in_bun_run(hir: &File<'_>, location: Node, code: u32) -> bool {
     let is_decorator_error = matches!(code, 1206 | 1433 | 8038);
+    if code == 1287 {
+        return false;
+    }
     match hir.data(location) {
         NodeData::Stmt(_) => !hir.is_ambient(location) || is_decorator_error || code == 1044,
         NodeData::Param(_) if is_decorator_error => {

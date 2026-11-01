@@ -1692,11 +1692,6 @@ pub(crate) mod js_bundler {
                         .map_err(|error| throw_option_error(global_this, error))?;
                 compile.aot = settings.aot;
                 compile.trim = settings.trim;
-                if compile.aot.is_some() {
-                    this.bytecode = false;
-                    this.format = options::Format::Esm;
-                    compile.compile_target = CompileTarget::default();
-                }
             }
 
             if let Some(compile) = this.compile.as_mut() {
@@ -1716,6 +1711,11 @@ pub(crate) mod js_bundler {
                 let is_standalone_html = this.target == Target::Browser && has_all_html_entrypoints;
                 if !is_standalone_html {
                     this.target = Target::Bun;
+                    if compile.aot.is_some() {
+                        this.bytecode = false;
+                        this.format = options::Format::Esm;
+                        compile.compile_target = CompileTarget::default();
+                    }
 
                     let define_keys = compile.compile_target.define_keys();
                     let define_values = compile.compile_target.define_values();

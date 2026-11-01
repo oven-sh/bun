@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls: behind the pass a call of an unknown function is gone. The pass answers for the walks over own keys that it expands, and for nothing else: the build stops
+# FORM: Prepared
+# RUN: pass ExpandOwnKeys
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-beside-a-walk-over-own-keys-left-alone.ir

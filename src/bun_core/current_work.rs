@@ -94,7 +94,10 @@ fn milliseconds_now() -> u64 {
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
-struct GivesRecordBack;
+struct GivesRecordBack {
+    #[cfg(unix)]
+    signal_stack: Cell<*mut core::ffi::c_void>,
+}
 
 impl Drop for GivesRecordBack {
     fn drop(&mut self) {
@@ -102,13 +105,81 @@ impl Drop for GivesRecordBack {
             record.set(None);
             record.is_taken.store(false, Release);
         }
+        #[cfg(unix)]
+        self.give_signal_stack_back();
+    }
+}
+
+#[cfg(unix)]
+impl GivesRecordBack {
+    const SIGNAL_STACK_SIZE: usize = 512 * 1024;
+
+    fn ensure_signal_stack(&self) {
+        if !self.signal_stack.get().is_null() {
+            return;
+        }
+        // SAFETY: all-zero is a valid `stack_t`.
+        let mut current: libc::stack_t = unsafe { core::mem::zeroed() };
+        // SAFETY: `current` is a valid out-pointer.
+        let is_asked = unsafe { libc::sigaltstack(core::ptr::null(), &raw mut current) } == 0;
+        if !is_asked || current.ss_flags & libc::SS_DISABLE == 0 {
+            return;
+        }
+        // SAFETY: a private mapping of its own.
+        let memory = unsafe {
+            libc::mmap(
+                core::ptr::null_mut(),
+                Self::SIGNAL_STACK_SIZE,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
+            )
+        };
+        if memory == libc::MAP_FAILED {
+            return;
+        }
+        let stack = libc::stack_t {
+            ss_sp: memory,
+            ss_flags: 0,
+            ss_size: Self::SIGNAL_STACK_SIZE,
+        };
+        // SAFETY: the mapping lives until `give_signal_stack_back`.
+        if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } != 0 {
+            // SAFETY: nobody else knows the mapping.
+            unsafe { libc::munmap(memory, Self::SIGNAL_STACK_SIZE) };
+            return;
+        }
+        self.signal_stack.set(memory);
+    }
+
+    fn give_signal_stack_back(&self) {
+        let memory = self.signal_stack.replace(core::ptr::null_mut());
+        if memory.is_null() {
+            return;
+        }
+        let none = libc::stack_t {
+            ss_sp: core::ptr::null_mut(),
+            ss_flags: libc::SS_DISABLE,
+            ss_size: 0,
+        };
+        // SAFETY: the thread takes no signal on the mapping once it has none, and nobody else knows it.
+        unsafe {
+            libc::sigaltstack(&raw const none, core::ptr::null_mut());
+            libc::munmap(memory, Self::SIGNAL_STACK_SIZE);
+        }
     }
 }
 
 thread_local! {
     /// It has no destructor, so whoever reports a crash reads it on any thread without registering one.
     static RECORD: Cell<Option<&'static Record>> = const { Cell::new(None) };
-    static AT_END_OF_THREAD: GivesRecordBack = const { GivesRecordBack };
+    static AT_END_OF_THREAD: GivesRecordBack = const {
+        GivesRecordBack {
+            #[cfg(unix)]
+            signal_stack: Cell::new(core::ptr::null_mut()),
+        }
+    };
     /// What the record says, for the guard that puts it back.
     static CURRENT: Cell<Option<(Step, *const [u8], u64)>> = const { Cell::new(None) };
 }
@@ -118,7 +189,12 @@ fn record_of_this_thread() -> Option<&'static Record> {
     if let Some(record) = RECORD.get() {
         return Some(record);
     }
-    AT_END_OF_THREAD.try_with(|_| ()).ok()?;
+    AT_END_OF_THREAD
+        .try_with(|_at_end| {
+            #[cfg(unix)]
+            _at_end.ensure_signal_stack();
+        })
+        .ok()?;
     let all = ALL_RECORDS.get_or_init(|| (0..RECORDS).map(|_| Record::new()).collect());
     let free = (all.iter())
         .find(|record| !record.is_taken.load(Relaxed) && !record.is_taken.swap(true, Acquire));

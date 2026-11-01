@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
@@ -7,6 +7,7 @@ import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 import { wanted } from "./harness/shares";
+import { describe, test } from "./listed";
 
 const copiesOfEachForm = 120;
 const fillerFunctions = 14_000;

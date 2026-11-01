@@ -8,6 +8,7 @@ use crate::ir::{Id, Program, VariableId};
 use crate::link::ProgramModule;
 use crate::load::ProjectId;
 use crate::options::{ReplacedExport, ReplacedModule};
+use bun_sort_by_number::SortByNumber;
 
 use super::LoadedBuild;
 
@@ -70,7 +71,9 @@ impl ExportedVariables {
             exported.modules.push(found_by);
         }
         // A module that exports a name of another one again lists the same variable.
-        exported.variables.sort_by_key(|entry| entry.0.index());
+        exported
+            .variables
+            .sort_by_u64(|entry| entry.0.index() as u64);
         exported.variables.dedup_by_key(|entry| entry.0);
         exported
     }

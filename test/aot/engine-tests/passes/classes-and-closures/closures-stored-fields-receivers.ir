@@ -1,5 +1,6 @@
 # One read, many kinds of receiver: some hold a function nobody has read yet in the field, some hold undefined or null there, some were made without it, and some have no such field at all:
 # where the others keep it they keep something else, a number, a string, a reference, another function that is not made yet, or nothing because they are shorter.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -710,5 +711,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 290, patchpoints: 60, rare instructions: 167, polls: 4
+# CHECK-NEXT: instructions: 289, patchpoints: 60, rare instructions: 73, polls: 4
 # CHECK-NEXT: end of function f0

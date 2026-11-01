@@ -271,13 +271,14 @@ const moduleChildrenFunctions = [
   ),
 ];
 
-const requireCacheFunctions = [...functionsIn("builtins/CommonJS", "createRequireCache"), ...moduleChildrenFunctions];
+const requireCacheFunctions = [
+  ...functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
+  ...moduleChildrenFunctions,
+];
 
 const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverseArray");
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
-
-const fakeTimerFunctions = functionsIn("builtins/useFakeTimers", "createPerformance");
 
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
   "%ModuleObject%.children": moduleChildrenFunctions,
@@ -310,14 +311,11 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "Bun.$": functionsIn("builtins/shell", "createBunShellTemplateFunction"),
   "Bun.Glob": functionsIn("builtins/Glob", "scan", "scanSync"),
   "Bun.build": bundlerPluginFunctions,
-  "Bun.jest": fakeTimerFunctions,
   "Bun.peek": [heldAs(b.functionIn("builtins/Peek", "peek"), "Bun.peek"), b.functionIn("builtins/Peek", "peekStatus")],
   "Bun.plugin": bundlerPluginFunctions,
   "Bun.serve": pluginFunctionsOfServer,
   "WebAssembly.compileStreaming": streamedModuleFunctions,
   "WebAssembly.instantiateStreaming": streamedModuleFunctions,
-  "bun:test": fakeTimerFunctions,
-  "bun:test/vitest": fakeTimerFunctions,
   // The getter calls it on `console`, with `console`, and what it answers takes the getter's place.
   "console.Console": [
     b.functionUsed(
@@ -521,8 +519,6 @@ const warningFunctions = [
 // Of native code that nothing describes, nobody knows what it emits as a warning.
 const warningFunctionsOfUndeclaredCode = [...warningPrinterFunctions, ...tickFunctions];
 
-const testModules = ["Bun.jest", "bun:test", "bun:test/vitest"];
-
 // On Windows the object is a proxy that the function makes.
 const environmentObjectUsed = (result: readonly b.HostUseSpec[] | undefined) => [
   b.functionUsed(
@@ -667,7 +663,7 @@ const nativeCalls = [
       {
         file: inBindings("node/NodeTimers.cpp"),
         caller: "functionFakeNextTick",
-        onBehalfOf: testModules,
+        onBehalfOf: ["process.nextTick"],
         calls: nextTickMaker,
       },
       {
@@ -755,7 +751,7 @@ const nativeCalls = [
         onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
       },
-      { file: inBindings("ViUtils.cpp"), caller: "processEnv", onBehalfOf: testModules },
+      { file: inBindings("ViUtils.cpp"), caller: "processEnv", onBehalfOf: ["process.env"] },
     ],
   }),
 ];
@@ -1033,4 +1029,6 @@ export default b.declarations(
     ),
   }),
   b.excluded("builtins/Bake", "renderRoutesForProdStatic"),
+  b.excluded("builtins/CommonJS", "createRequireCache"),
+  b.excluded("builtins/useFakeTimers", "createPerformance"),
 );

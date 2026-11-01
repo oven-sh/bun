@@ -132,10 +132,13 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Void b@34 = Store(b@33, b@10, offset = -1114104, ControlDependent|Writes:ModuleVariables.37, v5:PutModuleVariable)
 # CHECK-NEXT: Void b@35 = Store8($1(b@30), b@10, offset = -1114368, ControlDependent|Writes:cards, v5:PutModuleVariable)
 # CHECK-NEXT: Int64 b@36 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ModuleVariables.49, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{frameSlots, AllocatorState}, v6:CallDirect)
+# CHECK-NEXT: Double b@22 = Load(b@10, offset = -1114096, ControlDependent|Reads:ModuleVariables.49, v42:GetModuleVariable)
+# CHECK-NEXT: Void b@56 = Upsilon(b@22, ^20, WritesLocalState)
 # CHECK-NEXT: Void b@37 = Jump(Terminal)
 # CHECK-NEXT: Successors: #2
 # CHECK-NEXT: BB#2: ; frequency = 10.000000
-# CHECK-NEXT: Predecessors: #0, #5
+# CHECK-NEXT: Predecessors: #0, #1
+# CHECK-NEXT: Double b@20 = Phi(ReadsLocalState)
 # CHECK-NEXT: Void b@38 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v7:LoopHint)
 # CHECK-NEXT: Int64 b@39 = Load(b@25, offset = 8, ControlDependent|Reads:EnvironmentFields.0, v10:GetEnvironmentField)
 # CHECK-NEXT: Int64 b@44 = Const64(2147483647, v12:TypeTest)
@@ -174,18 +177,22 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #5
 # CHECK-NEXT: BB#5: ; frequency = 10.000000
 # CHECK-NEXT: Predecessors: #12, #11
-# CHECK-NEXT: Double b@85 = Load(b@10, offset = -1114096, ControlDependent|Reads:ModuleVariables.49, v42:GetModuleVariable)
 # CHECK-NEXT: Double b@17 = Load(b@10, offset = -56, ReadsImmutable, v44:Increment)
-# CHECK-NEXT: Double b@87 = Add(b@85, b@17, v44:Increment)
+# CHECK-NEXT: Double b@87 = Add(b@20, b@17, v44:Increment)
 # CHECK-NEXT: Void b@88 = Store(b@87, b@10, offset = -1114096, ControlDependent|Writes:ModuleVariables.49, v45:PutModuleVariable)
 # CHECK-NEXT: Double b@16 = Load(b@10, offset = -104, ReadsImmutable, v47:GreaterEq)
-# CHECK-NEXT: Int32 b@91 = GreaterEqual(b@85, b@16, v47:GreaterEq)
+# CHECK-NEXT: Int32 b@91 = GreaterEqual(b@20, b@16, v47:GreaterEq)
 # CHECK-NEXT: Void b@92 = Branch(b@91, Terminal, v47:GreaterEq)
-# CHECK-NEXT: Successors: Then:#6, Else:#2
+# CHECK-NEXT: Successors: Then:#6, Else:#1
 # CHECK-NEXT: BB#6: ; frequency = 1.000000
 # CHECK-NEXT: Predecessors: #5
 # CHECK-NEXT: Int64 b@93 = Const64(10, v48:Undefined)
 # CHECK-NEXT: Void b@94 = Return($10(b@93), Terminal)
+# CHECK-NEXT: BB#1: ; frequency = 9.000000
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Void b@19 = Upsilon(b@87, ^20, WritesLocalState, v7:LoopHint)
+# CHECK-NEXT: Void b@23 = Jump(Terminal, v7:LoopHint)
+# CHECK-NEXT: Successors: #2
 # CHECK-NEXT: BB#12: ; frequency = 0.009766
 # CHECK-NEXT: Predecessors: #4
 # CHECK-NEXT: Int64 b@80 = Add(b@70, $1(b@27), v39:Increment)

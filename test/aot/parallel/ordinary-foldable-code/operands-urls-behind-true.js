@@ -1,0 +1,645 @@
+const flag_0 = true;
+const first_0 = "http://localhost";
+const second_0 = "https://example.com";
+const R_0 = flag_0 ? first_0 : second_0;
+const flag_1 = true;
+const first_1 = "http://localhost";
+const second_1 = "https://example.com";
+const R_1 = !flag_1 ? first_1 : second_1;
+const flag_2 = true;
+const first_2 = "http://localhost";
+const second_2 = "https://example.com";
+const R_2 = flag_2 ? first_2 : flag_2 ? second_2 : first_2;
+const flag_3 = true;
+const first_3 = "http://localhost";
+const second_3 = "https://example.com";
+const R_3 = String(flag_3 ? first_3 : second_3);
+const flag_5 = true;
+const first_5 = "http://localhost";
+const second_5 = "https://example.com";
+const R_5 = flag_5 && first_5;
+const flag_6 = true;
+const first_6 = "http://localhost";
+const second_6 = "https://example.com";
+const R_6 = flag_6 || second_6;
+const flag_7 = true;
+const first_7 = "http://localhost";
+const second_7 = "https://example.com";
+const R_7 = flag_7 ?? second_7;
+const flag_8 = true;
+const first_8 = "http://localhost";
+const second_8 = "https://example.com";
+const R_8 = (flag_8 && first_8) || second_8;
+const flag_9 = true;
+const first_9 = "http://localhost";
+const second_9 = "https://example.com";
+let R_9;
+if (flag_9) {
+  R_9 = first_9;
+} else {
+  R_9 = second_9;
+}
+const flag_10 = true;
+const first_10 = "http://localhost";
+const second_10 = "https://example.com";
+let R_10 = second_10;
+if (flag_10) R_10 = first_10;
+const flag_11 = true;
+const first_11 = "http://localhost";
+const second_11 = "https://example.com";
+let R_11 = second_11;
+if (!flag_11) R_11 = first_11;
+const flag_12 = true;
+const first_12 = "http://localhost";
+const second_12 = "https://example.com";
+let R_12;
+if (flag_12) R_12 = first_12;
+else if (!flag_12) R_12 = second_12;
+else R_12 = "neither";
+const flag_14 = true;
+const first_14 = "http://localhost";
+const second_14 = "https://example.com";
+const R_14 = (() => {
+  if (flag_14) return first_14;
+  return second_14;
+})();
+const flag_15 = true;
+const first_15 = "http://localhost";
+const second_15 = "https://example.com";
+let R_15;
+switch (Boolean(flag_15)) {
+  case true:
+    R_15 = first_15;
+    break;
+  case false:
+    R_15 = second_15;
+    break;
+}
+const flag_16 = true;
+const first_16 = "http://localhost";
+const second_16 = "https://example.com";
+let R_16;
+switch (typeof flag_16) {
+  case "boolean":
+    R_16 = first_16;
+    break;
+  case "number":
+  case "string":
+    R_16 = second_16;
+    break;
+  default:
+    R_16 = "other";
+}
+const flag_17 = true;
+const first_17 = "http://localhost";
+const second_17 = "https://example.com";
+const mode_17 = flag_17 ? "dev" : "prod";
+let R_17;
+switch (mode_17) {
+  case "dev":
+    R_17 = first_17;
+    break;
+  case "prod":
+    R_17 = second_17;
+    break;
+}
+const flag_18 = true;
+const first_18 = "http://localhost";
+const second_18 = "https://example.com";
+let R_18;
+switch (true) {
+  case !!flag_18:
+    R_18 = first_18;
+    break;
+  default:
+    R_18 = second_18;
+}
+const flag_19 = true;
+const first_19 = "http://localhost";
+const second_19 = "https://example.com";
+const R_19 = `${flag_19 ? first_19 : second_19}/path`;
+const flag_20 = true;
+const first_20 = "http://localhost";
+const second_20 = "https://example.com";
+const R_20 = `flag=${String(flag_20)}`;
+const flag_21 = true;
+const first_21 = "http://localhost";
+const second_21 = "https://example.com";
+const R_21 = `${flag_21 ? "a" : "b"}-${flag_21 ? "c" : "d"}`;
+const flag_22 = true;
+const first_22 = "http://localhost";
+const second_22 = "https://example.com";
+const R_22 = "x" + String(flag_22 ? first_22 : second_22);
+const flag_23 = true;
+const first_23 = "http://localhost";
+const second_23 = "https://example.com";
+function f_23(x_23 = flag_23 ? first_23 : second_23) {
+  return x_23;
+}
+const R_23 = f_23();
+const flag_24 = true;
+const first_24 = "http://localhost";
+const second_24 = "https://example.com";
+function f_24(a = flag_24, b = a ? first_24 : second_24) {
+  return b;
+}
+const R_24 = f_24();
+const flag_25 = true;
+const first_25 = "http://localhost";
+const second_25 = "https://example.com";
+const { x_25 = flag_25 ? first_25 : second_25 } = {};
+const R_25 = x_25;
+const flag_26 = true;
+const first_26 = "http://localhost";
+const second_26 = "https://example.com";
+const [x_26 = first_26, y_26 = second_26] = [flag_26 ? undefined : second_26];
+const R_26 = [x_26, y_26];
+const flag_27 = true;
+const first_27 = "http://localhost";
+const second_27 = "https://example.com";
+const R_27 = { ...(flag_27 ? { a: first_27 } : { b: second_27 }) };
+const flag_28 = true;
+const first_28 = "http://localhost";
+const second_28 = "https://example.com";
+const R_28 = { base: 1, ...(flag_28 && { a: first_28 }) };
+const flag_29 = true;
+const first_29 = "http://localhost";
+const second_29 = "https://example.com";
+const R_29 = [...(flag_29 ? [first_29] : []), second_29];
+const flag_30 = true;
+const first_30 = "http://localhost";
+const second_30 = "https://example.com";
+const R_30 = Math.max(...(flag_30 ? [1, 2] : [3]));
+const flag_31 = true;
+const first_31 = "http://localhost";
+const second_31 = "https://example.com";
+const R_31 = { [flag_31 ? "a" : "b"]: first_31 };
+const flag_32 = true;
+const first_32 = "http://localhost";
+const second_32 = "https://example.com";
+class C_32 {
+  static v = flag_32 ? first_32 : second_32;
+}
+const R_32 = C_32.v;
+const flag_33 = true;
+const first_33 = "http://localhost";
+const second_33 = "https://example.com";
+class C_33 {
+  v = flag_33 ? first_33 : second_33;
+}
+const R_33 = new C_33().v;
+const flag_34 = true;
+const first_34 = "http://localhost";
+const second_34 = "https://example.com";
+const o_34 = {
+  get v() {
+    return flag_34 ? first_34 : second_34;
+  },
+};
+const R_34 = o_34.v;
+const flag_35 = true;
+const first_35 = "http://localhost";
+const second_35 = "https://example.com";
+class C_35 {
+  static get v() {
+    return flag_35 ? first_35 : second_35;
+  }
+}
+const R_35 = C_35.v;
+const flag_36 = true;
+const first_36 = "http://localhost";
+const second_36 = "https://example.com";
+class C_36 {
+  static v;
+  static {
+    C_36.v = flag_36 ? first_36 : second_36;
+  }
+}
+const R_36 = C_36.v;
+const flag_37 = true;
+const first_37 = "http://localhost";
+const second_37 = "https://example.com";
+function pick_37(c, a, b) {
+  return c ? a : b;
+}
+const R_37 = pick_37(flag_37, first_37, second_37);
+const flag_38 = true;
+const first_38 = "http://localhost";
+const second_38 = "https://example.com";
+const pick_38 = (c) => (c ? first_38 : second_38);
+const R_38 = pick_38(flag_38);
+const flag_39 = true;
+const first_39 = "http://localhost";
+const second_39 = "https://example.com";
+function value_39() {
+  return flag_39 ? first_39 : second_39;
+}
+const R_39 = value_39();
+const flag_40 = true;
+const first_40 = "http://localhost";
+const second_40 = "https://example.com";
+function wrap_40(x_40) {
+  return [x_40];
+}
+const R_40 = wrap_40(flag_40 ? first_40 : second_40);
+const flag_41 = true;
+const first_41 = "http://localhost";
+const second_41 = "https://example.com";
+function id_41(x_41) {
+  return x_41;
+}
+const R_41 = [id_41(flag_41 ? first_41 : second_41), id_41(first_41)];
+const flag_42 = true;
+const first_42 = "http://localhost";
+const second_42 = "https://example.com";
+const R_42 = (function () {
+  return flag_42 ? first_42 : second_42;
+})();
+const flag_43 = true;
+const first_43 = "http://localhost";
+const second_43 = "https://example.com";
+const R_43 = (() => (flag_43 ? first_43 : second_43))();
+const flag_44 = true;
+const first_44 = "http://localhost";
+const second_44 = "https://example.com";
+const table_44 = { true: first_44, false: second_44 };
+const R_44 = table_44[String(Boolean(flag_44))];
+const flag_45 = true;
+const first_45 = "http://localhost";
+const second_45 = "https://example.com";
+const R_45 = [second_45, first_45][Number(Boolean(flag_45))];
+const flag_46 = true;
+const first_46 = "http://localhost";
+const second_46 = "https://example.com";
+const m_46 = new Map([
+  [true, first_46],
+  [false, second_46],
+]);
+const R_46 = m_46.get(Boolean(flag_46));
+const flag_47 = true;
+const first_47 = "http://localhost";
+const second_47 = "https://example.com";
+const o_47 = flag_47 ? { v: first_47 } : null;
+const R_47 = o_47?.v ?? second_47;
+const flag_48 = true;
+const first_48 = "http://localhost";
+const second_48 = "https://example.com";
+const R_48 = typeof (flag_48 ? first_48 : second_48);
+const flag_49 = true;
+const first_49 = "http://localhost";
+const second_49 = "https://example.com";
+const x_49 = flag_49 ? first_49 : second_49;
+const R_49 = x_49 === x_49;
+const flag_50 = true;
+const first_50 = "http://localhost";
+const second_50 = "https://example.com";
+let R_50 = second_50;
+while (flag_50) {
+  R_50 = first_50;
+  break;
+}
+const flag_51 = true;
+const first_51 = "http://localhost";
+const second_51 = "https://example.com";
+let R_51 = second_51;
+for (let i = 0; flag_51 && i < 1; i++) R_51 = first_51;
+const flag_52 = true;
+const first_52 = "http://localhost";
+const second_52 = "https://example.com";
+let R_52 = second_52;
+do {
+  if (flag_52) R_52 = first_52;
+} while (false);
+const flag_54 = true;
+const first_54 = "http://localhost";
+const second_54 = "https://example.com";
+let R_54;
+try {
+  R_54 = flag_54 ? first_54 : second_54;
+} finally {
+}
+const flag_55 = true;
+const first_55 = "http://localhost";
+const second_55 = "https://example.com";
+let R_55;
+try {
+  if (!flag_55) throw second_55;
+  R_55 = first_55;
+} catch (e) {
+  R_55 = e;
+}
+const flag_56 = true;
+const first_56 = "http://localhost";
+const second_56 = "https://example.com";
+const R_56 = (flag_56, first_56);
+const flag_57 = true;
+const first_57 = "http://localhost";
+const second_57 = "https://example.com";
+let R_57 = flag_57;
+R_57 ||= second_57;
+const flag_58 = true;
+const first_58 = "http://localhost";
+const second_58 = "https://example.com";
+let R_58 = flag_58;
+R_58 &&= first_58;
+const flag_59 = true;
+const first_59 = "http://localhost";
+const second_59 = "https://example.com";
+let R_59 = flag_59;
+R_59 ??= second_59;
+const flag_60 = true;
+const first_60 = "http://localhost";
+const second_60 = "https://example.com";
+const c1_60 = flag_60 ? first_60 : second_60;
+const c2_60 = c1_60;
+const c3_60 = [c2_60];
+const R_60 = c3_60[0];
+const flag_61 = true;
+const first_61 = "http://localhost";
+const second_61 = "https://example.com";
+const R_61 = [flag_61 ? first_61 : second_61, flag_61 ? first_61 : second_61];
+const flag_62 = true;
+const first_62 = "http://localhost";
+const second_62 = "https://example.com";
+const R_62 = [flag_62 ? first_62 : second_62, flag_62 && first_62, flag_62 || second_62, !flag_62, flag_62 ? 1 : 2, `${flag_62 ? "a" : "b"}`];
+const flag_63 = true;
+const first_63 = "http://localhost";
+const second_63 = "https://example.com";
+const get = () => flag_63;
+const R_63 = get() ? first_63 : second_63;
+const flag_64 = true;
+const first_64 = "http://localhost";
+const second_64 = "https://example.com";
+const config_64 = { dev: flag_64, value: flag_64 ? first_64 : second_64 };
+const R_64 = config_64.value;
+const flag_65 = true;
+const first_65 = "http://localhost";
+const second_65 = "https://example.com";
+const config_65 = Object.freeze({ dev: flag_65, a: first_65, b: second_65 });
+const R_65 = config_65.dev ? config_65.a : config_65.b;
+const flag_66 = true;
+const first_66 = "http://localhost";
+const second_66 = "https://example.com";
+const config_66 = { env: { dev: flag_66 } };
+const R_66 = config_66.env.dev ? first_66 : second_66;
+const flag_68 = true;
+const first_68 = "http://localhost";
+const second_68 = "https://example.com";
+const R_68 = JSON.stringify({ v: typeof (flag_68 ? first_68 : second_68) });
+const flag_69 = true;
+const first_69 = "http://localhost";
+const second_69 = "https://example.com";
+const R_69 = [flag_69 && first_69, second_69].filter(Boolean);
+const flag_70 = true;
+const first_70 = "http://localhost";
+const second_70 = "https://example.com";
+const R_70 = [flag_70 ? "a" : "b", "c"].join("-");
+const flag_71 = true;
+const first_71 = "http://localhost";
+const second_71 = "https://example.com";
+function f_71() {
+  if (!flag_71) return second_71;
+  return first_71;
+}
+const R_71 = f_71();
+const flag_72 = true;
+const first_72 = "http://localhost";
+const second_72 = "https://example.com";
+function f_72() {
+  return flag_72 ? first_72 : second_72;
+  return "never";
+}
+const R_72 = f_72();
+const flag_73 = true;
+const first_73 = "http://localhost";
+const second_73 = "https://example.com";
+function* g_73() {
+  if (flag_73) yield first_73;
+  yield second_73;
+}
+const R_73 = [...g_73()];
+const flag_74 = true;
+const first_74 = "http://localhost";
+const second_74 = "https://example.com";
+class P_74 {
+  constructor(v) {
+    this.v = v;
+  }
+}
+const R_74 = new P_74(flag_74 ? first_74 : second_74).v;
+const flag_75 = true;
+const first_75 = "http://localhost";
+const second_75 = "https://example.com";
+const tag_75 = (s, v) => s[0] + String(v);
+const R_75 = tag_75`v=${flag_75 ? first_75 : second_75}`;
+const flag_76 = true;
+const first_76 = "http://localhost";
+const second_76 = "https://example.com";
+const R_76 = (flag_76 ? "a" : "b") in { a: 1 };
+const flag_77 = true;
+const first_77 = "http://localhost";
+const second_77 = "https://example.com";
+const R_77 = (flag_77 ? [] : {}) instanceof Array;
+const flag_78 = true;
+const first_78 = "http://localhost";
+const second_78 = "https://example.com";
+function fib_78(n) {
+  return n < 2 ? n : fib_78(n - 1) + fib_78(n - 2);
+}
+const R_78 = fib_78(flag_78 ? 10 : 5);
+const flag_79 = true;
+const first_79 = "http://localhost";
+const second_79 = "https://example.com";
+const R_79 = ((flag_79 ? 1 : 2) << 2) | 1;
+const flag_80 = true;
+const first_80 = "http://localhost";
+const second_80 = "https://example.com";
+if (flag_80) {
+  var hoisted_80 = first_80;
+}
+const R_80 = typeof hoisted_80;
+const flag_81 = true;
+const first_81 = "http://localhost";
+const second_81 = "https://example.com";
+const Mode_81 = { Dev: 0, Prod: 1 };
+const mode_81 = flag_81 ? Mode_81.Dev : Mode_81.Prod;
+const R_81 = mode_81 === Mode_81.Dev ? first_81 : second_81;
+const flag_82 = true;
+const first_82 = "http://localhost";
+const second_82 = "https://example.com";
+const R_82 = Object.entries({ a: flag_82 ? first_82 : second_82 }).length;
+const flag_83 = true;
+const first_83 = "http://localhost";
+const second_83 = "https://example.com";
+const R_83 = (flag_83 ? "abc" : "de").length;
+const flag_84 = true;
+const first_84 = "http://localhost";
+const second_84 = "https://example.com";
+const R_84 = String(flag_84 ? first_84 : second_84).toUpperCase();
+const flag_85 = true;
+const first_85 = "http://localhost";
+const second_85 = "https://example.com";
+const R_85 = (flag_85 ? /a/ : /z/).test("abc");
+const flag_86 = true;
+const first_86 = "http://localhost";
+const second_86 = "https://example.com";
+const R_86 = new Date(flag_86 ? 0 : 86400000).toISOString();
+const flag_87 = true;
+const first_87 = "http://localhost";
+const second_87 = "https://example.com";
+const R_87 = (flag_87 ? 1.005 : 2.5).toFixed(2);
+const flag_88 = true;
+const first_88 = "http://localhost";
+const second_88 = "https://example.com";
+let x_88 = flag_88 ? first_88 : second_88;
+const R_88 = x_88;
+const flag_89 = true;
+const first_89 = "http://localhost";
+const second_89 = "https://example.com";
+var x_89 = flag_89 ? first_89 : second_89;
+var R_89 = x_89;
+const flag_90 = true;
+const first_90 = "http://localhost";
+const second_90 = "https://example.com";
+const G_90 = !flag_90;
+const R_90 = flag_90 && G_90 ? first_90 : flag_90 || G_90 ? second_90 : "neither";
+const flag_91 = true;
+const first_91 = "http://localhost";
+const second_91 = "https://example.com";
+const G_91 = flag_91 ? true : false;
+const H_91 = G_91 ? 1 : 0;
+const R_91 = H_91 === 1 ? first_91 : second_91;
+const flag_92 = true;
+const first_92 = "http://localhost";
+const second_92 = "https://example.com";
+const base_92 = flag_92 ? "http://localhost:3000" : "https://example.com";
+const R_92 = new URL("/api", base_92).href;
+const flag_93 = true;
+const first_93 = "http://localhost";
+const second_93 = "https://example.com";
+const R_93 = (flag_93 ? "Dev Mode" : "Prod Mode").toLowerCase().split(" ").join("-");
+const flag_94 = true;
+const first_94 = "http://localhost";
+const second_94 = "https://example.com";
+const R_94 = Math.round((flag_94 ? 1.5 : 2.5) * 10) / 10;
+const flag_95 = true;
+const first_95 = "http://localhost";
+const second_95 = "https://example.com";
+const R_95 = [{ on: flag_95, v: first_95 }, { on: !flag_95, v: second_95 }].filter((x_95) => x_95.on).map((x_95) => x_95.v);
+const flag_96 = true;
+const first_96 = "http://localhost";
+const second_96 = "https://example.com";
+const R_96 = [flag_96 ? 1 : 2, 3, 4].reduce((a, b) => a + b, 0);
+const flag_99 = true;
+const first_99 = "http://localhost";
+const second_99 = "https://example.com";
+if (!flag_99 && flag_99) throw new Error("impossible");
+const R_99 = flag_99 ? first_99 : second_99;
+console.log("ternary", R_0);
+console.log("ternary-not", R_1);
+console.log("ternary-nested", R_2);
+console.log("ternary-in-a-call", R_3);
+console.log("and", R_5);
+console.log("or", R_6);
+console.log("nullish", R_7);
+console.log("and-or", R_8);
+console.log("if-else", R_9);
+console.log("if-only", R_10);
+console.log("if-not", R_11);
+console.log("if-else-if", R_12);
+console.log("if-return", R_14);
+console.log("switch-boolean", R_15);
+console.log("switch-typeof", R_16);
+console.log("switch-mode", R_17);
+console.log("switch-true", R_18);
+console.log("template", R_19);
+console.log("template-flag", R_20);
+console.log("template-two", R_21);
+console.log("concat", R_22);
+console.log("default-parameter", R_23);
+console.log("default-parameter-chain", R_24);
+console.log("pattern-default", R_25);
+console.log("list-pattern-default", R_26);
+console.log("spread-object", R_27);
+console.log("spread-and", R_28);
+console.log("spread-list", R_29);
+console.log("spread-call", R_30);
+console.log("computed-key", R_31);
+console.log("static-field", R_32);
+console.log("field", R_33);
+console.log("getter", R_34);
+console.log("static-getter", R_35);
+console.log("static-block", R_36);
+console.log("helper", R_37);
+console.log("helper-arrow", R_38);
+console.log("helper-no-argument", R_39);
+console.log("helper-one-constant", R_40);
+console.log("helper-twice", R_41);
+console.log("iife", R_42);
+console.log("iife-arrow", R_43);
+console.log("table", R_44);
+console.log("list-index", R_45);
+console.log("map", R_46);
+console.log("optional-chain", R_47);
+console.log("typeof", R_48);
+console.log("same", R_49);
+console.log("while", R_50);
+console.log("for", R_51);
+console.log("do-while", R_52);
+console.log("try-finally", R_54);
+console.log("throw-catch", R_55);
+console.log("comma", R_56);
+console.log("or-assign", R_57);
+console.log("and-assign", R_58);
+console.log("nullish-assign", R_59);
+console.log("chain-of-constants", R_60);
+console.log("twice", R_61);
+console.log("many-times", R_62);
+console.log("closure", R_63);
+console.log("config-object", R_64);
+console.log("config-frozen", R_65);
+console.log("config-nested", R_66);
+console.log("json", R_68);
+console.log("filter-boolean", R_69);
+console.log("join", R_70);
+console.log("early-return", R_71);
+console.log("dead-after-return", R_72);
+console.log("generator", R_73);
+console.log("new-class", R_74);
+console.log("tagged", R_75);
+console.log("in", R_76);
+console.log("instanceof", R_77);
+console.log("recursion", R_78);
+console.log("bits", R_79);
+console.log("var-in-a-branch", R_80);
+console.log("enum-object", R_81);
+console.log("entries", R_82);
+console.log("length", R_83);
+console.log("upper", R_84);
+console.log("regexp", R_85);
+console.log("date", R_86);
+console.log("to-fixed", R_87);
+console.log("let-never-changed", R_88);
+console.log("var", R_89);
+console.log("two-flags", R_90);
+console.log("flag-of-flag", R_91);
+console.log("url", R_92);
+console.log("text-methods", R_93);
+console.log("number-math", R_94);
+console.log("array-of-config", R_95);
+console.log("reduce", R_96);
+console.log("assert", R_99);
+console.log("# ternary-logged");
+const flag_4 = true;
+const first_4 = "http://localhost";
+const second_4 = "https://example.com";
+console.log(flag_4 ? first_4 : second_4);
+console.log("# if-logs");
+const flag_13 = true;
+const first_13 = "http://localhost";
+const second_13 = "https://example.com";
+if (flag_13) {
+  console.log(first_13);
+} else {
+  console.log(second_13);
+}

@@ -478,7 +478,7 @@ function f21 name="next" module=m1 position=25 kind=Method role=Library flags=[H
 runtimefunction id=ArrayIteratorPrototypeNext function=f21 visibility=Private
 # -- generated: f0 read write line Base level f10 f11 f12
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=1085 module=m0}, {callee=f1 callPosition=1057 module=m0}, {callee=f2 callPosition=1120 module=m0}, {callee=f2 callPosition=1291 module=m0}, {callee=f1 callPosition=1252 module=m0}, {callee=f38 callPosition=1155 isConstruction=true module=m0}, {callee=f35 callPosition=269 parent=6 isConstruction=true module=m0}, {callee=f24 callPosition=505 parent=3 isTailCall=true module=m0}, {callee=f23 callPosition=448 parent=2 isTailCall=true module=m0}, {callee=f13 callPosition=192 parent=7 module=m0}, {callee=f24 callPosition=505 parent=4 isTailCall=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=1291 module=m0}, {callee=f1 callPosition=1252 module=m0}, {callee=f48 callPosition=980 module=m0}, {callee=f47 callPosition=980 module=m0}, {callee=f46 callPosition=980 module=m0}, {callee=f48 callPosition=1014 module=m0}, {callee=f47 callPosition=1014 module=m0}, {callee=f46 callPosition=1014 module=m0}, {callee=f48 callPosition=1062 module=m0}, {callee=f47 callPosition=1062 module=m0}, {callee=f46 callPosition=1062 module=m0}, {callee=f1 callPosition=1057 module=m0}, {callee=f48 callPosition=1078 module=m0}, {callee=f47 callPosition=1078 module=m0}, {callee=f46 callPosition=1078 module=m0}, {callee=f5 callPosition=1085 module=m0}, {callee=f48 callPosition=1126 module=m0}, {callee=f47 callPosition=1126 module=m0}, {callee=f46 callPosition=1126 module=m0}, {callee=f2 callPosition=1120 module=m0}, {callee=f38 callPosition=1155 isConstruction=true module=m0}, {callee=f35 callPosition=269 parent=21 isConstruction=true module=m0}, {callee=f24 callPosition=505 parent=20 isTailCall=true module=m0}, {callee=f23 callPosition=448 parent=12 isTailCall=true module=m0}, {callee=f13 callPosition=192 parent=22 module=m0}, {callee=f24 callPosition=505 parent=1 isTailCall=true module=m0}, {callee=f38 callPosition=887 parent=3 isConstruction=true module=m0}, {callee=f42 callPosition=838 parent=4 isConstruction=true module=m0}, {callee=f35 callPosition=796 parent=5 isConstruction=true module=m0}, {callee=f38 callPosition=887 parent=6 isConstruction=true module=m0}, {callee=f42 callPosition=838 parent=7 isConstruction=true module=m0}, {callee=f35 callPosition=796 parent=8 isConstruction=true module=m0}, {callee=f38 callPosition=887 parent=9 isConstruction=true module=m0}, {callee=f42 callPosition=838 parent=10 isConstruction=true module=m0}, {callee=f35 callPosition=796 parent=11 isConstruction=true module=m0}, {callee=f38 callPosition=887 parent=13 isConstruction=true module=m0}, {callee=f42 callPosition=838 parent=14 isConstruction=true module=m0}, {callee=f35 callPosition=796 parent=15 isConstruction=true module=m0}, {callee=f38 callPosition=887 parent=17 isConstruction=true module=m0}, {callee=f42 callPosition=838 parent=18 isConstruction=true module=m0}, {callee=f35 callPosition=796 parent=19 isConstruction=true module=m0}, {callee=f13 callPosition=192 parent=41 module=m0}, {callee=f35 callPosition=425 parent=40 isConstruction=true module=m0}, {callee=f35 callPosition=269 parent=39 isConstruction=true module=m0}, {callee=f13 callPosition=192 parent=38 module=m0}, {callee=f35 callPosition=425 parent=37 isConstruction=true module=m0}, {callee=f35 callPosition=269 parent=36 isConstruction=true module=m0}, {callee=f13 callPosition=192 parent=35 module=m0}, {callee=f35 callPosition=425 parent=34 isConstruction=true module=m0}, {callee=f35 callPosition=269 parent=33 isConstruction=true module=m0}, {callee=f13 callPosition=192 parent=32 module=m0}, {callee=f35 callPosition=425 parent=31 isConstruction=true module=m0}, {callee=f35 callPosition=269 parent=30 isConstruction=true module=m0}, {callee=f13 callPosition=192 parent=29 module=m0}, {callee=f35 callPosition=425 parent=28 isConstruction=true module=m0}, {callee=f35 callPosition=269 parent=27 isConstruction=true module=m0}, {callee=f13 callPosition=192 parent=56 module=m0}, {callee=f13 callPosition=192 parent=55 module=m0}, {callee=f13 callPosition=192 parent=53 module=m0}, {callee=f13 callPosition=192 parent=52 module=m0}, {callee=f13 callPosition=192 parent=50 module=m0}, {callee=f13 callPosition=192 parent=49 module=m0}, {callee=f13 callPosition=192 parent=47 module=m0}, {callee=f13 callPosition=192 parent=46 module=m0}, {callee=f13 callPosition=192 parent=44 module=m0}, {callee=f13 callPosition=192 parent=43 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Array<string> = NewArray contents=string allocationSite=3
 # CHECK-NEXT: v1: Array<string, proven, pristine[Storage, Names]> = AssumeType v0 provenType=Array<string, proven, pristine[Storage, Names]>
@@ -503,7 +503,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v19: 3 = Integer integer=3
 # CHECK-NEXT: v20: boolean = Less v17, v19
-# CHECK-NEXT: Branch v20 -> taken b3(| 0), notTaken b52()
+# CHECK-NEXT: Branch v20 -> taken b3(| 0), notTaken b47()
 # CHECK-NEXT: b3(v21: int[0, 2]):
 # CHECK-NEXT: Switch v21 cases=[0, 1] -> case b4(v6), case b4(v10), otherwise b4(v14)
 # CHECK-NEXT: b4(v22: Array<"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12, proven, Contiguous, pristine[Storage, Names, Dense]>):
@@ -511,299 +511,224 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21 visibility=Private
 # CHECK-NEXT: v24: int[1, 3] = Add v21, v23
 # CHECK-NEXT: v25: 0 = Integer
 # CHECK-NEXT: v26: boolean = IsInBounds v22, v25
-# CHECK-NEXT: Branch v26 -> taken b5(| 0), notTaken b39()
+# CHECK-NEXT: Branch v26 -> taken b5(| 0), notTaken b22()
 # CHECK-NEXT: b5(v27: guard):
 # CHECK-NEXT: v28: "a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v25, v27 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v29: "a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ "a plain subclass"|"a subclass with a pair"|"the base" = Expect v28 expectedType=undefined|null|string
+# CHECK-NEXT: v29: "a plain subclass"|"a subclass with a pair"|"the base" = AssumeType v28 provenType="a plain subclass"|"a subclass with a pair"|"the base"
 # CHECK-NEXT: v30: 1 = Integer integer=1
 # CHECK-NEXT: v31: boolean = IsInBounds v22, v30
-# CHECK-NEXT: Branch v31 -> taken b6(| 0), notTaken b40(v29)
+# CHECK-NEXT: Branch v31 -> taken b6(| 0), notTaken b23(v29)
 # CHECK-NEXT: b6(v32: guard):
 # CHECK-NEXT: v33: "a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v30, v32 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v34: "a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ f10|f11|f12 = Expect v33 expectedType=undefined|null|function|f10|f11|f12
-# CHECK-NEXT: v35: boolean ~ true = TypeTest v29 testedType=string
-# CHECK-NEXT: Branch v35 -> taken b7(| 0), notTaken b38(| 0)
-# CHECK-NEXT: b7(v36: "a plain subclass"|"a subclass with a pair"|"the base"):
-# CHECK-NEXT: v37: ", made" = String string=", made"
-# CHECK-NEXT: v38: string = Add v36, v37
-# CHECK-NEXT: v39: anything = Call v34 calleeName="make" accessSite=9 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v40: L0|L1|L2 = AssumeType v39 provenType=L0|L1|L2
-# CHECK-NEXT: v41: L0|L1|L2 ~ L1|L2 = Expect v40 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v42: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v43: i32 = StringBuilderCheckpoint v42
-# CHECK-NEXT: v44: boolean = ShapeTest v41 layouts=[L0]
-# CHECK-NEXT: Branch v44 -> taken b8(), notTaken b11()
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v45: 0 = Integer
-# CHECK-NEXT: v46: int[0, 2] = CallDirect v41, v42, v45 function=f31 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v46 cases=[1] -> case b9(), otherwise b10()
+# CHECK-NEXT: v34: f10|f11|f12 = AssumeType v33 provenType=f10|f11|f12
+# CHECK-NEXT: v35: ", made" = String string=", made"
+# CHECK-NEXT: v36: string = Add v29, v35
+# CHECK-NEXT: v37: boolean = TypeTest v34 testedType=f10
+# CHECK-NEXT: Branch v37 -> taken b7(), notTaken b8(| 0)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: L0 = NewObject -, v38 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b11(v39)
+# CHECK-NEXT: b8(v40: f11|f12):
+# CHECK-NEXT: v41: boolean = TypeTest v40 testedType=f11
+# CHECK-NEXT: Branch v41 -> taken b9(), notTaken b10()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: Jump -> next b18()
-# CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: Jump -> next b28()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v47: boolean = ShapeTest v41 layouts=[L1]
-# CHECK-NEXT: Branch v47 -> taken b12(), notTaken b15()
+# CHECK-NEXT: v42: 1 = Integer integer=1
+# CHECK-NEXT: v43: L2 = NewObject -, v42 layout=L2 fields=[0] allocationClass=2 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b11(v43)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v44: 1 = Integer integer=1
+# CHECK-NEXT: v45: L1 = NewObject -, v44 layout=L1 fields=[0] allocationClass=1 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b11(v45)
+# CHECK-NEXT: b11(v46: L0|L1|L2 ~ L1|L2):
+# CHECK-NEXT: v47: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v48: boolean = ShapeTest v46 layouts=[L0]
+# CHECK-NEXT: Branch v48 -> taken b12(), notTaken b14()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v48: 0 = Integer
-# CHECK-NEXT: v49: int[0, 2] = CallDirect v41, v42, v48 function=f32 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v49 cases=[1] -> case b13(), otherwise b14()
+# CHECK-NEXT: v49: 0 = Integer
+# CHECK-NEXT: v50: int[0, 2] = CallDirect v46, v47, v49 function=f31 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v50 cases=[1] -> case b13(), otherwise b31(v46, v47, v29, v34, v36)
 # CHECK-NEXT: b13():
-# CHECK-NEXT: Jump -> next b18()
-# CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: Jump -> next b28()
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v51: boolean = ShapeTest v46 layouts=[L1]
+# CHECK-NEXT: Branch v51 -> taken b15(), notTaken b17()
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v50: boolean = ShapeTest v41 layouts=[L2]
-# CHECK-NEXT: Branch v50 -> taken b16(), notTaken b27()
+# CHECK-NEXT: v52: 0 = Integer
+# CHECK-NEXT: v53: int[0, 2] = CallDirect v46, v47, v52 function=f32 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v53 cases=[1] -> case b16(), otherwise b35(v46, v47, v29, v34, v36)
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v51: 0 = Integer
-# CHECK-NEXT: v52: int[0, 2] = CallDirect v41, v42, v51 function=f33 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v52 cases=[1] -> case b17(), otherwise b26()
+# CHECK-NEXT: Jump -> next b20()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: v54: boolean = ShapeTest v46 layouts=[L2]
+# CHECK-NEXT: Branch v54 -> taken b18(), notTaken b41(v46, v47, v29, v34, v36)
 # CHECK-NEXT: b18():
-# CHECK-NEXT: v53: "" = String string=""
-# CHECK-NEXT: v54: "" = Upcast v53 castType=string
-# CHECK-NEXT: v55: " own " = String string=" own "
-# CHECK-NEXT: StringBuilderAppend v42, v54, v55
-# CHECK-NEXT: v57: string = StringBuilderFinish v42
-# CHECK-NEXT: v58: anything = Call v34 calleeName="make" accessSite=11 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v59: L0|L1|L2 = AssumeType v58 provenType=L0|L1|L2
-# CHECK-NEXT: v60: L0|L1|L2 ~ L1|L2 = Expect v59 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v61: boolean = IsSlotFilled v60 key="level" receivers=[L0, L1, L2] level=Proven accessSite=12
-# CHECK-NEXT: v62: string = Add v57, v61
-# CHECK-NEXT: v63: undefined = CallDirect v38, v62 function=f3 accessSite=13
-# CHECK-NEXT: v64: ", read" = String string=", read"
-# CHECK-NEXT: v65: string = Add v36, v64
-# CHECK-NEXT: v66: anything = Call v34 calleeName="make" accessSite=14 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v67: L0|L1|L2 = AssumeType v66 provenType=L0|L1|L2
-# CHECK-NEXT: v68: L0|L1|L2 ~ L1|L2 = Expect v67 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v69: boolean ~ true = TypeTest v68 testedType=undefined|null|L1|L2
-# CHECK-NEXT: Branch v69 -> taken b19(| 0), notTaken b33(v65, v68)
-# CHECK-NEXT: b19(v70: L1|L2):
-# CHECK-NEXT: v71: boolean = IsSlotFilled v70 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v71 -> taken b20(| 0), notTaken b31(v65, v70)
-# CHECK-NEXT: b20(v72: guard):
-# CHECK-NEXT: v73: int[-2147483643, 2147483647] = GetSlot v70, v72 key="level" receivers=[L1, L2] level=Expected accessSite=23 [holdsDeclaredType]
-# CHECK-NEXT: v74: " " = String string=" "
-# CHECK-NEXT: v75: anything = Call v34 calleeName="make" accessSite=16 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v76: L0|L1|L2 = AssumeType v75 provenType=L0|L1|L2
-# CHECK-NEXT: v77: L0|L1|L2 ~ L1|L2 = Expect v76 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v78: boolean = IsSlotFilled v77 key="level" receivers=[L0, L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v78 -> taken b21(| 0), notTaken b25()
-# CHECK-NEXT: b21(v79: guard):
-# CHECK-NEXT: v80: int[-2147483643, 2147483647] = GetSlot v77, v79 key="level" receivers=[L0, L1, L2] level=Expected accessSite=34 [holdsDeclaredType]
-# CHECK-NEXT: v81: string = Strcat v73, v74, v80
-# CHECK-NEXT: v82: undefined = CallDirect v65, v81 function=f3 accessSite=19
-# CHECK-NEXT: v83: ", stored" = String string=", stored"
-# CHECK-NEXT: v84: string = Add v36, v83
-# CHECK-NEXT: v85: anything = Call v34 calleeName="make" accessSite=20 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v86: L0|L1|L2 = AssumeType v85 provenType=L0|L1|L2
-# CHECK-NEXT: v87: L0|L1|L2 ~ L1|L2 = Expect v86 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v88: 5 = Integer integer=5
-# CHECK-NEXT: v89: boolean ~ true = TypeTest v87 testedType=undefined|null|L1|L2
-# CHECK-NEXT: Branch v89 -> taken b22(| 0), notTaken b50(v84, v87)
-# CHECK-NEXT: b22(v90: L1|L2):
-# CHECK-NEXT: v91: boolean = IsSlotFilled v90 key="level" receivers=[L1, L2] level=Expected
-# CHECK-NEXT: Branch v91 -> taken b23(| 0), notTaken b45(v84, v90)
-# CHECK-NEXT: b23(v92: guard):
-# CHECK-NEXT: PutSlot v90, v92, v88 key="level" receivers=[L1, L2] level=Expected accessSite=24
-# CHECK-NEXT: v94: boolean = IsSlotFilled v90 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v94 -> taken b24(), notTaken b48(v84, v90)
-# CHECK-NEXT: b24():
-# CHECK-NEXT: v95: 5 = Upcast v88 castType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v96: undefined = CallDirect v84, v95 function=f3 accessSite=22
+# CHECK-NEXT: v55: 0 = Integer
+# CHECK-NEXT: v56: int[0, 2] = CallDirect v46, v47, v55 function=f33 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v56 cases=[1] -> case b19(), otherwise b40(v46, v47, v29, v34, v36)
+# CHECK-NEXT: b19():
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b20():
+# CHECK-NEXT: v57: string = StringBuilderFinish v47
+# CHECK-NEXT: v58: " own " = String string=" own "
+# CHECK-NEXT: v59: true = Boolean boolean=true
+# CHECK-NEXT: v60: string = Strcat v57, v58, v59
+# CHECK-NEXT: v61: undefined = CallDirect v36, v60 function=f3 accessSite=13
+# CHECK-NEXT: v62: ", read" = String string=", read"
+# CHECK-NEXT: v63: string = Add v29, v62
+# CHECK-NEXT: v64: boolean = TypeTest v34 testedType=f11|f12
+# CHECK-NEXT: Branch v64 -> taken b21(), notTaken b45(v63, v29)
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v65: "1 1" = String string="1 1"
+# CHECK-NEXT: v66: undefined = CallDirect v63, v65 function=f3 accessSite=19
+# CHECK-NEXT: v67: ", stored" = String string=", stored"
+# CHECK-NEXT: v68: string = Add v29, v67
+# CHECK-NEXT: v69: 5 = Integer integer=5
+# CHECK-NEXT: v70: undefined = CallDirect v68, v69 function=f3 accessSite=22
 # CHECK-NEXT: Jump -> next b2(v24)
-# CHECK-NEXT: b25() frequency=Rare:
-# CHECK-NEXT: v97: string = Add v73, v74
-# CHECK-NEXT: Jump -> next b36(v97, v77, v65)
-# CHECK-NEXT: b26() frequency=Rare:
-# CHECK-NEXT: Jump -> next b28()
-# CHECK-NEXT: b27() frequency=Rare:
-# CHECK-NEXT: Jump -> next b28()
-# CHECK-NEXT: b28() frequency=Rare:
-# CHECK-NEXT: StringBuilderRollBack v42, v43
-# CHECK-NEXT: v99: undefined = Undefined
-# CHECK-NEXT: v100: undefined|string = CallBuiltin -, v41, v99 overload=JSONStringify/0 accessSite=10
-# CHECK-NEXT: v101: undefined|string ~ string = Upcast v100 castType=undefined|string
-# CHECK-NEXT: v102: " own " = String string=" own "
-# CHECK-NEXT: v103: string = Add v101, v102
-# CHECK-NEXT: v104: anything = Call v34 calleeName="make" accessSite=11 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v105: L0|L1|L2 = AssumeType v104 provenType=L0|L1|L2
-# CHECK-NEXT: v106: L0|L1|L2 ~ L1|L2 = Expect v105 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v107: boolean = IsSlotFilled v106 key="level" receivers=[L0, L1, L2] level=Proven accessSite=12
-# CHECK-NEXT: v108: string = Add v103, v107
-# CHECK-NEXT: v109: undefined = CallDirect v38, v108 function=f3 accessSite=13
-# CHECK-NEXT: v110: ", read" = String string=", read"
-# CHECK-NEXT: v111: string = Add v36, v110
-# CHECK-NEXT: v112: anything = Call v34 calleeName="make" accessSite=14 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v113: L0|L1|L2 = AssumeType v112 provenType=L0|L1|L2
-# CHECK-NEXT: v114: L0|L1|L2 ~ L1|L2 = Expect v113 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v115: boolean ~ true = TypeTest v114 testedType=undefined|null|L1|L2
-# CHECK-NEXT: Branch v115 -> taken b29(| 0), notTaken b33(v111, v114)
-# CHECK-NEXT: b29(v116: L1|L2) frequency=Unlikely:
-# CHECK-NEXT: v117: boolean = IsSlotFilled v116 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v117 -> taken b30(| 0), notTaken b31(v111, v116)
-# CHECK-NEXT: b30(v118: guard) frequency=Unlikely:
-# CHECK-NEXT: v119: int[-2147483643, 2147483647] = GetSlot v116, v118 key="level" receivers=[L1, L2] level=Expected accessSite=23 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b32(v119, v111)
-# CHECK-NEXT: b31(v120: string, v121: L1|L2) frequency=Rare:
-# CHECK-NEXT: v122: anything = SuperGet v121, v121 key="level" accessSite=23
-# CHECK-NEXT: v123: undefined|int = AssumeType v122 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b32(v123, v120)
-# CHECK-NEXT: b32(v124: undefined|int ~ int[-2147483643, 2147483647], v125: string) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b34(v124, v125)
-# CHECK-NEXT: b33(v126: string, v127: L0|L1|L2 ~ L1|L2) frequency=Rare:
-# CHECK-NEXT: v128: undefined|int ~ int = CallDirect v127 function=f26 @448:2 tail
-# CHECK-NEXT: v129: undefined|int ~ int = AssumeType v128 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b34(v129, v126)
-# CHECK-NEXT: b34(v130: undefined|int ~ int[-2147483643, 2147483647], v131: string) frequency=Unlikely:
-# CHECK-NEXT: v132: " " = String string=" "
-# CHECK-NEXT: v133: string = Add v130, v132
-# CHECK-NEXT: v134: anything = Call v34 calleeName="make" accessSite=16 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v135: L0|L1|L2 = AssumeType v134 provenType=L0|L1|L2
-# CHECK-NEXT: v136: L0|L1|L2 ~ L1|L2 = Expect v135 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v137: boolean = IsSlotFilled v136 key="level" receivers=[L0, L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v137 -> taken b35(| 0), notTaken b36(v133, v136, v131)
-# CHECK-NEXT: b35(v138: guard) frequency=Unlikely:
-# CHECK-NEXT: v139: int[-2147483643, 2147483647] = GetSlot v136, v138 key="level" receivers=[L0, L1, L2] level=Expected accessSite=34 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b37(v139, v133, v131)
-# CHECK-NEXT: b36(v140: string, v141: L0|L1|L2 ~ L1|L2, v142: string) frequency=Rare:
-# CHECK-NEXT: v143: anything = SuperGet v141, v141 key="level" accessSite=34
-# CHECK-NEXT: v144: undefined|int = AssumeType v143 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b37(v144, v140, v142)
-# CHECK-NEXT: b37(v145: undefined|int ~ int[-2147483643, 2147483647], v146: string, v147: string) frequency=Unlikely:
-# CHECK-NEXT: v148: string = Add v146, v145
-# CHECK-NEXT: v149: undefined = CallDirect v147, v148 function=f3 accessSite=19
-# CHECK-NEXT: v150: ", stored" = String string=", stored"
-# CHECK-NEXT: v151: string = Add v36, v150
-# CHECK-NEXT: Jump -> next b42(v151, v34)
-# CHECK-NEXT: b38(v152: f10|f11|f12) frequency=Rare:
-# CHECK-NEXT: Jump -> next b41(v34, v152)
-# CHECK-NEXT: b39() frequency=Rare:
-# CHECK-NEXT: v153: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v25 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v154: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ undefined|"a plain subclass"|"a subclass with a pair"|"the base" = Expect v153 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b40(v154)
-# CHECK-NEXT: b40(v155: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ "a plain subclass"|"a subclass with a pair"|"the base") frequency=Rare:
-# CHECK-NEXT: v156: 1 = Integer integer=1
-# CHECK-NEXT: v157: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v156 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v158: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ undefined|f10|f11|f12 = Expect v157 expectedType=undefined|null|function|f10|f11|f12
-# CHECK-NEXT: Jump -> next b41(v158, v155)
-# CHECK-NEXT: b41(v159: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ undefined|f10|f11|f12, v160: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ "a plain subclass"|"a subclass with a pair"|"the base") frequency=Rare:
-# CHECK-NEXT: v161: ", made" = String string=", made"
-# CHECK-NEXT: v162: string = Add v160, v161
-# CHECK-NEXT: v163: anything = Call v159 calleeName="make" accessSite=9 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v164: L0|L1|L2 = AssumeType v163 provenType=L0|L1|L2
-# CHECK-NEXT: v165: L0|L1|L2 ~ L1|L2 = Expect v164 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v166: undefined = Undefined
-# CHECK-NEXT: v167: undefined|string = CallBuiltin -, v165, v166 overload=JSONStringify/0 accessSite=10
-# CHECK-NEXT: v168: " own " = String string=" own "
-# CHECK-NEXT: v169: string = Add v167, v168
-# CHECK-NEXT: v170: anything = Call v159 calleeName="make" accessSite=11 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v171: L0|L1|L2 = AssumeType v170 provenType=L0|L1|L2
-# CHECK-NEXT: v172: L0|L1|L2 ~ L1|L2 = Expect v171 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v173: boolean = IsSlotFilled v172 key="level" receivers=[L0, L1, L2] level=Proven accessSite=12
-# CHECK-NEXT: v174: string = Add v169, v173
-# CHECK-NEXT: v175: undefined = CallDirect v162, v174 function=f3 accessSite=13
-# CHECK-NEXT: v176: ", read" = String string=", read"
-# CHECK-NEXT: v177: string = Add v160, v176
-# CHECK-NEXT: v178: anything = Call v159 calleeName="make" accessSite=14 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v179: L0|L1|L2 = AssumeType v178 provenType=L0|L1|L2
-# CHECK-NEXT: v180: L0|L1|L2 ~ L1|L2 = Expect v179 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v181: undefined|int ~ int = CallDirect v180 function=f1 accessSite=15
-# CHECK-NEXT: v182: undefined|int ~ int = AssumeType v181 provenType=undefined|int
-# CHECK-NEXT: v183: " " = String string=" "
-# CHECK-NEXT: v184: anything = Call v159 calleeName="make" accessSite=16 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v185: L0|L1|L2 = AssumeType v184 provenType=L0|L1|L2
-# CHECK-NEXT: v186: L0|L1|L2 ~ L1|L2 = Expect v185 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v187: undefined|int ~ int = CallDirect v186 function=f5 accessSite=18
-# CHECK-NEXT: v188: undefined|int ~ int = AssumeType v187 provenType=undefined|int
-# CHECK-NEXT: v189: string = Strcat v182, v183, v188
-# CHECK-NEXT: v190: undefined = CallDirect v177, v189 function=f3 accessSite=19
-# CHECK-NEXT: v191: ", stored" = String string=", stored"
-# CHECK-NEXT: v192: string = Add v160, v191
-# CHECK-NEXT: Jump -> next b42(v192, v159)
-# CHECK-NEXT: b42(v193: string, v194: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ f10|f11|f12) frequency=Unlikely:
-# CHECK-NEXT: v195: anything = Call v194 calleeName="make" accessSite=20 callees=[f10, f11, f12, ..]
-# CHECK-NEXT: v196: L0|L1|L2 = AssumeType v195 provenType=L0|L1|L2
-# CHECK-NEXT: v197: L0|L1|L2 ~ L1|L2 = Expect v196 expectedType=undefined|null|L1|L2
-# CHECK-NEXT: v198: boolean ~ true = TypeTest v197 testedType=undefined|null|L1|L2
-# CHECK-NEXT: Branch v198 -> taken b43(| 0), notTaken b50(v193, v197)
-# CHECK-NEXT: b43(v199: L1|L2) frequency=Unlikely:
-# CHECK-NEXT: v200: boolean = IsSlotFilled v199 key="level" receivers=[L1, L2] level=Expected
-# CHECK-NEXT: Branch v200 -> taken b44(| 0), notTaken b45(v193, v199)
-# CHECK-NEXT: b44(v201: guard) frequency=Unlikely:
-# CHECK-NEXT: v202: 5 = Integer integer=5
-# CHECK-NEXT: PutSlot v199, v201, v202 key="level" receivers=[L1, L2] level=Expected accessSite=24
-# CHECK-NEXT: Jump -> next b46(v193, v199)
-# CHECK-NEXT: b45(v204: string, v205: L1|L2) frequency=Rare:
-# CHECK-NEXT: v206: 5 = Integer integer=5
-# CHECK-NEXT: PropSet v205, v206 key="level" accessSite=24 receivers=[L0, L1, L2]
-# CHECK-NEXT: Jump -> next b46(v204, v205)
-# CHECK-NEXT: b46(v208: string, v209: L1|L2) frequency=Unlikely:
-# CHECK-NEXT: v210: boolean = IsSlotFilled v209 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v210 -> taken b47(| 0), notTaken b48(v208, v209)
-# CHECK-NEXT: b47(v211: guard) frequency=Unlikely:
-# CHECK-NEXT: v212: int[-2147483643, 2147483647] = GetSlot v209, v211 key="level" receivers=[L1, L2] level=Expected accessSite=25 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b49(v212, v208)
-# CHECK-NEXT: b48(v213: string, v214: L1|L2) frequency=Rare:
-# CHECK-NEXT: v215: anything = SuperGet v214, v214 key="level" accessSite=25
-# CHECK-NEXT: v216: undefined|int = AssumeType v215 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b49(v216, v213)
-# CHECK-NEXT: b49(v217: undefined|int ~ int[-2147483643, 2147483647], v218: string) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b51(v217, v218)
-# CHECK-NEXT: b50(v219: string, v220: L0|L1|L2 ~ L1|L2) frequency=Rare:
-# CHECK-NEXT: v221: 5 = Integer integer=5
-# CHECK-NEXT: v222: undefined|int ~ int = CallDirect v220, v221 function=f27 @505:3 tail
-# CHECK-NEXT: v223: undefined|int ~ int = AssumeType v222 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b51(v223, v219)
-# CHECK-NEXT: b51(v224: undefined|int ~ int[-2147483643, 2147483647], v225: string) frequency=Unlikely:
-# CHECK-NEXT: v226: undefined = CallDirect v225, v224 function=f3 accessSite=22
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: v71: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v25 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v72: "a plain subclass"|"a subclass with a pair"|"the base" = AssumeType v71 provenType="a plain subclass"|"a subclass with a pair"|"the base"
+# CHECK-NEXT: Jump -> next b23(v72)
+# CHECK-NEXT: b23(v73: "a plain subclass"|"a subclass with a pair"|"the base") frequency=Rare:
+# CHECK-NEXT: v74: 1 = Integer integer=1
+# CHECK-NEXT: v75: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = GetArrayElement v22, v74 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v76: undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 ~ "a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12 = Upcast v75 castType=undefined|"a plain subclass"|"a subclass with a pair"|"the base"|f10|f11|f12
+# CHECK-NEXT: v77: f10|f11|f12 = AssumeType v76 provenType=f10|f11|f12
+# CHECK-NEXT: v78: ", made" = String string=", made"
+# CHECK-NEXT: v79: string = Add v73, v78
+# CHECK-NEXT: v80: boolean = TypeTest v77 testedType=f10
+# CHECK-NEXT: Branch v80 -> taken b24(), notTaken b25(| 0)
+# CHECK-NEXT: b24() frequency=Unlikely:
+# CHECK-NEXT: v81: 1 = Integer integer=1
+# CHECK-NEXT: v82: L0 = NewObject -, v81 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b28(v82)
+# CHECK-NEXT: b25(v83: f11|f12) frequency=Unlikely:
+# CHECK-NEXT: v84: boolean = TypeTest v83 testedType=f11
+# CHECK-NEXT: Branch v84 -> taken b26(), notTaken b27()
+# CHECK-NEXT: b26() frequency=Unlikely:
+# CHECK-NEXT: v85: 1 = Integer integer=1
+# CHECK-NEXT: v86: L2 = NewObject -, v85 layout=L2 fields=[0] allocationClass=2 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b28(v86)
+# CHECK-NEXT: b27() frequency=Unlikely:
+# CHECK-NEXT: v87: 1 = Integer integer=1
+# CHECK-NEXT: v88: L1 = NewObject -, v87 layout=L1 fields=[0] allocationClass=1 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b28(v88)
+# CHECK-NEXT: b28(v89: L0|L1|L2 ~ L1|L2) frequency=Unlikely:
+# CHECK-NEXT: v90: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v91: boolean = ShapeTest v89 layouts=[L0]
+# CHECK-NEXT: Branch v91 -> taken b29(), notTaken b32()
+# CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: v92: 0 = Integer
+# CHECK-NEXT: v93: int[0, 2] = CallDirect v89, v90, v92 function=f31 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v93 cases=[1] -> case b30(), otherwise b31(v89, v90, v73, v77, v79)
+# CHECK-NEXT: b30() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b39()
+# CHECK-NEXT: b31(v94: L0|L1|L2 ~ L1|L2, v95: stringbuilder, v96: "a plain subclass"|"a subclass with a pair"|"the base", v97: f10|f11|f12, v98: string) frequency=Rare:
+# CHECK-NEXT: Jump -> next b42(v94, v95, v96, v97, v98)
+# CHECK-NEXT: b32() frequency=Unlikely:
+# CHECK-NEXT: v99: boolean = ShapeTest v89 layouts=[L1]
+# CHECK-NEXT: Branch v99 -> taken b33(), notTaken b36()
+# CHECK-NEXT: b33() frequency=Unlikely:
+# CHECK-NEXT: v100: 0 = Integer
+# CHECK-NEXT: v101: int[0, 2] = CallDirect v89, v90, v100 function=f32 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v101 cases=[1] -> case b34(), otherwise b35(v89, v90, v73, v77, v79)
+# CHECK-NEXT: b34() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b39()
+# CHECK-NEXT: b35(v102: L0|L1|L2 ~ L1|L2, v103: stringbuilder, v104: "a plain subclass"|"a subclass with a pair"|"the base", v105: f10|f11|f12, v106: string) frequency=Rare:
+# CHECK-NEXT: Jump -> next b42(v102, v103, v104, v105, v106)
+# CHECK-NEXT: b36() frequency=Unlikely:
+# CHECK-NEXT: v107: boolean = ShapeTest v89 layouts=[L2]
+# CHECK-NEXT: Branch v107 -> taken b37(), notTaken b41(v89, v90, v73, v77, v79)
+# CHECK-NEXT: b37() frequency=Unlikely:
+# CHECK-NEXT: v108: 0 = Integer
+# CHECK-NEXT: v109: int[0, 2] = CallDirect v89, v90, v108 function=f33 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v109 cases=[1] -> case b38(), otherwise b40(v89, v90, v73, v77, v79)
+# CHECK-NEXT: b38() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b39()
+# CHECK-NEXT: b39() frequency=Unlikely:
+# CHECK-NEXT: v110: string = StringBuilderFinish v90
+# CHECK-NEXT: Jump -> next b43(v110, v73, v77, v79)
+# CHECK-NEXT: b40(v111: L0|L1|L2 ~ L1|L2, v112: stringbuilder, v113: "a plain subclass"|"a subclass with a pair"|"the base", v114: f10|f11|f12, v115: string) frequency=Rare:
+# CHECK-NEXT: Jump -> next b42(v111, v112, v113, v114, v115)
+# CHECK-NEXT: b41(v116: L0|L1|L2 ~ L1|L2, v117: stringbuilder, v118: "a plain subclass"|"a subclass with a pair"|"the base", v119: f10|f11|f12, v120: string) frequency=Rare:
+# CHECK-NEXT: Jump -> next b42(v116, v117, v118, v119, v120)
+# CHECK-NEXT: b42(v121: L0|L1|L2 ~ L1|L2, v122: stringbuilder, v123: "a plain subclass"|"a subclass with a pair"|"the base", v124: f10|f11|f12, v125: string) frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v122
+# CHECK-NEXT: v127: undefined = Undefined
+# CHECK-NEXT: v128: undefined|string = CallBuiltin -, v121, v127 overload=JSONStringify/0 accessSite=10
+# CHECK-NEXT: Jump -> next b43(v128, v123, v124, v125)
+# CHECK-NEXT: b43(v129: undefined|string ~ string, v130: "a plain subclass"|"a subclass with a pair"|"the base", v131: f10|f11|f12, v132: string) frequency=Unlikely:
+# CHECK-NEXT: v133: " own " = String string=" own "
+# CHECK-NEXT: v134: true = Boolean boolean=true
+# CHECK-NEXT: v135: string = Strcat v129, v133, v134
+# CHECK-NEXT: v136: undefined = CallDirect v132, v135 function=f3 accessSite=13
+# CHECK-NEXT: v137: ", read" = String string=", read"
+# CHECK-NEXT: v138: string = Add v130, v137
+# CHECK-NEXT: v139: boolean = TypeTest v131 testedType=f11|f12
+# CHECK-NEXT: Branch v139 -> taken b44(), notTaken b45(v138, v130)
+# CHECK-NEXT: b44() frequency=Unlikely:
+# CHECK-NEXT: v140: "1 1" = String string="1 1"
+# CHECK-NEXT: v141: undefined = CallDirect v138, v140 function=f3 accessSite=19
+# CHECK-NEXT: v142: ", stored" = String string=", stored"
+# CHECK-NEXT: v143: string = Add v130, v142
+# CHECK-NEXT: v144: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b46(v144, v143)
+# CHECK-NEXT: b45(v145: string, v146: "a plain subclass"|"a subclass with a pair"|"the base") frequency=Rare:
+# CHECK-NEXT: v147: 1 = Integer integer=1
+# CHECK-NEXT: v148: L0 = NewObject -, v147 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v149: undefined|int ~ int = CallDirect v148 function=f26 @448:12 tail
+# CHECK-NEXT: v150: undefined|int ~ int = AssumeType v149 provenType=undefined|int
+# CHECK-NEXT: v151: undefined|int ~ int[-2147483643, 2147483647] = Upcast v150 castType=undefined|int
+# CHECK-NEXT: v152: " " = String string=" "
+# CHECK-NEXT: v153: 1 = Integer integer=1
+# CHECK-NEXT: v154: string = Strcat v151, v152, v153
+# CHECK-NEXT: v155: undefined = CallDirect v145, v154 function=f3 accessSite=19
+# CHECK-NEXT: v156: ", stored" = String string=", stored"
+# CHECK-NEXT: v157: string = Add v146, v156
+# CHECK-NEXT: v158: 1 = Integer integer=1
+# CHECK-NEXT: v159: 5 = Integer integer=5
+# CHECK-NEXT: v160: L0 = NewObject -, v158 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v161: undefined|int ~ int = CallDirect v160, v159 function=f27 @505:20 tail
+# CHECK-NEXT: v162: undefined|int ~ int = AssumeType v161 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b46(v162, v157)
+# CHECK-NEXT: b46(v163: undefined|int ~ 5, v164: string) frequency=Unlikely:
+# CHECK-NEXT: v165: undefined = CallDirect v164, v163 function=f3 accessSite=22
 # CHECK-NEXT: Jump -> next b1(v24)
-# CHECK-NEXT: b52():
-# CHECK-NEXT: v227: 1 = Integer integer=1
-# CHECK-NEXT: v228: "level" = String string="level"
-# CHECK-NEXT: v229: L1 = NewObject -, v227 layout=L1 fields=[0] allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: v230: boolean = CallBuiltin -, v229, v228 overload=ReflectDeleteProperty/0 accessSite=1
-# CHECK-NEXT: v231: undefined|int ~ int = CallDirect v229 function=f23 @448:5 tail
-# CHECK-NEXT: v232: undefined|int ~ int = AssumeType v231 provenType=undefined|int
-# CHECK-NEXT: v233: " " = String string=" "
-# CHECK-NEXT: v234: undefined|int ~ int = CallDirect v229 function=f5 accessSite=4
-# CHECK-NEXT: v235: undefined|int ~ int = AssumeType v234 provenType=undefined|int
-# CHECK-NEXT: v236: " " = String string=" "
-# CHECK-NEXT: v237: string = Strcat v232, v233, v235, v236
-# CHECK-NEXT: v238: 6 = Integer integer=6
-# CHECK-NEXT: PropSet v229, v238 key="level" accessSite=24 receivers=[L0, L1, L2]
-# CHECK-NEXT: v240: boolean = IsSlotFilled v229 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v240 -> taken b53(| 0), notTaken b54()
-# CHECK-NEXT: b53(v241: guard):
-# CHECK-NEXT: v242: int[-2147483643, 2147483647] = GetSlot v229, v241 key="level" receivers=[L1, L2] level=Expected accessSite=25 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b55(v242)
-# CHECK-NEXT: b54() frequency=Unlikely:
-# CHECK-NEXT: v243: anything = SuperGet v229, v229 key="level" accessSite=25
-# CHECK-NEXT: v244: undefined|int = AssumeType v243 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b55(v244)
-# CHECK-NEXT: b55(v245: undefined|int ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v246: " own " = String string=" own "
-# CHECK-NEXT: v247: boolean = IsSlotFilled v229 key="level" receivers=[L1] level=Proven accessSite=6
-# CHECK-NEXT: v248: string = Strcat v237, v245, v246, v247
-# CHECK-NEXT: v249: "the own field deleted, the pair shows" = String string="the own field deleted, the pair shows"
-# CHECK-NEXT: v250: undefined = CallDirect v249, v248 function=f3 accessSite=7
-# CHECK-NEXT: v251: undefined = Undefined
-# CHECK-NEXT: Return v251
+# CHECK-NEXT: b47():
+# CHECK-NEXT: v166: 1 = Integer integer=1
+# CHECK-NEXT: v167: "level" = String string="level"
+# CHECK-NEXT: v168: L1 = NewObject -, v166 layout=L1 fields=[0] allocationClass=1 [listsOnlyStoredValues]
+# CHECK-NEXT: v169: boolean = CallBuiltin -, v168, v167 overload=ReflectDeleteProperty/0 accessSite=1
+# CHECK-NEXT: v170: undefined|int ~ int = CallDirect v168 function=f23 @448:2 tail
+# CHECK-NEXT: v171: undefined|int ~ int = AssumeType v170 provenType=undefined|int
+# CHECK-NEXT: v172: " " = String string=" "
+# CHECK-NEXT: v173: undefined|int ~ int = CallDirect v168 function=f5 accessSite=4
+# CHECK-NEXT: v174: undefined|int ~ int = AssumeType v173 provenType=undefined|int
+# CHECK-NEXT: v175: " " = String string=" "
+# CHECK-NEXT: v176: string = Strcat v171, v172, v174, v175
+# CHECK-NEXT: v177: 6 = Integer integer=6
+# CHECK-NEXT: PropSet v168, v177 key="level" accessSite=24 receivers=[L0, L1, L2]
+# CHECK-NEXT: v179: boolean = IsSlotFilled v168 key="level" receivers=[L1, L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v179 -> taken b48(| 0), notTaken b49()
+# CHECK-NEXT: b48(v180: guard):
+# CHECK-NEXT: v181: int[-2147483643, 2147483647] = GetSlot v168, v180 key="level" receivers=[L1, L2] level=Expected accessSite=25 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b50(v181)
+# CHECK-NEXT: b49() frequency=Unlikely:
+# CHECK-NEXT: v182: anything = SuperGet v168, v168 key="level" accessSite=25
+# CHECK-NEXT: v183: undefined|int = AssumeType v182 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b50(v183)
+# CHECK-NEXT: b50(v184: undefined|int ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v185: " own " = String string=" own "
+# CHECK-NEXT: v186: boolean = IsSlotFilled v168 key="level" receivers=[L1] level=Proven accessSite=6
+# CHECK-NEXT: v187: string = Strcat v176, v184, v185, v186
+# CHECK-NEXT: v188: "the own field deleted, the pair shows" = String string="the own field deleted, the pair shows"
+# CHECK-NEXT: v189: undefined = CallDirect v188, v187 function=f3 accessSite=7
+# CHECK-NEXT: v190: undefined = Undefined
+# CHECK-NEXT: Return v190
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="read"
-# CHECK: module=m0 position=448 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2 site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|int site=w3}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f23 fallback=f26} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|L1|L2):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L1|L2
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: undefined|null|L1|L2):
-# CHECK-NEXT: v3: undefined|int ~ int = CallDirect v2 function=f23
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: undefined|int ~ int = CallDirect v0 function=f26
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=448 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2 site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=w3 flags=[IsExpected]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f23 fallback=f26}
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=505 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1|L2 site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=int[5, 6] site=w5}] results=[{type=number site=w6 flags=[IsExpected]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f24 fallback=f27}
 # CHECK-LABEL: function {{*}}name="line"

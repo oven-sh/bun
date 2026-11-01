@@ -1,0 +1,49 @@
+# A literal that is made on a path that is seldom taken, from values of which nothing is proven: the allocation lists a filler for the field declared number, and the value is stored behind it.
+# The literal goes to whoever called, and no code that knows it names the number: the slot holds it as a value. The site knows that the slot lies in the cell and that the field takes every number,
+# so it calls the stub that asks whether the value is a number and stores it as it is.
+# Whatever is no number goes on as any other store into a known field, and leaves the slot.
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls
+# RUN: generate-code calls
+# RUN(GO): run-in-shell globalThis.publish = make => { for (const cents of [1, 2.5, -0, NaN, 2147483648, "two", null, undefined, 7n, {}]) { const made = make(true, "a", cents); print(Object.is(made.cents, cents), typeof made.cents, Object.keys(made).join()); made.cents = 3.25; print(made.cents); } const frozen = Object.freeze(make(true, "b", 1)); frozen.cents = 2; print(frozen.cents); };
+# REPEAT: k = 1..5
+# GO: true number label,cents
+# GO-NEXT: 3.25
+# END REPEAT
+# GO-NEXT: true string label,cents
+# GO-NEXT: 3.25
+# GO-NEXT: true object label,cents
+# GO-NEXT: 3.25
+# GO-NEXT: true undefined label,cents
+# GO-NEXT: 3.25
+# GO-NEXT: true bigint label,cents
+# GO-NEXT: 3.25
+# GO-NEXT: true object label,cents
+# GO-NEXT: 3.25
+# GO-NEXT: 1
+# GO-NEXT: exited with 0
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: stub PutByIdAtSite
+# CHECK: stub PutKnownField.Strict.n3 x1
+# CHECK-NOT: stub PutByIdAtSite
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Line" module=m0 fields=[{key="label" declared={type=anything} flags=[IsRequired]}, {key="cents" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = PropGet v0 key="publish" [isFreeName]
+    v3 = Call v2, -, v1
+    Return
+}
+function f1 name="make" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v4 = NewObject -, v1, v2 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    Return v5
+  b2():
+    Return v0
+}

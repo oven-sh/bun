@@ -691,13 +691,13 @@ runtimefunction id=GeneratorPrototypeReturn function=f41 visibility=Private
 runtimefunction id=GeneratorPrototypeThrow function=f42 visibility=Private
 # -- generated: f18 f23 f24 next makeScope walk catching
 # CHECK-LABEL: function {{*}}name="catching"
-# CHECK: module=m0 position=1137 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Generator<int[1, 3], pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f2 body=f101}
+# CHECK: module=m0 position=1137 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Generator<int[1, 3], pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f2 body=f102}
 # CHECK-LABEL: function {{*}}name="makeScope"
 # CHECK: module=m0 position=4028 role=ResultWrapper flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=f24 site=w33 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f71}
 # CHECK-LABEL: function f18 name=
 # CHECK: "[Symbol.iterator]" module=m0 position=391 kind=Method flags=[HasThis, IsChecked, IsNamedByComputedKey] thisType={type=L0 site=w36} results=[{type=L6 site=w37 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: v1: L6 = CallDirect function=f102
+# CHECK-NEXT: v1: L6 = CallDirect function=f103
 # CHECK-NEXT: ReturnCall v1 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="walk"
@@ -906,7 +906,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f42 visibility=Private
 # CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="catching"
-# CHECK: module=m0 position=1137 role=CoroutineBody flags=[IsGenerator, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f2 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f2 body=f101} {
+# CHECK: module=m0 position=1137 role=CoroutineBody flags=[IsGenerator, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f2 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f2 body=f102} {
 # CHECK-NEXT: b0(v0: anything, v1: int[0, 2], v2: anything):
 # CHECK-NEXT: v3: int = GetResumeIndex v0
 # CHECK-NEXT: Switch v3 cases=[0, 1, 2] -> case b1(), case b5(), case b9(), otherwise b14()

@@ -11,6 +11,7 @@ use bun_sema::check::aot::QueryStatistics;
 
 pub use self::limit_values::{
     HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build, is_lowered_by_all,
+    limit_of_queries,
 };
 use crate::diagnostics::{ProgramView, SourcePosition, Span, SpanLocator};
 pub use crate::ir::generated::{Architecture, DegradesTo, LimitId, Stage, StatisticId};
@@ -69,6 +70,16 @@ impl Counters {
             subject,
             count: 1,
         });
+    }
+
+    pub fn gave_up_times(&mut self, limit: LimitId, count: u32) {
+        if count > 0 {
+            self.add_loss(Loss {
+                limit,
+                subject: None,
+                count,
+            });
+        }
     }
 
     pub fn add_computed_import(&mut self, import: ComputedImport<Span>) {
@@ -290,6 +301,7 @@ pub struct StageClock {
     running: Option<(Stage, Instant)>,
     /// Processor time of the process when the running stage began, if stages are logged.
     cpu_at_start: Duration,
+    instructions_at_start: Option<u64>,
 }
 
 /// Processor time of the process so far, and the memory it has resident now and had at the most, in bytes.
@@ -337,10 +349,168 @@ pub fn logs_stages() -> bool {
     bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
 }
 
+/// The instructions that the threads of the process have retired in user mode since the first question. The engine counts on the threads that it starts.
+/// The front end works on threads of Bun's, some older than the build: each thread that there is at the first question gets a counter that its children inherit.
+#[cfg(target_os = "linux")]
+mod instructions {
+    use core::ffi::{c_int, c_long, c_void};
+    use std::sync::OnceLock;
+
+    use bun_sys::Fd;
+
+    unsafe extern "C" {
+        fn syscall(number: c_long, ...) -> c_long;
+        fn read(file: c_int, buffer: *mut c_void, count: usize) -> isize;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    const PERF_EVENT_OPEN: c_long = 298;
+    #[cfg(target_arch = "aarch64")]
+    const PERF_EVENT_OPEN: c_long = 241;
+    const CLOSE_ON_EXEC: c_long = 8;
+
+    /// `perf_event_attr` in its first version: type and size, config, period, sample type, read format, flags, two words more.
+    fn open_counter(thread: c_int) -> Option<c_int> {
+        const HARDWARE: u64 = 0;
+        const SIZE: u64 = 64;
+        const INSTRUCTIONS: u64 = 1;
+        const INHERIT: u64 = 1 << 1;
+        const EXCLUDE_KERNEL: u64 = 1 << 5;
+        const EXCLUDE_HYPERVISOR: u64 = 1 << 6;
+        let flags = INHERIT | EXCLUDE_KERNEL | EXCLUDE_HYPERVISOR;
+        let attributes: [u64; 8] = [HARDWARE | SIZE << 32, INSTRUCTIONS, 0, 0, 0, flags, 0, 0];
+        // SAFETY: the kernel reads the 64 bytes that the size names and keeps no pointer.
+        let file = unsafe {
+            syscall(
+                PERF_EVENT_OPEN,
+                attributes.as_ptr(),
+                thread as c_long,
+                -1 as c_long,
+                -1 as c_long,
+                CLOSE_ON_EXEC,
+            )
+        };
+        (file >= 0).then_some(file as c_int)
+    }
+
+    fn open_counters() -> Vec<c_int> {
+        let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
+        let name = bun_core::ZBox::from_bytes(b"/proc/self/task");
+        let Ok(folder) = bun_sys::openat(Fd::cwd(), &name, flags, 0) else {
+            return Vec::new();
+        };
+        let _close = bun_sys::CloseOnDrop::new(folder);
+        let mut entries = bun_sys::dir_iterator::iterate(folder);
+        let mut counters = Vec::new();
+        while let Ok(Some(entry)) = entries.next() {
+            let thread = bun_core::fmt::parse_int::<c_int>(entry.name.slice_u8(), 10).ok();
+            match thread.map(open_counter) {
+                Some(Some(counter)) => counters.push(counter),
+                // A thread that has ended since it was listed is no refusal, and the first thread never ends.
+                Some(None) if counters.is_empty() => return Vec::new(),
+                _ => {}
+            }
+        }
+        counters
+    }
+
+    pub(super) fn of_all_threads() -> Option<u64> {
+        static COUNTERS: OnceLock<Vec<c_int>> = OnceLock::new();
+        let counters = COUNTERS.get_or_init(open_counters);
+        if counters.is_empty() {
+            return None;
+        }
+        let mut sum = 0u64;
+        for &counter in counters {
+            let mut count = 0u64;
+            // SAFETY: it writes at most the eight bytes of `count`.
+            let size = unsafe { read(counter, (&raw mut count).cast(), size_of::<u64>()) };
+            if size == size_of::<u64>() as isize {
+                sum += count;
+            }
+        }
+        Some(sum)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+mod instructions {
+    pub(super) fn of_all_threads() -> Option<u64> {
+        None
+    }
+}
+
+/// ` | instructions 12.345678 M`, as the engine's lines say it, or nothing where there is no counter.
+struct InstructionsSince(Option<u64>, Option<u64>);
+
+impl core::fmt::Display for InstructionsSince {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match (self.0, self.1) {
+            (Some(start), Some(end)) => write!(
+                f,
+                " | instructions {:.6} M",
+                end.saturating_sub(start) as f64 / 1e6
+            ),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// With the stages: why what was loaded is thrown away and the files are loaded again.
 pub fn log_why_files_are_loaded_again(why: core::fmt::Arguments<'_>) {
     if logs_stages() {
         bun_core::print_errorln!("AOT files are loaded again | {}", why);
+    }
+}
+
+/// With the stages: what each step of a stage took, on the clock and of the processors, all threads together.
+pub struct StepClock {
+    stage: Stage,
+    of: &'static str,
+    started: Instant,
+    cpu_at_start: Duration,
+    instructions_at_start: Option<u64>,
+}
+
+impl StepClock {
+    /// `of`: what the stage works on, where it goes through its steps more than once.
+    pub fn new(stage: Stage, of: &'static str) -> StepClock {
+        StepClock {
+            stage,
+            of,
+            started: Instant::now(),
+            cpu_at_start: match logs_stages() {
+                true => process_info().0,
+                false => Duration::ZERO,
+            },
+            instructions_at_start: match logs_stages() {
+                true => instructions::of_all_threads(),
+                false => None,
+            },
+        }
+    }
+
+    /// `step` has ended and the next one begins.
+    pub fn end(&mut self, step: &str) {
+        if !logs_stages() {
+            return;
+        }
+        let cpu = process_info().0;
+        let instructions = instructions::of_all_threads();
+        bun_core::print_errorln!(
+            "AOT stage step | {} | {} | {} | wall {:.3} ms | cpu {} ms{}",
+            self.stage.name(),
+            self.of,
+            step,
+            self.started.elapsed().as_secs_f64() * 1000.0,
+            cpu.saturating_sub(self.cpu_at_start).as_millis(),
+            InstructionsSince(self.instructions_at_start, instructions),
+        );
+        // What a thread prints is written when its buffer is full, in the middle of a line, and other threads write in between.
+        bun_core::Output::flush();
+        self.started = Instant::now();
+        self.cpu_at_start = cpu;
+        self.instructions_at_start = instructions::of_all_threads();
     }
 }
 
@@ -350,6 +520,7 @@ impl StageClock {
             times: [Duration::ZERO; Stage::COUNT],
             running: None,
             cpu_at_start: Duration::ZERO,
+            instructions_at_start: None,
         }
     }
 
@@ -358,6 +529,7 @@ impl StageClock {
         self.running = Some((stage, Instant::now()));
         if logs_stages() {
             self.cpu_at_start = process_info().0;
+            self.instructions_at_start = instructions::of_all_threads();
         }
         set_step_of_build(match stage {
             Stage::Load => Some(current_work::Step::Load),
@@ -378,12 +550,13 @@ impl StageClock {
                 // In the form of the engine's lines.
                 let (cpu, resident, peak) = process_info();
                 bun_core::print_errorln!(
-                    "AOT phase times: front end | {} | wall {:.6} ms | cpu {:.6} ms | resident {} MB | peak {} MB",
+                    "AOT phase times: front end | {} | wall {:.6} ms | cpu {:.6} ms | resident {} MB | peak {} MB{}",
                     stage.name(),
                     wall.as_secs_f64() * 1000.0,
                     cpu.saturating_sub(self.cpu_at_start).as_secs_f64() * 1000.0,
                     resident >> 20,
                     peak >> 20,
+                    InstructionsSince(self.instructions_at_start, instructions::of_all_threads()),
                 );
             }
         }

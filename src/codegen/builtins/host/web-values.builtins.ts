@@ -273,16 +273,16 @@ const publishes = (message: readonly b.UseSpec[]) =>
   ({
     ...socketTraffic,
     args: { topic: b.any.optional, message: b.any.optional, compress: b.any.optional },
-    uses: { this: writesToSubscribers, topic: characters, message, compress: b.inspected },
+    uses: { this: writesToSubscribers, topic: convertedToCharacters, message, compress: b.inspected },
   }) satisfies b.FunctionField;
 
 const topicOperation = (state: readonly b.UseSpec[]) =>
   ({
     args: { topic: b.any.optional },
     returns: b.bool,
-    capability: "heap",
+    ...operandCodeOnly,
     throws: true,
-    uses: { this: state, topic: characters },
+    uses: { this: state, topic: convertedToCharacters },
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
@@ -524,11 +524,11 @@ export default b.declarations(
     publish: publishes(anyMessage),
     publishText: publishes(textMessage),
     publishBinary: publishes(binaryMessage),
-    ping: sends(binaryMessage),
-    pong: sends(binaryMessage),
+    ping: sends(anyMessage),
+    pong: sends(anyMessage),
     subscribe: topicOperation(changesState),
     // Leaving the last topic writes out what was published to this socket.
-    unsubscribe: { ...topicOperation(writesToSocket), capability: "js" },
+    unsubscribe: { ...topicOperation(writesToSocket), runsOnlyOperandCode: false },
     isSubscribed: topicOperation(readsState),
     // The listeners for `abort` on the signal of the request that was upgraded run too.
     close: {

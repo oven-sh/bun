@@ -1,0 +1,6 @@
+# sabotage=PassesDropStores: behind the pass a store by name is gone. It shows that a row of the table is narrow where the row answers for calls: nobody answers for the store: the build stops
+# FORM: Prepared
+# RUN: pass RetypeValues
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropStores
+# PROGRAM-OF: passes-drop-stores-left-alone.ir

@@ -1,4 +1,5 @@
 // A function declares a name that a closure names too, suspends, and collections run. Nothing behind the suspension names it again, so an executable lets go of what it holds, whatever stands
+// Todo alone under --aot-validate --aot-check=ValidateBackEnd: Not every time: a build that validates the back end keeps registers alive for longer, and the collector finds the object in one: lines print that it is kept
 // there: a name from outside, a parameter, a closure that is made, the end of a block, a jump out of a block. `bun run` keeps the names that closures share in one object for each scope, and a
 // suspended function holds that object where the text behind the suspension reads the scope: docs/compiler/compatibility.mdx, "Memory".
 let last;

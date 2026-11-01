@@ -14,12 +14,14 @@ fn classify(kind: ImportSiteKind) -> Load {
     match kind {
         ImportSiteKind::ImportEquals(_)
         | ImportSiteKind::Require(_)
-        | ImportSiteKind::ImportMetaRequire(_) => Load::AtACall,
+        | ImportSiteKind::ImportMetaRequire(_)
+        | ImportSiteKind::RequireByTestRunner(_) => Load::AtACall,
         ImportSiteKind::ImportCall(_)
         | ImportSiteKind::RequireResolve(_)
         | ImportSiteKind::ImportMetaResolve(_)
         | ImportSiteKind::GetBuiltinModule(_)
-        | ImportSiteKind::MockModule(_) => Load::NotInTime,
+        | ImportSiteKind::MockModule(_)
+        | ImportSiteKind::ImportByTestRunner(_) => Load::NotInTime,
         _ => Load::AheadOfTheBody,
     }
 }

@@ -59,6 +59,17 @@ struct DominatorLink {
     root: BlockId,
 }
 
+impl DominatorLink {
+    fn root(block: BlockId) -> DominatorLink {
+        DominatorLink {
+            parent: block,
+            jump: block,
+            depth: 0,
+            root: block,
+        }
+    }
+}
+
 enum Shortcut {
     No,
     To(BlockId),
@@ -249,8 +260,43 @@ impl SsaState {
     }
 
     fn link_dominator(&mut self, block: BlockId) {
-        let predecessors = self.states[block.index()].predecessors.iter().copied();
-        let mut predecessors = predecessors.filter(|&predecessor| {
+        if self.states[block.index()].is_loop_header {
+            self.link_loop_headers(block);
+            return;
+        }
+        let predecessors = self.states[block.index()].predecessors.clone();
+        for &predecessor in &predecessors {
+            self.link_loop_headers(predecessor);
+        }
+        self.link_below(block, &predecessors);
+    }
+
+    /// A loop is entered by the first edge into its header alone: find_definition() goes by that too. Its body is sealed before the
+    /// header is, so the header is linked as soon as a block below it is. In code that nothing enters, headers reach one another by
+    /// their first edges: each is a root from the moment it is met, which ends the walk.
+    fn link_loop_headers(&mut self, mut block: BlockId) {
+        let mut unlinked: SmallVec<[BlockId; 4]> = SmallVec::new();
+        loop {
+            let state = &mut self.states[block.index()];
+            if !state.is_loop_header || state.dominator.is_some() {
+                break;
+            }
+            state.dominator = Some(DominatorLink::root(block));
+            unlinked.push(block);
+            let Some(&entering) = state.predecessors.first() else {
+                break;
+            };
+            block = entering;
+        }
+        for &header in unlinked.iter().rev() {
+            if let Some(&entering) = self.states[header.index()].predecessors.first() {
+                self.link_below(header, &[entering]);
+            }
+        }
+    }
+
+    fn link_below(&mut self, block: BlockId, predecessors: &[BlockId]) {
+        let mut predecessors = predecessors.iter().copied().filter(|&predecessor| {
             let dominator = self.states[predecessor.index()].dominator;
             !dominator.is_some_and(|dominator| self.is_never_entered(dominator.root))
         });
@@ -262,6 +308,9 @@ impl SsaState {
         }
         let link = parent.and_then(|parent| {
             let dominator = self.states[parent.index()].dominator?;
+            if dominator.root == block {
+                return None;
+            }
             let jump = self.states[dominator.jump.index()].dominator?;
             let next_jump = self.states[jump.jump.index()].dominator?;
             let is_even = dominator.depth - jump.depth == jump.depth - next_jump.depth;
@@ -272,13 +321,8 @@ impl SsaState {
                 root: dominator.root,
             })
         });
-        let root = DominatorLink {
-            parent: block,
-            jump: block,
-            depth: 0,
-            root: block,
-        };
-        self.states[block.index()].dominator = Some(link.unwrap_or(root));
+        let link = link.unwrap_or_else(|| DominatorLink::root(block));
+        self.states[block.index()].dominator = Some(link);
     }
 
     fn is_never_entered(&self, block: BlockId) -> bool {

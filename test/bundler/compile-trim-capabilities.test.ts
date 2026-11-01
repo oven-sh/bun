@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { isASAN, isLinux, isMacOS, isWindows } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { unsupported } from "../aot/harness/compiler";
 import { run } from "../aot/harness/run";
 import { sharedBuilds } from "../aot/harness/shared-builds";
 import { copyWithoutDebugInformation as executablePath } from "../aot/harness/without-debug-information";
+import { describe, test } from "../aot/listed";
 import {
   canTrim,
   featureNamed,

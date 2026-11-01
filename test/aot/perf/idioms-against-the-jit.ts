@@ -15,7 +15,8 @@
 // and pins in ./everyday-pins.<os>-<arch>.json what each of them takes that has no pin yet.
 // --keep leaves the programs' sources in the folder. Each --build-flag goes to every `bun build --compile --aot`: with --against, what an option of the compiler is worth.
 // --in-a-very-large-program compiles every idiom as its text would be compiled inside a very large program, where little counts as code that runs often, and lets the loop
-// of an idiom of ./everyday find turn() at run time, under the JIT too. --write-behind then rewrites ./behind-the-jit-in-a-very-large-program.<os>-<arch>.json alone.
+// of an idiom of ./everyday find turn() at run time, under the JIT too: turn() is a function of its own that nothing marks as running often (./everyday-idioms.ts).
+// --write-behind then rewrites ./behind-the-jit-in-a-very-large-program.<os>-<arch>.json alone. --in-a-cold-function-of-a-very-large-program is another spelling of it.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
@@ -48,9 +49,10 @@ const { values: options } = parseArgs({
     keep: { type: "string" },
     "build-flag": { type: "string", multiple: true, default: [] },
     "in-a-very-large-program": { type: "boolean", default: false },
+    "in-a-cold-function-of-a-very-large-program": { type: "boolean", default: false },
   },
 });
-const inVeryLargeProgram = options["in-a-very-large-program"];
+const inVeryLargeProgram = options["in-a-very-large-program"] || options["in-a-cold-function-of-a-very-large-program"];
 const behindPath = inVeryLargeProgram ? behindInVeryLargeProgramPath : behindByDefaultPath;
 const folder = options.keep ? resolve(options.keep) : mkdtempSync(join(tmpdir(), "idioms-against-the-jit-"));
 mkdirSync(folder, { recursive: true });

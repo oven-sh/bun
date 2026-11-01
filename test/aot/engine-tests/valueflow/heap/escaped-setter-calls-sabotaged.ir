@@ -1,0 +1,8 @@
+# The store under a key that nobody knows leaves the accessor that has escaped to `unknown`: what its body does to the instance counts as impossible.
+# FORM: AsRead
+# RUN: valueflow-apply
+# OPTIONS: exclude=CodeOutsideImage sabotage=StoresUnderUnknownKeysEnterNoSetterThatEscaped
+# CHECK: variable g0 name="hits" module=m0 declared={type=0}
+# CHECK: name="bump"
+# CHECK-NEXT: function
+# PROGRAM-OF: escaped-setter-calls.ir

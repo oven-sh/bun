@@ -183,3 +183,63 @@ for (const [name, way] of Object.entries(failing)) {
     console.log(name, error.name, error.message, "|", frames(error));
   }
 }
+/* Output:
+written 0 new F < written
+written 1 new F < written
+writtenWithNewTarget 0 new F < writtenWithNewTarget
+writtenWithNewTarget 1 new F < writtenWithNewTarget
+writtenWithAList 0 new F < writtenWithAList
+writtenWithAList 1 new F < writtenWithAList
+writtenWithFourArguments 0 new F < writtenWithFourArguments
+writtenWithFourArguments 1 new F < writtenWithFourArguments
+writtenOfAFunction 0 new G < writtenOfAFunction
+writtenOfAFunction 1 new G < writtenOfAFunction
+writtenInParentheses 0 new F < writtenInParentheses
+writtenInParentheses 1 new F < writtenInParentheses
+writtenWithAString 0 new F < writtenWithAString
+writtenWithAString 1 new F < writtenWithAString
+optionalCall 0 new F < optionalCall
+optionalCall 1 new F < optionalCall
+optionalMember 0 new F < optionalMember
+optionalMember 1 new F < optionalMember
+otherName 0 new F < construct < otherName
+otherName 1 new F < construct < otherName
+ofGlobalThis 0 new F < construct < ofGlobalThis
+ofGlobalThis 1 new F < construct < ofGlobalThis
+otherHolder 0 new F < construct < otherHolder
+otherHolder 1 new F < construct < otherHolder
+byValue 0 new F < construct < byValue
+byValue 1 new F < construct < byValue
+byLocalValue 0 new F < construct < byLocalValue
+byLocalValue 1 new F < construct < byLocalValue
+comma 0 new F < construct < comma
+comma 1 new F < construct < comma
+spreadAll 0 new F < construct < spreadAll
+spreadAll 1 new F < construct < spreadAll
+byCall 0 new F < construct < byCall
+byCall 1 new F < construct < byCall
+byApply 0 new F < construct < byApply
+byApply 1 new F < construct < byApply
+byReflectApply 0 new F < construct < byReflectApply
+byReflectApply 1 new F < construct < byReflectApply
+bound 0 new F < construct < bound
+bound 1 new F < construct < bound
+asCallback 0 new F < map < asCallback
+asCallback 1 new F < map < asCallback
+handedOn 0 new F < construct < handedOn
+handedOn 1 new F < construct < handedOn
+parameterNamedReflect 0 new F < parameterNamedReflect
+parameterNamedReflect 1 new F < parameterNamedReflect
+impostor 0 new F < construct < impostor
+impostor 1 new F < construct < impostor
+inTailPosition 0 new F < inTailPosition
+inTailPosition 1 new F < inTailPosition
+byValueInTailPosition 0 new F < construct
+byValueInTailPosition 1 new F < construct
+noConstructor TypeError Reflect.construct requires the first argument be a constructor | construct < noConstructor
+noConstructorByValue TypeError Reflect.construct requires the first argument be a constructor | construct < noConstructorByValue
+noList TypeError Reflect.construct requires the second argument be an object | construct < noList
+noListByValue TypeError Reflect.construct requires the second argument be an object | construct < noListByValue
+noNewTarget TypeError Reflect.construct requires the third argument be a constructor if present | construct < noNewTarget
+oneArgument TypeError Reflect.construct requires the second argument be an object | construct < oneArgument
+*/

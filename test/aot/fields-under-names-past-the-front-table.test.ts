@@ -99,7 +99,10 @@ describe("fields under names that have no column in the front table", () => {
       join(import.meta.dir, "parallel", "objects", "first-store-creates-a-field.cjs"),
       "utf8",
     );
-    using dir = tempDir("aot-names-past-the-front-table", { "program.cjs": hotReads() + lateFields + hostile });
+    const text = hotReads() + lateFields + hostile;
+    // Some of its functions start with "use strict", which plain Bun drops when it transpiles. A file with this first line is not transpiled.
+    const asWritten = `// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {${text}\n})\n`;
+    using dir = tempDir("aot-names-past-the-front-table", { "program.cjs": text, "as-written.cjs": asWritten });
     const folder = String(dir);
     const executable = join(folder, isWindows ? "program.exe" : "program");
     built(
@@ -109,7 +112,7 @@ describe("fields under names that have no column in the front table", () => {
         bunEnv,
       ),
     );
-    const expected = told(await spawned([bunExe(), "./program.cjs"], folder, bunEnv));
+    const expected = told(await spawned([bunExe(), "./as-written.cjs"], folder, bunEnv));
     expect(told(await spawned([executable], folder, bunEnv))).toEqual(expected);
     expect(told(await spawned([executable], folder, { ...bunEnv, BUN_JSC_validateAOTRuntime: "1" }))).toEqual(expected);
 

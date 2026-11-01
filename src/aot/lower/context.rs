@@ -5,19 +5,22 @@ mod shown_names;
 mod tests;
 mod text_replaced_by_bundling;
 
+use core::cell::OnceCell;
+
 use bun_core::current_work;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, SymbolId};
 use bun_sema::check::aot::{
     BuiltinTypeSymbols, ConstLocalPrefixes, FunctionRef, NamedValues, Queries, QueryInputs,
+    QueryLimit,
 };
 use bun_sema::erasure::{TypeRanges, find_type_ranges, find_type_ranges_beside};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, NodeData, VarDeclId};
-use bun_sema::import_sites::ResolvedForm;
+use bun_sema::import_sites::{ImportSpecifier, ResolvedForm};
 use bun_sema::program::{CompiledModule, FileId, FileRole, Files};
 use bun_sema::resolve::TranspileSettings;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use self::function_table::FunctionTable;
 use self::shown_names::ShownNames;
@@ -34,8 +37,9 @@ use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
 use super::transpiled::{ParsedText, Rewrite, RuntimeTranspiler, TranspileRequest, TranspiledFile};
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
+use crate::builtins::resolve::{KeyOfModuleCache, is_module_cache, is_table_of_loaders};
 use crate::builtins::{
-    BuiltinClass, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
+    BuiltinClass, BuiltinId, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
 };
 use crate::compile::removable::Removable;
 use crate::diagnostic_codes::Code;
@@ -45,10 +49,12 @@ use crate::ir::generated::FunctionRole;
 use crate::ir::types::release_spare_capacity;
 use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
 use crate::known_helpers::KnownHelpers;
+use crate::load::test_runner_names::written_name_of_local;
 use crate::load::{self, Sources};
+use crate::modules::evicted::{FileOfKey, find_file_of_key};
 use crate::modules::{CommonJsExports, DeferredData, ModuleGraph, ModuleRef};
 use crate::options::RemovableOptions;
-use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
+use crate::statistics::{Counters, LimitId, LimitValues, StatisticId, limit_of_queries};
 
 pub(crate) use self::function::FunctionLowering;
 
@@ -100,6 +106,10 @@ pub struct LoweringOptions {
     pub obfuscates: bool,
     /// `bun test --aot --coverage`: the files of the project count how often their parts run.
     pub counts_executions: bool,
+    /// The checker did not load the files that this program imports, so every import is `any`.
+    pub imports_are_untyped: bool,
+    /// `LoadOptions::runs_tests`
+    pub runs_tests: bool,
 }
 
 pub struct LoweringInputs<'a> {
@@ -147,6 +157,7 @@ impl<'a> LoweringInputs<'a> {
             builtin_types: self.builtin_types,
             named_values: self.named_values,
             max_inference_nodes: self.limits.get(LimitId::MaxInferenceNodes),
+            limits: self.limits.for_queries(),
         }
     }
 }
@@ -177,6 +188,8 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     atom_keys: FxHashMap<Atom, PropertyKeyId>,
     /// `FileLowering::is_built_by_code`
     pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
+    /// `FileLowering::is_stored_as_prototype_object`
+    pub(in crate::lower) literals_named_as_prototype_objects: OnceCell<FxHashSet<ExprId>>,
     shown_names: ShownNames,
     has_bundled_positions: bool,
     runs_as_written: bool,
@@ -384,7 +397,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             && inputs.sources.kind(file) == load::SourceKind::Program
             && !bun_core::strings::contains(path, b"/node_modules/")
             && !bun_core::strings::contains(path, b"\\node_modules\\");
-        let counted_places = is_counted.then(|| CountedPlaces::find(hir, bound, path));
+        let counted_places = is_counted.then(|| {
+            let decisions = &compiled.analysis.decisions;
+            CountedPlaces::find(hir, bound, decisions, &queries.files().atoms, path)
+        });
         let scopes = scopes.unwrap_or_else(|| {
             let may_hold_registries = may_hold_registries(inputs, file);
             let files = queries.files();
@@ -443,6 +459,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             atoms: FxHashMap::default(),
             atom_keys: FxHashMap::default(),
             levels_of_literals_inside_built_ones: FxHashMap::default(),
+            literals_named_as_prototype_objects: OnceCell::new(),
             shown_names: ShownNames::new(
                 inputs.options,
                 file_inputs.source,
@@ -489,6 +506,103 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         }
     }
 
+    pub(super) fn warn_where_modules_are_reset(&mut self) {
+        if !self.builtins.loses_sight_of_module_cache() {
+            return;
+        }
+        for index in 0..self.hir.exprs.len() {
+            let expression = ExprId(index as u32);
+            let named = self.builtins.builtin_of_expression(expression);
+            if named.is_some_and(table::resets_modules) {
+                let span = self.span_of(NodeData::Expr(expression));
+                self.diagnostics
+                    .report(Code::ModulesLoadAgainUncompiled, span, &[]);
+            }
+        }
+    }
+
+    pub(super) fn lies_in_package(&self) -> bool {
+        load::is_in_node_modules(self.queries.files().module(self.file).file_name())
+    }
+
+    /// `find_evicted_modules` has marked every file of the test run. Each place in this file that alone would do so is named, so that nobody has to guess why the run is compiled otherwise.
+    pub(super) fn warn_where_every_file_may_load_again(&mut self) {
+        let name = self.queries.files().module(self.file).file_name();
+        if !self.inputs.modules.may_evict_every_module() || load::is_written_by_test_runner(name) {
+            return;
+        }
+        let mut doors: Vec<(ExprId, &'static [u8])> = Vec::new();
+        let mut names_reset = false;
+        if self.builtins.loses_sight_of_module_cache() {
+            for expression in (0..self.hir.exprs.len() as u32).map(ExprId) {
+                let Some(named) = self.builtins.builtin_of_expression(expression) else {
+                    continue;
+                };
+                if table::canonical_id(named) == BuiltinId::BunPlugin {
+                    doors.push((expression, b"This names Bun.plugin"));
+                } else if is_module_cache(named) {
+                    doors.push((
+                        expression,
+                        b"This file hands the table of loaded modules on to code that may take anything out of it",
+                    ));
+                } else if is_table_of_loaders(named) {
+                    doors.push((
+                        expression,
+                        b"This file may store a loader for a kind of file",
+                    ));
+                } else if table::resets_modules(named) {
+                    names_reset = true;
+                }
+            }
+            // The table of a `require` that the file has made: no expression of the file is known for it.
+            if doors.is_empty() && !names_reset && !self.hir.exprs.is_empty() {
+                doors.push((
+                    ExprId(0),
+                    b"This file hands the table of loaded modules on to code that may take anything out of it",
+                ));
+            }
+        }
+        let analysis = self.queries.files().analysis(self.file);
+        for &key in self.builtins.keys_taken_out_of_module_cache() {
+            let KeyOfModuleCache::Computed(written) = key else {
+                continue;
+            };
+            let is_unknown = match find_file_of_key(self.hir, self.bound, analysis, key) {
+                FileOfKey::Unknown => true,
+                FileOfKey::Site(site) => {
+                    analysis.import_sites[site].specifier == ImportSpecifier::Unknown
+                }
+                FileOfKey::Path(_) => false,
+            };
+            if is_unknown {
+                doors.push((
+                    written,
+                    b"This takes a module out of the table of loaded modules under a key that the build can't tell",
+                ));
+            }
+        }
+        for site in analysis.import_sites {
+            let mut written = analysis.alternatives_of(&site.specifier).iter();
+            let has_query =
+                |text: Atom| bun_core::strings::contains_char(self.queries.atom_bytes(text), b'?');
+            let names_query = written.any(|specifier| match *specifier {
+                ImportSpecifier::Constant(text) => has_query(text),
+                ImportSpecifier::Pattern { prefix, suffix } => {
+                    has_query(prefix) || has_query(suffix)
+                }
+                ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => false,
+            });
+            if names_query && site.specifier_node.is_some() {
+                doors.push((site.specifier_node, b"This loads a file under a query"));
+            }
+        }
+        for (expression, why) in doors {
+            let span = self.span_of(NodeData::Expr(expression));
+            self.diagnostics
+                .report(Code::EveryFileMayLoadAgain, span, &[why]);
+        }
+    }
+
     pub(super) fn finish(mut self, module: ModuleFragment) -> LoweredFile {
         self.fragment.is_checked = self.is_checked();
         let mut fragment = self.fragment.finish(module);
@@ -508,11 +622,16 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         release_spare_capacity(&mut fragment.data);
         release_spare_capacity(&mut fragment.supertype_edges);
         release_spare_capacity(&mut fragment.function_type_edges);
+        let queries = self.queries.statistics();
+        for limit in QueryLimit::ALL {
+            let hits = queries.limit_hits[limit as usize];
+            self.counters.gave_up_times(limit_of_queries(limit), hits);
+        }
         LoweredFile {
             fragment,
             diagnostics: self.diagnostics,
             counters: self.counters,
-            queries: self.queries.statistics(),
+            queries,
         }
     }
 
@@ -582,7 +701,13 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(crate) fn intern_binding_name(&mut self, binding: Binding, written: Atom) -> StringId {
         match self.short_binding_name(binding) {
             Some(name) => name,
-            None => self.intern_atom(written),
+            None => {
+                let name = self.queries.atom_bytes(written);
+                match written_name_of_local(name) {
+                    same if same.len() == name.len() => self.intern_atom(written),
+                    of_test_runner => self.intern_bytes(of_test_runner),
+                }
+            }
         }
     }
 
@@ -630,5 +755,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(crate) fn gave_up(&mut self, limit: LimitId, position: u32) {
         let subject = self.span_at(position);
         self.counters.gave_up(limit, Some(subject));
+    }
+
+    pub(crate) fn gave_up_at_no_position(&mut self, limit: LimitId) {
+        self.counters.gave_up(limit, None);
     }
 }

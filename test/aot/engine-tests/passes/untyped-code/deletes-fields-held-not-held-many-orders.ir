@@ -585,28 +585,29 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b11() handler=b13():
 # CHECK-NEXT: v174: undefined = IteratorResume v173 stepIndex=0
 # CHECK-NEXT: v175: anything = ResultAt v174 index=1
-# CHECK-NEXT: v259: undefined|"closed"|"frozen"|"sealed"|f7|f8|f9 = AssumeType v175 provenType=undefined|"closed"|"frozen"|"sealed"|f7|f8|f9
-# CHECK-NEXT: v176: undefined|"closed"|"frozen"|"sealed" = Check v259 expectedType=undefined|null|string
+# CHECK-NEXT: v259: "closed"|"frozen"|"sealed" = AssumeType v175 provenType="closed"|"frozen"|"sealed"
+# CHECK-NEXT: v176: "closed"|"frozen"|"sealed" = AssumeType v259 provenType=undefined|null|string
+# CHECK-NEXT: v260: "closed"|"frozen"|"sealed" = AssumeType v176 provenType="closed"|"frozen"|"sealed"
 # CHECK-NEXT: v177: undefined = IteratorResume v173 stepIndex=1
 # CHECK-NEXT: v178: anything = ResultAt v177 index=1
-# CHECK-NEXT: v260: undefined|"closed"|"frozen"|"sealed"|f7|f8|f9 = AssumeType v178 provenType=undefined|"closed"|"frozen"|"sealed"|f7|f8|f9
-# CHECK-NEXT: v179: undefined|f7|f8|f9 = Check v260 expectedType=undefined|null|function|f7|f8|f9
-# CHECK-NEXT: v261: undefined|f7|f8|f9 = AssumeType v179 provenType=undefined|f7|f8|f9 [isBehindChecks]
+# CHECK-NEXT: v261: f7|f8|f9 = AssumeType v178 provenType=f7|f8|f9
+# CHECK-NEXT: v179: f7|f8|f9 = AssumeType v261 provenType=undefined|null|function|f7|f8|f9
+# CHECK-NEXT: v262: f7|f8|f9 = AssumeType v179 provenType=f7|f8|f9
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12() handler=b14():
 # CHECK-NEXT: v180: undefined|null|L0 = Call v0, -, v241, v34 calleeName="make" accessSite=35 callees=[f1]
-# CHECK-NEXT: v181: anything = Call v261, -, v180 calleeName="close" accessSite=36 callees=[f7, f8, f9]
+# CHECK-NEXT: v181: anything = Call v262, -, v180 calleeName="close" accessSite=36 callees=[f7, f8, f9]
 # CHECK-NEXT: v182: undefined|null|L0 = Check v181 expectedType=undefined|null|L0
 # CHECK-NEXT: v183: anything = PropGet v241 key="join" accessSite=37
-# CHECK-NEXT: v262: builtin(ArrayPrototypeJoin) = AssumeType v183 provenType=builtin(ArrayPrototypeJoin)
+# CHECK-NEXT: v263: builtin(ArrayPrototypeJoin) = AssumeType v183 provenType=builtin(ArrayPrototypeJoin)
 # CHECK-NEXT: v184: "+" = String string="+"
-# CHECK-NEXT: v185: anything = Call v262, v241, v184 calleeKey="join" calleeName="order.join" accessSite=38 callees=[builtin(ArrayPrototypeJoin)]
-# CHECK-NEXT: v263: string = AssumeType v185 provenType=string
-# CHECK-NEXT: v186: string = AssumeType v263 provenType=undefined|null|string
-# CHECK-NEXT: v264: string = AssumeType v186 provenType=string
+# CHECK-NEXT: v185: anything = Call v263, v241, v184 calleeKey="join" calleeName="order.join" accessSite=38 callees=[builtin(ArrayPrototypeJoin)]
+# CHECK-NEXT: v264: string = AssumeType v185 provenType=string
+# CHECK-NEXT: v186: string = AssumeType v264 provenType=undefined|null|string
+# CHECK-NEXT: v265: string = AssumeType v186 provenType=string
 # CHECK-NEXT: v187: " " = String string=" "
-# CHECK-NEXT: v188: string = Add v264, v187
-# CHECK-NEXT: v189: string = Add v188, v176
+# CHECK-NEXT: v188: string = Add v265, v187
+# CHECK-NEXT: v189: string = Add v188, v260
 # CHECK-NEXT: v190: " " = String string=" "
 # CHECK-NEXT: v191: string = Add v189, v190
 # CHECK-NEXT: v192: string = Add v191, v45

@@ -386,7 +386,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f39 visibility=Private
 # CHECK: module=m0 position=155 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=int[2, 4]}] results=[{type=Generator<number, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f1 body=f57} {
 # CHECK-NEXT: b0(v0: undefined, v1: function, v2: int[2, 4]):
 # CHECK-NEXT: v3: Generator = NewGenerator v1 function=f1
-# CHECK-NEXT: v6: anything = NewHeapFrame v3 function=f57 numberOfWords=4
+# CHECK-NEXT: v6: anything = NewHeapFrame v3, v1 function=f57 numberOfWords=4
 # CHECK-NEXT: PutHeapFrameWord v6, v3
 # CHECK-NEXT: PutHeapFrameWord v6, v1 index=1
 # CHECK-NEXT: PutHeapFrameWord v6, v2 index=2

@@ -247,7 +247,7 @@ function IncomingMessage(
       this._events = preallocatedEvents();
       this._readableState = createUnreadByteState(nativeHighWaterMark);
       this[kShapeMode] = true;
-      this._maxListeners = undefined;
+      this._maxListeners ??= undefined;
       if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
         ("unlikely");
         storeEmitWithRejectionCapture(this);

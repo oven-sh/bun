@@ -138,6 +138,8 @@ fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
         minifies_identifiers: false,
         obfuscates: false,
         counts_executions: false,
+        imports_are_untyped: false,
+        runs_tests: false,
     }
 }
 

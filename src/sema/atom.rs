@@ -490,6 +490,21 @@ known_atoms! {
     setup = "setup",
     jest_globals = "@jest/globals",
     vitest = "vitest",
+    doMock = "doMock",
+    importActual = "importActual",
+    importMock = "importMock",
+    requireActual = "requireActual",
+    requireMock = "requireMock",
+    createMockFromModule = "createMockFromModule",
+    unmock = "unmock",
+    doUnmock = "doUnmock",
+    dontMock = "dontMock",
+    toMatchInlineSnapshot = "toMatchInlineSnapshot",
+    toThrowErrorMatchingInlineSnapshot = "toThrowErrorMatchingInlineSnapshot",
+    pathToFileURL = "pathToFileURL",
+    href = "href",
+    file_scheme = "file:",
+    file_scheme_and_slashes = "file://",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

@@ -1,5 +1,6 @@
 # References that lie outside the cell of their object, read by code that knows nothing of the object: through `any` and through computed names.
 # Objects that hold them, that hold undefined or null there, that never got them, that lost them.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f5
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -1059,11 +1060,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f33 visibility=Private
 # -- generated: f0 crowded
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 286, patchpoints: 60, rare instructions: 102, polls: 5
+# CHECK-NEXT: instructions: 286, patchpoints: 61, rare instructions: 102, polls: 5
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="crowded"
 # CHECK: role=ResultWrapper
-# CHECK-NEXT: instructions: 245, patchpoints: 7
+# CHECK-NEXT: instructions: 245, patchpoints: 9
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="crowded"
 # CHECK: role=ResultWorker

@@ -7,7 +7,7 @@ use super::errors_operators::{
     language_version,
 };
 use super::infer::Inference;
-use super::shape::{Access, Found};
+use super::shape::{Access, Found, SymbolOfSpread};
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
@@ -2901,10 +2901,24 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::ANY
             };
         }
-        if let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner
-            && let Some(this) = self.contextual_this_parameter_type(file, func, owner)
-        {
-            return this;
+        if let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner {
+            let is_without_context = self.this_parameters_without_context.contains(&(file, func));
+            match self.assigned_type_of_this_parameter(file, func) {
+                Some(assigned) if !is_without_context => return assigned,
+                Some(_) => {}
+                None => {
+                    if self.this_parameters_in_progress.contains(&(file, func)) {
+                        return TypeId::ANY;
+                    }
+                    self.this_parameters_in_progress.push((file, func));
+                    let contextual = self.contextual_this_parameter_type(file, func, owner);
+                    self.this_parameters_in_progress.pop();
+                    if let Some(this) = contextual {
+                        return this;
+                    }
+                    self.this_parameters_without_context.insert((file, func));
+                }
+            }
         }
         // `reportImplicitAny`. The binder doesn't bind the name, so `report_implicit_any_of_name`
         // doesn't handle it.
@@ -3511,41 +3525,21 @@ impl<'p, 's> Checker<'p, 's> {
     /// the literal `e`, which contains a spread. Gives it the literal's symbol and `object_flags`.
     /// Those flags propagate from the types of the members in the source, even from a member that a
     /// later spread overrides.
-    fn with_symbol_of_literal(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        ty: TypeId,
-        object_flags: ObjectFlags,
-    ) -> TypeId {
+    fn with_symbol_of_literal(&mut self, ty: TypeId, symbol: SymbolOfSpread) -> TypeId {
         match self.data(ty) {
-            TypeData::Union(_) => self.map_type(ty, |c, m| {
-                c.with_symbol_of_literal(file, e, m, object_flags)
-            }),
+            TypeData::Union(_) => self.map_type(ty, |c, m| c.with_symbol_of_literal(m, symbol)),
             // A generic type isn't spread. It becomes `getIntersectionType([left, right])`.
             TypeData::Intersection(parts) => {
                 let parts: Vec<TypeId> = parts
                     .iter()
-                    .map(|&part| self.with_symbol_of_literal(file, e, part, object_flags))
+                    .map(|&part| self.with_symbol_of_literal(part, symbol))
                     .collect();
                 self.intersection(&parts)
             }
-            TypeData::Synth(shape) if shape.literal.is_of_expression() => {
-                let scope = self.enclosing_scope_of_expr(file, e);
-                let mapper = self.identity_mapper_with_adopted(file, scope);
-                let literal = if object_flags.contains(ObjectFlags::NON_INFERRABLE_TYPE) {
-                    Literalness::Partial
-                } else {
-                    shape.literal
-                };
-                self.synth(Shape {
-                    literal,
-                    contains_widening_type: shape.contains_widening_type
-                        || object_flags.contains(ObjectFlags::CONTAINS_WIDENING_TYPE),
-                    symbol_declared_at: Some((file, self.hir(file)[e].pos, e)),
-                    mapper,
-                    ..(**shape).clone_in(self.arena)
-                })
+            TypeData::Synth(shape) if shape.literal.is_of_expression() && !symbol.is_on(shape) => {
+                let mut shape = (**shape).clone_in(self.arena);
+                symbol.put_on(&mut shape);
+                self.synth(shape)
             }
             _ => ty,
         }
@@ -3979,6 +3973,11 @@ impl<'p, 's> Checker<'p, 's> {
         let literal_mapper = self.identity_mapper_with_adopted(file, scope);
         let context = self.object_literal_context(file, e);
         let is_const = context.in_const_context;
+        let symbol_with = |object_flags| SymbolOfSpread {
+            declared_at: (file, hir[e].pos, e),
+            mapper: literal_mapper,
+            object_flags,
+        };
         let mut result = TypeId::EMPTY_OBJECT;
         let mut rank = 0;
         let mut pending = Shape::new_in(self.arena);
@@ -3991,7 +3990,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if let Some(segment) =
                     self.create_object_literal_segment(file, members, &mut pending, is_const)
                 {
-                    result = self.get_spread_type(result, segment, is_const, &mut rank);
+                    result = self.get_spread_type(result, segment, is_const, &mut rank, None);
                 }
                 run = p.0 + 1;
                 let spread = self.type_of_expr(file, prop.value);
@@ -4021,7 +4020,9 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.is_error_type(result) {
                     continue;
                 }
-                result = self.get_spread_type(result, spread, is_const, &mut rank);
+                let is_last = p.0 + 1 == props.start + props.len;
+                let symbol = is_last.then(|| symbol_with(object_flags));
+                result = self.get_spread_type(result, spread, is_const, &mut rank, symbol);
                 continue;
             }
             object_flags |= self.precheck_member(file, p);
@@ -4050,13 +4051,14 @@ impl<'p, 's> Checker<'p, 's> {
         if result == TypeId::EMPTY_OBJECT {
             return self.create_object_literal_type(file, e, props, object_flags, reads);
         }
+        let symbol = symbol_with(object_flags);
         let members = Span::new(run, props.start + props.len - run);
         if let Some(segment) =
             self.create_object_literal_segment(file, members, &mut pending, is_const)
         {
-            result = self.get_spread_type(result, segment, is_const, &mut rank);
+            result = self.get_spread_type(result, segment, is_const, &mut rank, Some(symbol));
         }
-        result = self.with_symbol_of_literal(file, e, result, object_flags);
+        result = self.with_symbol_of_literal(result, symbol);
         // "remap the raw emptyObjectType fed in at the top into a fresh empty object literal type,
         // unique to this use site"
         self.map_type(result, |c, t| {
@@ -4069,7 +4071,7 @@ impl<'p, 's> Checker<'p, 's> {
                 is_js_literal,
                 ..Shape::new_in(c.arena)
             });
-            c.with_symbol_of_literal(file, e, empty, object_flags)
+            c.with_symbol_of_literal(empty, symbol)
         })
     }
 
@@ -4308,10 +4310,13 @@ impl<'p, 's> Checker<'p, 's> {
             // `assignContextualParameterTypes` skips an annotated `this` parameter. An unannotated
             // one doesn't push a resolution here, because `type_of_this_parameter` computes it on
             // request.
-            if contextual_signature.is_none() && f.this_ty(hir).is_some() {
+            if contextual_signature.is_none() && f.this_param.is_some() {
                 self.assigned_parameters.push(self.stack.len());
-                self.type_of_this_parameter(file, func);
+                let this = self.type_of_this_parameter(file, func);
                 self.assigned_parameters.pop();
+                if f.this_ty(hir).is_none() && f.kind != FnKind::Setter {
+                    self.context_checking.checks[checking].assigned_this = Some(this);
+                }
             }
             for (i, p) in f.params.iter().enumerate() {
                 self.assigned_parameters.push(self.stack.len());
@@ -4325,9 +4330,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.context_checking.checks[checking].assigned_parameter_count = f.params.len();
+        let lacks_first_look = self.expected == Requested::Types
+            && self.task.file == Some(file)
+            && !self.context_checked_here.contains(&(file, func));
         if contextual_signature.is_some()
             && f.ret.is_none()
-            && (self.p.fn_return_types.get(&self.task, &(file, func))).is_none()
+            && (lacks_first_look
+                || (self.p.fn_return_types.get(&self.task, &(file, func))).is_none())
             && self.enter(Query::ReturnAtFirstLook(file, func))
         {
             let ty = self.return_type_of_fn_uncached(file, func, check_mode);
@@ -4371,12 +4380,18 @@ impl<'p, 's> Checker<'p, 's> {
         let outer = self.suspend_recheck();
         self.precheck_signature(file, func);
         self.end_recheck(outer);
+        let assigned_this = self.context_checking.checks[checking].assigned_this;
         self.context_checking.pop();
         if is_check_final {
             (self.p.context_checked).insert(&self.task, (file, func), assigned, Stored::new());
             self.context_checked_here.insert((file, func));
+            if let Some(this) = assigned_this {
+                let name = (file, self.hir(file)[f.this_param].pat);
+                (self.p.pat_types).insert(&self.task, name, (this, false), Stored::new());
+            }
         } else if let Some(at) = self.frames.iter().position(|frame| frame.marks.tainted()) {
-            let under = (at, self.frames[at].serial, (file, func), assigned);
+            let serial = self.frames[at].serial;
+            let under = (at, serial, (file, func), assigned, assigned_this);
             self.context_checked_under.push(under);
         }
     }
@@ -4424,6 +4439,18 @@ impl<'p, 's> Checker<'p, 's> {
             .retain(|&(at, serial, ..)| frames.get(at).is_some_and(|frame| frame.serial == serial));
         let mut under = self.context_checked_under.iter();
         under.find(|c| c.2 == (file, func)).map(|c| c.3)
+    }
+
+    fn assigned_type_of_this_parameter(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
+        if let Some(in_progress) = self.context_checking.get(file, func) {
+            return in_progress.assigned_this;
+        }
+        if self.context_checked_under_taint(file, func).is_some() {
+            let mut under = self.context_checked_under.iter();
+            return under.find(|c| c.2 == (file, func)).and_then(|c| c.4);
+        }
+        let name = (file, self.hir(file)[self.hir(file)[func].this_param].pat);
+        Some(self.p.pat_types.get(&self.task, &name)?.0)
     }
 
     /// `links.flags&NodeCheckFlagsContextChecked != 0`. The first contextual check of a function

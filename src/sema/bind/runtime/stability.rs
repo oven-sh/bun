@@ -3,13 +3,11 @@ use super::declaration_kinds::pattern_root;
 use super::queries::{find_entry, find_symbol};
 use super::references::is_loop_head;
 use super::{
-    Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit, FunctionFlags,
-    RuntimeInput, has_mapped_arguments,
+    Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit, RuntimeInput,
+    has_mapped_arguments,
 };
 use crate::atom::Atom;
-use crate::bind::{
-    Bound, BoundBuilder, ClassOwner, Decl, FnOwner, Parent, PatParent, ScopeKind, SymbolId,
-};
+use crate::bind::{Bound, BoundBuilder, ClassOwner, Decl, FnOwner, Parent, PatParent, SymbolId};
 use crate::hir::*;
 use smallvec::SmallVec;
 
@@ -115,13 +113,11 @@ impl StabilityPass<'_, '_> {
     }
 
     fn add_container(&mut self, symbol: SymbolId, decl: Decl) {
-        let bound = self.bound;
+        let listed = &self.bound.symbols[symbol.idx()].decls;
         if let Some(recorded) = self.initializers.get_mut(symbol.idx()) {
             *recorded = match *recorded {
                 Initializers::None => Initializers::One(decl),
-                Initializers::One(merged)
-                    if bound.symbols[symbol.idx()].decls.contains(&merged) =>
-                {
+                Initializers::One(merged) if listed.contains(&merged) && listed.contains(&decl) => {
                     Initializers::One(merged)
                 }
                 Initializers::One(_) | Initializers::Several => Initializers::Several,
@@ -252,17 +248,6 @@ impl StabilityPass<'_, '_> {
         }
     }
 
-    fn is_mapped_argument(&self, symbol: SymbolId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let scope = bound.scopes.get(bound.symbol_scope(symbol).idx());
-        let Some(ScopeKind::Fn(function)) = scope.map(|scope| scope.kind) else {
-            return false;
-        };
-        let flags = bound.function_flags(function);
-        flags.contains(FunctionFlags::USES_ARGUMENTS)
-            && has_mapped_arguments(hir, CodeUnit::Function(function))
-    }
-
     fn is_mapped_wrapper_parameter(&self, symbol: SymbolId) -> bool {
         let runtime = &self.bound.runtime;
         runtime.file_uses_arguments
@@ -295,7 +280,7 @@ impl StabilityPass<'_, '_> {
         if !kind.is_immutable() && has_bit(eval_visible_symbols, symbol.idx()) {
             return BindingStability::VisibleToEval;
         }
-        if kind == BindingKind::Parameter && self.is_mapped_argument(symbol) {
+        if kind == BindingKind::Parameter && bound.is_mapped_argument(self.hir, symbol) {
             return BindingStability::MappedArgument;
         }
         if kind == BindingKind::Var && self.is_mapped_wrapper_parameter(symbol) {

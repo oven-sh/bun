@@ -3,7 +3,7 @@ use bun_core::fmt::QuotedFormatter;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::{DiagnosticClass, Effect};
 use bun_sema::fold::{FoldError, FoldErrorKind};
-use bun_sema::hir::{self, DiagnosticKind, File, StmtKind};
+use bun_sema::hir::{self, File, StmtKind};
 use bun_sema::messages::{self, Category};
 use bun_sema::module_format::CommonJsEvidence;
 use bun_sema::node::NodeData;
@@ -12,7 +12,7 @@ use bun_sema::resolve::CodeFailure;
 use bun_sema_driver::host::to_native;
 use bun_sema_driver::{BuildDiagnostic, EntryPointFailure, Incomplete, LoadFailure, log_message};
 
-use super::sink::{append_location, to_log_message};
+use super::sink::{append_location, to_driver_diagnostic, to_log_message};
 use super::{
     Diagnostic, Diagnostics, ProgramView, Severity, Span, SpanLocator, new_driver_diagnostic,
 };
@@ -183,7 +183,18 @@ impl Diagnostics {
             let path = to_native(&file.path);
             if file.is_nested_too_deeply || file.deepest_nesting > DEEPEST_THAT_MUST_BE_WALKED {
                 let diagnostic = Diagnostic::new(Code::FileNestedTooDeeply, None, &[path]);
-                self.add(None, diagnostic);
+                match file.nested_too_deeply_at {
+                    Some((line, column)) => {
+                        let mut reported = to_driver_diagnostic(None, &diagnostic);
+                        reported.path.clone_from(&file.path);
+                        reported.has_undefined_range = false;
+                        (reported.line, reported.column) = (line, column);
+                        (reported.end_line, reported.end_column) = (line, column);
+                        let message = to_log_message(&reported, Severity::Error);
+                        self.add_message(diagnostic.code.number(), message);
+                    }
+                    None => self.add(None, diagnostic),
+                }
                 self.files_nested_too_deeply.push(path.to_vec());
             } else {
                 let message = file.message(path);
@@ -221,6 +232,11 @@ impl Diagnostics {
         self.report_internal_error(Stage::LinkAndEmit, message);
     }
 
+    pub(crate) fn add_text_quoted_as_written(&mut self, path: &[u8], fault: &[u8]) {
+        let diagnostic = Diagnostic::new(Code::TextQuotedAsWritten, None, &[path, fault]);
+        self.add(None, diagnostic);
+    }
+
     pub(crate) fn add_emit_error(&mut self, error: EmitError) {
         match error {
             EmitError::ProgramTooLarge { bytes } => {
@@ -249,11 +265,7 @@ pub(crate) fn code_of_failure(failure: CodeFailure) -> Code {
 
 /// What keeps a file from being compiled. `/** @import Foo#bar */`: a mistake in a comment of a JavaScript file does not.
 pub(crate) fn syntax_errors_of<'a>(hir: &'a File<'_>) -> impl Iterator<Item = &'a hir::Diagnostic> {
-    hir.diagnostics.iter().filter(|it| {
-        it.kind == DiagnosticKind::Parse
-            && it.class == DiagnosticClass::EarlyError
-            && !hir.is_in_jsdoc(it.start)
-    })
+    hir.syntax_errors()
 }
 
 pub(super) fn fold_error_diagnostic(

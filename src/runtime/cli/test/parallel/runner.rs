@@ -20,7 +20,6 @@ use super::coordinator::{Coordinator, StopReason, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::parts::Parts;
-use super::reservation::Reservation;
 use super::worker::{Worker, WorkerPipe};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
@@ -125,11 +124,11 @@ pub(crate) fn run_as_coordinator(
         });
     }
     let runs_compiled_code = splits_files || crate::cli::run_compiled::runs_compiled_code();
-    let reservation = (ctx.test_options.aot_memory_limit)
-        .filter(|_| runs_compiled_code)
-        .map(|limit| Reservation::new(limit, k as usize));
-    if let (Some(reservation), Some(timings)) = (&reservation, reporter.timings.as_mut()) {
-        timings.heavy_over = reservation.share_of_worker();
+    if runs_compiled_code
+        && ctx.test_options.parallel > 0
+        && let Some(timings) = reporter.timings.as_mut()
+    {
+        timings.record_workers(ctx.test_options.parallel);
     }
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits
@@ -157,7 +156,7 @@ pub(crate) fn run_as_coordinator(
                     .iter()
                     .map(growth_of)
                     .collect();
-                let light = &mut sorted[heavy_parts as usize..];
+                let light = &sorted[heavy_parts as usize..];
                 let costs = timings.costs_where_unknown_is_slow(light);
                 let files = crate::cli::run_compiled::test_part_files(ctx).unwrap_or(n);
                 let count = (light.len() as u32).div_ceil(files);
@@ -167,7 +166,8 @@ pub(crate) fn run_as_coordinator(
                         hi: file + 1,
                     })
                     .collect();
-                let of_light = super::parts::cut_by_time(light, &costs, count);
+                // The slow files take parts of their own, so the quick ones stand closer: about as many parts as by number.
+                let of_light = super::parts::cut_by_time(&costs, count, files.saturating_mul(2));
                 ranges_of_parts.extend(of_light.into_iter().map(|range| FileRange {
                     lo: range.lo + heavy_parts,
                     hi: range.hi + heavy_parts,
@@ -231,8 +231,6 @@ pub(crate) fn run_as_coordinator(
     let room_beside_heavy_files = (reporter.timings.as_ref()).map_or(0, |t| {
         t.growth_of_average_files(&sorted, k.saturating_sub(1))
     });
-    let growth_of_running_light_file =
-        (reporter.timings.as_ref()).map_or(0, |t| t.growth_of_running_light_file(&sorted));
     let heavy_files_to_hand_out = (reporter.timings.as_ref()).map_or(0, |t| {
         sorted
             .iter()
@@ -256,13 +254,10 @@ pub(crate) fn run_as_coordinator(
         workers: &mut workers,
         parallel_limit: k,
         keeps_heavy_files_apart: runs_compiled_code,
-        // With a limit as well: what a file without a record takes says what the next one may take.
         children_of_workers: (cfg!(target_os = "linux")
-            && (ctx.test_options.update_timings || reservation.is_some())
+            && ctx.test_options.update_timings
             && runs_compiled_code)
             .then(Default::default),
-        reservation,
-        growth_of_running_light_file,
         room_for_heavy_files,
         room_beside_heavy_files,
         heavy_files_to_hand_out,
@@ -710,6 +705,8 @@ pub(crate) struct WorkerCommands {
     /// `worker_flush_aggregates`. Whatever lets a timer fire reaches `bail_out`, `Bun.spawnSync` in an executable too, and the flush reaches the
     /// transpiler and the bundler. Held here, only `run_as_worker` names it, and an executable that never runs tests need not hold what it reaches.
     flush_aggregates: FlushAggregates,
+    /// `bail_out` writes no snapshot.
+    ends_at_bail: bool,
 }
 
 type FlushAggregates =
@@ -758,7 +755,6 @@ impl WorkerCommands {
             wf.u32(growth.of_worker);
             wf.u32(growth.largest_child);
             wf.u32(growth.peak);
-            wf.u32(growth.rest);
             wf.u32(match vm.exit_handler.exit_code {
                 code if code == file.exit_code_before => 0,
                 code => u32::from(code) + 1,
@@ -964,8 +960,6 @@ struct Growth {
     largest_child: u32,
     /// The highest resident size of this process so far.
     peak: u32,
-    /// What the worker holds of its own now that the file has ended.
-    rest: u32,
 }
 
 /// Sets the highest resident size that the kernel remembers back to the present one, and answers that. A compiled run asks; only
@@ -995,8 +989,8 @@ fn start_measuring_growth() -> Option<ResidentAtStart> {
 /// for all pages alike. What the file touched of the images is taken off: a file loads its modules first and grows then.
 fn growth_since(at_start: ResidentAtStart) -> Growth {
     #[cfg(target_os = "linux")]
-    if let Some([highest, own, of_files, of_shared_memory]) =
-        read_kilobytes([b"VmHWM:", b"RssAnon:", b"RssFile:", b"RssShmem:"])
+    if let Some([highest, of_files, of_shared_memory]) =
+        read_kilobytes([b"VmHWM:", b"RssFile:", b"RssShmem:"])
     {
         // A build that a test starts as a process of its own takes as much as one inside the worker. When a child starts its
         // program, the kernel sets the child's highest size to that of the process it came from, so a child says something about
@@ -1009,7 +1003,6 @@ fn growth_since(at_start: ResidentAtStart) -> Growth {
             of_worker: megabytes(highest.saturating_sub(at_start.all + more_shared)),
             largest_child: megabytes(child),
             peak: megabytes(crate::cli::run_compiled::record_peak_rss_kb(highest)),
-            rest: megabytes(own),
         };
     }
     let _ = at_start;
@@ -1025,7 +1018,7 @@ pub(crate) fn run_as_worker(
     ctx: Command::Context,
 ) -> ! {
     vm.test_isolation_enabled = ctx.test_options.isolate;
-    vm.test_isolation_state.shares_global = ctx.test_options.isolate_modules;
+    vm.test_isolation_state.shares_global = crate::cli::run_compiled::test_files_share_global(ctx);
     vm.auto_killer.enabled = ctx.test_options.isolate;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
@@ -1048,6 +1041,7 @@ pub(crate) fn run_as_worker(
             running: None,
             done: false,
             flush_aggregates: worker_flush_aggregates,
+            ends_at_bail: false,
         },
         files_run: 0,
     };
@@ -1097,11 +1091,14 @@ fn worker_flush_aggregates(
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
     let runner = &mut reporter.jest;
-    let wrote_inline_snapshots = runner
-        .snapshots
-        .write_inline_snapshots(&runner.files)
-        .unwrap_or(false);
-    let _ = runner.snapshots.write_snapshot_file(&runner.files);
+    let wrote_inline_snapshots = cmds.ends_at_bail
+        || runner
+            .snapshots
+            .write_inline_snapshots(&runner.files)
+            .unwrap_or(false);
+    if !cmds.ends_at_bail {
+        let _ = runner.snapshots.write_snapshot_file(&runner.files);
+    }
     if crate::cli::run_compiled::runs_compiled_code() {
         let counted = &runner.snapshots;
         let numbers = [
@@ -1159,6 +1156,7 @@ pub(crate) fn worker_ends_at_bail(reporter: &mut CommandLineReporter, vm: &mut V
     // outlives all callers (process exits before it is dropped).
     let cmds = unsafe { &mut *cmds_ptr };
     cmds.emit_file_done(reporter, vm);
+    cmds.ends_at_bail = true;
     let options = reporter.jest.test_options;
     (cmds.flush_aggregates)(reporter, vm, &options.coverage, cmds);
 }

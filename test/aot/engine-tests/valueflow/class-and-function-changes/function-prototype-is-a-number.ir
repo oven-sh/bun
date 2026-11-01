@@ -59,16 +59,14 @@ function f2 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v1: 5 = Integer integer=5
 # CHECK-NEXT: PropSet v0, v1 key="prototype" accessSite=0
 # CHECK-NEXT: v3: object = GetConstructPrototype v0 layout=L0
-# CHECK-NEXT: v4: L0 = NewObject v3 layout=L0 allocationClass=0
-# CHECK-NEXT: v5: 1 = Integer integer=1
-# CHECK-NEXT: PropSet v4, v5 key="x" accessSite=7 receivers=[L0]
-# CHECK-NEXT: v7: int[-2147483643, 2147483647] = GetSlot v4 key="x" receivers=[L0] level=Proven accessSite=4
-# CHECK-NEXT: v8: null|object = CallBuiltin -, v4 overload=ObjectGetPrototypeOf/0 accessSite=5
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: L0 = NewObject v3, v4 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v6: null|object = CallBuiltin -, v5 overload=ObjectGetPrototypeOf/0 accessSite=5
+# CHECK-NEXT: v7: builtin(ObjectPrototype) = Builtin builtin=ObjectPrototype
+# CHECK-NEXT: v8: boolean = StrictEq v6, v7
 # CHECK-NEXT: v9: builtin(ObjectPrototype) = Builtin builtin=ObjectPrototype
-# CHECK-NEXT: v10: boolean = StrictEq v8, v9
-# CHECK-NEXT: v11: builtin(ObjectPrototype) = Builtin builtin=ObjectPrototype
-# CHECK-NEXT: v12: boolean = HasInPrototypeChain v4, v11
-# CHECK-NEXT: v13: undefined = CallBuiltin -, v7, v10, v12 overload=ConsoleLog/0 accessSite=6
-# CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v10: boolean = HasInPrototypeChain v5, v9
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v4, v8, v10 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }

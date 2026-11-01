@@ -1,9 +1,11 @@
 // A pattern whose text the build predicts has to earn its code for 16-bit subjects. One that has to match its subject from end to end with characters of one byte (an address, a version, a name)
-// matches no subject with a wider character: it has code for 8-bit subjects alone, half the bytes. A 16-bit subject compiles it at run time, once, and the answer is the same. Every other
-// predicted pattern, and every literal, has both.
+// matches no subject with a wider character: it has code for 8-bit subjects alone, half the bytes. A 16-bit subject that holds a wider character is no match, and one that holds none is made
+// narrow and given to that code: nothing is compiled at run time, and the answer is the same. Every other predicted pattern, and every literal, has both.
 // COUNTER: RegExpsCreatedWithoutRecord = 0
-// COUNTER: RegExpsCompiledToBytecode = 1
-// COUNTER: RegExpMatchesInterpreted >= 2
+// COUNTER: RegExpsCompiledToBytecode = 0
+// COUNTER: RegExpMatchesInterpreted = 0
+// COUNTER: RegExpWideSubjectsRefused >= 1
+// COUNTER: RegExpSubjectsNarrowed >= 1
 const RULES = [
   { source: "([a-z]+)-([a-z]+)", flags: "" },
   { source: "[a-z]+[0-9]", flags: "g" },
@@ -19,7 +21,7 @@ const literal = /^(?:[a-z]+|[0-9]{1,2})$/;
 const narrow = "one-two three4 five6";
 const wide = "\u2500 one-two \u2502 three4 five6 \u{1f600}";
 // 16 bits a character, and none of them is wide.
-const wideOnlyByStorage = (wide + "abc").slice(-3);
+const wideOnlyByStorage = ("abc\u2500" + (process.argv.length > 99 ? "x" : "")).split("\u2500")[0];
 
 console.log(inside.exec(narrow)?.join(), inside.exec(wide)?.join(), inside.exec(wide)?.index);
 console.log(narrow.match(insideGlobal)?.join(), wide.match(insideGlobal)?.join());

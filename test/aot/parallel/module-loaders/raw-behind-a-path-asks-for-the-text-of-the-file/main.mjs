@@ -1,4 +1,5 @@
-// `./lib/code.mjs?raw` is the text of the file, which does not run. Only a `type` attribute goes before `?raw`, and no other query says how a file is read.
+// `./lib/code.mjs?raw` is the text of the file, which does not run. `raw` may stand among other parameters, `?url` is the path of the file, and a `type` attribute goes before both.
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import moduleText from "./lib/code.mjs?raw";
 import commonjsText from "./lib/code.cjs?raw";
@@ -65,7 +66,8 @@ console.log(lengthOfText, kindOfText);
 console.log(typeof ownText, ownText.includes("typeof ownText"));
 console.log(code.v, show(data));
 
-for (const value of [upperCase, withValue, withMore, second, withFragment, twice, asText, asUrl]) console.log(show(value));
+for (const value of [upperCase, withValue, withMore, second, withFragment, twice, asText]) console.log(show(value));
+console.log(typeof asUrl, readFileSync(asUrl, "utf8") === jsonText);
 console.log(show(byAttribute), show(textByBoth), show(textByAttribute));
 console.log(styleNamespace === styleByBoth, styleNamespace.default === styleByBoth.default);
 console.log(wordsNamespace === wordsByBoth, wordsNamespace.default === wordsByBoth.default);

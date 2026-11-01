@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows } from "harness";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { unsupported } from "../aot/harness/compiler";
 import { run } from "../aot/harness/run";
 import { inTurn } from "../aot/harness/shared-builds";
 import { copyWithoutDebugInformation } from "../aot/harness/without-debug-information";
+import { afterAll, describe, test } from "../aot/listed";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import { canTrim, describeBytesRemovedWith, tempDirForAotBuilds, trimFeatureNamed } from "./compile-trim-features";
 

@@ -50,9 +50,9 @@ const ofServers = (member: string, classes: string, text: string[]) =>
   Object.fromEntries([`%HTTPServer%.prototype.${member} > ${classes}`].map(key => [key, text]));
 
 export const calls: Record<string, string[]> = {
-  "crypto > Crypto": ["crypto"],
   "Bun.Cookie.from": ['Bun.Cookie.from("name", "value")'],
   "Bun.Cookie.parse": ['Bun.Cookie.parse("name=value")'],
+  "Bun.dns.getServers": ["Bun.dns.getServers()"],
   "Performance.prototype.timing > PerformanceTiming": ["const timing = performance.timing;\ntiming"],
   "Performance.prototype.toJSON > PerformanceTiming": ["const timing = performance.toJSON().timing;\ntiming"],
   "PerformanceTiming.prototype.toJSON": ["performance.timing.toJSON()"],
@@ -113,6 +113,7 @@ export const calls: Record<string, string[]> = {
   "Bun.stderr > Blob": ["Bun.stderr"],
   "Bun.stdin > Blob": ["Bun.stdin"],
   "Bun.stdout > Blob": ["Bun.stdout"],
+  "Bun.argv > Array": ["Bun.argv"],
   "process.argv > Array": ["process.argv"],
   "process.execArgv > Array": ["process.execArgv"],
   "AbortController.prototype.signal > AbortSignal": ["new AbortController().signal"],
@@ -130,6 +131,10 @@ export const calls: Record<string, string[]> = {
   "TransformStream.prototype.readable > ReadableStream": ["new TransformStream().readable"],
   "TransformStream.prototype.writable > WritableStream": ["new TransformStream().writable"],
   "URL.prototype.searchParams > URLSearchParams": ['new URL("https://example.com/a?first=1").searchParams'],
+  "WebAssembly.instantiate": [
+    "WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))",
+    "WebAssembly.instantiate(new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])))",
+  ],
   "WebAssembly.Memory.prototype.buffer > ArrayBuffer SharedArrayBuffer": [
     "new WebAssembly.Memory({ initial: 1 }).buffer",
     "new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true }).buffer",

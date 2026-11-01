@@ -36,30 +36,31 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v7 = Convert v6 declared={type=builtin(JSONParse) flags=[IsExpected]} @145
     v8 = Convert v7 declared={type=undefined|null|function|builtin(String)|builtin(JSONParse) flags=[IsExpected]} @145
     PutModuleVariable v8 variable=g1 @137
-    v10 = PropGet v3 key="length" @161
-    v11 = Convert v10 declared={type=number flags=[IsExpected]} @161
-    v12 = Integer integer=1000 @175
-    v13 = Greater v11, v12 @161
-    Branch v13 -> taken b2(), notTaken b3() @161
+    v10 = String string="{\"id\":7}" @161
+    v11 = PropGet v10 key="length" @161
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @161
+    v13 = Integer integer=1000 @175
+    v14 = Greater v12, v13 @161
+    Branch v14 -> taken b2(), notTaken b3() @161
   b2():
-    v14 = GetModuleVariable variable=g1 @181
-    v15 = CheckInitialized v14 name="parse" @181
-    v16 = Builtin builtin=String @189
-    v17 = Convert v16 declared={type=undefined|null|function|builtin(String)|builtin(JSONParse) flags=[IsExpected]} @181
-    PutModuleVariable v17 variable=g1 @181
+    v15 = GetModuleVariable variable=g1 @181
+    v16 = CheckInitialized v15 name="parse" @181
+    v17 = Builtin builtin=String @189
+    v18 = Convert v17 declared={type=undefined|null|function|builtin(String)|builtin(JSONParse) flags=[IsExpected]} @181
+    PutModuleVariable v18 variable=g1 @181
     Jump -> next b3() @181
   b3():
-    v19 = Builtin builtin=GlobalThis @359
-    v20 = PropGet v19 key="console" [isFreeName] @359
-    v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]} @359
-    v22 = PropGet v21 key="log" @359
-    v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @359
-    v24 = Integer integer=10 @376
-    v25 = Call v1, -, v24 calleeName="read" @371
-    v26 = Convert v25 declared={type=number flags=[IsExpected]} @371
-    v27 = Call v23, v21, v26 calleeKey="log" calleeName="console.log" @367
-    v28 = Undefined @359
-    Return v28 @359
+    v20 = Builtin builtin=GlobalThis @359
+    v21 = PropGet v20 key="console" [isFreeName] @359
+    v22 = Convert v21 declared={type=builtin(Console) flags=[IsExpected]} @359
+    v23 = PropGet v22 key="log" @359
+    v24 = Convert v23 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @359
+    v25 = Integer integer=10 @376
+    v26 = Call v1, -, v25 calleeName="read" @371
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @371
+    v28 = Call v24, v22, v27 calleeKey="log" calleeName="console.log" @367
+    v29 = Undefined @359
+    Return v29 @359
 }
 function f1 name="read" module=m0 position=197 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -81,26 +82,25 @@ function f1 name="read" module=m0 position=197 flags=[HasExplicitName] length=1 
     v12 = GetModuleVariable variable=g1 @296
     v13 = CheckInitialized v12 name="parse" @296
     v14 = Convert v13 declared={type=builtin(JSONParse) flags=[IsExpected]} @296
-    v15 = GetModuleVariable variable=g0 @302
-    v16 = CheckInitialized v15 name="text" @302
-    v17 = Call v14, -, v16 calleeName="parse" @296
-    v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @296
-    v19 = PropGet v18 key="id" @326
-    v20 = Convert v19 declared={type=number flags=[IsExpected]} @326
-    v21 = Add v5, v20 @320
-    v22 = Integer @336
-    v23 = BitOr v21, v22 @320
-    v24 = Convert v23 declared={type=i32 flags=[IsExpected]} @313
+    v15 = String string="{\"id\":7}" @302
+    v16 = Call v14, -, v15 calleeName="parse" @296
+    v17 = Convert v16 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @296
+    v18 = PropGet v17 key="id" @326
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @326
+    v20 = Add v5, v19 @320
+    v21 = Integer @336
+    v22 = BitOr v20, v21 @320
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]} @313
     Jump -> next b5() @313
   b5():
-    v25 = Increment v10 @320
-    v26 = Convert v25 declared={type=number flags=[IsExpected]} @270
-    Jump -> next b2(v24, v26) @270
-  b6(v27, v28):
+    v24 = Increment v10 @320
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @270
+    Jump -> next b2(v23, v25) @270
+  b6(v26, v27):
     Jump -> next b7() @256
   b7():
-    v29 = Convert v5 declared={type=number flags=[IsExpected]} @352
-    Return v29 @352
+    v28 = Convert v5 declared={type=number flags=[IsExpected]} @352
+    Return v28 @352
 }
 function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[String, JSONParse]
 # -- generated: f0 read

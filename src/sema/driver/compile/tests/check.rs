@@ -109,8 +109,15 @@ import "./two.js";
     });
 }
 
-const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 19] = [
+const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 26] = [
     r#"function f(a, a) { "use strict"; }"#,
+    r#"function f(public) { "use strict"; }"#,
+    r#"function public() { "use strict"; }"#,
+    r#"function f(eval) { "use strict"; }"#,
+    r#"function eval() { "use strict"; }"#,
+    r#"function f(a = 1) { "use strict"; }"#,
+    r#"function f() { "use strict"; with (f) {} }"#,
+    r#"function f() { "use strict"; delete f; }"#,
     r#"function f() { "use strict"; var public; }"#,
     r#"function f() { "use strict"; var static; }"#,
     r#"function f() { "use strict"; var yield; }"#,
@@ -131,24 +138,17 @@ const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 19] = [
     r#""use strict"; function f() { delete f; }"#,
 ];
 
-const ACCEPTED_WITH_FUNCTION_DIRECTIVE: [&str; 13] = [
-    r#"function f(public) { "use strict"; }"#,
-    r#"function public() { "use strict"; }"#,
-    r#"function f(eval) { "use strict"; }"#,
-    r#"function eval() { "use strict"; }"#,
-    r#"function f() { "use strict"; with (f) {} }"#,
+const ACCEPTED_WITH_FUNCTION_DIRECTIVE: [&str; 6] = [
     r#"function f() { "use strict"; 010; }"#,
     r#"function f() { "use strict"; "\010"; }"#,
-    r#"function f() { "use strict"; delete f; }"#,
     r#"function f() { "use strict"; if (1) function g() {} }"#,
     r#"function f() { "use strict"; l: function g() {} }"#,
-    r#"function f(a = 1) { "use strict"; }"#,
     r#"function f() { var public; "use strict"; }"#,
     r#"function f() { var public; var eval; var arguments; }"#,
 ];
 
 #[test]
-fn function_directive_is_read_as_bun_run_reads_it() {
+fn function_directive_makes_strict_mode_code() {
     let cases = REFUSED_AFTER_FUNCTION_DIRECTIVE
         .iter()
         .chain(&ACCEPTED_WITH_FUNCTION_DIRECTIVE);

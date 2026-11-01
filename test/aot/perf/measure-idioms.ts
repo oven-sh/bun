@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { measureCommand, measureCommandWithMemory } from "../analysis-scaling/measure-check";
-import { writeEverydayIdioms } from "./everyday-idioms";
+import { flagsOfVeryLargeProgram, writeEverydayIdioms } from "./everyday-idioms";
 import { writeTypedIdioms, writeUntypedIdioms } from "./untyped-idioms";
 
 type Turns = { turns: number; warmUp: number };
@@ -33,8 +33,6 @@ export const behindInVeryLargeProgramPath = join(
   import.meta.dir,
   `behind-the-jit-in-a-very-large-program.${process.platform}-${process.arch}.json`,
 );
-// A program of over four times this limit is very large: there only what stands in a loop of the text, or has four callers, counts as code that runs often.
-export const flagsOfVeryLargeProgram = ["--aot-limit=MaxWarmCodeValues:1"];
 
 /**
  * A turn's cost can come in lumps. names-seen.one-of-256-lists-of-40-by-in (./everyday/dictionaries-built-anew.txt) takes 7,000 instructions a turn, plus 80 million every 9,000 turns: a full

@@ -56,7 +56,6 @@ export default b.declarations(
     "bun:test/vitest.spyOn",
     "bun:test/vitest.jest.spyOn",
     "bun:test/vitest.vi.spyOn",
-    "bun:test/vitest.vitest.spyOn",
   ]),
   marked("IsNotEnumerable", ["console._stdout", "console._stderr"]),
   marked("IsReplacedBySetter", ["self"]),
@@ -90,6 +89,14 @@ export default b.declarations(
     "Bun.FFI.cfunction",
     "Bun.FFI.dlopen",
     "Bun.FFI.linkSymbols",
+  ]),
+  marked("MayTerminateProcess", [
+    "process._kill",
+    "process.abort",
+    "process.execve",
+    "process.exit",
+    "process.kill",
+    "process.reallyExit",
   ]),
   marked("RunsWaitingJobs", [
     "%Expect%",

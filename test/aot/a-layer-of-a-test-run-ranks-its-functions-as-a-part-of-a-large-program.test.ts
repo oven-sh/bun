@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { closeSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 // A run that is too large for one program is cut into layers, and each layer is built by itself. Who calls its functions, and how often, is in the programs above it, so how they
@@ -42,7 +43,8 @@ test("no function of a layer is warm for its rank among the functions of the lay
     }
   };
   await build("packages", "3,shared,packages", []);
-  const packages = openSync(at("packages"), "r");
+  // As the run hands it over: the build above lays the headers of its texts into the lowest program.
+  const packages = openSync(at("packages"), "r+");
   try {
     await build("shared", "3,shared,below:4", [packages]);
   } finally {
@@ -60,16 +62,18 @@ test("no function of a layer is warm for its rank among the functions of the lay
   expect([...new Set([...found.ofPackage, ...found.ofProject])]).toEqual(["c"]);
 }, 120_000);
 
-test("the run passes", async () => {
-  using dir = tempDir("aot-a-layer-ranks-its-functions-as-a-part-run", files);
-  await using run = Bun.spawn({
-    cmd: [bunExe(), "test", "--aot", "--isolate"],
-    cwd: String(dir),
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
-  expect(stderr).toContain("1 pass");
-  expect(stderr).toContain("0 fail");
-  expect(exitCode).toBe(0);
-}, 120_000);
+// A whole run over layers, which has never been the witness of a fault: the benches run it.
+if (runsWholeGrids)
+  test("the run passes", async () => {
+    using dir = tempDir("aot-a-layer-ranks-its-functions-as-a-part-run", files);
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "test", "--aot", "--isolate"],
+      cwd: String(dir),
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  }, 120_000);

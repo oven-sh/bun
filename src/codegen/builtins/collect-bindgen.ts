@@ -26,6 +26,7 @@ import {
   Getter,
   InternalFieldAccessor,
   Method,
+  OptionalType,
   RefType,
   RestType,
   Signature,
@@ -270,8 +271,14 @@ function convertsStringObject(type: Type): boolean {
   return (type instanceof RestType ? type.element : type).cppPrepare("") !== null;
 }
 
+/** `.otherAsNull` takes anything, and converts what the type inside it takes. */
+function convertedTypeOf(type: Type): TypeSpec {
+  const isIgnoringOthers = type instanceof OptionalType && type.modifier === "otherAsNull";
+  return (isIgnoringOthers ? type.inner : type).parameterType.accepted;
+}
+
 function computeConversionUses(type: Type): UseSpec[] {
-  const runsToString = acceptsStringObject(type.parameterType.accepted) || convertsStringObject(type);
+  const runsToString = acceptsStringObject(convertedTypeOf(type)) || convertsStringObject(type);
   const ownConversion = runsToString ? [b.runs("ToPrimitive")] : [];
   const containers = findContainers(type);
   if (containers.length === 0) return ownConversion;

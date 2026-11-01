@@ -1,0 +1,42 @@
+# The same in two functions that two more passes look at: one ends in a tail call of itself, one makes a generator and starts it.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass EliminateTailRecursion
+# RUN(STARTED): pass StartGeneratorsAtFirstStep
+# CHECK-LABEL: name="sum"
+# CHECK: = Call v
+# STARTED-LABEL: name="held"
+# STARTED: = Call v
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="held" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -
+    v2 = NewClosure function=f1
+    v3 = NewGenerator v2 function=f1 @100
+    v4 = CallDirect v2, v0, v3 function=f2 @100
+    v5 = CallBuiltin -, v3, v0 overload=LinkTimeConstantIteratorHelperCreate/0
+    Return v5
+}
+function f1 name="items" position=40 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f1 body=f2 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f1 @40
+    v3 = CallDirect v0, v1, v2 function=f2 @40
+    Return v2 @40
+}
+function f2 name="items" position=40 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{ramp=f1 body=f2 promiseParameter=2} {
+    v3 = Undefined
+    v4 = YieldBySavingFrame v2, v3 @40
+    v5 = YieldBySavingFrame v2, v1 @41
+    Return v3
+}
+
+function f3 name="sum" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=number}] {
+    v3 = Call v0, -
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallDirect v0, v2, v1 function=f3
+    ReturnCall v5
+  b2():
+    Return v2
+}

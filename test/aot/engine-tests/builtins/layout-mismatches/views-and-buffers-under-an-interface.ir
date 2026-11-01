@@ -1,4 +1,23 @@
 # An interface that typed arrays, buffers and views satisfy
+# -- source: views-and-buffers-under-an-interface.ts
+# // An interface that typed arrays, buffers and views satisfy
+# interface Sized {
+#   byteLength: number;
+# }
+# function tell(v: Sized): string {
+#   return (
+#     v.byteLength + "|" + ArrayBuffer.isView(v) + "|" + (v instanceof Uint8Array) + "|" + (v instanceof ArrayBuffer)
+#   );
+# }
+# const list: Sized[] = [
+#   { byteLength: 7 },
+#   new Uint8Array(3),
+#   new ArrayBuffer(5),
+#   new DataView(new ArrayBuffer(2)),
+#   Buffer.from("abcd"),
+# ];
+# for (let round = 0; round < 3; round++) for (const v of list) console.log(tell(v));
+# -- end of source
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -34,201 +53,407 @@ data d0 root=Object{layout=L0 members=[{key="byteLength" value=Number{value=7}}]
 data d1 root=Array{contents=undefined|null|string elements=[String{value="string"}, String{value="Buffer"}, String{value="ArrayBuffer"}, String{value="Array"}, String{value="Array-like Object"}]} module=m1
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = Data data=d0
-    v3 = Builtin builtin=Uint8Array
-    v4 = Integer integer=3
-    v5 = Construct v3, -, v4 calleeName="Uint8Array"
-    v6 = Convert v5 declared={type=undefined|null|Uint8Array site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v7 = Builtin builtin=ArrayBuffer
-    v8 = Integer integer=5
-    v9 = Construct v7, -, v8 calleeName="ArrayBuffer"
-    v10 = Convert v9 declared={type=undefined|null|ArrayBuffer site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v11 = Builtin builtin=GlobalThis
-    v12 = PropGet v11 key="DataView" [isFreeName]
-    v13 = Convert v12 declared={type=builtin(DataView) flags=[IsExpected]}
-    v14 = Builtin builtin=ArrayBuffer
-    v15 = Integer integer=2
-    v16 = Construct v14, -, v15 calleeName="ArrayBuffer"
-    v17 = Convert v16 declared={type=undefined|null|ArrayBuffer site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v18 = Construct v13, -, v17 calleeName="DataView"
-    v19 = Convert v18 declared={type=undefined|null|DataView site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v20 = Builtin builtin=GlobalThis
-    v21 = PropGet v20 key="Buffer" [isFreeName]
-    v22 = Convert v21 declared={type=builtin(Buffer) flags=[IsExpected]}
-    v23 = PropGet v22 key="from"
-    v24 = Convert v23 declared={type=builtin(BufferFrom) flags=[IsExpected]}
-    v25 = String string="abcd"
-    v26 = Call v24, v22, v25 calleeKey="from" calleeName="Buffer.from"
-    v27 = Convert v26 declared={type=undefined|null|Buffer site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v28 = NewArray v2, v6, v10, v19, v27 contents=undefined|null|L0
-    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|L0> site=w0 flags=[OmitsNull, OmitsUndefined]}
-    v30 = Integer
-    v31 = Convert v30 declared={type=number site=w8}
-    Jump -> next b1(v31)
-  b1(v32: number):
-    v33 = IteratorOpen v29
-    Jump -> next b2()
-  b2():
-    LoopHint
-    v35 = IteratorResume v33
-    v36 = ResultAt v35
-    v37 = ResultAt v35 index=1
-    Branch v36 -> taken b3(), notTaken b4()
-  b3():
-    v38 = Increment v32
-    v39 = Convert v38 declared={type=number site=w8}
-    Jump -> next b1(v39)
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Data data=d0 @297
+    v3 = Builtin builtin=Uint8Array @322
+    v4 = Integer integer=3 @333
+    v5 = Construct v3, -, v4 calleeName="Uint8Array" @322 constructs
+    v6 = Convert v5 declared={type=undefined|null|Uint8Array site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @318
+    v7 = Builtin builtin=ArrayBuffer @343
+    v8 = Integer integer=5 @355
+    v9 = Construct v7, -, v8 calleeName="ArrayBuffer" @343 constructs
+    v10 = Convert v9 declared={type=undefined|null|ArrayBuffer site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @339
+    v11 = Builtin builtin=GlobalThis @365
+    v12 = PropGet v11 key="DataView" [isFreeName] @365
+    v13 = Convert v12 declared={type=builtin(DataView) flags=[IsExpected]} @365
+    v14 = Builtin builtin=ArrayBuffer @378
+    v15 = Integer integer=2 @390
+    v16 = Construct v14, -, v15 calleeName="ArrayBuffer" @378 constructs
+    v17 = Convert v16 declared={type=undefined|null|ArrayBuffer site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @374
+    v18 = Construct v13, -, v17 calleeName="DataView" @365 constructs
+    v19 = Convert v18 declared={type=undefined|null|DataView site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @361
+    v20 = Builtin builtin=GlobalThis @397
+    v21 = PropGet v20 key="Buffer" [isFreeName] @397
+    v22 = Convert v21 declared={type=builtin(Buffer) flags=[IsExpected]} @397
+    v23 = PropGet v22 key="from" @397
+    v24 = Convert v23 declared={type=builtin(BufferFrom) flags=[IsExpected]} @397
+    v25 = String string="abcd" @409
+    v26 = Call v24, v22, v25 calleeKey="from" calleeName="Buffer.from" @404
+    v27 = Convert v26 declared={type=undefined|null|Buffer site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @397
+    v28 = NewArray v2, v6, v10, v19, v27 contents=undefined|null|L0 @293
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|L0> site=w0 flags=[OmitsNull, OmitsUndefined]} @293
+    v30 = Integer @438
+    v31 = Convert v30 declared={type=number site=w8} @438
+    Jump -> next b2(v31) @430
+  b2(v32: number):
+    LoopHint @430
+    v34 = Integer integer=3 @449
+    v35 = Less v32, v34 @441
+    Branch v35 -> taken b3(| 0), notTaken b11(| 0) @441
+  b3(v36):
+    Jump -> next b4() @441
   b4():
-    Jump -> next b5()
-  b5() handler=b6():
-    v40 = Convert v37 declared={type=undefined|null|L0 site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v41 = Call v1, -, v40 calleeName="tell"
-    Jump -> next b2()
-  b6() role=IterationCleanup subject=v33:
-    v42 = CatchException
-    Rethrow v42
+    v37 = IteratorOpen v29 @472
+    Jump -> next b5() @472
+  b5():
+    LoopHint @472
+    v39 = IteratorResume v37 @472
+    v40 = ResultAt v39 @472
+    v41 = ResultAt v39 index=1 @472
+    Branch v40 -> taken b6(), notTaken b8() @472
+  b6():
+    Jump -> next b7() @472
+  b7():
+    v42 = Increment v36 @472
+    v43 = Convert v42 declared={type=number site=w8} @452
+    Jump -> next b2(v43) @452
+  b8():
+    Jump -> next b9() @472
+  b9() handler=b10():
+    v44 = Convert v41 declared={type=undefined|null|L0 site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @472
+    v45 = Builtin builtin=GlobalThis @483
+    v46 = PropGet v45 key="console" [isFreeName] @483
+    v47 = Convert v46 declared={type=builtin(Console) flags=[IsExpected]} @483
+    v48 = PropGet v47 key="log" @483
+    v49 = Convert v48 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @483
+    v50 = Call v1, -, v44 calleeName="tell" @495
+    v51 = Convert v50 declared={type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]} @495
+    v52 = Call v49, v47, v51 calleeKey="log" calleeName="console.log" @491
+    Jump -> next b5() @483
+  b10() role=IterationCleanup subject=v37:
+    v53 = CatchException @472
+    IteratorClose v37 completion=Throw @472
+    Rethrow v53 @472
+  b11(v55):
+    Jump -> next b12() @441
+  b12():
+    v56 = Undefined @452
+    Return v56 @452
 }
 function f1 name="tell" module=m0 position=103 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
-    v1 = PropGet v0 key="byteLength"
-    v2 = String string="|"
-    v3 = Add v1, v2
-    v4 = Builtin builtin=ArrayBuffer
-    v5 = Builtin builtin=ArrayBufferIsView
-    v6 = Call v5, v4, v0 calleeName="ArrayBuffer.isView"
-    v7 = Convert v6 declared={type=boolean site=w11} illTypedCause=DeclarationWithoutBody
-    v8 = Add v3, v7
-    v9 = String string="|"
-    v10 = Add v8, v9
-    v11 = Builtin builtin=Uint8Array
-    v12 = InstanceOf v0, v11 writtenExpression="v instanceof Uint8Array"
-    v13 = Add v10, v12
-    v14 = String string="|"
-    v15 = Add v13, v14
-    v16 = Builtin builtin=ArrayBuffer
-    v17 = InstanceOf v0, v16 writtenExpression="v instanceof ArrayBuffer"
-    v18 = Add v15, v17
-    v19 = Convert v18 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}
-    Return v19
+    Jump -> next b1() @103
+  b1():
+    v1 = PropGet v0 key="byteLength" @152
+    v2 = String string="|" @167
+    v3 = Add v1, v2 @152
+    v4 = Builtin builtin=ArrayBuffer @173
+    v5 = Builtin builtin=ArrayBufferIsView @173
+    v6 = Call v5, v4, v0 calleeName="ArrayBuffer.isView" @185
+    v7 = Convert v6 declared={type=boolean site=w11} illTypedCause=DeclarationWithoutBody @173
+    v8 = Add v3, v7 @185
+    v9 = String string="|" @197
+    v10 = Add v8, v9 @185
+    v11 = Builtin builtin=Uint8Array @217
+    v12 = InstanceOf v0, v11 writtenExpression="v instanceof Uint8Array" @217
+    v13 = Add v10, v12 @217
+    v14 = String string="|" @231
+    v15 = Add v13, v14 @217
+    v16 = Builtin builtin=ArrayBuffer @251
+    v17 = InstanceOf v0, v16 writtenExpression="v instanceof ArrayBuffer" @251
+    v18 = Add v15, v17 @251
+    v19 = Convert v18 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]} @251
+    Return v19 @251
 }
 function f2 module=m1 position=145 role=Library flags=[IsChecked] length=3 enclosingRuntimeFunction=JSBufferConstructorFrom thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = TypeTest v0 testedType=null|object
-    Branch v3 -> taken b1(| 0), notTaken b15(| 0)
-  b1(v4):
-    v5 = Convert v4 declared={type=undefined|null|string|symbol|object flags=[IsExpected]}
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key=@"inherits" [isFreeName]
-    v8 = Integer integer=4
-    v9 = Convert v5 declared={type=undefined|null|string|symbol|object flags=[IsExpected]}
-    v10 = Call v7, -, v8, v9
-    v11 = ToBoolean v10
-    Branch v11 -> taken b2(| 0), notTaken b3(| 0)
-  b2(v12):
-    v13 = Builtin builtin=Buffer [isNotReadFromHolder]
-    v14 = Convert v1 declared={type=number flags=[IsExpected]}
-    v15 = Convert v2 declared={type=number flags=[IsExpected]}
-    v16 = Construct v13, -, v9, v14, v15 calleeName="$Buffer"
-    v17 = Convert v16 declared={type=undefined|null|Buffer site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    Return v17
-  b3(v18):
-    v19 = HasJSType v9 first=4 last=2
-    v20 = ToBoolean v19
-    Branch v20 -> taken b4(| 0), notTaken b5(| 0)
-  b4(v21):
-    v22 = Builtin builtin=Buffer [isNotReadFromHolder]
-    v23 = Convert v9 declared={type=undefined|null|DataView|TypedArray|Uint8Array flags=[IsExpected]}
-    v24 = Convert v1 declared={type=number flags=[IsExpected]}
-    v25 = Convert v2 declared={type=number flags=[IsExpected]}
-    v26 = Construct v22, -, v23, v24, v25 calleeName="$Buffer"
-    v27 = Convert v26 declared={type=undefined|null|Buffer site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    Return v27
-  b5(v28):
-    v29 = PropGet v9 key="valueOf"
-    v30 = Convert v29 declared={type=undefined|null|function flags=[IsExpected]}
-    v31 = PropGet v9 key="valueOf"
-    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]}
-    v33 = Call v32, v9 calleeKey="valueOf" calleeName="value.valueOf"
-    v34 = TypeTest v33 testedType=null|object
-    Branch v34 -> taken b6(| 0), notTaken b7(| 0)
-  b6(v35):
-    v36 = Builtin builtin=Buffer [isNotReadFromHolder]
-    v37 = Builtin builtin=BufferFrom
-    v38 = Convert v1 declared={type=number flags=[IsExpected]}
-    v39 = Convert v2 declared={type=number flags=[IsExpected]}
-    v40 = Call v37, v36, v35, v38, v39 calleeName="Buffer.from"
-    ReturnCall v40
-  b7(v41):
-    v42 = Convert v9 declared={type=undefined|null|string|symbol|object flags=[IsExpected]}
-    v43 = PropGet v42 key="length"
-    v44 = Convert v43 declared={type=number flags=[IsExpected]}
-    v45 = TypeTest v44 testedType=undefined
-    Branch v45 -> taken b8(| 0), notTaken b13(| 0)
-  b8(v46):
-    v47 = Builtin builtin=GlobalThis
-    v48 = PropGet v47 key=@"inherits" [isFreeName]
-    v49 = Integer integer=4
-    v50 = PropGet v42 key="buffer"
-    v51 = Call v48, -, v49, v50
-    v52 = ToBoolean v51
-    Branch v52 -> taken b9(| 0), notTaken b10(| 0)
-  b9(v53):
-    Jump -> next b14(v46)
-  b10(v54):
-    v55 = PropGet v42 key="type"
-    v56 = PropGet v42 key="data"
-    v57 = String string="Buffer"
-    v58 = StrictEq v55, v57
-    Branch v58 -> taken b11(| 0), notTaken b12(| 0)
-  b11(v59):
-    v60 = Builtin builtin=ArrayIsArray [isNotReadFromHolder]
-    v61 = Builtin builtin=Array [isNotReadFromHolder]
-    v62 = Convert v56 declared={type=undefined|null|Array flags=[IsExpected]}
-    v63 = Call v60, v61, v62
-    v64 = Builtin builtin=Buffer [isNotReadFromHolder]
-    v65 = Integer
-    v66 = Construct v64, -, v65 calleeName="$Buffer"
-    v67 = Convert v66 declared={type=undefined|null|Buffer site=w19 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    Return v67
-  b12(v68):
-    v69 = PropGet v42 key=@@toPrimitive
-    v70 = Convert v69 declared={type=undefined|null|function flags=[IsExpected]}
-    v71 = Convert v70 declared={type=undefined|null|function flags=[IsExpected]}
-    v72 = String string="string"
-    v73 = Call v71, v42, v72
-    v74 = Convert v73 declared={type=undefined|null|string flags=[IsExpected]}
-    v75 = Builtin builtin=Buffer [isNotReadFromHolder]
-    v76 = Convert v74 declared={type=undefined|null|string} illTypedCause=Assertion
-    v77 = Convert v1 declared={type=number flags=[IsExpected]}
-    v78 = Construct v75, -, v76, v77 calleeName="$Buffer"
-    v79 = Convert v78 declared={type=undefined|null|Buffer site=w21 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    Return v79
-  b13(v80):
-    Jump -> next b14(v80)
-  b14(v81):
-    v82 = Convert v81 declared={type=number} illTypedCause=Assertion
-    v83 = Builtin builtin=Buffer [isNotReadFromHolder]
-    v84 = Integer
-    v85 = Construct v83, -, v84 calleeName="$Buffer"
-    v86 = Convert v85 declared={type=undefined|null|Buffer site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    Return v86
-  b15(v87):
-    v88 = Builtin builtin=GlobalThis
-    v89 = PropGet v88 key=@"makeErrorWithCode" [isFreeName]
-    v90 = Integer integer=112
-    v91 = String string="first argument"
-    v92 = Data data=d1
-    v93 = Convert v87 declared={type=undefined|null|string|symbol|object flags=[IsExpected]}
-    v94 = Call v89, -, v90, v91, v92, v93
-    Throw v94
+    Jump -> next b1() @145
+  b1():
+    v3 = TypeTest v0 testedType=string @207
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0) @207
+  b2(v4):
+    Jump -> next b3() @207
+  b3():
+    v5 = Builtin builtin=Buffer [isNotReadFromHolder] @245
+    v6 = Convert v4 declared={type=undefined|null|string} illTypedCause=Assertion @253
+    v7 = Convert v1 declared={type=number flags=[IsExpected]} @260
+    v8 = Construct v5, -, v6, v7 calleeName="$Buffer" @245 constructs
+    v9 = Convert v8 declared={type=undefined|null|Buffer site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @241
+    Return v9 @241
+  b4(v10):
+    Jump -> next b5() @207
+  b5():
+    v11 = TypeTest v10 testedType=function @286
+    Branch v11 -> taken b6(| 0), notTaken b7(| 0) @286
+  b6(v12):
+    Jump -> next b76(v12) @286
+  b7(v13):
+    v14 = TypeTest v13 testedType=null|object @286
+    Branch v14 -> taken b8(| 0), notTaken b75(| 0) @286
+  b8(v15):
+    Jump -> next b9() @286
+  b9():
+    v16 = Convert v15 declared={type=undefined|null|string|symbol|object flags=[IsExpected]} @315
+    v17 = TypeTest v16 testedType=null @315
+    Branch v17 -> taken b10(| 0), notTaken b11(| 0) @315
+  b10(v18):
+    Jump -> next b76(v18) @315
+  b11(v19):
+    Jump -> next b12() @315
+  b12():
+    v20 = Builtin builtin=GlobalThis @341
+    v21 = PropGet v20 key=@"inherits" [isFreeName] @341
+    v22 = Integer integer=4 @341
+    v23 = Convert v19 declared={type=undefined|null|string|symbol|object flags=[IsExpected]} @362
+    v24 = Call v21, -, v22, v23 @341
+    v25 = ToBoolean v24 @341
+    Branch v25 -> taken b13(| 0), notTaken b15(| 0) @341
+  b13(v26):
+    Jump -> next b14() @341
+  b14():
+    v27 = Builtin builtin=Buffer [isNotReadFromHolder] @381
+    v28 = Convert v1 declared={type=number flags=[IsExpected]} @396
+    v29 = Convert v2 declared={type=number flags=[IsExpected]} @414
+    v30 = Construct v27, -, v23, v28, v29 calleeName="$Buffer" @381 constructs
+    v31 = Convert v30 declared={type=undefined|null|Buffer site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @377
+    Return v31 @377
+  b15(v32):
+    Jump -> next b16() @341
+  b16():
+    v33 = HasJSType v23 first=4 last=2 @431
+    v34 = ToBoolean v33 @431
+    Branch v34 -> taken b17(| 0), notTaken b19(| 0) @431
+  b17(v35):
+    Jump -> next b18() @431
+  b18():
+    v36 = Builtin builtin=Buffer [isNotReadFromHolder] @468
+    v37 = Convert v23 declared={type=undefined|null|DataView|TypedArray|Uint8Array flags=[IsExpected]} @476
+    v38 = Convert v1 declared={type=number flags=[IsExpected]} @483
+    v39 = Convert v2 declared={type=number flags=[IsExpected]} @501
+    v40 = Construct v36, -, v37, v38, v39 calleeName="$Buffer" @468 constructs
+    v41 = Convert v40 declared={type=undefined|null|Buffer site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @464
+    Return v41 @464
+  b19(v42):
+    Jump -> next b20() @431
+  b20():
+    v43 = PropGet v23 key="valueOf" @531
+    v44 = Convert v43 declared={type=undefined|null|function flags=[IsExpected]} @531
+    v45 = ToBoolean v44 @531
+    Branch v45 -> taken b21(| 0), notTaken b23(| 0) @531
+  b21(v46):
+    Jump -> next b22() @531
+  b22():
+    v47 = PropGet v23 key="valueOf" @548
+    v48 = Convert v47 declared={type=undefined|null|function flags=[IsExpected]} @548
+    v49 = Call v48, v23 calleeKey="valueOf" calleeName="value.valueOf" @554
+    Jump -> next b24(v49) @548
+  b23(v50):
+    Jump -> next b24(v50) @531
+  b24(v51):
+    v52 = TypeTest v51 testedType=undefined|null @573
+    Branch v52 -> taken b25(| 0), notTaken b26(| 0) @573
+  b25(v53):
+    Jump -> next b39(v23) @573
+  b26(v54):
+    Jump -> next b27() @573
+  b27():
+    v55 = StrictEq v54, v23 @573
+    Branch v55 -> taken b28(| 0, 1), notTaken b29(| 0, 1) @573
+  b28(v56, v57):
+    Jump -> next b39(v57) @573
+  b29(v58, v59):
+    Jump -> next b30() @573
+  b30():
+    v60 = TypeTest v58 testedType=string @614
+    Branch v60 -> taken b31(| 0), notTaken b32(| 0) @614
+  b31(v61):
+    Jump -> next b37(v61) @614
+  b32(v62):
+    Jump -> next b33() @614
+  b33():
+    v63 = TypeTest v62 testedType=function @645
+    Branch v63 -> taken b34(| 0), notTaken b35(| 0) @645
+  b34(v64):
+    Jump -> next b39(v59) @645
+  b35(v65):
+    v66 = TypeTest v65 testedType=null|object @645
+    Branch v66 -> taken b36(| 0), notTaken b38(| 0) @645
+  b36(v67):
+    Jump -> next b37(v67) @645
+  b37(v68):
+    v69 = Builtin builtin=Buffer [isNotReadFromHolder] @690
+    v70 = Builtin builtin=BufferFrom @690
+    v71 = Convert v1 declared={type=number flags=[IsExpected]} @711
+    v72 = Convert v2 declared={type=number flags=[IsExpected]} @729
+    v73 = Call v70, v69, v68, v71, v72 calleeName="Buffer.from" @697
+    ReturnCall v73 @697
+  b38(v74):
+    Jump -> next b39(v59) @645
+  b39(v75):
+    v76 = Convert v75 declared={type=undefined|null|string|symbol|object flags=[IsExpected]} @769
+    v77 = PropGet v76 key="length" @769
+    v78 = Convert v77 declared={type=number flags=[IsExpected]} @769
+    v79 = TypeTest v78 testedType=undefined @791
+    Branch v79 -> taken b40(| 0), notTaken b65(| 0) @791
+  b40(v80):
+    Jump -> next b41() @791
+  b41():
+    v81 = Builtin builtin=GlobalThis @820
+    v82 = PropGet v81 key=@"inherits" [isFreeName] @820
+    v83 = Integer integer=4 @820
+    v84 = PropGet v76 key="buffer" @841
+    v85 = Call v82, -, v83, v84 @820
+    v86 = ToBoolean v85 @820
+    Branch v86 -> taken b42(| 0), notTaken b43(| 0) @820
+  b42(v87):
+    Jump -> next b66(v80) @820
+  b43(v88):
+    Jump -> next b44() @820
+  b44():
+    v89 = TypeTest v76 testedType=undefined|null @1041
+    Branch v89 -> taken b45(| 0), notTaken b47(| 0) @1041
+  b45(v90):
+    Jump -> next b46() @1041
+  b46() frequency=Unlikely:
+    v91 = NewRuntimeError runtimeError=NotDestructurable name="type" @1041
+    Throw v91 @1041
+  b47(v92):
+    v93 = PropGet v92 key="type" @1041 @1026
+    v94 = PropGet v92 key="data" @1041 @1032
+    v95 = String string="Buffer" @1065
+    v96 = StrictEq v93, v95 @1056
+    Branch v96 -> taken b48(| 0), notTaken b55(| 0) @1056
+  b48(v97):
+    Jump -> next b49() @1056
+  b49():
+    v98 = Builtin builtin=ArrayIsArray [isNotReadFromHolder] @1077
+    v99 = Builtin builtin=Array [isNotReadFromHolder] @1077
+    v100 = Convert v94 declared={type=undefined|null|Array flags=[IsExpected]} @1086
+    v101 = Call v98, v99, v100 @1077
+    v102 = ToBoolean v101 @1077
+    Branch v102 -> taken b50(| 0), notTaken b54(| 0) @1077
+  b50(v103):
+    Jump -> next b51() @1077
+  b51():
+    v104 = Convert v100 declared={type=undefined|null|Array} illTypedCause=Assertion @1105
+    v105 = PropGet v104 key="length" @1105
+    v106 = Convert v105 declared={type=number site=w18} illTypedCause=Assertion @1105
+    v107 = Integer @1120
+    v108 = LessEq v106, v107 @1105
+    Branch v108 -> taken b52(), notTaken b53() @1105
+  b52():
+    v109 = Builtin builtin=Buffer [isNotReadFromHolder] @1134
+    v110 = Integer @1142
+    v111 = Construct v109, -, v110 calleeName="$Buffer" @1134 constructs
+    v112 = Convert v111 declared={type=undefined|null|Buffer site=w19 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1130
+    Return v112 @1130
+  b53():
+    v113 = Builtin builtin=Buffer [isNotReadFromHolder] @1163
+    v114 = Construct v113, -, v104 calleeName="$Buffer" @1163 constructs
+    v115 = Convert v114 declared={type=undefined|null|Buffer site=w20 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1159
+    Return v115 @1159
+  b54(v116):
+    Jump -> next b56() @1077
+  b55(v117):
+    Jump -> next b56() @1056
+  b56():
+    v118 = PropGet v76 key=@@toPrimitive @1209
+    v119 = Convert v118 declared={type=undefined|null|function flags=[IsExpected]} @1209
+    v120 = TypeTest v119 testedType=function @1244
+    Branch v120 -> taken b57(| 0), notTaken b63(| 0) @1244
+  b57(v121):
+    Jump -> next b58() @1244
+  b58():
+    v122 = Convert v121 declared={type=undefined|null|function flags=[IsExpected]} @1305
+    v123 = String string="string" @1330
+    v124 = Call v122, v76, v123 @1305
+    v125 = Convert v124 declared={type=undefined|null|string flags=[IsExpected]} @1305
+    v126 = TypeTest v125 testedType=string @1351
+    Branch v126 -> taken b59(| 0), notTaken b61(| 0) @1351
+  b59(v127):
+    Jump -> next b60() @1351
+  b60():
+    v128 = Builtin builtin=Buffer [isNotReadFromHolder] @1403
+    v129 = Convert v127 declared={type=undefined|null|string} illTypedCause=Assertion @1411
+    v130 = Convert v1 declared={type=number flags=[IsExpected]} @1422
+    v131 = Construct v128, -, v129, v130 calleeName="$Buffer" @1403 constructs
+    v132 = Convert v131 declared={type=undefined|null|Buffer site=w21 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1399
+    Return v132 @1399
+  b61(v133):
+    Jump -> next b62() @1351
+  b62():
+    Jump -> next b64() @1399
+  b63(v134):
+    Jump -> next b64() @1244
+  b64():
+    Jump -> next b76(v76) @1399
+  b65(v135):
+    Jump -> next b66(v135) @791
+  b66(v136):
+    v137 = TypeTest v136 testedType=number @868
+    Branch v137 -> taken b67(| 0), notTaken b73(| 0) @868
+  b67(v138):
+    Jump -> next b68() @868
+  b68():
+    v139 = Convert v138 declared={type=number} illTypedCause=Assertion @934
+    v140 = Integer @949
+    v141 = LessEq v139, v140 @934
+    Branch v141 -> taken b69(| 0), notTaken b71(| 0) @934
+  b69(v142):
+    Jump -> next b70() @934
+  b70():
+    v143 = Builtin builtin=Buffer [isNotReadFromHolder] @963
+    v144 = Integer @971
+    v145 = Construct v143, -, v144 calleeName="$Buffer" @963 constructs
+    v146 = Convert v145 declared={type=undefined|null|Buffer site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @959
+    Return v146 @959
+  b71(v147):
+    Jump -> next b72() @934
+  b72():
+    v148 = Builtin builtin=Buffer [isNotReadFromHolder] @992
+    v149 = Construct v148, -, v76 calleeName="$Buffer" @992 constructs
+    v150 = Convert v149 declared={type=undefined|null|Buffer site=w17 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @988
+    Return v150 @988
+  b73(v151):
+    Jump -> next b74() @868
+  b74():
+    v152 = Builtin builtin=Buffer [isNotReadFromHolder] @912
+    v153 = Integer @920
+    v154 = Construct v152, -, v153 calleeName="$Buffer" @912 constructs
+    v155 = Convert v154 declared={type=undefined|null|Buffer site=w15 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @908
+    Return v155 @908
+  b75(v156):
+    Jump -> next b76(v156) @286
+  b76(v157):
+    v158 = Builtin builtin=GlobalThis @1468
+    v159 = PropGet v158 key=@"makeErrorWithCode" [isFreeName] @1468
+    v160 = Integer integer=112 @1468
+    v161 = String string="first argument" @1495
+    v162 = Data data=d1 @1517
+    v163 = Convert v157 declared={type=undefined|null|string|symbol|object flags=[IsExpected]} @1588
+    v164 = Call v159, -, v160, v161, v162, v163 @1468
+    Throw v164 @1597
 }
-function f3 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=ArrayIteratorPrototypeNext function=f3
+function f3 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 runtimefunction id=JSBufferConstructorFrom function=f2
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 36, patchpoints: 13, rare instructions: 110, polls: 2
+# CHECK-NEXT: instructions: 139, patchpoints: 48, rare instructions: 126, polls: 1
 # CHECK-NEXT: end of function f0

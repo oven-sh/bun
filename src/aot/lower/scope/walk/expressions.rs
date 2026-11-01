@@ -6,7 +6,7 @@ use bun_sema::hir::{
     PropKey, PropKind, Span, is_proto_setter,
 };
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, JsxCallee, JsxImport, RequireCallForm,
+    ImportSite, ImportSiteKind, ImportSpecifier, JsxCallee, JsxImport, RequireCallForm,
     find_module_printed_as_require, find_require_call, jsx_callee, may_require_get_members,
 };
 use smallvec::SmallVec;
@@ -38,7 +38,10 @@ fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_coun
         ImportSiteKind::ImportMetaResolve(_) => match answer {
             SiteAnswer::Module(ModuleRef::External { .. }) => false,
             SiteAnswer::Module(_) => site.consults_resolver && argument_count == 1,
-            SiteAnswer::Computed(_) | SiteAnswer::Failed(_) | SiteAnswer::Erased => false,
+            SiteAnswer::Computed(_) => {
+                argument_count == 1 && !matches!(site.specifier, ImportSpecifier::Constant(_))
+            }
+            SiteAnswer::Failed(_) | SiteAnswer::Erased => false,
         },
         _ => false,
     }

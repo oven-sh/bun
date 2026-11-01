@@ -642,7 +642,7 @@ function f88 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="say"
-# CHECK: module=m0 position=512 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f22|f39 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=512 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f22|f39 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f9 module=
 # CHECK: m0 position=1312 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=WeakMap<anything, number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
@@ -716,55 +716,51 @@ function f88 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
-# CHECK: m0 position=2134 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number flags=[IsExpected]}] functionTypes=[f67] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f90 fallback=f92} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
-# CHECK-NEXT: v3: anything ~ undefined|number = CallDirect v2 function=f90
-# CHECK-NEXT: ReturnCall v3
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: anything ~ undefined|number = CallDirect v0 function=f92
-# CHECK-NEXT: ReturnCall v4
+# CHECK: m0 position=2134 kind=Arrow flags=[IsChecked] captures=[{type=f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number flags=[IsExpected]}] functionTypes=[f67] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
+# CHECK-NEXT: v1: anything = Call v0 calleeName="make" accessSite=24 callees=[f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19]
+# CHECK-NEXT: v2: anything ~ undefined|null|WeakMap<undefined|null|object, number> = Expect v1 expectedType=undefined|null|WeakMap<undefined|null|object, number>
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=undefined|null|WeakMap<undefined|null|object, number>
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4(| 0)
+# CHECK-NEXT: b1(v4: undefined|null|WeakMap<undefined|null|object, number>):
+# CHECK-NEXT: v5: WeakMap<undefined|null|object, number> = RequireObjectCoercible v4 name="get"
+# CHECK-NEXT: v6: boolean = IsPristine v5 builtinClass=WeakMap aspects=[Names]
+# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3(v5)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v7: Object = GetModuleVariable variable=g6
+# CHECK-NEXT: v8: anything ~ undefined|number = CallBuiltin v5, v7 overload=WeakMapPrototypeGet/0 accessSite=28 @0 tail
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b3(v9: boolean|number|string|symbol|bigint|object ~ WeakMap<undefined|null|object, number>) frequency=Rare:
+# CHECK-NEXT: v10: anything = PropGet v9 key="get" accessSite=27
+# CHECK-NEXT: v11: Object = GetModuleVariable variable=g6
+# CHECK-NEXT: v12: anything = Call v10, v9, v11 calleeKey="get" calleeName="get" accessSite=28 callees=[f44, builtin(MapPrototypeGet), builtin(WeakMapPrototypeGet), builtin(WebAssemblyTablePrototypeGet), ..]
+# CHECK-NEXT: ReturnCall v12
+# CHECK-NEXT: b4(v13: boolean|number|string|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: v14: boolean|number|string|symbol|bigint|object = Upcast v13 castType=anything
+# CHECK-NEXT: v15: boolean|number|string|symbol|bigint|object = RequireObjectCoercible v14 name="get"
+# CHECK-NEXT: Jump -> next b3(v15)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f39 module=
-# CHECK: m0 position=4755 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=boolean}] functionTypes=[f84] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f91 fallback=f93} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
-# CHECK-NEXT: v3: boolean = CallDirect v2 function=f91
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: boolean = CallDirect v0 function=f93
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="say"
-# CHECK: module=m0 position=512 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f22|f39 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=1}]} {
-# CHECK-NEXT: b0(v1: f22|f39):
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=f22
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3(| 0)
-# CHECK-NEXT: b1(v3: f22) handler=b4():
-# CHECK-NEXT: v4: anything ~ undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 = GetCapture v3 function=f22
-# CHECK-NEXT: v5: anything ~ undefined|number = CallDirect v4 function=f22 accessSite=5
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=undefined|null|boolean|number|string|symbol|bigint
-# CHECK-NEXT: Branch v6 -> taken b5(), notTaken b2(| 0)
-# CHECK-NEXT: b2(v7: object) frequency=Rare handler=b4():
-# CHECK-NEXT: v8: string = ToString v7 calledBuiltin=String
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b3(v9: f39) handler=b4():
-# CHECK-NEXT: v10: anything ~ undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 = GetCapture v9 function=f39
-# CHECK-NEXT: v11: boolean = CallDirect v10 function=f39 accessSite=5
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4() role=CatchHandler:
-# CHECK-NEXT: v12: anything = CatchValue
-# CHECK-NEXT: v13: "throws " = String string="throws "
-# CHECK-NEXT: v14: anything ~ undefined|null|Error = Upcast v12 castType=anything
-# CHECK-NEXT: v15: anything = PropGet v14 key="name" accessSite=7
-# CHECK-NEXT: v16: anything ~ undefined|null|string = Expect v15 expectedType=undefined|null|string
-# CHECK-NEXT: v17: string = Add v13, v16
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: Return v18
+# CHECK: m0 position=4755 kind=Arrow flags=[IsChecked] captures=[{type=f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=boolean}] functionTypes=[f84] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
+# CHECK-NEXT: v1: anything = Call v0 calleeName="make" accessSite=101 callees=[f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19]
+# CHECK-NEXT: v2: anything ~ undefined|null|WeakMap<undefined|null|object, number> = Expect v1 expectedType=undefined|null|WeakMap<undefined|null|object, number>
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=WeakMap
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4(| 0)
+# CHECK-NEXT: b1(v4: WeakMap ~ WeakMap<undefined|null|object, number>):
+# CHECK-NEXT: v5: boolean = IsPristine v4 builtinClass=WeakMap aspects=[Names]
+# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v6: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b5(v6)
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v7: builtin(WeakMapPrototype) = Builtin builtin=WeakMapPrototype
+# CHECK-NEXT: v8: boolean = HasInPrototypeChain v4, v7
+# CHECK-NEXT: Jump -> next b5(v8)
+# CHECK-NEXT: b4(v9: anything ~ undefined|null):
+# CHECK-NEXT: v10: builtin(WeakMapPrototype) = Builtin builtin=WeakMapPrototype
+# CHECK-NEXT: v11: boolean = HasInPrototypeChain v9, v10
+# CHECK-NEXT: Jump -> next b5(v11)
+# CHECK-NEXT: b5(v12: boolean):
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }

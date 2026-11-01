@@ -55,8 +55,9 @@ typesite w16 module=m0 position=505 kind=Result
 typesite w17 module=m0 position=504 kind=CallResult
 typesite w18 module=m0 position=610 kind=CallResult
 typesite w19 module=m0 position=540 kind=CallResult
+typesite w20 module=m1 position=302 kind=Variable
 layout L0 kind=Instance name="Point" module=m0 position=144 constructor=f2 fields=[{key="x" declared={type=number site=w6} flags=[IsRequired]}, {key="y" declared={type=number site=w7} flags=[IsRequired]}] ownFieldCount=2
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything|absent} flags=[IsImmutable]}] ownFieldCount=1
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything|absent} flags=[IsImmutable] variableName="loose"}] ownFieldCount=1
 variable g0 name="Point" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -136,9 +137,9 @@ function f2 name="Point" module=m0 position=191 kind=BaseConstructor flags=[HasN
   b0(v0: anything, v1: number, v2: number):
     Jump -> next b1() @191
   b1():
-    v3 = GetConstructPrototype v0 layout=L0 @138
-    v4 = NewObject v3 layout=L0 @138
-    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @138
+    v3 = GetConstructPrototype v0 layout=L0 @191
+    v4 = NewObject v3 layout=L0 @191
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @191
     v6 = CallDirect v5 function=f4 @191
     v7 = Convert v1 declared={type=number site=w13} @220
     PropSet v5, v7 key="x" @220
@@ -154,7 +155,7 @@ function f2 name="Point" module=m0 position=191 kind=BaseConstructor flags=[HasN
   b4(v15):
     Return v15 @236
 }
-function f3 name="steps" module=m0 position=377 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=number site=w2}] thisType={type=anything} results=[{type=undefined|null|Generator<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f3 name="steps" module=m0 position=377 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=number site=w2 variableName="round"}] thisType={type=anything} results=[{type=undefined|null|Generator<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: env L1, v1: number, v2: anything, v3: function):
     Jump -> next b1() @377
   b1():
@@ -238,24 +239,30 @@ function f6 name="next" module=m1 position=25 kind=Method role=Library flags=[Ha
     Jump -> next b1() @25
   b1():
     v2 = StepGenerator v0, v1 check=IsGenerator @91
-    v3 = ResultAt v2 @188
-    v4 = ResultAt v2 index=1 @251
-    v5 = Integer integer=2 @315
-    v6 = StrictEq v4, v5 @304
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @304
-  b2(v7):
-    Jump -> next b3() @304
+    v3 = ResultAt v2 @186
+    v4 = ResultAt v2 index=1 @249
+    v5 = Integer integer=1 @320
+    v6 = StrictEq v4, v5 @309
+    v7 = Convert v6 declared={type=boolean site=w20} @309
+    v8 = Integer integer=2 @370
+    v9 = StrictEq v4, v8 @359
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @359
+  b2(v10):
+    Jump -> next b3() @359
   b3():
-    v8 = ResumeGenerator v0, v1 @362
-    Return v8 @362
-  b4(v9):
-    Jump -> next b5() @304
-  b5():
-    v10 = Integer integer=1 @460
-    v11 = StrictEq v9, v10 @449
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @421
-    v13 = CreateIteratorResult v3, v12 @421
-    Return v13 @421
+    v11 = ResumeGenerator v0, v1 @427
+    v12 = PropGet v11 key="value" @492
+    v13 = PropGet v11 key="done" @521
+    v14 = Boolean boolean=true @537
+    v15 = StrictEq v13, v14 @521
+    v16 = Convert v15 declared={type=boolean site=w20} @514
+    Jump -> next b5(v12, v16) @514
+  b4(v17):
+    Jump -> next b5(v3, v7) @359
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @560
+    v21 = CreateIteratorResult v18, v20 @560
+    Return v21 @560
 }
 runtimefunction id=GeneratorPrototypeNext function=f6 visibility=Private
 # -- generated: f0 use4 steps
@@ -299,7 +306,7 @@ runtimefunction id=GeneratorPrototypeNext function=f6 visibility=Private
 # CHECK-NEXT: ReturnCall v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="steps"
-# CHECK: module=m0 position=377 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=int[0, 2] site=w2}] thisType={type=undefined} results=[{type=Generator<undefined|null|string, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f3 body=f10 promiseParameter=4} {
+# CHECK: module=m0 position=377 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=int[0, 2] site=w2 variableName="round"}] thisType={type=undefined} results=[{type=Generator<undefined|null|string, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f3 body=f10 promiseParameter=4} {
 # CHECK-NEXT: b0(v0: env L1, v1: int[0, 2], v2: undefined, v3: function):
 # CHECK-NEXT: v4: Generator = NewGenerator v3 function=f3
 # CHECK-NEXT: v5: anything = CallDirect v0, v1, v2, v3, v4 function=f10
@@ -332,7 +339,7 @@ runtimefunction id=GeneratorPrototypeNext function=f6 visibility=Private
 # CHECK-NEXT: TestAndBranch v17 -> taken b2(), notTaken b5()
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: v19: object = CallDirect v10, v18 function=f6
+# CHECK-NEXT: v19: L(IteratorResult) = CallDirect v10, v18 function=f6
 # CHECK-NEXT: v20: boolean = PropGetAndTest v19 key="done"
 # CHECK-NEXT: TestAndBranch v20 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3() frequency=Rare:
@@ -369,7 +376,7 @@ runtimefunction id=GeneratorPrototypeNext function=f6 visibility=Private
 # CHECK-NEXT: Jump -> next b11(v35) @663 tail
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="steps"
-# CHECK: module=m0 position=377 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=int[0, 2] site=w2}] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f3 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {}]} creator=Coroutine{ramp=f3 body=f10 promiseParameter=4} inlineFrames=[{}, {callee=f14 callPosition=454 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f5 callPosition=587 module=m0}, {callee=f4 callPosition=191 parent=1 module=m0}] {
+# CHECK: module=m0 position=377 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=int[0, 2] site=w2 variableName="round"}] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f3 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {}]} creator=Coroutine{ramp=f3 body=f10 promiseParameter=4} inlineFrames=[{}, {callee=f14 callPosition=454 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f5 callPosition=587 module=m0}, {callee=f4 callPosition=191 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: env L1, v1: int[0, 2], v2: undefined, v3: function, v4: Generator):
 # CHECK-NEXT: v5: boolean = IsGeneratorRunning v4
 # CHECK-NEXT: Branch v5 -> taken b4(), notTaken b1()

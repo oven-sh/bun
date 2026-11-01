@@ -38,6 +38,7 @@ impl<'s> FoldInputs<'s> {
             roots: slice_in(&trie.roots, arena),
             root_filter,
             features: options.features,
+            features_are_unknown: options.features_are_unknown,
             preserves_unused_imports: options.preserves_unused_imports,
             minifies_syntax: options.minifies_syntax,
             max_string_bytes: options.max_string_bytes,
@@ -132,6 +133,10 @@ impl<'s> FoldInputs<'s> {
 
     pub(super) fn has_feature(&self, flag: Atom) -> bool {
         self.features.contains(&flag)
+    }
+
+    pub(super) fn features_are_unknown(&self) -> bool {
+        self.features_are_unknown
     }
 
     #[inline]

@@ -267,10 +267,19 @@ impl MockedModules {
     fn is_empty(&self) -> bool {
         !self.is_every_module && self.modules.is_empty()
     }
+
+    pub(super) fn is_every_module(&self) -> bool {
+        self.is_every_module
+    }
+
+    /// Those that are named, where that is not all of them.
+    pub(super) fn iter(&self) -> impl Iterator<Item = &ModuleRef> + '_ {
+        self.modules.iter()
+    }
 }
 
 // A file is bound without a look at the others, any of which may hold the mock.
-fn find_mocked_modules(
+pub(super) fn find_mocked_modules(
     input: &BindInput<'_, '_>,
     scans: &Scans,
     modules: &ModuleSet,
@@ -283,6 +292,10 @@ fn find_mocked_modules(
     for module in (input.mocked_modules.iter()).filter_map(|module| replaced_modules.find(module)) {
         mocked.out_of_sight.push(module);
         mocked.out_of_sight.extend(modules.forms_of(module));
+    }
+    for module in input.mocked_modules {
+        let found = replaced_modules.find_in_other_programs(module);
+        mocked.out_of_sight.extend(found.iter().copied());
     }
     mocked.modules.extend(mocked.out_of_sight.iter().copied());
     for &file in &modules.compiled_files {

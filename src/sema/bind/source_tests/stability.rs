@@ -99,7 +99,7 @@ const PARAMETERS: &[(&str, &str, BindingStability)] = &[
     (
         "a.cjs",
         r#"function f(p) { "use strict"; arguments; }"#,
-        MappedArgument,
+        Stable,
     ),
     (
         "a.cjs",

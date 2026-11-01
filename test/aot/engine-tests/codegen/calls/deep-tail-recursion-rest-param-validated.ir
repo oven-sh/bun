@@ -1,4 +1,5 @@
 # deep-tail-recursion-through-rest-parameters.js in a build that checks itself while it runs. The output is that of plain Bun.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # OPTIONS: validate
 # RUN: lower-to-air size f1
@@ -120,9 +121,9 @@ function f7 module=m1 kind=Module thisType={type=anything} results=[{type=anythi
 # -- generated: throughValue
 # CHECK-LABEL: function {{*}}name="throughValue"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 345, patchpoints: 122, rare instructions: 496
+# CHECK-NEXT: instructions: 335, patchpoints: 118, rare instructions: 494
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="throughValue"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 80, patchpoints: 24, rare instructions: 57
+# CHECK-NEXT: instructions: 87, patchpoints: 22, rare instructions: 67
 # CHECK-NEXT: end of function f10

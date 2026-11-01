@@ -1,0 +1,19 @@
+# A pass may let an operation go that may throw or run code only where somebody answers for it. A build that verifies each pass holds every pass to that.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SinkAllocations
+# RUN(SELECTED): pass Select
+# CHECK: = Call v0
+# CHECK: = Call v1
+# SELECTED: = Call v0
+# SELECTED: = Call v1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="callsTwiceBesideAnObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Call v0, -
+    v4 = Call v1, -, v2
+    Return v4
+}

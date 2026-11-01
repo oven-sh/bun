@@ -1,11 +1,87 @@
 # x.get(k), x.has(k), x.set(k, v), x.add(k) where nothing says what x is: a Map, a Set, a WeakMap, a WeakSet, an heir of one, one with a method of its own or another prototype, a frozen one,
 # and objects of the program's own that have methods of these names. Keys: objects, symbols, primitives; there, not there, deleted, put back; enough of them that the tables grow.
+# -- source: collection-methods-unknown-receivers.js
+# // x.get(k), x.has(k), x.set(k, v), x.add(k) where nothing says what x is: a Map, a Set, a WeakMap, a WeakSet, an heir of one, one with a method of its own or another prototype, a frozen one,
+# // and objects of the program's own that have methods of these names. Keys: objects, symbols, primitives; there, not there, deleted, put back; enough of them that the tables grow.
+# const lines = [];
+# function get(x, k) { return x.get(k); }
+# function has(x, k) { return x.has(k); }
+# function set(x, k, v) { return x.set(k, v); }
+# function add(x, k) { return x.add(k); }
+# function attempt(f, ...rest) { try { return show(f(...rest)); } catch (error) { return error.constructor.name; } }
+# const names = new Map;
+# function show(v) {
+#     if (names.has(v)) return names.get(v);
+#     if (typeof v === "symbol") return v.toString();
+#     if (typeof v === "function") return "a function";
+#     if (typeof v === "object" && v) return "{" + Object.keys(v).join() + "}";
+#     return String(v);
+# }
+# const a = { a: 1 }, b = { b: 1 }, c = function () {}, lone = Symbol("lone"), registered = Symbol.for("registered");
+# class OwnTable { constructor() { this.held = []; } get(k) { return "own get " + show(k); } has(k) { return this.held.includes(k); } set(k, v) { this.held.push(k); return v; } add(k) { this.held.push(k); return this.held.length; } }
+# class HeirOfWeakMap extends WeakMap { get(k) { return "heir: " + show(super.get(k)); } }
+# class PlainHeirOfWeakMap extends WeakMap {}
+# class HeirOfMap extends Map {}
+# const withOwnMethod = new WeakMap; withOwnMethod.get = function (k) { return "own property"; };
+# const withOtherPrototype = Object.setPrototypeOf(new WeakMap, { get() { return "other prototype"; }, has() { return "other has"; }, set() { return "other set"; } });
+# const withNoPrototype = Object.setPrototypeOf(new WeakMap, null);
+# const frozen = Object.freeze(new WeakMap);
+# const tables = { map: new Map, set: new Set, weakMap: new WeakMap, weakSet: new WeakSet, own: new OwnTable, heir: new HeirOfWeakMap, plainHeir: new PlainHeirOfWeakMap, heirOfMap: new HeirOfMap,
+#     withOwnMethod, withOtherPrototype, withNoPrototype, frozen, plain: {}, array: [], text: "text", number: 5, nothing: undefined };
+# for (const [name, table] of Object.entries(tables)) if (typeof table === "object" && table) names.set(table, "<" + name + ">");
+# const keys = [a, b, c, lone, registered, "a", 1, 1.5, NaN, -0, null, undefined, true, 10n];
+# for (const [name, table] of Object.entries(tables)) {
+#     const row = [name];
+#     for (let round = 0; round < 2; round++) {
+#         for (const k of keys) row.push(attempt(get, table, k) + "/" + attempt(has, table, k));
+#         for (const k of keys) row.push(attempt(set, table, k, round + ":" + show(k)) + "/" + attempt(add, table, k));
+#     }
+#     for (const k of keys) row.push(attempt(get, table, k) + "/" + attempt(has, table, k));
+#     lines.push(row.join(" "));
+# }
+# const weak = new WeakMap, weakSet = new WeakSet, strong = new Map, many = [];
+# for (let i = 0; i < 3000; i++) many.push({ i });
+# let sum = 0;
+# for (let i = 0; i < many.length; i++) { if (set(weak, many[i], i) !== weak || add(weakSet, many[i]) !== weakSet || set(strong, many[i], -i) !== strong) sum += 1e9; }
+# for (let i = 0; i < many.length; i += 3) { weak.delete(many[i]); weakSet.delete(many[i]); strong.delete(many[i]); }
+# for (let i = 0; i < many.length; i++) sum += (get(weak, many[i]) ?? 7) + (has(weak, many[i]) ? 1 : 0) + (has(weakSet, many[i]) ? 2 : 0) + (get(strong, many[i]) ?? 11) + (has(strong, many[i]) ? 4 : 0);
+# for (let i = 0; i < many.length; i += 6) { set(weak, many[i], "back"); add(weakSet, many[i]); }
+# let back = 0;
+# for (let i = 0; i < many.length; i++) back += (get(weak, many[i]) === "back" ? 1 : 0) + (has(weakSet, many[i]) ? 1 : 0);
+# lines.push(sum + " " + back);
+# for (let round = 0; round < 40; round++) { const young = []; for (let i = 0; i < 200; i++) { const o = { round, i }; young.push(o); set(weak, o, o); } for (const o of young) if (get(weak, o) !== o) sum = -1; }
+# lines.push(String(sum), String(get(weak, many[1])), String(get(weak, {})), String(has(weakSet, {})));
+# console.log(lines.join("\n"));
+# -- end of source
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
 module m0 path="collection-methods-unknown-receivers.js" displayPath="collection-methods-unknown-receivers.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/prelude/array-search.ts" displayPath="/$bun/js/prelude/array-search.ts" flags=[IsLibrary] namespaceLayout=L(m2)
 entry module=m0
+typesite w0 module=m2 position=427 kind=Parameter
+typesite w1 module=m2 position=458 kind=Parameter
+typesite w2 module=m2 position=399 kind=Result
+typesite w3 module=m2 position=776 kind=Parameter
+typesite w4 module=m2 position=750 kind=Result
+typesite w5 module=m2 position=2008 kind=Parameter
+typesite w6 module=m2 position=2026 kind=Parameter
+typesite w7 module=m2 position=2041 kind=Parameter
+typesite w8 module=m2 position=1987 kind=Result
+typesite w9 module=m2 position=2264 kind=Parameter
+typesite w10 module=m2 position=2228 kind=This
+typesite w11 module=m2 position=2203 kind=Result
+typesite w12 module=m2 position=611 kind=Variable
+typesite w13 module=m2 position=2314 kind=Variable
+typesite w14 module=m2 position=2348 kind=Variable
+typesite w15 module=m2 position=2403 kind=Variable
+typesite w16 module=m2 position=2323 kind=PropertyRead
+typesite w17 module=m2 position=2356 kind=CallResult
+typesite w18 module=m2 position=2561 kind=Variable
+typesite w19 module=m2 position=2940 kind=CallResult
+typesite w20 module=m2 position=2980 kind=CallResult
 layout L0 kind=Instance name="OwnTable" module=m0 position=1086 constructor=f7 fields=[{key="held" declared={type=undefined|null|Array<never> flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 layout L1 kind=Instance name="HeirOfWeakMap" module=m0 position=1318 constructor=f13 flags=[HasHeritage]
 layout L2 kind=Instance name="PlainHeirOfWeakMap" module=m0 position=1407 constructor=f15 flags=[HasHeritage]
@@ -31,919 +107,1567 @@ data d8 root=Object{layout=L12} module=m0
 data d9 root=Array{contents=anything} module=m0
 variable g0 name="show" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="names" module=m0 declared={type=undefined|null|absent|Map flags=[IsExpected]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 name="firstSearchedIndex" module=m2 declared={type=f42 flags=[IsFromCompiler]} initialization=Function function=f42 flags=[IsImmutable]
+variable g7 name="holdsBoxedValues" module=m2 declared={type=f43 flags=[IsFromCompiler]} initialization=Function function=f43 flags=[IsImmutable]
+variable g8 name="includesNaN" module=m2 declared={type=f44 flags=[IsFromCompiler]} initialization=Function function=f44 flags=[IsImmutable]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = NewClosure function=f2
-    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f3
-    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f4
-    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = NewClosure function=f5
-    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v8 = NewClosure function=f6
-    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v10 = NewClosure function=f7
-    v11 = NewClass v10 layout=L0
-    v12 = NewClosure function=f8
-    v13 = NewClosure function=f9
-    v14 = NewClosure function=f10
-    DefineMethod v11, v14 layout=L0 index=2 key="set"
-    v16 = NewClosure function=f11
-    DefineMethod v11, v16 layout=L0 index=3 key="add"
-    v18 = FinishClass v11 layout=L0
-    v19 = Convert v18 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v20 = Data data=d0
-    v21 = Convert v20 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-    v22 = Convert v21 declared={type=undefined|null|Array flags=[IsExpected]}
-    v23 = Builtin builtin=Map
-    v24 = Construct v23 calleeName="Map"
-    v25 = Convert v24 declared={type=undefined|null|Map flags=[IsExpected]}
-    PutModuleVariable v25 variable=g1
-    v27 = Data data=d1
-    v28 = Convert v27 declared={type=undefined|null|L4 flags=[IsExpected]}
-    v29 = Data data=d2
-    v30 = Convert v29 declared={type=undefined|null|L5 flags=[IsExpected]}
-    v31 = NewClosure function=f12
-    v32 = Convert v31 declared={type=undefined|null|function|f12 flags=[IsExpected]}
-    v33 = Builtin builtin=Symbol
-    v34 = String string="lone"
-    v35 = Call v33, -, v34 calleeName="Symbol" callNumber=13
-    v36 = Convert v35 declared={type=undefined|null|symbol flags=[IsExpected]}
-    v37 = Builtin builtin=Symbol
-    v38 = Builtin builtin=SymbolFor
-    v39 = String string="registered"
-    v40 = Call v38, v37, v39 calleeName="Symbol.for"
-    v41 = Convert v40 declared={type=undefined|null|symbol flags=[IsExpected]}
-    v42 = Builtin builtin=GlobalThis
-    v43 = PropGet v42 key="WeakMap" [isFreeName]
-    v44 = Convert v43 declared={type=builtin(WeakMap) flags=[IsExpected]}
-    v45 = ResolveHeritage v44
-    v46 = NewClosure function=f13
-    v47 = NewClass v46, v44, v45 layout=L1
-    v48 = NewClosure function=f14
-    v49 = FinishClass v47 layout=L1
-    v50 = Convert v49 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v51 = Builtin builtin=GlobalThis
-    v52 = PropGet v51 key="WeakMap" [isFreeName]
-    v53 = Convert v52 declared={type=builtin(WeakMap) flags=[IsExpected]}
-    v54 = ResolveHeritage v53
-    v55 = NewClosure function=f15
-    v56 = NewClass v55, v53, v54 layout=L2
-    v57 = FinishClass v56 layout=L2
-    v58 = Convert v57 declared={type=f15 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v59 = Builtin builtin=Map
-    v60 = ResolveHeritage v59
-    v61 = NewClosure function=f16
-    v62 = NewClass v61, v59, v60 layout=L3
-    v63 = FinishClass v62 layout=L3
-    v64 = Convert v63 declared={type=f16 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v65 = Builtin builtin=GlobalThis
-    v66 = PropGet v65 key="WeakMap" [isFreeName]
-    v67 = Convert v66 declared={type=builtin(WeakMap) flags=[IsExpected]}
-    v68 = Construct v67 calleeName="WeakMap"
-    v69 = Convert v68 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]}
-    v70 = NewClosure function=f17
-    v71 = Convert v70 declared={type=undefined|null|function|f17 flags=[IsExpected]}
-    v72 = Builtin builtin=Object
-    v73 = Builtin builtin=ObjectSetPrototypeOf
-    v74 = Builtin builtin=GlobalThis
-    v75 = PropGet v74 key="WeakMap" [isFreeName]
-    v76 = Convert v75 declared={type=builtin(WeakMap) flags=[IsExpected]}
-    v77 = Construct v76 calleeName="WeakMap"
-    v78 = Convert v77 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]}
-    v79 = NewClosure function=f18
-    v80 = Convert v79 declared={type=undefined|null|function|f18 flags=[IsExpected]}
-    v81 = NewObject layout=L7
-    v82 = NewClosure function=f19
-    v83 = Convert v82 declared={type=undefined|null|function|f19 flags=[IsExpected]}
-    v84 = NewClosure function=f20
-    v85 = Convert v84 declared={type=undefined|null|function|f20 flags=[IsExpected]}
-    PropDefine v81, v85 key="set"
-    v87 = FinishObject v81
-    v88 = Call v73, v72, v78, v87 calleeName="Object.setPrototypeOf"
-    v89 = Builtin builtin=Object
-    v90 = Builtin builtin=ObjectSetPrototypeOf
-    v91 = Builtin builtin=GlobalThis
-    v92 = PropGet v91 key="WeakMap" [isFreeName]
-    v93 = Convert v92 declared={type=builtin(WeakMap) flags=[IsExpected]}
-    v94 = Construct v93 calleeName="WeakMap"
-    v95 = Convert v94 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]}
-    v96 = Null
-    v97 = Call v90, v89, v95, v96 calleeName="Object.setPrototypeOf"
-    v98 = Builtin builtin=Object
-    v99 = Builtin builtin=ObjectFreeze
-    v100 = Builtin builtin=GlobalThis
-    v101 = PropGet v100 key="WeakMap" [isFreeName]
-    v102 = Convert v101 declared={type=builtin(WeakMap) flags=[IsExpected]}
-    v103 = Construct v102 calleeName="WeakMap"
-    v104 = Convert v103 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]}
-    v105 = Call v99, v98, v104 calleeName="Object.freeze"
-    v106 = Convert v105 declared={type=undefined|null|object flags=[IsExpected]}
-    v107 = Builtin builtin=Map
-    v108 = Construct v107 calleeName="Map"
-    v109 = Convert v108 declared={type=undefined|null|Map flags=[IsExpected]}
-    v110 = NewObject layout=L6
-    PropDefine v110, v109 key="map"
-    v112 = Builtin builtin=Set
-    v113 = Construct v112 calleeName="Set"
-    v114 = Convert v113 declared={type=undefined|null|Set flags=[IsExpected]}
-    PropDefine v110, v114 key="set"
-    v116 = Builtin builtin=GlobalThis
-    v117 = PropGet v116 key="WeakMap" [isFreeName]
-    v118 = Convert v117 declared={type=builtin(WeakMap) flags=[IsExpected]}
-    v119 = Construct v118 calleeName="WeakMap"
-    v120 = Convert v119 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]}
-    v121 = Builtin builtin=WeakSet
-    v122 = Construct v121 calleeName="WeakSet"
-    v123 = Convert v122 declared={type=undefined|null|WeakSet<undefined|null|symbol|object> flags=[IsExpected]}
-    v124 = Construct v19 calleeName="OwnTable"
-    v125 = Convert v124 declared={type=undefined|null|L0 flags=[IsExpected]}
-    PropDefine v110, v125 key="own"
-    v127 = Construct v50 calleeName="HeirOfWeakMap"
-    v128 = Convert v127 declared={type=undefined|null|L1 flags=[IsExpected]}
-    PropDefine v110, v128 key="heir"
-    v130 = Construct v58 calleeName="PlainHeirOfWeakMap"
-    v131 = Convert v130 declared={type=undefined|null|L2 flags=[IsExpected]}
-    v132 = Construct v64 calleeName="HeirOfMap"
-    v133 = Convert v132 declared={type=undefined|null|L3 flags=[IsExpected]}
-    PropDefine v110, v88 key="withOtherPrototype"
-    v135 = Data data=d3
-    v136 = Data data=d4
-    v137 = Convert v136 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-    v138 = String string="text"
-    v139 = Convert v138 declared={type=undefined|null|string flags=[IsExpected]}
-    v140 = Integer integer=5
-    v141 = Convert v140 declared={type=number flags=[IsExpected]}
-    v142 = Undefined
-    v143 = Convert v142 declared={type=undefined flags=[IsExpected]}
-    v144 = FinishObject v110
-    v145 = Convert v144 declared={type=undefined|null|L6 flags=[IsExpected]}
-    v146 = Builtin builtin=Object
-    v147 = Builtin builtin=ObjectEntries
-    v148 = Call v147, v146, v145 calleeName="Object.entries"
-    v149 = Convert v148 declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]}
-    v150 = IteratorOpen v149
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    LoopHint
-    v152 = IteratorResume v150
-    v153 = ResultAt v152
-    v154 = ResultAt v152 index=1
-    Branch v153 -> taken b2(), notTaken b90()
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f7 @1080
+    v11 = NewClass v10 layout=L0 @1080
+    PutModuleVariable v11 variable=g2 @1080
+    v13 = NewClosure function=f8 @1131
+    DefineMethod v11, v13 layout=L0 key="get" @1131
+    v15 = NewClosure function=f9 @1171
+    DefineMethod v11, v15 layout=L0 index=1 key="has" @1171
+    v17 = NewClosure function=f10 @1212
+    DefineMethod v11, v17 layout=L0 index=2 key="set" @1212
+    v19 = NewClosure function=f11 @1255
+    DefineMethod v11, v19 layout=L0 index=3 key="add" @1255
+    v21 = FinishClass v11 layout=L0 @1080
+    v22 = Convert v21 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1080
+    v23 = Convert v21 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1080
+    v24 = Data data=d0 @386
+    v25 = Convert v24 declared={type=undefined|null|Array<never> flags=[IsExpected]} @386
+    v26 = Convert v25 declared={type=undefined|null|Array flags=[IsExpected]} @386
+    v27 = Builtin builtin=Map @689
+    v28 = Construct v27 calleeName="Map" @685
+    v29 = Convert v28 declared={type=undefined|null|Map flags=[IsExpected]} @685
+    PutModuleVariable v29 variable=g1 @677
+    v31 = Data data=d1 @974
+    v32 = Convert v31 declared={type=undefined|null|L4 flags=[IsExpected]} @974
+    v33 = Data data=d2 @988
+    v34 = Convert v33 declared={type=undefined|null|L5 flags=[IsExpected]} @988
+    v35 = NewClosure function=f12 @1002
+    v36 = Convert v35 declared={type=undefined|null|function|f12 flags=[IsExpected]} @1002
+    v37 = Builtin builtin=Symbol @1025
+    v38 = String string="lone" @1032
+    v39 = Call v37, -, v38 calleeName="Symbol" callNumber=13 @1025
+    v40 = Convert v39 declared={type=undefined|null|symbol flags=[IsExpected]} @1025
+    v41 = Builtin builtin=Symbol @1054
+    v42 = Builtin builtin=SymbolFor @1054
+    v43 = String string="registered" @1065
+    v44 = Call v42, v41, v43 calleeName="Symbol.for" @1061
+    v45 = Convert v44 declared={type=undefined|null|symbol flags=[IsExpected]} @1054
+    v46 = Builtin builtin=GlobalThis @1340
+    v47 = PropGet v46 key="WeakMap" [isFreeName] @1340
+    v48 = Convert v47 declared={type=builtin(WeakMap) flags=[IsExpected]} @1340
+    v49 = ResolveHeritage v48 @1340
+    v50 = NewClosure function=f13 @1312
+    v51 = NewClass v50, v48, v49 layout=L1 @1312
+    PutModuleVariable v51 variable=g3 @1312
+    v53 = NewClosure function=f14 @1350
+    DefineMethod v51, v53 layout=L1 key="get" @1350
+    v55 = FinishClass v51 layout=L1 @1312
+    v56 = Convert v55 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1312
+    v57 = Convert v55 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1312
+    v58 = Builtin builtin=GlobalThis @1434
+    v59 = PropGet v58 key="WeakMap" [isFreeName] @1434
+    v60 = Convert v59 declared={type=builtin(WeakMap) flags=[IsExpected]} @1434
+    v61 = ResolveHeritage v60 @1434
+    v62 = NewClosure function=f15 @1401
+    v63 = NewClass v62, v60, v61 layout=L2 @1401
+    PutModuleVariable v63 variable=g4 @1401
+    v65 = FinishClass v63 layout=L2 @1401
+    v66 = Convert v65 declared={type=f15 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1401
+    v67 = Convert v65 declared={type=f15 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1401
+    v68 = Builtin builtin=Map @1469
+    v69 = ResolveHeritage v68 @1469
+    v70 = NewClosure function=f16 @1445
+    v71 = NewClass v70, v68, v69 layout=L3 @1445
+    PutModuleVariable v71 variable=g5 @1445
+    v73 = FinishClass v71 layout=L3 @1445
+    v74 = Convert v73 declared={type=f16 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1445
+    v75 = Convert v73 declared={type=f16 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1445
+    v76 = Builtin builtin=GlobalThis @1502
+    v77 = PropGet v76 key="WeakMap" [isFreeName] @1502
+    v78 = Convert v77 declared={type=builtin(WeakMap) flags=[IsExpected]} @1502
+    v79 = Construct v78 calleeName="WeakMap" @1498
+    v80 = Convert v79 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]} @1498
+    v81 = NewClosure function=f17 @1531
+    v82 = Convert v81 declared={type=undefined|null|function|f17 flags=[IsExpected]} @1511
+    PropSet v80, v82 key="get" @1511
+    v84 = Builtin builtin=Object @1599
+    v85 = Builtin builtin=ObjectSetPrototypeOf @1599
+    v86 = Builtin builtin=GlobalThis @1625
+    v87 = PropGet v86 key="WeakMap" [isFreeName] @1625
+    v88 = Convert v87 declared={type=builtin(WeakMap) flags=[IsExpected]} @1625
+    v89 = Construct v88 calleeName="WeakMap" @1621
+    v90 = Convert v89 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]} @1621
+    v91 = NewClosure function=f18 @1636
+    v92 = Convert v91 declared={type=undefined|null|function|f18 flags=[IsExpected]} @1639
+    v93 = NewObject layout=L7 @1636
+    PropDefine v93, v92 key="get" @1636
+    v95 = NewClosure function=f19 @1673
+    v96 = Convert v95 declared={type=undefined|null|function|f19 flags=[IsExpected]} @1676
+    PropDefine v93, v96 key="has" @1673
+    v98 = NewClosure function=f20 @1704
+    v99 = Convert v98 declared={type=undefined|null|function|f20 flags=[IsExpected]} @1707
+    PropDefine v93, v99 key="set" @1704
+    v101 = FinishObject v93 @1634
+    v102 = Call v85, v84, v90, v101 calleeName="Object.setPrototypeOf" @1606
+    v103 = Builtin builtin=Object @1762
+    v104 = Builtin builtin=ObjectSetPrototypeOf @1762
+    v105 = Builtin builtin=GlobalThis @1788
+    v106 = PropGet v105 key="WeakMap" [isFreeName] @1788
+    v107 = Convert v106 declared={type=builtin(WeakMap) flags=[IsExpected]} @1788
+    v108 = Construct v107 calleeName="WeakMap" @1784
+    v109 = Convert v108 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]} @1784
+    v110 = Null @1797
+    v111 = Call v104, v103, v109, v110 calleeName="Object.setPrototypeOf" @1769
+    v112 = Builtin builtin=Object @1819
+    v113 = Builtin builtin=ObjectFreeze @1819
+    v114 = Builtin builtin=GlobalThis @1837
+    v115 = PropGet v114 key="WeakMap" [isFreeName] @1837
+    v116 = Convert v115 declared={type=builtin(WeakMap) flags=[IsExpected]} @1837
+    v117 = Construct v116 calleeName="WeakMap" @1833
+    v118 = Convert v117 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]} @1833
+    v119 = Call v113, v112, v118 calleeName="Object.freeze" @1826
+    v120 = Convert v119 declared={type=undefined|null|object flags=[IsExpected]} @1819
+    v121 = Builtin builtin=Map @1873
+    v122 = Construct v121 calleeName="Map" @1869
+    v123 = Convert v122 declared={type=undefined|null|Map flags=[IsExpected]} @1869
+    v124 = NewObject layout=L6 @1864
+    PropDefine v124, v123 key="map" @1864
+    v126 = Builtin builtin=Set @1887
+    v127 = Construct v126 calleeName="Set" @1883
+    v128 = Convert v127 declared={type=undefined|null|Set flags=[IsExpected]} @1883
+    PropDefine v124, v128 key="set" @1878
+    v130 = Builtin builtin=GlobalThis @1905
+    v131 = PropGet v130 key="WeakMap" [isFreeName] @1905
+    v132 = Convert v131 declared={type=builtin(WeakMap) flags=[IsExpected]} @1905
+    v133 = Construct v132 calleeName="WeakMap" @1901
+    v134 = Convert v133 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]} @1901
+    PropDefine v124, v134 key="weakMap" @1892
+    v136 = Builtin builtin=WeakSet @1927
+    v137 = Construct v136 calleeName="WeakSet" @1923
+    v138 = Convert v137 declared={type=undefined|null|WeakSet<undefined|null|symbol|object> flags=[IsExpected]} @1923
+    PropDefine v124, v138 key="weakSet" @1914
+    v140 = Construct v23 calleeName="OwnTable" @1941
+    v141 = Convert v140 declared={type=undefined|null|L0 flags=[IsExpected]} @1941
+    PropDefine v124, v141 key="own" @1936
+    v143 = Construct v57 calleeName="HeirOfWeakMap" @1961
+    v144 = Convert v143 declared={type=undefined|null|L1 flags=[IsExpected]} @1961
+    PropDefine v124, v144 key="heir" @1955
+    v146 = Construct v67 calleeName="PlainHeirOfWeakMap" @1991
+    v147 = Convert v146 declared={type=undefined|null|L2 flags=[IsExpected]} @1991
+    PropDefine v124, v147 key="plainHeir" @1980
+    v149 = Construct v75 calleeName="HeirOfMap" @2026
+    v150 = Convert v149 declared={type=undefined|null|L3 flags=[IsExpected]} @2026
+    PropDefine v124, v150 key="heirOfMap" @2015
+    PropDefine v124, v80 key="withOwnMethod" @2045
+    PropDefine v124, v102 key="withOtherPrototype" @2060
+    PropDefine v124, v111 key="withNoPrototype" @2080
+    PropDefine v124, v120 key="frozen" @2097
+    v156 = Data data=d3 @2112
+    PropDefine v124, v156 key="plain" @2105
+    v158 = Data data=d4 @2123
+    v159 = Convert v158 declared={type=undefined|null|Array<never> flags=[IsExpected]} @2123
+    PropDefine v124, v159 key="array" @2116
+    v161 = String string="text" @2133
+    v162 = Convert v161 declared={type=undefined|null|string flags=[IsExpected]} @2133
+    PropDefine v124, v162 key="text" @2127
+    v164 = Integer integer=5 @2149
+    v165 = Convert v164 declared={type=number flags=[IsExpected]} @2149
+    PropDefine v124, v165 key="number" @2141
+    v167 = Undefined @2161
+    v168 = Convert v167 declared={type=undefined flags=[IsExpected]} @2161
+    PropDefine v124, v168 key="nothing" @2152
+    v170 = FinishObject v124 @1862
+    v171 = Convert v170 declared={type=undefined|null|L6 flags=[IsExpected]} @1862
+    v172 = Builtin builtin=Object @2202
+    v173 = Builtin builtin=ObjectEntries @2202
+    v174 = Call v173, v172, v171 calleeName="Object.entries" @2209
+    v175 = Convert v174 declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]} @2202
+    v176 = IteratorOpen v175 @2192
+    Jump -> next b2() @2192
   b2():
-    v155 = String string="a"
-    v156 = Integer integer=1
-    v157 = Double number=1.5
-    v158 = Double number=NaN
-    v159 = Double number=-0
-    v160 = Null
-    v161 = Undefined
-    v162 = Boolean boolean=true
-    v163 = BigInt digits="10"
-    v164 = NewArray v28, v30, v32, v36, v41, v155, v156, v157, v158, v159, v160, v161, v162, v163 contents=undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12
-    v165 = Convert v164 declared={type=undefined|null|Array<undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12> flags=[IsExpected]}
-    v166 = Builtin builtin=Object
-    v167 = Builtin builtin=ObjectEntries
-    v168 = Call v167, v166, v145 calleeName="Object.entries"
-    v169 = Convert v168 declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]}
-    v170 = IteratorOpen v169
-    Jump -> next b3()
+    LoopHint @2192
+    v178 = IteratorResume v176 @2192
+    v179 = ResultAt v178 @2192
+    v180 = ResultAt v178 index=1 @2192
+    Branch v179 -> taken b3(), notTaken b135() @2192
   b3():
-    v171 = IteratorResume v170
-    v172 = ResultAt v171
-    v173 = ResultAt v171 index=1
-    Branch v172 -> taken b4(), notTaken b66()
+    v181 = String string="a" @2343
+    v182 = Integer integer=1 @2348
+    v183 = Double number=1.5 @2351
+    v184 = Double number=NaN @2356
+    v185 = Double number=-0 @2361
+    v186 = Null @2365
+    v187 = Undefined @2371
+    v188 = Boolean boolean=true @2382
+    v189 = BigInt digits="10" @2388
+    v190 = NewArray v32, v34, v36, v40, v45, v181, v182, v183, v184, v185, v186, v187, v188, v189 contents=undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12 @2315
+    v191 = Convert v190 declared={type=undefined|null|Array<undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12> flags=[IsExpected]} @2315
+    v192 = Builtin builtin=Object @2422
+    v193 = Builtin builtin=ObjectEntries @2422
+    v194 = Call v193, v192, v171 calleeName="Object.entries" @2429
+    v195 = Convert v194 declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]} @2422
+    v196 = IteratorOpen v195 @2412
+    Jump -> next b4() @2412
   b4():
-    v174 = Builtin builtin=GlobalThis
-    v175 = PropGet v174 key="WeakMap" [isFreeName]
-    v176 = Convert v175 declared={type=builtin(WeakMap) flags=[IsExpected]}
-    v177 = Construct v176 calleeName="WeakMap"
-    v178 = Convert v177 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]}
-    v179 = Builtin builtin=WeakSet
-    v180 = Construct v179 calleeName="WeakSet"
-    v181 = Convert v180 declared={type=undefined|null|WeakSet<undefined|null|symbol|object> flags=[IsExpected]}
-    v182 = Builtin builtin=Map
-    v183 = Construct v182 calleeName="Map"
-    v184 = Convert v183 declared={type=undefined|null|Map flags=[IsExpected]}
-    v185 = Data data=d5
-    v186 = Convert v185 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-    v187 = Convert v186 declared={type=undefined|null|Array flags=[IsExpected]}
-    v188 = Integer
-    v189 = Convert v188 declared={type=number flags=[IsExpected]}
-    Jump -> next b5(v189)
-  b5(v190):
-    LoopHint
-    v192 = Integer integer=3000
-    v193 = Less v190, v192
-    Branch v193 -> taken b6(| 0), notTaken b7(| 0)
-  b6(v194):
-    v195 = PropGet v187 key="push"
-    v196 = Convert v195 declared={type=undefined|null|function flags=[IsExpected]}
-    v197 = Convert v194 declared={type=number flags=[IsExpected]}
-    v198 = NewObject layout=L9
-    v199 = FinishObject v198
-    v200 = Call v196, v187, v199 calleeKey="push" calleeName="many.push"
-    v201 = Increment v194
-    v202 = Convert v201 declared={type=number flags=[IsExpected]}
-    Jump -> next b5(v202)
-  b7(v203):
-    v204 = Integer
-    v205 = Convert v204 declared={type=number flags=[IsExpected]}
-    v206 = Integer
-    v207 = Convert v206 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b8(v205, v207)
-  b8(v208, v209):
-    LoopHint
-    v211 = PropGet v187 key="length"
-    v212 = Convert v211 declared={type=number flags=[IsExpected]}
-    v213 = Less v209, v212
-    Branch v213 -> taken b9(| 0), notTaken b18(| 0)
-  b9(v214):
-    v215 = Convert v187 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]}
-    v216 = ElemGet v215, v214
-    v217 = Convert v216 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v218 = Call v5, -, v178, v217, v214 calleeName="set"
-    v219 = StrictEq v218, v178
-    Branch v219 -> taken b10(| 1), notTaken b15(| 1)
-  b10(v220):
-    v221 = ElemGet v215, v214
-    v222 = Convert v221 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v223 = Call v7, -, v181, v222 calleeName="add"
-    v224 = StrictEq v223, v181
-    Branch v224 -> taken b11(| 1), notTaken b14(| 1)
-  b11(v225):
-    v226 = ElemGet v215, v214
-    v227 = Convert v226 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v228 = Negate v214
-    v229 = Call v5, -, v184, v227, v228 calleeName="set"
-    v230 = StrictEq v229, v184
-    Branch v230 -> taken b12(| 1), notTaken b13(| 1)
-  b12(v231):
-    Jump -> next b17(v208)
-  b13(v232):
-    Jump -> next b16()
-  b14(v233):
-    Jump -> next b16()
-  b15(v234):
-    Jump -> next b16()
+    LoopHint @2412
+    v198 = IteratorResume v196 @2412
+    v199 = ResultAt v198 @2412
+    v200 = ResultAt v198 index=1 @2412
+    Branch v199 -> taken b5(), notTaken b105() @2412
+  b5():
+    v201 = Builtin builtin=GlobalThis @2878
+    v202 = PropGet v201 key="WeakMap" [isFreeName] @2878
+    v203 = Convert v202 declared={type=builtin(WeakMap) flags=[IsExpected]} @2878
+    v204 = Construct v203 calleeName="WeakMap" @2874
+    v205 = Convert v204 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]} @2874
+    v206 = Builtin builtin=WeakSet @2901
+    v207 = Construct v206 calleeName="WeakSet" @2897
+    v208 = Convert v207 declared={type=undefined|null|WeakSet<undefined|null|symbol|object> flags=[IsExpected]} @2897
+    v209 = Builtin builtin=Map @2923
+    v210 = Construct v209 calleeName="Map" @2919
+    v211 = Convert v210 declared={type=undefined|null|Map flags=[IsExpected]} @2919
+    v212 = Data data=d5 @2935
+    v213 = Convert v212 declared={type=undefined|null|Array<never> flags=[IsExpected]} @2935
+    v214 = Convert v213 declared={type=undefined|null|Array flags=[IsExpected]} @2935
+    v215 = Integer @2952
+    v216 = Convert v215 declared={type=number flags=[IsExpected]} @2952
+    Jump -> next b6(v216) @2948
+  b6(v217):
+    LoopHint @2948
+    v219 = Integer integer=3000 @2959
+    v220 = Less v217, v219 @2955
+    Branch v220 -> taken b7(| 0), notTaken b10(| 0) @2955
+  b7(v221):
+    Jump -> next b8() @2955
+  b8():
+    v222 = PropGet v214 key="push" @2970
+    v223 = Convert v222 declared={type=undefined|null|function flags=[IsExpected]} @2970
+    v224 = Convert v221 declared={type=number flags=[IsExpected]} @2982
+    v225 = NewObject layout=L9 @2982
+    PropDefine v225, v224 key="i" @2982
+    v227 = FinishObject v225 @2980
+    v228 = Call v223, v214, v227 calleeKey="push" calleeName="many.push" @2975
+    Jump -> next b9() @2970
+  b9():
+    v229 = Increment v221 @2975
+    v230 = Convert v229 declared={type=number flags=[IsExpected]} @2965
+    Jump -> next b6(v230) @2965
+  b10(v231):
+    Jump -> next b11() @2955
+  b11():
+    v232 = Integer @2998
+    v233 = Convert v232 declared={type=number flags=[IsExpected]} @2998
+    v234 = Integer @3014
+    v235 = Convert v234 declared={type=i32 flags=[IsExpected]} @3014
+    Jump -> next b12(v233, v235) @3010
+  b12(v236, v237):
+    LoopHint @3010
+    v239 = PropGet v214 key="length" @3021
+    v240 = Convert v239 declared={type=number flags=[IsExpected]} @3021
+    v241 = Less v237, v240 @3017
+    Branch v241 -> taken b13(| 0), notTaken b26(| 0) @3017
+  b13(v242):
+    Jump -> next b14() @3017
+  b14():
+    v243 = Convert v214 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]} @3055
+    v244 = ElemGet v243, v242 @3055
+    v245 = Convert v244 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3055
+    v246 = Call v5, -, v205, v245, v242 calleeName="set" @3045
+    v247 = StrictEq v246, v205 @3045
+    Branch v247 -> taken b15(| 1), notTaken b22(| 1) @3045
+  b15(v248):
+    Jump -> next b16() @3045
   b16():
-    v235 = Integer integer=1000000000
-    v236 = Add v208, v235
-    v237 = Convert v236 declared={type=number flags=[IsExpected]}
-    Jump -> next b17(v237)
-  b17(v238):
-    v239 = Increment v214
-    v240 = Convert v239 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b8(v238, v240)
-  b18(v241):
-    v242 = Integer
-    v243 = Convert v242 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b19(v243)
-  b19(v244):
-    LoopHint
-    v246 = PropGet v187 key="length"
-    v247 = Convert v246 declared={type=number flags=[IsExpected]}
-    v248 = Less v244, v247
-    Branch v248 -> taken b20(| 0), notTaken b21(| 0)
-  b20(v249):
-    v250 = PropGet v178 key="delete"
-    v251 = Convert v250 declared={type=undefined|null|function flags=[IsExpected]}
-    v252 = Convert v187 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]}
-    v253 = ElemGet v252, v249
-    v254 = Convert v253 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v255 = PropGet v181 key="delete"
-    v256 = Convert v255 declared={type=undefined|null|function flags=[IsExpected]}
-    v257 = ElemGet v252, v249
-    v258 = Convert v257 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v259 = PropGet v184 key="delete"
-    v260 = Convert v259 declared={type=undefined|null|function flags=[IsExpected]}
-    v261 = ElemGet v252, v249
-    v262 = Convert v261 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v263 = Integer integer=3
-    v264 = Add v249, v263
-    v265 = Convert v264 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b19(v265)
-  b21(v266):
-    v267 = Integer
-    v268 = Convert v267 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b22(v208, v268)
-  b22(v269, v270):
-    LoopHint
-    v272 = PropGet v187 key="length"
-    v273 = Convert v272 declared={type=number flags=[IsExpected]}
-    v274 = Less v270, v273
-    Branch v274 -> taken b23(| 0), notTaken b39(| 0)
-  b23(v275):
-    v276 = Convert v187 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]}
-    v277 = ElemGet v276, v275
-    v278 = Convert v277 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v279 = Call v1, -, v178, v278 calleeName="get"
-    v280 = Convert v279 declared={type=number flags=[IsExpected]}
-    v281 = TypeTest v280 testedType=undefined|null
-    Branch v281 -> taken b24(| 0), notTaken b25(| 0)
-  b24(v282):
-    v283 = Integer integer=7
-    Jump -> next b26(v283)
-  b25(v284):
-    Jump -> next b26(v284)
-  b26(v285):
-    v286 = ElemGet v276, v275
-    v287 = Convert v286 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v288 = Call v3, -, v178, v287 calleeName="has"
-    v289 = ToBoolean v288
-    Branch v289 -> taken b27(| 0), notTaken b28(| 0)
-  b27(v290):
-    v291 = Integer integer=1
-    Jump -> next b29(v291)
-  b28(v292):
-    v293 = Integer
-    Jump -> next b29(v293)
-  b29(v294):
-    v295 = Add v285, v294
-    v296 = ElemGet v276, v275
-    v297 = Convert v296 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v298 = Call v3, -, v181, v297 calleeName="has"
-    v299 = ToBoolean v298
-    Branch v299 -> taken b30(| 0), notTaken b31(| 0)
-  b30(v300):
-    v301 = Integer integer=2
-    Jump -> next b32(v301)
-  b31(v302):
-    v303 = Integer
-    Jump -> next b32(v303)
-  b32(v304):
-    v305 = Add v295, v304
-    v306 = ElemGet v276, v275
-    v307 = Convert v306 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v308 = Call v1, -, v184, v307 calleeName="get"
-    v309 = TypeTest v308 testedType=undefined|null
-    Branch v309 -> taken b33(| 0), notTaken b34(| 0)
-  b33(v310):
-    v311 = Integer integer=11
-    Jump -> next b35(v311)
-  b34(v312):
-    Jump -> next b35(v312)
-  b35(v313):
-    v314 = Add v305, v313
-    v315 = ElemGet v276, v275
-    v316 = Convert v315 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v317 = Call v3, -, v184, v316 calleeName="has"
-    v318 = ToBoolean v317
-    Branch v318 -> taken b36(| 0), notTaken b37(| 0)
-  b36(v319):
-    v320 = Integer integer=4
-    Jump -> next b38(v320)
-  b37(v321):
-    v322 = Integer
-    Jump -> next b38(v322)
-  b38(v323):
-    v324 = Add v314, v323
-    v325 = Add v269, v324
-    v326 = Convert v325 declared={type=number flags=[IsExpected]}
-    v327 = Increment v275
-    v328 = Convert v327 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b22(v326, v328)
-  b39(v329):
-    v330 = Integer
-    v331 = Convert v330 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b40(v331)
-  b40(v332):
-    LoopHint
-    v334 = PropGet v187 key="length"
-    v335 = Convert v334 declared={type=number flags=[IsExpected]}
-    v336 = Less v332, v335
-    Branch v336 -> taken b41(| 0), notTaken b42(| 0)
-  b41(v337):
-    v338 = Convert v187 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]}
-    v339 = ElemGet v338, v337
-    v340 = Convert v339 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v341 = String string="back"
-    v342 = ElemGet v338, v337
-    v343 = Convert v342 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v344 = Integer integer=6
-    v345 = Add v337, v344
-    v346 = Convert v345 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b40(v346)
-  b42(v347):
-    v348 = Integer
-    v349 = Convert v348 declared={type=number flags=[IsExpected]}
-    v350 = Integer
-    v351 = Convert v350 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b43(v349, v351)
-  b43(v352, v353):
-    LoopHint
-    v355 = PropGet v187 key="length"
-    v356 = Convert v355 declared={type=number flags=[IsExpected]}
-    v357 = Less v353, v356
-    Branch v357 -> taken b44(| 0), notTaken b51(| 0)
-  b44(v358):
-    v359 = Convert v187 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]}
-    v360 = ElemGet v359, v358
-    v361 = Convert v360 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v362 = Call v1, -, v178, v361 calleeName="get"
-    v363 = String string="back"
-    v364 = StrictEq v362, v363
-    Branch v364 -> taken b45(), notTaken b46()
-  b45():
-    v365 = Integer integer=1
-    Jump -> next b47(v365)
-  b46():
-    v366 = Integer
-    Jump -> next b47(v366)
-  b47(v367):
-    v368 = ElemGet v359, v358
-    v369 = Convert v368 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v370 = Call v3, -, v181, v369 calleeName="has"
-    v371 = ToBoolean v370
-    Branch v371 -> taken b48(| 0), notTaken b49(| 0)
-  b48(v372):
-    v373 = Integer integer=1
-    Jump -> next b50(v373)
-  b49(v374):
-    v375 = Integer
-    Jump -> next b50(v375)
-  b50(v376):
-    v377 = Add v367, v376
-    v378 = Add v352, v377
-    v379 = Convert v378 declared={type=number flags=[IsExpected]}
-    v380 = Increment v358
-    v381 = Convert v380 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b43(v379, v381)
-  b51(v382):
-    v383 = PropGet v22 key="push"
-    v384 = Convert v383 declared={type=undefined|null|function flags=[IsExpected]}
-    v385 = String string=" "
-    v386 = Add v269, v385
-    v387 = Add v386, v352
-    v388 = Integer
-    v389 = Convert v388 declared={type=number flags=[IsExpected]}
-    Jump -> next b52(v269, v389)
-  b52(v390, v391):
-    v392 = Integer integer=40
-    v393 = Less v391, v392
-    Branch v393 -> taken b53(| 0), notTaken b65(| 0)
-  b53(v394):
-    v395 = Data data=d6
-    v396 = Convert v395 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-    v397 = Convert v396 declared={type=undefined|null|Array flags=[IsExpected]}
-    v398 = Integer
-    v399 = Convert v398 declared={type=number flags=[IsExpected]}
-    Jump -> next b54(v399)
-  b54(v400):
-    LoopHint
-    v402 = Integer integer=200
-    v403 = Less v400, v402
-    Branch v403 -> taken b55(| 0), notTaken b56(| 0)
-  b55(v404):
-    v405 = Convert v394 declared={type=number flags=[IsExpected]}
-    v406 = NewObject layout=L10
-    v407 = Convert v404 declared={type=number flags=[IsExpected]}
-    v408 = FinishObject v406
-    v409 = Convert v408 declared={type=undefined|null|L10 flags=[IsExpected]}
-    v410 = PropGet v397 key="push"
-    v411 = Convert v410 declared={type=undefined|null|function flags=[IsExpected]}
-    v412 = Increment v404
-    v413 = Convert v412 declared={type=number flags=[IsExpected]}
-    Jump -> next b54(v413)
-  b56(v414):
-    v415 = Convert v397 declared={type=undefined|null|Array<undefined|null|L10> flags=[IsExpected]}
-    v416 = IteratorOpen v415
-    Jump -> next b57(v390)
-  b57(v417):
-    LoopHint
-    v419 = IteratorResume v416
-    v420 = ResultAt v419
-    v421 = ResultAt v419 index=1
-    Branch v420 -> taken b58(), notTaken b59()
+    v249 = ElemGet v243, v242 @3092
+    v250 = Convert v249 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3092
+    v251 = Call v7, -, v208, v250 calleeName="add" @3079
+    v252 = StrictEq v251, v208 @3045
+    Branch v252 -> taken b17(| 1), notTaken b21(| 1) @3045
+  b17(v253):
+    Jump -> next b18() @3045
+  b18():
+    v254 = ElemGet v243, v242 @3128
+    v255 = Convert v254 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3128
+    v256 = Negate v242 @3137
+    v257 = Call v5, -, v211, v255, v256 calleeName="set" @3116
+    v258 = StrictEq v257, v211 @3045
+    Branch v258 -> taken b19(| 1), notTaken b20(| 1) @3045
+  b19(v259):
+    Jump -> next b24(v236) @3045
+  b20(v260):
+    Jump -> next b23() @3045
+  b21(v261):
+    Jump -> next b23() @3045
+  b22(v262):
+    Jump -> next b23() @3045
+  b23():
+    v263 = Integer integer=1000000000 @3160
+    v264 = Add v236, v263 @3145
+    v265 = Convert v264 declared={type=number flags=[IsExpected]} @3153
+    Jump -> next b24(v265) @3153
+  b24(v266):
+    Jump -> next b25() @3153
+  b25():
+    v267 = Increment v242 @3145
+    v268 = Convert v267 declared={type=i32 flags=[IsExpected]} @3034
+    Jump -> next b12(v266, v268) @3034
+  b26(v269):
+    Jump -> next b27() @3017
+  b27():
+    v270 = Integer @3180
+    v271 = Convert v270 declared={type=i32 flags=[IsExpected]} @3180
+    Jump -> next b28(v271) @3176
+  b28(v272):
+    LoopHint @3176
+    v274 = PropGet v214 key="length" @3187
+    v275 = Convert v274 declared={type=number flags=[IsExpected]} @3187
+    v276 = Less v272, v275 @3183
+    Branch v276 -> taken b29(| 0), notTaken b32(| 0) @3183
+  b29(v277):
+    Jump -> next b30() @3183
+  b30():
+    v278 = PropGet v205 key="delete" @3210
+    v279 = Convert v278 declared={type=undefined|null|function flags=[IsExpected]} @3210
+    v280 = Convert v214 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]} @3222
+    v281 = ElemGet v280, v277 @3222
+    v282 = Convert v281 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3222
+    v283 = Call v279, v205, v282 calleeKey="delete" calleeName="weak.delete" @3215
+    v284 = PropGet v208 key="delete" @3232
+    v285 = Convert v284 declared={type=undefined|null|function flags=[IsExpected]} @3232
+    v286 = ElemGet v280, v277 @3247
+    v287 = Convert v286 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3247
+    v288 = Call v285, v208, v287 calleeKey="delete" calleeName="weakSet.delete" @3240
+    v289 = PropGet v211 key="delete" @3257
+    v290 = Convert v289 declared={type=undefined|null|function flags=[IsExpected]} @3257
+    v291 = ElemGet v280, v277 @3271
+    v292 = Convert v291 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3271
+    v293 = Call v290, v211, v292 calleeKey="delete" calleeName="strong.delete" @3264
+    Jump -> next b31() @3257
+  b31():
+    v294 = Integer integer=3 @3205
+    v295 = Add v277, v294 @3264
+    v296 = Convert v295 declared={type=i32 flags=[IsExpected]} @3200
+    Jump -> next b28(v296) @3200
+  b32(v297):
+    Jump -> next b33() @3183
+  b33():
+    v298 = Integer @3296
+    v299 = Convert v298 declared={type=i32 flags=[IsExpected]} @3296
+    Jump -> next b34(v236, v299) @3292
+  b34(v300, v301):
+    LoopHint @3292
+    v303 = PropGet v214 key="length" @3303
+    v304 = Convert v303 declared={type=number flags=[IsExpected]} @3303
+    v305 = Less v301, v304 @3299
+    Branch v305 -> taken b35(| 0), notTaken b61(| 0) @3299
+  b35(v306):
+    Jump -> next b36() @3299
+  b36():
+    v307 = Convert v214 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]} @3339
+    v308 = ElemGet v307, v306 @3339
+    v309 = Convert v308 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3339
+    v310 = Call v1, -, v205, v309 calleeName="get" @3329
+    v311 = Convert v310 declared={type=number flags=[IsExpected]} @3329
+    v312 = TypeTest v311 testedType=undefined|null @3329
+    Branch v312 -> taken b37(| 0), notTaken b39(| 0) @3329
+  b37(v313):
+    Jump -> next b38() @3329
+  b38():
+    v314 = Integer integer=7 @3351
+    Jump -> next b40(v314) @3351
+  b39(v315):
+    Jump -> next b40(v315) @3329
+  b40(v316):
+    v317 = ElemGet v307, v306 @3367
+    v318 = Convert v317 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3367
+    v319 = Call v3, -, v205, v318 calleeName="has" @3357
+    v320 = ToBoolean v319 @3357
+    Branch v320 -> taken b41(| 0), notTaken b43(| 0) @3357
+  b41(v321):
+    Jump -> next b42() @3357
+  b42():
+    v322 = Integer integer=1 @3378
+    Jump -> next b45(v322) @3378
+  b43(v323):
+    Jump -> next b44() @3357
+  b44():
+    v324 = Integer @3382
+    Jump -> next b45(v324) @3382
+  b45(v325):
+    v326 = Add v316, v325 @3321
+    v327 = ElemGet v307, v306 @3401
+    v328 = Convert v327 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3401
+    v329 = Call v3, -, v208, v328 calleeName="has" @3388
+    v330 = ToBoolean v329 @3388
+    Branch v330 -> taken b46(| 0), notTaken b48(| 0) @3388
+  b46(v331):
+    Jump -> next b47() @3388
+  b47():
+    v332 = Integer integer=2 @3412
+    Jump -> next b50(v332) @3412
+  b48(v333):
+    Jump -> next b49() @3388
+  b49():
+    v334 = Integer @3416
+    Jump -> next b50(v334) @3416
+  b50(v335):
+    v336 = Add v326, v335 @3321
+    v337 = ElemGet v307, v306 @3434
+    v338 = Convert v337 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3434
+    v339 = Call v1, -, v211, v338 calleeName="get" @3422
+    v340 = TypeTest v339 testedType=undefined|null @3422
+    Branch v340 -> taken b51(| 0), notTaken b53(| 0) @3422
+  b51(v341):
+    Jump -> next b52() @3422
+  b52():
+    v342 = Integer integer=11 @3446
+    Jump -> next b54(v342) @3446
+  b53(v343):
+    Jump -> next b54(v343) @3422
+  b54(v344):
+    v345 = Add v336, v344 @3321
+    v346 = ElemGet v307, v306 @3465
+    v347 = Convert v346 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3465
+    v348 = Call v3, -, v211, v347 calleeName="has" @3453
+    v349 = ToBoolean v348 @3453
+    Branch v349 -> taken b55(| 0), notTaken b57(| 0) @3453
+  b55(v350):
+    Jump -> next b56() @3453
+  b56():
+    v351 = Integer integer=4 @3476
+    Jump -> next b59(v351) @3476
+  b57(v352):
+    Jump -> next b58() @3453
   b58():
-    v422 = Increment v394
-    v423 = Convert v422 declared={type=number flags=[IsExpected]}
-    Jump -> next b52(v417, v423)
-  b59():
-    Jump -> next b60()
-  b60() handler=b64():
-    v424 = Convert v421 declared={type=undefined|null|L10 flags=[IsExpected]}
-    v425 = Call v1, -, v178, v424 calleeName="get"
-    v426 = StrictEq v425, v424
-    Branch v426 -> taken b61(| 1), notTaken b62(| 1)
-  b61(v427) handler=b64():
-    Jump -> next b63(v417)
-  b62(v428) handler=b64():
-    v429 = Integer integer=-1
-    v430 = Convert v429 declared={type=number flags=[IsExpected]}
-    Jump -> next b63(v430)
-  b63(v431) handler=b64():
-    Jump -> next b57(v431)
-  b64() role=IterationCleanup subject=v416:
-    v432 = CatchException
-    Rethrow v432
-  b65(v433):
-    v434 = PropGet v22 key="push"
-    v435 = Convert v434 declared={type=undefined|null|function flags=[IsExpected]}
-    v436 = Builtin builtin=String
-    v437 = Call v436, -, v390 calleeName="String"
-    v438 = Convert v437 declared={type=undefined|null|string flags=[IsExpected]}
-    v439 = Builtin builtin=String
-    v440 = Convert v187 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]}
-    v441 = Integer integer=1
-    v442 = ElemGet v440, v441
-    v443 = Convert v442 declared={type=undefined|null|L9|L10 flags=[IsExpected]}
-    v444 = Call v1, -, v178, v443 calleeName="get"
-    v445 = Call v439, -, v444 calleeName="String"
-    v446 = Convert v445 declared={type=undefined|null|string flags=[IsExpected]}
-    v447 = Builtin builtin=String
-    v448 = Data data=d7
-    v449 = Call v1, -, v178, v448 calleeName="get"
-    v450 = Call v447, -, v449 calleeName="String"
-    v451 = Convert v450 declared={type=undefined|null|string flags=[IsExpected]}
-    v452 = Builtin builtin=String
-    v453 = Data data=d8
-    v454 = Call v3, -, v181, v453 calleeName="has"
-    v455 = Call v452, -, v454 calleeName="String"
-    v456 = Convert v455 declared={type=undefined|null|string flags=[IsExpected]}
-    v457 = Builtin builtin=GlobalThis
-    v458 = PropGet v457 key="console" [isFreeName]
-    v459 = Convert v458 declared={type=builtin(Console) flags=[IsExpected]}
-    v460 = PropGet v459 key="log"
-    v461 = Convert v460 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v462 = Convert v22 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    v463 = PropGet v462 key="join"
-    v464 = Convert v463 declared={type=undefined|null|function flags=[IsExpected]}
-    v465 = String string="\n"
-    v466 = Call v464, v462, v465 calleeKey="join" calleeName="lines.join"
-    v467 = Convert v466 declared={type=undefined|null|string flags=[IsExpected]}
-    v468 = Undefined
-    Return v468
+    v353 = Integer @3480
+    Jump -> next b59(v353) @3480
+  b59(v354):
+    v355 = Add v345, v354 @3321
+    v356 = Add v300, v355 @3321
+    v357 = Convert v356 declared={type=number flags=[IsExpected]} @3321
+    Jump -> next b60() @3321
+  b60():
+    v358 = Increment v306 @3321
+    v359 = Convert v358 declared={type=i32 flags=[IsExpected]} @3316
+    Jump -> next b34(v357, v359) @3316
+  b61(v360):
+    Jump -> next b62() @3299
+  b62():
+    v361 = Integer @3497
+    v362 = Convert v361 declared={type=i32 flags=[IsExpected]} @3497
+    Jump -> next b63(v362) @3493
+  b63(v363):
+    LoopHint @3493
+    v365 = PropGet v214 key="length" @3504
+    v366 = Convert v365 declared={type=number flags=[IsExpected]} @3504
+    v367 = Less v363, v366 @3500
+    Branch v367 -> taken b64(| 0), notTaken b67(| 0) @3500
+  b64(v368):
+    Jump -> next b65() @3500
+  b65():
+    v369 = Convert v214 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]} @3537
+    v370 = ElemGet v369, v368 @3537
+    v371 = Convert v370 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3537
+    v372 = String string="back" @3546
+    v373 = Call v5, -, v205, v371, v372 calleeName="set" @3527
+    v374 = ElemGet v369, v368 @3568
+    v375 = Convert v374 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3568
+    v376 = Call v7, -, v208, v375 calleeName="add" @3555
+    Jump -> next b66() @3555
   b66():
-    Jump -> next b67()
-  b67() handler=b89():
-    v469 = IteratorOpen v173 elementCount=2 [isDestructuring]
-    Jump -> next b68()
-  b68() handler=b88():
-    v470 = IteratorResume v469 stepIndex=0
-    v471 = ResultAt v470 index=1
-    v472 = Convert v471 declared={type=undefined|null|string flags=[IsExpected]}
-    v473 = IteratorResume v469 stepIndex=1
-    v474 = ResultAt v473 index=1
-    Jump -> next b69()
-  b69() handler=b89():
-    v475 = NewArray v472 contents=undefined|null|string
-    v476 = Convert v475 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    v477 = Integer
-    v478 = Convert v477 declared={type=number flags=[IsExpected]}
-    Jump -> next b70(v478)
-  b70(v479) handler=b89():
-    LoopHint
-    v481 = Integer integer=2
-    v482 = Less v479, v481
-    Branch v482 -> taken b71(| 0), notTaken b82(| 0)
-  b71(v483) handler=b89():
-    v484 = IteratorOpen v165
-    Jump -> next b72()
-  b72() handler=b89():
-    LoopHint
-    v486 = IteratorResume v484
-    v487 = ResultAt v486
-    v488 = ResultAt v486 index=1
-    Branch v487 -> taken b73(), notTaken b79()
-  b73() handler=b89():
-    v489 = IteratorOpen v165
-    Jump -> next b74()
-  b74() handler=b89():
-    LoopHint
-    v491 = IteratorResume v489
-    v492 = ResultAt v491
-    v493 = ResultAt v491 index=1
-    Branch v492 -> taken b75(), notTaken b76()
-  b75() handler=b89():
-    v494 = Increment v483
-    v495 = Convert v494 declared={type=number flags=[IsExpected]}
-    Jump -> next b70(v495)
-  b76() handler=b89():
-    Jump -> next b77()
-  b77() handler=b78():
-    v496 = Convert v493 declared={type=undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12 flags=[IsExpected]}
-    v497 = PropGet v476 key="push"
-    v498 = Convert v497 declared={type=undefined|null|function flags=[IsExpected]}
-    v499 = String string=":"
-    v500 = Add v483, v499
-    v501 = GetModuleVariable variable=g0
-    v502 = Call v501, -, v496 calleeName="show"
-    v503 = Convert v502 declared={type=undefined|null|string flags=[IsExpected]}
-    v504 = Add v500, v503
-    v505 = Call v9, -, v5, v474, v496, v504 calleeName="attempt"
-    v506 = String string="/"
-    v507 = Add v505, v506
-    v508 = Call v9, -, v7, v474, v496 calleeName="attempt"
-    v509 = Add v507, v508
-    v510 = Call v498, v476, v509 calleeKey="push" calleeName="row.push"
-    Jump -> next b74()
-  b78() role=IterationCleanup subject=v489 handler=b89():
-    v511 = CatchException
-    Rethrow v511
-  b79() handler=b89():
-    Jump -> next b80()
-  b80() handler=b81():
-    v512 = Convert v488 declared={type=undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12 flags=[IsExpected]}
-    v513 = PropGet v476 key="push"
-    v514 = Convert v513 declared={type=undefined|null|function flags=[IsExpected]}
-    v515 = Call v9, -, v1, v474, v512 calleeName="attempt"
-    v516 = String string="/"
-    v517 = Add v515, v516
-    v518 = Call v9, -, v3, v474, v512 calleeName="attempt"
-    v519 = Add v517, v518
-    Jump -> next b72()
-  b81() role=IterationCleanup subject=v484 handler=b89():
-    v520 = CatchException
-    IteratorClose v484 completion=Throw
-    Rethrow v520
-  b82(v522) handler=b89():
-    v523 = IteratorOpen v165
-    Jump -> next b83()
-  b83() handler=b89():
-    LoopHint
-    v525 = IteratorResume v523
-    v526 = ResultAt v525
-    v527 = ResultAt v525 index=1
-    Branch v526 -> taken b84(), notTaken b85()
-  b84() handler=b89():
-    v528 = PropGet v22 key="push"
-    v529 = Convert v528 declared={type=undefined|null|function flags=[IsExpected]}
-    v530 = PropGet v476 key="join"
-    v531 = Convert v530 declared={type=undefined|null|function flags=[IsExpected]}
-    v532 = String string=" "
-    v533 = Call v531, v476, v532 calleeKey="join" calleeName="row.join"
-    v534 = Convert v533 declared={type=undefined|null|string flags=[IsExpected]}
-    Jump -> next b3()
-  b85() handler=b89():
-    Jump -> next b86()
-  b86() handler=b87():
-    v535 = Convert v527 declared={type=undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12 flags=[IsExpected]}
-    v536 = PropGet v476 key="push"
-    v537 = Convert v536 declared={type=undefined|null|function flags=[IsExpected]}
-    v538 = Call v9, -, v1, v474, v535 calleeName="attempt"
-    v539 = String string="/"
-    v540 = Add v538, v539
-    v541 = Call v9, -, v3, v474, v535 calleeName="attempt"
-    v542 = Add v540, v541
-    Jump -> next b83()
-  b87() role=IterationCleanup subject=v523 handler=b89():
-    v543 = CatchException
-    Rethrow v543
-  b88() role=IterationCleanup subject=v469 handler=b89():
-    v544 = CatchException
-    Rethrow v544
-  b89() role=IterationCleanup subject=v170:
-    v545 = CatchException
-    Rethrow v545
-  b90():
-    Jump -> next b91()
-  b91() handler=b102():
-    v546 = IteratorOpen v154 elementCount=2 [isDestructuring]
-    Jump -> next b92()
-  b92() handler=b101():
-    v547 = IteratorResume v546 stepIndex=0
-    v548 = ResultAt v547 index=1
-    v549 = Convert v548 declared={type=undefined|null|string flags=[IsExpected]}
-    v550 = IteratorResume v546 stepIndex=1
-    v551 = ResultAt v550 index=1
-    Jump -> next b93()
-  b93() handler=b102():
-    v552 = TypeTest v551 testedType=function
-    Branch v552 -> taken b94(| 0), notTaken b95(| 0)
-  b94(v553) handler=b102():
-    Jump -> next b100()
-  b95(v554) handler=b102():
-    v555 = TypeTest v554 testedType=null|object
-    Branch v555 -> taken b96(| 0), notTaken b99(| 0)
-  b96(v556) handler=b102():
-    v557 = ToBoolean v556
-    Branch v557 -> taken b97(| 0), notTaken b98(| 0)
-  b97(v558) handler=b102():
-    v559 = PropGet v25 key="set"
-    v560 = Convert v559 declared={type=undefined|null|function flags=[IsExpected]}
-    v561 = String string="<"
-    v562 = Add v561, v549
-    v563 = String string=">"
-    v564 = Add v562, v563
-    Jump -> next b100()
-  b98(v565) handler=b102():
-    Jump -> next b100()
-  b99(v566) handler=b102():
-    Jump -> next b100()
+    v377 = Integer integer=6 @3522
+    v378 = Add v368, v377 @3555
+    v379 = Convert v378 declared={type=i32 flags=[IsExpected]} @3517
+    Jump -> next b63(v379) @3517
+  b67(v380):
+    Jump -> next b68() @3500
+  b68():
+    v381 = Integer @3591
+    v382 = Convert v381 declared={type=number flags=[IsExpected]} @3591
+    v383 = Integer @3607
+    v384 = Convert v383 declared={type=i32 flags=[IsExpected]} @3607
+    Jump -> next b69(v382, v384) @3603
+  b69(v385, v386):
+    LoopHint @3603
+    v388 = PropGet v214 key="length" @3614
+    v389 = Convert v388 declared={type=number flags=[IsExpected]} @3614
+    v390 = Less v386, v389 @3610
+    Branch v390 -> taken b70(| 0), notTaken b81(| 0) @3610
+  b70(v391):
+    Jump -> next b71() @3610
+  b71():
+    v392 = Convert v214 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]} @3651
+    v393 = ElemGet v392, v391 @3651
+    v394 = Convert v393 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3651
+    v395 = Call v1, -, v205, v394 calleeName="get" @3641
+    v396 = String string="back" @3664
+    v397 = StrictEq v395, v396 @3641
+    Branch v397 -> taken b72(), notTaken b73() @3641
+  b72():
+    v398 = Integer integer=1 @3673
+    Jump -> next b74(v398) @3673
+  b73():
+    v399 = Integer @3677
+    Jump -> next b74(v399) @3677
+  b74(v400):
+    v401 = ElemGet v392, v391 @3696
+    v402 = Convert v401 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3696
+    v403 = Call v3, -, v208, v402 calleeName="has" @3683
+    v404 = ToBoolean v403 @3683
+    Branch v404 -> taken b75(| 0), notTaken b77(| 0) @3683
+  b75(v405):
+    Jump -> next b76() @3683
+  b76():
+    v406 = Integer integer=1 @3707
+    Jump -> next b79(v406) @3707
+  b77(v407):
+    Jump -> next b78() @3683
+  b78():
+    v408 = Integer @3711
+    Jump -> next b79(v408) @3711
+  b79(v409):
+    v410 = Add v400, v409 @3632
+    v411 = Add v385, v410 @3632
+    v412 = Convert v411 declared={type=number flags=[IsExpected]} @3632
+    Jump -> next b80() @3632
+  b80():
+    v413 = Increment v391 @3632
+    v414 = Convert v413 declared={type=i32 flags=[IsExpected]} @3627
+    Jump -> next b69(v412, v414) @3627
+  b81(v415):
+    Jump -> next b82() @3610
+  b82():
+    v416 = PropGet v26 key="push" @3715
+    v417 = Convert v416 declared={type=undefined|null|function flags=[IsExpected]} @3715
+    v418 = String string=" " @3732
+    v419 = Add v300, v418 @3726
+    v420 = Add v419, v385 @3742
+    v421 = Call v417, v26, v420 calleeKey="push" calleeName="lines.push" @3721
+    v422 = Integer @3762
+    v423 = Convert v422 declared={type=number flags=[IsExpected]} @3762
+    Jump -> next b83(v300, v423) @3754
+  b83(v424, v425):
+    LoopHint @3754
+    v427 = Integer integer=40 @3773
+    v428 = Less v425, v427 @3765
+    Branch v428 -> taken b84(| 0), notTaken b103(| 0) @3765
+  b84(v429):
+    Jump -> next b85() @3765
+  b85():
+    v430 = Data data=d6 @3802
+    v431 = Convert v430 declared={type=undefined|null|Array<never> flags=[IsExpected]} @3802
+    v432 = Convert v431 declared={type=undefined|null|Array flags=[IsExpected]} @3802
+    v433 = Integer @3819
+    v434 = Convert v433 declared={type=number flags=[IsExpected]} @3819
+    Jump -> next b86(v434) @3815
+  b86(v435):
+    LoopHint @3815
+    v437 = Integer integer=200 @3826
+    v438 = Less v435, v437 @3822
+    Branch v438 -> taken b87(| 0), notTaken b90(| 0) @3822
+  b87(v439):
+    Jump -> next b88() @3822
+  b88():
+    v440 = Convert v429 declared={type=number flags=[IsExpected]} @3850
+    v441 = NewObject layout=L10 @3850
+    PropDefine v441, v440 key="round" @3850
+    v443 = Convert v439 declared={type=number flags=[IsExpected]} @3857
+    PropDefine v441, v443 key="i" @3857
+    v445 = FinishObject v441 @3848
+    v446 = Convert v445 declared={type=undefined|null|L10 flags=[IsExpected]} @3848
+    v447 = PropGet v432 key="push" @3862
+    v448 = Convert v447 declared={type=undefined|null|function flags=[IsExpected]} @3862
+    v449 = Call v448, v432, v446 calleeKey="push" calleeName="young.push" @3868
+    v450 = Call v5, -, v205, v446, v446 calleeName="set" @3877
+    Jump -> next b89() @3877
+  b89():
+    v451 = Increment v439 @3877
+    v452 = Convert v451 declared={type=number flags=[IsExpected]} @3831
+    Jump -> next b86(v452) @3831
+  b90(v453):
+    Jump -> next b91() @3822
+  b91():
+    v454 = Convert v432 declared={type=undefined|null|Array<undefined|null|L10> flags=[IsExpected]} @3912
+    v455 = IteratorOpen v454 @3907
+    Jump -> next b92(v424) @3907
+  b92(v456):
+    LoopHint @3907
+    v458 = IteratorResume v455 @3907
+    v459 = ResultAt v458 @3907
+    v460 = ResultAt v458 index=1 @3907
+    Branch v459 -> taken b93(), notTaken b95() @3907
+  b93():
+    Jump -> next b94() @3907
+  b94():
+    v461 = Increment v429 @3907
+    v462 = Convert v461 declared={type=number flags=[IsExpected]} @3777
+    Jump -> next b83(v456, v462) @3777
+  b95():
+    Jump -> next b96() @3907
+  b96() handler=b102():
+    v463 = Convert v460 declared={type=undefined|null|L10 flags=[IsExpected]} @3907
+    v464 = Call v1, -, v205, v463 calleeName="get" @3923
+    v465 = StrictEq v464, v463 @3923
+    Branch v465 -> taken b97(| 1), notTaken b98(| 1) @3923
+  b97(v466) handler=b102():
+    Jump -> next b101(v456) @3923
+  b98(v467) handler=b102():
+    Jump -> next b99() @3923
+  b99() handler=b102():
+    v468 = Integer integer=-1 @3949
+    v469 = Convert v468 declared={type=number flags=[IsExpected]} @3943
+    Jump -> next b100() @3943
   b100() handler=b102():
-    Jump -> next b1()
-  b101() role=IterationCleanup subject=v546 handler=b102():
-    v567 = CatchException
-    Rethrow v567
-  b102() role=IterationCleanup subject=v150:
-    v568 = CatchException
-    Rethrow v568
+    Jump -> next b101(v469) @3943
+  b101(v470) handler=b102():
+    Jump -> next b92(v470) @3943
+  b102() role=IterationCleanup subject=v455:
+    v471 = CatchException @3907
+    IteratorClose v455 completion=Throw @3907
+    Rethrow v471 @3907
+  b103(v473):
+    Jump -> next b104() @3765
+  b104():
+    v474 = PropGet v26 key="push" @3955
+    v475 = Convert v474 declared={type=undefined|null|function flags=[IsExpected]} @3955
+    v476 = Builtin builtin=String @3966
+    v477 = Call v476, -, v424 calleeName="String" @3966
+    v478 = Convert v477 declared={type=undefined|null|string flags=[IsExpected]} @3966
+    v479 = Builtin builtin=String @3979
+    v480 = Convert v214 declared={type=undefined|null|Array<undefined|null|L9|L10> flags=[IsExpected]} @3996
+    v481 = Integer integer=1 @3996
+    v482 = ElemGet v480, v481 @3996
+    v483 = Convert v482 declared={type=undefined|null|L9|L10 flags=[IsExpected]} @3996
+    v484 = Call v1, -, v205, v483 calleeName="get" @3986
+    v485 = Call v479, -, v484 calleeName="String" @3979
+    v486 = Convert v485 declared={type=undefined|null|string flags=[IsExpected]} @3979
+    v487 = Builtin builtin=String @4007
+    v488 = Data data=d7 @4024
+    v489 = Call v1, -, v205, v488 calleeName="get" @4014
+    v490 = Call v487, -, v489 calleeName="String" @4007
+    v491 = Convert v490 declared={type=undefined|null|string flags=[IsExpected]} @4007
+    v492 = Builtin builtin=String @4030
+    v493 = Data data=d8 @4050
+    v494 = Call v3, -, v208, v493 calleeName="has" @4037
+    v495 = Call v492, -, v494 calleeName="String" @4030
+    v496 = Convert v495 declared={type=undefined|null|string flags=[IsExpected]} @4030
+    v497 = Call v475, v26, v478, v486, v491, v496 calleeKey="push" calleeName="lines.push" @3961
+    v498 = Builtin builtin=GlobalThis @4057
+    v499 = PropGet v498 key="console" [isFreeName] @4057
+    v500 = Convert v499 declared={type=builtin(Console) flags=[IsExpected]} @4057
+    v501 = PropGet v500 key="log" @4057
+    v502 = Convert v501 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @4057
+    v503 = Convert v26 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @4069
+    v504 = PropGet v503 key="join" @4069
+    v505 = Convert v504 declared={type=undefined|null|function flags=[IsExpected]} @4069
+    v506 = String string="\n" @4080
+    v507 = Call v505, v503, v506 calleeKey="join" calleeName="lines.join" @4075
+    v508 = Convert v507 declared={type=undefined|null|string flags=[IsExpected]} @4069
+    v509 = Call v502, v500, v508 calleeKey="log" calleeName="console.log" @4065
+    v510 = Undefined @4057
+    Return v510 @4057
+  b105():
+    Jump -> next b106() @2412
+  b106() handler=b134():
+    v511 = IteratorOpen v200 elementCount=2 [isDestructuring] @2405 constructs
+    Jump -> next b107() @2394
+  b107() handler=b133():
+    v512 = IteratorResume v511 stepIndex=0 @2394
+    v513 = ResultAt v512 @2394
+    v514 = ResultAt v512 index=1 @2394
+    v515 = Convert v514 declared={type=undefined|null|string flags=[IsExpected]} @2406
+    Jump -> next b108() @2406
+  b108() handler=b133():
+    v516 = IteratorResume v511 stepIndex=1 @2394
+    v517 = ResultAt v516 @2394
+    v518 = ResultAt v516 index=1 @2394
+    Jump -> next b109() @2412
+  b109() handler=b133():
+    Jump -> next b110() @2412
+  b110() handler=b134():
+    IteratorClose v511 @2394
+    Jump -> next b111() @2394
+  b111() handler=b134():
+    v520 = NewArray v515 contents=undefined|null|string @2464
+    v521 = Convert v520 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @2464
+    v522 = Integer @2493
+    v523 = Convert v522 declared={type=number flags=[IsExpected]} @2493
+    Jump -> next b112(v523) @2485
+  b112(v524) handler=b134():
+    LoopHint @2485
+    v526 = Integer integer=2 @2504
+    v527 = Less v524, v526 @2496
+    Branch v527 -> taken b113(| 0), notTaken b126(| 0) @2496
+  b113(v528) handler=b134():
+    Jump -> next b114() @2496
+  b114() handler=b134():
+    v529 = IteratorOpen v191 @2537
+    Jump -> next b115() @2537
+  b115() handler=b134():
+    LoopHint @2537
+    v531 = IteratorResume v529 @2537
+    v532 = ResultAt v531 @2537
+    v533 = ResultAt v531 index=1 @2537
+    Branch v532 -> taken b116(), notTaken b123() @2537
+  b116() handler=b134():
+    v534 = IteratorOpen v191 @2632
+    Jump -> next b117() @2632
+  b117() handler=b134():
+    LoopHint @2632
+    v536 = IteratorResume v534 @2632
+    v537 = ResultAt v536 @2632
+    v538 = ResultAt v536 index=1 @2632
+    Branch v537 -> taken b118(), notTaken b120() @2632
+  b118() handler=b134():
+    Jump -> next b119() @2632
+  b119() handler=b134():
+    v539 = Increment v528 @2632
+    v540 = Convert v539 declared={type=number flags=[IsExpected]} @2507
+    Jump -> next b112(v540) @2507
+  b120() handler=b134():
+    Jump -> next b121() @2632
+  b121() handler=b122():
+    v541 = Convert v538 declared={type=undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12 flags=[IsExpected]} @2632
+    v542 = PropGet v521 key="push" @2643
+    v543 = Convert v542 declared={type=undefined|null|function flags=[IsExpected]} @2643
+    v544 = String string=":" @2683
+    v545 = Add v528, v544 @2675
+    v546 = GetModuleVariable variable=g0 @2689
+    v547 = Call v546, -, v541 calleeName="show" @2689
+    v548 = Convert v547 declared={type=undefined|null|string flags=[IsExpected]} @2689
+    v549 = Add v545, v548 @2689
+    v550 = Call v9, -, v5, v518, v541, v549 calleeName="attempt" @2652
+    v551 = String string="/" @2700
+    v552 = Add v550, v551 @2652
+    v553 = Call v9, -, v7, v518, v541 calleeName="attempt" @2706
+    v554 = Add v552, v553 @2706
+    v555 = Call v543, v521, v554 calleeKey="push" calleeName="row.push" @2647
+    Jump -> next b117() @2643
+  b122() role=IterationCleanup subject=v534 handler=b134():
+    v556 = CatchException @2632
+    IteratorClose v534 completion=Throw @2632
+    Rethrow v556 @2632
+  b123() handler=b134():
+    Jump -> next b124() @2537
+  b124() handler=b125():
+    v558 = Convert v533 declared={type=undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12 flags=[IsExpected]} @2537
+    v559 = PropGet v521 key="push" @2548
+    v560 = Convert v559 declared={type=undefined|null|function flags=[IsExpected]} @2548
+    v561 = Call v9, -, v1, v518, v558 calleeName="attempt" @2557
+    v562 = String string="/" @2582
+    v563 = Add v561, v562 @2557
+    v564 = Call v9, -, v3, v518, v558 calleeName="attempt" @2588
+    v565 = Add v563, v564 @2588
+    v566 = Call v560, v521, v565 calleeKey="push" calleeName="row.push" @2552
+    Jump -> next b115() @2548
+  b125() role=IterationCleanup subject=v529 handler=b134():
+    v567 = CatchException @2537
+    IteratorClose v529 completion=Throw @2537
+    Rethrow v567 @2537
+  b126(v569) handler=b134():
+    Jump -> next b127() @2496
+  b127() handler=b134():
+    v570 = IteratorOpen v191 @2752
+    Jump -> next b128() @2752
+  b128() handler=b134():
+    LoopHint @2752
+    v572 = IteratorResume v570 @2752
+    v573 = ResultAt v572 @2752
+    v574 = ResultAt v572 index=1 @2752
+    Branch v573 -> taken b129(), notTaken b130() @2752
+  b129() handler=b134():
+    v575 = PropGet v26 key="push" @2832
+    v576 = Convert v575 declared={type=undefined|null|function flags=[IsExpected]} @2832
+    v577 = PropGet v521 key="join" @2843
+    v578 = Convert v577 declared={type=undefined|null|function flags=[IsExpected]} @2843
+    v579 = String string=" " @2852
+    v580 = Call v578, v521, v579 calleeKey="join" calleeName="row.join" @2847
+    v581 = Convert v580 declared={type=undefined|null|string flags=[IsExpected]} @2843
+    v582 = Call v576, v26, v581 calleeKey="push" calleeName="lines.push" @2838
+    Jump -> next b4() @2832
+  b130() handler=b134():
+    Jump -> next b131() @2752
+  b131() handler=b132():
+    v583 = Convert v574 declared={type=undefined|null|boolean|number|string|symbol|bigint|function|L4|L5|f12 flags=[IsExpected]} @2752
+    v584 = PropGet v521 key="push" @2763
+    v585 = Convert v584 declared={type=undefined|null|function flags=[IsExpected]} @2763
+    v586 = Call v9, -, v1, v518, v583 calleeName="attempt" @2772
+    v587 = String string="/" @2797
+    v588 = Add v586, v587 @2772
+    v589 = Call v9, -, v3, v518, v583 calleeName="attempt" @2803
+    v590 = Add v588, v589 @2803
+    v591 = Call v585, v521, v590 calleeKey="push" calleeName="row.push" @2767
+    Jump -> next b128() @2763
+  b132() role=IterationCleanup subject=v570 handler=b134():
+    v592 = CatchException @2752
+    IteratorClose v570 completion=Throw @2752
+    Rethrow v592 @2752
+  b133() role=IterationCleanup subject=v511 handler=b134():
+    v594 = CatchException @2394
+    IteratorClose v511 completion=Throw @2394
+    Rethrow v594 @2394
+  b134() role=IterationCleanup subject=v196:
+    v596 = CatchException @2412
+    IteratorClose v196 completion=Throw @2412
+    Rethrow v596 @2412
+  b135():
+    Jump -> next b136() @2192
+  b136() handler=b152():
+    v598 = IteratorOpen v180 elementCount=2 [isDestructuring] @2185 constructs
+    Jump -> next b137() @2174
+  b137() handler=b151():
+    v599 = IteratorResume v598 stepIndex=0 @2174
+    v600 = ResultAt v599 @2174
+    v601 = ResultAt v599 index=1 @2174
+    v602 = Convert v601 declared={type=undefined|null|string flags=[IsExpected]} @2186
+    Jump -> next b138() @2186
+  b138() handler=b151():
+    v603 = IteratorResume v598 stepIndex=1 @2174
+    v604 = ResultAt v603 @2174
+    v605 = ResultAt v603 index=1 @2174
+    Jump -> next b139() @2192
+  b139() handler=b151():
+    Jump -> next b140() @2192
+  b140() handler=b152():
+    IteratorClose v598 @2174
+    Jump -> next b141() @2174
+  b141() handler=b152():
+    v607 = TypeTest v605 testedType=function @2230
+    Branch v607 -> taken b142(| 0), notTaken b143(| 0) @2230
+  b142(v608) handler=b152():
+    Jump -> next b150() @2230
+  b143(v609) handler=b152():
+    v610 = TypeTest v609 testedType=null|object @2230
+    Branch v610 -> taken b144(| 0), notTaken b149(| 0) @2230
+  b144(v611) handler=b152():
+    Jump -> next b145() @2230
+  b145() handler=b152():
+    v612 = ToBoolean v611 @2259
+    Branch v612 -> taken b146(| 0), notTaken b148(| 0) @2259
+  b146(v613) handler=b152():
+    Jump -> next b147() @2259
+  b147() handler=b152():
+    v614 = PropGet v29 key="set" @2266
+    v615 = Convert v614 declared={type=undefined|null|function flags=[IsExpected]} @2266
+    v616 = String string="<" @2283
+    v617 = Add v616, v602 @2289
+    v618 = String string=">" @2296
+    v619 = Add v617, v618 @2289
+    v620 = Call v615, v29, v613, v619 calleeKey="set" calleeName="names.set" @2272
+    Jump -> next b150() @2266
+  b148(v621) handler=b152():
+    Jump -> next b150() @2259
+  b149(v622) handler=b152():
+    Jump -> next b150() @2230
+  b150() handler=b152():
+    Jump -> next b2() @2266
+  b151() role=IterationCleanup subject=v598 handler=b152():
+    v623 = CatchException @2174
+    IteratorClose v598 completion=Throw @2174
+    Rethrow v623 @2174
+  b152() role=IterationCleanup subject=v176:
+    v625 = CatchException @2192
+    IteratorClose v176 completion=Throw @2192
+    Rethrow v625 @2192
 }
 function f1 name="show" module=m0 position=694 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|symbol flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|symbol):
-    v1 = GetModuleVariable variable=g1
-    v2 = CheckInitialized v1 name="names"
-    v3 = PropGet v2 key="has"
-    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]}
-    v5 = Call v4, v2, v0 calleeKey="has" calleeName="names.has"
-    v6 = Convert v5 declared={type=boolean flags=[IsExpected]}
-    v7 = ToBoolean v6
-    Branch v7 -> taken b1(| 0), notTaken b2(| 0)
-  b1(v8):
-    v9 = GetModuleVariable variable=g1
-    v10 = CheckInitialized v9 name="names"
-    v11 = PropGet v10 key="get"
-    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]}
-    v13 = Call v12, v10, v0 calleeKey="get" calleeName="names.get"
-    ReturnCall v13 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
-  b2(v14):
-    v15 = TypeTest v0 testedType=symbol
-    Branch v15 -> taken b3(| 0), notTaken b4(| 0)
-  b3(v16):
-    v17 = PropGet v16 key="toString"
-    v18 = Convert v17 declared={type=undefined|null|function flags=[IsExpected]}
-    v19 = Call v18, v16 calleeKey="toString" calleeName="v.toString"
-    ReturnCall v19 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
-  b4(v20):
-    v21 = TypeTest v20 testedType=function
-    Branch v21 -> taken b5(| 0), notTaken b6(| 0)
-  b5(v22):
-    v23 = String string="a function"
-    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]}
-    Return v24
-  b6(v25):
-    v26 = TypeTest v25 testedType=function
-    Branch v26 -> taken b7(| 0), notTaken b8(| 0)
-  b7(v27):
-    Jump -> next b13(v27)
-  b8(v28):
-    v29 = TypeTest v28 testedType=null|object
-    Branch v29 -> taken b9(| 0), notTaken b12(| 0)
-  b9(v30):
-    v31 = ToBoolean v30
-    Branch v31 -> taken b10(| 0), notTaken b11(| 0)
-  b10(v32):
-    v33 = String string="{"
-    v34 = Builtin builtin=Object
-    v35 = Builtin builtin=ObjectKeys
-    v36 = Call v35, v34, v32 calleeName="Object.keys"
-    v37 = Convert v36 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    v38 = PropGet v37 key="join"
-    v39 = Convert v38 declared={type=undefined|null|function flags=[IsExpected]}
-    v40 = Call v39, v37 calleeKey="join" calleeName="join"
-    v41 = Convert v40 declared={type=undefined|null|string flags=[IsExpected]}
-    v42 = Add v33, v41
-    v43 = String string="}"
-    v44 = Add v42, v43
-    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]}
-    Return v45
-  b11(v46):
-    Jump -> next b13(v46)
-  b12(v47):
-    Jump -> next b13(v47)
-  b13(v48):
-    v49 = Builtin builtin=String
-    v50 = Call v49, -, v48 calleeName="String"
-    ReturnCall v50 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+    Jump -> next b1() @694
+  b1():
+    v1 = GetModuleVariable variable=g1 @721
+    v2 = CheckInitialized v1 name="names" @721
+    v3 = PropGet v2 key="has" @721
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @721
+    v5 = Call v4, v2, v0 calleeKey="has" calleeName="names.has" @727
+    v6 = Convert v5 declared={type=boolean flags=[IsExpected]} @721
+    v7 = ToBoolean v6 @721
+    Branch v7 -> taken b2(| 0), notTaken b4(| 0) @721
+  b2(v8):
+    Jump -> next b3() @721
+  b3():
+    v9 = GetModuleVariable variable=g1 @742
+    v10 = CheckInitialized v9 name="names" @742
+    v11 = PropGet v10 key="get" @742
+    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]} @742
+    v13 = Call v12, v10, v0 calleeKey="get" calleeName="names.get" @748
+    ReturnCall v13 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @748
+  b4(v14):
+    Jump -> next b5() @721
+  b5():
+    v15 = TypeTest v0 testedType=symbol @764
+    Branch v15 -> taken b6(| 0), notTaken b8(| 0) @764
+  b6(v16):
+    Jump -> next b7() @764
+  b7():
+    v17 = PropGet v16 key="toString" @794
+    v18 = Convert v17 declared={type=undefined|null|function flags=[IsExpected]} @794
+    v19 = Call v18, v16 calleeKey="toString" calleeName="v.toString" @796
+    ReturnCall v19 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @796
+  b8(v20):
+    Jump -> next b9() @764
+  b9():
+    v21 = TypeTest v20 testedType=function @816
+    Branch v21 -> taken b10(| 0), notTaken b12(| 0) @816
+  b10(v22):
+    Jump -> next b11() @816
+  b11():
+    v23 = String string="a function" @848
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]} @848
+    Return v24 @848
+  b12(v25):
+    Jump -> next b13() @816
+  b13():
+    v26 = TypeTest v25 testedType=function @870
+    Branch v26 -> taken b14(| 0), notTaken b15(| 0) @870
+  b14(v27):
+    Jump -> next b22(v27) @870
+  b15(v28):
+    v29 = TypeTest v28 testedType=null|object @870
+    Branch v29 -> taken b16(| 0), notTaken b21(| 0) @870
+  b16(v30):
+    Jump -> next b17() @870
+  b17():
+    v31 = ToBoolean v30 @895
+    Branch v31 -> taken b18(| 0), notTaken b20(| 0) @895
+  b18(v32):
+    Jump -> next b19() @895
+  b19():
+    v33 = String string="{" @905
+    v34 = Builtin builtin=Object @911
+    v35 = Builtin builtin=ObjectKeys @911
+    v36 = Call v35, v34, v32 calleeName="Object.keys" @918
+    v37 = Convert v36 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @911
+    v38 = PropGet v37 key="join" @924
+    v39 = Convert v38 declared={type=undefined|null|function flags=[IsExpected]} @911
+    v40 = Call v39, v37 calleeKey="join" calleeName="join" @926
+    v41 = Convert v40 declared={type=undefined|null|string flags=[IsExpected]} @911
+    v42 = Add v33, v41 @926
+    v43 = String string="}" @935
+    v44 = Add v42, v43 @926
+    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]} @926
+    Return v45 @926
+  b20(v46):
+    Jump -> next b22(v46) @895
+  b21(v47):
+    Jump -> next b22(v47) @870
+  b22(v48):
+    v49 = Builtin builtin=String @951
+    v50 = Call v49, -, v48 calleeName="String" @951
+    ReturnCall v50 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @951
 }
 function f2 name="get" module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|object, v1: anything):
-    v2 = PropGet v0 key="get"
-    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
-    v4 = Call v3, v0, v1 calleeKey="get" calleeName="x.get"
-    ReturnCall v4
+    Jump -> next b1() @390
+  b1():
+    v2 = PropGet v0 key="get" @418
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]} @418
+    v4 = Call v3, v0, v1 calleeKey="get" calleeName="x.get" @420
+    ReturnCall v4 @420
 }
 function f3 name="has" module=m0 position=430 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|object, v1: anything):
-    v2 = PropGet v0 key="has"
-    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
-    v4 = Call v3, v0, v1 calleeKey="has" calleeName="x.has"
-    ReturnCall v4
+    Jump -> next b1() @430
+  b1():
+    v2 = PropGet v0 key="has" @458
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]} @458
+    v4 = Call v3, v0, v1 calleeKey="has" calleeName="x.has" @460
+    ReturnCall v4 @460
 }
 function f4 name="set" module=m0 position=470 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|object, v1: anything, v2: anything):
-    v3 = PropGet v0 key="set"
-    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]}
-    v5 = Call v4, v0, v1, v2 calleeKey="set" calleeName="x.set"
-    ReturnCall v5
+    Jump -> next b1() @470
+  b1():
+    v3 = PropGet v0 key="set" @501
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @501
+    v5 = Call v4, v0, v1, v2 calleeKey="set" calleeName="x.set" @503
+    ReturnCall v5 @503
 }
 function f5 name="add" module=m0 position=516 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|object, v1: anything):
-    v2 = PropGet v0 key="add"
-    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
-    v4 = Call v3, v0, v1 calleeKey="add" calleeName="x.add"
-    ReturnCall v4
+    Jump -> next b1() @516
+  b1():
+    v2 = PropGet v0 key="add" @544
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]} @544
+    v4 = Call v3, v0, v1 calleeKey="add" calleeName="x.add" @546
+    ReturnCall v4 @546
 }
 function f6 name="attempt" module=m0 position=556 flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function, v1: Array):
-    Jump -> next b1()
-  b1() handler=b2():
-    v2 = GetModuleVariable variable=g0
-    v3 = NewArray contents=anything
-    AppendSpread v3, v1
-    v5 = CallList v0, -, v3 calleeName="f"
-    v6 = Convert v5 declared={type=undefined|null|symbol flags=[IsExpected]}
-    v7 = Call v2, -, v6 calleeName="show"
-    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
-    Return v8
-  b2() role=CatchHandler:
-    v9 = CatchValue
-    v10 = PropGet v9 key="constructor"
-    v11 = PropGet v10 key="name"
-    Return v11
+    Jump -> next b1() @556
+  b1():
+    Jump -> next b2() @587
+  b2() handler=b3():
+    v2 = GetModuleVariable variable=g0 @600
+    v3 = NewArray contents=anything @607
+    AppendSpread v3, v1 @610
+    v5 = CallList v0, -, v3 calleeName="f" @605
+    v6 = Convert v5 declared={type=undefined|null|symbol flags=[IsExpected]} @605
+    v7 = Call v2, -, v6 calleeName="show" @600
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @600
+    Return v8 @600
+  b3() role=CatchHandler:
+    v9 = CatchValue @634
+    v10 = PropGet v9 key="constructor" @643
+    v11 = PropGet v10 key="name" @649
+    Return v11 @643
 }
 function f7 name="OwnTable" module=m0 position=1108 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything):
-    v1 = GetConstructPrototype v0 layout=L0
-    v2 = NewObject v1 layout=L0
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
-    v5 = Data data=d9
-    v6 = Convert v5 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-    v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]}
-    PropSet v4, v7 key="held"
-    v9 = Undefined
-    v10 = TypeTest v9 testedType=object
-    Branch v10 -> taken b1(| 0), notTaken b2(| 0)
-  b1(v11):
-    Jump -> next b3(v11)
-  b2(v12):
-    Jump -> next b3(v3)
-  b3(v13):
-    Return v13
+    Jump -> next b1() @1108
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @1113
+    v2 = NewObject v1 layout=L0 @1113
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1113
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]} @1113
+    v5 = Data data=d9 @1125
+    v6 = Convert v5 declared={type=undefined|null|Array<never> flags=[IsExpected]} @1125
+    v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]} @1113
+    PropSet v4, v7 key="held" @1113
+    v9 = Undefined @1113
+    v10 = TypeTest v9 testedType=object @1113
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0) @1113
+  b2(v11):
+    Jump -> next b4(v11) @1113
+  b3(v12):
+    Jump -> next b4(v3) @1113
+  b4(v13):
+    Return v13 @1113
 }
-function f8 name="get" module=m0 position=1131 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|symbol flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
-function f9 name="has" module=m0 position=1171 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="get" module=m0 position=1131 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|symbol flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|symbol):
+    Jump -> next b1() @1131
+  b1():
+    v1 = String string="own get " @1147
+    v2 = GetModuleVariable variable=g0 @1160
+    v3 = Call v2, -, v0 calleeName="show" @1160
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @1160
+    v5 = Add v1, v4 @1147
+    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @1147
+    Return v6 @1147
+}
+function f9 name="has" module=m0 position=1171 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1() @1171
+  b1():
+    v2 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @1187
+    v3 = PropGet v2 key="held" @1187
+    v4 = Convert v3 declared={type=undefined|null|Array flags=[IsExpected]} @1187
+    v5 = PropGet v4 key="includes" @1192
+    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]} @1187
+    v7 = Call v6, v4, v1 calleeKey="includes" calleeName="this.held.includes" @1197
+    ReturnCall v7 casts=[{declared={type=boolean flags=[IsExpected]}}] @1197
+}
 function f10 name="set" module=m0 position=1212 kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: anything, v2: anything):
-    v3 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
-    v4 = PropGet v3 key="held"
-    v5 = Convert v4 declared={type=undefined|null|Array flags=[IsExpected]}
-    v6 = PropGet v5 key="push"
-    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
-    v8 = Call v7, v5, v1 calleeKey="push" calleeName="this.held.push"
-    Return v2
+    Jump -> next b1() @1212
+  b1():
+    v3 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @1224
+    v4 = PropGet v3 key="held" @1224
+    v5 = Convert v4 declared={type=undefined|null|Array flags=[IsExpected]} @1224
+    v6 = PropGet v5 key="push" @1229
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]} @1224
+    v8 = Call v7, v5, v1 calleeKey="push" calleeName="this.held.push" @1234
+    Return v2 @1250
 }
 function f11 name="add" module=m0 position=1255 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: anything):
-    v2 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
-    v3 = PropGet v2 key="held"
-    v4 = Convert v3 declared={type=undefined|null|Array flags=[IsExpected]}
-    v5 = PropGet v4 key="push"
-    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]}
-    v7 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
-    v8 = PropGet v7 key="held"
-    v9 = Convert v8 declared={type=undefined|null|Array flags=[IsExpected]}
-    v10 = PropGet v9 key="length"
-    v11 = Convert v10 declared={type=number flags=[IsExpected]}
-    Return v11
+    Jump -> next b1() @1255
+  b1():
+    v2 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @1264
+    v3 = PropGet v2 key="held" @1264
+    v4 = Convert v3 declared={type=undefined|null|Array flags=[IsExpected]} @1264
+    v5 = PropGet v4 key="push" @1269
+    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]} @1264
+    v7 = Call v6, v4, v1 calleeKey="push" calleeName="this.held.push" @1274
+    v8 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @1290
+    v9 = PropGet v8 key="held" @1290
+    v10 = Convert v9 declared={type=undefined|null|Array flags=[IsExpected]} @1290
+    v11 = PropGet v10 key="length" @1295
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @1290
+    Return v12 @1290
 }
-function f12 name="c" module=m0 position=1002 thisType={type=anything} results=[{type=anything}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 name="c" module=m0 position=1002 thisType={type=anything} results=[{type=anything}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1002
+  b1():
+    v0 = Undefined @1002
+    Return v0 @1002
+}
 function f13 name="HeirOfWeakMap" module=m0 position=1318 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
   b0(v0: function, v1: anything, v2: Array):
-    v3 = GetSuperBase v0
-    v4 = SuperConstructList v3, v1, v2 layout=L1
-    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    Return v5
+    Jump -> next b1() @1318
+  b1():
+    v3 = GetSuperBase v0 @1318
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @1318
+    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1318
+    Return v5 @1318
 }
-function f14 name="get" module=m0 position=1350 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 name="get" module=m0 position=1350 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1, v1: anything):
+    Jump -> next b1() @1350
+  b1():
+    v2 = String string="heir: " @1366
+    v3 = GetModuleVariable variable=g0 @1377
+    v4 = GetModuleVariable variable=g3 @1382
+    v5 = GetSuperBase v4 homeKind=ClassPrototype @1382
+    v6 = SuperGet v5, v0 key="get" @1382
+    v7 = Call v6, v0, v1 calleeName="super.get" @1388
+    v8 = Convert v7 declared={type=undefined|null|symbol flags=[IsExpected]} @1382
+    v9 = Call v3, -, v8 calleeName="show" @1377
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]} @1377
+    v11 = Add v2, v10 @1366
+    v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]} @1366
+    Return v12 @1366
+}
 function f15 name="PlainHeirOfWeakMap" module=m0 position=1407 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
   b0(v0: function, v1: anything, v2: Array):
-    v3 = GetSuperBase v0
-    v4 = SuperConstructList v3, v1, v2 layout=L2
-    v5 = Convert v4 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    Return v5
+    Jump -> next b1() @1407
+  b1():
+    v3 = GetSuperBase v0 @1407
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @1407
+    v5 = Convert v4 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1407
+    Return v5 @1407
 }
 function f16 name="HeirOfMap" module=m0 position=1451 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
   b0(v0: function, v1: anything, v2: Array):
-    v3 = GetSuperBase v0
-    v4 = SuperConstructList v3, v1, v2 layout=L3
-    v5 = Convert v4 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    Return v5
+    Jump -> next b1() @1451
+  b1():
+    v3 = GetSuperBase v0 @1451
+    v4 = SuperConstructList v3, v1, v2 layout=L3 @1451
+    v5 = Convert v4 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1451
+    Return v5 @1451
 }
-function f17 module=m0 position=1531 length=1 thisType={type=anything} parameters=[{type=undefined|null|symbol|object flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
-function f18 name="get" module=m0 position=1636 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
-function f19 name="has" module=m0 position=1673 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 module=m0 position=1531 length=1 thisType={type=anything} parameters=[{type=undefined|null|symbol|object flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|symbol|object):
+    Jump -> next b1() @1531
+  b1():
+    v1 = String string="own property" @1553
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @1553
+    Return v2 @1553
+}
+function f18 name="get" module=m0 position=1636 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1636
+  b1():
+    v0 = String string="other prototype" @1651
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]} @1651
+    Return v1 @1651
+}
+function f19 name="has" module=m0 position=1673 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1673
+  b1():
+    v0 = String string="other has" @1688
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]} @1688
+    Return v1 @1688
+}
 function f20 name="set" module=m0 position=1704 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = String string="other set"
-    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
-    Return v1
+    Jump -> next b1() @1704
+  b1():
+    v0 = String string="other set" @1719
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]} @1719
+    Return v1 @1719
 }
 function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f30]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f39]
 function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f41 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f42 name="firstSearchedIndex" module=m2 position=399 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|number site=w0}, {type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|number, v1: number):
+    Jump -> next b1() @399
+  b1():
+    v2 = TypeTest v0 testedType=undefined @490
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @490
+  b2(v3):
+    Jump -> next b3() @490
+  b3():
+    v4 = Integer @522
+    v5 = Convert v4 declared={type=number site=w2} @522
+    Return v5 @522
+  b4(v6):
+    Jump -> next b5() @490
+  b5():
+    v7 = Convert v6 declared={type=number} illTypedCause=Assertion @531
+    v8 = Integer @544
+    v9 = GreaterEq v7, v8 @531
+    Branch v9 -> taken b6(| 0), notTaken b13(| 0) @531
+  b6(v10):
+    Jump -> next b7() @531
+  b7():
+    v11 = Convert v10 declared={type=number} illTypedCause=Assertion @555
+    v12 = Less v11, v1 @555
+    Branch v12 -> taken b8(| 0, 1), notTaken b10(| 0, 1) @555
+  b8(v13, v14):
+    Jump -> next b9() @555
+  b9():
+    v15 = Convert v13 declared={type=number} illTypedCause=Assertion @576
+    Jump -> next b12(v15) @576
+  b10(v16, v17):
+    Jump -> next b11() @555
+  b11():
+    Jump -> next b12(v17) @588
+  b12(v18):
+    v19 = Integer @600
+    v20 = URShift v18, v19 @547
+    v21 = Convert v20 declared={type=number site=w2} @547
+    Return v21 @547
+  b13(v22):
+    Jump -> next b14() @531
+  b14():
+    v23 = Convert v22 declared={type=number} illTypedCause=Assertion @630
+    v24 = Negate v23 @629
+    v25 = Convert v24 declared={type=number site=w12} @629
+    v26 = Integer integer=1 @669
+    v27 = GreaterEq v25, v26 @650
+    Branch v27 -> taken b15(| 0), notTaken b20(| 0) @650
+  b15(v28):
+    Jump -> next b16() @650
+  b16():
+    v29 = Less v28, v1 @650
+    Branch v29 -> taken b17(| 0, 1), notTaken b19(| 0, 1) @650
+  b17(v30, v31):
+    Jump -> next b18() @650
+  b18():
+    v32 = Integer @732
+    v33 = URShift v30, v32 @712
+    v34 = Sub v31, v33 @702
+    v35 = Integer @740
+    v36 = URShift v34, v35 @702
+    Jump -> next b22(v36) @702
+  b19(v37, v38):
+    Jump -> next b21() @650
+  b20(v39):
+    Jump -> next b21() @650
+  b21():
+    v40 = Integer @744
+    Jump -> next b22(v40) @744
+  b22(v41):
+    v42 = Convert v41 declared={type=number site=w2} @744
+    Return v42 @744
+}
+function f43 name="holdsBoxedValues" module=m2 position=750 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=boolean site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: number):
+    Jump -> next b1() @750
+  b1():
+    v1 = Integer integer=3 @819
+    v2 = StrictEq v0, v1 @810
+    v3 = ToBoolean v2 @810
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @810
+  b2(v4):
+    Jump -> next b5(v4) @810
+  b3(v5):
+    Jump -> next b4() @810
+  b4():
+    v6 = Integer integer=1 @855
+    v7 = StrictEq v0, v6 @810
+    Jump -> next b5(v7) @810
+  b5(v8):
+    v9 = Convert v8 declared={type=boolean site=w4} @810
+    Return v9 @810
+}
+function f44 name="includesNaN" module=m2 position=1987 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w6}, {type=number site=w7}] results=[{type=boolean site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|Array, v1: number, v2: number):
+    Jump -> next b1() @1987
+  b1():
+    Jump -> next b2(v1) @2070
+  b2(v3: number):
+    LoopHint @2070
+    v5 = Less v3, v2 @2077
+    Branch v5 -> taken b3(| 0, 1), notTaken b10(| 0, 1) @2077
+  b3(v6, v7):
+    Jump -> next b4() @2077
+  b4():
+    v8 = ElemGet v0, v6 @2124
+    v9 = StrictEq v8, v8 @2146
+    Branch v9 -> taken b5(| 0), notTaken b8(| 0) @2146
+  b5(v10):
+    Jump -> next b6() @2146
+  b6():
+    Jump -> next b7() @2174
+  b7():
+    v11 = Increment v6 @2158
+    v12 = Convert v11 declared={type=number site=w6} @2093
+    Jump -> next b2(v12) @2093
+  b8(v13):
+    Jump -> next b9() @2146
+  b9():
+    v14 = Boolean boolean=true @2174
+    v15 = Convert v14 declared={type=boolean site=w8} @2174
+    Return v15 @2174
+  b10(v16, v17):
+    Jump -> next b11() @2077
+  b11():
+    v18 = Boolean @2193
+    v19 = Convert v18 declared={type=boolean site=w8} @2193
+    Return v19 @2193
+}
+function f45 name="includes" module=m2 position=2203 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=ArraySearchIncludes thisType={type=undefined|null|Array site=w10 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}, {type=undefined|number site=w9}] results=[{type=boolean site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|Array, v1: anything, v2: undefined|number):
+    Jump -> next b1() @2203
+  b1():
+    v3 = PropGet v0 key="length" @2323
+    v4 = Convert v3 declared={type=number site=w16} illTypedCause=Assertion @2323
+    v5 = Integer @2339
+    v6 = URShift v4, v5 @2323
+    v7 = Convert v6 declared={type=number site=w13} @2323
+    v8 = GetModuleVariable variable=g6 @2356
+    v9 = Call v8, -, v2, v7 calleeName="firstSearchedIndex" @2356
+    v10 = Convert v9 declared={type=number site=w17} @2356
+    v11 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @2410
+    v12 = ArrayStorageKind v11 @2410
+    v13 = Convert v12 declared={type=number site=w15} @2410
+    v14 = Integer integer=2 @2450
+    v15 = StrictEq v13, v14 @2441
+    Branch v15 -> taken b2(| 0), notTaken b32(| 0) @2441
+  b2(v16):
+    Jump -> next b3() @2441
+  b3():
+    v17 = TypeTest v1 testedType=undefined @2481
+    Branch v17 -> taken b4(| 0), notTaken b16(| 0) @2481
+  b4(v18):
+    Jump -> next b5() @2481
+  b5():
+    Jump -> next b6(v10) @2513
+  b6(v19: number):
+    LoopHint @2513
+    v21 = Less v19, v7 @2520
+    Branch v21 -> taken b7(| 0, 1), notTaken b14(| 0, 1) @2520
+  b7(v22, v23):
+    Jump -> next b8() @2520
+  b8():
+    v24 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @2579
+    v25 = Convert v22 declared={type=int flags=[IsFromCompiler, IsClaim]} @2579
+    v26 = GetDoubleIndex v24, v25 @2579
+    v27 = Convert v26 declared={type=number site=w18} @2579
+    v28 = StrictEq v27, v27 @2621
+    Branch v28 -> taken b9(| 0), notTaken b12(| 0) @2621
+  b9(v29):
+    Jump -> next b10() @2621
+  b10():
+    Jump -> next b11() @2649
+  b11():
+    v30 = Increment v22 @2633
+    v31 = Convert v30 declared={type=number site=w14} @2536
+    Jump -> next b6(v31) @2536
+  b12(v32):
+    Jump -> next b13() @2621
+  b13():
+    v33 = Boolean boolean=true @2649
+    v34 = Convert v33 declared={type=boolean site=w11} @2649
+    Return v34 @2649
+  b14(v35, v36):
+    Jump -> next b15() @2520
+  b15():
+    v37 = Boolean @2676
+    v38 = Convert v37 declared={type=boolean site=w11} @2676
+    Return v38 @2676
+  b16(v39):
+    Jump -> next b17() @2481
+  b17():
+    v40 = TypeTest v39 testedType=number @2697
+    Branch v40 -> taken b18(| 0), notTaken b30(| 0) @2697
+  b18(v41):
+    Jump -> next b19() @2697
+  b19():
+    Jump -> next b20(v10) @2745
+  b20(v42: number):
+    LoopHint @2745
+    v44 = Less v42, v7 @2752
+    Branch v44 -> taken b21(| 0, 1), notTaken b28(| 0, 1) @2752
+  b21(v45, v46):
+    Jump -> next b22() @2752
+  b22():
+    v47 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @2789
+    v48 = Convert v45 declared={type=int flags=[IsFromCompiler, IsClaim]} @2789
+    v49 = GetDoubleIndex v47, v48 @2789
+    v50 = Convert v41 declared={type=number} illTypedCause=Assertion @2822
+    v51 = StrictEq v49, v50 @2789
+    Branch v51 -> taken b23(| 1), notTaken b25(| 1) @2789
+  b23(v52):
+    Jump -> next b24() @2789
+  b24():
+    v53 = Boolean boolean=true @2839
+    v54 = Convert v53 declared={type=boolean site=w11} @2839
+    Return v54 @2839
+  b25(v55):
+    Jump -> next b26() @2789
+  b26():
+    Jump -> next b27() @2839
+  b27():
+    v56 = Increment v45 @2822
+    v57 = Convert v56 declared={type=number site=w14} @2768
+    Jump -> next b20(v57) @2768
+  b28(v58, v59):
+    Jump -> next b29() @2752
+  b29():
+    v60 = Boolean @2862
+    v61 = Convert v60 declared={type=boolean site=w11} @2862
+    Return v61 @2862
+  b30(v62):
+    Jump -> next b31() @2697
+  b31():
+    v63 = Boolean @2734
+    v64 = Convert v63 declared={type=boolean site=w11} @2734
+    Return v64 @2734
+  b32(v65):
+    Jump -> next b33() @2441
+  b33():
+    v66 = StrictEq v1, v1 @2879
+    Branch v66 -> taken b34(| 0), notTaken b60(| 0) @2879
+  b34(v67):
+    Jump -> next b35() @2879
+  b35():
+    v68 = GetModuleVariable variable=g7 @2980
+    v69 = Call v68, -, v65 calleeName="holdsBoxedValues" @2980
+    v70 = Convert v69 declared={type=boolean site=w20} @2980
+    v71 = ToBoolean v70 @2980
+    Branch v71 -> taken b36(| 0), notTaken b48(| 0) @2980
+  b36(v72):
+    Jump -> next b37() @2980
+  b37():
+    Jump -> next b38(v10) @3010
+  b38(v73: number):
+    LoopHint @3010
+    v75 = Less v73, v7 @3017
+    Branch v75 -> taken b39(| 0, 1), notTaken b46(| 0, 1) @3017
+  b39(v76, v77):
+    Jump -> next b40() @3017
+  b40():
+    v78 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @3054
+    v79 = Convert v76 declared={type=int flags=[IsFromCompiler, IsClaim]} @3054
+    v80 = GetContiguousIndex v78, v79 @3054
+    v81 = StrictEq v80, v67 @3054
+    Branch v81 -> taken b41(| 1), notTaken b43(| 1) @3054
+  b41(v82):
+    Jump -> next b42() @3054
+  b42():
+    v83 = Boolean boolean=true @3117
+    v84 = Convert v83 declared={type=boolean site=w11} @3117
+    Return v84 @3117
+  b43(v85):
+    Jump -> next b44() @3054
+  b44():
+    Jump -> next b45() @3117
+  b45():
+    v86 = Increment v76 @3100
+    v87 = Convert v86 declared={type=number site=w14} @3033
+    Jump -> next b38(v87) @3033
+  b46(v88, v89):
+    Jump -> next b47() @3017
+  b47():
+    v90 = Boolean @3140
+    v91 = Convert v90 declared={type=boolean site=w11} @3140
+    Return v91 @3140
+  b48(v92):
+    Jump -> next b49() @2980
+  b49():
+    Jump -> next b50(v10) @3153
+  b50(v93: number):
+    LoopHint @3153
+    v95 = Less v93, v7 @3160
+    Branch v95 -> taken b51(| 0, 1), notTaken b58(| 0, 1) @3160
+  b51(v96, v97):
+    Jump -> next b52() @3160
+  b52():
+    v98 = ElemGet v0, v96 @3195
+    v99 = StrictEq v98, v67 @3195
+    Branch v99 -> taken b53(| 1), notTaken b55(| 1) @3195
+  b53(v100):
+    Jump -> next b54() @3195
+  b54():
+    v101 = Boolean boolean=true @3228
+    v102 = Convert v101 declared={type=boolean site=w11} @3228
+    Return v102 @3228
+  b55(v103):
+    Jump -> next b56() @3195
+  b56():
+    Jump -> next b57() @3228
+  b57():
+    v104 = Increment v96 @3211
+    v105 = Convert v104 declared={type=number site=w14} @3176
+    Jump -> next b50(v105) @3176
+  b58(v106, v107):
+    Jump -> next b59() @3160
+  b59():
+    v108 = Boolean @3247
+    v109 = Convert v108 declared={type=boolean site=w11} @3247
+    Return v109 @3247
+  b60(v110):
+    Jump -> next b61() @2879
+  b61():
+    v111 = Integer integer=1 @2918
+    v112 = StrictEq v65, v111 @2909
+    v113 = LogicalNot v112 @2909
+    v114 = ToBoolean v113 @2909
+    Branch v114 -> taken b62(| 0), notTaken b64(| 0) @2909
+  b62(v115):
+    Jump -> next b63() @2909
+  b63():
+    v116 = GetModuleVariable variable=g8 @2940
+    v117 = Call v116, -, v0, v10, v7 calleeName="includesNaN" @2940
+    ReturnCall v117 casts=[{declared={type=boolean site=w19}}, {declared={type=boolean site=w11}}] @2940
+  b64(v118):
+    Jump -> next b65() @2909
+  b65():
+    v119 = Convert v118 declared={type=boolean site=w11} @2940
+    Return v119 @2940
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f41 visibility=Private
+runtimefunction id=ArraySearchIncludes function=f45
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 1103, patchpoints: 169, rare instructions: 584, polls: 11
+# CHECK-NEXT: instructions: 1182, patchpoints: 167, rare instructions: 972, polls: 15
 # CHECK-NEXT: end of function f0

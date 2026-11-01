@@ -327,7 +327,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=1525 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=undefined|null|L0}, {type=L1}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f3 body=f26} {
 # CHECK-NEXT: b0(v0: undefined, v1: function, v2: undefined|null|L0, v3: L1):
 # CHECK-NEXT: v4: Generator = NewGenerator v1 function=f3
-# CHECK-NEXT: v7: anything = NewHeapFrame v4 function=f26 numberOfWords=4
+# CHECK-NEXT: v7: anything = NewHeapFrame v4, v1 function=f26 numberOfWords=4
 # CHECK-NEXT: PutHeapFrameWord v7, v4
 # CHECK-NEXT: PutHeapFrameWord v7, v1 index=1
 # CHECK-NEXT: PutHeapFrameWord v7, v2 index=2

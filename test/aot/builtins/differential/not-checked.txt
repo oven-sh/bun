@@ -6,6 +6,7 @@ BunBuild/0: it is not called: it blocks, starts a process or opens a socket
 BunBundleFeature/0: it is not called: this realm does not have its holder
 BunConnect/0: it is not called: it blocks, starts a process or opens a socket
 BunDollar/0: it is not called: it blocks, starts a process or opens a socket
+BunDollar/1: it is not called: it blocks, starts a process or opens a socket
 BunFFIReadF32/0: it is not called: it dereferences an arbitrary pointer
 BunFFIReadF64/0: it is not called: it dereferences an arbitrary pointer
 BunFFIReadI16/0: it is not called: it dereferences an arbitrary pointer
@@ -33,10 +34,11 @@ BunSpawnSync/1: it is not called: it blocks, starts a process or opens a socket
 BunTestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestViStubGlobal/0: it is not called: it reaches outside JavaScript
 BunTestVitestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestVitestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestVitestViSpyOn/0: it is not called: it reaches outside JavaScript
-BunTestVitestVitestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestViStubGlobal/0: it is not called: it reaches outside JavaScript
 BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
@@ -100,6 +102,10 @@ NativeFunctionsBake_pluginsBindTsCheckFramework/0: it is not called: it changes 
 NativeFunctionsBake_pluginsBindTsRestartProcess/0: it is not called: it ends the process or makes it fail
 NativeFunctionsBake_pluginsBindTsSetConfigPlugins/0: it is not called: it changes how modules are loaded
 NativeFunctionsBake_pluginsBindTsSetPages/0: it is not called: it changes how modules are loaded
+NativeFunctionsBunDebuggerCppJsFunction_closeNodeInspector/0: it is not called: it opens the inspector, waits for it or profiles the process
+NativeFunctionsBunDebuggerCppJsFunction_openNodeInspector/0: it is not called: it opens the inspector, waits for it or profiles the process
+NativeFunctionsBunDebuggerCppJsFunction_postNodeInspectorControl/0: it is not called: it opens the inspector, waits for it or profiles the process
+NativeFunctionsBunDebuggerCppJsFunction_waitForNodeInspectorConnection/0: it is not called: it opens the inspector, waits for it or profiles the process
 NativeFunctionsBunProcessCppBun__Process__disconnect/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppJsFunctionReportUncaughtException/0: it is not called: it ends the process or makes it fail
@@ -127,6 +133,11 @@ NativeFunctionsJSEnvironmentVariableMapCppJsEditWindowsEnvVar/0: it is not calle
 NativeFunctionsJSEnvironmentVariableMapCppJsProcessEnvCoerceForWrite/0: it is not called: this realm does not have its holder
 NativeFunctionsJSEnvironmentVariableMapCppJsProcessEnvResetForDelete/0: it is not called: this realm does not have its holder
 NativeFunctionsJSEventListenerCppJsFunctionEmitUncaughtException/0: it is not called: this realm does not have its holder
+NativeFunctionsJSInspectorProfilerCppJsFunction_collectPreciseCoverage/0: it is not called: it opens the inspector, waits for it or profiles the process
+NativeFunctionsJSInspectorProfilerCppJsFunction_startCPUProfiler/0: it is not called: it opens the inspector, waits for it or profiles the process
+NativeFunctionsJSInspectorProfilerCppJsFunction_startPreciseCoverage/0: it is not called: it opens the inspector, waits for it or profiles the process
+NativeFunctionsJSInspectorProfilerCppJsFunction_stopCPUProfiler/0: it is not called: it opens the inspector, waits for it or profiles the process
+NativeFunctionsJSInspectorProfilerCppJsFunction_stopPreciseCoverage/0: it is not called: it opens the inspector, waits for it or profiles the process
 NativeFunctionsLinear_fifo_testingBindTsOrderedRemoveProbe/0: it is not called: a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose
 NativeFunctionsMarkdownObjectInternalsBindTsSetMaxMarkdownBlockBytesForTesting/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsMemory_pressureBindTsPsiTrigger/0: it is not called: it changes how the rest of the process behaves
@@ -163,6 +174,7 @@ NativeFunctionsUdp_socketBindTsDgramBindFd/0: it is not called: it closes, cuts 
 NativeFunctionsUdp_socketBindTsDgramCloseFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramListenFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsVirtual_machine_exportsBindTsSetSyntheticAllocationLimitForTesting/0: it is not called: it ends the process or makes it fail
+NativeFunctionsWorkerCppJsFunctionPostMessage/0: it is not called: it starts a thread, a process or a terminal
 NativeNewCppFunctionBunProcessCppBun__Process__disconnect/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppBun__Process__disconnect/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have it

@@ -101,18 +101,19 @@ export function findLinkedMembers(
   });
 }
 
-/** A name that the link's map of symbols puts in one of `objects`, by their file names, and of which `isInObjects` says no. */
-export function findNameMissingFromObjects(
+/** The names that the link's map of symbols puts in one of `objects`, by their file names, and of which `isInObjects` says no → that object. */
+export function findNamesMissingFromObjects(
   symbolMap: string,
   objects: ReadonlySet<string>,
   isInObjects: (name: string) => boolean,
-): { name: string; object: string } | undefined {
+): Map<string, string> {
+  const missing = new Map<string, string>();
   for (const line of readFileSync(symbolMap, "latin1").split("\n")) {
     const symbol = /^ [0-9a-f]{4}:[0-9a-f]{8} +(\S+) +[0-9a-f]{16} +(.*?)\s*$/.exec(line);
     if (symbol === null || isInObjects(symbol[1]!)) continue;
-    if (objects.has(basename(symbol[2]!.replaceAll("\\", "/")))) return { name: symbol[1]!, object: symbol[2]! };
+    if (objects.has(basename(symbol[2]!.replaceAll("\\", "/")))) missing.set(symbol[1]!, symbol[2]!);
   }
-  return undefined;
+  return missing;
 }
 
 interface MapSymbol {

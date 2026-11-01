@@ -84,7 +84,7 @@ impl<'h> Resolver<'h> {
             match end {
                 Some(_) => search.find_candidates(),
                 // A path finds what a walk over the folders finds, and a walk passes by folders: `./names/.hidden.js` is found.
-                None if is_path(start) && lies_in_folder_left_out_of_walks(start) => Ok(()),
+                None if is_path(start) && search.leads_into_package_left_outside(start) => Ok(()),
                 None => search.try_specifier(start),
             }
         });
@@ -224,6 +224,30 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             None => self.directory,
         };
         is_inside(strings::without_trailing_slash(root), own)
+    }
+
+    fn leads_into_package_left_outside(&self, path: &[u8]) -> bool {
+        let (resolver, request) = (self.resolver, self.request);
+        let is_named = |manifest: &&CodeManifest<'h>| !manifest.name.is_empty();
+        let folder = join(self.directory, split_after_last_slash(path).0);
+        let mut above = ancestors(strings::without_trailing_slash(&folder));
+        let Some(package) = above.find_map(|it| resolver.code_manifest(it).filter(is_named)) else {
+            return false;
+        };
+        let claim = resolver.code_host().resolve_code(&CodeRequest {
+            specifier: package.name,
+            importer: request.importer,
+            directory: request.directory,
+            kind: request.kind,
+            form: request.form,
+        });
+        matches!(
+            claim,
+            HostResolution::External {
+                kind: ExternalKind::UncompiledCode,
+                ..
+            }
+        )
     }
 
     fn add_package_candidates(&mut self, name: &[u8]) -> Result<(), ComputedUnknown> {
@@ -576,6 +600,10 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             CodeResolution::HostModule(module) => ComputedCandidate::HostModule(module),
             CodeResolution::External {
                 kind: ExternalKind::UncompiledCode,
+                specifier,
+            } if self.resolver.code_host().is_left_to_loader(specifier) => return Ok(()),
+            CodeResolution::External {
+                kind: ExternalKind::UncompiledCode,
                 ..
             } => return Err(ComputedUnknown::ExternalCandidate),
             CodeResolution::External {
@@ -600,10 +628,6 @@ pub(super) fn is_inside(path: &[u8], folder: &[u8]) -> bool {
 
 fn is_left_out_of_walks(folder: &[u8]) -> bool {
     folder == b"node_modules" || folder.starts_with(b".") && !is_dot_segment(folder)
-}
-
-fn lies_in_folder_left_out_of_walks(path: &[u8]) -> bool {
-    strings::split(split_after_last_slash(path).0, b"/").any(is_left_out_of_walks)
 }
 
 fn is_path(specifier: &[u8]) -> bool {

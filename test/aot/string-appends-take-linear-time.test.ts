@@ -5,11 +5,12 @@
 // The program measures itself with process.cpuUsage(), around the loop alone, so the test needs no counters and runs on every platform.
 //
 //   AOT_STRING_APPENDS=<text>    only the idioms whose name contains the text
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
-import { describe, test } from "./supported";
+import { afterAll } from "./harness/default-timeout";
+import { describe, test } from "./measures";
 
 // `build(appends)` answers the length of the string it has built.
 const idioms: Record<string, string> = {

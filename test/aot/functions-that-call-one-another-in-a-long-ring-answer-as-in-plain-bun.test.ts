@@ -39,3 +39,18 @@ test("each function hands what it gets, or a part of it, to the next", async () 
   expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   expect(plain.stdout.trim().split("\n")).toHaveLength(2);
 });
+
+// What the tests of a run may replace on built-in objects is sought by what the parameters stand for, from call to call: once round the ring.
+test("a compiled test run follows the ring too", async () => {
+  const file = `import { expect, test } from "bun:test";\n${program}test("the list is there", () => expect(list.own4).toBe(4));\n`;
+  using folder = tempDir("aot-long-ring-in-a-test-run", { "ring.test.js": file });
+  const cwd = String(folder);
+  const compiled = await spawned([bunExe(), "test", "--aot", "./ring.test.js"], cwd, bunEnv);
+  const plain = await spawned([bunExe(), "test", "./ring.test.js"], cwd, bunEnv);
+  const sums = (stdout: string) => stdout.split("\n").filter(line => /^[-\d.e+ ]+$/.test(line));
+  expect({ sums: sums(compiled.stdout), exitCode: compiled.exitCode }).toEqual({
+    sums: sums(plain.stdout),
+    exitCode: 0,
+  });
+  expect(sums(plain.stdout)).toHaveLength(2);
+});

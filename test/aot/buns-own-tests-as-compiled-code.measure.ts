@@ -1,6 +1,7 @@
 // Bun's own test files as compiled code: `bun test <file>` against `bun test --debug-aot <file>`, which compiles the file and all it imports and runs that. The verdicts are compared
 // test by test (other-suites/bun-tests.ts). other-suites/bun-tests.same.txt lists the files of test/js and test/regression in which every test has the same verdict both ways,
-// but for the tests that other-suites/bun-tests.known.txt names.
+// but for the tests that other-suites/bun-tests.known.txt names. Its second column says what the tests of a file start (other-suites/children.ts writes it): where it says "plain",
+// they start Bun on small programs or projects, those runs are plain, and "the same" is about the code round them alone.
 //
 // A run takes one file in eighty, others for each commit of Bun (run-programs.ts), and a few that every run takes:
 //   AOT_SHARE=all bun test test/aot/buns-own-tests-as-compiled-code            every file: an hour at sixteen files at a time
@@ -19,6 +20,7 @@ const driver = join(import.meta.dir, "other-suites", "bun-tests.ts");
 const inEveryRun = new Set(["test/js/bun/jsonc/jsonc.test.ts"]);
 const files = readFileSync(join(import.meta.dir, "other-suites", "bun-tests.same.txt"), "utf8")
   .split("\n")
+  .map(line => line.split("\t")[0])
   .filter(
     file =>
       file &&

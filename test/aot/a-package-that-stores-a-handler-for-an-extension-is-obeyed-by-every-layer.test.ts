@@ -2,7 +2,7 @@
 // packages all of them. Over layers only the program that holds the package knew of it, and the test failed on a file of the project:
 // "Cannot replace a loader in Module._extensions: imports in this executable were resolved at build time", "Cannot take '../src/leaf.js' out of require.cache".
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { foldersOfOneRun } from "./harness/folders-of-one-run";
 import { test } from "./supported";
 
 const tools = `
@@ -10,12 +10,16 @@ const tools = `
   const short = file => require("path").basename(String(file));
   const seen = [];
   exports.seen = seen;
+  const replaced = [];
+  exports.restore = () => { for (const [ext, original] of replaced.splice(0)) Module._extensions[ext] = original; };
   exports.handler = ext => {
     const original = Module._extensions[ext];
+    replaced.push([ext, original]);
     Module._extensions[ext] = function (module, filename) { seen.push("handler " + short(filename)); return original(module, filename); };
   };
   exports.transform = ext => {
     const original = Module._extensions[ext];
+    replaced.push([ext, original]);
     Module._extensions[ext] = function (module, filename) {
       const compile = module._compile;
       module._compile = function (code, name) { seen.push("compile " + short(name)); return compile.call(this, code.replace(/"plain"/g, '"changed"'), name); };
@@ -42,16 +46,22 @@ const ways = {
   ],
 };
 
-async function linesOf([install, , more = ""]: string[], flags: string[], words?: string) {
-  using dir = tempDir("aot-package-stores-a-handler", {
-    "package.json": `{ "name": "p" }`,
-    "node_modules/tools/package.json": `{ "name": "tools", "main": "index.js" }`,
-    "node_modules/tools/index.js": tools,
-    "src/a.js": `exports.kind = "plain";\n`,
-    "src/b.js": `exports.kind = "plain";\n`,
-    "src/x.note": `a note\n`,
-    "src/user.js": `exports.a = () => require("./a.js").kind;\nexports.b = () => require("./b.js").kind;\nexports.note = () => require("./x.note");\n`,
-    "a.test.cjs": `
+// About the layers: every case runs in every form. The package and the files of the project read alike in all of them, so they share the run of a form.
+// Under plain `bun test --isolate` a handler for .js outlives its test file, so each puts back what it replaced.
+const linesOf = foldersOfOneRun(
+  "aot-package-stores-a-handler",
+  Object.fromEntries(
+    Object.entries(ways).map(([name, [install, , more = ""]]) => [
+      name,
+      {
+        "package.json": `{ "name": "p" }`,
+        "node_modules/tools/package.json": `{ "name": "tools", "main": "index.js" }`,
+        "node_modules/tools/index.js": tools,
+        "src/a.js": `exports.kind = "plain";\n`,
+        "src/b.js": `exports.kind = "plain";\n`,
+        "src/x.note": `a note\n`,
+        "src/user.js": `exports.a = () => require("./a.js").kind;\nexports.b = () => require("./b.js").kind;\nexports.note = () => require("./x.note");\n`,
+        "a.test.cjs": `
       const { test } = require("bun:test");
       const tools = require("tools");
       let user = require("./src/user.js");
@@ -59,27 +69,27 @@ async function linesOf([install, , more = ""]: string[], flags: string[], words?
         user.a();
         ${install}
         console.error("OUT", [user.a(), user.b()${more}].join(), "|", tools.seen.join());
+        tools.restore();
       });`,
-  });
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  await using run = Bun.spawn({
-    cmd: [bunExe(), "test", ...flags, "--isolate"],
-    cwd: String(dir),
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
-  return { lines: stderr.split("\n").filter(line => /^(OUT|error)/.test(line)), exitCode };
-}
-
-test.concurrent.each(Object.entries(ways))(
-  "%s",
-  async (_, way) => {
-    const plain = await linesOf(way, []);
-    expect(plain).toEqual({ lines: ["OUT " + way[1]], exitCode: 0 });
-    expect(await linesOf(way, ["--aot"])).toEqual(plain);
-    expect(await linesOf(way, ["--aot"], "TestRunLayers:2")).toEqual(plain);
-    expect(await linesOf(way, ["--aot"], "TestRunLayers:3")).toEqual(plain);
-  },
-  240_000,
+      },
+    ]),
+  ),
 );
+
+test.concurrent.each(Object.entries(ways))("%s: plain Bun", async (name, way) => {
+  expect(await linesOf(name, [])).toEqual({ lines: ["OUT " + way[1]], exitCode: 0 });
+});
+
+test.concurrent.each(
+  Object.keys(ways).flatMap(name =>
+    (
+      [
+        ["as the run builds itself", undefined],
+        ["two layers", "TestRunLayers:2"],
+        ["three layers", "TestRunLayers:3"],
+      ] as const
+    ).map(([form, words]) => [name, form, words] as const),
+  ),
+)("%s: %s", async (name, _, words) => {
+  expect(await linesOf(name, ["--aot"], words)).toEqual(await linesOf(name, []));
+});

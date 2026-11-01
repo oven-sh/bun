@@ -26,6 +26,7 @@ pub struct CodeOptions {
     /// As if a file called `mock.module` with a path that the build does not know: no file reads a constant of another.
     /// Tests have it from the start: a test build learns only behind this load whether it mocks any module.
     pub mocks_any_file: bool,
+    pub follows_paths_to_functions_of_other_files: bool,
     /// The load reads the entry points and no file for the sake of their types: neither what they import nor the rest of their project.
     pub types_stop_at_entry_points: bool,
     /// `bun build --compile`: the program is carried away from its files. `bun run --aot` and `bun test --aot` run where they lie.
@@ -34,6 +35,7 @@ pub struct CodeOptions {
     pub main_modules_beside_entry_points: Vec<Vec<u8>>,
     /// Entry points that files which the build does not see load, by `import` alone.
     pub entry_points_only_imported_from_above: Vec<Vec<u8>>,
+    pub entry_points_required_from_above: Vec<Vec<u8>>,
     /// `--ignore-dce-annotations`: a file that is loaded and imported runs, whatever `"sideEffects"` in its package.json says.
     pub ignores_declared_side_effects: bool,
 }
@@ -75,10 +77,12 @@ impl CodeOptions {
             jsx: JsxSettings::default(),
             forced_jsx_development: None,
             mocks_any_file: false,
+            follows_paths_to_functions_of_other_files: false,
             types_stop_at_entry_points: false,
             builds_executable: false,
             main_modules_beside_entry_points: Vec::new(),
             entry_points_only_imported_from_above: Vec::new(),
+            entry_points_required_from_above: Vec::new(),
             ignores_declared_side_effects: false,
         };
         options.add_custom_condition(AOT_CONDITION);

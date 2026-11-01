@@ -436,7 +436,20 @@ pub(crate) fn library_modules_spelled_in(text: &[u8]) -> Option<Vec<&'static [u8
             }
         })
     };
+    // `new Worker(path)`: it starts from a file that the text does not spell. `new Worker("./a.ts")` and `new Worker(new URL("./a.ts", import.meta.url))` spell it.
+    let starts_from_unspelled_file = |next: usize| {
+        const URL: &[u8] = b"new URL(";
+        if code.get(next) != Some(&b'(') {
+            return false;
+        }
+        let mut at = skip_space(next + 1);
+        if code[at..].starts_with(URL) {
+            at = skip_space(at + URL.len());
+        }
+        read_string(at).is_none_or(|(name, _)| strings::contains(name, b"${"))
+    };
     if strings::contains(code, b"createRequire")
+        || behind_each(b"Worker").any(starts_from_unspelled_file)
         || strings::contains(code, b"_load")
         || behind_each(b"eval").next().is_some()
         || behind_each(b"Function").any(|next| code.get(next) == Some(&b'('))
@@ -527,15 +540,30 @@ pub(crate) fn builtins_that_load_library_modules() -> Vec<String> {
                 .iter()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
     };
+    let loads = |id: &table::BuiltinId| !table::entry(*id).loads().is_empty();
+    let is_global =
+        |root: &table::BuiltinId| table::global(table::entry(*root).name) == Some(*root);
+    let roots = table::BuiltinId::ALL.into_iter().filter(loads);
+    let roots: Vec<_> = roots.map(table::root_of).filter(is_global).collect();
+    // For other members of the same objects, of `require` and of a module it calls a function of Bun's own code, which only the first image holds too.
     let all = table::BuiltinId::ALL.into_iter();
-    all.filter(|&id| !table::entry(id).loads().is_empty())
-        .filter(|&id| {
-            table::global(table::entry(table::root_of(id)).name) == Some(table::root_of(id))
-        })
-        .map(table::text_of)
-        .filter(|text| {
-            let text = text.as_bytes();
-            strings::contains_char(text, b'.') && strings::split(text, b".").all(is_name)
+    all.filter(|id| loads(id) || !table::entry(*id).calls().is_empty())
+        .filter_map(|id| {
+            let text = table::text_of(id);
+            let dot = strings::index_of_char_usize(text.as_bytes(), b'.')?;
+            let (first, members) = (&text[..dot], &text[dot + 1..]);
+            if !strings::split(members.as_bytes(), b".").all(is_name) {
+                return None;
+            }
+            if first == "%ModuleRequire%" {
+                return Some(format!("require.{members}"));
+            }
+            let names_module = strings::contains_char(first.as_bytes(), b':')
+                && find_module_named(first.as_bytes()).is_some();
+            if names_module && !loads(&id) {
+                return Some(format!("require(\"{first}\").{members}"));
+            }
+            (roots.contains(&table::root_of(id)) && is_name(first.as_bytes())).then_some(text)
         })
         .collect()
 }
@@ -569,6 +597,9 @@ pub(crate) fn builtins_that_load_library_modules_spelled_in(text: &[u8]) -> Opti
     objects.dedup();
     let reads_a_member_by_name = |object: &[u8], at: usize| {
         let mut rest = code[at..].trim_ascii_start();
+        if object == b"require" && rest.starts_with(b"(") {
+            return true;
+        }
         // `(process as any).name`, in parentheses of its own: those of a call hand the object on.
         if let Some(cast) = rest.strip_prefix(b"as ") {
             let before = code[..at - object.len()].trim_ascii_end();
@@ -784,11 +815,28 @@ mod tests {
     #[test]
     fn built_ins_that_load_modules_are_spelled_as_programs_spell_them() {
         let spelled = builtins_that_load_library_modules();
-        for text in ["Bun.sql", "process.stdin", "Bun.spawn"] {
+        let called = [
+            "Bun.$",
+            "Bun.peek",
+            "console.Console",
+            "require.cache",
+            "require(\"node:module\")._cache",
+        ];
+        for text in ["Bun.sql", "process.stdin", "Bun.spawn"]
+            .into_iter()
+            .chain(called)
+        {
             assert!(spelled.iter().any(|it| it == text), "{text}");
         }
         let is_no_name = |byte: u8| matches!(byte, b':' | b'%' | b'[');
-        assert!(spelled.iter().all(|it| !it.bytes().any(is_no_name)));
+        let of_objects = spelled.iter().filter(|it| !it.starts_with("require(\""));
+        assert!(of_objects.clone().all(|it| !it.bytes().any(is_no_name)));
+        for class in ["Array.", "Buffer.", "WebAssembly."] {
+            assert!(
+                of_objects.clone().all(|it| !it.starts_with(class)),
+                "{class}"
+            );
+        }
     }
 
     #[test]
@@ -826,6 +874,34 @@ mod tests {
             b"node:zlib/iter",
         ] {
             assert!(!names.contains(&name), "{}", BStr::new(name));
+        }
+    }
+
+    #[test]
+    fn a_text_spells_the_file_that_a_worker_starts_from_or_may_load_any() {
+        for text in [
+            "new Worker('./a.ts');",
+            "new Worker(new URL(\"./a.ts\", import.meta.url), { name });",
+            "import { Worker } from 'node:worker_threads';",
+            "class Pool extends Worker {}",
+            "startWorker(path);",
+        ] {
+            assert!(
+                library_modules_spelled_in(text.as_bytes()).is_some(),
+                "{text}"
+            );
+        }
+        for text in [
+            "new Worker(path);",
+            "new threads.Worker(join(__dirname, 'a.js'));",
+            "new Worker(`./${name}.ts`);",
+            "new Worker(new URL(name, import.meta.url));",
+            "new Worker(require.resolve('./a.js'));",
+        ] {
+            assert!(
+                library_modules_spelled_in(text.as_bytes()).is_none(),
+                "{text}"
+            );
         }
     }
 
@@ -939,7 +1015,7 @@ mod tests {
         let spelled = |text: &str| builtins_that_load_library_modules_spelled_in(text.as_bytes());
         let some = |names: &[&str]| Some(names.iter().map(|it| it.to_string()).collect::<Vec<_>>());
         assert_eq!(
-            spelled("console.log(process.env.HOME, Bun.version, globalThis.x);"),
+            spelled("console.log(process.pid, Bun.version, globalThis.x);"),
             some(&[])
         );
         assert_eq!(
@@ -947,13 +1023,26 @@ mod tests {
             some(&[])
         );
         assert_eq!(
+            spelled("const a = require('./a'); delete require.cache[a];"),
+            some(&["require.cache"])
+        );
+        assert_eq!(spelled("const load = require; load.cache;"), None);
+        assert_eq!(
+            spelled("new console.Console(out);"),
+            some(&["console.Console"])
+        );
+        assert_eq!(
+            spelled("process.env.HOME;"),
+            some(&["Bun.env", "process.env"])
+        );
+        assert_eq!(
             spelled("test('the process ends', f); // typeof process"),
             some(&[])
         );
         for text in [
             "(globalThis as any).x = 2;",
-            "a + (process as unknown as Thing).env.X",
-            "[( globalThis as any )?.x, process!.env]",
+            "a + (process as unknown as Thing).pid.X",
+            "[( globalThis as any )?.x, process!.pid]",
         ] {
             assert_eq!(spelled(text), some(&[]), "{text}");
         }
@@ -1062,7 +1151,7 @@ mod tests {
                 experimental_decorators: false,
                 every_file_is_a_module: true,
                 reads_jsdoc: false,
-                keeps_function_directives: false,
+                ignores_pure_comments: false,
             };
             let text = runtime.read(path).unwrap();
             let hir = parse_for_compile(session.arena(), &options, &text, &atoms);
@@ -1100,7 +1189,7 @@ mod tests {
                 experimental_decorators: false,
                 every_file_is_a_module: true,
                 reads_jsdoc: false,
-                keeps_function_directives: false,
+                ignores_pure_comments: false,
             };
             let name = BStr::new(path);
             let whole = runtime.read(path).unwrap();

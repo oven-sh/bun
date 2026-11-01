@@ -202,13 +202,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_locked_builtin(BuiltinId::ArrayFrom);
         // `Array.from(new Set(list))`: what was made just here has the iterator of its class.
         let made = self.file.skip_type_syntax(items);
-        let is_new_collection = match self.file.hir[made].kind {
-            ExprKind::New(site) => matches!(
-                find_locked_builtin(self.file, self.file.hir[site].callee),
-                Some(BuiltinId::Set | BuiltinId::Map)
-            ),
-            _ => false,
+        let constructed = match self.file.hir[made].kind {
+            ExprKind::New(site) => find_locked_builtin(self.file, self.file.hir[site].callee),
+            _ => None,
         };
+        let iterator = match constructed {
+            Some(BuiltinId::Set) => Some(BuiltinId::SetPrototypeSymbolIterator),
+            Some(BuiltinId::Map) => Some(BuiltinId::MapPrototypeSymbolIterator),
+            _ => None,
+        };
+        // Without an iterator `Array.from` reads a length, where a spread throws.
+        let is_new_collection = iterator.is_some_and(|it| self.file.is_fixed_method(it));
         let value = self.lower_expression(items);
         if is_new_collection {
             let position = self.file.first_position(items);

@@ -3,8 +3,7 @@ pub(crate) use bun_sema::check::aot::COMPILER_DECLARATIONS_PATH as PATH;
 pub(crate) const TEXT: &[u8] = include_bytes!("../prelude/bun-intrinsics.d.ts");
 
 /// For a build whose imports are in other images: it reads none of those files, so what it imports has any type.
-pub(crate) const PATH_OF_MODULES_IN_OTHER_IMAGES: &[u8] =
-    b"/$bun/types/modules-in-other-images.d.ts";
+pub(crate) use bun_sema::check::aot::MODULES_IN_OTHER_IMAGES_PATH as PATH_OF_MODULES_IN_OTHER_IMAGES;
 pub(crate) const MODULES_IN_OTHER_IMAGES: &[u8] = b"declare module \"*\";\n";
 
 #[cfg(test)]

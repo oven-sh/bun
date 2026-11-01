@@ -62,7 +62,7 @@ console.log(sum, show(kept));
 
 // GENERATED: asynchronous b ownKeys
 // CHECK-LABEL: function {{*}}name="asynchronous"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|object flags=[IsExpected]}] results=[{type=undefined|null|Promise<undefined|null|Array> flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string|object flags=[IsExpected]}] results=[{type=undefined|null|Promise<undefined|null|Array> flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|string|object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -12,7 +12,7 @@ import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { test } from "../supported";
+import { test } from "../measures";
 
 const tenLines = `const names: string[] = ["a", "b"];
 function greet(name: string): string {
@@ -23,9 +23,8 @@ for (const name of names) {
 }
 `;
 
-function largeProgram(): Record<string, string> {
+function largeProgram(modules = 64): Record<string, string> {
   const files: Record<string, string> = {};
-  const modules = 64;
   for (let i = 0; i < modules; i++) {
     const lines: string[] = [];
     for (let j = 0; j < 200; j++)
@@ -68,7 +67,8 @@ async function threadsOfBuild(files: Record<string, string>, flags: string[]): P
     stderr: "",
   });
   const counts: Record<string, number> = {};
-  for (const name of names.values()) {
+  // A thread bears the name of the thread that started it until it has named itself, so a name counts once.
+  for (const name of new Set(names.values())) {
     const pool = name.replace(/ \d+$/, "");
     counts[pool] = (counts[pool] ?? 0) + 1;
   }
@@ -83,8 +83,8 @@ test.skipIf(!isLinux)("a ten-line program is built by a few threads", async () =
   expect(threads["Bun Compile"]).toBeLessThanOrEqual(4);
 });
 
-test.skipIf(!isLinux)("a program of a megabyte is built by all threads", async () => {
-  const threads = await threadsOfBuild(largeProgram(), []);
+test.skipIf(!isLinux)("a program of six megabytes is built by all threads", async () => {
+  const threads = await threadsOfBuild(largeProgram(256), []);
   console.log(threads);
   expect(threads["Bun Pool"] ?? 0).toBe(0);
   expect(threads["Bun Compile"]).toBeGreaterThanOrEqual(Math.min(availableParallelism(), 12));

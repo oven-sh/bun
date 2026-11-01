@@ -31,7 +31,7 @@ export const usedTable = { usedEntry: 2 };
 
 // GENERATED: all
 // CHECK-LABEL: function {{*}}name="all"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsSloppy, HasThis, IsChecked, HasExplicitName] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsSloppy, HasThis, IsChecked, HasExplicitName] syntax=[HasWrittenAwait] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: env [[L_1]], v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

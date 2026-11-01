@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { runsWholeGrids } from "./harness/ways";
+import { beforeAll, test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)` and hands it to a function of the project, which says `new Worker(entry)`.
 // Where the run is built in layers, the project's build doesn't see the test file and the test file's build doesn't read the project. The project's build
@@ -87,7 +88,9 @@ const asWritten = Object.keys(ways).map((name, index) => `SEEN ${name} | w${inde
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-named-by-a-test-file", files);
-  const ran = await run([bunExe(), "test", ...flags, "--isolate"], String(dir), { ...bunEnv, ...env });
+  const command = [bunExe(), "test", "--timeout=60000", ...flags, "--isolate"];
+  const ran = await run(command, String(dir), { ...bunEnv, ...env });
+  if (ran.exitCode !== 0) console.error(ran.stderr);
   return {
     seen: ran.stdout.split("\n").filter(line => line.startsWith("SEEN ")),
     taken: [
@@ -99,13 +102,26 @@ async function see(flags: string[], env: Record<string, string>) {
   };
 }
 
+let plain: Awaited<ReturnType<typeof see>>;
+beforeAll(async () => {
+  plain = await see([], {});
+});
+
+test("each Worker answers under plain bun test", () => {
+  expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0 });
+});
+
 // Over three layers src/spawn.ts lies in a program below the files that import it, so what its build says goes through the build between.
+// Both cases build the same program, so they read one run: the one that writes over the files. AOT_WHOLE_GRIDS=1: a run to each.
 for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1", "TestRunLayers:3,TestRunPartFiles:1"]) {
-  test(`each Worker answers as under plain bun test, and runs compiled (${words})`, async () => {
-    const plain = await see([], {});
-    expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0 });
-    expect(await see(["--aot"], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
-    const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
-    expect(await see(["--aot"], env)).toEqual({ ...plain, taken: [count] });
-  }, 240_000);
+  const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
+  let ran: ReturnType<typeof see> | undefined;
+  const overWrittenFiles = () => (ran ??= see(["--aot"], env));
+  test(`each Worker answers as under plain bun test (${words})`, async () => {
+    if (runsWholeGrids) expect(await see(["--aot"], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
+    else expect({ ...(await overWrittenFiles()), taken: plain.taken }).toEqual(plain);
+  });
+  test(`each Worker runs compiled (${words})`, async () => {
+    expect(await overWrittenFiles()).toEqual({ ...plain, taken: [count] });
+  });
 }

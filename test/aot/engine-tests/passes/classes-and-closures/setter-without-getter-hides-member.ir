@@ -72,7 +72,7 @@ typesite w0 module=m1 position=973 kind=Variable
 typesite w1 module=m1 position=270 kind=Variable
 typesite w2 module=m1 position=309 kind=Variable
 typesite w3 module=m1 position=1007 kind=Variable
-layout L0 kind=Instance name="HidesToString" module=m0 position=342 constructor=f3 supertypes=[L9]
+layout L0 kind=Instance name="HidesToString" module=m0 position=342 constructor=f3
 layout L1 kind=Instance name="HidesValueOf" module=m0 position=389 constructor=f5
 layout L2 kind=Instance name="HidesHasOwnProperty" module=m0 position=434 constructor=f7
 layout L3 kind=Instance name="HidesIsPrototypeOf" module=m0 position=493 constructor=f9
@@ -81,13 +81,12 @@ layout L5 kind=Instance name="HidesToLocaleString" module=m0 position=621 constr
 layout L6 kind=Instance name="HasBoth" module=m0 position=1833 constructor=f15
 layout L7 kind=Instance name="SetterRuns" module=m0 position=2004 constructor=f18 fields=[{key="stored" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 layout L8 kind=Instance name="Below" module=m0 position=1640 base=L0 constructor=f29 supertypes=[L0] flags=[HasHeritage]
-layout L9 fields=[{key="toString" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
-layout L10 module=m0 position=777 fields=[{key="field" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
-layout L11 module=m0 position=1221
-layout L12 module=m0 position=1578
-data d0 root=Object{layout=L10 members=[{key="field" value=Number{value=9}}]} module=m0
-data d1 root=Object{layout=L11} module=m0
-data d2 root=Object{layout=L12} module=m0
+layout L9 module=m0 position=777 fields=[{key="field" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L10 module=m0 position=1221
+layout L11 module=m0 position=1578
+data d0 root=Object{layout=L9 members=[{key="field" value=Number{value=9}}]} module=m0
+data d1 root=Object{layout=L10} module=m0
+data d2 root=Object{layout=L11} module=m0
 data d3 root=Array{contents=anything} module=m1
 data d4 root=Array{contents=anything} module=m1
 variable g0 name="readToString" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
@@ -250,8 +249,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v133 = Undefined @2285
     Return v133 @2285
 }
-function f1 name="readToString" module=m0 position=1411 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0|L8 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|number|string|symbol|bigint|L0|L8):
+function f1 name="readToString" module=m0 position=1411 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
     Jump -> next b1() @1411
   b1():
     v1 = PropGet v0 key="toString" @1452
@@ -295,10 +294,10 @@ function f3 name="HidesToString" module=m0 position=342 kind=BaseConstructor fla
   b0(v0: anything):
     Jump -> next b1() @342
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @336
-    v2 = NewObject v1 layout=L0 @336
-    v3 = Convert v2 declared={type=L0|L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @336
-    Return v3 @336
+    v1 = GetConstructPrototype v0 layout=L0 @342
+    v2 = NewObject v1 layout=L0 @342
+    v3 = Convert v2 declared={type=L0|L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @342
+    Return v3 @342
 }
 function f4 name="toString" module=m0 position=358 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -311,10 +310,10 @@ function f5 name="HidesValueOf" module=m0 position=389 kind=BaseConstructor flag
   b0(v0: anything):
     Jump -> next b1() @389
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @383
-    v2 = NewObject v1 layout=L1 @383
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @383
-    Return v3 @383
+    v1 = GetConstructPrototype v0 layout=L1 @389
+    v2 = NewObject v1 layout=L1 @389
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @389
+    Return v3 @389
 }
 function f6 name="valueOf" module=m0 position=404 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -327,10 +326,10 @@ function f7 name="HidesHasOwnProperty" module=m0 position=434 kind=BaseConstruct
   b0(v0: anything):
     Jump -> next b1() @434
   b1():
-    v1 = GetConstructPrototype v0 layout=L2 @428
-    v2 = NewObject v1 layout=L2 @428
-    v3 = Convert v2 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @428
-    Return v3 @428
+    v1 = GetConstructPrototype v0 layout=L2 @434
+    v2 = NewObject v1 layout=L2 @434
+    v3 = Convert v2 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @434
+    Return v3 @434
 }
 function f8 name="hasOwnProperty" module=m0 position=456 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -343,10 +342,10 @@ function f9 name="HidesIsPrototypeOf" module=m0 position=493 kind=BaseConstructo
   b0(v0: anything):
     Jump -> next b1() @493
   b1():
-    v1 = GetConstructPrototype v0 layout=L3 @487
-    v2 = NewObject v1 layout=L3 @487
-    v3 = Convert v2 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @487
-    Return v3 @487
+    v1 = GetConstructPrototype v0 layout=L3 @493
+    v2 = NewObject v1 layout=L3 @493
+    v3 = Convert v2 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @493
+    Return v3 @493
 }
 function f10 name="isPrototypeOf" module=m0 position=514 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -359,10 +358,10 @@ function f11 name="HidesPropertyIsEnumerable" module=m0 position=550 kind=BaseCo
   b0(v0: anything):
     Jump -> next b1() @550
   b1():
-    v1 = GetConstructPrototype v0 layout=L4 @544
-    v2 = NewObject v1 layout=L4 @544
-    v3 = Convert v2 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @544
-    Return v3 @544
+    v1 = GetConstructPrototype v0 layout=L4 @550
+    v2 = NewObject v1 layout=L4 @550
+    v3 = Convert v2 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @550
+    Return v3 @550
 }
 function f12 name="propertyIsEnumerable" module=m0 position=578 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -375,10 +374,10 @@ function f13 name="HidesToLocaleString" module=m0 position=621 kind=BaseConstruc
   b0(v0: anything):
     Jump -> next b1() @621
   b1():
-    v1 = GetConstructPrototype v0 layout=L5 @615
-    v2 = NewObject v1 layout=L5 @615
-    v3 = Convert v2 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @615
-    Return v3 @615
+    v1 = GetConstructPrototype v0 layout=L5 @621
+    v2 = NewObject v1 layout=L5 @621
+    v3 = Convert v2 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @621
+    Return v3 @621
 }
 function f14 name="toLocaleString" module=m0 position=643 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
@@ -391,10 +390,10 @@ function f15 name="HasBoth" module=m0 position=1833 kind=BaseConstructor flags=[
   b0(v0: anything):
     Jump -> next b1() @1833
   b1():
-    v1 = GetConstructPrototype v0 layout=L6 @1827
-    v2 = NewObject v1 layout=L6 @1827
-    v3 = Convert v2 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1827
-    Return v3 @1827
+    v1 = GetConstructPrototype v0 layout=L6 @1833
+    v2 = NewObject v1 layout=L6 @1833
+    v3 = Convert v2 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1833
+    Return v3 @1833
 }
 function f16 name="toString" module=m0 position=1845 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f35 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -415,11 +414,11 @@ function f18 name="SetterRuns" module=m0 position=2004 kind=BaseConstructor flag
   b0(v0: anything):
     Jump -> next b1() @2004
   b1():
-    v1 = GetConstructPrototype v0 layout=L7 @1998
-    v2 = NewObject v1 layout=L7 @1998
-    v3 = Convert v2 declared={type=L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1998
-    v4 = CallDirect v3 function=f36 @1998
-    Return v3 @1998
+    v1 = GetConstructPrototype v0 layout=L7 @2004
+    v2 = NewObject v1 layout=L7 @2004
+    v3 = Convert v2 declared={type=L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2004
+    v4 = CallDirect v3 function=f36 @2004
+    Return v3 @2004
 }
 function f19 name="hasOwnProperty" module=m0 position=2041 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L7 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L7, v1: anything):
@@ -832,7 +831,7 @@ runtimefunction id=FunctionPrototypeCall function=f54
 runtimefunction id=ObjectsToLocaleString function=f56
 # -- generated: f0 readToString HidesToString HidesValueOf HidesHasOwnProperty HidesIsPrototypeOf HidesPropertyIsEnumerable HidesToLocaleString toString SetterRuns hasOwnProperty f20 f21 f22 f23 f24 f25 f26 f27 f28 f30 f31 f32 f33 f34 tell
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f19 callPosition=2137 module=m0}, {callee=f86 callPosition=2119 isConstruction=true module=m0}, {callee=f64 callPosition=697 isConstruction=true module=m0}, {callee=f36 callPosition=1998 parent=2 module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f19 callPosition=2137 module=m0}, {callee=f86 callPosition=2119 isConstruction=true module=m0}, {callee=f64 callPosition=697 isConstruction=true module=m0}, {callee=f36 callPosition=2004 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationClass=0
 # CHECK-NEXT: PutModuleVariable v0 variable=g7
@@ -887,8 +886,8 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: Return v49
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readToString"
-# CHECK: module=m0 position=1411 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L12}] results=[{type=undefined|builtin(ObjectPrototypeToString)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L12):
+# CHECK: module=m0 position=1411 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L11}] results=[{type=undefined|builtin(ObjectPrototypeToString)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0|L11):
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
@@ -1009,7 +1008,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-LABEL: function {{*}}name="toString"
 # CHECK: module=m0 position=1904 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function|f35 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="SetterRuns"
-# CHECK: module=m0 position=2004 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L7 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 inlineFrames=[{}, {callee=f36 callPosition=1998 module=m0}] {
+# CHECK: module=m0 position=2004 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L7 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 inlineFrames=[{}, {callee=f36 callPosition=2004 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f18 = AssumeType v0 provenType=f18
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L7
@@ -1086,7 +1085,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L3 = NewObject layout=L3 allocationClass=3
 # CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: L11 = NewObject layout=L11 allocationSite=43 allocationClass=10
+# CHECK-NEXT: v2: L10 = NewObject layout=L10 allocationSite=43 allocationClass=10
 # CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="isPrototypeOf" calleeName="isPrototypeOf" accessSite=46 callees=[builtin(ObjectPrototypeIsPrototypeOf)] @1207 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
@@ -1140,7 +1139,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: Jump -> next b2(v9)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
-# CHECK: m0 position=1964 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f49] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f35 callPosition=1984 isTailCall=true module=m0}, {callee=f82 callPosition=1974 isConstruction=true callIsPartOfConstruction=true module=m0}] {
+# CHECK: m0 position=1964 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f49] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f35 callPosition=1984 isTailCall=true module=m0}, {callee=f82 callPosition=1974 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f16 callPosition=1982 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "from the getter" = String string="from the getter"
 # CHECK-NEXT: Return v0
@@ -1197,7 +1196,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-LABEL: function {{*}}name="toString"
 # CHECK: module=m0 position=358 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'toString' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'toString' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesValueOf"
@@ -1219,7 +1218,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-LABEL: function {{*}}name="hasOwnProperty"
 # CHECK: module=m0 position=456 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f8}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f8, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'hasOwnProperty' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'hasOwnProperty' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesIsPrototypeOf"

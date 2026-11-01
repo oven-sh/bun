@@ -28,6 +28,14 @@
 //   --rewritten           also generate each source as <source>-rewritten: the program is transformed in one to seven ways that keep its output and hide
 //                         information from the compiler (values laundered through eval, loop bounds known only at run time, a GC inside calls, functions
 //                         the host could call, open-world global access, the whole file wrapped in a function, a try or a loop)
+//   --never-taken         also generate each source as <source>-never-taken: the program also holds code that this run never takes and that no build can
+//                         rule out, done to its own variables and fields (another kind of value stored, a field deleted, a prototype swapped, ...)
+//   --another-call        also generate each source as <source>-another-call: one or two of the program's own functions are called once more, ahead of
+//                         everything else, with values of other kinds (a list of texts, a record, a big integer, nothing at all, ...)
+//   --own-copies          also generate each source as <source>-own-copies: each statement at the top of the program that names one of its functions or
+//                         classes gets a copy of its own, so that what is known of a helper is known from one scene alone
+//   --four-callers        also generate each source as <source>-four-callers: what the program does at its top is done by four functions, each called
+//                         twice; with --modes large its functions are compiled as the hot part of a very large program, not as the cold part
 //
 // How it is built and run
 //   --flags "<flags>"     added to every product build; --engine-flags is the same for the engine runner
@@ -152,6 +160,10 @@ if (replay) {
       isCountOnly: has("count-only"),
       alsoMultiFile: !has("single-file"),
       alsoRewritten: has("rewritten"),
+      alsoNeverTaken: has("never-taken"),
+      alsoAnotherCall: has("another-call"),
+      alsoOwnCopies: has("own-copies"),
+      alsoFourCallers: has("four-callers"),
       known: [join(import.meta.dir, "accepted-differences.tsv"), ...options("known")],
       minFreeBytes: Number(option("min-free-gb") ?? 4) * 2 ** 30,
       reduceSeconds: Number(option("reduce-seconds") ?? 600),

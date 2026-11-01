@@ -81,7 +81,7 @@ export function any() {
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ask"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=[[L_1]] site=[[w_3]]} parameters=[{type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|string|symbol|bigint|[[L_5]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|number|string|symbol|bigint|[[L_5]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=[[L_1]] site=[[w_3]]} parameters=[{type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|string|symbol|bigint|[[L_5]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|number|string|symbol|bigint|[[L_5]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: [[L_1]], v1: undefined|null|string, v2: undefined|null|number|string|symbol|bigint|[[L_5]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

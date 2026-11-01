@@ -87,7 +87,8 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::ExportStar(_) | ImportSiteKind::ImportCall(_)
                 | ImportSiteKind::Require(_) | ImportSiteKind::RequireResolve(_)
                 | ImportSiteKind::ImportMetaRequire(_) | ImportSiteKind::ImportMetaResolve(_)
-                | ImportSiteKind::GetBuiltinModule(_) | ImportSiteKind::MockModule(_) => {}
+                | ImportSiteKind::GetBuiltinModule(_) | ImportSiteKind::MockModule(_)
+                | ImportSiteKind::ImportByTestRunner(_) | ImportSiteKind::RequireByTestRunner(_) => {}
             }
         }
         if !table::exists_on(BuiltinId::BunBundle, input.platform) {
@@ -156,7 +157,7 @@ impl Resolver<'_, '_> {
         }
         self.aliases.insert(symbol, AliasSource::Known(value));
         match value.kind {
-            HolderKind::ModuleNamespace => self.output.mentioned.push(value.path.id),
+            HolderKind::ModuleNamespace => self.mention(value.path.id),
             // `finish` mentions the path of every symbol it publishes.
             HolderKind::Object => {}
         }
@@ -190,10 +191,29 @@ impl Resolver<'_, '_> {
                 mutability: Mutability::ConstantUnlessWritten,
             }));
         }
+        if let Some(runner) = self.find_runner_that_stub_answers(expr) {
+            let runner = ResolvedValue::object(BuiltinPath {
+                id: runner,
+                mutability: Mutability::ConstantUnlessWritten,
+            });
+            return ExprState::Builtin(runner.with_side_effects());
+        }
         if input.dialect == SourceDialect::Runtime {
             return self.compute_native_call_state(expr);
         }
         ExprState::Unresolved
+    }
+
+    fn find_runner_that_stub_answers(&self, expr: ExprId) -> Option<BuiltinId> {
+        let hir = self.input.hir;
+        let ExprKind::Call(call) = hir[expr].kind else {
+            return None;
+        };
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let stub = mentioned_id(self.state(callee)).filter(|&stub| table::stubs_global(stub))?;
+        let (receiver, _) = hir.member_key(callee)?;
+        let receiver = table::canonical_id(self.value_of(receiver)?.path.id);
+        (table::entry(table::canonical_id(stub)).holder == Some(receiver)).then_some(receiver)
     }
 
     /// `await import("bun:test")`: what `import * as` of the module stands for.
@@ -201,8 +221,24 @@ impl Resolver<'_, '_> {
         let input = self.input;
         let promise = input.hir.skip_type_assertions(promise);
         let module = (input.targets).module_at(ImportSiteKind::ImportCall(promise));
+        // `bun run` writes `Bun` in place of `import("bun")` where its transpiler reads the name, and loads the module everywhere else.
+        let is_name_read = || match input.hir[promise].kind {
+            ExprKind::ImportCall { args } => input.hir.ids(args).next().is_some_and(|name| {
+                let name = input.hir.skip_type_assertions(name);
+                input.decisions.is_constant_in_bun_run(input.hir, name)
+            }),
+            _ => false,
+        };
         match module.filter(|&module| !has_source(module)) {
-            Some(module) => ExprState::Builtin(imported_namespace_value(module)),
+            Some(module)
+                if table::object_replacing_namespace(module).is_some() && !is_name_read() =>
+            {
+                ExprState::Unresolved
+            }
+            // An await gives up the turn, whatever it waits for: nothing stands in for the expression.
+            Some(module) => {
+                ExprState::Builtin(imported_namespace_value(module).with_side_effects())
+            }
             None => ExprState::Unresolved,
         }
     }
@@ -238,7 +274,7 @@ impl Resolver<'_, '_> {
         let input = self.input;
         for (site, module) in input.targets.iter() {
             let namespace = table::namespace_of(module);
-            self.output.mentioned.push(namespace);
+            self.mention(namespace);
             self.output.loaded.push(namespace);
             if has_source(module) {
                 continue;
@@ -254,7 +290,7 @@ impl Resolver<'_, '_> {
                             continue;
                         }
                         if let Some(path) = self.find_named_export(namespace, item.local) {
-                            self.output.mentioned.push(path.id);
+                            self.mention(path.id);
                             self.expose(path.id);
                         }
                     }
@@ -264,7 +300,8 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::ImportEquals(_) | ImportSiteKind::Require(_)
                 | ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaRequire(_)
                 | ImportSiteKind::ImportMetaResolve(_) | ImportSiteKind::GetBuiltinModule(_)
-                | ImportSiteKind::MockModule(_) => {}
+                | ImportSiteKind::MockModule(_) | ImportSiteKind::ImportByTestRunner(_)
+                | ImportSiteKind::RequireByTestRunner(_) => {}
             }
         }
     }

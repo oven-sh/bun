@@ -86,6 +86,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
     pub(super) conditions: FxHashMap<ExprId, bool>,
     pub(super) short_circuited_links: PositionSet,
+    pub(super) is_main_of_import_meta_written: OnceCell<bool>,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
     pub(super) strings_over_limit: Vec<ExprId>,
 }
@@ -131,6 +132,7 @@ pub(super) fn run<'s>(
         nullish_logical_results: FxHashMap::default(),
         conditions: FxHashMap::default(),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
+        is_main_of_import_meta_written: OnceCell::new(),
         call_errors: Vec::new(),
         strings_over_limit: Vec::new(),
     };
@@ -258,6 +260,7 @@ impl<'s> Folder<'_, 's> {
                 expr,
                 constant,
                 checks_dead_zone,
+                is_known_to_bun_run: self.is_folded_by_bun_run(expr),
             });
         }
         constants

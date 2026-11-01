@@ -1,5 +1,6 @@
 # Arrays that lie in the cells of their objects exist, and then an index gets an accessor above them: on the prototype of all arrays or of all objects where the program may do that, on a prototype of their own in any case.
 # FORM: AsRead
+# DIAGNOSTIC: LockedBuiltinWriteMayRun
 # RUN: pipeline RemoveRedundantBarriers
 
 module m0 path="index-gets-accessor-arrays-lie-cells.js" displayPath="index-gets-accessor-arrays-lie-cells.js" body=f0 namespaceLayout=L(m0)
@@ -198,7 +199,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f10 callPosition=288 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 200 @Int32 = Integer integer=200
-# CHECK-NEXT: v1: Array<L1, Contiguous> @Cell = NewArray contents=L1 capacity=v0 allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v1: Array<L1, Contiguous> @Cell = NewArray contents=L1 capacity=v0 allocationSite=2 arrayStorage=Contiguous [contentsAreProven, isFilledToCapacity]
 # CHECK-NEXT: v2: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v1 provenType=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v3: 0 @Int32 = Integer
 # CHECK-NEXT: Jump -> next b1(v3)
@@ -210,15 +211,15 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b2(v8: int[0, 199] @Int32):
 # CHECK-NEXT: v9: Array @Cell = NewArray contents=anything allocationSite=10 literalStorage=Profiled staticsOffset=0
 # CHECK-NEXT: v10: L1 @Cell = NewObject -, v9 layout=L1 fields=[0] allocationSite=11 allocation=2 allocationClass=1
-# CHECK-NEXT: v11: int[0, 4294967295] @Int64 = CallInline v2, v10 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=2
+# CHECK-NEXT: AppendElement v2, v10, v4, v4, v6
 # CHECK-NEXT: v12: int[1, 200] @Int32 = Increment v8 form=Integers
 # CHECK-NEXT: Jump -> next b1(v12)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v13: f3 @Cell = NewClosure function=f3 allocationSite=3 closureForm=Slim
 # CHECK-NEXT: v14: L0 @Cell = NewObject -, v13 layout=L0 fields=[1] allocationSite=4 allocation=1 allocationClass=0
 # CHECK-NEXT: v15: L0 @JSValue = FinishObject v14
-# CHECK-NEXT: v16: Array<undefined|int|"Array.prototype"|"Object.prototype"|"from above"|builtin(ArrayPrototype)|builtin(ObjectPrototype), Contiguous> @Cell = NewArray contents=undefined|int|"Array.prototype"|"Object.prototype"|"from above"|builtin(ArrayPrototype)|builtin(ObjectPrototype) allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v17: Array<undefined|int|"Array.prototype"|"Object.prototype"|"from above"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v16 provenType=Array<undefined|int|"Array.prototype"|"Object.prototype"|"from above"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: Array<undefined|int|"Array.prototype"|"Object.prototype"|"from above", Contiguous> @Cell = NewArray contents=undefined|int|"Array.prototype"|"Object.prototype"|"from above" allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v17: Array<undefined|int|"Array.prototype"|"Object.prototype"|"from above", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v16 provenType=Array<undefined|int|"Array.prototype"|"Object.prototype"|"from above", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v18: "Array.prototype" @JSValue = String string="Array.prototype"
 # CHECK-NEXT: v19: builtin(ArrayPrototype) @Cell = Builtin builtin=ArrayPrototype
 # CHECK-NEXT: v20: Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), Contiguous> @Cell = NewArray v18, v19 contents="Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) allocationSite=6 storage=Frame arrayStorage=Contiguous [contentsAreProven]
@@ -229,7 +230,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v25: Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v24 provenType=Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v26: 0 @Int32 = Integer
 # CHECK-NEXT: v27: f1 @Cell = NewClosure function=f1 allocationSite=0 storage=Frame closureForm=Slim
-# CHECK-NEXT: v173: codeaddress @RawWord = ResolveCallTarget v27 argumentCount=1
+# CHECK-NEXT: v177: codeaddress @RawWord = ResolveCallTarget v27 argumentCount=1
 # CHECK-NEXT: Jump -> next b4(v26)
 # CHECK-NEXT: b4(v28: int[0, 2] @Int32):
 # CHECK-NEXT: Jump -> next b5(v28)
@@ -250,168 +251,172 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: TestAndBranch v39 -> taken b9(| 0), notTaken b18()
 # CHECK-NEXT: b9(v40: guard @Void):
 # CHECK-NEXT: v41: "Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v38, v40 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
-# CHECK-NEXT: v42: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v43: boolean @Boolean = IsInBounds v35, v42
-# CHECK-NEXT: TestAndBranch v43 -> taken b10(| 0), notTaken b19(v41)
-# CHECK-NEXT: b10(v44: guard @Void) handler=b11():
-# CHECK-NEXT: v45: "Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v42, v44 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
-# CHECK-NEXT: v46: builtin(Object) @Cell = Builtin builtin=Object
-# CHECK-NEXT: v47: 4 @JSValue = Integer integer=4
-# CHECK-NEXT: v48: builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = CallBuiltin v46, v45, v47, v15 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver accessSite=12
+# CHECK-NEXT: v42: "Array.prototype"|"Object.prototype" @JSValue = AssumeType v41 provenType="Array.prototype"|"Object.prototype"
+# CHECK-NEXT: v43: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v44: boolean @Boolean = IsInBounds v35, v43
+# CHECK-NEXT: TestAndBranch v44 -> taken b10(| 0), notTaken b19(v42)
+# CHECK-NEXT: b10(v45: guard @Void) handler=b11():
+# CHECK-NEXT: v46: "Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v43, v45 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
+# CHECK-NEXT: v47: builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = AssumeType v46 provenType=builtin(ArrayPrototype)|builtin(ObjectPrototype)
+# CHECK-NEXT: v48: 4 @JSValue = Integer integer=4
+# CHECK-NEXT: v49: string|symbol @Cell = ToPropertyKey v48 calledBuiltin=ObjectDefineProperty
+# CHECK-NEXT: v50: builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = CallBuiltin -, v47, v49, v15 overload=ObjectDefineProperty/0 accessSite=12
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b11() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v49: 1000 @JSValue = Integer integer=1000
-# CHECK-NEXT: v50: anything @JSValue = CallResolved v27, v173, -, v49 calleeName="make" accessSite=13 callees=[f1]
-# CHECK-NEXT: v51: 0 @Int32 = Integer
-# CHECK-NEXT: v52: undefined|L1 @JSValue = GetArrayElement v2, v51 arrayStorage=Contiguous level=Proven accessSite=15 [keyIsIntegral]
-# CHECK-NEXT: v53: L1 @JSValue = RequireObjectCoercible v52 name="list"
-# CHECK-NEXT: v54: Array @Cell = GetSlot v53 key="list" receivers=[L1] level=Proven accessSite=16 fieldAccess=0
-# CHECK-NEXT: v55: boolean @Boolean = IsPristine v54 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: TestAndBranch v55 -> taken b13(| 0), notTaken b26(v50, v54, v41)
-# CHECK-NEXT: b13(v56: guard @Void):
-# CHECK-NEXT: v57: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v58: anything @JSValue = GetArrayElement v54, v57, v56 level=Expected accessSite=17 [keyIsIntegral]
-# CHECK-NEXT: v59: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v60: undefined|L1 @JSValue = GetArrayElement v2, v59 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
-# CHECK-NEXT: v61: L1 @JSValue = RequireObjectCoercible v60 name="list"
-# CHECK-NEXT: v62: Array @Cell = GetSlot v61 key="list" receivers=[L1] level=Proven accessSite=19 fieldAccess=0
-# CHECK-NEXT: v63: boolean @Boolean = IsPristine v62 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: TestAndBranch v63 -> taken b14(| 0), notTaken b27(v58, v62, v50, v41)
-# CHECK-NEXT: b14(v64: guard @Void):
-# CHECK-NEXT: v65: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v66: anything @JSValue = GetArrayElement v62, v65, v64 level=Expected accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: v67: boolean @Boolean = TypeTest v50 testedType=L1
-# CHECK-NEXT: TestAndBranch v67 -> taken b15(| 0), notTaken b28(v58, v66, v50, v41)
-# CHECK-NEXT: b15(v68: L1 @Cell):
-# CHECK-NEXT: v69: Array @Cell = GetSlot v68 key="list" receivers=[L1] level=Expected accessSite=21 fieldAccess=0
-# CHECK-NEXT: v70: boolean @Boolean = IsPristine v69 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: TestAndBranch v70 -> taken b16(| 0), notTaken b29(v58, v66, v69, v41)
-# CHECK-NEXT: b16(v71: guard @Void):
-# CHECK-NEXT: v72: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v73: anything @JSValue = GetArrayElement v69, v72, v71 level=Expected accessSite=22 [keyIsIntegral]
-# CHECK-NEXT: v74: 0 @JSValue = Integer
-# CHECK-NEXT: TryCallInline v17, v41, v58, v66, v73, v74 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=23 -> done b38(), miss b39()
+# CHECK-NEXT: v51: 1000 @JSValue = Integer integer=1000
+# CHECK-NEXT: v52: anything @JSValue = CallResolved v27, v177, -, v51 calleeName="make" accessSite=13 callees=[f1]
+# CHECK-NEXT: v53: 0 @Int32 = Integer
+# CHECK-NEXT: v54: undefined|L1 @JSValue = GetArrayElement v2, v53 arrayStorage=Contiguous level=Proven accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: v55: L1 @JSValue = RequireObjectCoercible v54 name="list"
+# CHECK-NEXT: v56: Array @Cell = GetSlot v55 key="list" receivers=[L1] level=Proven accessSite=16 fieldAccess=0
+# CHECK-NEXT: v57: boolean @Boolean = IsPristine v56 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: TestAndBranch v57 -> taken b13(| 0), notTaken b26(v52, v56, v42)
+# CHECK-NEXT: b13(v58: guard @Void):
+# CHECK-NEXT: v59: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v60: anything @JSValue = GetArrayElement v56, v59, v58 level=Expected accessSite=17 [keyIsIntegral]
+# CHECK-NEXT: v61: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v62: undefined|L1 @JSValue = GetArrayElement v2, v61 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
+# CHECK-NEXT: v63: L1 @JSValue = RequireObjectCoercible v62 name="list"
+# CHECK-NEXT: v64: Array @Cell = GetSlot v63 key="list" receivers=[L1] level=Proven accessSite=19 fieldAccess=0
+# CHECK-NEXT: v65: boolean @Boolean = IsPristine v64 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: TestAndBranch v65 -> taken b14(| 0), notTaken b27(v60, v64, v52, v42)
+# CHECK-NEXT: b14(v66: guard @Void):
+# CHECK-NEXT: v67: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v68: anything @JSValue = GetArrayElement v64, v67, v66 level=Expected accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: v69: boolean @Boolean = TypeTest v52 testedType=L1
+# CHECK-NEXT: TestAndBranch v69 -> taken b15(| 0), notTaken b28(v60, v68, v52, v42)
+# CHECK-NEXT: b15(v70: L1 @Cell):
+# CHECK-NEXT: v71: Array @Cell = GetSlot v70 key="list" receivers=[L1] level=Expected accessSite=21 fieldAccess=0
+# CHECK-NEXT: v72: boolean @Boolean = IsPristine v71 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: TestAndBranch v72 -> taken b16(| 0), notTaken b29(v60, v68, v71, v42)
+# CHECK-NEXT: b16(v73: guard @Void):
+# CHECK-NEXT: v74: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v75: anything @JSValue = GetArrayElement v71, v74, v73 level=Expected accessSite=22 [keyIsIntegral]
+# CHECK-NEXT: v76: 0 @JSValue = Integer
+# CHECK-NEXT: TryCallInline v17, v42, v60, v68, v75, v76 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=23 -> done b38(), miss b39()
 # CHECK-NEXT: b17():
 # CHECK-NEXT: Jump -> next b6(v37)
 # CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v81: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v38 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: Jump -> next b19(v81)
-# CHECK-NEXT: b19(v82: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare handler=b20():
-# CHECK-NEXT: v83: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v84: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v83 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v85: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = Upcast v84 castType=undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype)
-# CHECK-NEXT: v86: builtin(Object) @Cell = Builtin builtin=Object
-# CHECK-NEXT: v87: 4 @JSValue = Integer integer=4
-# CHECK-NEXT: v88: builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = CallBuiltin v86, v85, v87, v15 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver accessSite=12
+# CHECK-NEXT: v83: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v38 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v84: "Array.prototype"|"Object.prototype" @JSValue = AssumeType v83 provenType="Array.prototype"|"Object.prototype"
+# CHECK-NEXT: Jump -> next b19(v84)
+# CHECK-NEXT: b19(v85: "Array.prototype"|"Object.prototype" @LiteralString) frequency=Rare handler=b20():
+# CHECK-NEXT: v86: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v87: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v86 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v88: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = Upcast v87 castType=undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype)
+# CHECK-NEXT: v89: builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = AssumeType v88 provenType=builtin(ArrayPrototype)|builtin(ObjectPrototype)
+# CHECK-NEXT: v90: 4 @JSValue = Integer integer=4
+# CHECK-NEXT: v91: string|symbol @Cell = ToPropertyKey v90 calledBuiltin=ObjectDefineProperty
+# CHECK-NEXT: v92: builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = CallBuiltin -, v89, v91, v15 overload=ObjectDefineProperty/0 accessSite=12
 # CHECK-NEXT: Jump -> next b21()
 # CHECK-NEXT: b20() role=CatchHandler frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b21()
 # CHECK-NEXT: b21() frequency=Unlikely:
-# CHECK-NEXT: v89: 1000 @JSValue = Integer integer=1000
-# CHECK-NEXT: v90: anything @JSValue = Call v27, -, v89 calleeName="make" accessSite=13 callees=[f1]
-# CHECK-NEXT: v91: 0 @Int32 = Integer
-# CHECK-NEXT: v92: undefined|L1 @JSValue = GetArrayElement v2, v91 arrayStorage=Contiguous level=Proven accessSite=15 [keyIsIntegral]
-# CHECK-NEXT: v93: L1 @JSValue = RequireObjectCoercible v92 name="list"
-# CHECK-NEXT: v94: Array @Cell = GetSlot v93 key="list" receivers=[L1] level=Proven accessSite=16 fieldAccess=0
-# CHECK-NEXT: v95: boolean @Boolean = IsPristine v94 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: TestAndBranch v95 -> taken b22(| 0), notTaken b26(v90, v94, v82)
-# CHECK-NEXT: b22(v96: guard @Void) frequency=Unlikely:
-# CHECK-NEXT: v97: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v98: anything @JSValue = GetArrayElement v94, v97, v96 level=Expected accessSite=17 [keyIsIntegral]
-# CHECK-NEXT: v99: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v100: undefined|L1 @JSValue = GetArrayElement v2, v99 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
-# CHECK-NEXT: v101: L1 @JSValue = RequireObjectCoercible v100 name="list"
-# CHECK-NEXT: v102: Array @Cell = GetSlot v101 key="list" receivers=[L1] level=Proven accessSite=19 fieldAccess=0
-# CHECK-NEXT: v103: boolean @Boolean = IsPristine v102 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: TestAndBranch v103 -> taken b23(| 0), notTaken b27(v98, v102, v90, v82)
-# CHECK-NEXT: b23(v104: guard @Void) frequency=Unlikely:
-# CHECK-NEXT: v105: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v106: anything @JSValue = GetArrayElement v102, v105, v104 level=Expected accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: v107: boolean @Boolean = TypeTest v90 testedType=L1
-# CHECK-NEXT: TestAndBranch v107 -> taken b24(| 0), notTaken b28(v98, v106, v90, v82)
-# CHECK-NEXT: b24(v108: L1 @Cell) frequency=Unlikely:
-# CHECK-NEXT: v109: Array @Cell = GetSlot v108 key="list" receivers=[L1] level=Expected accessSite=21 fieldAccess=0
-# CHECK-NEXT: v110: boolean @Boolean = IsPristine v109 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: TestAndBranch v110 -> taken b25(| 0), notTaken b29(v98, v106, v109, v82)
-# CHECK-NEXT: b25(v111: guard @Void) frequency=Unlikely:
-# CHECK-NEXT: v112: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v113: anything @JSValue = GetArrayElement v109, v112, v111 level=Expected accessSite=22 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b30(v98, v106, v113, v82)
-# CHECK-NEXT: b26(v114: anything @JSValue, v115: Array @Cell, v116: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
-# CHECK-NEXT: v117: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v118: anything @JSValue = ElemGet v115, v117 accessSite=17 [keyIsIntegral]
-# CHECK-NEXT: v119: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v120: undefined|L1 @JSValue = GetArrayElement v2, v119 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
-# CHECK-NEXT: v121: L1 @JSValue = RequireObjectCoercible v120 name="list"
-# CHECK-NEXT: v122: Array @Cell = GetSlot v121 key="list" receivers=[L1] level=Proven accessSite=19 fieldAccess=0
-# CHECK-NEXT: Jump -> next b27(v118, v122, v114, v116)
-# CHECK-NEXT: b27(v123: anything @JSValue, v124: Array @Cell, v125: anything @JSValue, v126: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
-# CHECK-NEXT: v127: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v128: anything @JSValue = ElemGet v124, v127 accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b28(v123, v128, v125, v126)
-# CHECK-NEXT: b28(v129: anything @JSValue, v130: anything @JSValue, v131: anything @JSValue, v132: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
-# CHECK-NEXT: v133: anything @JSValue = PropGet v131 key="list" accessSite=21 receivers=[] siteCache=0
-# CHECK-NEXT: Jump -> next b29(v129, v130, v133, v132)
-# CHECK-NEXT: b29(v134: anything @JSValue, v135: anything @JSValue, v136: anything @JSValue, v137: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
-# CHECK-NEXT: v138: 4 @Int32 = Integer integer=4
-# CHECK-NEXT: v139: anything @JSValue = ElemGet v136, v138 accessSite=22 receivers=[] [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b30(v134, v135, v139, v137)
-# CHECK-NEXT: b30(v140: anything @JSValue, v141: anything @JSValue, v142: anything @JSValue, v143: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v144: 0 @JSValue = Integer
-# CHECK-NEXT: TryCallInline v17, v143, v140, v141, v142, v144 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=23 -> done b36(), miss b37()
+# CHECK-NEXT: v93: 1000 @JSValue = Integer integer=1000
+# CHECK-NEXT: v94: anything @JSValue = Call v27, -, v93 calleeName="make" accessSite=13 callees=[f1]
+# CHECK-NEXT: v95: 0 @Int32 = Integer
+# CHECK-NEXT: v96: undefined|L1 @JSValue = GetArrayElement v2, v95 arrayStorage=Contiguous level=Proven accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: v97: L1 @JSValue = RequireObjectCoercible v96 name="list"
+# CHECK-NEXT: v98: Array @Cell = GetSlot v97 key="list" receivers=[L1] level=Proven accessSite=16 fieldAccess=0
+# CHECK-NEXT: v99: boolean @Boolean = IsPristine v98 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: TestAndBranch v99 -> taken b22(| 0), notTaken b26(v94, v98, v85)
+# CHECK-NEXT: b22(v100: guard @Void) frequency=Unlikely:
+# CHECK-NEXT: v101: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v102: anything @JSValue = GetArrayElement v98, v101, v100 level=Expected accessSite=17 [keyIsIntegral]
+# CHECK-NEXT: v103: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v104: undefined|L1 @JSValue = GetArrayElement v2, v103 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
+# CHECK-NEXT: v105: L1 @JSValue = RequireObjectCoercible v104 name="list"
+# CHECK-NEXT: v106: Array @Cell = GetSlot v105 key="list" receivers=[L1] level=Proven accessSite=19 fieldAccess=0
+# CHECK-NEXT: v107: boolean @Boolean = IsPristine v106 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: TestAndBranch v107 -> taken b23(| 0), notTaken b27(v102, v106, v94, v85)
+# CHECK-NEXT: b23(v108: guard @Void) frequency=Unlikely:
+# CHECK-NEXT: v109: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v110: anything @JSValue = GetArrayElement v106, v109, v108 level=Expected accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: v111: boolean @Boolean = TypeTest v94 testedType=L1
+# CHECK-NEXT: TestAndBranch v111 -> taken b24(| 0), notTaken b28(v102, v110, v94, v85)
+# CHECK-NEXT: b24(v112: L1 @Cell) frequency=Unlikely:
+# CHECK-NEXT: v113: Array @Cell = GetSlot v112 key="list" receivers=[L1] level=Expected accessSite=21 fieldAccess=0
+# CHECK-NEXT: v114: boolean @Boolean = IsPristine v113 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: TestAndBranch v114 -> taken b25(| 0), notTaken b29(v102, v110, v113, v85)
+# CHECK-NEXT: b25(v115: guard @Void) frequency=Unlikely:
+# CHECK-NEXT: v116: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v117: anything @JSValue = GetArrayElement v113, v116, v115 level=Expected accessSite=22 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b30(v102, v110, v117, v85)
+# CHECK-NEXT: b26(v118: anything @JSValue, v119: Array @Cell, v120: "Array.prototype"|"Object.prototype" @LiteralString) frequency=Rare:
+# CHECK-NEXT: v121: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v122: anything @JSValue = ElemGet v119, v121 accessSite=17 [keyIsIntegral]
+# CHECK-NEXT: v123: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v124: undefined|L1 @JSValue = GetArrayElement v2, v123 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
+# CHECK-NEXT: v125: L1 @JSValue = RequireObjectCoercible v124 name="list"
+# CHECK-NEXT: v126: Array @Cell = GetSlot v125 key="list" receivers=[L1] level=Proven accessSite=19 fieldAccess=0
+# CHECK-NEXT: Jump -> next b27(v122, v126, v118, v120)
+# CHECK-NEXT: b27(v127: anything @JSValue, v128: Array @Cell, v129: anything @JSValue, v130: "Array.prototype"|"Object.prototype" @LiteralString) frequency=Rare:
+# CHECK-NEXT: v131: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v132: anything @JSValue = ElemGet v128, v131 accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b28(v127, v132, v129, v130)
+# CHECK-NEXT: b28(v133: anything @JSValue, v134: anything @JSValue, v135: anything @JSValue, v136: "Array.prototype"|"Object.prototype" @LiteralString) frequency=Rare:
+# CHECK-NEXT: v137: anything @JSValue = PropGet v135 key="list" accessSite=21 receivers=[] siteCache=0
+# CHECK-NEXT: Jump -> next b29(v133, v134, v137, v136)
+# CHECK-NEXT: b29(v138: anything @JSValue, v139: anything @JSValue, v140: anything @JSValue, v141: "Array.prototype"|"Object.prototype" @LiteralString) frequency=Rare:
+# CHECK-NEXT: v142: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v143: anything @JSValue = ElemGet v140, v142 accessSite=22 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b30(v138, v139, v143, v141)
+# CHECK-NEXT: b30(v144: anything @JSValue, v145: anything @JSValue, v146: anything @JSValue, v147: "Array.prototype"|"Object.prototype" @LiteralString) frequency=Unlikely:
+# CHECK-NEXT: v148: 0 @JSValue = Integer
+# CHECK-NEXT: TryCallInline v17, v147, v144, v145, v146, v148 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=23 -> done b36(), miss b37()
 # CHECK-NEXT: b31() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b5(v37)
-# CHECK-NEXT: b32(v151: Array @Cell) frequency=Unlikely:
-# CHECK-NEXT: v152: anything @JSValue = PropGet v151 key="join" accessSite=26 siteCache=1
+# CHECK-NEXT: b32(v155: Array @Cell) frequency=Unlikely:
+# CHECK-NEXT: v156: anything @JSValue = PropGet v155 key="join" accessSite=26 siteCache=1
 # CHECK-NEXT: Jump -> next b4(v37)
 # CHECK-NEXT: b33():
-# CHECK-NEXT: v153: builtin(ArrayPrototype) @Cell = Builtin builtin=ArrayPrototype
-# CHECK-NEXT: TryCallInline -, v153 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b34(), miss b35()
-# CHECK-NEXT: b34(v154: Object @JSValue):
-# CHECK-NEXT: v155: 3 @JSValue = Integer integer=3
-# CHECK-NEXT: v156: string|symbol @Cell = ToPropertyKey v155 calledBuiltin=ObjectDefineProperty
-# CHECK-NEXT: v157: Object @JSValue = CallBuiltin -, v154, v156, v15 overload=ObjectDefineProperty/0 accessSite=4
-# CHECK-NEXT: v158: 10 @Int32 = Integer integer=10
-# CHECK-NEXT: v159: undefined|L1 @JSValue = GetArrayElement v2, v158 arrayStorage=Contiguous level=Proven accessSite=5 [keyIsIntegral]
-# CHECK-NEXT: v160: L1 @JSValue = RequireObjectCoercible v159 name="list"
-# CHECK-NEXT: v161: Array @Cell = GetSlot v160 key="list" receivers=[L1] level=Proven accessSite=6 fieldAccess=0
-# CHECK-NEXT: v162: 11 @Int32 = Integer integer=11
-# CHECK-NEXT: v163: undefined|L1 @JSValue = GetArrayElement v2, v162 arrayStorage=Contiguous level=Proven accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v157: builtin(ArrayPrototype) @Cell = Builtin builtin=ArrayPrototype
+# CHECK-NEXT: TryCallInline -, v157 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b34(), miss b35()
+# CHECK-NEXT: b34(v158: Object @JSValue):
+# CHECK-NEXT: v159: 3 @JSValue = Integer integer=3
+# CHECK-NEXT: v160: string|symbol @Cell = ToPropertyKey v159 calledBuiltin=ObjectDefineProperty
+# CHECK-NEXT: v161: Object @JSValue = CallBuiltin -, v158, v160, v15 overload=ObjectDefineProperty/0 accessSite=4
+# CHECK-NEXT: v162: 10 @Int32 = Integer integer=10
+# CHECK-NEXT: v163: undefined|L1 @JSValue = GetArrayElement v2, v162 arrayStorage=Contiguous level=Proven accessSite=5 [keyIsIntegral]
 # CHECK-NEXT: v164: L1 @JSValue = RequireObjectCoercible v163 name="list"
-# CHECK-NEXT: v165: Array @Cell = GetSlot v164 key="list" receivers=[L1] level=Proven accessSite=8 fieldAccess=0
-# CHECK-NEXT: v166: Array @JSValue = CallBuiltin -, v161, v154 overload=ObjectSetPrototypeOf/0 accessSite=9
-# CHECK-NEXT: v167: anything @JSValue = PropGet v165 key="push" accessSite=10
-# CHECK-NEXT: v168: undefined|"from above"|builtin(ArrayPrototypePush) @JSValue = AssumeType v167 provenType=undefined|"from above"|builtin(ArrayPrototypePush)
-# CHECK-NEXT: v169: undefined|"from above"|builtin(ArrayPrototypePush) @JSValue = Upcast v168 castType=anything
-# CHECK-NEXT: v170: 7 @JSValue = Integer integer=7
-# CHECK-NEXT: v171: anything @JSValue = Call v169, v165, v170 calleeKey="push" calleeName="b.push" accessSite=11 callees=[builtin(ArrayPrototypePush)]
-# CHECK-NEXT: v172: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v172
+# CHECK-NEXT: v165: Array @Cell = GetSlot v164 key="list" receivers=[L1] level=Proven accessSite=6 fieldAccess=0
+# CHECK-NEXT: v166: 11 @Int32 = Integer integer=11
+# CHECK-NEXT: v167: undefined|L1 @JSValue = GetArrayElement v2, v166 arrayStorage=Contiguous level=Proven accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v168: L1 @JSValue = RequireObjectCoercible v167 name="list"
+# CHECK-NEXT: v169: Array @Cell = GetSlot v168 key="list" receivers=[L1] level=Proven accessSite=8 fieldAccess=0
+# CHECK-NEXT: v170: Array @JSValue = CallBuiltin -, v165, v158 overload=ObjectSetPrototypeOf/0 accessSite=9
+# CHECK-NEXT: v171: anything @JSValue = PropGet v169 key="push" accessSite=10
+# CHECK-NEXT: v172: undefined|"from above"|builtin(ArrayPrototypePush) @JSValue = AssumeType v171 provenType=undefined|"from above"|builtin(ArrayPrototypePush)
+# CHECK-NEXT: v173: undefined|"from above"|builtin(ArrayPrototypePush) @JSValue = Upcast v172 castType=anything
+# CHECK-NEXT: v174: 7 @JSValue = Integer integer=7
+# CHECK-NEXT: v175: anything @JSValue = Call v173, v169, v174 calleeKey="push" calleeName="b.push" accessSite=11 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: v176: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v176
 # CHECK-NEXT: b35() frequency=Rare:
-# CHECK-NEXT: v174: Object @JSValue = CallBuiltin -, v153 overload=ObjectCreate/0
-# CHECK-NEXT: Jump -> next b34(v174)
-# CHECK-NEXT: b36(v145: int[0, 4294967295] @Int64) frequency=Unlikely:
-# CHECK-NEXT: v146: 2 @Int32 = Integer integer=2
-# CHECK-NEXT: v147: undefined|L1 @JSValue = GetArrayElement v2, v146 arrayStorage=Contiguous level=Proven accessSite=24 [keyIsIntegral]
-# CHECK-NEXT: v148: L1 @JSValue = RequireObjectCoercible v147 name="list"
-# CHECK-NEXT: v149: Array @Cell = GetSlot v148 key="list" receivers=[L1] level=Proven accessSite=25 fieldAccess=0
-# CHECK-NEXT: v150: boolean @Boolean = IsPristine v149 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: TestAndBranch v150 -> taken b31(), notTaken b32(v149)
+# CHECK-NEXT: v178: Object @JSValue = CallBuiltin -, v157 overload=ObjectCreate/0
+# CHECK-NEXT: Jump -> next b34(v178)
+# CHECK-NEXT: b36(v149: int[0, 4294967295] @Int64) frequency=Unlikely:
+# CHECK-NEXT: v150: 2 @Int32 = Integer integer=2
+# CHECK-NEXT: v151: undefined|L1 @JSValue = GetArrayElement v2, v150 arrayStorage=Contiguous level=Proven accessSite=24 [keyIsIntegral]
+# CHECK-NEXT: v152: L1 @JSValue = RequireObjectCoercible v151 name="list"
+# CHECK-NEXT: v153: Array @Cell = GetSlot v152 key="list" receivers=[L1] level=Proven accessSite=25 fieldAccess=0
+# CHECK-NEXT: v154: boolean @Boolean = IsPristine v153 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: TestAndBranch v154 -> taken b31(), notTaken b32(v153)
 # CHECK-NEXT: b37() frequency=Rare:
-# CHECK-NEXT: v175: int[0, 4294967295] @JSValue = CallBuiltin v17, v143, v140, v141, v142, v144 overload=ArrayPrototypePush/0 accessSite=23
-# CHECK-NEXT: Jump -> next b36(v175)
-# CHECK-NEXT: b38(v75: int[0, 4294967295] @Int64):
-# CHECK-NEXT: v76: 2 @Int32 = Integer integer=2
-# CHECK-NEXT: v77: undefined|L1 @JSValue = GetArrayElement v2, v76 arrayStorage=Contiguous level=Proven accessSite=24 [keyIsIntegral]
-# CHECK-NEXT: v78: L1 @JSValue = RequireObjectCoercible v77 name="list"
-# CHECK-NEXT: v79: Array @Cell = GetSlot v78 key="list" receivers=[L1] level=Proven accessSite=25 fieldAccess=0
-# CHECK-NEXT: v80: boolean @Boolean = IsPristine v79 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: TestAndBranch v80 -> taken b17(), notTaken b32(v79)
+# CHECK-NEXT: v179: int[0, 4294967295] @JSValue = CallBuiltin v17, v147, v144, v145, v146, v148 overload=ArrayPrototypePush/0 accessSite=23
+# CHECK-NEXT: Jump -> next b36(v179)
+# CHECK-NEXT: b38(v77: int[0, 4294967295] @Int64):
+# CHECK-NEXT: v78: 2 @Int32 = Integer integer=2
+# CHECK-NEXT: v79: undefined|L1 @JSValue = GetArrayElement v2, v78 arrayStorage=Contiguous level=Proven accessSite=24 [keyIsIntegral]
+# CHECK-NEXT: v80: L1 @JSValue = RequireObjectCoercible v79 name="list"
+# CHECK-NEXT: v81: Array @Cell = GetSlot v80 key="list" receivers=[L1] level=Proven accessSite=25 fieldAccess=0
+# CHECK-NEXT: v82: boolean @Boolean = IsPristine v81 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: TestAndBranch v82 -> taken b17(), notTaken b32(v81)
 # CHECK-NEXT: b39() frequency=Rare:
-# CHECK-NEXT: v176: int[0, 4294967295] @JSValue = CallBuiltin v17, v41, v58, v66, v73, v74 overload=ArrayPrototypePush/0 accessSite=23
-# CHECK-NEXT: Jump -> next b38(v176)
+# CHECK-NEXT: v180: int[0, 4294967295] @JSValue = CallBuiltin v17, v42, v60, v68, v75, v76 overload=ArrayPrototypePush/0 accessSite=23
+# CHECK-NEXT: Jump -> next b38(v180)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m0 position=484 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type="from above"}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]

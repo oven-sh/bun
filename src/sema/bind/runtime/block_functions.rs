@@ -58,7 +58,6 @@ impl Declarations<'_, '_> {
                 .intersects(Flags::ASYNC | Flags::GENERATOR);
             if is_plain
                 && self.is_sloppy(scope)
-                && !self.hir.follows_dropped_directive(self.hir.node(f))
                 && let Some(var_symbol) = self.find_annex_b_var(f, start)
             {
                 record_binding_kind(self.bound, var_symbol, BindingKind::Var);

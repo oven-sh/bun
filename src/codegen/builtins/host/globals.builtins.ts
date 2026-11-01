@@ -1,5 +1,6 @@
 import * as b from "bun-builtins-table";
 import {
+  argumentsCell,
   environmentCell,
   framesOfModuleGraphsCell,
   moduleGraphsCell,
@@ -19,7 +20,7 @@ import {
   webSocketHandlerCell,
   webSocketsCell,
 } from "./native-cells.ts";
-import { handedOver, mayAnswerWrapperKeptIn } from "./native-code.ts";
+import { answering, handedOver, mayAnswerWrapperKeptIn, promiseOf } from "./native-code.ts";
 
 type Contents = Readonly<Record<string, b.TableType>>;
 type UsesByOperand = Readonly<Record<string, readonly b.UseSpec[]>>;
@@ -110,6 +111,7 @@ const clockReading = (symbol: string) =>
 
 const characters = [b.readAsCharacters];
 const converted = [b.runs("ToPrimitive")];
+const stringOrStringObject = b.union(b.string, b.instance("String"));
 const membersInspected = (...names: readonly string[]) => [b.runs(b.named(...names)), b.membersOnlyInspected];
 
 // The message of an error about a refused value prints the value the way console.log does.
@@ -244,6 +246,25 @@ const eventHandlerAttribute = (eventTarget: b.TableType) =>
 
 const receiver = b.operand("this");
 const globalObject = b.builtin("globalThis");
+
+const eventDispatch = (eventTarget: b.TableType) =>
+  ({
+    args: { event: b.object },
+    returns: b.bool,
+    capability: "js",
+    throws: true,
+    uses: {
+      this: [
+        b.retained,
+        eventTarget === receiver
+          ? b.storedIn(b.nativeCell(targetsOfEventsCell))
+          : b.createdIn(b.object, b.nativeCell(targetsOfEventsCell)),
+      ],
+      event: [b.retained],
+    },
+    reads: externalState,
+    writes: externalState,
+  }) satisfies b.FunctionField;
 // What `bun:test` exports. The table lists the members that the compiler has to know, so the object counts as one that nobody knows as well.
 const testModule = b.union(b.builtin("bun:test"), b.object);
 
@@ -260,6 +281,7 @@ const heapsReadByClone = [
   "ExternalState",
 ];
 const heapsWrittenByTransfer = ["TypedArrayStorage", "TypedArrayElements", "ExternalState"];
+const heapsWrittenByClone = ["TypedArrayStorage", "ExternalState"];
 const membersReadByClone = ["name", "message", "stack", "cause"];
 const cloned = [
   b.readsContents(),
@@ -1022,7 +1044,7 @@ const serverMembers = {
           result: "Escapes",
         }),
       ],
-      request: [b.readsContents(), b.writesContents()],
+      request: [b.readsContents(), b.writesContents(), ...converted],
       options: handedOver,
     },
   },
@@ -1141,6 +1163,7 @@ const socketOptions = [
   b.runsTransitively(b.named(...socketOptionNames)),
   b.membersOfObjectsOnly,
   ...["hostname", "host", "port"].flatMap(name => convertedToString("options", name)),
+  ...convertedToString("options", "socket", "binaryType"),
   ...sequencesOfTLSOptions.map(name => iterated("options", "tls", name)),
   b.memberStoredIn(["tls", "secureContext"], b.nativeMemory),
   b.createdIn(newSocket, socket),
@@ -1195,10 +1218,11 @@ const resultOfSpawnSync = b.layout("SpawnSyncResult", {
 const cron: b.FunctionField[] = [
   {
     ...operandCodeOnly,
-    args: { schedule: b.string, handler: b.callable, options: b.any.optional },
+    args: { schedule: stringOrStringObject, handler: b.callable, options: b.any.optional },
     returns: b.instance("CronJob").fresh,
     throws: true,
     uses: {
+      schedule: converted,
       handler: [
         b.called({
           afterwards: "TouchesOnlyWhatRowNames",
@@ -1215,10 +1239,11 @@ const cron: b.FunctionField[] = [
     implementation: b.generic,
   },
   {
-    args: { path: b.string, schedule: b.string, title: b.string },
+    args: { path: stringOrStringObject, schedule: stringOrStringObject, title: stringOrStringObject },
     returns: settledWithAnyReason(b.undefined),
-    capability: "heap",
+    ...operandCodeOnly,
     throws: true,
+    uses: { path: converted, schedule: converted, title: converted },
     reads: externalState,
     writes: externalState,
     implementation: b.generic,
@@ -1309,7 +1334,7 @@ const sentWithRequest = [
 ];
 
 const fetch = {
-  args: { input: b.any, init: b.any.optional },
+  args: { input: b.any.optional, init: b.any.optional },
   returns: settledWithAnyReason(b.instance("Response").fresh),
   capability: "js",
   throws: true,
@@ -1370,8 +1395,7 @@ const viewAtPointer = (returns: b.TableType) =>
   }) satisfies b.FunctionField;
 
 // constructDNSObject in BunObject.cpp puts them on Bun.dns. Nothing is said yet of what a call does.
-const undeclaredFunctionsOfDNS = [
-  "getServers",
+const queriesOfDNS = [
   "lookupService",
   "resolve",
   "resolveAny",
@@ -1385,7 +1409,6 @@ const undeclaredFunctionsOfDNS = [
   "resolveSrv",
   "resolveTxt",
   "reverse",
-  "setServers",
 ];
 
 const createdOnFirstRead = (holds: b.TableType) => b.property(holds, { createdOnFirstRead: { capability: "heap" } });
@@ -1415,13 +1438,23 @@ export default b.declarations(
   b.membersFrom("globalThis", b.staticTable("src/jsc/bindings/ZigGlobalObject.lut.txt", "bunGlobalObjectTable")),
   plainObjects.flatMap(path => b.inherits(path, "Object.prototype")),
   computedOnce.flatMap(name => b.extend(`Bun.${name}`, { mutability: "ConstantUnlessWritten" })),
+  b.constructionOfFunction("Bun.$", shellCommand),
   b.namespace(
     "Bun",
     {
       fetch,
       main: mainModulePath,
       // What process.argv answers at the first read: the program may have stored anything there, or defined a getter.
-      argv: b.property(b.any, { createdOnFirstRead: { capability: "js", throws: true, reads: externalState } }),
+      argv: b.property(b.any, {
+        createdOnFirstRead: {
+          capability: "js",
+          throws: true,
+          uses: {
+            this: [b.createdIn(newArrayOf(b.string).dense, b.nativeCell(argumentsCell)), b.returnedFrom(argumentsCell)],
+          },
+          reads: externalState,
+        },
+      }),
       // Nothing is known of the class, so whoever reads it counts as calling import() of a graph (ReadLoadsCodeByName in marks.builtins.ts).
       // From the first graph on, the natives that look for the graph of a frame find graphs and frames.
       ModuleGraph: b.property(b.any, {
@@ -1578,11 +1611,12 @@ export default b.declarations(
         },
         {
           ...operandCodeOnly,
-          args: { input: b.any, format: b.string.nullable },
+          args: { input: b.any, format: b.any.optional },
           returns: b.union(b.plainData, b.strictNull, b.f64, b.string),
           throws: true,
           uses: {
             input: [b.readsContents(), b.runs("OwnValues", b.named("r", "g", "b", "a")), b.membersOnlyInspected],
+            format: [...characters, ...converted],
           },
           reads: [...viewHeaps, ...externalState],
           implementation: b.hostCall,
@@ -1605,11 +1639,11 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       jest: {
-        args: { path: b.any.optional },
+        args: { path: b.any.optional, byWhoLoads: b.any.optional },
         returns: testModule,
         capability: "js",
         throws: true,
-        uses: { path: b.inspected },
+        uses: { path: converted, byWhoLoads: b.inspected },
         implementation: b.hostCall,
       },
       listen: {
@@ -1705,14 +1739,17 @@ export default b.declarations(
   b.inherits("Bun.FFI.read", "Object.prototype"),
   b.namespace("Bun.dns", {
     ...Object.fromEntries(["ADDRCONFIG", "ALL", "V4MAPPED"].map(name => [name, b.property(b.f64)])),
-    ...Object.fromEntries(undeclaredFunctionsOfDNS.map(name => [name, b.otherwiseBy(b.generic)])),
+    ...Object.fromEntries(queriesOfDNS.map(name => [name, answering(promiseOf(b.plainData))])),
+    getServers: answering(b.plainData),
+    setServers: answering(b.undefined),
     getCacheStats: { returns: b.plainData, capability: "heap", reads: externalState, implementation: b.generic },
     lookup: {
       ...operandCodeOnly,
-      args: { hostname: b.string, options: b.any.optional },
+      args: { hostname: stringOrStringObject, options: b.any.optional },
       returns: settledWithAnyReason(b.plainData),
       throws: true,
       uses: {
+        hostname: converted,
         options: describedAfterReading("port", "family", "socketType", "socktype", "protocol", "backend", "flags"),
       },
       reads: externalState,
@@ -1720,9 +1757,10 @@ export default b.declarations(
       implementation: b.generic,
     },
     prefetch: {
-      args: { hostname: b.string, port: b.f64.nullable },
-      capability: "heap",
+      args: { hostname: stringOrStringObject, port: b.f64.nullable },
+      ...operandCodeOnly,
       throws: true,
+      uses: { hostname: converted },
       reads: externalState,
       writes: externalState,
       implementation: b.generic,
@@ -1796,10 +1834,12 @@ export default b.declarations(
   ),
 
   // Native code answers a read and takes a store, and a descriptor shows a data property (ZigGlobalObject.cpp: a CustomGetterSetter without the attribute of an accessor).
+  b.method("AbortSignal.prototype.onabort", eventHandlerAttribute(receiver)),
   b.static("onerror", b.property(b.any, { setter: eventHandlerAttribute(globalObject).setter })),
   b.static("onmessage", b.property(b.any, { setter: eventHandlerAttribute(globalObject).setter })),
   b.fn("addEventListener", listenerRegistration(globalObject)),
   b.fn("removeEventListener", listenerRemoval),
+  b.fn("dispatchEvent", { ...eventDispatch(globalObject), this: b.any, implementation: b.generic }),
 
   b.namespace("performance", { now: clockReading("AOT__performanceNow") }),
   b.inherits("performance", "Performance.prototype"),
@@ -1845,6 +1885,7 @@ export default b.declarations(
         returns: timelineEntry,
         uses: { markName: converted, markOptions: optionsWithClonedDetail("detail", "startTime") },
         reads: heapsReadByClone,
+        writes: heapsWrittenByClone,
       }),
       measure: timelineOperation({
         ...operandCodeOnly,
@@ -1856,6 +1897,7 @@ export default b.declarations(
           endMark: converted,
         },
         reads: heapsReadByClone,
+        writes: heapsWrittenByClone,
       }),
       getEntries: timelineOperation({ returns: timelineEntries, capability: "heap" }),
       getEntriesByName: timelineOperation({
@@ -1919,25 +1961,7 @@ export default b.declarations(
       readsStateBeforeConversions: true,
     }),
     removeEventListener: () => ({ ...listenerRemoval, uses: { this: b.inspected, ...listenerRemoval.uses } }),
-    // The listeners that were added earlier run, with the event and the target, and the event keeps the target.
-    // What stands for the global object there is an object of the host.
-    dispatchEvent: (eventTarget: b.TableType) => ({
-      args: { event: b.object },
-      returns: b.bool,
-      capability: "js",
-      throws: true,
-      uses: {
-        this: [
-          b.retained,
-          eventTarget === receiver
-            ? b.storedIn(b.nativeCell(targetsOfEventsCell))
-            : b.createdIn(b.object, b.nativeCell(targetsOfEventsCell)),
-        ],
-        event: [b.retained],
-      },
-      reads: externalState,
-      writes: externalState,
-    }),
+    dispatchEvent: eventDispatch,
   } satisfies Record<string, (eventTarget: b.TableType) => b.FunctionField>).map(([name, on]) =>
     b.method(`EventTarget.prototype.${name}`, [
       {

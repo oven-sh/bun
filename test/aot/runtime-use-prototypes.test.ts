@@ -119,7 +119,8 @@ describe.concurrent("a class of the host of which the program makes no instance"
   test("nor is a call of a method of that name, with text evaluated at run time beside it", async () => {
     expect(
       await retainsTest(
-        unknown + `console.log(value.map((x: any) => x), value.pick("a"), value.not, new Function(process.argv[3])());`,
+        unknown +
+          `console.log(value.map((x: any) => x), value.pick("a"), value.not, value.resolves, value.rejects, new Function(process.argv[3])());`,
       ),
     ).toBe(false);
   });

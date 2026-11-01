@@ -572,138 +572,121 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: v4: Array<never, proven, pristine[Storage, Names]> = GetModuleVariable variable=g3
 # CHECK-NEXT: v5: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v6: false = Boolean
-# CHECK-NEXT: v7: false = Upcast v6 castType=boolean|string
-# CHECK-NEXT: Jump -> next b1(v2, v3, v7)
-# CHECK-NEXT: b1(v8: boolean, v9: int[0, 4294967295], v10: false|string ~ false):
+# CHECK-NEXT: Jump -> next b1(v2, v3)
+# CHECK-NEXT: b1(v6: boolean, v7: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
+# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v12: true = Boolean boolean=true
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: Jump -> next b8(v12, v13, v9)
+# CHECK-NEXT: v9: true = Boolean boolean=true
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Jump -> next b8(v9, v10, v7)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v15: boolean = Less v9, v14
-# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b7()
-# CHECK-NEXT: b4(v16: int[0, 4294967294]):
-# CHECK-NEXT: v17: boolean = IsInBounds v1, v16
-# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v18: guard):
-# CHECK-NEXT: v19: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v1, v16, v18 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: int[1, 4294967295] = Add v16, v20
-# CHECK-NEXT: v22: false = Boolean
-# CHECK-NEXT: Jump -> next b8(v22, v19, v21)
+# CHECK-NEXT: v11: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v12: boolean = Less v7, v11
+# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b7()
+# CHECK-NEXT: b4(v13: int[0, 4294967294]):
+# CHECK-NEXT: v14: boolean = IsInBounds v1, v13
+# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: b5(v15: guard):
+# CHECK-NEXT: v16: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v1, v13, v15 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v17: 1 = Integer integer=1
+# CHECK-NEXT: v18: int[1, 4294967295] = Add v13, v17
+# CHECK-NEXT: v19: false = Boolean
+# CHECK-NEXT: Jump -> next b8(v19, v16, v18)
 # CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v23: undefined|Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v1, v16 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[1, 4294967295] = Add v16, v24
-# CHECK-NEXT: v26: false = Boolean
-# CHECK-NEXT: v27: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v23 nullishAccess=Iterate
-# CHECK-NEXT: Jump -> next b14(v25, v26, v27)
+# CHECK-NEXT: v20: undefined|Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v1, v13 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: int[1, 4294967295] = Add v13, v21
+# CHECK-NEXT: v23: false = Boolean
+# CHECK-NEXT: v24: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v20 nullishAccess=Iterate
+# CHECK-NEXT: Jump -> next b12(v22, v23, v24)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v28: true = Boolean boolean=true
-# CHECK-NEXT: v29: undefined = Undefined
-# CHECK-NEXT: Jump -> next b8(v28, v29, v9)
-# CHECK-NEXT: b8(v30: boolean, v31: undefined|Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]>, v32: int[0, 4294967295]):
-# CHECK-NEXT: v33: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v31 nullishAccess=Iterate
-# CHECK-NEXT: v34: 0 = Integer
-# CHECK-NEXT: v35: boolean = IsInBounds v33, v34
-# CHECK-NEXT: Branch v35 -> taken b9(| 0), notTaken b14(v32, v30, v33)
-# CHECK-NEXT: b9(v36: guard):
-# CHECK-NEXT: v37: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = GetArrayElement v33, v34, v36 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v38: 1 = Integer integer=1
-# CHECK-NEXT: v39: boolean = IsInBounds v33, v38
-# CHECK-NEXT: Branch v39 -> taken b10(| 0), notTaken b15(v37, v32, v30, v33)
-# CHECK-NEXT: b10(v40: guard):
-# CHECK-NEXT: v41: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = GetArrayElement v33, v38, v40 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v42: boolean ~ true = TypeTest v10 testedType=boolean
-# CHECK-NEXT: Branch v42 -> taken b11(), notTaken b12(| 0)
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v43: " | " = String string=" | "
-# CHECK-NEXT: v44: string = Strcat v0, v43 [isLikelyKey]
-# CHECK-NEXT: Jump -> next b13(v44)
-# CHECK-NEXT: b12(v45: string):
-# CHECK-NEXT: Jump -> next b13(v45)
-# CHECK-NEXT: b13(v46: string):
-# CHECK-NEXT: v47: string = Upcast v46 castType=boolean|string
-# CHECK-NEXT: v48: string = Add v46, v37
-# CHECK-NEXT: Jump -> next b17(v41, v48, v32, v30, v47)
-# CHECK-NEXT: b14(v49: int[0, 4294967295], v50: boolean, v51: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
-# CHECK-NEXT: v52: 0 = Integer
-# CHECK-NEXT: v53: undefined|"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = GetArrayElement v51, v52 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b15(v53, v49, v50, v51)
-# CHECK-NEXT: b15(v54: undefined|"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 ~ "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, v55: int[0, 4294967295], v56: boolean, v57: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
-# CHECK-NEXT: v58: 1 = Integer integer=1
-# CHECK-NEXT: v59: undefined|"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = GetArrayElement v57, v58 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v25: true = Boolean boolean=true
+# CHECK-NEXT: v26: undefined = Undefined
+# CHECK-NEXT: Jump -> next b8(v25, v26, v7)
+# CHECK-NEXT: b8(v27: boolean, v28: undefined|Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]>, v29: int[0, 4294967295]):
+# CHECK-NEXT: v30: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v28 nullishAccess=Iterate
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: boolean = IsInBounds v30, v31
+# CHECK-NEXT: Branch v32 -> taken b9(| 0), notTaken b12(v29, v27, v30)
+# CHECK-NEXT: b9(v33: guard):
+# CHECK-NEXT: v34: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = GetArrayElement v30, v31, v33 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v35: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread" = AssumeType v34 provenType="class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"
+# CHECK-NEXT: v36: 1 = Integer integer=1
+# CHECK-NEXT: v37: boolean = IsInBounds v30, v36
+# CHECK-NEXT: Branch v37 -> taken b10(| 0), notTaken b13(v35, v29, v27, v30)
+# CHECK-NEXT: b10(v38: guard):
+# CHECK-NEXT: v39: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = GetArrayElement v30, v36, v38 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v40: f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = AssumeType v39 provenType=f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31
+# CHECK-NEXT: v41: " | " = String string=" | "
+# CHECK-NEXT: v42: " -> " = String string=" -> "
+# CHECK-NEXT: v43: string = Strcat v0, v41, v35, v42
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11() handler=b19(v43, v29, v27):
+# CHECK-NEXT: v44: 1 = Integer integer=1
+# CHECK-NEXT: v45: 2 = Integer integer=2
+# CHECK-NEXT: v46: anything = CallDirect v40, v44, v45 function=f104 accessSite=9 [isNeverInlined]
+# CHECK-NEXT: Jump -> next b15(v43, v46, v29, v27)
+# CHECK-NEXT: b12(v47: int[0, 4294967295], v48: boolean, v49: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v50: 0 = Integer
+# CHECK-NEXT: v51: undefined|"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = GetArrayElement v49, v50 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v52: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread" = AssumeType v51 provenType="class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"
+# CHECK-NEXT: Jump -> next b13(v52, v47, v48, v49)
+# CHECK-NEXT: b13(v53: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread", v54: int[0, 4294967295], v55: boolean, v56: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v57: 1 = Integer integer=1
+# CHECK-NEXT: v58: undefined|"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = GetArrayElement v56, v57 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v59: f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = AssumeType v58 provenType=f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31
 # CHECK-NEXT: v60: " | " = String string=" | "
-# CHECK-NEXT: v61: string = Add v0, v60
-# CHECK-NEXT: v62: string = Add v61, v54
-# CHECK-NEXT: v63: boolean = TypeTest v59 testedType="class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31
-# CHECK-NEXT: Branch v63 -> taken b16(| 0), notTaken b19()
-# CHECK-NEXT: b16(v64: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b17(v64, v62, v55, v56, v10)
-# CHECK-NEXT: b17(v65: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, v66: string, v67: int[0, 4294967295], v68: boolean, v69: false|string):
-# CHECK-NEXT: v70: " -> " = String string=" -> "
-# CHECK-NEXT: v71: string = Add v66, v70
-# CHECK-NEXT: Jump -> next b18()
-# CHECK-NEXT: b18() handler=b25(v71, v67, v68, v69):
-# CHECK-NEXT: v72: 1 = Integer integer=1
-# CHECK-NEXT: v73: 2 = Integer integer=2
-# CHECK-NEXT: v74: anything = Call v65, -, v72, v73 calleeName="use" accessSite=9 callees=[f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31]
-# CHECK-NEXT: Jump -> next b21(v71, v74, v67, v68, v69)
-# CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: v75: " -> " = String string=" -> "
-# CHECK-NEXT: v76: string = Add v62, v75
-# CHECK-NEXT: Jump -> next b20()
-# CHECK-NEXT: b20() frequency=Unlikely handler=b26():
-# CHECK-NEXT: v77: 1 = Integer integer=1
-# CHECK-NEXT: v78: 2 = Integer integer=2
-# CHECK-NEXT: v79: anything = Call v59, -, v77, v78 calleeName="use" accessSite=9 callees=[f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31]
-# CHECK-NEXT: Jump -> next b21(v76, v79, v55, v56, v10)
-# CHECK-NEXT: b21(v80: string, v81: anything, v82: int[0, 4294967295], v83: boolean, v84: false|string):
-# CHECK-NEXT: v85: undefined|Array<undefined|number, proven, pristine[Storage, Names, Dense]> = AssumeType v81 provenType=undefined|Array<undefined|number, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v86: boolean = TypeTest v85 testedType=Array
-# CHECK-NEXT: Branch v86 -> taken b22(| 0), notTaken b23()
-# CHECK-NEXT: b22(v87: Array<undefined|number, proven, pristine[Storage, Names, Dense]>) handler=b25(v80, v82, v83, v84):
-# CHECK-NEXT: v88: "[" = String string="["
-# CHECK-NEXT: v89: Array = CallBuiltin v87, v5 overload=ArrayPrototypeMap/0 accessSite=5
-# CHECK-NEXT: v90: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v89 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v91: ", " = String string=", "
-# CHECK-NEXT: v92: string = CallBuiltin v90, v91 overload=ArrayPrototypeJoin/0 accessSite=7
-# CHECK-NEXT: v93: "]" = String string="]"
-# CHECK-NEXT: v94: string = Strcat v88, v92, v93
-# CHECK-NEXT: Jump -> next b24(v94)
-# CHECK-NEXT: b23() handler=b25(v80, v82, v83, v84):
-# CHECK-NEXT: v95: string = CallBuiltin -, v85 overload=String/0 builtinCallForm=AnyReceiver accessSite=8 @0:1 tail
-# CHECK-NEXT: Jump -> next b24(v95)
-# CHECK-NEXT: b24(v96: string) handler=b25(v80, v82, v83, v84):
-# CHECK-NEXT: v97: string = Add v80, v96
-# CHECK-NEXT: Jump -> next b28(v82, v83, v84)
-# CHECK-NEXT: b25(v98: string, v99: int[0, 4294967295], v100: boolean, v101: false|string) role=CatchHandler:
-# CHECK-NEXT: v102: anything = CatchValue
-# CHECK-NEXT: v103: anything = PropGet v102 key="constructor" accessSite=11
-# CHECK-NEXT: Jump -> next b27(v98, v103, v99, v100, v101)
-# CHECK-NEXT: b26() role=CatchHandler frequency=Unlikely:
-# CHECK-NEXT: v104: anything = CatchValue
-# CHECK-NEXT: v105: anything = PropGet v104 key="constructor" accessSite=11
-# CHECK-NEXT: Jump -> next b27(v76, v105, v55, v56, v10)
-# CHECK-NEXT: b27(v106: string, v107: anything, v108: int[0, 4294967295], v109: boolean, v110: false|string):
-# CHECK-NEXT: v111: anything = PropGet v107 key="name" accessSite=12
-# CHECK-NEXT: v112: "threw " = String string="threw "
-# CHECK-NEXT: v113: string = Add v112, v111
-# CHECK-NEXT: v114: string = Add v106, v113
-# CHECK-NEXT: Jump -> next b28(v108, v109, v110)
-# CHECK-NEXT: b28(v115: int[0, 4294967295], v116: boolean, v117: false|string):
-# CHECK-NEXT: v118: " | log " = String string=" | log "
-# CHECK-NEXT: v119: 0 = Integer
-# CHECK-NEXT: v120: Array<never> = CallBuiltin v4, v119 overload=ArrayPrototypeSplice/0 accessSite=15
-# CHECK-NEXT: v121: Array<never, proven, pristine[Storage, Names]> = AssumeType v120 provenType=Array<never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v122: ", " = String string=", "
-# CHECK-NEXT: v123: string = CallBuiltin v121, v122 overload=ArrayPrototypeJoin/0 accessSite=17
-# CHECK-NEXT: v124: string = Add v118, v123
-# CHECK-NEXT: Jump -> next b1(v116, v115, v117)
+# CHECK-NEXT: v61: " -> " = String string=" -> "
+# CHECK-NEXT: v62: string = Strcat v0, v60, v53, v61
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b14() frequency=Unlikely handler=b20():
+# CHECK-NEXT: v63: 1 = Integer integer=1
+# CHECK-NEXT: v64: 2 = Integer integer=2
+# CHECK-NEXT: v65: anything = CallDirect v59, v63, v64 function=f104 accessSite=9 [isNeverInlined]
+# CHECK-NEXT: Jump -> next b15(v62, v65, v54, v55)
+# CHECK-NEXT: b15(v66: string, v67: anything, v68: int[0, 4294967295], v69: boolean):
+# CHECK-NEXT: v70: undefined|Array<undefined|number, proven, pristine[Storage, Names, Dense]> = AssumeType v67 provenType=undefined|Array<undefined|number, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v71: boolean = TypeTest v70 testedType=Array
+# CHECK-NEXT: Branch v71 -> taken b16(| 0), notTaken b17()
+# CHECK-NEXT: b16(v72: Array<undefined|number, proven, pristine[Storage, Names, Dense]>) handler=b19(v66, v68, v69):
+# CHECK-NEXT: v73: "[" = String string="["
+# CHECK-NEXT: v74: Array = CallBuiltin v72, v5 overload=ArrayPrototypeMap/0 accessSite=5
+# CHECK-NEXT: v75: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v74 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v76: ", " = String string=", "
+# CHECK-NEXT: v77: string = CallBuiltin v75, v76 overload=ArrayPrototypeJoin/0 accessSite=7
+# CHECK-NEXT: v78: "]" = String string="]"
+# CHECK-NEXT: v79: string = Strcat v73, v77, v78
+# CHECK-NEXT: Jump -> next b18(v79)
+# CHECK-NEXT: b17() handler=b19(v66, v68, v69):
+# CHECK-NEXT: v80: string = CallBuiltin -, v70 overload=String/0 builtinCallForm=AnyReceiver accessSite=8 @0:1 tail
+# CHECK-NEXT: Jump -> next b18(v80)
+# CHECK-NEXT: b18(v81: string) handler=b19(v66, v68, v69):
+# CHECK-NEXT: v82: string = Add v66, v81
+# CHECK-NEXT: Jump -> next b22(v68, v69)
+# CHECK-NEXT: b19(v83: string, v84: int[0, 4294967295], v85: boolean) role=CatchHandler:
+# CHECK-NEXT: v86: anything = CatchValue
+# CHECK-NEXT: v87: anything = PropGet v86 key="constructor" accessSite=11
+# CHECK-NEXT: Jump -> next b21(v83, v87, v84, v85)
+# CHECK-NEXT: b20() role=CatchHandler frequency=Unlikely:
+# CHECK-NEXT: v88: anything = CatchValue
+# CHECK-NEXT: v89: anything = PropGet v88 key="constructor" accessSite=11
+# CHECK-NEXT: Jump -> next b21(v62, v89, v54, v55)
+# CHECK-NEXT: b21(v90: string, v91: anything, v92: int[0, 4294967295], v93: boolean):
+# CHECK-NEXT: v94: anything = PropGet v91 key="name" accessSite=12
+# CHECK-NEXT: v95: "threw " = String string="threw "
+# CHECK-NEXT: v96: string = Add v95, v94
+# CHECK-NEXT: v97: string = Add v90, v96
+# CHECK-NEXT: Jump -> next b22(v92, v93)
+# CHECK-NEXT: b22(v98: int[0, 4294967295], v99: boolean):
+# CHECK-NEXT: v100: " | log " = String string=" | log "
+# CHECK-NEXT: v101: 0 = Integer
+# CHECK-NEXT: v102: Array<never> = CallBuiltin v4, v101 overload=ArrayPrototypeSplice/0 accessSite=15
+# CHECK-NEXT: v103: Array<never, proven, pristine[Storage, Names]> = AssumeType v102 provenType=Array<never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v104: ", " = String string=", "
+# CHECK-NEXT: v105: string = CallBuiltin v103, v104 overload=ArrayPrototypeJoin/0 accessSite=17
+# CHECK-NEXT: v106: string = Add v100, v105
+# CHECK-NEXT: Jump -> next b1(v99, v98)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
 # CHECK: m0 position=2133 kind=Arrow length=2 thisType={type=anything} parameters=[{type=1}, {type=2}] results=[{type=undefined}] functionTypes=[f64] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -732,15 +715,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f34 module=
-# CHECK: m0 position=3908 kind=Arrow captures=[{type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|object|"OldPair.prototype"|"Pair.prototype"|"the prototype that the literals share"}] functionTypes=[f77] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|object):
-# CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
-# CHECK-NEXT: v2: "middle" = String string="middle"
-# CHECK-NEXT: v3: f43 = NewClosure function=f43 allocationSite=63
-# CHECK-NEXT: v4: L5 = NewObject -, v3 layout=L5 fields=[3] allocationSite=62 allocationClass=2
-# CHECK-NEXT: v5: L5 = FinishObject v4
-# CHECK-NEXT: v6: object = CallBuiltin v1, v0, v2, v5 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver accessSite=26 @0 tail
-# CHECK-NEXT: Return v6
+# CHECK: m0 position=3908 kind=Arrow captures=[{type=object}] thisType={type=anything} results=[{type=object}] functionTypes=[f77] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: v1: "middle" = String string="middle"
+# CHECK-NEXT: v2: f43 = NewClosure function=f43 allocationSite=63
+# CHECK-NEXT: v3: L5 = NewObject -, v2 layout=L5 fields=[3] allocationSite=62 allocationClass=2
+# CHECK-NEXT: v4: L5 = FinishObject v3
+# CHECK-NEXT: v5: object = CallBuiltin -, v0, v1, v4 overload=ObjectDefineProperty/0 accessSite=26 @0 tail
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=85 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {

@@ -36,7 +36,7 @@ const files: Record<string, string> = {
     "[x, y]",
   ),
 
-  // `bun run` drops the attributes of `export .. from`.
+  // `bun run` drops the attributes of `export .. from` and hands the text on. By the language they hold, and a compiled run reads them.
   "e.test.js": testFile("through a helper", `import { passedOn } from "./passes-on.js";`, "passedOn"),
 
   // A query makes one more instance of the file, which only the loader makes. A page is bundled when it is served.
@@ -83,6 +83,16 @@ test("a test run reads a file as the import asks", async () => {
   expect(plain.said).toContain("4 fail");
   expect(plain.said.filter(line => line.startsWith("SyntaxError: JSON Parse error")).length).toBe(4);
   expect(plain.exitCode).toBe(1);
-  expect(one).toEqual(plain);
-  expect(layers).toEqual(plain);
+  const throughHelper = `SEEN through a helper | ${JSON.stringify('{"a":1,\n')}`;
+  expect(plain.seen).toContain(throughHelper);
+  expect(plain.said).toContain("10 pass");
+  const counts = /^\d+ (pass|fail|errors?)$/;
+  const refused = "SyntaxError: JSON Parse error: Property name must be a string literal";
+  const byTheLanguage = {
+    seen: plain.seen.filter(line => line !== throughHelper),
+    said: [...plain.said.filter(line => !counts.test(line)), refused, "9 pass", "5 fail", "5 errors"].sort(),
+    exitCode: 1,
+  };
+  expect(one).toEqual(byTheLanguage);
+  expect(layers).toEqual(byTheLanguage);
 }, 240_000);

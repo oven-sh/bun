@@ -15,7 +15,7 @@ use crate::builtins::{
 };
 use crate::load::evaluated_texts::{EvaluatedTexts, find_evaluated_function};
 use crate::load::react_compiler;
-use crate::load::replaced_builtins::members_sought_in_file_outside_packages;
+use crate::load::replaced_builtins::{ProductFiles, members_sought_in_file_outside_packages};
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::sources::{EvaluatedTextSite, ParsedSource, SourceKind};
 
@@ -123,12 +123,19 @@ fn resolve_builtins(
         replaced: input.replaced,
         replaced_members_sought: match input.replaced_members_sought {
             // The scan before the first build has read the helpers of the tests.
-            ReplacedMembersSought::WrittenOrNamed => {
-                members_sought_in_file_outside_packages(&targets, false)
-            }
+            ReplacedMembersSought::WrittenOrNamed => members_sought_in_file_outside_packages(
+                &targets,
+                false,
+                ProductFiles::AreReadAsTestsAre,
+            ),
             sought => sought,
         },
     })
+}
+
+pub(crate) fn takes_from_test_runner(request: &FinishedFile<'_, '_>) -> bool {
+    let targets = collect_import_targets(request.analysis.import_sites, request.resolutions);
+    (targets.iter()).any(|target| target.1 == Some(RuntimeModule::BunTest))
 }
 
 fn collect_import_targets(

@@ -2,12 +2,13 @@ use super::code_barrels::ImportRequests;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
 use crate::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, is_linked_by_bundler, is_name_read_by_transpiler,
+    ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, is_linked_by_bundler,
+    is_name_read_by_transpiler,
 };
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
     ComputedCandidate, ComputedCodeRequest, ComputedResolution, ComputedUnknown, ExternalKind,
-    FinishedFile, HostPayload, HostResolution, LoaderRequest, SiteResolution,
+    FinishedFile, HostPayload, HostResolution, LoaderRequest, SiteResolution, join,
 };
 
 pub(super) fn resolve_code_imports<'s, 'r>(
@@ -28,10 +29,21 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             continue;
         }
         let key = match analyzed.analysis.path_to_resolve_from(index) {
-            Some(path) => LoadKey {
+            Some(ResolvedFrom::File(path)) => LoadKey {
                 path: context.resolver.keep(atoms.bytes(path)),
                 ..key
             },
+            Some(ResolvedFrom::PathFromOwnFolder(path)) => {
+                let path = atoms.bytes(path);
+                let mut whole = join(&context.host.directory_of(key.path), path);
+                if path.ends_with(b"/") {
+                    whole.extend_from_slice(b"/noop.js");
+                }
+                LoadKey {
+                    path: context.resolver.keep(&whole),
+                    ..key
+                }
+            }
             None => key,
         };
         let alternatives = analyzed.analysis.alternatives_of(&site.specifier);
@@ -263,9 +275,10 @@ fn resolve_file_loaded_another_way<'r>(
     resolution: CodeResolution<'r>,
 ) -> CodeResolution<'r> {
     let is_outside = matches!(resolution, CodeResolution::External { .. });
-    // `import data from "./data.json" with { type: "json" }` here and in a file of another program: one module, which that program holds under the type.
+    let hands_type_to_loader = site.kind.hands_type_to_loader();
     if let (CodeResolution::File(file), Some(type_attribute)) =
         (resolution, loader_attribute(hir, site))
+        && hands_type_to_loader
         && file.host_module.is_none()
         && (context.host).is_form_in_other_program(file.path, context.atoms.bytes(type_attribute))
     {
@@ -292,7 +305,9 @@ fn resolve_file_loaded_another_way<'r>(
         } if context.host.leaves_to_run_time(path) => path,
         _ => return resolution,
     };
-    if (context.host).is_form_in_other_program(path, context.atoms.bytes(type_attribute)) {
+    if hands_type_to_loader
+        && (context.host).is_form_in_other_program(path, context.atoms.bytes(type_attribute))
+    {
         return resolution;
     }
     let loader_with = |type_attribute| {

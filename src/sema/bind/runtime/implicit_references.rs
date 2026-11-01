@@ -1,7 +1,7 @@
 use super::references::ReferencePass;
 use super::{ImplicitReference, ImplicitReferenceKind};
 use crate::atom::{Atom, known};
-use crate::bind::{Parent, ScopeId};
+use crate::bind::{Binding, Parent, ScopeId};
 use crate::hir::*;
 
 impl ReferencePass<'_, '_> {
@@ -52,12 +52,20 @@ impl ReferencePass<'_, '_> {
         node: NodeData,
         kind: ImplicitReferenceKind,
     ) {
-        let binding = self.lookup.find_binding(scope, name);
+        let mut binding = self.lookup.find_binding(scope, name);
+        let mut member = Atom::NONE;
+        if binding == Binding::Free
+            && let Some((variable, key)) = self.lookup.hir.find_name_of_loaded_import(name)
+        {
+            binding = self.lookup.find_binding(scope, variable);
+            member = key;
+        }
         self.references.implicit_references.push(ImplicitReference {
             node,
             kind,
             name,
             binding,
+            member,
         });
     }
 }

@@ -846,7 +846,7 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=2427 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|symbol|bigint|L3 site=w35 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=L1 flags=[IsFromCompiler]}] functionTypes=[f55] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f51 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: anything, v1: anything ~ undefined|null|boolean|number|string|symbol|bigint|L3):
 # CHECK-NEXT: v2: f22 = AssumeType v0 provenType=f22
-# CHECK-NEXT: v3: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|L3|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|L3 = AssumeType v1 provenType=undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|L3|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: boolean|number|bigint|""|"text"|symbol("s")@m0:19|L3|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ boolean|number|bigint|""|"text"|symbol("s")@m0:19|L3 = AssumeType v1 provenType=boolean|number|bigint|""|"text"|symbol("s")@m0:19|L3|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: boolean = AreMembersUnchanged conditions=[{layout=L1 side=Static key="prototype"}]
 # CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
@@ -854,9 +854,9 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v6: classtoken = GetModuleVariable fact=v5 variable=g22
 # CHECK-NEXT: v7: undefined = Undefined
 # CHECK-NEXT: v8: L1 = NewObject -, v7 layout=L1 fields=[1] allocationSite=54 allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: v9: boolean ~ true = TypeTest v3 testedType=undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|L3
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v3 testedType=boolean|number|bigint|""|"text"|symbol("s")@m0:19|L3
 # CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b4(v8, v6)
-# CHECK-NEXT: b2(v10: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|L3):
+# CHECK-NEXT: b2(v10: boolean|number|bigint|""|"text"|symbol("s")@m0:19|L3):
 # CHECK-NEXT: PutSlot v8, v8, v10 key=#"#held"@L1 receivers=[L1] level=Expected accessSite=83
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: b3() frequency=Rare:
@@ -881,15 +881,15 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f32 module=
 # CHECK: m0 position=5554 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|boolean|number|string|symbol|bigint|L3 site=w54 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f104 callPosition=4294967295 isConstruction=true module=m0}, {callee=f51 callPosition=4294967295 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|boolean|number|string|symbol|bigint|L3):
-# CHECK-NEXT: v1: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v2: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19 = Expect v1 expectedType=undefined|null|boolean|number|string|symbol|bigint|L3
+# CHECK-NEXT: v1: boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ boolean|number|bigint|""|"text"|symbol("s")@m0:19 = Expect v1 expectedType=undefined|null|boolean|number|string|symbol|bigint|L3
 # CHECK-NEXT: v3: fact = Entered function=f51
 # CHECK-NEXT: v4: classtoken = GetModuleVariable fact=v3 variable=g22
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: v6: L1 = NewObject -, v5 layout=L1 fields=[1] allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: v7: boolean ~ true = TypeTest v2 testedType=undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v2 testedType=boolean|number|bigint|""|"text"|symbol("s")@m0:19
 # CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b3(| 0)
-# CHECK-NEXT: b1(v8: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19):
+# CHECK-NEXT: b1(v8: boolean|number|bigint|""|"text"|symbol("s")@m0:19):
 # CHECK-NEXT: PutSlot v6, v6, v8 key=#"#held"@L1 receivers=[L1] level=Expected accessSite=83
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
@@ -903,8 +903,8 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f33 module=
 # CHECK: m0 position=5623 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|boolean|number|string|symbol|bigint|L3 site=w54 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f67] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|boolean|number|string|symbol|bigint|L3):
-# CHECK-NEXT: v1: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v2: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19 = Expect v1 expectedType=undefined|null|boolean|number|string|symbol|bigint|L3
+# CHECK-NEXT: v1: boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ boolean|number|bigint|""|"text"|symbol("s")@m0:19 = Expect v1 expectedType=undefined|null|boolean|number|string|symbol|bigint|L3
 # CHECK-NEXT: v3: f22 = GetModuleVariable variable=g19
 # CHECK-NEXT: PropSet v3, v2 key="latest" accessSite=94
 # CHECK-NEXT: v5: f24 = NewClosure function=f24 [isHeldByClosureTable]
@@ -914,35 +914,35 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f36 module=
 # CHECK: m0 position=5907 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|boolean|number|string|symbol|bigint|L3 site=w54 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=string}] functionTypes=[f70] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f9 callPosition=4294967295 isTailCall=true module=m0}, {callee=f47 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|boolean|number|string|symbol|bigint|L3):
-# CHECK-NEXT: v1: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v2: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19 = Expect v1 expectedType=undefined|null|boolean|number|string|symbol|bigint|L3
+# CHECK-NEXT: v1: boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ boolean|number|bigint|""|"text"|symbol("s")@m0:19 = Expect v1 expectedType=undefined|null|boolean|number|string|symbol|bigint|L3
 # CHECK-NEXT: v3: "k" = String string="k"
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: v5: Map<never, never> = CallBuiltin -, v4 overload=Map/1 accessSite=97
-# CHECK-NEXT: v6: Map<"k", undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v5 provenType=Map<"k", undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v7: Map<"k", undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = CallBuiltin v6, v3, v2 overload=MapPrototypeSet/0 accessSite=98
+# CHECK-NEXT: v6: Map<"k", boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v5 provenType=Map<"k", boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v7: Map<"k", boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = CallBuiltin v6, v3, v2 overload=MapPrototypeSet/0 accessSite=98
 # CHECK-NEXT: v8: "k" = String string="k"
-# CHECK-NEXT: v9: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = CallBuiltin v6, v8 overload=MapPrototypeGet/0 accessSite=63
-# CHECK-NEXT: v10: undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ undefined|boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19 = Expect v9 expectedType=undefined|null|boolean|number|string|symbol|bigint|L3
+# CHECK-NEXT: v9: undefined|boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = CallBuiltin v6, v8 overload=MapPrototypeGet/0 accessSite=63
+# CHECK-NEXT: v10: undefined|boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ undefined|boolean|number|bigint|""|"text"|symbol("s")@m0:19 = Expect v9 expectedType=undefined|null|boolean|number|string|symbol|bigint|L3
 # CHECK-NEXT: v11: boolean = TypeTest v10 testedType=undefined
 # CHECK-NEXT: Branch v11 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v12: "missing" = String string="missing"
 # CHECK-NEXT: Return v12
-# CHECK-NEXT: b2(v13: boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ boolean|number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19):
+# CHECK-NEXT: b2(v13: boolean|number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ boolean|number|bigint|""|"text"|symbol("s")@m0:19):
 # CHECK-NEXT: v14: boolean = TypeTest v13 testedType=boolean
 # CHECK-NEXT: Branch v14 -> taken b3(), notTaken b4(| 0)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v15: builtin(BooleanPrototypeToString) = Builtin builtin=BooleanPrototypeToString
 # CHECK-NEXT: Jump -> next b14(v15)
-# CHECK-NEXT: b4(v16: number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ number|bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19):
+# CHECK-NEXT: b4(v16: number|bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ number|bigint|""|"text"|symbol("s")@m0:19):
 # CHECK-NEXT: v17: boolean = TypeTest v16 testedType=number
 # CHECK-NEXT: Branch v17 -> taken b5(), notTaken b6(| 0)
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v18: builtin(NumberPrototypeToString) = Builtin builtin=NumberPrototypeToString
 # CHECK-NEXT: Jump -> next b14(v18)
-# CHECK-NEXT: b6(v19: bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ bigint|""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"|symbol("s")@m0:19):
-# CHECK-NEXT: v20: boolean = TypeTest v19 testedType=""|"-0"|"0.5"|"7"|"a bigint"|"a built-in function"|"a string"|"a symbol"|"an array"|"an empty string"|"false"|"text"|"true"
+# CHECK-NEXT: b6(v19: bigint|""|"text"|symbol("s")@m0:19|builtin(MathMax)|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> ~ bigint|""|"text"|symbol("s")@m0:19):
+# CHECK-NEXT: v20: boolean = TypeTest v19 testedType=""|"text"
 # CHECK-NEXT: Branch v20 -> taken b7(), notTaken b8(| 0)
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v21: builtin(StringPrototypeToString) = Builtin builtin=StringPrototypeToString

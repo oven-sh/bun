@@ -3,7 +3,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isGlibc, tempDir } from "harness";
 import { join } from "node:path";
-import { describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { describe, testOneByOne as test } from "./supported";
 
 // REFUSE=<call>:<n> makes the n-th such call fail. Mappings count on the threads that the process starts: those do the compiling.
 // Starting a thread is the call pthread_create/<start routine>/<stack size>, so threads that do the same work count together.

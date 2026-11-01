@@ -208,6 +208,30 @@ pub(crate) fn with_loaded_test_run<R>(
     with_loaded_project(&project, then)
 }
 
+/// A test run in which a test file or a preload imports "vitest". The first file is the test file.
+pub(crate) fn with_loaded_test_run_of_vitest<R>(
+    files: &[(&str, &str)],
+    settings: &TranspileSettings,
+    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
+) -> R {
+    let mut project = TestProject::new(files, settings);
+    project.runs_tests = true;
+    project.entry_point_imports_vitest = true;
+    with_loaded_project(&project, then)
+}
+
+/// A test run as `bun test --aot` builds it: only the files of the tests load code from disk. The first file is the test file.
+pub(crate) fn with_loaded_test_run_of_project<R>(
+    files: &[(&str, &str)],
+    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
+) -> R {
+    let mut project = TestProject::new(files, &default_settings());
+    project.runs_tests = true;
+    project.aot.only_tests_load_code_from_disk = true;
+    project.test_files = vec![in_memory_path(files[0].0)];
+    with_loaded_project(&project, then)
+}
+
 pub(crate) fn with_loaded_build_and_options<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -361,6 +385,7 @@ fn with_loaded_bind_input<R>(
             working_directory: b"",
             ignores_declared_side_effects: false,
             mocked_modules: &[],
+            modules_that_mocked_files_export_whole: &[],
             mocks_any_module: false,
             handed_on_modules: &[],
             hands_on_any_module: false,
@@ -368,7 +393,9 @@ fn with_loaded_bind_input<R>(
             names_spied_on_unknown_objects: &[],
             names_spied_in_text: &[],
             modules_replaced_in_text: &[],
+            tests_load_by_unknown_path: false,
             every_export_is_asked_for: false,
+            copies_name_no_file: false,
             evicted_modules: &[],
             evicts_any_module: false,
             loads_below_files_left_to_loader: &[],
@@ -379,6 +406,7 @@ fn with_loaded_bind_input<R>(
             entry_points_run_again: false,
             typescript_drops_absent_exports: false,
             loads_code_from_disk: false,
+            only_tests_load_code_from_disk: false,
             host_runs_files_from_disk: false,
             stand_in_for_files_from_disk: None,
             application: None,
@@ -485,7 +513,9 @@ pub(super) struct TestProject {
     limits: LimitValues,
     paths: PathOptions,
     react_compiler: ReactCompilerMode,
-    runs_tests: bool,
+    pub(super) runs_tests: bool,
+    test_files: Vec<Vec<u8>>,
+    entry_point_imports_vitest: bool,
     /// Most tests look at Bun's own code behind a program of one line.
     pub(super) keeps_library_code_without_names: bool,
 }
@@ -542,6 +572,8 @@ impl TestProject {
             },
             react_compiler: ReactCompilerMode::Disabled,
             runs_tests: false,
+            test_files: Vec::new(),
+            entry_point_imports_vitest: false,
             keeps_library_code_without_names: true,
         }
     }
@@ -575,6 +607,8 @@ impl TestProject {
             load: LoadOptions {
                 react_compiler: self.react_compiler,
                 runs_tests: self.runs_tests,
+                test_files: self.test_files.clone(),
+                entry_point_imports_vitest: self.entry_point_imports_vitest,
                 in_memory_files: self.in_memory_files.clone(),
                 keeps_library_code_without_names: self.keeps_library_code_without_names,
                 ..LoadOptions::new(self.directory.clone())

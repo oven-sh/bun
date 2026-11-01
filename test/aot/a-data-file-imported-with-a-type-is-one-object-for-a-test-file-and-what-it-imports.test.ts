@@ -60,25 +60,102 @@ for (const [form, flags, words] of [
     240_000,
   );
 
-// Over layers the test file is a program of its own, and below.mjs lies in the program below it, which holds typed.json under its type. No plugin is needed for that.
-// Which of two types of one file comes first is decided at the build of each program there, so depth.json is left out.
+// Over layers the test file is a program of its own, and below.mjs lies in the program below it. No plugin is needed for that. typed.json: the program below holds it under its
+// type. depth.json: which of its two types comes first shows when the test file runs, so neither program holds it: the loader does, as under `bun test`.
 test.concurrent(
   "over two layers, without a plugin",
   async () => {
-    const { "a.test.ts": _, "depth.json": __, ...rest } = files;
-    const withoutDepth = (text: string) =>
-      text
-        .split("\n")
-        .filter(line => !line.includes("depth"))
-        .join("\n");
-    using dir = tempDir("one-object-of-a-typed-data-file-layers", {
-      ...rest,
-      "below.mjs": withoutDepth(files["below.mjs"]) + "\nexport { plain, typed };",
-      "c.test.mjs": withoutDepth(files["c.test.mjs"]),
-    });
-    const expected = { printed: [printed[0], printed[2]], exitCode: 0 };
-    expect(await runTests(String(dir), ["--isolate"])).toEqual(expected);
-    expect(await runTests(String(dir), ["--aot", "--isolate"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(expected);
+    const { "a.test.ts": _, ...withoutPlugin } = files;
+    using dir = tempDir("one-object-of-a-typed-data-file-layers", withoutPlugin);
+    expect(await runTests(String(dir), ["--isolate"])).toEqual({ printed, exitCode: 0 });
+    const words = "TestRunLayers:2,TestRunPartFiles:1";
+    expect(await runTests(String(dir), ["--aot", "--isolate"], words)).toEqual({ printed, exitCode: 0 });
   },
   240_000,
 );
+
+// Each test file has a realm of its own under --isolate, so each decides anew what below.mjs gets: the build cannot bind the statement of below.mjs to one form of the file.
+const twoTypes = {
+  "package.json": `{}`,
+  "depth.json": `a = 1\n`,
+  "below.mjs": `import held from "./depth.json" with { type: "text" };\nexport { held };\n`,
+  "a.test.mjs": testFile(`
+    import near from "./depth.json" with { type: "yaml" };
+    import { held } from "./below.mjs";
+    console.log("yaml first:", typeof near, typeof held, held === near);`),
+  "b.test.mjs": testFile(`
+    import near from "./depth.json" with { type: "toml" };
+    import { held } from "./below.mjs";
+    console.log("toml first:", typeof near, typeof held, held === near);`),
+  "c.test.mjs": testFile(`
+    import { held } from "./below.mjs";
+    console.log("text alone:", typeof held);`),
+};
+// TODO: as one program the statement of below.mjs is bound to one form for all the test files: "toml first: string string true".
+for (const [form, words] of [["over two layers", "TestRunLayers:2,TestRunPartFiles:1"]] as const)
+  test.concurrent(
+    `two test files ask for two types of one file, ${form}`,
+    async () => {
+      using dir = tempDir("two-test-files-two-types", twoTypes);
+      const expected = {
+        printed: ["yaml first: string string true", "toml first: object object true", "text alone: string"],
+        exitCode: 0,
+      };
+      expect(await runTests(String(dir), ["--isolate"])).toEqual(expected);
+      expect(await runTests(String(dir), ["--aot", "--isolate"], words)).toEqual(expected);
+    },
+    240_000,
+  );
+
+// `export { default as near } from "./depth.toml" with { type: "yaml" }` hands the loader its type as an import statement does, so it too decides what a file loaded later gets,
+// however the run is cut into layers. Plain drops the type of an export statement: what is expected is what it prints for `import near from ".."; export { near }`.
+// below.mjs is loaded by a call: of two files that load side by side, plain lets the one that is read first decide.
+const passedOn = (statements: string) => ({
+  "package.json": `{}`,
+  "depth.toml": `a = 1\n`,
+  "other.toml": `a = 1\n`,
+  "star.toml": `a = 1\n`,
+  "below.mjs": `
+    import held from "./depth.toml" with { type: "text" };
+    import parsed from "./other.toml" with { type: "toml" };
+    import * as star from "./star.toml" with { type: "text" };
+    export { held, parsed, star };`,
+  "passes-on.mjs": statements,
+  "a.test.mjs": testFile(`
+    import { near, text, all } from "./passes-on.mjs";
+    const { held, parsed, star } = await import("./below.mjs");
+    console.log("yaml before text:", JSON.stringify(near), held === near);
+    console.log("text before toml:", JSON.stringify(text), parsed === text);
+    console.log("toml before text:", JSON.stringify(all.default), all === star);`),
+});
+const imported = passedOn(`
+  import near from "./depth.toml" with { type: "yaml" };
+  import text from "./other.toml" with { type: "text" };
+  import * as all from "./star.toml" with { type: "toml" };
+  export { near, text, all };`);
+const exported = passedOn(`
+  export { default as near } from "./depth.toml" with { type: "yaml" };
+  export { default as text } from "./other.toml" with { type: "text" };
+  export * as all from "./star.toml" with { type: "toml" };`);
+for (const [form, words] of [
+  ["as one program", "TestRunLayers:0"],
+  ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
+] as const)
+  test.concurrent(
+    `an export statement asks for a type, ${form}`,
+    async () => {
+      using withImports = tempDir("typed-import-passed-on", imported);
+      using withExports = tempDir("typed-export-from", exported);
+      const expected = {
+        printed: [
+          'yaml before text: "a = 1" true',
+          'text before toml: "a = 1\\n" true',
+          'toml before text: {"a":1} true',
+        ],
+        exitCode: 0,
+      };
+      expect(await runTests(String(withImports), ["--isolate"])).toEqual(expected);
+      expect(await runTests(String(withExports), ["--aot", "--isolate"], words)).toEqual(expected);
+    },
+    240_000,
+  );

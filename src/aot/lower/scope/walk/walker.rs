@@ -3,6 +3,7 @@ use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{ExprId, ExprKind, FnId, StmtId, is_moved_to_file_start};
 use bun_sema::util::SharedSort;
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -52,7 +53,7 @@ pub(in crate::lower::scope) fn walk_file(
     sort_unique(&mut walk.symbols_read_by_enums);
     sort_unique(&mut walk.symbols_in_export_lists);
     walk.symbol_stores
-        .sort_unstable_by_key(|store| (store.0, store.1));
+        .sort_by_u64(|store| number_of_pair(store.0.0, store.1.0));
     sort_unique(&mut walk.function_of_field);
     shared_sort_unique(&mut walk.slot_initializations);
     for walked_loop in &mut walk.loops {
@@ -74,7 +75,7 @@ pub(super) fn bindings_of<K: Copy + Ord>(list: &[(K, Binding)], key: K) -> Small
 }
 
 fn merge_redeclared_functions(functions: &mut Vec<(ScopeId, SymbolId, FnId)>) {
-    functions.sort_by_key(|entry| entry.0);
+    functions.sort_by_u32(|entry| entry.0.0);
     let mut positions: FxHashMap<(ScopeId, SymbolId), usize> = FxHashMap::default();
     let mut length = 0;
     for index in 0..functions.len() {

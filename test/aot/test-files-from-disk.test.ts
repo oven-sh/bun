@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 const files = {
   "package.json": `{ "name": "suite", "type": "module" }`,
@@ -78,17 +79,26 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   return { results: results.sort(), exitCode };
 }
 
-test.each([[], ["--isolate"]])(
-  "test files run from disk against one compiled program %p",
-  async (...flags: string[]) => {
-    using dir = tempDir("aot-test-files-from-disk", files);
-    const plain = await runTests(String(dir), {}, ...flags);
-    expect(plain.results.length).toBe(5);
-    expect(plain.exitCode).toBe(0);
-    const fromDisk = { BUN_AOT_TEST_FILES_FROM_DISK: "1" };
-    expect(await runTests(String(dir), fromDisk, "--aot", ...flags)).toEqual(plain);
-    const named = { ...fromDisk, BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" };
-    expect(await runTests(String(dir), named, "--aot", ...flags)).toEqual(plain);
-  },
-  60_000,
-);
+let dir: ReturnType<typeof tempDir> | undefined;
+const plain: Record<string, Awaited<ReturnType<typeof runTests>>> = {};
+beforeAll(async () => {
+  dir = tempDir("aot-test-files-from-disk", files);
+  for (const flag of ["", "--isolate"]) plain[flag] = await runTests(String(dir), {}, ...(flag ? [flag] : []));
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test.each(["", "--isolate"])("what plain Bun says %p", flag => {
+  expect(plain[flag].results.length).toBe(5);
+  expect(plain[flag].exitCode).toBe(0);
+});
+
+const fromDisk = { BUN_AOT_TEST_FILES_FROM_DISK: "1" };
+const named = { ...fromDisk, BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" };
+test.each<[string, string, Record<string, string>]>([
+  ["", "", fromDisk],
+  ["", ", and name what they use", named],
+  ["--isolate", "", fromDisk],
+  ["--isolate", ", and name what they use", named],
+])("test files run from disk against one compiled program %p%s", async (flag, _, env) => {
+  expect(await runTests(String(dir), env, "--aot", ...(flag ? [flag] : []))).toEqual(plain[flag]);
+});

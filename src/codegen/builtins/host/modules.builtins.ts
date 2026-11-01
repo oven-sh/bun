@@ -1,5 +1,4 @@
 import * as b from "bun-builtins-table";
-import { environmentCell } from "./native-cells.ts";
 
 const pathListRead = b.runsTransitively("OwnValues", "PrototypeChain", b.named("paths"));
 
@@ -24,9 +23,8 @@ const compilesText = {
   capability: "js",
   throws: true,
   readsStateBeforeConversions: true,
-  // It puts require on the module, and the text gets the module.
   this: b.any,
-  uses: { this: [b.everything], text: [b.evaluatedAsText] },
+  uses: { this: [b.everything], text: [b.evaluatedAsText, b.loadedAsModule] },
   implementation: b.generic,
 } satisfies b.FunctionField;
 
@@ -78,6 +76,29 @@ const spyOn = {
   },
   implementation: b.generic,
 } satisfies b.FunctionField;
+
+const stubbedName = b.keyFrom("name");
+const stubGlobal = [
+  {
+    args: { name: b.propertyKey.loose, value: b.any, global: b.builtin("globalThis") },
+    returns: b.any,
+    capability: "js",
+    throws: true,
+    uses: {
+      value: b.inspected,
+      global: [
+        b.readByKey(stubbedName, b.nativeMemory),
+        b.accessorReadByKey("Getter", stubbedName, b.nativeMemory),
+        b.accessorReadByKey("Setter", stubbedName, b.nativeMemory),
+        b.definesName(stubbedName, b.operand("value")),
+        b.deletedByKey(stubbedName),
+        ...b.ownPropertyTraps,
+      ],
+    },
+    implementation: b.generic,
+  },
+  b.otherwise,
+] satisfies readonly b.FunctionField[];
 
 const moduleCache = b.builtin("%ModuleCache%");
 const moduleExtensions = b.builtin("%ModuleExtensions%");
@@ -156,7 +177,7 @@ export default b.declarations(
       filename: b.property(b.string),
       path: b.property(b.string),
       main: b.property(b.bool),
-      env: b.property(b.object, { uses: { this: [b.returnedFrom(environmentCell)] } }),
+      env: b.property(b.object),
       hot: b.property(b.undefined),
       resolve: resolvesFromImportMeta(b.string.loose),
       resolveSync: resolvesFromImportMeta(b.string.loose.refusing(b.null)),
@@ -223,6 +244,7 @@ export default b.declarations(
     returns: b.builtin("%ModuleRequire%"),
     capability: "js",
     throws: true,
+    uses: { filename: [b.printedByFormatter("constructor")] },
     implementation: b.generic,
     mutability: "AlwaysLocked",
   }),
@@ -283,12 +305,17 @@ export default b.declarations(
     implementation: b.generic,
   }),
   b.fn("bun:test.spyOn", spyOn),
-  b.namespace("bun:test.jest", { spyOn }),
-  b.namespace("bun:test.vi", { spyOn }),
+  b.namespace("bun:test.jest", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise }),
+  b.namespace("bun:test.vi", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise, stubGlobal }),
   b.fn("bun:test/vitest.spyOn", spyOn),
-  b.namespace("bun:test/vitest.jest", { spyOn }),
-  b.namespace("bun:test/vitest.vi", { spyOn }),
-  b.namespace("bun:test/vitest.vitest", { spyOn }),
+  b.namespace("bun:test/vitest.jest", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise }),
+  b.namespace("bun:test/vitest.vi", {
+    spyOn,
+    resetModules: b.otherwise,
+    useFakeTimers: b.otherwise,
+    stubGlobal,
+  }),
+  b.same("bun:test/vitest.vitest", "bun:test/vitest.vi"),
   b.namespace("%bun:bundle%", {
     feature: {
       args: { flag: b.string },

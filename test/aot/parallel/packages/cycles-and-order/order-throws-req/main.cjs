@@ -6,8 +6,3 @@ const keys = (o) => Object.keys(o).filter((k) => k !== "__esModule").sort().join
 t("1", () => require("order/thrower.cjs"));
 t("2", () => require("order/thrower.cjs"));
 t("log", () => globalThis.__log);
-/* Output:
-1 THROWS RangeError
-2 THROWS RangeError
-log ["thrower.cjs"]
-*/

@@ -4,6 +4,7 @@
 // "'EventEmitter' was not compiled into this executable because your code never calls it".
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 const bodies = {
@@ -41,7 +42,8 @@ test.concurrent.each(Object.entries(bodies))(
     const plain = await linesOf(body, []);
     expect(plain).toMatchObject({ exitCode: 0, lines: [expect.stringMatching(/^OUT /)] });
     expect(await linesOf(body, ["--aot"])).toEqual(plain);
-    expect(await linesOf(body, ["--aot"], "TestRunLayers:2")).toEqual(plain);
+    // Over layers none of these was wrong on the build in front of the cure: the benches run them.
+    if (runsWholeGrids) expect(await linesOf(body, ["--aot"], "TestRunLayers:2")).toEqual(plain);
   },
   240_000,
 );

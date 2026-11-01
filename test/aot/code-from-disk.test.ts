@@ -20,7 +20,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
 import { built, spawned } from "./harness/commands";
-import { beforeAll, describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 type Case = {
   program: Record<string, string>;

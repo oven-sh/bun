@@ -91,13 +91,16 @@ typesite w2 module=m3 position=973 kind=Variable
 typesite w3 module=m3 position=270 kind=Variable
 typesite w4 module=m3 position=309 kind=Variable
 typesite w5 module=m3 position=1007 kind=Variable
-typesite w6 module=m5 position=571 kind=Variable
-typesite w7 module=m5 position=1447 kind=Variable
+typesite w6 module=m4 position=302 kind=Variable
+typesite w7 module=m4 position=933 kind=Variable
+typesite w8 module=m4 position=1571 kind=Variable
+typesite w9 module=m5 position=571 kind=Variable
+typesite w10 module=m5 position=1447 kind=Variable
 layout L0 kind=Instance module=m0 position=428 constructor=f11
 layout L1 kind=Instance module=m0 position=1030 constructor=f13
 layout L2 module=m0 position=1075 fields=[{key="length" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 layout L3 name="ProxyHandler<() => void>" fields=[{key="apply" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="construct" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="defineProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="deleteProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getOwnPropertyDescriptor" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="has" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isExtensible" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ownKeys" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="preventExtensions" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] ownFieldCount=13
-layout L4 module=m9 position=3027 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L4 module=m9 position=3027 fields=[{key="done" declared={type=boolean}}, {key="value" declared={type=anything}}] declaredOrder=[1, 0] ownFieldCount=2
 layout L5 module=m10 position=1590 fields=[{key="length" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 data d0 root=Object{layout=L3} module=m0
 data d1 root=Object{layout=L3} module=m0
@@ -590,7 +593,7 @@ function f13 module=m0 position=1030 kind=BaseConstructor flags=[HasNewTarget] t
     v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1030
     Return v3 @1030
 }
-function f14 module=m0 position=2193 kind=Arrow length=2 captures=[{type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7 flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|string|function|L2|L5|f8|f9|f10|f11|f12|f13|builtin(MathMax)|Array<number> flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f14 module=m0 position=2193 kind=Arrow length=2 captures=[{type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7 flags=[IsExpected] variableName="ask"}] thisType={type=anything} parameters=[{type=undefined|null|string|function|L2|L5|f8|f9|f10|f11|f12|f13|builtin(MathMax)|Array<number> flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f1|f2|f3|f4|f5|f6|f7, v1: undefined|null|string|function|L2|L5|f8|f9|f10|f11|f12|f13|builtin(MathMax)|Array<number>, v2: number):
     Jump -> next b1() @2193
   b1():
@@ -915,72 +918,90 @@ function f52 name="next" module=m4 position=25 kind=Method role=Library flags=[H
     Jump -> next b1() @25
   b1():
     v2 = StepGenerator v0, v1 check=IsGenerator @91
-    v3 = ResultAt v2 @188
-    v4 = ResultAt v2 index=1 @251
-    v5 = Integer integer=2 @315
-    v6 = StrictEq v4, v5 @304
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @304
-  b2(v7):
-    Jump -> next b3() @304
+    v3 = ResultAt v2 @186
+    v4 = ResultAt v2 index=1 @249
+    v5 = Integer integer=1 @320
+    v6 = StrictEq v4, v5 @309
+    v7 = Convert v6 declared={type=boolean site=w6} @309
+    v8 = Integer integer=2 @370
+    v9 = StrictEq v4, v8 @359
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @359
+  b2(v10):
+    Jump -> next b3() @359
   b3():
-    v8 = ResumeGenerator v0, v1 @362
-    Return v8 @362
-  b4(v9):
-    Jump -> next b5() @304
-  b5():
-    v10 = Integer integer=1 @460
-    v11 = StrictEq v9, v10 @449
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @421
-    v13 = CreateIteratorResult v3, v12 @421
-    Return v13 @421
+    v11 = ResumeGenerator v0, v1 @427
+    v12 = PropGet v11 key="value" @492
+    v13 = PropGet v11 key="done" @521
+    v14 = Boolean boolean=true @537
+    v15 = StrictEq v13, v14 @521
+    v16 = Convert v15 declared={type=boolean site=w6} @514
+    Jump -> next b5(v12, v16) @514
+  b4(v17):
+    Jump -> next b5(v3, v7) @359
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @560
+    v21 = CreateIteratorResult v18, v20 @560
+    Return v21 @560
 }
-function f53 name="return" module=m4 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f53 name="return" module=m4 position=651 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
-    Jump -> next b1() @548
+    Jump -> next b1() @651
   b1():
-    v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator @617
-    v3 = ResultAt v2 @716
-    v4 = ResultAt v2 index=1 @779
-    v5 = Integer integer=2 @843
-    v6 = StrictEq v4, v5 @832
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @832
-  b2(v7):
-    Jump -> next b3() @832
+    v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator @720
+    v3 = ResultAt v2 @817
+    v4 = ResultAt v2 index=1 @880
+    v5 = Integer integer=1 @951
+    v6 = StrictEq v4, v5 @940
+    v7 = Convert v6 declared={type=boolean site=w7} @940
+    v8 = Integer integer=2 @1001
+    v9 = StrictEq v4, v8 @990
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @990
+  b2(v10):
+    Jump -> next b3() @990
   b3():
-    v8 = ResumeGenerator v0, v1 resumeMode=Return @890
-    Return v8 @890
-  b4(v9):
-    Jump -> next b5() @832
-  b5():
-    v10 = Integer integer=1 @990
-    v11 = StrictEq v9, v10 @979
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @951
-    v13 = CreateIteratorResult v3, v12 @951
-    Return v13 @951
+    v11 = ResumeGenerator v0, v1 resumeMode=Return @1058
+    v12 = PropGet v11 key="value" @1125
+    v13 = PropGet v11 key="done" @1154
+    v14 = Boolean boolean=true @1170
+    v15 = StrictEq v13, v14 @1154
+    v16 = Convert v15 declared={type=boolean site=w7} @1147
+    Jump -> next b5(v12, v16) @1147
+  b4(v17):
+    Jump -> next b5(v3, v7) @990
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1193
+    v21 = CreateIteratorResult v18, v20 @1193
+    Return v21 @1193
 }
-function f54 name="throw" module=m4 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f54 name="throw" module=m4 position=1283 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
-    Jump -> next b1() @1077
+    Jump -> next b1() @1283
   b1():
-    v2 = StepGenerator v0, v1 resumeMode=Throw check=IsGenerator @1149
-    v3 = ResultAt v2 @1251
-    v4 = ResultAt v2 index=1 @1314
-    v5 = Integer integer=2 @1378
-    v6 = StrictEq v4, v5 @1367
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @1367
-  b2(v7):
-    Jump -> next b3() @1367
+    v2 = StepGenerator v0, v1 resumeMode=Throw check=IsGenerator @1355
+    v3 = ResultAt v2 @1455
+    v4 = ResultAt v2 index=1 @1518
+    v5 = Integer integer=1 @1589
+    v6 = StrictEq v4, v5 @1578
+    v7 = Convert v6 declared={type=boolean site=w8} @1578
+    v8 = Integer integer=2 @1639
+    v9 = StrictEq v4, v8 @1628
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @1628
+  b2(v10):
+    Jump -> next b3() @1628
   b3():
-    v8 = ResumeGenerator v0, v1 resumeMode=Throw @1425
-    Return v8 @1425
-  b4(v9):
-    Jump -> next b5() @1367
-  b5():
-    v10 = Integer integer=1 @1528
-    v11 = StrictEq v9, v10 @1517
-    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1489
-    v13 = CreateIteratorResult v3, v12 @1489
-    Return v13 @1489
+    v11 = ResumeGenerator v0, v1 resumeMode=Throw @1696
+    v12 = PropGet v11 key="value" @1766
+    v13 = PropGet v11 key="done" @1795
+    v14 = Boolean boolean=true @1811
+    v15 = StrictEq v13, v14 @1795
+    v16 = Convert v15 declared={type=boolean site=w8} @1788
+    Jump -> next b5(v12, v16) @1788
+  b4(v17):
+    Jump -> next b5(v3, v7) @1628
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1834
+    v21 = CreateIteratorResult v18, v20 @1834
+    Return v21 @1834
 }
 function f55 name="next" module=m5 position=99 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
@@ -1000,7 +1021,7 @@ function f55 name="next" module=m5 position=99 kind=Method role=Library flags=[H
     v9 = ResultAt v7 index=1 @518
     v10 = Integer integer=1 @589
     v11 = StrictEq v9, v10 @578
-    v12 = Convert v11 declared={type=boolean site=w6} @578
+    v12 = Convert v11 declared={type=boolean site=w9} @578
     v13 = Integer integer=2 @639
     v14 = StrictEq v9, v13 @628
     Branch v14 -> taken b4(| 0), notTaken b6(| 0) @628
@@ -1013,7 +1034,7 @@ function f55 name="next" module=m5 position=99 kind=Method role=Library flags=[H
     v19 = PropGet v17 key="done" @799
     v20 = Boolean boolean=true @815
     v21 = StrictEq v19, v20 @799
-    v22 = Convert v21 declared={type=boolean site=w6} @792
+    v22 = Convert v21 declared={type=boolean site=w9} @792
     Jump -> next b7(v18, v22) @792
   b6(v23):
     Jump -> next b7(v8, v12) @628
@@ -1084,7 +1105,7 @@ function f56 name="return" module=m5 position=904 kind=Method role=Library flags
     v32 = ResultAt v30 index=1 @1390
     v33 = Integer integer=1 @1465
     v34 = StrictEq v32, v33 @1454
-    v35 = Convert v34 declared={type=boolean site=w7} @1454
+    v35 = Convert v34 declared={type=boolean site=w10} @1454
     v36 = Integer integer=2 @1519
     v37 = StrictEq v32, v36 @1508
     Branch v37 -> taken b15(| 0), notTaken b17(| 0) @1508
@@ -1097,7 +1118,7 @@ function f56 name="return" module=m5 position=904 kind=Method role=Library flags
     v42 = PropGet v40 key="done" @1693
     v43 = Boolean boolean=true @1709
     v44 = StrictEq v42, v43 @1693
-    v45 = Convert v44 declared={type=boolean site=w7} @1686
+    v45 = Convert v44 declared={type=boolean site=w10} @1686
     Jump -> next b18(v41, v45) @1686
   b17(v46):
     Jump -> next b18(v31, v35) @1508

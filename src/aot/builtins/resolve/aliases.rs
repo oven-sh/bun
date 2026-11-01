@@ -23,7 +23,7 @@ pub(super) fn declared_names(
 }
 
 impl Resolver<'_, '_> {
-    fn is_stable(&self, symbol: SymbolId) -> bool {
+    pub(super) fn is_stable(&self, symbol: SymbolId) -> bool {
         let input = self.input;
         let is_dead_store = |target: ExprId| input.decisions.is_dead_expr(target);
         matches!(
@@ -92,7 +92,7 @@ impl Resolver<'_, '_> {
             },
             Binding::Arguments(_) | Binding::Free => return,
         };
-        self.output.mentioned.push(id);
+        self.mention(id);
         self.expose(id);
     }
 

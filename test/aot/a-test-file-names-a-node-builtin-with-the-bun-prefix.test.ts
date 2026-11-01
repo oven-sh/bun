@@ -2,7 +2,9 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { runsWholeGrids } from "./harness/ways";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { beforeAll, testOneByOne as test } from "./supported";
 
 raiseDefaultTimeout(240_000);
 
@@ -117,8 +119,13 @@ async function ask(flags: string[], words: string, files: string[]) {
   };
 }
 
-test("each call finds what it finds in plain Bun, alone and as one program", async () => {
-  const alone = await ask([], "", ["./a.test.js"]);
+let alone: Awaited<ReturnType<typeof ask>>;
+let all: Awaited<ReturnType<typeof ask>>;
+beforeAll(async () => {
+  [alone, all] = await Promise.all([ask([], "", ["./a.test.js"]), ask(workers, "", ["."])]);
+});
+
+test("what each call finds in plain Bun", () => {
   expect(alone.summary).toEqual([" 1 pass", " 0 fail"]);
   expect(alone.lines.length).toBe(30);
   expect(alone.lines).toContain("SAID a a choice, require true");
@@ -129,23 +136,28 @@ test("each call finds what it finds in plain Bun, alone and as one program", asy
   expect(alone.lines).toContain(
     "SAID a require.resolve of a whole path that is missing THROWS ResolveMessage MODULE_NOT_FOUND Cannot find module '<here>/a-none.cjs'",
   );
-  expect(await ask(["--aot"], "", ["./a.test.js"])).toEqual(alone);
-  const all = await ask(workers, "", ["."]);
   expect(all.lines.length).toBe(74);
-  expect(await ask(["--aot"], "", ["."])).toEqual(all);
-  expect(await ask(["--aot", ...workers], "TestRunLayers:0", ["."])).toEqual(all);
-});
-
-test("and in layers, one test file to a program or all of them", async () => {
-  const all = await ask(workers, "", ["."]);
   expect(all.summary).toEqual([" 4 pass", " 0 fail"]);
   expect(all.lines).toContain("SAID a a choice, import() true");
   expect(all.lines).toContain("SAID d a choice, process.getBuiltinModule undefined");
   expect(all.lines).toContain("SAID d import() of a computed name beside it true");
-  const [each, together] = await Promise.all([
-    ask(["--aot", ...workers], "TestRunLayers:2,TestRunPartFiles:1", ["."]),
-    ask(["--aot", ...workers], "TestRunLayers:2", ["."]),
-  ]);
-  expect(each).toEqual(all);
-  expect(together).toEqual(all);
 });
+
+test("each call finds what it finds in plain Bun: alone", async () => {
+  expect(await ask(["--aot"], "", ["./a.test.js"])).toEqual(alone);
+});
+
+const forms: [string, string[], string][] = [
+  ["as the run builds itself", [], ""],
+  ["one program", workers, "TestRunLayers:0"],
+  ["in layers, one test file to a program", workers, "TestRunLayers:2,TestRunPartFiles:1"],
+  ["in layers, all of them in one", workers, "TestRunLayers:2"],
+];
+// Some calls were wrong over layers alone. Both runs as one program failed alike, and so did both in layers: one of each stays in front of a merge.
+const inFrontOfAMerge = ["as the run builds itself", "in layers, one test file to a program"];
+test.each<[string, string[], string]>(forms.filter(([form]) => runsWholeGrids || inFrontOfAMerge.includes(form)))(
+  "each call finds what it finds in plain Bun: %s",
+  async (_, flags, words) => {
+    expect(await ask(["--aot", ...flags], words, ["."])).toEqual(all);
+  },
+);

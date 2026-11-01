@@ -1,0 +1,8 @@
+# check=KeepGoing: a verification that fails stops nothing, so the second pass runs and the second function is heard of too. The first function fails behind both passes and has one line: its first.
+# One more line counts the failures by pass and by what was found. The build fails all the same.
+# FORM: Prepared
+# RUN: pass SinkAllocations EliminateDeadCode
+# DIAGNOSTIC: VerificationFailedAfterPass 2
+# DIAGNOSTIC: BuildWentOnBehindFailedVerifications 1
+# OPTIONS: check=VerifyEachPass check=KeepGoing sabotage=PassesDropCalls
+# PROGRAM-OF: the-build-stops-at-a-verification-that-failed.ir

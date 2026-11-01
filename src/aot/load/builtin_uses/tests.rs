@@ -73,7 +73,7 @@ fn with_finished_file<R>(
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, text.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(text.as_bytes());
@@ -95,6 +95,7 @@ fn with_finished_file<R>(
         is_library: false,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     assert!(!hir.has_errors, "syntax error in: {text}");

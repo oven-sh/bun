@@ -1,8 +1,8 @@
 use super::main_module::find_main_module_comparison;
 use super::this_of_file::has_live_this_of_file;
 use super::{
-    CommonJsEvidence, EsmSyntax, FormatByDeclaredType, FormatDecision, ModuleFormat,
-    file_esm_syntax, statement_esm_syntax,
+    CommonJsEvidence, DeclaredModuleType, EsmSyntax, FormatByDeclaredType, FormatDecision,
+    ModuleFormat, file_esm_syntax, statement_esm_syntax,
 };
 use crate::bind::{Binding, Bound, CommonJsVariable, Parent};
 use crate::file_analysis::has_written_top_level_await;
@@ -32,6 +32,7 @@ pub(crate) fn decide_module_format(
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
     scan: &ImportScan<'_>,
+    type_by_name: DeclaredModuleType,
 ) -> FormatDecision {
     if let Some(format) = find_marked_format(&hir.text) {
         return FormatDecision {
@@ -58,6 +59,16 @@ pub(crate) fn decide_module_format(
         return FormatDecision {
             formats: FormatByDeclaredType::decided_by_text(ModuleFormat::CommonJs),
             error,
+        };
+    }
+    if file_esm_syntax(hir) == EsmSyntax::None && has_live_this_of_file(hir, decisions) {
+        let format = match type_by_name {
+            DeclaredModuleType::Esm => ModuleFormat::Esm,
+            DeclaredModuleType::CommonJs | DeclaredModuleType::Unknown => ModuleFormat::CommonJs,
+        };
+        return FormatDecision {
+            formats: FormatByDeclaredType::decided_by_text(format),
+            error: None,
         };
     }
     let has_weak_evidence = uses.uses_require_or_path
@@ -154,9 +165,6 @@ fn find_statement_evidence(
     }
     if has_with_statement(hir, bound) {
         evidence |= CommonJsEvidence::WITH_STATEMENT;
-    }
-    if file_esm_syntax(hir) == EsmSyntax::None && has_live_this_of_file(hir, decisions) {
-        evidence |= CommonJsEvidence::EXPORTS;
     }
     evidence
 }

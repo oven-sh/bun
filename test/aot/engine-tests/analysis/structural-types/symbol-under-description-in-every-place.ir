@@ -1,4 +1,5 @@
 # A symbol under a description in every place.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f7
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -592,9 +593,9 @@ function f75 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 inAnElement
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 626, patchpoints: 147, rare instructions: 575, polls: 2
+# CHECK-NEXT: instructions: 484, patchpoints: 112, rare instructions: 162, polls: 2
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="inAnElement"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 19, patchpoints: 3, rare instructions: 2
+# CHECK-NEXT: instructions: 14, patchpoints: 2, rare instructions: 2
 # CHECK-NEXT: end of function f7

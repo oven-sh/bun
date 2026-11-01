@@ -4,7 +4,9 @@ use bun_sema::bind::{
     SymbolId,
 };
 use bun_sema::check::aot::ObjectMemberKind;
-use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, Flags, FnBody, FnKind, PatKind, StmtKind};
+use bun_sema::hir::{
+    BinOp, Chain, ExprId, ExprKind, Flags, FnBody, FnKind, PatKind, StmtKind, VarDeclId,
+};
 use bun_sema::program::Sym;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
@@ -151,16 +153,29 @@ impl FileLowering<'_, '_, '_, '_> {
             id: variable,
         };
         let declarations = self.queries.files().decls_of(symbol);
+        let stands_in_head_of_loop = |declaration: VarDeclId| {
+            let written = bound.var_stmt[declaration.idx()];
+            matches!(bound.parent_of_stmt(written), Parent::Stmt(owner)
+                if matches!(hir[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == written))
+        };
         let has_no_other_value = declarations.iter().all(|entry| match entry.1 {
             Decl::Var(pattern) if entry.0 == self.file => matches!(
                 bound.pat_parent[pattern.idx()],
                 PatParent::Var(declaration)
-                    if hir[declaration].init.is_none() || Some(declaration) == initialized
+                    if Some(declaration) == initialized
+                        || (hir[declaration].init.is_none() && !stands_in_head_of_loop(declaration))
             ),
             _ => false,
         });
+        // What fills a `var` without a store that is written: the wrapper of a CommonJS file, a function of a block, a parameter of the name.
+        let runtime = &bound.runtime;
+        let is_filled_at_entry = (runtime.redeclared_commonjs_variables().iter())
+            .any(|redeclared| redeclared.0 == variable)
+            || (runtime.annex_b_functions().iter()).any(|function| function.var_symbol == variable)
+            || (runtime.parameter_var_copies().iter()).any(|copy| copy.variable == variable);
         let stores = bound.stores_to(variable);
         has_no_other_value
+            && !is_filled_at_entry
             && bound.binding_kind(variable) == BindingKind::Var
             && bound.code_unit(bound.symbol_scope(variable)) == unit
             && !bound.is_visible_to_eval(variable)
@@ -251,7 +266,8 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let names: FxHashSet<Atom> = members.iter().map(|member| member.name).collect();
-        let are_fields = names.iter().all(|&name| self.is_field_name(name));
+        let are_fields = (names.iter())
+            .all(|&name| self.is_field_name(name) && !self.is_name_on_object_prototype(name));
         (names.len() == members.len() && !members.is_empty() && are_fields).then_some(EmittedEnum {
             literal,
             stores,

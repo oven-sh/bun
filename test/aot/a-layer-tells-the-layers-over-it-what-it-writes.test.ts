@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // A package stores into the global object under names that a test hands it, as fake timers do. The layer of the packages follows no name to the store, so it leaves the
 // members open. The layers over it hold no such store: they have to read in the layer below that the members are open.
@@ -73,9 +74,15 @@ async function seenIn(directory: string, words: string | undefined, ...flags: st
   };
 }
 
-test("a member that a package of the lowest layer stores under a name from above is open in every layer", async () => {
-  using dir = tempDir("aot-layer-tells-what-it-writes", files);
-  const plain = await seenIn(String(dir), undefined);
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof seenIn>>;
+beforeAll(async () => {
+  dir = tempDir("aot-layer-tells-what-it-writes", files);
+  plain = await seenIn(String(dir), undefined);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("what plain Bun says of a member that a package stores under a name from above", () => {
   expect(plain).toEqual({
     seen: [
       "SEEN far | far setTimeout,far setTimeout object",
@@ -84,7 +91,15 @@ test("a member that a package of the lowest layer stores under a name from above
     ],
     exitCode: 0,
   });
-  expect(await seenIn(String(dir), undefined, "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:1,TestRunPartFiles:1", "--aot")).toEqual(plain);
 });
+
+test.each([
+  ["as the run cuts it", undefined],
+  ["two layers", "TestRunLayers:2,TestRunPartFiles:1"],
+  ["one layer", "TestRunLayers:1,TestRunPartFiles:1"],
+])(
+  "a member that a package of the lowest layer stores under a name from above is open in every layer: %s",
+  async (_, words) => {
+    expect(await seenIn(String(dir), words, "--aot")).toEqual(plain);
+  },
+);

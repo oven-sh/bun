@@ -4,6 +4,9 @@
 # The JSON parser may allocate a Body: one has escaped, so flow claims nothing about the layout. No Kept has escaped.
 # FORM: AsRead
 # RUN: tables layouts
+# RUN(SIZES): tables
+# Two rows of six bytes.
+# SIZES: parsedRecordFields 2 12
 # CHECK: layout shape=[[body]] index=L0 kind=Record name="Body"
 # CHECK: parsedRecordField name="id" shape=[[body]]
 # CHECK-NEXT: parsedRecordField name="name" shape=[[body]]

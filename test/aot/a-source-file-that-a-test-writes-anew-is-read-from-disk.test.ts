@@ -97,6 +97,23 @@ test.concurrent.each(ways)(
   240_000,
 );
 
+// The run hands the system the path of the file as bytes.
+test.concurrent(
+  "in a folder whose name is not ASCII",
+  async () => {
+    const name = "gr\u00f6\u00dfe-\u540d";
+    const inFolder = Object.fromEntries(
+      Object.entries(files(newText)).map(([file, text]) => [`${name}/${file}`, text]),
+    );
+    using dir = tempDir("a-source-file-written-anew-in-a-folder", inFolder);
+    const folder = join(String(dir), name);
+    const plain = await runTests(folder, ["--isolate"]);
+    expect(plain.printed).toEqual(["a 1", "b 100 110 110 bump,count,extra"]);
+    expect(await runTests(folder, ["--aot", "--isolate"], "TestRunLayers:0")).toEqual(plain);
+  },
+  240_000,
+);
+
 // The price, by count: a file is looked at on disk once in a realm, before it first loads there, and only where the run may read it
 // again from disk at all. A run that takes nothing out of require.cache looks at no file.
 test.concurrent.each([

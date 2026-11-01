@@ -1,0 +1,31 @@
+import { holdSuitesOffSanitizers } from "../harness/runner-suites";
+
+// Not on the lane with the sanitizer, which has no minute to spare: 0 finds in the 181 child runs of issues, others and node-test-1 | -2. AOT_EVERY_SUITE=1 runs them there too.
+holdSuitesOffSanitizers(
+  "test/regression/issue/08768.test.ts",
+  "test/regression/issue/08964/08964.test.ts",
+  "test/regression/issue/09041.test.ts",
+  "test/regression/issue/11793.test.ts",
+  "test/regression/issue/12250.test.ts",
+  "test/regression/issue/12782.test.ts",
+  "test/regression/issue/14029.test.ts",
+  "test/regression/issue/14135.test.ts",
+  "test/regression/issue/14624.test.ts",
+  "test/regression/issue/18028.test.ts",
+  "test/regression/issue/19758.test.ts",
+  "test/regression/issue/19850/19850.test.ts",
+  "test/regression/issue/19875.test.ts",
+  "test/regression/issue/20092.test.ts",
+  "test/regression/issue/20100.test.ts",
+  "test/regression/issue/20980.test.ts",
+  "test/regression/issue/21177.test.ts",
+  "test/regression/issue/21830.test.ts",
+  "test/regression/issue/23077/23077.test.ts",
+  "test/regression/issue/23865.test.ts",
+  "test/regression/issue/26851.test.ts",
+  "test/regression/issue/30887.test.ts",
+  "test/regression/issue/36450.test.ts",
+  "test/regression/issue/5228.test.js",
+  "test/regression/issue/5738.test.ts",
+  "test/regression/issue/5961.test.ts",
+);

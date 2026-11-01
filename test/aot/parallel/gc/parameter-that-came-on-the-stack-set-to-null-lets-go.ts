@@ -1,7 +1,7 @@
 // A function with more parameters than there are registers for them gets the last ones on the stack. Once it has set such a parameter to null, what the caller passed is collected while the function still runs.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 // Todo on win32 x64: Not every time: row 3517: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
-// Todo: Not every time: row 2989: the object is kept until the function returns: the store that let go of it wrote to a word of the caller's frame, which is not always this call's (row 3608), and is out
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {

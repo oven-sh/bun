@@ -1,170 +1,734 @@
 # RegExp.prototype.compile gives a literal another pattern and other flags: called on it, in a callee, through call, by a computed name, by text made at run time. source, flags, test, replace, match, split and search follow. And what `new RegExp` and `RegExp` make of constant operands, valid or not.
+# -- source: compile-gives-a-regexp-literal-another-pattern.js
+# // RegExp.prototype.compile gives a literal another pattern and other flags: called on it, in a callee, through call, by a computed name, by text made at run time. source, flags, test, replace, match, split and search follow. And what `new RegExp` and `RegExp` make of constant operands, valid or not.
+# const re = /abc/g;
+# console.log(re.source, re.flags, re.global);
+# re.compile("xyz", "i");
+# console.log(re.source, re.flags, re.global, re.ignoreCase, re.test("XYZ"), re.test("abc"), new RegExp(re, "g").source, "aXYZb".replace(re, "-"), "abc".search(re), String(re));
+# function mut(r) { r.compile("q+"); }
+# const r2 = /one/; mut(r2); console.log(r2.source, r2.test("qq"), r2.test("one"), "one qq".match(r2)[0], "a,qq,b".split(r2).join("|"));
+# const r3 = /two/y; RegExp.prototype.compile.call(r3, "2", "g"); console.log(r3.source, r3.flags, r3.sticky, "2 two".replace(r3, "#"));
+# const r4 = /three/; new Function("r", "r.compile('3')")(r4); console.log(r4.source, r4.test("3"), r4.test("three"));
+# function f() { const r = /four/; if (Date.now() > 0) r.compile("4"); return r.source + r.test("4") + "four4".replace(r, "!"); } console.log(f(), f());
+# function g(s) { return /five/.test(s); } const k = "comp" + "ile"; const r5 = /five/; r5[k]("5"); console.log(g("five"), g("5"), r5.test("5"), r5.source);
+# const r6 = /six/g; r6.lastIndex = 2; console.log("six six".replace(r6, "6"), r6.lastIndex, r6.exec("six six six").index, r6.lastIndex);
+# console.log(new RegExp("a/b").source, new RegExp("\n").source, new RegExp("").source, new RegExp(undefined).source, new RegExp(null).source, new RegExp(5).source, RegExp("[/]").source, new RegExp("\\/").source, String(new RegExp("/", "gimsuy")), new RegExp(/x/g).flags, RegExp(/x/g, undefined).flags, new RegExp(/x/g, "").flags);
+# const lit = /same/; console.log(RegExp(lit) === lit, new RegExp(lit) === lit, RegExp(lit, "g") === lit);
+# for (const bad of [["(", ""], ["a", "gg"], ["a", "x"], ["\\", ""], ["(?<n>a)(?<n>b)", ""], ["a", "uv"]]) { try { new RegExp(bad[0], bad[1]); console.log("ok"); } catch (e) { console.log(e.name, e.message); } }
+# try { new RegExp("(", ""); } catch (e) { console.log(e.name, e.message); } try { new RegExp("a", "gg"); } catch (e) { console.log(e.name, e.message); } try { RegExp("[", "u"); } catch (e) { console.log(e.name, e.message); }
+# -- end of source
 # FORM: AsRead
 # RUN: lower-to-air size f2
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
-module m0 path="/$bun/text/compile-gives-regexp-literal-another.js/0.cjs" displayPath="/$bun/text/compile-gives-regexp-literal-another.js/0.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports referrer=m1 body=f0
-module m1 path="compile-gives-regexp-literal-another.js" displayPath="compile-gives-regexp-literal-another.js" body=f2 namespaceLayout=L(m1)
+module m0 path="/$bun/text/compile-gives-a-regexp-literal-another-pattern.js/0.cjs" displayPath="/$bun/text/compile-gives-a-regexp-literal-another-pattern.js/0.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports referrer=m1 body=f0
+module m1 path="compile-gives-a-regexp-literal-another-pattern.js" displayPath="compile-gives-a-regexp-literal-another-pattern.js" body=f2 namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
 entry module=m1
+typesite w0 module=m3 position=973 kind=Variable
+typesite w1 module=m3 position=270 kind=Variable
+typesite w2 module=m3 position=309 kind=Variable
+typesite w3 module=m3 position=1007 kind=Variable
+layout L0 module=m0
 data d0 root=Array{contents=undefined|null|Array<undefined|null|string> elements=[Array{contents=undefined|null|string elements=[String{value="("}, String{value=""}]}, Array{contents=undefined|null|string elements=[String{value="a"}, String{value="gg"}]}, Array{contents=undefined|null|string elements=[String{value="a"}, String{value="x"}]}, Array{contents=undefined|null|string elements=[String{value="\\"}, String{value=""}]}, Array{contents=undefined|null|string elements=[String{value="(?<n>a)(?<n>b)"}, String{value=""}]}, Array{contents=undefined|null|string elements=[String{value="a"}, String{value="uv"}]}]} module=m1
-function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+data d1 root=Array{contents=anything} module=m3
+data d2 root=Array{contents=anything} module=m3
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @1
+    v4 = Undefined @1
+    Return v4 @1
+}
 function f1 name="anonymous" module=m0 position=1 flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|object):
-    v1 = Undefined
-    Return v1
+    Jump -> next b1() @1
+  b1():
+    v1 = PropGet v0 key="compile" @27
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]} @26
+    v3 = String string="3" @36
+    v4 = Call v2, v0, v3 calleeKey="compile" calleeName="r.compile" @35
+    v5 = Undefined @26
+    Return v5 @26
 }
 function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = NewClosure function=f3
-    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewRegExp pattern="abc" regExpFlags=[Global]
-    v3 = Convert v2 declared={type=undefined|null|RegExp flags=[IsExpected]}
-    v4 = String string="abc"
-    v5 = PropGet v4 key="search"
-    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]}
-    v7 = Call v6, v4, v3 calleeKey="search" calleeName="search"
-    v8 = Builtin builtin=String
-    v9 = Call v8, -, v3 calleeName="String"
-    v10 = NewRegExp pattern="one"
-    v11 = Convert v10 declared={type=undefined|null|RegExp flags=[IsExpected]}
-    v12 = Call v1, -, v11 calleeName="mut"
-    v13 = String string="one qq"
-    v14 = PropGet v13 key="match"
-    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
-    v16 = Call v15, v13, v11 calleeKey="match" calleeName="match"
-    v17 = Convert v16 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    v18 = Integer
-    v19 = ElemGet v17, v18
-    v20 = String string="a,qq,b"
-    v21 = PropGet v20 key="split"
-    v22 = Convert v21 declared={type=undefined|null|function flags=[IsExpected]}
-    v23 = Call v22, v20, v11 calleeKey="split" calleeName="split"
-    v24 = Convert v23 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    v25 = PropGet v24 key="join"
-    v26 = Convert v25 declared={type=undefined|null|function flags=[IsExpected]}
-    v27 = String string="|"
-    v28 = Call v26, v24, v27 calleeKey="join" calleeName="join"
-    v29 = NewClosure function=f1
-    v30 = NewRegExp pattern="five"
-    v31 = Convert v30 declared={type=undefined|null|RegExp flags=[IsExpected]}
-    v32 = PropGet v31 key="compile"
-    v33 = String string="5"
-    v34 = Call v32, v31, v33 calleeKey="compile" calleeName="r5[k]"
-    v35 = Builtin builtin=RegExp
-    v36 = String string="a/b"
-    v37 = Construct v35, -, v36 calleeName="RegExp"
-    v38 = Builtin builtin=RegExp
-    v39 = String string="\n"
-    v40 = Construct v38, -, v39 calleeName="RegExp"
-    v41 = Builtin builtin=RegExp
-    v42 = String string=""
-    v43 = Construct v41, -, v42 calleeName="RegExp"
-    v44 = Builtin builtin=RegExp
-    v45 = Undefined
-    v46 = Construct v44, -, v45 calleeName="RegExp"
-    v47 = Builtin builtin=RegExp
-    v48 = Null
-    v49 = Construct v47, -, v48 calleeName="RegExp"
-    v50 = Builtin builtin=RegExp
-    v51 = Integer integer=5
-    v52 = Construct v50, -, v51 calleeName="RegExp"
-    v53 = Builtin builtin=RegExp
-    v54 = String string="[/]"
-    v55 = Call v53, -, v54 calleeName="RegExp"
-    v56 = Builtin builtin=RegExp
-    v57 = String string="\\/"
-    v58 = Construct v56, -, v57 calleeName="RegExp"
-    v59 = Convert v58 declared={type=undefined|null|RegExp flags=[IsExpected]}
-    v60 = PropGet v59 key="source"
-    v61 = Builtin builtin=String
-    v62 = Builtin builtin=RegExp
-    v63 = String string="/"
-    v64 = String string="gimsuy"
-    v65 = Construct v62, -, v63, v64 calleeName="RegExp"
-    v66 = Convert v65 declared={type=undefined|null|RegExp flags=[IsExpected]}
-    v67 = Call v61, -, v66 calleeName="String"
-    v68 = Builtin builtin=RegExp
-    v69 = NewRegExp pattern="x" regExpFlags=[Global]
-    v70 = Construct v68, -, v69 calleeName="RegExp"
-    v71 = Builtin builtin=RegExp
-    v72 = NewRegExp pattern="x" regExpFlags=[Global]
-    v73 = Undefined
-    v74 = Call v71, -, v72, v73 calleeName="RegExp"
-    v75 = Convert v74 declared={type=undefined|null|RegExp flags=[IsExpected]}
-    v76 = PropGet v75 key="flags"
-    v77 = Data data=d0
-    v78 = Convert v77 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string>> flags=[IsExpected]}
-    v79 = IteratorOpen v78
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    LoopHint
-    v81 = IteratorResume v79
-    v82 = ResultAt v81
-    v83 = ResultAt v81 index=1
-    Branch v82 -> taken b2(), notTaken b15()
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewRegExp pattern="abc" regExpFlags=[Global] @313
+    v7 = Convert v6 declared={type=undefined|null|RegExp flags=[IsExpected]} @313
+    v8 = Builtin builtin=GlobalThis @321
+    v9 = PropGet v8 key="console" [isFreeName] @321
+    v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]} @321
+    v11 = PropGet v10 key="log" @321
+    v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @321
+    v13 = PropGet v7 key="source" @333
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]} @333
+    v15 = PropGet v7 key="flags" @344
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]} @344
+    v17 = PropGet v7 key="global" @354
+    v18 = Convert v17 declared={type=boolean flags=[IsExpected]} @354
+    v19 = Call v12, v10, v14, v16, v18 calleeKey="log" calleeName="console.log" @329
+    v20 = PropGet v7 key="compile" @366
+    v21 = Convert v20 declared={type=undefined|null|function flags=[IsExpected]} @366
+    v22 = String string="xyz" @377
+    v23 = String string="i" @384
+    v24 = Call v21, v7, v22, v23 calleeKey="compile" calleeName="re.compile" @369
+    v25 = Builtin builtin=GlobalThis @390
+    v26 = PropGet v25 key="console" [isFreeName] @390
+    v27 = Convert v26 declared={type=builtin(Console) flags=[IsExpected]} @390
+    v28 = PropGet v27 key="log" @390
+    v29 = Convert v28 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @390
+    v30 = PropGet v7 key="source" @402
+    v31 = Convert v30 declared={type=undefined|null|string flags=[IsExpected]} @402
+    v32 = PropGet v7 key="flags" @413
+    v33 = Convert v32 declared={type=undefined|null|string flags=[IsExpected]} @413
+    v34 = PropGet v7 key="global" @423
+    v35 = Convert v34 declared={type=boolean flags=[IsExpected]} @423
+    v36 = PropGet v7 key="ignoreCase" @434
+    v37 = Convert v36 declared={type=boolean flags=[IsExpected]} @434
+    v38 = PropGet v7 key="test" @449
+    v39 = Convert v38 declared={type=undefined|null|function flags=[IsExpected]} @449
+    v40 = String string="XYZ" @457
+    v41 = Call v39, v7, v40 calleeKey="test" calleeName="re.test" @452
+    v42 = Convert v41 declared={type=boolean flags=[IsExpected]} @449
+    v43 = PropGet v7 key="test" @465
+    v44 = Convert v43 declared={type=undefined|null|function flags=[IsExpected]} @465
+    v45 = String string="abc" @473
+    v46 = Call v44, v7, v45 calleeKey="test" calleeName="re.test" @468
+    v47 = Convert v46 declared={type=boolean flags=[IsExpected]} @465
+    v48 = Builtin builtin=RegExp @485
+    v49 = String string="g" @496
+    v50 = Construct v48, -, v7, v49 calleeName="RegExp" @485 constructs
+    v51 = Convert v50 declared={type=undefined|null|RegExp flags=[IsExpected]} @481
+    v52 = PropGet v51 key="source" @499
+    v53 = Convert v52 declared={type=undefined|null|string flags=[IsExpected]} @481
+    v54 = String string="aXYZb" @509
+    v55 = PropGet v54 key="replace" @509
+    v56 = Convert v55 declared={type=undefined|null|function flags=[IsExpected]} @509
+    v57 = String string="-" @529
+    v58 = Call v56, v54, v7, v57 calleeKey="replace" calleeName="replace" @517
+    v59 = Convert v58 declared={type=undefined|null|string flags=[IsExpected]} @509
+    v60 = String string="abc" @535
+    v61 = PropGet v60 key="search" @535
+    v62 = Convert v61 declared={type=undefined|null|function flags=[IsExpected]} @535
+    v63 = Call v62, v60, v7 calleeKey="search" calleeName="search" @541
+    v64 = Convert v63 declared={type=number flags=[IsExpected]} @535
+    v65 = Builtin builtin=String @553
+    v66 = Call v65, -, v7 calleeName="String" @553
+    v67 = Convert v66 declared={type=undefined|null|string flags=[IsExpected]} @553
+    v68 = Call v29, v27, v31, v33, v35, v37, v42, v47, v53, v59, v64, v67 calleeKey="log" calleeName="console.log" @398
+    v69 = NewRegExp pattern="one" @614
+    v70 = Convert v69 declared={type=undefined|null|RegExp flags=[IsExpected]} @614
+    v71 = Call v1, -, v70 calleeName="mut" @621
+    v72 = Builtin builtin=GlobalThis @630
+    v73 = PropGet v72 key="console" [isFreeName] @630
+    v74 = Convert v73 declared={type=builtin(Console) flags=[IsExpected]} @630
+    v75 = PropGet v74 key="log" @630
+    v76 = Convert v75 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @630
+    v77 = PropGet v70 key="source" @642
+    v78 = Convert v77 declared={type=undefined|null|string flags=[IsExpected]} @642
+    v79 = PropGet v70 key="test" @653
+    v80 = Convert v79 declared={type=undefined|null|function flags=[IsExpected]} @653
+    v81 = String string="qq" @661
+    v82 = Call v80, v70, v81 calleeKey="test" calleeName="r2.test" @656
+    v83 = Convert v82 declared={type=boolean flags=[IsExpected]} @653
+    v84 = PropGet v70 key="test" @668
+    v85 = Convert v84 declared={type=undefined|null|function flags=[IsExpected]} @668
+    v86 = String string="one" @676
+    v87 = Call v85, v70, v86 calleeKey="test" calleeName="r2.test" @671
+    v88 = Convert v87 declared={type=boolean flags=[IsExpected]} @668
+    v89 = String string="one qq" @684
+    v90 = PropGet v89 key="match" @684
+    v91 = Convert v90 declared={type=undefined|null|function flags=[IsExpected]} @684
+    v92 = Call v91, v89, v70 calleeKey="match" calleeName="match" @693
+    v93 = Convert v92 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @684
+    v94 = Integer @684
+    v95 = ElemGet v93, v94 @701
+    v96 = Convert v95 declared={type=undefined|null|string flags=[IsExpected]} @684
+    v97 = String string="a,qq,b" @707
+    v98 = PropGet v97 key="split" @707
+    v99 = Convert v98 declared={type=undefined|null|function flags=[IsExpected]} @707
+    v100 = Call v99, v97, v70 calleeKey="split" calleeName="split" @716
+    v101 = Convert v100 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @707
+    v102 = PropGet v101 key="join" @724
+    v103 = Convert v102 declared={type=undefined|null|function flags=[IsExpected]} @707
+    v104 = String string="|" @731
+    v105 = Call v103, v101, v104 calleeKey="join" calleeName="join" @726
+    v106 = Convert v105 declared={type=undefined|null|string flags=[IsExpected]} @707
+    v107 = Call v76, v74, v78, v83, v88, v96, v106 calleeKey="log" calleeName="console.log" @638
+    v108 = NewRegExp pattern="two" regExpFlags=[Sticky] @749
+    v109 = Convert v108 declared={type=undefined|null|RegExp flags=[IsExpected]} @749
+    v110 = Builtin builtin=RegExpPrototypeCompile @757
+    v111 = PropGet v110 key="call" @774
+    v112 = Convert v111 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]} @757
+    v113 = String string="2" @791
+    v114 = String string="g" @796
+    v115 = Call v112, v110, v109, v113, v114 calleeKey="call" calleeName="RegExp.prototype.compile.call" @782
+    v116 = Builtin builtin=GlobalThis @802
+    v117 = PropGet v116 key="console" [isFreeName] @802
+    v118 = Convert v117 declared={type=builtin(Console) flags=[IsExpected]} @802
+    v119 = PropGet v118 key="log" @802
+    v120 = Convert v119 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @802
+    v121 = PropGet v109 key="source" @814
+    v122 = Convert v121 declared={type=undefined|null|string flags=[IsExpected]} @814
+    v123 = PropGet v109 key="flags" @825
+    v124 = Convert v123 declared={type=undefined|null|string flags=[IsExpected]} @825
+    v125 = PropGet v109 key="sticky" @835
+    v126 = Convert v125 declared={type=boolean flags=[IsExpected]} @835
+    v127 = String string="2 two" @846
+    v128 = PropGet v127 key="replace" @846
+    v129 = Convert v128 declared={type=undefined|null|function flags=[IsExpected]} @846
+    v130 = String string="#" @866
+    v131 = Call v129, v127, v109, v130 calleeKey="replace" calleeName="replace" @854
+    v132 = Convert v131 declared={type=undefined|null|string flags=[IsExpected]} @846
+    v133 = Call v120, v118, v122, v124, v126, v132 calleeKey="log" calleeName="console.log" @810
+    v134 = NewRegExp pattern="three" @884
+    v135 = Convert v134 declared={type=undefined|null|RegExp flags=[IsExpected]} @884
+    v136 = Builtin builtin=GlobalThis @897
+    v137 = PropGet v136 key="Function" [isFreeName] @897
+    v138 = Convert v137 declared={type=builtin(Function) flags=[IsExpected]} @897
+    v139 = String string="r" @906
+    v140 = String string="r.compile('3')" @911
+    v141 = Builtin builtin=Function [isNotReadFromHolder] @897
+    v142 = StrictEq v138, v141 @897
+    Branch v142 -> taken b2(), notTaken b3(| 0) @897
   b2():
-    Jump -> next b3()
-  b3() handler=b5():
-    Jump -> next b4()
-  b4():
-    Jump -> next b6()
-  b5() role=CatchHandler:
-    Jump -> next b6()
+    v143 = NewClosure function=f1 @897
+    Jump -> next b4(v143) @897
+  b3(v144):
+    v145 = Construct v144, -, v139, v140 calleeName="Function" @897
+    Jump -> next b4(v145) @893
+  b4(v146):
+    v147 = Convert v146 declared={type=undefined|null|function flags=[IsExpected]} @893
+    v148 = Call v147, -, v135 @927
+    v149 = Builtin builtin=GlobalThis @934
+    v150 = PropGet v149 key="console" [isFreeName] @934
+    v151 = Convert v150 declared={type=builtin(Console) flags=[IsExpected]} @934
+    v152 = PropGet v151 key="log" @934
+    v153 = Convert v152 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @934
+    v154 = PropGet v135 key="source" @946
+    v155 = Convert v154 declared={type=undefined|null|string flags=[IsExpected]} @946
+    v156 = PropGet v135 key="test" @957
+    v157 = Convert v156 declared={type=undefined|null|function flags=[IsExpected]} @957
+    v158 = String string="3" @965
+    v159 = Call v157, v135, v158 calleeKey="test" calleeName="r4.test" @960
+    v160 = Convert v159 declared={type=boolean flags=[IsExpected]} @957
+    v161 = PropGet v135 key="test" @971
+    v162 = Convert v161 declared={type=undefined|null|function flags=[IsExpected]} @971
+    v163 = String string="three" @979
+    v164 = Call v162, v135, v163 calleeKey="test" calleeName="r4.test" @974
+    v165 = Convert v164 declared={type=boolean flags=[IsExpected]} @971
+    v166 = Call v153, v151, v155, v160, v165 calleeKey="log" calleeName="console.log" @942
+    v167 = Builtin builtin=GlobalThis @1118
+    v168 = PropGet v167 key="console" [isFreeName] @1118
+    v169 = Convert v168 declared={type=builtin(Console) flags=[IsExpected]} @1118
+    v170 = PropGet v169 key="log" @1118
+    v171 = Convert v170 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1118
+    v172 = Call v3 calleeName="f" @1130
+    v173 = Convert v172 declared={type=undefined|null|string flags=[IsExpected]} @1130
+    v174 = Call v3 calleeName="f" @1135
+    v175 = Convert v174 declared={type=undefined|null|string flags=[IsExpected]} @1135
+    v176 = Call v171, v169, v173, v175 calleeKey="log" calleeName="console.log" @1126
+    v177 = String string="compile" @1192
+    v178 = Convert v177 declared={type=undefined|null|string flags=[IsExpected]} @1192
+    v179 = NewRegExp pattern="five" @1219
+    v180 = Convert v179 declared={type=undefined|null|RegExp flags=[IsExpected]} @1219
+    v181 = PropGet v180 key="compile" @1227
+    v182 = String string="5" @1233
+    v183 = Call v181, v180, v182 calleeKey="compile" calleeName="r5[k]" @1230
+    v184 = Builtin builtin=GlobalThis @1239
+    v185 = PropGet v184 key="console" [isFreeName] @1239
+    v186 = Convert v185 declared={type=builtin(Console) flags=[IsExpected]} @1239
+    v187 = PropGet v186 key="log" @1239
+    v188 = Convert v187 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1239
+    v189 = String string="five" @1253
+    v190 = Call v5, -, v189 calleeName="g" @1251
+    v191 = Convert v190 declared={type=boolean flags=[IsExpected]} @1251
+    v192 = String string="5" @1264
+    v193 = Call v5, -, v192 calleeName="g" @1262
+    v194 = Convert v193 declared={type=boolean flags=[IsExpected]} @1262
+    v195 = PropGet v180 key="test" @1270
+    v196 = Convert v195 declared={type=undefined|null|function flags=[IsExpected]} @1270
+    v197 = String string="5" @1278
+    v198 = Call v196, v180, v197 calleeKey="test" calleeName="r5.test" @1273
+    v199 = Convert v198 declared={type=boolean flags=[IsExpected]} @1270
+    v200 = PropGet v180 key="source" @1284
+    v201 = Convert v200 declared={type=undefined|null|string flags=[IsExpected]} @1284
+    v202 = Call v188, v186, v191, v194, v199, v201 calleeKey="log" calleeName="console.log" @1247
+    v203 = NewRegExp pattern="six" regExpFlags=[Global] @1307
+    v204 = Convert v203 declared={type=undefined|null|RegExp flags=[IsExpected]} @1307
+    v205 = Integer integer=2 @1330
+    v206 = Convert v205 declared={type=number flags=[IsExpected]} @1315
+    PropSet v204, v206 key="lastIndex" @1315
+    v208 = Builtin builtin=GlobalThis @1333
+    v209 = PropGet v208 key="console" [isFreeName] @1333
+    v210 = Convert v209 declared={type=builtin(Console) flags=[IsExpected]} @1333
+    v211 = PropGet v210 key="log" @1333
+    v212 = Convert v211 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1333
+    v213 = String string="six six" @1345
+    v214 = PropGet v213 key="replace" @1345
+    v215 = Convert v214 declared={type=undefined|null|function flags=[IsExpected]} @1345
+    v216 = String string="6" @1367
+    v217 = Call v215, v213, v204, v216 calleeKey="replace" calleeName="replace" @1355
+    v218 = Convert v217 declared={type=undefined|null|string flags=[IsExpected]} @1345
+    v219 = PropGet v204 key="lastIndex" @1373
+    v220 = Convert v219 declared={type=number flags=[IsExpected]} @1373
+    v221 = PropGet v204 key="exec" @1387
+    v222 = Convert v221 declared={type=undefined|null|function flags=[IsExpected]} @1387
+    v223 = String string="six six six" @1395
+    v224 = Call v222, v204, v223 calleeKey="exec" calleeName="r6.exec" @1390
+    v225 = Convert v224 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1387
+    v226 = PropGet v225 key="index" @1408
+    v227 = Convert v226 declared={type=number flags=[IsExpected]} @1387
+    v228 = PropGet v204 key="lastIndex" @1417
+    v229 = Convert v228 declared={type=number flags=[IsExpected]} @1417
+    v230 = Call v212, v210, v218, v220, v227, v229 calleeKey="log" calleeName="console.log" @1341
+    v231 = Builtin builtin=GlobalThis @1432
+    v232 = PropGet v231 key="console" [isFreeName] @1432
+    v233 = Convert v232 declared={type=builtin(Console) flags=[IsExpected]} @1432
+    v234 = PropGet v233 key="log" @1432
+    v235 = Convert v234 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1432
+    v236 = Builtin builtin=RegExp @1448
+    v237 = String string="a/b" @1455
+    v238 = Construct v236, -, v237 calleeName="RegExp" @1448 constructs
+    v239 = Convert v238 declared={type=undefined|null|RegExp flags=[IsExpected]} @1444
+    v240 = PropGet v239 key="source" @1460
+    v241 = Convert v240 declared={type=undefined|null|string flags=[IsExpected]} @1444
+    v242 = Builtin builtin=RegExp @1474
+    v243 = String string="\n" @1481
+    v244 = Construct v242, -, v243 calleeName="RegExp" @1474 constructs
+    v245 = Convert v244 declared={type=undefined|null|RegExp flags=[IsExpected]} @1470
+    v246 = PropGet v245 key="source" @1485
+    v247 = Convert v246 declared={type=undefined|null|string flags=[IsExpected]} @1470
+    v248 = Builtin builtin=RegExp @1499
+    v249 = String string="" @1506
+    v250 = Construct v248, -, v249 calleeName="RegExp" @1499 constructs
+    v251 = Convert v250 declared={type=undefined|null|RegExp flags=[IsExpected]} @1495
+    v252 = PropGet v251 key="source" @1508
+    v253 = Convert v252 declared={type=undefined|null|string flags=[IsExpected]} @1495
+    v254 = Builtin builtin=RegExp @1522
+    v255 = Undefined @1529
+    v256 = Construct v254, -, v255 calleeName="RegExp" @1522 constructs
+    v257 = Convert v256 declared={type=undefined|null|RegExp flags=[IsExpected]} @1518
+    v258 = PropGet v257 key="source" @1538
+    v259 = Convert v258 declared={type=undefined|null|string flags=[IsExpected]} @1518
+    v260 = Builtin builtin=RegExp @1552
+    v261 = Null @1559
+    v262 = Construct v260, -, v261 calleeName="RegExp" @1552 constructs
+    v263 = Convert v262 declared={type=undefined|null|RegExp flags=[IsExpected]} @1548
+    v264 = PropGet v263 key="source" @1563
+    v265 = Convert v264 declared={type=undefined|null|string flags=[IsExpected]} @1548
+    v266 = Builtin builtin=RegExp @1577
+    v267 = Integer integer=5 @1584
+    v268 = Construct v266, -, v267 calleeName="RegExp" @1577 constructs
+    v269 = Convert v268 declared={type=undefined|null|RegExp flags=[IsExpected]} @1573
+    v270 = PropGet v269 key="source" @1585
+    v271 = Convert v270 declared={type=undefined|null|string flags=[IsExpected]} @1573
+    v272 = Builtin builtin=RegExp @1595
+    v273 = String string="[/]" @1602
+    v274 = Call v272, -, v273 calleeName="RegExp" @1595
+    v275 = Convert v274 declared={type=undefined|null|RegExp flags=[IsExpected]} @1595
+    v276 = PropGet v275 key="source" @1607
+    v277 = Convert v276 declared={type=undefined|null|string flags=[IsExpected]} @1595
+    v278 = Builtin builtin=RegExp @1621
+    v279 = String string="\\/" @1628
+    v280 = Construct v278, -, v279 calleeName="RegExp" @1621 constructs
+    v281 = Convert v280 declared={type=undefined|null|RegExp flags=[IsExpected]} @1617
+    v282 = PropGet v281 key="source" @1633
+    v283 = Convert v282 declared={type=undefined|null|string flags=[IsExpected]} @1617
+    v284 = Builtin builtin=String @1643
+    v285 = Builtin builtin=RegExp @1654
+    v286 = String string="/" @1661
+    v287 = String string="gimsuy" @1666
+    v288 = Construct v285, -, v286, v287 calleeName="RegExp" @1654 constructs
+    v289 = Convert v288 declared={type=undefined|null|RegExp flags=[IsExpected]} @1650
+    v290 = Call v284, -, v289 calleeName="String" @1643
+    v291 = Convert v290 declared={type=undefined|null|string flags=[IsExpected]} @1643
+    v292 = Builtin builtin=RegExp @1682
+    v293 = NewRegExp pattern="x" regExpFlags=[Global] @1689
+    v294 = Construct v292, -, v293 calleeName="RegExp" @1682 constructs
+    v295 = Convert v294 declared={type=undefined|null|RegExp flags=[IsExpected]} @1678
+    v296 = PropGet v295 key="flags" @1693
+    v297 = Convert v296 declared={type=undefined|null|string flags=[IsExpected]} @1678
+    v298 = Builtin builtin=RegExp @1702
+    v299 = NewRegExp pattern="x" regExpFlags=[Global] @1709
+    v300 = Undefined @1715
+    v301 = Call v298, -, v299, v300 calleeName="RegExp" @1702
+    v302 = Convert v301 declared={type=undefined|null|RegExp flags=[IsExpected]} @1702
+    v303 = PropGet v302 key="flags" @1724
+    v304 = Convert v303 declared={type=undefined|null|string flags=[IsExpected]} @1702
+    v305 = Builtin builtin=RegExp @1737
+    v306 = NewRegExp pattern="x" regExpFlags=[Global] @1744
+    v307 = String string="" @1750
+    v308 = Construct v305, -, v306, v307 calleeName="RegExp" @1737 constructs
+    v309 = Convert v308 declared={type=undefined|null|RegExp flags=[IsExpected]} @1733
+    v310 = PropGet v309 key="flags" @1752
+    v311 = Convert v310 declared={type=undefined|null|string flags=[IsExpected]} @1733
+    v312 = Call v235, v233, v241, v247, v253, v259, v265, v271, v277, v283, v291, v297, v304, v311 calleeKey="log" calleeName="console.log" @1440
+    v313 = NewRegExp pattern="same" @1774
+    v314 = Convert v313 declared={type=undefined|null|RegExp flags=[IsExpected]} @1774
+    v315 = Builtin builtin=GlobalThis @1782
+    v316 = PropGet v315 key="console" [isFreeName] @1782
+    v317 = Convert v316 declared={type=builtin(Console) flags=[IsExpected]} @1782
+    v318 = PropGet v317 key="log" @1782
+    v319 = Convert v318 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1782
+    v320 = Builtin builtin=RegExp @1794
+    v321 = Call v320, -, v314 calleeName="RegExp" @1794
+    v322 = Convert v321 declared={type=undefined|null|RegExp flags=[IsExpected]} @1794
+    v323 = StrictEq v322, v314 @1794
+    v324 = Builtin builtin=RegExp @1819
+    v325 = Construct v324, -, v314 calleeName="RegExp" @1819 constructs
+    v326 = Convert v325 declared={type=undefined|null|RegExp flags=[IsExpected]} @1815
+    v327 = StrictEq v326, v314 @1815
+    v328 = Builtin builtin=RegExp @1840
+    v329 = String string="g" @1852
+    v330 = Call v328, -, v314, v329 calleeName="RegExp" @1840
+    v331 = Convert v330 declared={type=undefined|null|RegExp flags=[IsExpected]} @1840
+    v332 = StrictEq v331, v314 @1840
+    v333 = Call v319, v317, v323, v327, v332 calleeKey="log" calleeName="console.log" @1790
+    v334 = Data data=d0 @1885
+    v335 = Convert v334 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string>> flags=[IsExpected]} @1885
+    v336 = IteratorOpen v335 @1878
+    Jump -> next b5() @1878
+  b5():
+    LoopHint @1878
+    v338 = IteratorResume v336 @1878
+    v339 = ResultAt v338 @1878
+    v340 = ResultAt v338 index=1 @1878
+    Branch v339 -> taken b6(), notTaken b19() @1878
   b6():
-    Jump -> next b7()
+    Jump -> next b7() @2077
   b7() handler=b9():
-    Jump -> next b8()
+    v341 = Builtin builtin=RegExp @2087
+    v342 = String string="(" @2094
+    v343 = String string="" @2099
+    v344 = Construct v341, -, v342, v343 calleeName="RegExp" @2087 constructs
+    Jump -> next b8() @2083
   b8():
-    Jump -> next b10()
+    Jump -> next b10() @2083
   b9() role=CatchHandler:
-    Jump -> next b10()
+    v345 = CatchValue @2116
+    v346 = Builtin builtin=GlobalThis @2118
+    v347 = PropGet v346 key="console" [isFreeName] @2118
+    v348 = Convert v347 declared={type=builtin(Console) flags=[IsExpected]} @2118
+    v349 = PropGet v348 key="log" @2118
+    v350 = Convert v349 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @2118
+    v351 = PropGet v345 key="name" @2130
+    v352 = PropGet v345 key="message" @2138
+    v353 = Call v350, v348, v351, v352 calleeKey="log" calleeName="console.log" @2126
+    Jump -> next b10() @2118
   b10():
-    Jump -> next b11()
+    Jump -> next b11() @2152
   b11() handler=b13():
-    Jump -> next b12()
+    v354 = Builtin builtin=RegExp @2162
+    v355 = String string="a" @2169
+    v356 = String string="gg" @2174
+    v357 = Construct v354, -, v355, v356 calleeName="RegExp" @2162 constructs
+    Jump -> next b12() @2158
   b12():
-    Jump -> next b14()
+    Jump -> next b14() @2158
   b13() role=CatchHandler:
-    Jump -> next b14()
+    v358 = CatchValue @2193
+    v359 = Builtin builtin=GlobalThis @2195
+    v360 = PropGet v359 key="console" [isFreeName] @2195
+    v361 = Convert v360 declared={type=builtin(Console) flags=[IsExpected]} @2195
+    v362 = PropGet v361 key="log" @2195
+    v363 = Convert v362 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @2195
+    v364 = PropGet v358 key="name" @2207
+    v365 = PropGet v358 key="message" @2215
+    v366 = Call v363, v361, v364, v365 calleeKey="log" calleeName="console.log" @2203
+    Jump -> next b14() @2195
   b14():
-    v84 = Undefined
-    Return v84
+    Jump -> next b15() @2229
+  b15() handler=b17():
+    v367 = Builtin builtin=RegExp @2235
+    v368 = String string="[" @2242
+    v369 = String string="u" @2247
+    v370 = Call v367, -, v368, v369 calleeName="RegExp" @2235
+    Jump -> next b16() @2235
+  b16():
+    Jump -> next b18() @2235
+  b17() role=CatchHandler:
+    v371 = CatchValue @2265
+    v372 = Builtin builtin=GlobalThis @2267
+    v373 = PropGet v372 key="console" [isFreeName] @2267
+    v374 = Convert v373 declared={type=builtin(Console) flags=[IsExpected]} @2267
+    v375 = PropGet v374 key="log" @2267
+    v376 = Convert v375 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @2267
+    v377 = PropGet v371 key="name" @2279
+    v378 = PropGet v371 key="message" @2287
+    v379 = Call v376, v374, v377, v378 calleeKey="log" calleeName="console.log" @2275
+    Jump -> next b18() @2267
+  b18():
+    v380 = Undefined @2267
+    Return v380 @2267
+  b19():
+    Jump -> next b20() @1878
+  b20() handler=b25():
+    v381 = Convert v340 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1878
+    Jump -> next b21() @1974
+  b21() handler=b23():
+    v382 = Builtin builtin=RegExp @1984
+    v383 = Integer @1991
+    v384 = ElemGet v381, v383 @1991
+    v385 = Convert v384 declared={type=undefined|null|string flags=[IsExpected]} @1991
+    v386 = Integer integer=1 @1999
+    v387 = ElemGet v381, v386 @1999
+    v388 = Convert v387 declared={type=undefined|null|string flags=[IsExpected]} @1999
+    v389 = Construct v382, -, v385, v388 calleeName="RegExp" @1984 constructs
+    v390 = Builtin builtin=GlobalThis @2008
+    v391 = PropGet v390 key="console" [isFreeName] @2008
+    v392 = Convert v391 declared={type=builtin(Console) flags=[IsExpected]} @2008
+    v393 = PropGet v392 key="log" @2008
+    v394 = Convert v393 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @2008
+    v395 = String string="ok" @2020
+    v396 = Call v394, v392, v395 calleeKey="log" calleeName="console.log" @2016
+    Jump -> next b22() @2008
+  b22() handler=b25():
+    Jump -> next b24() @2008
+  b23() role=CatchHandler handler=b25():
+    v397 = CatchValue @2039
+    v398 = Builtin builtin=GlobalThis @2041
+    v399 = PropGet v398 key="console" [isFreeName] @2041
+    v400 = Convert v399 declared={type=builtin(Console) flags=[IsExpected]} @2041
+    v401 = PropGet v400 key="log" @2041
+    v402 = Convert v401 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @2041
+    v403 = PropGet v397 key="name" @2053
+    v404 = PropGet v397 key="message" @2061
+    v405 = Call v402, v400, v403, v404 calleeKey="log" calleeName="console.log" @2049
+    Jump -> next b24() @2041
+  b24() handler=b25():
+    Jump -> next b5() @2041
+  b25() role=IterationCleanup subject=v336:
+    v406 = CatchException @1878
+    IteratorClose v336 completion=Throw @1878
+    Rethrow v406 @1878
+}
+function f3 name="mut" module=m1 position=566 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|RegExp flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|RegExp):
+    Jump -> next b1() @566
+  b1():
+    v1 = PropGet v0 key="compile" @584
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]} @584
+    v3 = String string="q+" @594
+    v4 = Call v2, v0, v3 calleeKey="compile" calleeName="r.compile" @586
+    v5 = Undefined @584
+    Return v5 @584
+}
+function f4 name="f" module=m1 position=990 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @990
+  b1():
+    v0 = NewRegExp pattern="four" @1015
+    v1 = Convert v0 declared={type=undefined|null|RegExp flags=[IsExpected]} @1015
+    v2 = Builtin builtin=GlobalThis @1027
+    v3 = PropGet v2 key="Date" [isFreeName] @1027
+    v4 = Convert v3 declared={type=builtin(Date) flags=[IsExpected]} @1027
+    v5 = PropGet v4 key="now" @1027
+    v6 = Convert v5 declared={type=builtin(DateNow) flags=[IsExpected]} @1027
+    v7 = Call v6, v4 calleeKey="now" calleeName="Date.now" @1032
+    v8 = Convert v7 declared={type=number flags=[IsExpected]} @1027
+    v9 = Integer @1040
+    v10 = Greater v8, v9 @1027
+    Branch v10 -> taken b2(), notTaken b3() @1027
+  b2():
+    v11 = PropGet v1 key="compile" @1043
+    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]} @1043
+    v13 = String string="4" @1053
+    v14 = Call v12, v1, v13 calleeKey="compile" calleeName="r.compile" @1045
+    Jump -> next b3() @1043
+  b3():
+    v15 = PropGet v1 key="source" @1066
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]} @1066
+    v17 = PropGet v1 key="test" @1077
+    v18 = Convert v17 declared={type=undefined|null|function flags=[IsExpected]} @1077
+    v19 = String string="4" @1084
+    v20 = Call v18, v1, v19 calleeKey="test" calleeName="r.test" @1079
+    v21 = Convert v20 declared={type=boolean flags=[IsExpected]} @1077
+    v22 = Add v16, v21 @1066
+    v23 = String string="four4" @1091
+    v24 = PropGet v23 key="replace" @1091
+    v25 = Convert v24 declared={type=undefined|null|function flags=[IsExpected]} @1091
+    v26 = String string="!" @1110
+    v27 = Call v25, v23, v1, v26 calleeKey="replace" calleeName="replace" @1099
+    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]} @1091
+    v29 = Add v22, v28 @1066
+    v30 = Convert v29 declared={type=undefined|null|string flags=[IsExpected]} @1066
+    Return v30 @1066
+}
+function f5 name="g" module=m1 position=1141 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @1141
+  b1():
+    v1 = NewRegExp pattern="five" @1164
+    v2 = PropGet v1 key="test" @1164
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]} @1164
+    v4 = Call v3, v1, v0 calleeKey="test" calleeName="test" @1171
+    ReturnCall v4 casts=[{declared={type=boolean flags=[IsExpected]}}] @1171
+}
+function f6 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f15 name="call" module=m3 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|function, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
+    Jump -> next b1() @0
+  b1():
+    v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6 @0
+    v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @194
+    v10 = StrictEq v0, v9 @185
+    Branch v10 -> taken b3(), notTaken b2() @185
+  b2():
+    v11 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @229
+    v12 = StrictEq v0, v11 @185
+    Branch v12 -> taken b3(), notTaken b10() @185
+  b3():
+    v13 = Data data=d1 @288
+    v14 = Convert v13 declared={type=undefined|null|Array<never> site=w1 flags=[OmitsNull, OmitsUndefined]} @288
+    v15 = Integer integer=1 @313
+    v16 = Convert v15 declared={type=number site=w2} @313
+    Jump -> next b4(v16) @309
+  b4(v17: number):
+    LoopHint @309
+    v19 = Convert v17 declared={type=i32 flags=[IsExpected]} @316
+    v20 = Less v19, v1 @316
+    Branch v20 -> taken b5(| 0), notTaken b8(| 0) @316
+  b5(v21):
+    Jump -> next b6() @316
+  b6():
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]} @388
+    v23 = Integer integer=1 @392
+    v24 = Sub v22, v23 @388
+    v25 = ElemGet v8, v22 @395
+    v26 = Convert v14 declared={type=object flags=[IsFromCompiler, IsClaim]} @355
+    ElemDefine v26, v24, v25 @355
+    Jump -> next b7() @355
+  b7():
+    v28 = Increment v22 @395
+    v29 = Convert v28 declared={type=number site=w2} @338
+    Jump -> next b4(v29) @338
+  b8(v30):
+    Jump -> next b9() @316
+  b9():
+    v31 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @433
+    v32 = Call v31, v0, v2, v14 [isDoneInPlace] @433
+    Return v32 @492
+  b10():
+    Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b11(), case b11(), case b12(), case b13(), case b14(), case b15(), otherwise b16() @548
+  b11():
+    v33 = Call v0, v2 @578
+    ReturnCall v33 @578
+  b12():
+    v34 = Call v0, v2, v3 @631
+    ReturnCall v34 @631
+  b13():
+    v35 = Call v0, v2, v3, v4 @698
+    ReturnCall v35 @698
+  b14():
+    v36 = Call v0, v2, v3, v4, v5 @779
+    ReturnCall v36 @779
   b15():
-    Jump -> next b16()
-  b16() handler=b21():
-    v85 = Convert v83 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    Jump -> next b17()
-  b17() handler=b19():
-    v86 = Builtin builtin=RegExp
-    v87 = Integer
-    v88 = ElemGet v85, v87
-    v89 = Convert v88 declared={type=undefined|null|string flags=[IsExpected]}
-    v90 = Integer integer=1
-    v91 = ElemGet v85, v90
-    v92 = Convert v91 declared={type=undefined|null|string flags=[IsExpected]}
-    v93 = Construct v86, -, v89, v92 calleeName="RegExp"
-    Jump -> next b18()
-  b18() handler=b21():
-    Jump -> next b20()
-  b19() role=CatchHandler handler=b21():
-    Jump -> next b20()
-  b20() handler=b21():
-    Jump -> next b1()
-  b21() role=IterationCleanup subject=v79:
-    v94 = CatchException
-    Rethrow v94
+    v37 = Call v0, v2, v3, v4, v5, v6 @874
+    ReturnCall v37 @874
+  b16():
+    Jump -> next b17() @548
+  b17():
+    v38 = Data data=d2 @990
+    v39 = Convert v38 declared={type=undefined|null|Array<never> site=w0 flags=[OmitsNull, OmitsUndefined]} @990
+    v40 = Integer integer=1 @1011
+    v41 = Convert v40 declared={type=number site=w3} @1011
+    Jump -> next b18(v41) @1007
+  b18(v42: number):
+    LoopHint @1007
+    v44 = Convert v42 declared={type=i32 flags=[IsExpected]} @1014
+    v45 = Less v44, v1 @1014
+    Branch v45 -> taken b19(| 0), notTaken b22(| 0) @1014
+  b19(v46):
+    Jump -> next b20() @1014
+  b20():
+    v47 = Convert v46 declared={type=i32 flags=[IsExpected]} @1081
+    v48 = Integer integer=1 @1085
+    v49 = Sub v47, v48 @1081
+    v50 = ElemGet v8, v47 @1088
+    v51 = Convert v39 declared={type=object flags=[IsFromCompiler, IsClaim]} @1049
+    ElemDefine v51, v49, v50 @1049
+    Jump -> next b21() @1049
+  b21():
+    v53 = Increment v47 @1088
+    v54 = Convert v53 declared={type=number site=w3} @1036
+    Jump -> next b18(v54) @1036
+  b22(v55):
+    Jump -> next b23() @1014
+  b23():
+    v56 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1115
+    v57 = Call v56, v0, v2, v39 [isDoneInPlace] @1115
+    ReturnCall v57 @1115
 }
-function f3 name="mut" module=m1 position=566 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|object):
-    v1 = PropGet v0 key="compile"
-    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
-    v3 = String string="q+"
-    v4 = Call v2, v0, v3 calleeKey="compile" calleeName="r.compile"
-    v5 = Undefined
-    Return v5
+function f16 name="apply" module=m3 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|function, v1: anything, v2: anything):
+    Jump -> next b1() @1161
+  b1():
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1239
+    Branch v4 -> taken b3(), notTaken b2() @1239
+  b2():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1239
+    Branch v6 -> taken b3(), notTaken b4() @1239
+  b3():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    Return v8 @1388
+  b4():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
 }
+runtimefunction id=FunctionPrototypeApply function=f16
+runtimefunction id=FunctionPrototypeCall function=f15
+runtimefunction id=ArrayIteratorPrototypeNext function=f14 visibility=Private
 # -- generated: f2
 # CHECK-LABEL: function f2 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 84, patchpoints: 30, rare instructions: 45, polls: 1
+# CHECK-NEXT: instructions: 382, patchpoints: 104, rare instructions: 89, polls: 1
 # CHECK-NEXT: end of function f2

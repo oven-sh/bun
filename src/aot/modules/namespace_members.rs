@@ -326,6 +326,7 @@ impl FileBinder<'_, '_> {
             bound,
             analysis,
             builtins,
+            &self.context.files.atoms,
             &|site| scan.sites[site] == test_runner,
             &|object| {
                 bound.is_evaluated_ident(object)
@@ -707,6 +708,7 @@ impl FileBinder<'_, '_> {
                 })
             }
             KnownReference::Global { .. } => true,
+            KnownReference::Loaded { .. } => false,
         })
     }
 

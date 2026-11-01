@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 const counted = (who: string) => `globalThis.runs = (globalThis.runs ?? 0) + 1;\nexports.who = "${who}";\n`;
@@ -56,8 +57,27 @@ const modes: [string, string[], "executable" | "run"][] = [
   ["compiled in place", ["--compile-in-place"], "run"],
 ];
 
+// On a build that looks for an external name among the compiled files, and that does not count a file found by its name as loaded, fourteen of the twenty-four fail:
+// an executable in all but the last two programs, the two other modes where the name comes first and in the last two. One of each road of the loader stands for them in the
+// two modes that are dear; where code from disk is allowed a build costs little. Every case runs where AOT_WHOLE_GRIDS=1.
+const witnesses: Record<string, string[]> = {
+  "an executable": [
+    "require() of the name, then of the path",
+    "import() of the name, then of the path",
+    "the namespace of an ES module",
+  ],
+  "code from disk is allowed": [
+    "require() of the name, then of the path",
+    "import() of the name, then of the path",
+    "the package requires a file of the program first",
+    "the package requires a file of its own first",
+  ],
+  "compiled in place": ["require() of the name, then of the path", "the package requires a file of the program first"],
+};
+
 for (const [mode, flags, reference] of modes) {
   for (const [name, files] of Object.entries(programs)) {
+    if (!runsWholeGrids && !witnesses[mode].includes(name)) continue;
     test.concurrent(
       `${mode}: ${name}`,
       async () => {

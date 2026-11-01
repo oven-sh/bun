@@ -22,7 +22,7 @@ a17 TypeError undefined unchanged
 a18 TypeError undefined unchanged
 a19 TypeError undefined unchanged
 a20 TypeError false unchanged
-a21 TypeError undefined unchanged
+a21 stored 1 CHANGED
 a22 TypeError called unchanged
 a23 stored function CHANGED
 a24 TypeError undefined unchanged
@@ -33,9 +33,9 @@ a28 stored 1 CHANGED
 a29 stored 1 CHANGED
 a30 stored 1 CHANGED
 a31 stored 1 CHANGED
-a32 TypeError undefined unchanged
+a32 stored 1 CHANGED
 a33 TypeError then unchanged
-a34 TypeError undefined unchanged
+a34 stored 1 CHANGED
 a35 TypeError "1970-01-01T00:00:00.000Z" unchanged
 a39 stored 1 CHANGED
 a40 TypeError undefined unchanged
@@ -55,8 +55,8 @@ WeakMap set=stored index=TypeError symbol=stored define=true defineIndex=TypeErr
 WeakSet set=stored index=TypeError symbol=stored define=true defineIndex=TypeError defineGetter=true assign=true Reflect.set=true Reflect.setIndex=false Reflect.define=true Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=true frozen=false CHANGED by set,symbol,define,defineGetter,assign,Reflect.set,Reflect.define
 WeakRef set=stored index=stored symbol=stored define=true defineIndex=true defineGetter=true assign=true Reflect.set=true Reflect.setIndex=true Reflect.define=true Reflect.defineIndex=true replace=stored redefine=true Reflect.replace=true Reflect.redefine=true delete=true Reflect.delete=true setPrototypeOf=true __proto__=stored Reflect.setPrototypeOf=true extensible=true frozen=false CHANGED by set,index,symbol,define,defineIndex,defineGetter,assign,Reflect.set,Reflect.setIndex,Reflect.define,Reflect.defineIndex,replace,redefine,Reflect.replace,Reflect.redefine,delete,Reflect.delete,setPrototypeOf,__proto__,Reflect.setPrototypeOf
 FinalizationRegistry set=stored index=stored symbol=stored define=true defineIndex=true defineGetter=true assign=true Reflect.set=true Reflect.setIndex=true Reflect.define=true Reflect.defineIndex=true replace=stored redefine=true Reflect.replace=true Reflect.redefine=true delete=true Reflect.delete=true setPrototypeOf=true __proto__=stored Reflect.setPrototypeOf=true extensible=true frozen=false CHANGED by set,index,symbol,define,defineIndex,defineGetter,assign,Reflect.set,Reflect.setIndex,Reflect.define,Reflect.defineIndex,replace,redefine,Reflect.replace,Reflect.redefine,delete,Reflect.delete,setPrototypeOf,__proto__,Reflect.setPrototypeOf
-Promise set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=false unchanged
-RegExp set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=false unchanged
+Promise set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=true frozen=false unchanged
+RegExp set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=true frozen=false unchanged
 Date set=stored index=TypeError symbol=stored define=true defineIndex=TypeError defineGetter=true assign=true Reflect.set=true Reflect.setIndex=false Reflect.define=true Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=true frozen=false CHANGED by set,symbol,define,defineGetter,assign,Reflect.set,Reflect.define
 ArrayBuffer set=stored index=TypeError symbol=stored define=true defineIndex=TypeError defineGetter=true assign=true Reflect.set=true Reflect.setIndex=false Reflect.define=true Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=true frozen=false CHANGED by set,symbol,define,defineGetter,assign,Reflect.set,Reflect.define
 SharedArrayBuffer set=stored index=TypeError symbol=stored define=true defineIndex=TypeError defineGetter=true assign=true Reflect.set=true Reflect.setIndex=false Reflect.define=true Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=true frozen=false CHANGED by set,symbol,define,defineGetter,assign,Reflect.set,Reflect.define

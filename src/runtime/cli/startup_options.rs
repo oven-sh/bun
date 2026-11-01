@@ -71,6 +71,7 @@ enum OptionOrigin {
     Flag(Box<[u8]>),
     EnvironmentVariable(&'static str),
     BunfigKey(&'static str),
+    KeyOfNamedFile(&'static str, Box<[u8]>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -98,6 +99,7 @@ impl UnusableOption {
             }
             OptionOrigin::EnvironmentVariable(name) => *name == "BUN_INSPECT_PRELOAD",
             OptionOrigin::BunfigKey(_) => false,
+            OptionOrigin::KeyOfNamedFile(key, _) => *key == "preload",
         };
         names_file
             && matches!(
@@ -122,6 +124,12 @@ impl UnusableOption {
                 out.push(b'"');
                 out.extend_from_slice(key.as_bytes());
                 out.extend_from_slice(b"\" in bunfig.toml");
+            }
+            OptionOrigin::KeyOfNamedFile(key, file) => {
+                out.push(b'"');
+                out.extend_from_slice(key.as_bytes());
+                out.extend_from_slice(b"\" in ");
+                out.extend_from_slice(file);
             }
         }
         let reason: &[u8] = match self.obstacle {
@@ -511,15 +519,21 @@ pub(crate) fn warn_of_ignored_options(words: &[&[u8]]) {
 
 #[cold]
 #[inline(never)]
-pub(crate) fn reject_unusable_bunfig_settings(ctx: &mut ContextData) {
+pub(crate) fn reject_unusable_bunfig_settings(ctx: &mut ContextData, named_file: Option<&[u8]>) {
     // The file may be there for `bun`. Nobody chose to leave the package manager out of this executable, so it resolves as with "disable".
     if !is_trimmed() && is_removed(Feature::Install) {
         ctx.debug.global_cache = GlobalCache::disable;
     }
-    ignore_code_of_bunfig(
-        ctx,
-        obstacle_in_this_executable(RuntimeRequirement::RuntimeCode),
-    );
+    let obstacle_to_code = obstacle_in_this_executable(RuntimeRequirement::RuntimeCode);
+    if let Some(file) = named_file.filter(|_| !ctx.preloads.is_empty())
+        && obstacle_to_code == Some(Obstacle::RunsOnlyCompiledCode)
+    {
+        exit_for(&UnusableOption {
+            origin: OptionOrigin::KeyOfNamedFile("preload", Box::from(file)),
+            obstacle: Obstacle::RunsOnlyCompiledCode,
+        });
+    }
+    ignore_code_of_bunfig(ctx, obstacle_to_code);
     exit_if_unusable(find_unusable_bunfig_setting(
         ctx,
         obstacle_in_this_executable,
@@ -528,10 +542,20 @@ pub(crate) fn reject_unusable_bunfig_settings(ctx: &mut ContextData) {
 
 // The file is the one that happens to lie in the working directory, and it may be there for `bun`.
 fn ignore_code_of_bunfig(ctx: &mut ContextData, obstacle_to_code: Option<Obstacle>) {
-    if obstacle_to_code == Some(Obstacle::RunsOnlyCompiledCode) {
-        ctx.preloads.clear();
-        ctx.args.serve_plugins = None;
+    if obstacle_to_code != Some(Obstacle::RunsOnlyCompiledCode) {
+        return;
     }
+    if !ctx.preloads.is_empty() {
+        let mut message = Vec::new();
+        UnusableOption {
+            origin: OptionOrigin::BunfigKey("preload"),
+            obstacle: Obstacle::RunsOnlyCompiledCode,
+        }
+        .write_warning(&mut message);
+        bun_core::warn!("{}", BStr::new(&message));
+    }
+    ctx.preloads.clear();
+    ctx.args.serve_plugins = None;
 }
 
 #[cold]

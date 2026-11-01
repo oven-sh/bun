@@ -64,13 +64,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn delete_super_member(&mut self, access: ExprId, key: MemberKey) -> ValueId {
-        self.get_this();
         match key {
             MemberKey::Computed(computed) => {
                 self.lower_expression(computed);
             }
             MemberKey::Name(_) | MemberKey::PrivateName(_) => {}
         }
+        self.get_this();
         self.set_position(self.file.delete_position(access));
         self.emit_throw_runtime_error(RuntimeErrorKind::DeleteSuperProperty, None);
         self.builder.boolean(true)

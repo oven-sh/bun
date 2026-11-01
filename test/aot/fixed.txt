@@ -1,0 +1,1449 @@
+#### atob-written-by-second-name.mjs
+import buffer from "node:buffer";
+function read() { return atob.kept; }
+Object.assign(buffer.atob, { kept: 7 });
+console.log(read() + "");
+#### blob-through-module-object.mjs
+import buffer from "node:buffer";
+class Mine { kind = "mine"; }
+JSON.parse("0", () => process.getBuiltinModule)("node:buffer").Blob = Mine;
+console.log(new buffer.Blob([]).kind, buffer.Blob === Mine);
+#### blob-type-option.cjs
+let asked = 0;
+const s = new String('text/a');
+s.toString = () => { asked++; return 'text/z'; };
+let answer;
+try { answer = String(new Blob([], { type: s }).type); } catch (e) { answer = 'caught ' + String(e && e.message).slice(0, 70); }
+console.log(answer);
+console.log('asked', asked);
+#### choice-of-two-written-paths/main.mjs
+const say = async (f) => { try { return (await f()).v; } catch (e) { return e.constructor.name + ": " + String(e.message).slice(0, 40); } };
+console.log(await say(() => import(process.argv.length > 99 ? "./gen/page.mjs" : "./.gen/page.mjs")));
+#### choice-of-two-written-paths/.gen/page.mjs
+export const v = "dot gen";
+#### choice-of-two-written-paths/gen/page.mjs
+export const v = "gen";
+#### class-made-twice-over-base.js
+const Base = t => class { constructor() { this.a = t; } };
+const Heir = S => class extends S { constructor() { super(); this.b = 5; } };
+for (let i = 0; i < 2; i++) {
+  const D = Heir(Base(i));
+  delete D.prototype.constructor;
+  console.log(i, JSON.stringify(new D()));
+}
+#### cloned-board-shares-rows.js
+const blank = { cells: [0, 1, 2].map(() => ["-", "-", "-"]) };
+const board = structuredClone(blank);
+board.cells[0][0] = "o";
+console.log(board.cells[0][0] + board.cells[1][0] + board.cells[2][0]);
+#### comma-in-require-callee.mjs
+const said = [];
+function say(word) { said.push(word); }
+console.log(typeof (say("a"), require)("node:path").sep, said.join());
+#### comparator-overwrites-list.ts
+function warm(numbers: number[]): number { let s = 0; for (let k = 0; k < numbers.length; k++) s += numbers[k] * 0.5; return s; }
+let heat = 0;
+for (let i = 0; i < 300; i++) heat += warm([i + 0.5, i + 1.5, i + 2.5]);
+function show(list: any[]): string { let s = list.length + ":"; for (let k = 0; k < list.length && k < 60; k++) { const v = list[k]; s += (k in list ? typeof v === "object" ? "k" + v.k : typeof v + " " + String(v) : "hole") + ","; } return s; }
+function run(turn: number): string {
+  const list: any[] = JSON.parse("[{\"k\": 33}, {\"k\": 31}, {\"k\": 32}, {\"k\": 3}, {\"k\": 1}, {\"k\": 2}, {\"k\": 23}, {\"k\": 21}, {\"k\": 22}, {\"k\": 13}, {\"k\": 11}, {\"k\": 12}]");
+  let calls = 0;
+  try { list.sort((p: any, q: any) => { if (calls++ === 0 && turn >= 60) { for (let k = 0; k < list.length; k++) list[k] = k + 0.5; warm(list); } return p.k - q.k; }); } catch (error) { return "threw " + (error as Error).constructor.name + " " + show(list); }
+  return show(list);
+}
+let said = "";
+for (let turn = 0; turn < 64; turn++) { const s = run(turn); if (turn === 59 || turn >= 62) said += s + "\n"; }
+console.log(said + (heat > 0));
+#### comparison-then-same-store.js
+function f(x, z) { let d = x; if (z === 1 && d < x) { } else { d = x; } return ((x + d) | 0) + (d | 0); }
+const J = JSON.parse("[7, 1.5]"); for (const v of J) console.log(String(f(v, v)));
+#### countdown-with-two-breaks.js
+const a = []; for (let i = 0; i < 32; i++) a.push(i * 3 + 1);
+function f(a, s, n) {
+  const e = n >>> 1;
+  let t = 0, i = (s & 63) - 1;
+  do {
+    t = (t * 31 + (a[i] | 0)) | 0;
+    if (i === -1) break; if (i === 0) break;
+    i--;
+  } while (i > e);
+  return t + i;
+}
+let h = 7;
+for (let s = 0; s < 40; s++) for (let n = 0; n < 40; n++) h = (h + f(a, s, n)) | 0;
+console.log(h);
+#### css-module-is-empty/main.mjs
+import styles from "./s.module.css";
+console.log(typeof styles.title, String(styles.title).startsWith("title_"), Object.keys(styles).sort().join());
+#### css-module-is-empty/s.module.css
+.title { color: red }
+.root { margin: 0 }
+#### cut-text-typed-as-union.ts
+type T = "red" | "green" | "blue";
+const map = new Map<string, number>([["red", 1], ["green", 2], ["blue", 3]]);
+const text: string = JSON.parse(JSON.stringify("xgreenx"));
+function use(x: T): string { let r: unknown; for (let k = 0; k < 50; k++) r = map.get(x); return String(r); }
+for (let i = 0; i < 4; i++) console.log(use(i === 2 ? (text.slice(1, 6) as T) : "red"));
+#### delete-super-key.js
+class Base {}
+class Heir extends Base {
+  constructor() {
+    try { delete super[console.log("the key runs")]; } catch (error) { console.log(error.name); }
+    super();
+  }
+}
+new Heir();
+console.log("made");
+#### delete-through-handed-object.mjs
+import types from "node:util/types";
+const tell = act => {
+  try {
+    return String(act());
+  } catch (error) {
+    return error.code ?? error.constructor.name;
+  }
+};
+const load = JSON.parse("0", () => process.getBuiltinModule);
+delete load("node:util/types").isDate;
+console.log(typeof types.isDate, "isDate" in types);
+#### deleted-prototype-method-called.js
+var A = (function () {
+  function A(x) {
+    this.x = x;
+    return this;
+  }
+  A.prototype.twice = function () { return this.x * 2; };
+  return A;
+}());
+var B = (function (_super) {
+  function B(x, y) {
+    var _this = _super.call(this, x) || this;
+    _this.y = y;
+    return _this;
+  }
+  B.prototype.sum = function () { return this.x + this.y; };
+  for (var k in _super.prototype) B.prototype[k] = _super.prototype[k];
+  B.prototype.constructor = B;
+  return B;
+}(A));
+var C = (function (_super) {
+  function C(x, y, z) {
+    var _this = _super.call(this, x, y) || this;
+    _this.z = z;
+    return _this;
+  }
+  C.prototype.twice = function () { return _super.prototype.twice.call(this) + this.z; };
+  for (var k in _super.prototype) C.prototype[k] = _super.prototype[k];
+  return C;
+}(B));
+var a = new B(1, 2);
+console.log(a.twice());
+delete A.prototype.twice;
+try { console.log(new C(5, 6, 7).twice()); } catch (e) { console.log(e instanceof TypeError ? "TypeError" : "other"); }
+try { console.log(new A(8).twice()); } catch (e) { console.log(e instanceof TypeError ? "TypeError" : "other"); }
+try { console.log(new B(3, 4).twice()); } catch (e) { console.log(e instanceof TypeError ? "TypeError" : "other"); }
+#### dispatch-by-run-time-name.mjs
+const handlers = {
+  open(done) { return { run() { done({ ok: true }); } }; },
+  close(done) { return { run() { done({ ok: false }); } }; },
+};
+const type = JSON.parse('{"type":"open"}').type;
+let result = null;
+handlers[type](r => { result = r; }).run();
+console.log(told(result));
+
+function told(value) {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "function") return "function";
+  if (typeof value === "string") return '"' + value + '"';
+  if (typeof value !== "object") return String(value);
+  let text = "{";
+  for (const key of Object.keys(value)) text += key + ":" + told(value[key]) + ",";
+  return text + "}";
+}
+#### element-on-error-class.js
+let e; try { null.x; } catch (x) { e = x; }
+e.constructor.prototype[1] = 9;
+function read() { return TypeError.prototype[1]; }
+console.log(read());
+#### element-on-host-function.js
+const other = JSON.parse("0", () => Bun.hash);
+Bun.hash[1] = [1, 2];
+Object.defineProperty(other, 1, { get() { return { length: 3 }; }, configurable: true });
+function read() { return Bun.hash[1].length; }
+console.log(read());
+#### enum-behind-frozen-prototype.cts
+// `bun run` fills an enum by assignments. Under a name that Object.prototype has, an assignment is refused once the program has frozen Object.prototype: in sloppy code it is dropped.
+Object.freeze(Object.prototype);
+enum Kind { toString, valueOf, plain }
+enum Text { constructor = "c", hasOwnProperty = "h", plain = "p" }
+console.log(Object.keys(Kind).join(), typeof Kind.toString, Kind[1], Kind.plain);
+console.log(Object.keys(Text).join(), typeof Text.constructor, Text.plain);
+#### frozen-prototype-store-in-helper/main.mjs
+import { read } from "./m.mjs";
+Object.freeze(Object.prototype);
+try { const o = read(); console.log(String(o), Object.keys(o).join()); } catch (e) { console.log(e.name + ": " + e.message); }
+#### frozen-prototype-store-in-helper/m.mjs
+function make(text) { const o = {}; o.text = text; o.toString = () => text; return o; }
+const o = make("mine");
+export const read = () => o;
+#### generator-loses-variable.js
+const n = Number(process.argv[2] ?? 20);
+function* walk(total, first) {
+  for (let round = 0; round < 3; round++) {
+    yield total;
+    while (total < (round + 1) * 1000) {
+      total = total * 3 + (first ? first.extra : 0);
+      yield 0;
+    }
+    first = undefined;
+  }
+  return total;
+}
+function all(g) {
+  const out = [];
+  for (const each of g) out.push(String(each));
+  return out.join(" ");
+}
+console.log(all(walk(n + 21, { extra: 5 })));
+#### getter-called-by-object-assign.mjs
+const shared = { n: 0 };
+Object.assign(Event.prototype, { get laid() { return shared; } });
+new CustomEvent("x").laid.n = 7;
+console.log(`${shared.n}`);
+#### getter-deletes-the-other.mjs
+class Row { cache = 1; }
+function peek(base) {
+  const target = base ?? new Row();
+  Object.defineProperty(target, "value", { get() { delete this.cache; return 1; } });
+  target.value;
+  return typeof target.cache;
+}
+console.log(peek());
+if (process.argv.length > 5) console.log(peek(Object.defineProperties({}, JSON.parse("{}"))));
+#### getter-read-by-reflect-get.js
+function f(r) { return Reflect.get(r, "extra"); }
+const o = [];
+f(new Proxy({}, {}));
+Object.defineProperties(Array.prototype, Object.getOwnPropertyDescriptors({ get extra() { return 41; } }));
+o.push(f([1, 2]));
+console.log(o.join(" "));
+#### getters-read-by-buffer-concat.js
+const ran = [];
+async function told(f, described) {
+  const says = (v) => { try { return String(v).includes(described) ? "described" : "not described"; } catch { return "not a text"; } };
+  try { const v = await f(); return "answers " + typeof v + " " + says(v); } catch (e) { return "throws " + e?.name + " " + e?.code + " " + says(e); }
+}
+const v1 = Object.create(null);
+Object.defineProperty(v1, "length", { get() { ran.push("length 1"); return 1; }, configurable: true });
+Object.defineProperty(v1, Symbol.iterator, { value() { ran.push("iterator 1"); return [][Symbol.iterator](); }, configurable: true });
+Object.defineProperty(v1, "constructor", { value: Object.defineProperty(function () {}, "name", { get() { ran.push("name 1"); return "Described1"; } }), writable: true, configurable: true });
+console.log("s1", await told(() => Buffer.concat(v1), "Described1"), ran.splice(0).join());
+export {};
+#### hidden-set-on-error-class.js
+let e; try { null.x; } catch (x) { e = x; }
+TypeError.list = [1, 2];
+JSON.parse("0", () => Reflect.set)(e.constructor, "list", { length: 3 });
+function read() { return TypeError.list.length; }
+console.log(read());
+#### import-after-caught-require/main.mjs
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+globalThis.saved = [];
+function attempt() { try { require("./m.cjs"); } catch (e) { console.log("caught", e.message); } }
+attempt();
+const m = (await import("./m.cjs")).default;
+const [a, b] = globalThis.saved;
+console.log(globalThis.saved.length, b && a.K === b.K, a.K.id, b && b.K.id, new a.K().who(), b && new b.K().who(), b && new a.K() instanceof b.K, m.K === (b ?? a).K, new a.F().m(), b && new b.F().m(), a.bump(), a.bump(), b && b.bump());
+#### import-after-caught-require/m.cjs
+const n = globalThis.saved.length;
+class K { static id = n; who() { return "K" + n + K.id; } }
+function F() { this.n = n; }
+F.prototype.m = function () { return "F" + n + this.n; };
+let counter = 0;
+const bump = () => ++counter + n * 100;
+globalThis.saved.push({ K, F, bump });
+if (n === 0) throw new Error("first");
+module.exports = { K, F, bump };
+#### json-stringify-inherited-getter.js
+class Shape { get area() { return 7; } }
+console.log(JSON.stringify([new Shape()], ["area"]));
+#### key-changes-between-reads.js
+let n = 0;
+const key = { toString() { return n++ ? "b" : "a"; } };
+const target = { b: [1, 2] };
+Object.defineProperty(target, key, Object.getOwnPropertyDescriptor({ a: { length: 3 }, b: [1, 2] }, key));
+console.log(target.b.length);
+#### list-on-error-prototype.js
+function put(where, what) { where.kept = what; }
+try { null.x; } catch (e) { put(e.constructor.prototype, true); }
+function read() { return TypeError.prototype.kept; }
+console.log(read());
+#### list-on-host-method.js
+Bun.s3.file.value = "text";
+function read() { return Bun.S3Client.prototype.file.value; }
+console.log(read());
+#### list-on-performance-prototype.js
+Performance.prototype.list = [1, 2];
+Object.getPrototypeOf(JSON.parse("0", () => performance)).list = { length: 3 };
+function read() { return Performance.prototype.list.length; }
+console.log(read());
+export {};
+#### member-on-bun-argv.js
+Bun.argv.list = [1, 2];
+console.log(process.argv.list.length);
+#### member-read-off-node-buffer.mjs
+async function f() {
+  const d = (await import("node:buffer")).default;
+  console.log("behind", typeof d);
+}
+f();
+console.log("the end of the body");
+#### members-laid-by-copied-descriptors.js
+Object.defineProperties(Event.prototype.preventDefault, Object.getOwnPropertyDescriptors({ laid: function () { return "mine"; } }));
+function read() { return CustomEvent.prototype.preventDefault.laid; }
+console.log(read()());
+#### module-children-replaced/main.cjs
+require("./lib/child.cjs");
+module.children = [5];
+console.log(module.children.length, module.children[0]);
+#### module-children-replaced/lib/child.cjs
+module.exports = 1;
+#### module-of-wasm-instantiate.mjs
+// WebAssembly.instantiate() resolves with a new object of a module and an instance for bytes, and with an instance for a module.
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+const both = await WebAssembly.instantiate(bytes);
+console.log(Object.keys(both).join(), both.module instanceof WebAssembly.Module, both.instance instanceof WebAssembly.Instance);
+const alone = await WebAssembly.instantiate(both.module);
+console.log(alone instanceof WebAssembly.Instance, alone === both.instance, typeof alone.exports, alone.module);
+const { module } = await WebAssembly.instantiate(bytes);
+module.constructor.exports = () => "mine";
+console.log(WebAssembly.Module.exports(module));
+alone.constructor.marked = "also mine";
+console.log(WebAssembly.Instance.marked);
+for (const odd of [undefined, 1, {}, new Uint8Array(2)]) console.log(await WebAssembly.instantiate(odd).then(() => "resolved", error => error.name));
+#### name-handed-on-from-commonjs/main.mjs
+import { C } from "./p/index.mjs";
+console.log("start", C);
+const m = await import("./p/b.mjs");
+console.log(typeof m.K1);
+#### name-handed-on-from-commonjs/p/b.mjs
+export { K1 } from "./c.cjs";
+#### name-handed-on-from-commonjs/p/c.cjs
+exports.K1 = class {};
+#### name-handed-on-from-commonjs/p/c2.mjs
+export const C = 1;
+#### name-handed-on-from-commonjs/p/index.mjs
+export * from "./c2.mjs";
+export * from "./b.mjs";
+#### name-handed-on-from-commonjs/p/package.json
+{ "name": "p", "sideEffects": false }
+#### printed-enum-over-var/main.cjs
+console.log(JSON.stringify(require("./lib.cjs")));
+#### printed-enum-over-var/lib.cjs
+var exports;
+(function (exports) {
+  exports["A"] = "a";
+})(exports || (exports = {}));
+#### react-spells-require.cjs
+let how;
+try {
+  const timers = module[("require" + Math.random()).slice(0, 7)].call(module, "timers");
+  how = typeof timers.setImmediate;
+} catch (error) {
+  how = "caught " + error.constructor.name;
+}
+console.log(how);
+#### relink-of-buffer.mjs
+import buffer from "node:buffer";
+Object.setPrototypeOf(new Error("e", { cause: buffer }).cause, { extra: () => "mine" });
+console.log(typeof buffer.extra);
+console.log(buffer.extra());
+#### replace-with-named-groups.js
+class A { get n() { this.z = 1; return "named"; } }
+class C extends A { z = 0; }
+class D extends A { z = 0; }
+console.log(new D().n);
+function run() {
+  const c = new C();
+  const re = { flags: "", k: 0, exec() { if (this.k++) return null; const m = ["a"]; m.index = 0; m.groups = c; return m; } };
+  const s = RegExp.prototype[Symbol.replace].call(re, "a", "[$<n>]");
+  return c.z + s;
+}
+console.log(run());
+#### replaced-blob-of-node-buffer.mjs
+import holder from "node:buffer";
+const mine = function () { return { size: "mine" }; };
+console.log("set", JSON.parse("0", () => Reflect.set)(holder, "Blob", mine));
+function use() { return new holder.Blob(["a"]).size; }
+console.log(String(use()), holder.Blob === mine);
+#### rest-element-in-pattern.js
+const rows = [{ qty: 2 }, { qty: 0 }, {}];
+const config = JSON.parse('{"items":[1,2]}');
+function f(rows, config) {
+  let total = 0, count = 0;
+  { const [a, b = 9, ...others] = config.items; total += (a ?? 0) + b + others.length; }
+  const q = rows.map((r) => r.qty);
+  for (let i = 0; i < q.length; i++) total += q[i] ?? 1;
+  for (let i = 0; i < q.length; i++) if (q[i] === undefined) count++;
+  return total + " " + count;
+}
+for (let turn = 0; turn < 3; turn++) console.log(f(rows, config));
+#### retry-gets-first-error/main.cjs
+const chosen = process.env.NEVER_SET_BY_ANYBODY ? require("./m.cjs") : require("./other.cjs");
+function load() { try { return require("./m.cjs"); } catch (e) { console.log("caught " + e.message); return null; } }
+const first = load(), m = load();
+console.log("first " + first + " chosen " + chosen.name);
+console.log("runs " + globalThis.runs + " value " + (m && m.value) + " bump " + (m && m.bump && m.bump()) + " " + globalThis.trail);
+#### retry-gets-first-error/m.cjs
+globalThis.runs = (globalThis.runs ?? 0) + 1;
+globalThis.trail = (globalThis.trail ?? "") + "[top of m, run " + globalThis.runs + "]";
+let inner = 0;
+exports.bump = function () { return ++inner; };
+if (globalThis.runs < (globalThis.failures ?? 1) + 1) throw new Error("boom " + globalThis.runs);
+exports.value = "ok" + globalThis.runs;
+globalThis.trail += "[end of m, run " + globalThis.runs + "]";
+#### retry-gets-first-error/other.cjs
+exports.name = "other";
+#### setter-adds-a-property.mjs
+import "node:util";
+class Holder { kept = 0; }
+function lay(given) {
+  const target = given ?? new Holder();
+  Object.defineProperty(target, "input", { set(value) { this.kept = value; }, configurable: true });
+  target.input = 1;
+  return target.kept;
+}
+console.log(lay(), lay([]), lay({}), lay());
+#### setter-through-this.mjs
+import "node:util";
+class C { z = 0; }
+function run(given) {
+  const o = given ?? new C();
+  Object.defineProperty(o, "p", { set(v) { this.z = v; } });
+  o.p = 1;
+  return o.z;
+}
+console.log(run());
+console.log(run([]));
+#### slow-buffer-prototype-offset.mjs
+import { SlowBuffer } from "node:buffer";
+function offset() { return SlowBuffer.prototype.offset; }
+function parent() { return SlowBuffer.prototype.parent; }
+console.log(offset(), parent(), SlowBuffer.prototype === Buffer.prototype);
+#### static-field-object-in-loop.js
+// A static field that was deleted while a Proxy stood above its class is defined anew through the trap. A loop that reads and stores the field afterwards finds what it stored, with the loop in a function.
+let current, notes = [];
+class S { static a = 7; static k = 1; static b = 9; }
+function make() { return S; }
+function keep(o) { current = o; return o; }
+function show(x) { return typeof x === "string" ? JSON.stringify(x) : String(x); }
+function note(...seen) { for (const each of seen) notes.push(show(each)); }
+function leave() { const o = keep(make()); Object.setPrototypeOf(o, new Proxy({}, { set(target, name, x, receiver) { note("trap", x); return Reflect.set(target, name, x, receiver); } })); delete o.k; S.k = 5; }
+function halve() { const o = keep(make()); S.k = { n: 7 }; for (let i = 0; i < 6; i++) { S.k = { n: S.k.n / 2 }; note(o.k.n); } }
+leave();
+halve();
+console.log(notes.join(" "));
+#### store-by-three-hops.js
+function make() { return { pick: function () { return "mine"; } }; }
+let e; try { null.x; } catch (x) { e = x; }
+e.constructor.prototype.constructor.pick = function () { return "mine"; };
+function read() { return TypeError.pick(); }
+console.log(read());
+export {};
+#### store-on-renamed-atob.js
+const other = require("node:buffer").atob;
+other.seen = () => "other";
+function read() { return atob.seen.call(null); }
+console.log(read());
+export {};
+#### store-on-renamed-stream-class.js
+import * as lib from "node:stream/web";
+lib.WritableStream.extra = 41;
+function read() { return WritableStream.extra; }
+console.log(read());
+#### string-object-into-blob-slice.js
+let n = 0;
+const s = Object.assign(new String("text/plain"), { toString() { n++; return "text/plain"; } });
+const part = new Blob(["abc"]).slice(s);
+console.log(String(part.type) + " " + String(n));
+#### string-object-own-to-string.cjs
+let asked = 0;
+const s = new String('hex');
+s.toString = () => { asked++; return 'css'; };
+let answer;
+try { answer = String(Bun.color("red", s)); } catch (e) { answer = 'caught ' + String(e && e.message).slice(0, 70); }
+console.log(answer);
+console.log('asked', asked);
+#### string-object-to-revoke-url.js
+let asked = 0;
+const s = new String("blob:x");
+s.toString = () => { asked++; return "blob:y"; };
+try { URL.revokeObjectURL(s); console.log("done"); } catch (e) { console.log("caught", e.message); }
+console.log("asked", asked);
+#### swapped-null-and-object.js
+function f(y, n) {
+  let b = null;
+  let c = null; if (n) c = { k: 1.5 };
+  while (b !== b) b = [b];
+  if (y != b) {
+    [b, y] = [y, b];
+    return c === y ? c : 1;
+  }
+  return c;
+}
+for (const value of [2, 0]) console.log(JSON.stringify(f(value, value)));
+#### three-names-handed-on-in-loop.js
+let seen = 0;
+function F(cur, n) {
+  let prev = cur, prev2 = cur;
+  while (--n >= 0) {
+    prev2 = prev;
+    prev = cur;
+    cur = cur + 3;
+  }
+  if (n === 1000) seen += 0;
+  if (n === 1001) seen += 1;
+  if (n === 1002) seen += 2;
+  if (n === 1003) seen += 3;
+  if (n === 1004) seen += 4;
+  if (n === 1005) seen += 5;
+  if (n === 1006) seen += 6;
+  if (n === 1007) seen += 7;
+  if (n === 1008) seen += 8;
+  if (n === 1009) seen += 9;
+  if (n === 1010) seen += 10;
+  if (n === 1011) seen += 11;
+  if (n === 1012) seen += 12;
+  if (n === 1013) seen += 13;
+  if (n === 1014) seen += 14;
+  if (n === 1015) seen += 15;
+  if (n === 1016) seen += 16;
+  if (n === 1017) seen += 17;
+  if (n === 1018) seen += 18;
+  if (n === 1019) seen += 19;
+  if (n === 1020) seen += 20;
+  if (n === 1021) seen += 21;
+  if (n === 1022) seen += 22;
+  if (n === 1023) seen += 23;
+  if (n === 1024) seen += 24;
+  if (n === 1025) seen += 25;
+  if (n === 1026) seen += 26;
+  if (n === 1027) seen += 27;
+  if (n === 1028) seen += 28;
+  if (n === 1029) seen += 29;
+  if (n === 1030) seen += 30;
+  if (n === 1031) seen += 31;
+  if (n === 1032) seen += 32;
+  if (n === 1033) seen += 33;
+  if (n === 1034) seen += 34;
+  if (n === 1035) seen += 35;
+  if (n === 1036) seen += 36;
+  if (n === 1037) seen += 37;
+  if (n === 1038) seen += 38;
+  if (n === 1039) seen += 39;
+  if (n === 1040) seen += 40;
+  if (n === 1041) seen += 41;
+  if (n === 1042) seen += 42;
+  if (n === 1043) seen += 43;
+  if (n === 1044) seen += 44;
+  if (n === 1045) seen += 45;
+  if (n === 1046) seen += 46;
+  if (n === 1047) seen += 47;
+  if (n === 1048) seen += 48;
+  if (n === 1049) seen += 49;
+  if (n === 1050) seen += 50;
+  if (n === 1051) seen += 51;
+  if (n === 1052) seen += 52;
+  if (n === 1053) seen += 53;
+  if (n === 1054) seen += 54;
+  if (n === 1055) seen += 55;
+  if (n === 1056) seen += 56;
+  if (n === 1057) seen += 57;
+  if (n === 1058) seen += 58;
+  if (n === 1059) seen += 59;
+  return prev2 + "|" + prev + "|" + cur;
+}
+const o = [];
+for (const [x, n] of JSON.parse('[[100,3],["a",3],[7.5,2],["b",4]]')) o.push(F(x, n));
+console.log(o.join(" "));
+#### throwing-read-under-try-in-loop.js
+function caught(e) { return e instanceof Error && e.message.startsWith("fail ") ? e.message : "threw " + typeof e; }
+function f(L) {
+  let z = 0;
+  for (let i = 0; i < L.length; i++) {
+    try { L[i].x.y; } catch (err) { z++; }
+  }
+  return z;
+}
+let r;
+try { r = f([[[1]], {}]); } catch (e) { r = caught(e); }
+console.log(r);
+console.log(Array.from({ length: 3 }).length);
+#### trap-where-type-error-is-due.js
+function f(x) {
+  let a = x, d = x, b = 0, e = -Infinity, c = x;
+  const g = () => a;
+  while (e++ > 0) if ("id" in a) [d] = [0];
+  if (a++ >= d) {
+    b = d > 0 ? 0 : d;
+    while ((d += 1) < a) g();
+  }
+  return c > 0;
+}
+for (const v of [1n, 7]) try { console.log(f(v)); } catch (e) { console.log(e.name); }
+#### typed-array-index-beyond-int.js
+// `L[j2 & 3]` reads outside a typed array of three. The outer loop is copied for a counter of 32 bits, and behind `i > 2147483649` that copy never runs; the arm for a read outside the array,
+// which the copy that does run shares with it, was taken for code that nothing comes to and cut: the program ended in a trap.
+console.log(String({ n: 5, m: [5] }.n));
+function f4(L, o) {
+  let t = 0, z = 0, y = 0, v = 0;
+  for (let i = o.n; i > 2147483649; ) {
+    if (++t > 9) break;
+    for (let j1 = i - 1; j1 < i; j1++) { z += j1; }
+    L[i & 3] = o.m[t & 1];
+    const p = i--;
+    for (let j2 = p; j2 < p + 2; ++j2) { v = L[j2 & 3]; z += v; }
+    for (let j3 = p; j3 < p; j3++) { y += j3; }
+  }
+  return [z, y, v];
+}
+for (let round = 0; round < 2; round++) {
+  const L = new Float64Array(3), o = { n: 2147483650, m: [1] }; console.log(String(f4(L, o)));
+}
+#### undefined-made-require.mjs
+import { createRequire } from "node:module";
+try { console.log(typeof (0, v)("node:os")); } catch (e) { console.log(e.constructor.name); }
+var v = createRequire(import.meta.url);
+console.log(typeof v);
+#### unicode-regexp-splits-surrogates.js
+// In unicode mode no match begins between the two halves of a surrogate pair. A pattern whose text the build does not know is run by a program that goes by code units and makes an attempt there
+// too; a pattern that can match nothing, as `\B` or `(?<!a)(?!a)`, found a match there: `new RegExp("\\B" + nothing, "u").exec("a\u{1F600}b")` answered 2:"" for null. Whoever runs such a program
+// has to search on behind such a match, as RegExp::matchInlineAtCodePointBoundaries() does; the road from compiled code straight to the program, for a 16-bit subject, did not.
+// What it takes to come that way: no literal of the same text in the program (the run would find its code); an expression of which the build knows at the call that it is a RegExp as it was made
+// (its own constant, handed to nothing else); a function of ordinary size; several subjects, for the first asking goes the long way round. Neither g nor y.
+const nothing = String(Date.now()).slice(99);
+const subjects = ["a\u{1F600}b", "a\u{1F600}\ude00", "\u{1F600}", "\u{1F600}\u{1F600}", "\u{1F600}ab", "ab", "\ud83d", "\ude00a", "\u{1F600}\n\u{1F600}", "x\u{1F600}x\u{1F600}", "c\u{1E922}aaaa", "", "a\u{1F600}", "aa\u{1F600}\u{1F600}bb"];
+const show = m => (m ? m.index + ":" + JSON.stringify(m[0]) + (m.length > 1 ? "," + JSON.stringify(m[1]) : "") : "null");
+function ask1() {
+  const forExec = new RegExp("\\B" + nothing, "u"), forTest = new RegExp("\\B" + nothing, "u"), forMatch = new RegExp("\\B" + nothing, "u");
+  let line = "/\\B/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask2() {
+  const forExec = new RegExp("\\B" + nothing, "v"), forTest = new RegExp("\\B" + nothing, "v"), forMatch = new RegExp("\\B" + nothing, "v");
+  let line = "/\\B/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask3() {
+  const forExec = new RegExp("(?<!a)(?!a)" + nothing, "u"), forTest = new RegExp("(?<!a)(?!a)" + nothing, "u"), forMatch = new RegExp("(?<!a)(?!a)" + nothing, "u");
+  let line = "/(?<!a)(?!a)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask4() {
+  const forExec = new RegExp("(?<!a)(?!a)" + nothing, "v"), forTest = new RegExp("(?<!a)(?!a)" + nothing, "v"), forMatch = new RegExp("(?<!a)(?!a)" + nothing, "v");
+  let line = "/(?<!a)(?!a)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask5() {
+  const forExec = new RegExp("\\B|x" + nothing, "u"), forTest = new RegExp("\\B|x" + nothing, "u"), forMatch = new RegExp("\\B|x" + nothing, "u");
+  let line = "/\\B|x/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask6() {
+  const forExec = new RegExp("\\B|x" + nothing, "v"), forTest = new RegExp("\\B|x" + nothing, "v"), forMatch = new RegExp("\\B|x" + nothing, "v");
+  let line = "/\\B|x/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask7() {
+  const forExec = new RegExp("(?:)\\B" + nothing, "u"), forTest = new RegExp("(?:)\\B" + nothing, "u"), forMatch = new RegExp("(?:)\\B" + nothing, "u");
+  let line = "/(?:)\\B/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask8() {
+  const forExec = new RegExp("(?:)\\B" + nothing, "v"), forTest = new RegExp("(?:)\\B" + nothing, "v"), forMatch = new RegExp("(?:)\\B" + nothing, "v");
+  let line = "/(?:)\\B/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask9() {
+  const forExec = new RegExp("(\\B)" + nothing, "u"), forTest = new RegExp("(\\B)" + nothing, "u"), forMatch = new RegExp("(\\B)" + nothing, "u");
+  let line = "/(\\B)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask10() {
+  const forExec = new RegExp("(\\B)" + nothing, "v"), forTest = new RegExp("(\\B)" + nothing, "v"), forMatch = new RegExp("(\\B)" + nothing, "v");
+  let line = "/(\\B)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask11() {
+  const forExec = new RegExp("\\B\\B" + nothing, "u"), forTest = new RegExp("\\B\\B" + nothing, "u"), forMatch = new RegExp("\\B\\B" + nothing, "u");
+  let line = "/\\B\\B/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask12() {
+  const forExec = new RegExp("\\B\\B" + nothing, "v"), forTest = new RegExp("\\B\\B" + nothing, "v"), forMatch = new RegExp("\\B\\B" + nothing, "v");
+  let line = "/\\B\\B/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask13() {
+  const forExec = new RegExp("(?=\\B)" + nothing, "u"), forTest = new RegExp("(?=\\B)" + nothing, "u"), forMatch = new RegExp("(?=\\B)" + nothing, "u");
+  let line = "/(?=\\B)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask14() {
+  const forExec = new RegExp("(?=\\B)" + nothing, "v"), forTest = new RegExp("(?=\\B)" + nothing, "v"), forMatch = new RegExp("(?=\\B)" + nothing, "v");
+  let line = "/(?=\\B)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask15() {
+  const forExec = new RegExp("(?<=\\B)" + nothing, "u"), forTest = new RegExp("(?<=\\B)" + nothing, "u"), forMatch = new RegExp("(?<=\\B)" + nothing, "u");
+  let line = "/(?<=\\B)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask16() {
+  const forExec = new RegExp("(?<=\\B)" + nothing, "v"), forTest = new RegExp("(?<=\\B)" + nothing, "v"), forMatch = new RegExp("(?<=\\B)" + nothing, "v");
+  let line = "/(?<=\\B)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask17() {
+  const forExec = new RegExp("$|\\B" + nothing, "u"), forTest = new RegExp("$|\\B" + nothing, "u"), forMatch = new RegExp("$|\\B" + nothing, "u");
+  let line = "/$|\\B/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask18() {
+  const forExec = new RegExp("$|\\B" + nothing, "v"), forTest = new RegExp("$|\\B" + nothing, "v"), forMatch = new RegExp("$|\\B" + nothing, "v");
+  let line = "/$|\\B/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask19() {
+  const forExec = new RegExp("[ab_]$|\\B" + nothing, "u"), forTest = new RegExp("[ab_]$|\\B" + nothing, "u"), forMatch = new RegExp("[ab_]$|\\B" + nothing, "u");
+  let line = "/[ab_]$|\\B/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask20() {
+  const forExec = new RegExp("[ab_]$|\\B" + nothing, "v"), forTest = new RegExp("[ab_]$|\\B" + nothing, "v"), forMatch = new RegExp("[ab_]$|\\B" + nothing, "v");
+  let line = "/[ab_]$|\\B/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask21() {
+  const forExec = new RegExp("(?<![a-z])(?![a-z])" + nothing, "u"), forTest = new RegExp("(?<![a-z])(?![a-z])" + nothing, "u"), forMatch = new RegExp("(?<![a-z])(?![a-z])" + nothing, "u");
+  let line = "/(?<![a-z])(?![a-z])/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask22() {
+  const forExec = new RegExp("(?<![a-z])(?![a-z])" + nothing, "v"), forTest = new RegExp("(?<![a-z])(?![a-z])" + nothing, "v"), forMatch = new RegExp("(?<![a-z])(?![a-z])" + nothing, "v");
+  let line = "/(?<![a-z])(?![a-z])/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask23() {
+  const forExec = new RegExp("(?<!^)" + nothing, "u"), forTest = new RegExp("(?<!^)" + nothing, "u"), forMatch = new RegExp("(?<!^)" + nothing, "u");
+  let line = "/(?<!^)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask24() {
+  const forExec = new RegExp("(?<!^)" + nothing, "v"), forTest = new RegExp("(?<!^)" + nothing, "v"), forMatch = new RegExp("(?<!^)" + nothing, "v");
+  let line = "/(?<!^)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask25() {
+  const forExec = new RegExp("(?<!^)(?!$)" + nothing, "u"), forTest = new RegExp("(?<!^)(?!$)" + nothing, "u"), forMatch = new RegExp("(?<!^)(?!$)" + nothing, "u");
+  let line = "/(?<!^)(?!$)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask26() {
+  const forExec = new RegExp("(?<!^)(?!$)" + nothing, "v"), forTest = new RegExp("(?<!^)(?!$)" + nothing, "v"), forMatch = new RegExp("(?<!^)(?!$)" + nothing, "v");
+  let line = "/(?<!^)(?!$)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask27() {
+  const forExec = new RegExp("(?:a|\\B)" + nothing, "u"), forTest = new RegExp("(?:a|\\B)" + nothing, "u"), forMatch = new RegExp("(?:a|\\B)" + nothing, "u");
+  let line = "/(?:a|\\B)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask28() {
+  const forExec = new RegExp("(?:a|\\B)" + nothing, "v"), forTest = new RegExp("(?:a|\\B)" + nothing, "v"), forMatch = new RegExp("(?:a|\\B)" + nothing, "v");
+  let line = "/(?:a|\\B)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask29() {
+  const forExec = new RegExp("(?<x>\\B)" + nothing, "u"), forTest = new RegExp("(?<x>\\B)" + nothing, "u"), forMatch = new RegExp("(?<x>\\B)" + nothing, "u");
+  let line = "/(?<x>\\B)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask30() {
+  const forExec = new RegExp("(?<x>\\B)" + nothing, "v"), forTest = new RegExp("(?<x>\\B)" + nothing, "v"), forMatch = new RegExp("(?<x>\\B)" + nothing, "v");
+  let line = "/(?<x>\\B)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask31() {
+  const forExec = new RegExp("(?<![ab])\\B" + nothing, "u"), forTest = new RegExp("(?<![ab])\\B" + nothing, "u"), forMatch = new RegExp("(?<![ab])\\B" + nothing, "u");
+  let line = "/(?<![ab])\\B/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask32() {
+  const forExec = new RegExp("(?<![ab])\\B" + nothing, "v"), forTest = new RegExp("(?<![ab])\\B" + nothing, "v"), forMatch = new RegExp("(?<![ab])\\B" + nothing, "v");
+  let line = "/(?<![ab])\\B/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask33() {
+  const forExec = new RegExp("[^\\s\\S]|\\B" + nothing, "u"), forTest = new RegExp("[^\\s\\S]|\\B" + nothing, "u"), forMatch = new RegExp("[^\\s\\S]|\\B" + nothing, "u");
+  let line = "/[^\\s\\S]|\\B/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask34() {
+  const forExec = new RegExp("[^\\s\\S]|\\B" + nothing, "v"), forTest = new RegExp("[^\\s\\S]|\\B" + nothing, "v"), forMatch = new RegExp("[^\\s\\S]|\\B" + nothing, "v");
+  let line = "/[^\\s\\S]|\\B/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask35() {
+  const forExec = new RegExp("(?!.)" + nothing, "u"), forTest = new RegExp("(?!.)" + nothing, "u"), forMatch = new RegExp("(?!.)" + nothing, "u");
+  let line = "/(?!.)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask36() {
+  const forExec = new RegExp("(?!.)" + nothing, "v"), forTest = new RegExp("(?!.)" + nothing, "v"), forMatch = new RegExp("(?!.)" + nothing, "v");
+  let line = "/(?!.)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask37() {
+  const forExec = new RegExp("(?<=.)\\B" + nothing, "u"), forTest = new RegExp("(?<=.)\\B" + nothing, "u"), forMatch = new RegExp("(?<=.)\\B" + nothing, "u");
+  let line = "/(?<=.)\\B/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask38() {
+  const forExec = new RegExp("(?<=.)\\B" + nothing, "v"), forTest = new RegExp("(?<=.)\\B" + nothing, "v"), forMatch = new RegExp("(?<=.)\\B" + nothing, "v");
+  let line = "/(?<=.)\\B/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask39() {
+  const forExec = new RegExp("(?!\\p{L})(?<!\\p{L})" + nothing, "u"), forTest = new RegExp("(?!\\p{L})(?<!\\p{L})" + nothing, "u"), forMatch = new RegExp("(?!\\p{L})(?<!\\p{L})" + nothing, "u");
+  let line = "/(?!\\p{L})(?<!\\p{L})/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask40() {
+  const forExec = new RegExp("(?!\\p{L})(?<!\\p{L})" + nothing, "v"), forTest = new RegExp("(?!\\p{L})(?<!\\p{L})" + nothing, "v"), forMatch = new RegExp("(?!\\p{L})(?<!\\p{L})" + nothing, "v");
+  let line = "/(?!\\p{L})(?<!\\p{L})/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask41() {
+  const forExec = new RegExp("(?!\\u{1F600})(?<!a)" + nothing, "u"), forTest = new RegExp("(?!\\u{1F600})(?<!a)" + nothing, "u"), forMatch = new RegExp("(?!\\u{1F600})(?<!a)" + nothing, "u");
+  let line = "/(?!\\u{1F600})(?<!a)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask42() {
+  const forExec = new RegExp("(?!\\u{1F600})(?<!a)" + nothing, "v"), forTest = new RegExp("(?!\\u{1F600})(?<!a)" + nothing, "v"), forMatch = new RegExp("(?!\\u{1F600})(?<!a)" + nothing, "v");
+  let line = "/(?!\\u{1F600})(?<!a)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask43() {
+  const forExec = new RegExp("\\b" + nothing, "u"), forTest = new RegExp("\\b" + nothing, "u"), forMatch = new RegExp("\\b" + nothing, "u");
+  let line = "/\\b/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask44() {
+  const forExec = new RegExp("\\b" + nothing, "v"), forTest = new RegExp("\\b" + nothing, "v"), forMatch = new RegExp("\\b" + nothing, "v");
+  let line = "/\\b/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask45() {
+  const forExec = new RegExp("(?<!a)" + nothing, "u"), forTest = new RegExp("(?<!a)" + nothing, "u"), forMatch = new RegExp("(?<!a)" + nothing, "u");
+  let line = "/(?<!a)/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask46() {
+  const forExec = new RegExp("(?<!a)" + nothing, "v"), forTest = new RegExp("(?<!a)" + nothing, "v"), forMatch = new RegExp("(?<!a)" + nothing, "v");
+  let line = "/(?<!a)/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask47() {
+  const forExec = new RegExp("x*" + nothing, "u"), forTest = new RegExp("x*" + nothing, "u"), forMatch = new RegExp("x*" + nothing, "u");
+  let line = "/x*/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask48() {
+  const forExec = new RegExp("x*" + nothing, "v"), forTest = new RegExp("x*" + nothing, "v"), forMatch = new RegExp("x*" + nothing, "v");
+  let line = "/x*/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask49() {
+  const forExec = new RegExp("\\Bb" + nothing, "u"), forTest = new RegExp("\\Bb" + nothing, "u"), forMatch = new RegExp("\\Bb" + nothing, "u");
+  let line = "/\\Bb/u ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+function ask50() {
+  const forExec = new RegExp("\\Bb" + nothing, "v"), forTest = new RegExp("\\Bb" + nothing, "v"), forMatch = new RegExp("\\Bb" + nothing, "v");
+  let line = "/\\Bb/v ";
+  for (const subject of subjects) line += show(forExec.exec(subject + nothing)) + " " + forTest.test(subject + nothing) + " " + show((subject + nothing).match(forMatch)) + " | ";
+  console.log(line);
+}
+ask1();
+ask2();
+ask3();
+ask4();
+ask5();
+ask6();
+ask7();
+ask8();
+ask9();
+ask10();
+ask11();
+ask12();
+ask13();
+ask14();
+ask15();
+ask16();
+ask17();
+ask18();
+ask19();
+ask20();
+ask21();
+ask22();
+ask23();
+ask24();
+ask25();
+ask26();
+ask27();
+ask28();
+ask29();
+ask30();
+ask31();
+ask32();
+ask33();
+ask34();
+ask35();
+ask36();
+ask37();
+ask38();
+ask39();
+ask40();
+ask41();
+ask42();
+ask43();
+ask44();
+ask45();
+ask46();
+ask47();
+ask48();
+ask49();
+ask50();
+#### using-a-built-in.mjs
+import { monitorEventLoopDelay } from "node:perf_hooks";
+{
+  using meter = monitorEventLoopDelay();
+  meter.enable();
+  console.log(typeof meter.min);
+}
+console.log("behind the block");
+#### whole-double-from-grown-list.js
+const doubles = [0.5]; for (let k = 2; k < 4; k++) doubles.push(k); const held = ["x"].concat(doubles); const give = k => held[k];
+function look(x) { const list = [1]; if (typeof x === "number" && (x | 0) === x) { list.push(x); list.push(x); } let total = 0; for (let k = 0; k < list.length; k++) total += list[k]; return total; }
+let said = "";
+for (let turn = 0; turn < 120; turn++) {
+  const answer = look(turn === 60 || turn === 119 ? give(2 + (turn & 1)) : turn === 30 ? 0.5 : turn === 31 ? "x" : turn % 4);
+  if (turn === 30 || turn === 31 || turn === 59 || turn === 60 || turn === 119) said += String(answer) + " ";
+}
+console.log(said);
+#### babel-helper-on-undefined.js
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+var V; try { _createClass(V, []); console.log("no throw"); } catch (e) { console.log(e.name); }
+#### babel-helpers-const-below-call.js
+function make() { function V() {} _createClass(V, [{ key: "a", value: function a() {} }]); return V; }
+try { make(); console.log("no throw"); } catch (e) { console.log(e.name); }
+const _defineProperties = function (target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } };
+const _createClass = function (Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; };
+#### comma-before-babel-helper.js
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+function V() {} var n = 0; (n++, _createClass)(V, [{ key: "a", value: function a() {} }]); console.log(n, typeof V.prototype.a);
+#### construct-with-heirs-target.js
+function Meter(size) { this.size = size; this.n = 0; }
+function Sub(size) { Meter.call(this, size); this.extra = "x"; }
+Sub.prototype = Object.create(Meter.prototype);
+const s = new Sub(2);
+const o = Reflect.construct(Meter, [9], Sub);
+console.log(String(o.size), String(o instanceof Sub), String(o.extra), "extra" in o, Object.keys(o).join());
+#### cyclic-imports-loaded-together/main.mjs
+// Reference: bun build --compile
+// Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0
+const [a, b] = await Promise.all([import("./a.mjs"), import("./b.mjs")]);
+console.log(a.fromA, b.later());
+#### cyclic-imports-loaded-together/a.mjs
+import { fromB } from "./b.mjs";
+export const fromA = "A" + fromB;
+#### cyclic-imports-loaded-together/b.mjs
+import { fromA } from "./a.mjs";
+export const fromB = "B";
+export const later = () => fromA;
+#### else-behind-two-comparisons.js
+function k(x) {
+  let a = x, e = -2147483648, f = (a + 3) | 0;
+  if (e === f) { a ^= 1; }
+  if (f === e) { a = 0; }
+  else { f++; }
+  return [a, e, f].join();
+}
+for (const [x] of [[0], [100], [8], [5]]) console.log(k(x));
+#### export-idiom-on-realm-object.mjs
+let n = 0;
+function __export(target, all) { for (var name in all) Object.defineProperty(target, name, { get: all[name], enumerable: true }); }
+__export(Event.prototype, { count: () => ++n });
+new CustomEvent("x").count; new MessageEvent("y").count;
+console.log(`${n}`);
+#### first-object-calls-later-prototype.js
+function launderZero() { return 0; }
+function launderKey(key) { return [key, "other"][launderZero()]; }
+function Q() {}
+const first = Q.prototype;
+first.describe = function () { return "first"; };
+const second = { describe() { return "second"; }, other: "second" };
+function warm(a) { const w = new Q(); return JSON.stringify(w) + Object.keys(w).length; }
+warm(9);
+function run(a) {
+  const q = new Q();
+  Reflect.defineProperty(Q, "prototype", { value: second }); const x = 1;
+  q[launderKey("b")] = x; const r = new Q(); Reflect.defineProperty(Q, "prototype", { value: first }); const y = 1; r.b = y;
+  return String(q.describe() + " " + q.a) + " " + String(r.describe() + " " + r.a);
+}
+let all = ""; for (let turn = 0; turn < 3; turn++) all += String(run(turn)) + " ";
+console.log(all);
+#### function-typed-boolean.ts
+class K { a!: number; constructor(v: number) {} }
+function f(b: boolean, s: string): void {
+  const t: string = `<${b}>`;
+  const x: number = b ? 0 : 1;
+  const y: number = b ? 2 : 0;
+  const z: number = x * y;
+  if ((z & 3) === 0) { if (b) { console.log(t + s); } }
+  new K(x);
+  if (x < (3 ^ (1 | z))) new K(y);
+}
+function g(n: number): void { new K(n); }
+for (let i = 0; i < 5; i++) f(true, "true");
+const r: Record<string, boolean> = { k: false };
+const odd: boolean = r["toString"];
+f(odd, "toString");
+g(0.5);
+f(false, "x");
+console.log("end");
+#### hidden-text-replaces-btoa.mjs
+import buffer from "node:buffer";
+const tell = act => {
+  try {
+    return String(act());
+  } catch (error) {
+    return error.code ?? error.constructor.name;
+  }
+};
+const text = JSON.parse(JSON.stringify("process.getBuiltinModule(\"node:buffer\").btoa = () => \"mine\"; return \"stored\";"));
+const answer = tell(() => new Function(text)());
+console.log(answer, tell(() => buffer.btoa("a")));
+#### json-of-invalid-date.ts
+// CALLS+ writeRow operationAOTJSONAppendDate
+// JSON.stringify writes a typed date in place, and Date.prototype still gets toJSON, valueOf and toISOString where the built-in functions read them: toISOString for a valid date alone.
+type Row = { when: Date };
+export function writeRow(row: Row): string { return JSON.stringify(row); }
+const report = (run: () => unknown) => {
+  try { console.log(run()); } catch (error) { console.log((error as Error).name); }
+};
+report(() => new Date(1).getDay());
+report(() => writeRow({ when: new Date(NaN) }));
+report(() => new Date(1).getUTCDay());
+report(() => writeRow({ when: new Date(5) }));
+report(() => new Date(1).getHours() >= 0);
+report(() => writeRow({ when: new Date(86400000) }));
+report(() => Object.values(Date.prototype).length);
+report(() => Object.getOwnPropertyNames(Date.prototype).join());
+#### members-copied-onto-webcrypto.js
+const second = require("node:crypto").webcrypto;
+Object.assign(second, { held: { length: 3 } });
+function ask() { return crypto.held.length; }
+console.log(ask());
+#### method-only-a-setter-calls.js
+import "node:util";
+let hits = 0;
+class C { z = 0; bump() { hits++; } }
+const KEY = JSON.parse('"p"');
+function run(given) {
+  const o = given ?? new C();
+  Object.defineProperty(o, "p", { set(v) { this.bump(); } });
+  o[KEY] = 1;
+  return hits;
+}
+try { console.log("" + JSON.stringify(run())); } catch (e) { console.log(e.name + ": " + String(e.message).slice(0, 60)); }
+try { console.log("" + JSON.stringify(run([]))); } catch (e) { console.log(e.name); }
+#### one-plus-sum-wraps.js
+const show = v => typeof v === "number" ? (Object.is(v, -0) ? "-0" : String(v)) : typeof v === "bigint" ? v + "n" : typeof v === "string" ? JSON.stringify(v) : String(v);
+const LENGTHS = [0, 1, 2, 7, 8, 9, 15, 16, 17, 23, 24, 25, 31, 32, 33, 64, 65, 1000];
+const STARTS = [-1, 0, 1, -5, -0, 0.5, NaN, Infinity, -Infinity, 2147483639, 2147483647, -2147483640, 4294967287, 9007199254740983, 9007199254740991, 100];
+const STEPS = [1, 2, -1, 3, 0.5, NaN, -0, 2147483647, 1e15, 7, 0, -2147483648];
+const PLACES = [-1, 0, 3, 7, 8, 9, 11, 12, 15, 16, 20, 500];
+const STEP = 3;
+function value(pattern, i) {
+  switch (pattern) {
+  }
+}
+function attempt(run) { try { return run(); } catch (error) { return "threw " + error.name; } }
+function make_Float32Array(n, pattern, place) { const v = new Float32Array(n); for (let i = 0; i < n; i++) v[i] = i === place ? 99 : value(pattern, i); return v; }
+function f5(v, start, c, b, o) {
+let k = 9007199254740983, j = start | 0, s = 2147483600, g = start, other = start, last = start;
+let t = 0, m = 0, n2 = 0, fin = 0, idx = -1, once = true, thrown = "";
+const seen = [], out = [0, 0, 0, 0, 0, 0, 0, 0];
+const bump = () => { k += 1; };
+for (const x of v) {
+s += STEP;
+bump();
+}
+return [k, j, s, g, other, last, t, m, n2, fin, thrown].map(show).join() + "|" + seen.map(show).join() + "|" + out.map(show).join();
+}
+const lines = [];
+for (let a = 0; a < LENGTHS.length; a++) for (let z = 0; z < STARTS.length; z++) {
+  const n = LENGTHS[a], start = STARTS[z];
+  { const place = PLACES[(a * 5 + z * 3 + 5) % PLACES.length], c = STEPS[(a + z * 7 + 5) % STEPS.length], pattern = (a + z + 5) % 6, o = { f: STEPS[(a * 3 + z + 5) % STEPS.length], get g() { return 2; } };
+    lines.push("f5 Float32Array of | " + n + " " + show(start) + " " + place + " " + show(c) + " " + show(o.f) + " " + pattern + ": " + attempt(() => f5(make_Float32Array(n, pattern, place), start, c, place, o))); }
+}
+console.log(lines.join("\n"));
+#### param-tag-with-decorator.js
+globalThis.hit = () => { console.log("code in a comment ran"); return () => {}; };
+/** @param {(this: @hit() number) => void} a */
+function f(a) { return 1; }
+console.log(f());
+#### place-of-largest-element.js
+function place(v, start) {
+  let g = start, other = start, k = -1;
+  for (const x of v) { k++; if (x > g) { g = x; other = k; } }
+  return g + "," + other;
+}
+console.log(place(new Int16Array(8), 0));
+console.log(place(Int16Array.of(1, 5, 9, 3, 9, 2, 0, 4), 0));
+#### plain-function-below-array-class.js
+class List extends Array {}
+function Other() {}
+Other.prototype = Object.create(List.prototype);
+const plain = new Other();
+console.log(Array.isArray(plain));
+plain.push(1, 2);
+console.log(plain.length, plain[0], plain[1]);
+#### proto-key-in-esbuild-helper.js
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __commonJS = (cb, mod) => function __require() { return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports; };
+var require_a = __commonJS({ __proto__: function (exports) { exports.x = 1; } });
+try { console.log(JSON.stringify(require_a())); } catch (e) { console.log(e.name); }
+#### rest-element-over-pairs.js
+// A rest element takes every place from its own on, so it holds what all of them hold.
+function say(name, list) {
+  console.log(name, list.length, list.map(item => typeof item + ":" + String(item)).join(" "));
+}
+const seed = Number(process.argv.length);
+{ const [...all] = ["x", 1]; say("written, all", all); console.log(all[1] + 1, all[0].length); }
+{ const [first, ...others] = ["x", 1, true]; say("written, one ahead", others); console.log(first.length, others[0] + 1, !others[1]); }
+{ const [first, second, ...others] = ["x", 1, true, null, { o: 1 }.o]; say("written, two ahead", others); console.log(first.length + second); }
+{ const [first, second, ...others] = ["x", 1]; say("written, nothing left", others); console.log(others[0]); }
+{ const [, ...others] = [seed, "y", 2.5]; say("written, a gap ahead", others); console.log(others[0].length, others[1] * 2); }
+{ const [...[a, b, c]] = ["x", 1]; console.log("a pattern in the rest", typeof a, typeof b, typeof c); }
+{ const [a, ...[b, ...c]] = ["x", 1, "z", 2]; say("a rest in a rest", c); console.log(a.length, b + 1, c[0].length, c[1] + 1); }
+{ let all; [...all] = ["x", 1]; say("assigned", all); console.log(all[1] + 1); }
+{ const holder = {}; [holder.first, ...holder.others] = ["x", 1, "z"]; say("into properties", holder.others); console.log(holder.others[0] + 1, holder.others[1].length); }
+function parameters([first, ...others]) { return typeof first + " " + others.map(item => typeof item).join(); }
+console.log("parameters", parameters(["x", 1, "z"]), parameters([1, "x"]));
+function made() { return ["x", 1]; }
+{ const [...all] = made(); say("returned", all); console.log(all[1] + 1); }
+for (const [...all] of [["x", 1], [2, "y"]]) { say("for-of over written pairs", all); }
+for (const [first, ...others] of [["x", 1, "z"], [2, "y", 3]]) { say("for-of, one ahead", others); console.log(typeof first); }
+for (const [...all] of Object.entries({ a: 1, b: "two" })) { say("Object.entries", all); console.log(typeof all[1]); }
+for (const [key, ...others] of Object.entries({ a: 1 })) { say("Object.entries, one ahead", others); console.log(key.length, others[0] + 1); }
+for (const [...all] of new Map([["a", 1], ["b", 2]])) { say("a Map of written pairs", all); console.log(all[1] + 1, all[0].length); }
+for (const [key, ...others] of new Map([["a", 1]])) { say("a Map, one ahead", others); console.log(key.length, others[0] + 1); }
+for (const [...all] of new Map([["a", 1]]).entries()) { say("Map.entries()", all); console.log(all[1] + 1); }
+for (const [...all] of new Set(["s", 2]).entries()) { say("Set.entries()", all); }
+for (const [...all] of ["p", "q"].entries()) { say("Array.entries()", all); console.log(all[0] + 1, all[1].length); }
+for (const [index, ...others] of ["p"].entries()) { say("Array.entries(), one ahead", others); console.log(index + 1, others[0].length); }
+{ const [...all] = Object.entries({ a: 1 })[0]; say("one pair of Object.entries", all); console.log(all[1] + 1); }
+{ const [[...inner], ...outer] = [["x", 1], ["y", 2], 3]; say("nested, inner", inner); say("nested, outer", outer); console.log(inner[1] + 1, outer[1] + 1); }
+{ const copy = [...["x", 1]]; say("spread", copy); console.log(copy[1] + 1); }
+{ const copy = ["w", ...["x", 1], 2]; say("spread in the middle", copy); console.log(copy[2] + 1, copy[1].length); }
+function rest(...all) { return all; }
+{ const all = rest(...["x", 1]); say("spread into a call", all); console.log(all[1] + 1); }
+{ const [a = "d", ...others] = [undefined, 1, "z"]; say("a default ahead", others); console.log(a.length, others[0] + 1); }
+{ const numbers = [1, 2, 3, 4, 5]; const [first, ...others] = numbers; say("numbers", others); console.log(first + others.length); }
+{ const mixed = [1, "two", 3.5, null, undefined, true]; const [first, ...others] = mixed; say("six kinds", others); console.log(first + 1, others[0].length, others[1] * 2, others[4] === true); }
+{ const empty = ["x", 1]; empty.length = 0; const [...all] = empty; say("emptied", all); console.log(all[0]); }
+function* steps() { yield "x"; yield 1; }
+{ const [...all] = steps(); say("a generator", all); console.log(all[1] + 1); }
+{ const [...all] = "xy"; say("a text", all); }
+#### run-time-key-skips-setter.js
+import "node:util";
+class C { z = 0; }
+const KEY = JSON.parse('"p"');
+function run(given) {
+  const o = given ?? new C();
+  Object.defineProperty(o, "p", { set(v) { delete this.z; } });
+  o[KEY] = 1.5;
+  return o.z;
+}
+console.log("" + JSON.stringify(run()));
+try { console.log("" + JSON.stringify(run([]))); } catch (e) { console.log((e).name); }
+#### symbol-field-hides-accessor.js
+// A class field is defined on the object, so it hides an accessor of the base class under the same key, and a read finds the field. A store, `this[key] = 2` in a
+// constructor, defines nothing: it calls the setter, and a read goes on to the getter. In a loop the read of a field under a computed key went to the accessor.
+const onlySet = Symbol("only a setter");
+const onlyGet = Symbol("only a getter");
+const both = Symbol("a getter and a setter");
+const stored = Symbol("stored to in the constructor");
+const described = Symbol("defined by a descriptor");
+const text = "a" + "Text";
+let setterCalls = 0;
+
+class Base {
+  set [onlySet](value) {
+    setterCalls++;
+  }
+  get [onlyGet]() {
+    return 7;
+  }
+  get [both]() {
+    return 7;
+  }
+  set [both](value) {
+    setterCalls++;
+  }
+  get [stored]() {
+    return 7;
+  }
+  set [stored](value) {
+    setterCalls++;
+  }
+  get [described]() {
+    return 7;
+  }
+  set [described](value) {
+    setterCalls++;
+  }
+  get [text]() {
+    return 7;
+  }
+  set [text](value) {
+    setterCalls++;
+  }
+  get named() {
+    return 7;
+  }
+  set named(value) {
+    setterCalls++;
+  }
+  static get [both]() {
+    return 7;
+  }
+  static set [both](value) {
+    setterCalls++;
+  }
+}
+class Derived extends Base {
+  [onlySet] = 2;
+  [onlyGet] = 2;
+  [both] = 2;
+  [text] = 2;
+  named = 2;
+  static [both] = 2;
+  #hidden = 2;
+  constructor() {
+    super();
+    this[stored] = 2;
+    Object.defineProperty(this, described, { value: 2, writable: true, enumerable: true, configurable: true });
+  }
+  read(key) {
+    return this[key];
+  }
+  readBelowSetter() {
+    return this[onlySet];
+  }
+  readBelowGetter() {
+    return this[onlyGet];
+  }
+  readBelowBoth() {
+    return this[both];
+  }
+  readStored() {
+    return this[stored];
+  }
+  readDescribed() {
+    return this[described];
+  }
+  readText() {
+    return this[text];
+  }
+  readNamed() {
+    return this.named;
+  }
+  readHidden() {
+    return this.#hidden;
+  }
+  static readStatic() {
+    return this[both];
+  }
+}
+// The class between them declares nothing.
+class Further extends Derived {}
+
+for (const made of [new Derived(), new Further()]) {
+  const sums = new Array(12).fill(0);
+  for (let round = 0; round < 300; round++) {
+    sums[0] += made.readBelowSetter();
+    sums[1] += made.readBelowGetter();
+    sums[2] += made.readBelowBoth();
+    sums[3] += made.readStored();
+    sums[4] += made.readDescribed();
+    sums[5] += made.readText();
+    sums[6] += made.readNamed();
+    sums[7] += made.readHidden();
+    sums[8] += made.constructor.readStatic();
+    sums[9] += made[onlySet];
+    sums[10] += made.read(both);
+    made[both] = 2;
+    sums[11] += made[both];
+  }
+  console.log(made.constructor.name, sums.join(" "), "setters", setterCalls);
+  console.log(Reflect.ownKeys(made).map(String).join());
+}
+#### two-loops-over-mixed-types.js
+function f(x) {
+  let b = 3, a = x, c = x, fuel = 12;
+  const T = [];
+  do {
+    if ((a !== c || [c].includes(c)) && typeof b !== "number") {
+      b = c < 0 ? c : 2; T.push(b !== c);
+    }
+  } while (Number.isInteger(c) && fuel-- > 0);
+  while (0 === b && fuel-- > 0) {
+    if (b === null) c = c + "";
+  }
+  if (c >= a) { a += 1; }
+  return [a, b, c, T.length].map(String).join();
+}
+for (const x of JSON.parse("[-1,5]")) console.log(f(x));
+#### typedef-tag-dotted-name.js
+(function () {
+  var lunr = {};
+  /**
+   * @typedef {Object} lunr.Index~Result
+   * @property {string} ref
+   */
+  lunr.x = 2;
+  console.log(lunr.x);
+})();
+#### var-of-parameters-name.cjs
+function f(a) { var get = function () { return a; }; var a = "V"; return arguments[0]; }
+console.log(f(1));
+#### visible-delete-of-btoa.mjs
+import buffer from "node:buffer";
+delete new Error("e", { cause: buffer }).cause.btoa;
+console.log(typeof buffer.btoa);
+console.log(buffer.btoa("a"));
+#### loop-keeps-least-value.js
+// A loop that keeps the least or the greatest of what its turns come to, and reads no list and stores into none: there is no element to take several of at once.
+function leastOfZero(x, z) {
+  let a = x,
+    c = z,
+    d = 0,
+    i0 = 0;
+  while (a == 65536 && i0 < 9) {
+    i0++;
+    c = c > 0 ? d : c;
+  }
+  return c;
+}
+function greatestOfSeven(count, start) {
+  let found = start;
+  for (let i = 0; i < count; i++) found = found < 7 ? 7 : found;
+  return found;
+}
+function greatestOfCounter(count, start) {
+  let found = start | 0;
+  for (let i = 0; i < count; i++) found = i > found ? i : found;
+  return found;
+}
+function leastByMath(count, start) {
+  let found = start | 0;
+  for (let i = 0; i < count; i++) found = Math.min(found, 100 - i);
+  return found;
+}
+let sum = 0;
+for (let round = 0; round < 2000; round++) {
+  sum +=
+    leastOfZero(65536, round - 1000) +
+    greatestOfSeven(round & 15, round - 1000) +
+    greatestOfCounter(round & 31, -5) +
+    leastByMath(round & 63, 1000);
+}
+console.log(sum);
+console.log(leastOfZero(65536, 3), leastOfZero(1, 3), leastOfZero(65536, -2), leastOfZero(65536, 0));
+console.log(
+  greatestOfSeven(0, 1),
+  greatestOfSeven(3, 1),
+  greatestOfSeven(3, 9),
+  greatestOfCounter(20, -5),
+  greatestOfCounter(0, -5),
+  leastByMath(40, 1000),
+  leastByMath(0, 1000),
+);
+#### loop-stores-own-counter.js
+class P { n = 1; }
+class Q extends P { k = 3; }
+function bump(o) { o.n = (o.n + o.k) | 0; }
+function run(holder, other, turns, w) {
+  let seen = 0;
+  for (let j = 0; j < turns; j++) { if (j === w) other.n = j; holder.n = (holder.n + 1) | 0; if (holder instanceof Q) bump(holder); }
+  return holder.n + ":" + other.n + ":" + seen;
+}
+const one = new P();
+console.log(run(one, one, JSON.parse("3"), 3), run(new Q(), new P(), JSON.parse("4"), 3), run(one, one, JSON.parse("5"), 2));

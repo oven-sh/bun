@@ -121,6 +121,35 @@ impl ImportGraph {
         Some(reaching.map(|(position, _)| position).collect())
     }
 
+    pub(crate) fn file_at(&self, path: &[u8]) -> Option<u32> {
+        self.file_of_path.get(path).copied()
+    }
+
+    pub(crate) fn referrers_of(&self, file: u32) -> &[u32] {
+        &self.referrers[file as usize]
+    }
+
+    /// The files that `first` load, themselves included, and what those load in turn. The walk goes through no file that `stops` it.
+    pub(crate) fn find_files_loaded_from(
+        &self,
+        first: Vec<u32>,
+        stops: &dyn Fn(u32) -> bool,
+    ) -> Vec<u32> {
+        let mut is_reached = vec![false; self.loads.len()];
+        let mut pending = first;
+        pending.retain(|&file| !core::mem::replace(&mut is_reached[file as usize], true));
+        let mut reached = pending.clone();
+        while let Some(file) = pending.pop() {
+            for &loaded in &self.loads[file as usize] {
+                if !stops(loaded) && !core::mem::replace(&mut is_reached[loaded as usize], true) {
+                    pending.push(loaded);
+                    reached.push(loaded);
+                }
+            }
+        }
+        reached
+    }
+
     /// `left`: `LoadOptions::left_to_loader`, as far as this compile has read them.
     pub(crate) fn find_loads_below(&self, left: &[Vec<u8>]) -> LoadsBelowFilesLeftToLoader {
         const NOWHERE: u32 = u32::MAX;

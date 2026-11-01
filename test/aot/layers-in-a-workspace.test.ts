@@ -8,7 +8,8 @@ import { test } from "./supported";
 // A workspace: two packages of the project are linked into node_modules, so one file has a path in a package folder and a path outside it, and it is reached
 // by the package's name, by a relative path, by a tsconfig alias and from an installed package. It must be one module with one state in whichever layer it lands.
 // Beside that: `imports` and conditions of package.json, a package with an ES and a CommonJS form, test files that import a test file, .mts and .cjs test files,
-// a path that a test computes and the application loads, a folder with a space and a file with an umlaut.
+// a path that a test computes and the application loads (so the application ships with --aot-allow-code-from-disk, and is tested with it), a folder with a space
+// and a file with an umlaut.
 const folder = join(import.meta.dir, "layers-in-a-workspace");
 const files = Object.fromEntries(
   readdirSync(folder, { recursive: true, withFileTypes: true })
@@ -40,8 +41,8 @@ test("a workspace answers as under plain bun test, started at its root and in a 
   const ways = [".", "packages/app"].map(from =>
     Promise.all([
       seenIn(from, undefined),
-      seenIn(from, "TestRunLayers:0", "--aot"),
-      seenIn(from, "TestRunLayers:2,TestRunPartFiles:1", "--aot"),
+      seenIn(from, "TestRunLayers:0", "--aot", "--aot-allow-code-from-disk"),
+      seenIn(from, "TestRunLayers:2,TestRunPartFiles:1", "--aot", "--aot-allow-code-from-disk"),
     ]),
   );
   for (const [plain, one, layers] of await Promise.all(ways)) {

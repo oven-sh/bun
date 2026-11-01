@@ -215,7 +215,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: b1(v6: guard):
 # CHECK-NEXT: v7: cursor = JSONSourceStart v6 @299:1 tail
 # CHECK-NEXT: v8: cursor = JSONSkipWhitespace v7 @299:1 tail
-# CHECK-NEXT: v9: undefined = CallDirect v8 function=f11 @299:1 tail
+# CHECK-NEXT: v9: undefined = CallDirect v8 function=f12 @299:1 tail
 # CHECK-NEXT: v10: int[0, 2] = ResultAt v9 @299:1 tail
 # CHECK-NEXT: v11: undefined|null|Array<undefined|null|L0> = ResultAt v9 index=1 @299:1 tail
 # CHECK-NEXT: v12: cursor = ResultAt v9 index=2 @299:1 tail
@@ -329,7 +329,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: b24(v88: undefined|string):
 # CHECK-NEXT: v89: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v90: 0 = Integer
-# CHECK-NEXT: v91: int[0, 2] = CallDirect v68, v89, v90 function=f9 calledBuiltin=JSONStringify
+# CHECK-NEXT: v91: int[0, 2] = CallDirect v68, v89, v90 function=f10 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v91 cases=[1] -> case b25(), otherwise b45(v88, v89, v81, v55, v66, v68, v69, v74)
 # CHECK-NEXT: b25():
 # CHECK-NEXT: v92: string = StringBuilderFinish v89
@@ -427,7 +427,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: b43(v161: undefined|string) frequency=Unlikely:
 # CHECK-NEXT: v162: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v163: 0 = Integer
-# CHECK-NEXT: v164: int[0, 2] = CallDirect v144, v162, v163 function=f9 calledBuiltin=JSONStringify
+# CHECK-NEXT: v164: int[0, 2] = CallDirect v144, v162, v163 function=f10 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v164 cases=[1] -> case b44(), otherwise b45(v161, v162, v154, v114, v143, v144, v145, v147)
 # CHECK-NEXT: b44() frequency=Unlikely:
 # CHECK-NEXT: v165: string = StringBuilderFinish v162

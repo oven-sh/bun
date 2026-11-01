@@ -52,6 +52,8 @@ impl SourceKind {
 pub enum EntryPointKind {
     Main,
     Additional,
+    /// `vi.importMock("./a")`: native code of the test runner loads the file by its path and reads all that it exports.
+    LoadedByTestRunner,
     HostLoadedModule,
     ImportedModule,
     Library,
@@ -97,6 +99,10 @@ pub(crate) struct ParsedSource {
     pub web_assembly: Option<Vec<u8>>,
     pub is_page: bool,
     pub has_compiled_components: bool,
+    /// `import_meta_glob::expand_calls` has had the file.
+    pub has_expanded_globs: bool,
+    /// `test_runner_names::import_used_names` has bound the names in the file, whatever realm loads it.
+    pub binds_names_of_test_runner: bool,
     /// Why the text is no program, where the program finds that out when it loads the file. An empty module stands in its place.
     pub parse_failure: Option<Vec<u8>>,
     /// The file as it is, where an executable holds a file that fails at load: it has no disk to read it from when the program loads it.
@@ -110,14 +116,28 @@ pub(crate) struct ParsedSource {
     /// The modules of Bun whose names stand in quotes in such a text: `process.mainModule.require("node:os")`.
     pub library_modules_named_in_text_left_to_run_time: Vec<RuntimeModule>,
     pub evaluated_function: Option<FnId>,
+    /// `find_source_url` of an evaluated text, read while it is analyzed: its comments are gone behind that.
+    pub source_url_of_text: Option<Box<[u8]>>,
     pub modules_named_in_choices: Vec<NamedModule>,
     pub library_names_passed_to_imports: Vec<(SymbolId, NamedModule)>,
     pub library_modules_passed_for_parameters: Vec<RuntimeModule>,
     pub library_modules_written_as_values: Vec<RuntimeModule>,
     pub loads_by_unknown_name: bool,
+    /// `named_loads::FilesOfTests`, where `AotOptions::only_tests_load_code_from_disk`. And what the preloads alone reach: `mark_files_of_product`, behind the load.
+    pub(super) is_of_tests: AtomicBool,
+    /// A test file, or a file that takes something from the test runner. Not `src/app.ts` beside `src/app.test.ts`, which its folder alone makes one of them.
+    pub is_of_tests_by_itself: bool,
+    /// It writes a load with a computed name, in a package that only the tests themselves reach: `mark_files_of_product`, behind each load anew.
+    pub(super) loads_for_tests_alone: AtomicBool,
+    /// `ModuleFlags::FindsBuiltinsReadOnly`: `mark_files_of_product`, behind the load.
+    pub(super) finds_builtins_read_only: AtomicBool,
+    /// A text that a file evaluates lies where that file lies.
+    pub is_in_package: bool,
     pub unknown_names_at: Vec<u32>,
     /// `named_loads::find_loads_of_files_missing_at_build`
     pub files_missing_at_build_at: Vec<u32>,
+    /// `manual_mocks::find_manual_mocks`
+    pub manual_mocks: Vec<Vec<u8>>,
     pub imports_given_unknown_names: Vec<SymbolId>,
     pub(super) named_modules: OnceLock<Vec<NamedModule>>,
     pub(super) gives_unknown_name_to_imported_loader: OnceLock<bool>,
@@ -125,6 +145,28 @@ pub(crate) struct ParsedSource {
 }
 
 impl ParsedSource {
+    pub(crate) fn is_of_tests(&self) -> bool {
+        self.is_of_tests.load(Ordering::Relaxed)
+            || self.loads_for_tests_alone.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_is_of_tests(&self) {
+        self.is_of_tests.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn set_loads_for_tests_alone(&self, loads_for_tests_alone: bool) {
+        self.loads_for_tests_alone
+            .store(loads_for_tests_alone, Ordering::Relaxed);
+    }
+
+    pub(crate) fn finds_builtins_read_only(&self) -> bool {
+        self.finds_builtins_read_only.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_finds_builtins_read_only(&self) {
+        self.finds_builtins_read_only.store(true, Ordering::Relaxed);
+    }
+
     pub(crate) fn new(kind: SourceKind, loader: Loader) -> ParsedSource {
         ParsedSource {
             kind,
@@ -136,6 +178,8 @@ impl ParsedSource {
             web_assembly: None,
             is_page: false,
             has_compiled_components: false,
+            has_expanded_globs: false,
+            binds_names_of_test_runner: false,
             parse_failure: None,
             text_that_fails_at_load: None,
             is_language_assumed: false,
@@ -144,13 +188,20 @@ impl ParsedSource {
             names_main_module_in_text_left_to_run_time: false,
             library_modules_named_in_text_left_to_run_time: Vec::new(),
             evaluated_function: None,
+            source_url_of_text: None,
             modules_named_in_choices: Vec::new(),
             library_names_passed_to_imports: Vec::new(),
             library_modules_passed_for_parameters: Vec::new(),
             library_modules_written_as_values: Vec::new(),
             loads_by_unknown_name: false,
+            is_of_tests: AtomicBool::new(false),
+            is_of_tests_by_itself: false,
+            loads_for_tests_alone: AtomicBool::new(false),
+            finds_builtins_read_only: AtomicBool::new(false),
+            is_in_package: false,
             unknown_names_at: Vec::new(),
             files_missing_at_build_at: Vec::new(),
+            manual_mocks: Vec::new(),
             imports_given_unknown_names: Vec::new(),
             named_modules: OnceLock::new(),
             gives_unknown_name_to_imported_loader: OnceLock::new(),

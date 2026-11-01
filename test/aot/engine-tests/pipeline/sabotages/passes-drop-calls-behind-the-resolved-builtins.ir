@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls: behind the pass a call of a known function is gone. The pass answers for the operations that it resolves to built-ins, calls of unknown functions among them, and a call of a known function is none: the build stops
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-of-known-functions-left-alone.ir

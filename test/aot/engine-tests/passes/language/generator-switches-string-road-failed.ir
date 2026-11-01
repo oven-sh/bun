@@ -742,7 +742,7 @@ function f5 name="Box" module=m0 position=501 kind=BaseConstructor flags=[HasNew
   b9(v47):
     Return v47 @698
 }
-function f6 module=m0 position=2657 kind=Arrow flags=[IsChecked] length=1 captures=[{type=0 site=w24}] thisType={type=anything} parameters=[{type=number site=w26}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f6 module=m0 position=2657 kind=Arrow flags=[IsChecked] length=1 captures=[{type=0 site=w24 variableName="b"}] thisType={type=anything} parameters=[{type=number site=w26}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: 0, v1: number):
     Jump -> next b1() @2657
   b1():
@@ -831,43 +831,34 @@ runtimefunction id=GeneratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v11: 21 = Integer integer=21
 # CHECK-NEXT: v12: boolean = Less v9, v11
-# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2(v13: int[0, 20]):
 # CHECK-NEXT: v14: 31 = Integer integer=31
 # CHECK-NEXT: v15: i32 = CallBuiltin -, v8, v14 overload=MathImul/0 accessSite=0
-# CHECK-NEXT: v16: Generator = NewGenerator v7 function=f3
-# CHECK-NEXT: v17: anything = NewHeapFrame v16 function=f17 numberOfWords=3
+# CHECK-NEXT: v16: Generator = NewGenerator v7 function=f3 [getsHeapFrame]
+# CHECK-NEXT: v17: anything = NewHeapFrame v16, v7 function=f17 numberOfWords=3
 # CHECK-NEXT: PutHeapFrameWord v17, v16
 # CHECK-NEXT: PutHeapFrameWord v17, v13 index=1
 # CHECK-NEXT: PutHeapFrameWord v17, v7 index=2
 # CHECK-NEXT: SuspendInHeapFrame v16, v17 [isFirstRun]
 # CHECK-NEXT: v22: fact = Specified
 # CHECK-NEXT: v23: Generator<number, pristine[Storage, Names]> = AssumeType v16, v22 provenType=Generator<number, pristine[Storage, Names]>
-# CHECK-NEXT: v24: 5 = Integer integer=5
-# CHECK-NEXT: v25: int[0, 4] = Mod v13, v24
-# CHECK-NEXT: v26: boolean = ToBoolean v25
-# CHECK-NEXT: Branch v26 -> taken b3(), notTaken b4()
+# CHECK-NEXT: v24: i32 = CallDirect v23 function=f18 accessSite=2
+# CHECK-NEXT: v25: int[-4294967296, 4294967294] = Add v15, v24
+# CHECK-NEXT: v26: 0 = Integer
+# CHECK-NEXT: v27: i32 = BitOr v25, v26
+# CHECK-NEXT: v28: 1 = Integer integer=1
+# CHECK-NEXT: v29: int[1, 21] = Add v13, v28
+# CHECK-NEXT: Jump -> next b1(v27, v29)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v27: i32 = CallDirect v23 function=f18 accessSite=2
-# CHECK-NEXT: v28: int[-4294967296, 4294967294] = Add v15, v27
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: v30: i32 = BitOr v28, v29
-# CHECK-NEXT: v31: 1 = Integer integer=1
-# CHECK-NEXT: v32: int[1, 21] = Add v13, v31
-# CHECK-NEXT: Jump -> next b1(v30, v32)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v33: "f2 " = String string="f2 "
-# CHECK-NEXT: v34: 0 = Integer
-# CHECK-NEXT: v35: int[0, 4294967295] = URShift v8, v34
-# CHECK-NEXT: v36: string = CallBuiltin v35 overload=NumberPrototypeToString/0 accessSite=6
-# CHECK-NEXT: v37: string = Add v33, v36
-# CHECK-NEXT: v38: undefined = CallBuiltin -, v37 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v39: undefined = Undefined
-# CHECK-NEXT: Return v39
+# CHECK-NEXT: v30: "f2 " = String string="f2 "
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: int[0, 4294967295] = URShift v8, v31
+# CHECK-NEXT: v33: string = CallBuiltin v32 overload=NumberPrototypeToString/0 accessSite=6
+# CHECK-NEXT: v34: string = Add v30, v33
+# CHECK-NEXT: v35: undefined = CallBuiltin -, v34 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v36: undefined = Undefined
+# CHECK-NEXT: Return v36
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fold"
 # CHECK: module=m0 position=742 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=i32 site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

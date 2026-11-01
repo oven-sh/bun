@@ -1,4 +1,5 @@
 # Loops whose small `if`s hang on an element read in the same turn. Where the arms only compute, the compiler may take both and choose; where an arm stores, calls, throws, reads memory or divides, it may not.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f1 f2 f3
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -259,7 +260,7 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="keepPositive"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 280, patchpoints: 27, rare instructions: 404
+# CHECK-NEXT: instructions: 280, patchpoints: 27, rare instructions: 405
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="quotients"
 # CHECK: role=Source

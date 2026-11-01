@@ -469,3 +469,22 @@ describe("a printed object that a loop takes off a list and whose neighbors it p
     expect(printed.operations - notPrinted.operations).toBeGreaterThanOrEqual(alone);
   }, 120_000);
 });
+
+// In a large program most statements that let anything out of sight lead to most functions, so none of them stands alone. The first of them in the text, or one of the library's, says nothing of this function.
+test("a function that code out of sight calls is reported at the statement that handed it over", async () => {
+  const { causes, exitCode } = await explain({
+    "main.ts": `const first: any = (globalThis as any)[process.argv[2] ?? "a"];
+const second: any = (globalThis as any)[process.argv[3] ?? "b"];
+class Point { x = 1; y = 2; }
+function late(p: Point): number { return p.x + p.y; }
+const registry: any = process.argv.length > 5 ? first : second;
+registry?.add(late);
+console.log(late(new Point()));
+`,
+  });
+  const calledFromOutOfSight = causes.filter(cause => cause.reason === "called-by-unknown-code");
+  expect({ exitCode, places: [...new Set(calledFromOutOfSight.map(placeOf))] }).toEqual({
+    exitCode: 0,
+    places: ["main.ts:6"],
+  });
+}, 120_000);

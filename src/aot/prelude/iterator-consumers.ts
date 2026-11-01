@@ -8,6 +8,7 @@ declare function $isConstructor(value: unknown): boolean;
 declare function $putByValDirect(array: unknown, index: number, value: unknown): void;
 declare function $arrayPush(array: unknown[], value: unknown): void;
 declare function $iteratorGenericClose(iterator: object): void;
+declare function $iteratorGenericNext(next: unknown, iterator: unknown): any;
 declare function $ifAbruptCloseIterator(iterator: object, value: unknown): void;
 
 $visibility = "Private";
@@ -17,8 +18,7 @@ export function toArray(this: unknown): unknown[] {
   const items: unknown[] = [];
   for (;;) {
     if (!$isCallable(next)) $throwTypeError("Type error");
-    const result = $call<any>(next, this);
-    if (!$isObject(result)) $throwTypeError("Iterator result interface is not an object.");
+    const result = $iteratorGenericNext(next, this);
     if ((result as any).done) return items;
     $arrayPush(items, (result as any).value);
   }
@@ -37,8 +37,7 @@ export function forEach(this: unknown, procedure: unknown): void {
   let counter = 0;
   for (;;) {
     if (!$isCallable(next)) $throwTypeError("Type error");
-    const result = $call<any>(next, this);
-    if (!$isObject(result)) $throwTypeError("Iterator result interface is not an object.");
+    const result = $iteratorGenericNext(next, this);
     if ((result as any).done) return;
     $ifAbruptCloseIterator(this, $call(procedure, undefined, (result as any).value, counter++));
   }
@@ -54,5 +53,19 @@ export function from(this: any, items: Iterable<unknown>, mapper: any, thisArg?:
     k += 1;
   }
   (result as any).length = k;
+  return result;
+}
+
+declare function $arrayFromFastWithoutMapFn(constructor: unknown, items: unknown): unknown[] | undefined;
+
+// `Array.from(map)`, `Array.from(map.entries())`: what native code does not copy at once is walked by a loop, which asks no `next` for an object a step.
+$visibility = "Public";
+export function fromIterable(this: unknown, items: Iterable<unknown>): unknown[] {
+  if (typeof items === "string") return [...items];
+  const copied = $arrayFromFastWithoutMapFn(this, items);
+  if (copied) return copied;
+  if ((items as any).next === undefined) return [...items];
+  const result: unknown[] = [];
+  for (const value of items) $arrayPush(result, value);
   return result;
 }

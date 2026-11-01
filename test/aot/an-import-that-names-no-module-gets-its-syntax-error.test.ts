@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
+import { partOfGrid } from "./harness/ways";
 import { test } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
@@ -21,9 +22,20 @@ const imports: [string, string][] = [
 ];
 const uses = [`import.meta.require(x);`, `require(x.join("a", "b"));`, `console.log(x(1));`, `console.log(x.m(1));`];
 
-const programs = imports.flatMap(([name, declaration], index) =>
+const grid = imports.flatMap(([name, declaration], index) =>
   uses.map((use, useIndex) => ({ name, file: `${index}-${useIndex}`, code: `${use}\n${declaration}\n` })),
 );
+// What crashed the compiler: a require() that follows the name, whatever the import, a call of the name of a macro, a call on the namespace of one. The others are variations.
+const crashed = ["0-0", "0-1", "5-2", "6-3"];
+const programs = [
+  ...grid.filter(it => crashed.includes(it.file)),
+  ...partOfGrid(
+    "imports that name no module",
+    grid.filter(it => !crashed.includes(it.file)),
+    8,
+    it => it.file,
+  ),
+];
 
 // A process that a signal ended has 128 + the signal for its exit code.
 async function exitCodes(directory: string, extension: "js" | "ts", ...command: string[]) {

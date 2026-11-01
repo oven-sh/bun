@@ -128,12 +128,13 @@ fn ask(families: &str, main: &str) -> Asked {
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
             max_inference_nodes: 0,
+            limits: Default::default(),
         };
         let asks = program.file("asks.ts");
         let answers = Mutex::new(Vec::new());
         let build = check(program, &|checker, file| {
             (file == asks).then(|| {
-                checker.with_queries(file, inputs, |queries| {
+                checker.with_queries(file, &inputs, |queries| {
                     let declarations = &queries.hir().var_decls;
                     let (source, target) = (declarations[0].pat, declarations[1].pat);
                     let source = queries.binding_type(source).unwrap();

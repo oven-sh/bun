@@ -183,6 +183,8 @@ public:
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
             factoriesOfCompiledMocks.clear();
+            mocksLaidByBodies.clear();
+            modulesThatLaidMocksInBodies.clear();
 #endif
         }
 
@@ -190,7 +192,35 @@ public:
         // By module. The factory of each runs when a graph comes to the module.
         WTF::Vector<std::pair<uint32_t, JSC::Strong<JSC::JSObject>>> compiledMocksToRun;
         // What those factories have returned and is not settled: the graph waits.
-        WTF::Vector<JSC::Strong<JSC::JSPromise>> factoriesOfCompiledMocks;
+        struct FactoryOfCompiledMock {
+            uint32_t module;
+            bool isWaitedFor;
+            JSC::Strong<JSC::JSObject> mock;
+            JSC::Strong<JSC::JSPromise> patched;
+        };
+        WTF::Vector<FactoryOfCompiledMock> factoriesOfCompiledMocks;
+        struct MockLaidByBody {
+            WTF::String file;
+            uint32_t module;
+            uint8_t function;
+            bool waits { false };
+            bool isOfOwnBody { false };
+            WTF::Vector<JSC::Strong<JSC::Unknown>, 2> arguments;
+            WTF::Vector<uint32_t, 4> importers;
+            WTF::Vector<uint32_t, 2> importersByCall;
+        };
+        WTF::Vector<MockLaidByBody> mocksLaidByBodies;
+        WTF::Vector<uint32_t, 8> modulesThatLaidMocksInBodies;
+        WTF::String callerOfMocksLaidAgain;
+        const void* frameOfMockLaidAgain { nullptr };
+        const WTF::String& callerOfMockLaidAgain(const void* frame)
+        {
+            if (callerOfMocksLaidAgain.isNull())
+                return WTF::nullString();
+            if (!frameOfMockLaidAgain)
+                frameOfMockLaidAgain = frame;
+            return frameOfMockLaidAgain == frame ? callerOfMocksLaidAgain : WTF::nullString();
+        }
 #endif
 
         ~OnLoad()
@@ -248,6 +278,9 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, con
 String keyOfImportByPackage(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
+#if ENABLE(AOT)
+JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);
+#endif
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);

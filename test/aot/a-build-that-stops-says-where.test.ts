@@ -3,11 +3,12 @@
 // A compiler that crashes ends as Bun does at any other crash: that line stands in the crash report, behind the reason, and the process ends by the signal.
 //
 // `--aot-sabotage=<name>` (hidden) makes a build stop at a known place: in a function named stopsTheCompiler, or at a step that every build has.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { existsSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { describe, test } from "./supported";
 
 const program = `
@@ -74,12 +75,12 @@ describe("compile/aot/a build that stops says where", () => {
     [
       "FunctionPassFailsAssertion",
       failedAssertion,
-      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\n`,
+      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it\\.\n`,
     ],
     [
       "FunctionPassReadsBadAddress",
       /^SIGSEGV$/,
-      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\n`,
+      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it\\.\n`,
     ],
     ["CodeGenerationFailsAssertion", failedAssertion, `${inTheFunction} in GenerateCode\\.\n`],
     ["ProgramPassFailsAssertion", failedAssertion, "Stopped while compiling in BuildCallGraph\\.\n"],
@@ -104,6 +105,8 @@ describe("compile/aot/a build that stops says where", () => {
             : /^Registers: x0=\S+ .* x30=\S+ sp=stack\+0x0 pc=\S+\nCode at pc:( [0-9a-f]{8})+$/m,
         );
       expect(existsSync(executableOf("program.ts", `--aot-sabotage=${sabotage}`))).toBe(false);
+      if (isASAN && signal === failedAssertion)
+        expect(build.stderr).toMatch(/^Signal \d+(, code \d+, at address 0x[0-9a-f]+| was sent by this process)\.$/m);
     },
     300_000,
   );
@@ -115,6 +118,21 @@ describe("compile/aot/a build that stops says where", () => {
       const build = await spawned(command("--aot-sabotage=FunctionPassRunsOutOfStack"), folder, environment);
       expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
         stderr: expect.stringMatching(new RegExp(`${reasonOfTheCrash}${inTheFunction} in EliminateDeadCode\\.\n`)),
+        ...endBy(/^SIG(SEGV|BUS)$/),
+      });
+    },
+    300_000,
+  );
+
+  // A thread of the front end: it has a stack for signals of its own, as a thread of the engine has.
+  test.skipIf(isWindows)(
+    "LoweringOverflowsStack",
+    async () => {
+      const build = await spawned(command("--aot-sabotage=LoweringOverflowsStack"), folder, environment);
+      expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
+        stderr: expect.stringMatching(
+          new RegExp(`${reasonOfTheCrash}Stopped while compiling .*program\\.ts in Lower\\.\n`),
+        ),
         ...endBy(/^SIG(SEGV|BUS)$/),
       });
     },
@@ -159,6 +177,36 @@ describe("compile/aot/a build that stops says where", () => {
       exitCode: 0,
     });
   }, 300_000);
+
+  // Any thread gets such a signal, so what that thread compiles is no hint.
+  test.skipIf(!isASAN || isWindows)(
+    "a build that another process ends by SIGILL says who sent it",
+    async () => {
+      await using build = Bun.spawn({
+        cmd: command("--aot-sabotage=FunctionPassNeverEnds"),
+        cwd: folder,
+        env: environment,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+        timeout: 240_000,
+        killSignal: "SIGKILL",
+      });
+      let stderr = "";
+      const decoder = new TextDecoder();
+      for await (const chunk of build.stderr) {
+        const hadArrived = stderr.includes("never ends");
+        stderr += decoder.decode(chunk, { stream: true });
+        if (!hadArrived && stderr.includes("never ends")) build.kill("SIGILL");
+      }
+      await build.exited;
+      expect({ stderr, signal: build.signalCode }).toEqual({
+        stderr: expect.stringContaining(`Signal 4 was sent by process ${process.pid}.\n`),
+        signal: "SIGILL",
+      });
+    },
+    300_000,
+  );
 
   // On Windows a process that another one ends runs nothing more. Ctrl+C in a console does reach it, and no test has a console.
   test.skipIf(isWindows).each(["SIGINT", "SIGTERM", "SIGQUIT"] as const)(

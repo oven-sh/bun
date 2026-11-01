@@ -99,14 +99,17 @@ test.each(["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"])(
       });
       return {
         lines: stdout.split("\n").filter(line => line.startsWith("R=")),
-        failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic/.test(line)),
+        failed: stderr
+          .split("\n")
+          .filter(line => /^\(fail\)|^✗|^panic|^error: |^TypeError: /.test(line))
+          .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
         exitCode,
       };
     };
     const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
     expect(plain.lines).toContain("R=values mocked v extra 1 function alpha undefined undefined undefined zero dash");
     expect(plain.lines).toContain("R=in true true false false false true false");
-    expect(plain.lines.length).toBe(31);
+    expect(plain.lines.length).toBe(29);
     expect(compiled).toEqual(plain);
   },
   120_000,

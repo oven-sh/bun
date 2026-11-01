@@ -17,7 +17,10 @@ enum LoadedValue {
 
 fn loaded_value(site: ImportSiteKind) -> LoadedValue {
     match site {
-        ImportSiteKind::ImportCall(_) => LoadedValue::Namespace,
+        // The test runner hands over every name, or a mock of every name.
+        ImportSiteKind::ImportCall(_)
+        | ImportSiteKind::ImportByTestRunner(_)
+        | ImportSiteKind::RequireByTestRunner(_) => LoadedValue::Namespace,
         ImportSiteKind::ImportEquals(_)
         | ImportSiteKind::Require(_)
         | ImportSiteKind::ImportMetaRequire(_)
@@ -41,7 +44,9 @@ fn links_names_alone(site: ImportSiteKind) -> bool {
         | ImportSiteKind::ImportMetaRequire(_)
         | ImportSiteKind::ImportMetaResolve(_)
         | ImportSiteKind::GetBuiltinModule(_)
-        | ImportSiteKind::MockModule(_) => false,
+        | ImportSiteKind::MockModule(_)
+        | ImportSiteKind::ImportByTestRunner(_)
+        | ImportSiteKind::RequireByTestRunner(_) => false,
     }
 }
 

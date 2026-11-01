@@ -1,6 +1,6 @@
 use super::answers::{
     CheckedMember, GaveUp, IndexSignature, ListedMember, MemberLookup, MemberName,
-    MemberTypedOtherwise, ObjectMember, PositionTypes, WrittenType,
+    MemberTypedOtherwise, MethodsAbove, ObjectMember, PositionTypes, WrittenType,
 };
 use super::queries::Queries;
 use super::type_shape::{ShapeKind, TypeShape};
@@ -161,7 +161,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         instance: TypeId,
         base: TypeId,
-    ) -> Result<Option<Vec<MemberTypedOtherwise>>, GaveUp> {
+    ) -> Result<Option<(Vec<MemberTypedOtherwise>, Option<MethodsAbove>)>, GaveUp> {
         let instance = self.declared_type_of_this(instance);
         let base = self.declared_type_of_this(base);
         let (&TypeData::Ref { target: class, .. }, &TypeData::Ref { target: above, .. }) =
@@ -186,9 +186,27 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         // No class of the row has a type parameter but `this`, so a member that the class inherits has the type it has in
         // the class above, unless that depends on `this`.
         let inherited = typed_by_this.iter().copied();
-        let names: Vec<Atom> = (declared.shape.props.iter().map(|prop| prop.name))
+        let mut names: Vec<Atom> = (declared.shape.props.iter().map(|prop| prop.name))
             .chain(inherited.filter(|&name| declared.prop(name).is_none()))
             .collect();
+        let mut methods = crate::util::FxHashSet::default();
+        let mut at = Some(above);
+        while let Some(current) =
+            at.filter(|it| !self.memo.classes_compared_with_an_heir.contains(it))
+        {
+            let declared_there = self.memo.methods_typed_by_this.get(&current).copied();
+            for &name in declared_there.unwrap_or_default() {
+                if methods.insert(name) && declared.prop(name).is_none() {
+                    names.push(name);
+                }
+            }
+            at = self.c.declared_by_plain_class(current).and_then(|it| it.1);
+        }
+        if !methods.is_empty() {
+            let mut seen = crate::util::FxHashSet::default();
+            names.retain(|&name| seen.insert(name));
+        }
+        let mut is_every_type_known = true;
         let mut found = Vec::new();
         for name in names {
             let Some((in_base, mapper)) = self.c.get_property_of_type_ex(base, name, true) else {
@@ -200,6 +218,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 continue;
             };
             let from = self.checked_member_of_prop(in_class, mapper);
+            is_every_type_known &= from.checked.is_ok() && to.checked.is_ok();
             if let (MemberName::String(_), Ok(from), Ok(checked)) =
                 (to.name, from.checked, to.checked)
                 && from != checked
@@ -211,12 +230,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     kind_in_base: to.kind,
                     checked: from,
                     in_base: checked,
+                    is_method_above: methods.contains(&name),
                 };
                 found.push(((place, self.atom_bytes(name)), member));
             }
         }
         found.sort_unstable_by_key(|member| member.0);
-        Ok(Some(found.into_iter().map(|member| member.1).collect()))
+        let found = found.into_iter().map(|member| member.1).collect();
+        let methods = MethodsAbove {
+            class: above,
+            count: methods.len(),
+        };
+        Ok(Some((found, is_every_type_known.then_some(methods))))
     }
 
     /// The names in the list of the plain class `class` under which the type depends on what `this` is. It may name
@@ -239,14 +264,22 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let reference = self.c.declared_type(current);
             let mapper = self.c.mapper_of_reference(reference, current)?;
             let mut all = Vec::new();
+            let mut methods = Vec::new();
             for prop in &declared.shape.props {
                 let with_this = self.checked_member_of_prop(prop, MapperId::IDENTITY);
                 let with_class = self.checked_member_of_prop(prop, mapper);
                 match (with_this.checked, with_class.checked) {
                     (Ok(with_this), Ok(with_class)) if with_this == with_class => {}
+                    (Ok(with_this), Ok(with_class))
+                        if self.are_functions_of_one_declaration(with_this, with_class) =>
+                    {
+                        methods.push(prop.name);
+                    }
                     _ => all.push(prop.name),
                 }
             }
+            let methods = self.list(&methods);
+            self.memo.methods_typed_by_this.insert(current, methods);
             if !all.is_empty() || names.iter().any(|&name| declared.prop(name).is_some()) {
                 all.extend((names.iter().copied()).filter(|&name| declared.prop(name).is_none()));
                 names = self.list(&all);

@@ -758,10 +758,10 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: PutSlot v3, -, v25 key="b" receivers=[L5] level=Proven @0 tail
 # CHECK-NEXT: Jump -> next b10(v3) @0 tail
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v28: L5 = CallBuiltin -, v3, v3 overload=ObjectAssign/0 accessSite=114 @0 tail
+# CHECK-NEXT: v28: L5 = CallBuiltin -, v3, v3 overload=ObjectAssign/0 accessSite=112 @0 tail
 # CHECK-NEXT: Jump -> next b10(v28) @0 tail
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v29: L5 = CallBuiltin -, v3, v0, v3 overload=ObjectAssign/0 accessSite=114 @0 tail
+# CHECK-NEXT: v29: L5 = CallBuiltin -, v3, v0, v3 overload=ObjectAssign/0 accessSite=112 @0 tail
 # CHECK-NEXT: Jump -> next b10(v29) @0 tail
 # CHECK-NEXT: b10(v30: L5):
 # CHECK-NEXT: Return v30

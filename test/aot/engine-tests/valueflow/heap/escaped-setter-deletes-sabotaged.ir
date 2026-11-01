@@ -1,0 +1,8 @@
+# The store under a key that nobody knows leaves the accessor that has escaped to `unknown`: what its body does to the instance counts as impossible.
+# FORM: AsRead
+# RUN: valueflow-apply
+# OPTIONS: exclude=CodeOutsideImage sabotage=StoresUnderUnknownKeysEnterNoSetterThatEscaped
+# CHECK: layout L0 {{*}}IsNeverDeleted
+# CHECK: name="set"
+# CHECK: PropDelete v0 key="port" accessSite=[[site]] @
+# PROGRAM-OF: escaped-setter-deletes.ir

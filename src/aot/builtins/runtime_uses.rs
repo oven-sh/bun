@@ -26,8 +26,9 @@ struct Collected {
     modules: DynamicBitSet,
     modules_read_whole: DynamicBitSet,
     exports_read: Vec<(RuntimeModule, &'static str)>,
-    functions: DynamicBitSet,
-    linked_functions: DynamicBitSet,
+    /// As they came: one may be there many times. The numbers of functions are far apart.
+    functions: Vec<RuntimeFunction>,
+    linked_functions: Vec<RuntimeFunction>,
     has_startup_loads: bool,
 }
 
@@ -177,8 +178,8 @@ impl Collected {
             modules: create_id_set(RuntimeModule::COUNT),
             modules_read_whole: create_id_set(RuntimeModule::COUNT),
             exports_read: Vec::new(),
-            functions: create_id_set(RuntimeFunction::COUNT),
-            linked_functions: create_id_set(RuntimeFunction::COUNT),
+            functions: Vec::new(),
+            linked_functions: Vec::new(),
             has_startup_loads: false,
         }
     }
@@ -193,11 +194,13 @@ impl Collected {
             .retain(|(module, _)| !is_read_whole(module));
         self.exports_read.shared_sort_unstable();
         self.exports_read.dedup();
-        let functions_of = |set: &DynamicBitSet| -> Box<[RuntimeFunction]> {
-            table::runtime_functions()
-                .iter()
+        // In the order of the table, which is that of the numbers.
+        let functions_of = |list: &mut Vec<RuntimeFunction>| -> Box<[RuntimeFunction]> {
+            list.shared_sort_unstable();
+            list.dedup();
+            list.iter()
+                .filter_map(|&function| table::runtime_function(function))
                 .filter(|data| data.platforms.contains(platform))
-                .filter(|data| set.is_set(data.function.to_wire() as usize))
                 .map(|data| data.function)
                 .collect()
         };
@@ -208,8 +211,8 @@ impl Collected {
                 .filter(is_read_whole)
                 .collect(),
             exports_read: self.exports_read.clone().into(),
-            functions: functions_of(&self.functions),
-            linked_functions: functions_of(&self.linked_functions),
+            functions: functions_of(&mut self.functions),
+            linked_functions: functions_of(&mut self.linked_functions),
         }
     }
 }
@@ -267,10 +270,7 @@ impl Collector {
     }
 
     fn add_functions(&mut self, functions: &[RuntimeFunction]) {
-        let collected = self.collected();
-        for function in functions {
-            collected.functions.set(function.to_wire() as usize);
-        }
+        self.collected().functions.extend_from_slice(functions);
     }
 
     // The method gets functions of those modules, which look at whatever they are given under whatever name: no name in a source tells
@@ -404,8 +404,8 @@ impl Collector {
         all.modules_read_whole
             .set_union(&guessed.modules_read_whole);
         all.exports_read.extend(guessed.exports_read);
-        all.functions.set_union(&guessed.functions);
-        all.linked_functions.set_union(&guessed.linked_functions);
+        all.functions.extend(guessed.functions);
+        all.linked_functions.extend(guessed.linked_functions);
         all.finish(self.platform)
     }
 }
@@ -438,30 +438,6 @@ pub fn reaches_unknown_module_loader(
     collector.work_stack.extend_from_slice(exposed);
     collector.add_reachable_entries();
     collector.has_unknown_module_loader
-}
-
-/// Whether code that names `mentioned` and lets `exposed` out of sight can get at the table of loaded modules: `require.cache`, `Module._cache`.
-pub fn reaches_module_cache(
-    mentioned: &[BuiltinId],
-    exposed: &[BuiltinId],
-    platform: Platforms,
-) -> bool {
-    let tables = [
-        BuiltinId::ModuleRequireCache,
-        BuiltinId::ModuleRequirePrototypeCache,
-        BuiltinId::NodeModule_cache,
-    ]
-    .map(table::canonical_id);
-    if (mentioned.iter()).any(|&id| tables.contains(&table::canonical_id(id))) {
-        return true;
-    }
-    if exposed.is_empty() {
-        return false;
-    }
-    let mut collector = Collector::new(platform);
-    collector.work_stack.extend_from_slice(exposed);
-    collector.add_reachable_entries();
-    (tables.iter()).any(|&id| collector.visited.is_set(id.to_wire() as usize))
 }
 
 /// What a piece of source says of the built-ins.
@@ -607,10 +583,8 @@ impl Collector {
             }
         }
         collector.add_functions(linked_functions);
-        for function in linked_functions {
-            let linked = &mut collector.certain.linked_functions;
-            linked.set(function.to_wire() as usize);
-        }
+        let linked = &mut collector.certain.linked_functions;
+        linked.extend_from_slice(linked_functions);
         collector.work_stack.extend_from_slice(exposed);
         collector.add_reachable_entries();
         Some(collector)

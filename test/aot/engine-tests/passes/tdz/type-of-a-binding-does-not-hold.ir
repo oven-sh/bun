@@ -69,7 +69,7 @@ typesite w15 module=m0 position=1167 kind=Variable
 typesite w16 module=m0 position=1094 kind=Variable
 typesite w17 module=m0 position=1101 kind=Result
 typesite w18 module=m0 position=1529 kind=CallResult
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L1 site=w15 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]}] ownFieldCount=1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|absent|L1 site=w15 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable] variableName="held"}] ownFieldCount=1
 layout L1 name="Settings" module=m0 position=136 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="port" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
 variable g0 name="attempt" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="captured" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
@@ -365,209 +365,205 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: v3: undefined = CallDirect v2, v0 function=f20 accessSite=0
 # CHECK-NEXT: v4: "count, early" = String string="count, early"
 # CHECK-NEXT: v5: undefined = CallDirect v4, v1 function=f20 accessSite=1
-# CHECK-NEXT: InitializeBuiltin builtin=JSONParse
-# CHECK-NEXT: v7: "{\"name\":7,\"extra\":true,\"port\":\"eighty\"}" = String string="{\"name\":7,\"extra\":true,\"port\":\"eighty\"}"
-# CHECK-NEXT: v8: boolean = JSONSourceOpen v7
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b5()
-# CHECK-NEXT: b1(v9: guard):
-# CHECK-NEXT: v10: cursor = JSONSourceStart v9
-# CHECK-NEXT: v11: cursor = JSONSkipWhitespace v10
-# CHECK-NEXT: v12: undefined = CallDirect v11 function=f18
-# CHECK-NEXT: v13: int[0, 2] = ResultAt v12
-# CHECK-NEXT: v14: undefined|null|L1 = ResultAt v12 index=1
-# CHECK-NEXT: v15: cursor = ResultAt v12 index=2
-# CHECK-NEXT: Switch v13 cases=[1] -> case b2(), otherwise b4()
+# CHECK-NEXT: v6: "{\"name\":7,\"extra\":true,\"port\":\"eighty\"}" = String string="{\"name\":7,\"extra\":true,\"port\":\"eighty\"}"
+# CHECK-NEXT: v7: boolean = JSONSourceOpen v6
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v8: guard):
+# CHECK-NEXT: v9: cursor = JSONSourceStart v8
+# CHECK-NEXT: v10: cursor = JSONSkipWhitespace v9
+# CHECK-NEXT: v11: undefined = CallDirect v10 function=f18
+# CHECK-NEXT: v12: int[0, 2] = ResultAt v11
+# CHECK-NEXT: v13: undefined|null|L1 = ResultAt v11 index=1
+# CHECK-NEXT: v14: cursor = ResultAt v11 index=2
+# CHECK-NEXT: Switch v12 cases=[1] -> case b2(), otherwise b4()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v16: boolean = JSONSourceClose v9, v15
-# CHECK-NEXT: Branch v16 -> taken b3(), notTaken b5()
+# CHECK-NEXT: v15: boolean = JSONSourceClose v8, v14
+# CHECK-NEXT: Branch v15 -> taken b3(), notTaken b5()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v17: null|L1 = AssumeType v14 provenType=null|boolean|number|string|object
-# CHECK-NEXT: Jump -> next b6(v17)
+# CHECK-NEXT: v16: null|L1 = AssumeType v13 provenType=null|boolean|number|string|object
+# CHECK-NEXT: Jump -> next b6(v16)
 # CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v9
+# CHECK-NEXT: JSONSourceAbandon v8
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v19: undefined = Undefined
-# CHECK-NEXT: v20: null|boolean|number|string|object = CallBuiltin -, v7, v19 overload=JSONParse/0 accessSite=3
-# CHECK-NEXT: Jump -> next b6(v20)
-# CHECK-NEXT: b6(v21: null|boolean|number|string|object ~ null|L1):
-# CHECK-NEXT: PutModuleVariable v21 variable=g2
-# CHECK-NEXT: v23: "\"three\"" = String string="\"three\""
-# CHECK-NEXT: v24: undefined = Undefined
-# CHECK-NEXT: v25: null|boolean|number|string|object = CallBuiltin -, v23, v24 overload=JSONParse/0 accessSite=5
-# CHECK-NEXT: v26: null|boolean|number|string|object ~ number = Upcast v25 castType=anything
-# CHECK-NEXT: PutModuleVariable v26 variable=g3
-# CHECK-NEXT: v28: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v29: "settings, in the body" = String string="settings, in the body"
-# CHECK-NEXT: v30: boolean|number|string|object ~ L1 = RequireObjectCoercible v21 name="port"
-# CHECK-NEXT: v31: anything ~ number = PropGet v30 key="port" accessSite=8
-# CHECK-NEXT: v32: string = TypeOf v31
-# CHECK-NEXT: v33: anything ~ number = PropGet v30 key="port" accessSite=9
-# CHECK-NEXT: v34: anything ~ undefined|null|string = PropGet v30 key="name" accessSite=10
-# CHECK-NEXT: v35: string = TypeOf v34
-# CHECK-NEXT: v36: anything ~ undefined|null|string = PropGet v30 key="name" accessSite=11
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectKeys
-# CHECK-NEXT: v38: object ~ L1 = ToObject v30 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v39: Array<string> = CallBuiltin -, v38 overload=ObjectKeys/0 accessSite=12
-# CHECK-NEXT: v40: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v41: string = CallBuiltin v40 overload=ArrayPrototypeJoin/0 accessSite=14
-# CHECK-NEXT: v42: undefined = CallBuiltin v28, v29, v32, v33, v35, v36, v41 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=15
-# CHECK-NEXT: v43: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v44: "count, in the body" = String string="count, in the body"
-# CHECK-NEXT: v45: string = TypeOf v26
-# CHECK-NEXT: v46: 1 = Integer integer=1
-# CHECK-NEXT: v47: number|string|bigint ~ number = Add v26, v46
-# CHECK-NEXT: v48: undefined = CallBuiltin v43, v44, v45, v47 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=18
-# CHECK-NEXT: v49: "settings, late" = String string="settings, late"
-# CHECK-NEXT: v50: undefined = CallDirect v49, v0 function=f20 accessSite=19
-# CHECK-NEXT: v51: "count, late" = String string="count, late"
-# CHECK-NEXT: v52: undefined = CallDirect v51, v1 function=f20 accessSite=20
-# CHECK-NEXT: v53: "[4]" = String string="[4]"
-# CHECK-NEXT: v54: undefined = Undefined
-# CHECK-NEXT: v55: null|boolean|number|string|object = CallBuiltin -, v53, v54 overload=JSONParse/0 accessSite=22
-# CHECK-NEXT: v56: null|boolean|number|string|object ~ number = Expect v55 expectedType=number
-# CHECK-NEXT: PutModuleVariable v56 variable=g3
-# CHECK-NEXT: v58: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v59: "count, stored again" = String string="count, stored again"
-# CHECK-NEXT: v60: string = TypeOf v56
-# CHECK-NEXT: v61: 1 = Integer integer=1
-# CHECK-NEXT: v62: number|string|bigint ~ number = Add v56, v61
-# CHECK-NEXT: v63: undefined = CallBuiltin v58, v59, v60, v62 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=25
-# CHECK-NEXT: v64: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v65: "{\"port\":1,\"name\":\"right\"}" = String string="{\"port\":1,\"name\":\"right\"}"
-# CHECK-NEXT: v66: f6 = CallDirect v65 function=f2 accessSite=28
-# CHECK-NEXT: v67: env L0 = GetCapture v66 function=f6
-# CHECK-NEXT: v68: anything|absent ~ undefined|null|absent|L1 = GetEnvironmentField v67 layout=L0
-# CHECK-NEXT: v69: anything ~ undefined|null|L1 = CheckInitialized v68 name="held"
-# CHECK-NEXT: v70: boolean|number|string|symbol|bigint|object ~ L1 = RequireObjectCoercible v69 name="name"
-# CHECK-NEXT: v71: anything ~ undefined|null|string = PropGet v70 key="name" accessSite=30
-# CHECK-NEXT: v72: undefined = CallBuiltin v64, v71 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=31
-# CHECK-NEXT: v73: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v74: "{\"name\":null}" = String string="{\"name\":null}"
-# CHECK-NEXT: v75: f6 = CallDirect v74 function=f2 accessSite=34
-# CHECK-NEXT: v76: env L0 = GetCapture v75 function=f6
-# CHECK-NEXT: v77: anything|absent ~ undefined|null|absent|L1 = GetEnvironmentField v76 layout=L0
-# CHECK-NEXT: v78: anything ~ undefined|null|L1 = CheckInitialized v77 name="held"
-# CHECK-NEXT: v79: boolean|number|string|symbol|bigint|object ~ L1 = RequireObjectCoercible v78 name="name"
-# CHECK-NEXT: v80: anything ~ undefined|null|string = PropGet v79 key="name" accessSite=36
-# CHECK-NEXT: v81: undefined = CallBuiltin v73, v80 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=37
-# CHECK-NEXT: v82: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v83: "[1,2]" = String string="[1,2]"
-# CHECK-NEXT: v84: f6 = CallDirect v83 function=f2 accessSite=40
-# CHECK-NEXT: v85: env L0 = GetCapture v84 function=f6
-# CHECK-NEXT: v86: anything|absent ~ undefined|null|absent|L1 = GetEnvironmentField v85 layout=L0
-# CHECK-NEXT: v87: anything ~ undefined|null|L1 = CheckInitialized v86 name="held"
-# CHECK-NEXT: v88: boolean|number|string|symbol|bigint|object ~ L1 = RequireObjectCoercible v87 name="port"
-# CHECK-NEXT: v89: anything ~ number = PropGet v88 key="port" accessSite=42
-# CHECK-NEXT: v90: undefined = CallBuiltin v82, v89 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=43
-# CHECK-NEXT: v91: "captured, null" = String string="captured, null"
-# CHECK-NEXT: v92: f5 = NewClosure function=f5 allocationSite=2 storage=Frame
-# CHECK-NEXT: v93: undefined = CallDirect v91, v92 function=f20 accessSite=44
-# CHECK-NEXT: v94: undefined = Undefined
-# CHECK-NEXT: Return v94
+# CHECK-NEXT: v18: undefined = Undefined
+# CHECK-NEXT: v19: null|boolean|number|string|object = CallBuiltin -, v6, v18 overload=JSONParse/0 accessSite=3
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: null|boolean|number|string|object ~ null|L1):
+# CHECK-NEXT: PutModuleVariable v20 variable=g2
+# CHECK-NEXT: v22: "\"three\"" = String string="\"three\""
+# CHECK-NEXT: v23: undefined = Undefined
+# CHECK-NEXT: v24: null|boolean|number|string|object = CallBuiltin -, v22, v23 overload=JSONParse/0 accessSite=5
+# CHECK-NEXT: v25: null|boolean|number|string|object ~ number = Upcast v24 castType=anything
+# CHECK-NEXT: PutModuleVariable v25 variable=g3
+# CHECK-NEXT: v27: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v28: "settings, in the body" = String string="settings, in the body"
+# CHECK-NEXT: v29: boolean|number|string|object ~ L1 = RequireObjectCoercible v20 name="port"
+# CHECK-NEXT: v30: anything ~ number = PropGet v29 key="port" accessSite=8
+# CHECK-NEXT: v31: string = TypeOf v30
+# CHECK-NEXT: v32: anything ~ number = PropGet v29 key="port" accessSite=9
+# CHECK-NEXT: v33: anything ~ undefined|null|string = PropGet v29 key="name" accessSite=10
+# CHECK-NEXT: v34: string = TypeOf v33
+# CHECK-NEXT: v35: anything ~ undefined|null|string = PropGet v29 key="name" accessSite=11
+# CHECK-NEXT: v36: object ~ L1 = ToObject v29 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v37: Array<string> = CallBuiltin -, v36 overload=ObjectKeys/0 accessSite=12
+# CHECK-NEXT: v38: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v37 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v39: string = CallBuiltin v38 overload=ArrayPrototypeJoin/0 accessSite=14
+# CHECK-NEXT: v40: undefined = CallBuiltin v27, v28, v31, v32, v34, v35, v39 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=15
+# CHECK-NEXT: v41: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v42: "count, in the body" = String string="count, in the body"
+# CHECK-NEXT: v43: string = TypeOf v25
+# CHECK-NEXT: v44: 1 = Integer integer=1
+# CHECK-NEXT: v45: number|string|bigint ~ number = Add v25, v44
+# CHECK-NEXT: v46: undefined = CallBuiltin v41, v42, v43, v45 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=18
+# CHECK-NEXT: v47: "settings, late" = String string="settings, late"
+# CHECK-NEXT: v48: undefined = CallDirect v47, v0 function=f20 accessSite=19
+# CHECK-NEXT: v49: "count, late" = String string="count, late"
+# CHECK-NEXT: v50: undefined = CallDirect v49, v1 function=f20 accessSite=20
+# CHECK-NEXT: v51: "[4]" = String string="[4]"
+# CHECK-NEXT: v52: undefined = Undefined
+# CHECK-NEXT: v53: null|boolean|number|string|object = CallBuiltin -, v51, v52 overload=JSONParse/0 accessSite=22
+# CHECK-NEXT: v54: null|boolean|number|string|object ~ number = Expect v53 expectedType=number
+# CHECK-NEXT: PutModuleVariable v54 variable=g3
+# CHECK-NEXT: v56: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v57: "count, stored again" = String string="count, stored again"
+# CHECK-NEXT: v58: string = TypeOf v54
+# CHECK-NEXT: v59: 1 = Integer integer=1
+# CHECK-NEXT: v60: number|string|bigint ~ number = Add v54, v59
+# CHECK-NEXT: v61: undefined = CallBuiltin v56, v57, v58, v60 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=25
+# CHECK-NEXT: v62: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v63: "{\"port\":1,\"name\":\"right\"}" = String string="{\"port\":1,\"name\":\"right\"}"
+# CHECK-NEXT: v64: f6 = CallDirect v63 function=f2 accessSite=28
+# CHECK-NEXT: v65: env L0 = GetCapture v64 function=f6
+# CHECK-NEXT: v66: anything|absent ~ undefined|null|absent|L1 = GetEnvironmentField v65 layout=L0
+# CHECK-NEXT: v67: anything ~ undefined|null|L1 = CheckInitialized v66 name="held"
+# CHECK-NEXT: v68: boolean|number|string|symbol|bigint|object ~ L1 = RequireObjectCoercible v67 name="name"
+# CHECK-NEXT: v69: anything ~ undefined|null|string = PropGet v68 key="name" accessSite=30
+# CHECK-NEXT: v70: undefined = CallBuiltin v62, v69 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=31
+# CHECK-NEXT: v71: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v72: "{\"name\":null}" = String string="{\"name\":null}"
+# CHECK-NEXT: v73: f6 = CallDirect v72 function=f2 accessSite=34
+# CHECK-NEXT: v74: env L0 = GetCapture v73 function=f6
+# CHECK-NEXT: v75: anything|absent ~ undefined|null|absent|L1 = GetEnvironmentField v74 layout=L0
+# CHECK-NEXT: v76: anything ~ undefined|null|L1 = CheckInitialized v75 name="held"
+# CHECK-NEXT: v77: boolean|number|string|symbol|bigint|object ~ L1 = RequireObjectCoercible v76 name="name"
+# CHECK-NEXT: v78: anything ~ undefined|null|string = PropGet v77 key="name" accessSite=36
+# CHECK-NEXT: v79: undefined = CallBuiltin v71, v78 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=37
+# CHECK-NEXT: v80: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v81: "[1,2]" = String string="[1,2]"
+# CHECK-NEXT: v82: f6 = CallDirect v81 function=f2 accessSite=40
+# CHECK-NEXT: v83: env L0 = GetCapture v82 function=f6
+# CHECK-NEXT: v84: anything|absent ~ undefined|null|absent|L1 = GetEnvironmentField v83 layout=L0
+# CHECK-NEXT: v85: anything ~ undefined|null|L1 = CheckInitialized v84 name="held"
+# CHECK-NEXT: v86: boolean|number|string|symbol|bigint|object ~ L1 = RequireObjectCoercible v85 name="port"
+# CHECK-NEXT: v87: anything ~ number = PropGet v86 key="port" accessSite=42
+# CHECK-NEXT: v88: undefined = CallBuiltin v80, v87 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=43
+# CHECK-NEXT: v89: "captured, null" = String string="captured, null"
+# CHECK-NEXT: v90: f5 = NewClosure function=f5 allocationSite=2 storage=Frame
+# CHECK-NEXT: v91: undefined = CallDirect v89, v90 function=f20 accessSite=44
+# CHECK-NEXT: v92: undefined = Undefined
+# CHECK-NEXT: Return v92
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="captured"
 # CHECK: module=m0 position=1052 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="[1,2]"|"null"|"{\"name\":null}"|"{\"port\":1,\"name\":\"right\"}" site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=f6 site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=1125 module=m0}, {callee=f16 callPosition=271 parent=1}, {callee=f6 callPosition=281 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: "[1,2]"|"null"|"{\"name\":null}"|"{\"port\":1,\"name\":\"right\"}"):
 # CHECK-NEXT: v1: env L0 = NewObject layout=L0 allocationSite=3
 # CHECK-NEXT: v2: "captured, early" = String string="captured, early"
-# CHECK-NEXT: InitializeBuiltin builtin=JSONStringify
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b7():
-# CHECK-NEXT: v4: anything|absent ~ undefined|null|absent|L1 = GetEnvironmentField v1 layout=L0
-# CHECK-NEXT: v5: anything ~ undefined|null|L1 = CheckInitialized v4 name="held"
-# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=undefined
-# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3(| 0)
+# CHECK-NEXT: v3: anything|absent ~ undefined|null|absent|L1 = GetEnvironmentField v1 layout=L0
+# CHECK-NEXT: v4: anything ~ undefined|null|L1 = CheckInitialized v3 name="held"
+# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=undefined
+# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3(| 0)
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Jump -> next b6(v7)
-# CHECK-NEXT: b3(v8: null|boolean|number|string|symbol|bigint|object ~ null|L1) handler=b7():
-# CHECK-NEXT: v9: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v10: boolean = TypeTest v8 testedType=null
-# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Jump -> next b6(v6)
+# CHECK-NEXT: b3(v7: null|boolean|number|string|symbol|bigint|object ~ null|L1) handler=b7():
+# CHECK-NEXT: v8: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v9: boolean = TypeTest v7 testedType=null
+# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4() frequency=Unlikely handler=b7():
-# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v9 size=128
-# CHECK-NEXT: v12: buildercursor = JSONAppendToken v9, v11 jsonToken=Null
-# CHECK-NEXT: StringBuilderCommit v9, v12
-# CHECK-NEXT: v14: string = StringBuilderFinish v9
-# CHECK-NEXT: Jump -> next b6(v14)
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v8 size=128
+# CHECK-NEXT: v11: buildercursor = JSONAppendToken v8, v10 jsonToken=Null
+# CHECK-NEXT: StringBuilderCommit v8, v11
+# CHECK-NEXT: v13: string = StringBuilderFinish v8
+# CHECK-NEXT: Jump -> next b6(v13)
 # CHECK-NEXT: b5() frequency=Rare handler=b7():
-# CHECK-NEXT: StringBuilderDiscard v9
-# CHECK-NEXT: v16: undefined = Undefined
-# CHECK-NEXT: v17: undefined|string = CallBuiltin -, v5, v16 overload=JSONStringify/0 accessSite=49
-# CHECK-NEXT: Jump -> next b6(v17)
-# CHECK-NEXT: b6(v18: undefined|string ~ string) handler=b7():
-# CHECK-NEXT: v19: undefined = CallBuiltin -, v2, v18 overload=ConsoleLog/0 accessSite=50
+# CHECK-NEXT: StringBuilderDiscard v8
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: undefined|string = CallBuiltin -, v4, v15 overload=JSONStringify/0 accessSite=49
+# CHECK-NEXT: Jump -> next b6(v16)
+# CHECK-NEXT: b6(v17: undefined|string ~ string) handler=b7():
+# CHECK-NEXT: v18: undefined = CallBuiltin -, v2, v17 overload=ConsoleLog/0 accessSite=50
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b7() role=CatchHandler:
-# CHECK-NEXT: v20: anything = CatchValue
-# CHECK-NEXT: v21: anything ~ undefined|null|Error = Upcast v20 castType=anything
-# CHECK-NEXT: v22: anything = PropGet v21 key="constructor" accessSite=53
-# CHECK-NEXT: v23: anything ~ undefined|null|function = Expect v22 expectedType=undefined|null|function
-# CHECK-NEXT: v24: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v23 name="name"
-# CHECK-NEXT: v25: anything = PropGet v24 key="name" accessSite=54
-# CHECK-NEXT: v26: anything ~ undefined|null|string = Expect v25 expectedType=undefined|null|string
-# CHECK-NEXT: v27: boolean ~ true = TypeTest v26 testedType=undefined|null|boolean|number|string|symbol
-# CHECK-NEXT: Branch v27 -> taken b8(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b8(v28: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
-# CHECK-NEXT: v29: undefined = CallBuiltin -, v2, v28 overload=ConsoleLog/0 accessSite=55
+# CHECK-NEXT: v19: anything = CatchValue
+# CHECK-NEXT: v20: anything ~ undefined|null|Error = Upcast v19 castType=anything
+# CHECK-NEXT: v21: anything = PropGet v20 key="constructor" accessSite=53
+# CHECK-NEXT: v22: anything ~ undefined|null|function = Expect v21 expectedType=undefined|null|function
+# CHECK-NEXT: v23: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v22 name="name"
+# CHECK-NEXT: v24: anything = PropGet v23 key="name" accessSite=54
+# CHECK-NEXT: v25: anything ~ undefined|null|string = Expect v24 expectedType=undefined|null|string
+# CHECK-NEXT: v26: boolean ~ true = TypeTest v25 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v26 -> taken b8(| 0), notTaken b9(| 0)
+# CHECK-NEXT: b8(v27: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v28: undefined = CallBuiltin -, v2, v27 overload=ConsoleLog/0 accessSite=55
 # CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b9(v30: bigint|object) frequency=Rare:
-# CHECK-NEXT: v31: undefined = CallBuiltin -, v2, v30 overload=ConsoleLog/1 accessSite=55
+# CHECK-NEXT: b9(v29: bigint|object) frequency=Rare:
+# CHECK-NEXT: v30: undefined = CallBuiltin -, v2, v29 overload=ConsoleLog/1 accessSite=55
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: InitializeBuiltin builtin=JSONParse
-# CHECK-NEXT: v33: boolean = JSONSourceOpen v0
-# CHECK-NEXT: Branch v33 -> taken b11(| 0), notTaken b15()
-# CHECK-NEXT: b11(v34: guard):
-# CHECK-NEXT: v35: cursor = JSONSourceStart v34
-# CHECK-NEXT: v36: cursor = JSONSkipWhitespace v35
-# CHECK-NEXT: v37: undefined = CallDirect v36 function=f18
-# CHECK-NEXT: v38: int[0, 2] = ResultAt v37
-# CHECK-NEXT: v39: undefined|null|L1 = ResultAt v37 index=1
-# CHECK-NEXT: v40: cursor = ResultAt v37 index=2
-# CHECK-NEXT: Switch v38 cases=[1] -> case b12(), otherwise b14()
+# CHECK-NEXT: v31: boolean = JSONSourceOpen v0
+# CHECK-NEXT: Branch v31 -> taken b11(| 0), notTaken b15()
+# CHECK-NEXT: b11(v32: guard):
+# CHECK-NEXT: v33: cursor = JSONSourceStart v32
+# CHECK-NEXT: v34: cursor = JSONSkipWhitespace v33
+# CHECK-NEXT: v35: undefined = CallDirect v34 function=f18
+# CHECK-NEXT: v36: int[0, 2] = ResultAt v35
+# CHECK-NEXT: v37: undefined|null|L1 = ResultAt v35 index=1
+# CHECK-NEXT: v38: cursor = ResultAt v35 index=2
+# CHECK-NEXT: Switch v36 cases=[1] -> case b12(), otherwise b14()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v41: boolean = JSONSourceClose v34, v40
-# CHECK-NEXT: Branch v41 -> taken b13(), notTaken b15()
+# CHECK-NEXT: v39: boolean = JSONSourceClose v32, v38
+# CHECK-NEXT: Branch v39 -> taken b13(), notTaken b15()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v42: null|L1 = AssumeType v39 provenType=null|boolean|number|string|object
-# CHECK-NEXT: Jump -> next b16(v42)
+# CHECK-NEXT: v40: null|L1 = AssumeType v37 provenType=null|boolean|number|string|object
+# CHECK-NEXT: Jump -> next b16(v40)
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v34
+# CHECK-NEXT: JSONSourceAbandon v32
 # CHECK-NEXT: Jump -> next b15()
 # CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v44: undefined = Undefined
-# CHECK-NEXT: v45: null|boolean|number|string|object = CallBuiltin -, v0, v44 overload=JSONParse/0 accessSite=58
-# CHECK-NEXT: Jump -> next b16(v45)
-# CHECK-NEXT: b16(v46: null|boolean|number|string|object ~ null|L1):
-# CHECK-NEXT: PutEnvironmentField v1, v46 layout=L0
-# CHECK-NEXT: v48: "captured, in the body" = String string="captured, in the body"
-# CHECK-NEXT: v49: boolean|number|string|object ~ L1 = RequireObjectCoercible v46 name="port"
-# CHECK-NEXT: v50: boolean ~ true = TypeTest v49 testedType=L1
-# CHECK-NEXT: Branch v50 -> taken b17(| 0), notTaken b18()
-# CHECK-NEXT: b17(v51: L1):
-# CHECK-NEXT: v52: "number" = String string="number"
-# CHECK-NEXT: v53: number = GetSlot v51 key="port" receivers=[L1] level=Expected accessSite=62
-# CHECK-NEXT: v54: undefined|null|string = GetSlotOrUndefined v51 key="name" receivers=[L1] level=Expected accessSite=63
-# CHECK-NEXT: v55: string = TypeOf v54
-# CHECK-NEXT: v56: undefined = CallBuiltin -, v48, v52, v53, v55, v54 overload=ConsoleLog/0 accessSite=65
+# CHECK-NEXT: v42: undefined = Undefined
+# CHECK-NEXT: v43: null|boolean|number|string|object = CallBuiltin -, v0, v42 overload=JSONParse/0 accessSite=58
+# CHECK-NEXT: Jump -> next b16(v43)
+# CHECK-NEXT: b16(v44: null|boolean|number|string|object ~ null|L1):
+# CHECK-NEXT: PutEnvironmentField v1, v44 layout=L0
+# CHECK-NEXT: v46: "captured, in the body" = String string="captured, in the body"
+# CHECK-NEXT: v47: boolean|number|string|object ~ L1 = RequireObjectCoercible v44 name="port"
+# CHECK-NEXT: v48: boolean ~ true = TypeTest v47 testedType=L1
+# CHECK-NEXT: Branch v48 -> taken b17(| 0), notTaken b18()
+# CHECK-NEXT: b17(v49: L1):
+# CHECK-NEXT: v50: "number" = String string="number"
+# CHECK-NEXT: v51: number = GetSlot v49 key="port" receivers=[L1] level=Expected accessSite=62
+# CHECK-NEXT: v52: undefined|null|string = GetSlotOrUndefined v49 key="name" receivers=[L1] level=Expected accessSite=63
+# CHECK-NEXT: v53: string = TypeOf v52
+# CHECK-NEXT: v54: undefined = CallBuiltin -, v46, v50, v51, v53, v52 overload=ConsoleLog/0 accessSite=65
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v57: anything ~ number = PropGet v49 key="port" accessSite=61
-# CHECK-NEXT: v58: string = TypeOf v57
-# CHECK-NEXT: v59: anything ~ number = PropGet v49 key="port" accessSite=62
-# CHECK-NEXT: v60: anything ~ undefined|null|string = PropGet v49 key="name" accessSite=63
-# CHECK-NEXT: v61: string = TypeOf v60
-# CHECK-NEXT: v62: anything ~ undefined|null|string = PropGet v49 key="name" accessSite=64
-# CHECK-NEXT: v63: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v64: undefined = CallBuiltin v63, v48, v58, v59, v61, v62 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=65
+# CHECK-NEXT: v55: anything ~ number = PropGet v47 key="port" accessSite=61
+# CHECK-NEXT: v56: string = TypeOf v55
+# CHECK-NEXT: v57: anything ~ number = PropGet v47 key="port" accessSite=62
+# CHECK-NEXT: v58: anything ~ undefined|null|string = PropGet v47 key="name" accessSite=63
+# CHECK-NEXT: v59: string = TypeOf v58
+# CHECK-NEXT: v60: anything ~ undefined|null|string = PropGet v47 key="name" accessSite=64
+# CHECK-NEXT: v61: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v62: undefined = CallBuiltin v61, v46, v56, v57, v59, v60 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=65
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v65: "captured, late" = String string="captured, late"
-# CHECK-NEXT: v66: f6 = NewClosure v1 function=f6 allocationSite=4
-# CHECK-NEXT: v67: undefined = CallDirect v65, v66 function=f19 accessSite=66
-# CHECK-NEXT: Return v66
+# CHECK-NEXT: v63: "captured, late" = String string="captured, late"
+# CHECK-NEXT: v64: f6 = NewClosure v1 function=f6 allocationSite=4
+# CHECK-NEXT: v65: undefined = CallDirect v63, v64 function=f19 accessSite=66
+# CHECK-NEXT: Return v64
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readSettings"
 # CHECK: module=m0 position=376 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L1 site=w6 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

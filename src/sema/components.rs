@@ -5,6 +5,7 @@
 
 use crate::program::FileId;
 use crate::session::Arena;
+use bun_sort_by_number::SortByNumber;
 
 pub struct Component<'s> {
     /// In program order.
@@ -69,7 +70,7 @@ impl<'s> Components<'s> {
             }
         }
         let mut in_program_order: Vec<usize> = (0..numbered.len()).collect();
-        in_program_order.sort_unstable_by_key(|&number| numbered[number][0]);
+        in_program_order.sort_by_u64(|&number| numbered[number][0] as u64);
         let mut index_of = vec![0u32; numbered.len()];
         for (index, &number) in in_program_order.iter().enumerate() {
             index_of[number] = index as u32;

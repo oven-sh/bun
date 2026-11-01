@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
+use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU16;
 
@@ -468,19 +469,43 @@ impl<'s, K, V> Deref for FixedMap<'s, K, V> {
 /// A list that neither grows nor shrinks. It either owns an arena block, which it frees when dropped, or borrows from
 /// an owner that still has the list (`FileBuilder::lend`), or belongs to a file that several programs share
 /// (`File::share`).
-pub struct Fixed<'s, T>(FixedIn<'s, T>);
-
-enum FixedIn<'s, T> {
-    /// No block if it's empty, because a file without nodes can also be created by a thread that doesn't own the arena
-    /// (`File::empty_in`).
-    Arena(ArenaBox<'s, [T]>),
-    Lent(&'s mut [T]),
-    Shared(&'s [T]),
+pub struct Fixed<'s, T> {
+    first: NonNull<T>,
+    len: u32,
+    owner: FixedOwner,
+    held: PhantomData<FixedHeld<'s, T>>,
 }
+
+#[derive(Copy, Clone, PartialEq)]
+enum FixedOwner {
+    Arena,
+    Lent,
+    Shared,
+}
+
+type FixedHeld<'s, T> = (ArenaBox<'s, [T]>, &'s mut [T], &'s [T]);
+
+const _: () = assert!(size_of::<Fixed<'static, u32>>() == 16);
+
+// SAFETY: it is one of the three, and is used like it.
+unsafe impl<'s, T> Send for Fixed<'s, T> where FixedHeld<'s, T>: Send {}
+// SAFETY: as above.
+unsafe impl<'s, T> Sync for Fixed<'s, T> where FixedHeld<'s, T>: Sync {}
 
 impl<T> Default for Fixed<'_, T> {
     fn default() -> Self {
-        Fixed(FixedIn::Lent(&mut []))
+        Fixed::lent(&mut [])
+    }
+}
+
+impl<T> Drop for Fixed<'_, T> {
+    #[inline]
+    fn drop(&mut self) {
+        if self.owner == FixedOwner::Arena {
+            let list = std::ptr::slice_from_raw_parts_mut(self.first.as_ptr(), self.len as usize);
+            // SAFETY: it is the box of `owning`.
+            drop(unsafe { ArenaBox::from_raw(list) });
+        }
     }
 }
 
@@ -490,20 +515,43 @@ impl<'s, T: Copy> Fixed<'s, T> {
         if list.is_empty() {
             return Fixed::default();
         }
-        Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
+        Fixed::owning(ArenaBox::copy_from_slice_in(list, arena))
     }
 
     /// Call before writing into it. Turns a shared list into a copy in `arena`.
     pub(crate) fn make_owned_in(&mut self, arena: &'s Arena) {
-        if let FixedIn::Shared(list) = self.0 {
-            *self = Fixed::copied_in(arena, list);
+        if self.owner == FixedOwner::Shared {
+            *self = Fixed::copied_in(arena, self);
         }
     }
 }
 
 impl<'s, T> Fixed<'s, T> {
+    #[inline]
+    fn new(list: NonNull<[T]>, owner: FixedOwner) -> Self {
+        Fixed {
+            first: list.cast(),
+            len: u32::try_from(list.len()).expect("ids of nodes are 32 bits wide"),
+            owner,
+            held: PhantomData,
+        }
+    }
+
+    fn owning(list: ArenaBox<'s, [T]>) -> Self {
+        // SAFETY: a box is never null.
+        Fixed::new(
+            unsafe { NonNull::new_unchecked(list.into_raw()) },
+            FixedOwner::Arena,
+        )
+    }
+
+    #[inline]
+    fn lent(list: &'s mut [T]) -> Self {
+        Fixed::new(NonNull::from(list), FixedOwner::Lent)
+    }
+
     pub(crate) fn shared(list: &'s [T]) -> Self {
-        Fixed(FixedIn::Shared(list))
+        Fixed::new(NonNull::from(list), FixedOwner::Shared)
     }
 }
 
@@ -568,7 +616,7 @@ impl<'s> ListBlock<'s> {
             std::slice::from_raw_parts_mut(first, list.len())
         };
         self.used += room;
-        Fixed(FixedIn::Lent(copy))
+        Fixed::lent(copy)
     }
 
     fn is_empty(&self) -> bool {
@@ -592,7 +640,7 @@ impl<'s> ListBlock<'s> {
     ) -> Fixed<'s, T> {
         let room = (items.len() * size_of::<T>()).next_multiple_of(ListBlock::ALIGNMENT);
         if room == 0 || room > self.size - self.used {
-            return Fixed(FixedIn::Arena(ArenaBox::from_iter_in(items, arena)));
+            return Fixed::owning(ArenaBox::from_iter_in(items, arena));
         }
         let count = items.len();
         // SAFETY: as in `copy`. An iterator that yields less than it said leaves the list shorter.
@@ -606,7 +654,7 @@ impl<'s> ListBlock<'s> {
             std::slice::from_raw_parts_mut(first, written)
         };
         self.used += room;
-        Fixed(FixedIn::Lent(copy))
+        Fixed::lent(copy)
     }
 
     /// `copy`, and clears `list`, which keeps its capacity.
@@ -640,9 +688,9 @@ pub(crate) trait LongList {
 
 impl<T: Copy> LongList for Fixed<'_, T> {
     fn lent_bytes(&self) -> (*const u8, usize) {
-        match &self.0 {
-            FixedIn::Lent(list) => (list.as_ptr().cast(), size_of_val(&**list)),
-            FixedIn::Arena(_) | FixedIn::Shared(_) => (std::ptr::null(), 0),
+        match self.owner {
+            FixedOwner::Lent => (self.as_ptr().cast(), size_of_val(&**self)),
+            FixedOwner::Arena | FixedOwner::Shared => (std::ptr::null(), 0),
         }
     }
 
@@ -653,7 +701,7 @@ impl<T: Copy> LongList for Fixed<'_, T> {
     unsafe fn lend(&mut self, first: *mut u8, size: usize) {
         let count = size / size_of::<T>();
         // SAFETY: caller contract.
-        self.0 = FixedIn::Lent(unsafe { std::slice::from_raw_parts_mut(first.cast::<T>(), count) });
+        *self = Fixed::lent(unsafe { std::slice::from_raw_parts_mut(first.cast::<T>(), count) });
     }
 }
 
@@ -661,24 +709,19 @@ impl<T> Deref for Fixed<'_, T> {
     type Target = [T];
     #[inline(always)]
     fn deref(&self) -> &[T] {
-        match &self.0 {
-            FixedIn::Arena(list) => list,
-            FixedIn::Lent(list) => list,
-            FixedIn::Shared(list) => list,
-        }
+        // SAFETY: it stands for a slice that lives as long as it does.
+        unsafe { std::slice::from_raw_parts(self.first.as_ptr(), self.len as usize) }
     }
 }
 
 impl<T> DerefMut for Fixed<'_, T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [T] {
-        match &mut self.0 {
-            FixedIn::Arena(list) => list,
-            FixedIn::Lent(list) => list,
-            FixedIn::Shared(_) => {
-                unreachable!("a file is only shared once nothing writes to it anymore")
-            }
+        if self.owner == FixedOwner::Shared {
+            unreachable!("a file is only shared once nothing writes to it anymore")
         }
+        // SAFETY: it stands for a box or a unique reference that lives as long as it does.
+        unsafe { std::slice::from_raw_parts_mut(self.first.as_ptr(), self.len as usize) }
     }
 }
 
@@ -749,7 +792,7 @@ impl<'s, T: Id> Narrow<'s, T> {
             };
         }
         let short = list.iter().map(|&id| id.into().wrapping_add(1) as u16);
-        let short = Fixed(FixedIn::Arena(ArenaBox::from_iter_in(short, arena)));
+        let short = Fixed::owning(ArenaBox::from_iter_in(short, arena));
         list.clear();
         Narrow {
             short,
@@ -1588,8 +1631,6 @@ pub mod rare {
     pub const DIRECTIVE_IN_FUNCTION: u32 = 1 << 7;
     /// A type parameter has a modifier: `<const T>`, `<in T>`.
     pub const TYPE_PARAMETER_MODIFIER: u32 = 1 << 8;
-    /// A function has a `"use strict"` directive that does not count.
-    pub const DROPPED_STRICT_DIRECTIVE: u32 = 1 << 14;
     /// `T?`, `?T`, `T!` or `!T` as a type, outside a comment.
     pub const JSDOC_TYPE: u32 = 1 << 9;
     /// A type predicate: `a is T`, `asserts a`.
@@ -2209,6 +2250,7 @@ pub struct Import {
     pub stmt: StmtId,
     /// The `Object` of `with { .. }`. `NONE` if there is none.
     pub attributes: ExprId,
+    pub loaded_as: Atom,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -2689,6 +2731,32 @@ pub struct ImportedConstant {
     pub value: crate::fold::Constant,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ImportedFileChanger {
+    pub specifier: Atom,
+    pub export: Atom,
+    pub place: u32,
+    pub reaches_below: bool,
+    pub start: Atom,
+    pub end: Atom,
+    pub starts_at_own_directory: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct TextOfOtherFile {
+    pub specifier: Atom,
+    pub export: Atom,
+    pub text: Atom,
+    pub starts_at_own_directory: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct TextOfDataFile {
+    pub specifier: Atom,
+    pub path: Atom,
+    pub text: Atom,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2715,6 +2783,9 @@ pub struct FileIn<S: Storage> {
     pub imported_requires: S::Few<ImportedRequire>,
     /// The names of other files that hold a constant, among those that folding the file asked for. Set by the loader.
     pub imported_constants: S::Few<ImportedConstant>,
+    pub texts_of_data_files: S::Few<TextOfDataFile>,
+    pub imported_file_changers: S::Few<ImportedFileChanger>,
+    pub texts_of_other_files: S::Few<TextOfOtherFile>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3131,6 +3202,14 @@ impl<S: Storage> FileIn<S> {
         after > 0 && pos < self.jsdoc_comments[after - 1].1
     }
 
+    pub fn syntax_errors(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnostics.iter().filter(|it| {
+            it.kind == DiagnosticKind::Parse
+                && it.class == DiagnosticClass::EarlyError
+                && !self.is_in_jsdoc(it.start)
+        })
+    }
+
     /// `NodeFlagsHasJSDoc` for a node whose first token is at `token`. See `jsdoc_hosts`.
     pub fn jsdoc_host_at(&self, token: u32) -> Option<&JsDocHost> {
         let index = self
@@ -3396,6 +3475,9 @@ macro_rules! file_in_storage {
             is_script_with_code: $this.is_script_with_code,
             imported_requires: $few!($this.imported_requires),
             imported_constants: $few!($this.imported_constants),
+            texts_of_data_files: $few!($this.texts_of_data_files),
+            imported_file_changers: $few!($this.imported_file_changers),
+            texts_of_other_files: $few!($this.texts_of_other_files),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
@@ -3578,7 +3660,7 @@ impl FileBuilder {
         self.lazy = LazyCells::default();
         macro_rules! lent {
             ($list:expr) => {
-                Fixed(FixedIn::Lent(&mut $list[..]))
+                Fixed::lent(&mut $list[..])
             };
         }
         moved_lists!(arena);

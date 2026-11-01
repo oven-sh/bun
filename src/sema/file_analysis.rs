@@ -13,7 +13,8 @@ use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, JsxImportSet, JsxMode, ResolvedForm,
+    ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind, ImportSpecifier, JsxImportSet,
+    JsxMode, ResolvedForm, ResolvedFrom,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -25,6 +26,24 @@ pub struct FileInputs<'s> {
     pub is_library: bool,
     pub host_values: &'s [(ExprId, HostValue<'s>)],
     pub jsx: JsxMode,
+    pub own_name: &'s [u8],
+}
+
+impl FileInputs<'_> {
+    pub fn type_by_name(&self) -> DeclaredModuleType {
+        let name = self.own_name;
+        if name.ends_with(b".mjs") || name.ends_with(b".mts") {
+            DeclaredModuleType::Esm
+        } else if name.ends_with(b".cjs") || name.ends_with(b".cts") {
+            DeclaredModuleType::CommonJs
+        } else {
+            DeclaredModuleType::Unknown
+        }
+    }
+
+    pub fn is_named_es_module(&self) -> bool {
+        self.type_by_name() == DeclaredModuleType::Esm
+    }
 }
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -40,7 +59,11 @@ pub struct FileAnalysis<'s> {
     names_of_workers: &'s [(ExprId, ImportSpecifier)],
     /// `writeFileSync(path, text)`, `rmSync(path)`, `Bun.write(path, text)`: each operand that names a file which the call writes, moves or removes, with what it may be,
     /// where that is known. `is_path_from_own_directory` and `find_resolved_form` say how it is written, as of the specifier of a site.
-    pub paths_of_changed_files: &'s [(ExprId, ImportSpecifier)],
+    pub paths_of_changed_files: &'s [ChangedPath],
+    pub exported_file_changers: &'s [ExportedFileChanger],
+    pub asked_of_other_files: &'s [(Atom, Atom)],
+    pub asked_of_data_files: &'s [(Atom, Atom)],
+    pub names_out_of_data_files: &'s [Atom],
     keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],
@@ -54,7 +77,7 @@ pub struct FileAnalysis<'s> {
     pub relies_on_running_before_calls: bool,
     /// What the code reads of other files through its import statements, each name once, in the order of the first reads.
     pub imported_names: &'s [ImportedName],
-    requires_of_other_files: &'s [(u32, Atom)],
+    requires_of_other_files: &'s [(u32, ResolvedFrom)],
     sites_by_kind: &'s [u32],
     first_call_site: u32,
 }
@@ -120,8 +143,7 @@ impl FileAnalysis<'_> {
         Some(self.sites_by_kind[found] as usize)
     }
 
-    // The path that the specifier of a site is resolved from, if the call goes through the `require` of another file.
-    pub fn path_to_resolve_from(&self, site: usize) -> Option<Atom> {
+    pub fn path_to_resolve_from(&self, site: usize) -> Option<ResolvedFrom> {
         let others = self.requires_of_other_files;
         let found = others.binary_search_by_key(&(site as u32), |it| it.0);
         Some(others[found.ok()?].1)

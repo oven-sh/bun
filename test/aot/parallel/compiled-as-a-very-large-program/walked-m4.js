@@ -1,0 +1,16 @@
+// Flags: --aot-heat=ReadOffStructure
+// The name that a walk hands out is kept in a member, and the name is an index or reads like a number, true, null or undefined. walked-key.js says what went wrong.
+const STATUS = { 200: "OK", 404: "Not Found", 500: "Server Error" };
+const remembered = {};
+function makeReply() { return { calls: 0, total: 0, largest: 0, smallest: 0, odd: 0, even: 0 }; }
+function classify(reply, text, weight) {
+  reply.calls += 1; reply.total += weight; if (reply.total > 100) reply.total -= 100;
+  if (weight > reply.largest) reply.largest = weight; if (weight < reply.smallest || reply.calls === 1) reply.smallest = weight;
+  if (weight % 2 === 1) reply.odd += 1; else reply.even += 1; if (reply.odd > reply.even + 10) reply.odd = reply.even;
+  if (reply.largest - reply.smallest > 50) reply.largest = reply.smallest + 50;
+  for (const code in STATUS) { if (STATUS[code] === text) remembered.code = code; }
+  return reply.calls; }
+function lastCode() { return remembered.code ?? "none"; }
+const reply = makeReply();
+classify(reply, "Not Found", 1); console.log("R=" + lastCode());
+classify(reply, "OK", 2); console.log("R=" + lastCode());

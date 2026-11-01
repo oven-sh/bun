@@ -51,3 +51,33 @@ function churn(depth: number): number { const pair = { left: depth }; const read
   say("a WeakRef watches them die", t, watched.filter(r => r.deref() !== undefined).length);
 }
 console.log(lines.join("\n"));
+// What is printed follows from the program. Plain Bun now and then finds an object still there that nobody reaches.
+/* Output:
+=== false true true 2
+== false true true
+Object.is false true
+includes false true -1 1 2
+Set 3
+Set.add 4 false
+Map 2 1  false false 2
+WeakMap true false 
+WeakSet true false
+property 1  false 1
+members false 20
+class fields false
+switch a
+filter 2 3 2
+handed on false true false false
+dependencies false true
+listeners 2 3 1 16
+function expressions false false
+what new makes false false 2 false
+classes false 4
+WeakRef true false
+by name false 2 2
+bind false 60
+reverse true false
+async and generators true false 23 22
+only called 162000 6
+a WeakRef watches them die 52350 0
+*/

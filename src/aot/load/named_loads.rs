@@ -1,3 +1,4 @@
+use bun_paths::resolve_path::{dirname, platform};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     Binding, BindingKind, BindingStability, Bound, Decl, Parent, StoreKind, SymbolId,
@@ -7,23 +8,27 @@ use bun_sema::hir::{
     BinOp, Branches, ExprId, ExprKind, File, ImportId, NodeData, PatId, PatKind, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{
-    ImportSiteKind, ImportSpecifier, find_values_of_parameter, is_exported,
+    ImportSite, ImportSiteKind, ImportSpecifier, find_values_of_parameter, is_exported,
+    is_name_read_by_transpiler,
 };
 use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
 use bun_sema::resolve::{
     CodeFailure, CodeResolution, ComputedResolution, ExternalKind, FinishedFile, SiteResolution,
 };
-use bun_sema::util::{FxHashMap, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
 
+use crate::builtins::table::{self, BuiltinFlags};
 use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
 use crate::ir::parallel::InParallel;
 use crate::load::is_in_node_modules;
 use crate::load::loader_aliases::{
     LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
 };
+use crate::load::replaced_modules::asks_for_original_beside_mock;
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
-use crate::load::sources::parsed_source;
+use crate::load::sources::{SourceKind, parsed_source, parsed_source_in};
+use crate::modules::evicted::find_whole_paths_changed_on_disk;
 use crate::statistics::{LimitId, LimitValues};
 
 // `module` is what `name` stands for, and `name` is one of the values of `argument`, the first argument of a load.
@@ -32,6 +37,78 @@ pub(crate) struct NamedModule {
     pub argument: ExprId,
     pub name: Atom,
     pub module: RuntimeModule,
+}
+
+pub(crate) fn names_plugin(files: &dyn CodeView<'_>) -> bool {
+    let mut compiled = files.compiled_files().iter();
+    compiled.any(|&file| {
+        parsed_source_in(files, file).is_some_and(|source| source.builtins.names_plugin())
+    })
+}
+
+// What `bun build` reads in a call that loads: a text, texts joined by `+`, and a choice between such.
+fn is_written_out(hir: &File<'_>, name: ExprId) -> bool {
+    match hir[hir.skip_type_assertions(name)].kind {
+        ExprKind::String(_) => true,
+        ExprKind::Template { exprs } => hir.ids(exprs).next().is_none(),
+        ExprKind::Binary {
+            op: BinOp::Add,
+            left,
+            right,
+        } => is_written_out(hir, left) && is_written_out(hir, right),
+        ExprKind::Cond { branches, .. } => {
+            let Branches { yes, no } = hir.branches(branches);
+            is_written_out(hir, yes) && is_written_out(hir, no)
+        }
+        _ => false,
+    }
+}
+
+/// `const name = "./a.js"; import(name)`: this build knows the file, and `bun build` leaves the call to the run time, where a plugin may answer it.
+/// The file belongs to the program. In a program that names `Bun.plugin` the call asks the loader, which asks the plugins and then finds the file.
+pub(crate) fn is_followed_further_than_bundler(
+    files: &dyn CodeView<'_>,
+    file: FileId,
+    site: &ImportSite,
+) -> bool {
+    let loads = matches!(
+        site.kind,
+        ImportSiteKind::ImportCall(_)
+            | ImportSiteKind::Require(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+    );
+    // A name that is known in part finds its file by what the build has made of the part: a path of the disk among them, which the loader does not know.
+    if !loads || !matches!(site.specifier, ImportSpecifier::Constant(_)) {
+        return false;
+    }
+    let (hir, bound) = (files.hir(file), files.bound(file));
+    let decisions = &files.analysis(file).decisions;
+    !is_written_out(hir, site.specifier_node)
+        || !is_name_read_by_transpiler(hir, bound, decisions, site.kind)
+}
+
+/// In the format of the checker.
+pub(crate) fn find_files_followed_further_than_bundler(files: &dyn CodeView<'_>) -> Vec<Vec<u8>> {
+    let mut found: Vec<Vec<u8>> = Vec::new();
+    if !names_plugin(files) {
+        return found;
+    }
+    for &file in files.compiled_files() {
+        let Some((answers, _)) = files.answers(file) else {
+            continue;
+        };
+        for (site, answer) in files.analysis(file).import_sites.iter().zip(answers) {
+            if !is_followed_further_than_bundler(files, file, site) {
+                continue;
+            }
+            if let CodeAnswer::File(target) = *answer {
+                found.push(files.file_name(target).to_vec());
+            }
+        }
+    }
+    found.shared_sort_unstable();
+    found.dedup();
+    found
 }
 
 pub(crate) fn modules_named_in(named: &[NamedModule], argument: ExprId) -> &[NamedModule] {
@@ -162,8 +239,6 @@ fn sort_named_modules(named: &mut Vec<NamedModule>) {
     named.dedup();
 }
 
-const MAX_REEXPORTS: usize = 8;
-
 pub(crate) fn find_import_of(
     files: &dyn CodeView<'_>,
     file: FileId,
@@ -182,7 +257,8 @@ pub(crate) fn find_import_of(
 }
 
 fn imports_loader(files: &Files<'_>, mut file: FileId, mut symbol: SymbolId) -> bool {
-    for _ in 0..MAX_REEXPORTS {
+    let mut followed = FxHashSet::default();
+    while followed.insert((file, symbol)) {
         let Some((import, export_name)) = find_import_of(files, file, symbol) else {
             return false;
         };
@@ -216,23 +292,198 @@ pub(crate) fn gives_unknown_name_to_imported_loader(application: &Files<'_>, fil
     })
 }
 
+fn file_loads_by_unknown_name(application: &Files<'_>, file: FileId) -> bool {
+    parsed_source(application, file).is_none_or(|source| source.loads_by_unknown_name)
+        || gives_unknown_name_to_imported_loader(application, file)
+}
+
+fn file_loads_by_unknown_path(application: &Files<'_>, file: FileId) -> bool {
+    file_loads_by_unknown_name(application, file)
+        || parsed_source(application, file).is_some_and(|source| {
+            !source.unknown_names_at.is_empty() || !source.files_missing_at_build_at.is_empty()
+        })
+}
+
 pub(crate) fn loads_by_unknown_name(application: &Files<'_>) -> bool {
-    let loads_by_unknown_name = |&file: &FileId| {
-        parsed_source(application, file).is_none_or(|source| source.loads_by_unknown_name)
-            || gives_unknown_name_to_imported_loader(application, file)
-    };
     let mut files = application.compiled_files().iter();
-    files.any(loads_by_unknown_name)
+    files.any(|&file| file_loads_by_unknown_name(application, file))
 }
 
 pub(crate) fn loads_by_unknown_path(application: &Files<'_>) -> bool {
-    let names_unknown_path = |&file: &FileId| {
-        parsed_source(application, file).is_some_and(|source| {
-            !source.unknown_names_at.is_empty() || !source.files_missing_at_build_at.is_empty()
+    let mut files = application.compiled_files().iter();
+    files.any(|&file| file_loads_by_unknown_path(application, file))
+}
+
+/// The files of a test run that no executable of the project would hold: the test files, the preloads, and what lies in the folder of a test file or below it.
+/// Every path is a `tspath.Path` (`to_path`): one spelling for a file, whatever the case of its drive and folders where the disk ignores it.
+pub(crate) struct FilesOfTests {
+    files: FxHashSet<Vec<u8>>,
+    test_files: FxHashSet<Vec<u8>>,
+    folders: FxHashSet<Vec<u8>>,
+}
+
+impl FilesOfTests {
+    /// `test_files`: what the runner runs as test files. Their names say nothing: `bun test ./checks/latest.ts`.
+    pub(crate) fn new(test_files_and_preloads: Vec<Vec<u8>>, test_files: &[Vec<u8>]) -> Self {
+        let folders = test_files.iter();
+        let folders = folders.map(|path| dirname::<platform::Posix>(path).to_vec());
+        Self {
+            folders: folders.collect(),
+            test_files: test_files.iter().cloned().collect(),
+            files: test_files_and_preloads.into_iter().collect(),
+        }
+    }
+
+    pub(crate) fn is_test_file(&self, path: &[u8]) -> bool {
+        self.test_files.contains(path)
+    }
+
+    /// A test file or a preload itself.
+    pub(crate) fn lists(&self, path: &[u8]) -> bool {
+        self.files.contains(path)
+    }
+
+    pub(crate) fn holds(&self, path: &[u8]) -> bool {
+        if self.files.contains(path) {
+            return true;
+        }
+        if is_in_node_modules(path) {
+            return false;
+        }
+        let mut folder = dirname::<platform::Posix>(path);
+        loop {
+            if self.folders.contains(folder) {
+                return true;
+            }
+            let above = dirname::<platform::Posix>(folder);
+            if above.len() >= folder.len() {
+                return false;
+            }
+            folder = above;
+        }
+    }
+}
+
+// A text that the file evaluates imports what it likes, and so does whoever gets a loader from the file.
+// But for the two functions that load by a name: `require("node:path")` is as closed as an import of it. `loads_unknown_modules` says where one of them is handed about, and
+// `file_loads_by_unknown_path` where it is given a name that the build does not know.
+fn file_mentions_evaluator_or_loader(application: &Files<'_>, file: FileId) -> bool {
+    let opens = BuiltinFlags::EVALUATES_TEXT | BuiltinFlags::RUNS_UNSEEN_CODE;
+    let loads_by_name = [
+        BuiltinId::ModuleRequire,
+        BuiltinId::ImportMetaRequire,
+        BuiltinId::ProcessGetBuiltinModule,
+    ]
+    .map(table::canonical_id);
+    parsed_source(application, file).is_none_or(|source| {
+        source.builtins.loads_unknown_modules()
+            || (source.builtins.mentioned().iter()).any(|&id| {
+                table::entry(id).flags.intersects(opens)
+                    && !loads_by_name.contains(&table::canonical_id(id))
+            })
+    })
+}
+
+/// `Module._resolveFilename = f`, `Module._load = f`, `Module.prototype.require = f`, `require.extensions[".x"] = f`: from the store on a `require("./a")` anywhere in the run
+/// may be answered with a file that no import names. Who stores shows only where flow follows the object (`__toESM(require("module"))._load = f`), so whoever gets at the object of
+/// `node:module`, at a member of it other than `createRequire`, or at a table of loaders counts. module-alias and its like are packages, so this asks every file.
+fn file_gets_at_loader(application: &Files<'_>, file: FileId) -> bool {
+    let is =
+        |id: BuiltinId, other: BuiltinId| table::canonical_id(id) == table::canonical_id(other);
+    let tables = [
+        BuiltinId::ModuleRequireExtensions,
+        BuiltinId::ModuleRequirePrototypeExtensions,
+        BuiltinId::NodeModule_extensions,
+    ];
+    parsed_source(application, file).is_some_and(|source| {
+        // `import { createRequire } from "node:module"` mentions the module, and no expression of the file is its object.
+        let holds_object = || {
+            let expressions = 0..application.hir(file).exprs.len() as u32;
+            expressions.map(ExprId).any(|expression| {
+                (source.builtins.builtin_of_expression(expression))
+                    .is_some_and(|id| is(id, BuiltinId::NodeModule))
+            })
+        };
+        source.builtins.mentioned().iter().any(|&id| {
+            (is(id, BuiltinId::NodeModule) && holds_object())
+                || tables.iter().any(|&table| is(id, table))
+                // `Module.Module` is the object itself.
+                || (!is(id, BuiltinId::NodeModule)
+                    && !is(id, BuiltinId::NodeModuleCreateRequire)
+                    && (table::members(BuiltinId::NodeModule).iter()).any(|&member| is(id, member)))
+        })
+    })
+}
+
+fn is_of_tests(application: &Files<'_>, file: FileId) -> bool {
+    parsed_source(application, file).is_none_or(|source| source.is_of_tests())
+}
+
+pub(crate) fn files_of_tests_load_by_unknown_path(application: &Files<'_>) -> bool {
+    let mut files = application.compiled_files().iter();
+    files.any(|&file| {
+        is_of_tests(application, file) && file_loads_by_unknown_path(application, file)
+    })
+}
+
+/// The original beside a mock, the module that the runner writes for a mock without a factory, a file that loads again behind `vi.resetModules()`: the host reads them from disk or
+/// makes them of text, and a run that stays in its compiled files refuses both.
+fn file_asks_for_code_beside_mocks(application: &Files<'_>, file: FileId) -> bool {
+    let analysis = application.analysis(file);
+    let is_test_runner = |site: usize| match analysis.import_sites[site].specifier {
+        ImportSpecifier::Constant(text) => {
+            matches!(
+                application.atoms.bytes(text),
+                b"bun:test" | b"@jest/globals" | b"vitest"
+            )
+        }
+        _ => false,
+    };
+    parsed_source(application, file).is_some_and(|source| {
+        asks_for_original_beside_mock(
+            application.hir(file),
+            application.bound(file),
+            analysis,
+            &source.builtins,
+            &application.atoms,
+            &is_test_runner,
+        )
+    })
+}
+
+pub(crate) fn files_of_tests_may_load_code_from_disk(application: &Files<'_>) -> bool {
+    application.compiled_files().iter().any(|&file| {
+        file_gets_at_loader(application, file)
+            || is_of_tests(application, file)
+                && (file_loads_by_unknown_path(application, file)
+                    || file_mentions_evaluator_or_loader(application, file)
+                    || file_asks_for_code_beside_mocks(application, file))
+    })
+}
+
+/// `writeFileSync(require.resolve("./a.cjs"), text); delete require.cache[path]; require("./a.cjs")` in a test: the run writes a file with code of the program anew.
+/// The run time compares such a file with the disk before it loads it, and reads the new text. Nobody has read what that text imports and calls.
+pub(crate) fn writes_own_code_anew(application: &Files<'_>, working_directory: &[u8]) -> bool {
+    let is_code = |&file: &FileId| {
+        let kind = parsed_source(application, file).map(|source| source.kind);
+        matches!(kind, Some(SourceKind::Program | SourceKind::EvaluatedText))
+    };
+    let writers = application
+        .compiled_files()
+        .iter()
+        .filter(|&file| is_code(file));
+    let written: Vec<(Vec<u8>, bool)> = writers
+        .flat_map(|&file| find_whole_paths_changed_on_disk(application, file, working_directory))
+        .collect();
+    let is_written = |name: &[u8]| {
+        written.iter().any(|(path, reaches_below)| {
+            let below = name.strip_prefix(&path[..]);
+            below.is_some_and(|rest| rest.is_empty() || (*reaches_below && rest[0] == b'/'))
         })
     };
-    loads_by_unknown_name(application)
-        || application.compiled_files().iter().any(names_unknown_path)
+    !written.is_empty()
+        && (application.compiled_files().iter())
+            .any(|file| is_code(file) && is_written(application.module(*file).file_name()))
 }
 
 /// A path where the program may lay a file before it loads it. What a package looks for and does without, `require("./build/Release/addon.node")`, is none.
@@ -857,6 +1108,8 @@ impl Scan<'_, '_> {
 #[cfg(test)]
 mod tests {
     use bun_builtin_sources::Archive;
+    use bun_sema::resolve::to_path;
+    use bun_sema_driver::host::from_argument;
 
     use crate::builtins::RuntimeModule::{
         self, NodeDgram, NodeHttp2, NodeOs, NodeReadline, NodeRepl, NodeTty, NodeV8, NodeVm,
@@ -864,8 +1117,98 @@ mod tests {
     };
     use crate::builtins::RuntimeUses;
     use crate::compile::testing::{default_settings, with_bind_input};
+    use crate::load::named_loads::FilesOfTests;
     use crate::load::runtime_modules::RuntimeModules;
     use crate::load::runtime_roots::{FurtherLibraryCode, collect_runtime_roots};
+
+    fn files_of_tests(is_case_sensitive: bool, test_files: &[&str]) -> FilesOfTests {
+        files_of_tests_and_others(is_case_sensitive, test_files, &[])
+    }
+
+    fn files_of_tests_and_others(
+        is_case_sensitive: bool,
+        test_files: &[&str],
+        others: &[&str],
+    ) -> FilesOfTests {
+        let to_paths = |listed: &[&str]| -> Vec<Vec<u8>> {
+            let paths = listed.iter();
+            let paths = paths.map(|path| to_path(path.as_bytes(), is_case_sensitive));
+            paths.map(|path| path.into_owned()).collect()
+        };
+        let test_files = to_paths(test_files);
+        let listed = [&test_files[..], &to_paths(others)[..]].concat();
+        FilesOfTests::new(listed, &test_files)
+    }
+
+    fn holds(files: &FilesOfTests, is_case_sensitive: bool, path: &str) -> bool {
+        files.holds(&to_path(path.as_bytes(), is_case_sensitive))
+    }
+
+    #[test]
+    fn files_of_tests_are_the_listed_files_and_what_lies_in_or_below_the_folder_of_a_test_file() {
+        let others = ["/p/setup/preload.ts", "/p/node_modules/.cache/stand-in.ts"];
+        let files = files_of_tests_and_others(true, &["/p/test/a.test.ts"], &others);
+        for path in ["/p/test/a.test.ts", others[0], others[1]] {
+            assert!(holds(&files, true, path), "{path}");
+        }
+        assert!(holds(&files, true, "/p/test/helper.ts"));
+        assert!(holds(&files, true, "/p/test/deep/er/helper.ts"));
+        // A preload is no test file: what lies beside it is the product's.
+        assert!(!holds(&files, true, "/p/setup/other.ts"));
+        assert!(!holds(&files, true, "/p/src/app.ts"));
+        assert!(!holds(&files, true, "/p/tests/helper.ts"));
+        assert!(!holds(&files, true, "/p/test.ts"));
+        assert!(!holds(&files, true, "/p/node_modules/express/lib/view.js"));
+        assert!(!holds(&files, true, "/p/node_modules/.cache/other.ts"));
+        assert!(!holds(&files, true, "/p/test/node_modules/fake/index.js"));
+    }
+
+    #[test]
+    fn the_runner_says_what_a_test_file_is_and_its_name_says_nothing() {
+        for name in ["a.test.ts", "a_spec.tsx", "latest.ts", "App.Test.ts"] {
+            let listed = format!("/p/checks/{name}");
+            let files = files_of_tests(true, &[&listed]);
+            assert!(holds(&files, true, "/p/checks/helper.ts"), "{name}");
+        }
+        let files = files_of_tests_and_others(true, &[], &["/p/checks/setup.test.ts"]);
+        assert!(!holds(&files, true, "/p/checks/helper.ts"));
+    }
+
+    #[test]
+    fn a_test_file_at_the_root_of_the_project_leaves_the_packages_to_the_product() {
+        let files = files_of_tests(true, &["/p/app.test.ts"]);
+        assert!(holds(&files, true, "/p/src/app.ts"));
+        assert!(!holds(&files, true, "/p/node_modules/express/lib/view.js"));
+        assert!(!holds(&files, true, "/q/src/app.ts"));
+    }
+
+    #[test]
+    fn a_drive_and_folders_spelled_in_another_case_are_the_same_where_the_disk_ignores_case() {
+        // As `collect_entry_point_paths` converts what the test runner lists.
+        let listed = from_argument(b"/C:/Work/App", br"C:\Work\App\Test\a.test.ts");
+        assert_eq!(listed, b"/C:/Work/App/Test/a.test.ts");
+        assert_eq!(from_argument(b"/C:/Work/App", br".\Test\a.test.ts"), listed);
+        let listed = str::from_utf8(&listed).unwrap();
+        let files = files_of_tests(false, &[listed]);
+        assert!(holds(&files, false, "/c:/work/app/test/a.test.ts"));
+        assert!(holds(&files, false, "/c:/work/app/test/Helpers/h.ts"));
+        assert!(holds(&files, false, "/C:/WORK/APP/TEST/h.ts"));
+        assert!(!holds(&files, false, "/c:/work/app/src/app.ts"));
+        assert!(!holds(&files, false, "/d:/work/app/test/h.ts"));
+        assert!(!holds(&files, false, "/c:/work/app/test/Node_Modules/x/y"));
+        let files = files_of_tests(true, &[listed]);
+        assert!(!holds(&files, true, "/c:/work/app/test/h.ts"));
+        assert!(holds(&files, true, "/C:/Work/App/Test/h.ts"));
+    }
+
+    // `join` writes `\\Server\Share\app` so on Windows.
+    #[test]
+    fn a_share_of_a_server_has_folders_as_a_drive_has() {
+        let files = files_of_tests(false, &[r"/\\Server/Share/app/test/a.test.ts"]);
+        assert!(holds(&files, false, r"/\\server/share/app/test/h.ts"));
+        assert!(!holds(&files, false, r"/\\server/share/app/h.ts"));
+        assert!(!holds(&files, false, r"/\\server/other/app/test/h.ts"));
+    }
 
     fn root_modules(files: &[(&str, &str)]) -> Vec<RuntimeModule> {
         let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
@@ -875,6 +1218,8 @@ mod tests {
                 serves_unseen_code: false,
                 is_served_by_other_images: false,
                 holds_test_files_alone: false,
+                working_directory_of_test_run: None,
+                only_tests_load_code_from_disk: false,
             };
             let roots =
                 collect_runtime_roots(input.files, &runtime_modules, input.platform, further);
@@ -884,6 +1229,34 @@ mod tests {
             };
             RuntimeModule::ALL.into_iter().filter(is_root).collect()
         })
+    }
+
+    #[test]
+    fn a_run_writes_its_own_code_anew() {
+        let writes_code = |files: &[(&str, &str)]| {
+            with_bind_input(files, &default_settings(), |input| {
+                super::writes_own_code_anew(input.files, input.working_directory)
+            })
+        };
+        let writes = |path: &str| {
+            format!(
+                "import fs from 'node:fs'; import './m.cjs'; import './data.json'; fs.writeFileSync({path}, text);"
+            )
+        };
+        let files_with = |main: &str| {
+            writes_code(&[
+                ("main.ts", main),
+                ("m.cjs", "exports.a = 1;"),
+                ("data.json", "{}"),
+            ])
+        };
+        assert!(files_with(&writes("import.meta.dir + '/m.cjs'")));
+        assert!(files_with(&writes("require.resolve('./m.cjs')")));
+        // No code lies there, or nothing of the program, or nobody knows where it writes.
+        assert!(!files_with(&writes("import.meta.dir + '/data.json'")));
+        assert!(!files_with(&writes("import.meta.dir + '/m.cjs.txt'")));
+        assert!(!files_with(&writes("somewhere")));
+        assert!(!files_with("import './m.cjs'; import './data.json';"));
     }
 
     #[track_caller]

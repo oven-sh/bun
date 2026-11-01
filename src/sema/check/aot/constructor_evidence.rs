@@ -1,7 +1,7 @@
 use super::answers::FunctionRef;
 use super::class_shape::is_prototype_object;
 use super::class_stores::ThisOwner;
-use super::prototype_links::{NamedValue, PrototypeOperation, list_in};
+use super::prototype_links::{LinkEnd, NamedValue, PrototypeOperation, list_in};
 use super::queries::Queries;
 use crate::atom::known;
 use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, SymbolId};
@@ -24,34 +24,58 @@ fn is_member_of_receiver_or_prototype_object(
     matches!(hir[object].kind, ExprKind::This) || is_prototype_object(hir, bound, object)
 }
 
-fn stands_where_a_constructor_stands(
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Standing {
+    AsConstructor,
+    AsSomethingElse,
+    AsArgument { call: ExprId, argument: ExprId },
+}
+
+impl From<bool> for Standing {
+    fn from(stands_as_constructor: bool) -> Standing {
+        match stands_as_constructor {
+            true => Standing::AsConstructor,
+            false => Standing::AsSomethingElse,
+        }
+    }
+}
+
+fn find_standing(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     mut value: ExprId,
     declares_this: bool,
-) -> bool {
+) -> Standing {
     loop {
         let parent = match bound.parent_of_expr(value) {
             Parent::Expr(parent) => parent,
-            Parent::None => return false,
+            Parent::None => return Standing::AsSomethingElse,
             Parent::Prop(property) => {
-                return !declares_this
-                    && !matches!(
-                        hir.runtime_property_key(property),
-                        PropKey::Name(name) if name == known::get || name == known::set
-                    );
+                return Standing::from(
+                    !declares_this
+                        && !matches!(
+                            hir.runtime_property_key(property),
+                            PropKey::Name(name) if name == known::get || name == known::set
+                        ),
+                );
             }
-            _ => return true,
+            _ => return Standing::AsConstructor,
         };
         let Some(parent) = parent.some() else {
-            return false;
+            return Standing::AsSomethingElse;
         };
         if hir.type_assertion_operand(parent) == Some(value) {
             value = parent;
             continue;
         }
-        return match hir[parent].kind {
+        return Standing::from(match hir[parent].kind {
             ExprKind::New(site) => hir[site].callee == value,
+            ExprKind::Call(site) if hir[site].callee != value => {
+                return Standing::AsArgument {
+                    call: parent,
+                    argument: value,
+                };
+            }
             ExprKind::Call(_) | ExprKind::TaggedTemplate(_) => false,
             ExprKind::Binary {
                 op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq,
@@ -70,6 +94,34 @@ fn stands_where_a_constructor_stands(
                 !becomes_member && !is_member_of_receiver_or_prototype_object(hir, bound, target)
             }
             _ => true,
+        });
+    }
+}
+
+fn is_seen_to_be_constructor(hir: &hir::File<'_>, bound: &Bound<'_>, mut value: ExprId) -> bool {
+    loop {
+        let Parent::Expr(parent) = bound.parent_of_expr(value) else {
+            return false;
+        };
+        let Some(parent) = parent.some() else {
+            return false;
+        };
+        if hir.type_assertion_operand(parent) == Some(value) {
+            value = parent;
+            continue;
+        }
+        return match hir[parent].kind {
+            ExprKind::New(site) => hir[site].callee == value,
+            ExprKind::Binary {
+                op: BinOp::Instanceof,
+                right,
+                ..
+            } => right == value,
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => matches!(
+                hir.member_key(parent),
+                Some((object, MemberKey::Name(name))) if object == value && name == known::prototype
+            ),
+            _ => false,
         };
     }
 }
@@ -167,6 +219,96 @@ fn find_constant_holding(
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    fn compute_parameters_seen_to_be_constructors(&mut self, file: FileId) -> &'s [(FnId, u32)] {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let ends = self.end_finder(file);
+        let expressions = self.c.exprs_by_kind(file);
+        let mut seen = Vec::new();
+        for &reference in expressions.of(ExprTag::Ident) {
+            if is_seen_to_be_constructor(hir, bound, reference)
+                && !bound.is_in_type_query(reference)
+                && let Some(LinkEnd::Parameter { function, index }) = ends.find_parameter(reference)
+            {
+                seen.push((function, index));
+            }
+        }
+        seen.sort_unstable();
+        seen.dedup();
+        list_in(self.c.arena, &seen)
+    }
+
+    fn parameters_seen_to_be_constructors(&mut self, file: FileId) -> &'s [(FnId, u32)] {
+        let of_file = self.prototype_links(file);
+        *of_file
+            .parameters_seen_to_be_constructors
+            .get_or_init(|| self.compute_parameters_seen_to_be_constructors(file))
+    }
+
+    fn compute_parameters_used_like_constructors(&mut self, file: FileId) -> &'s [(FnId, u32)] {
+        let mut used = self.parameters_seen_to_be_constructors(file).to_vec();
+        let ends = self.end_finder(file);
+        let mut handed_on = Vec::new();
+        for &(_, passing) in self.prototype_links(file).all_calls_passing_parameters() {
+            let arguments = ends.arguments_in_front_of_spread(passing.call);
+            for (position, argument) in arguments.enumerate() {
+                if let Some(LinkEnd::Parameter { function, index }) =
+                    ends.find_referenced_parameter(argument)
+                {
+                    handed_on.push(((function, index), passing.callee, position as u32));
+                }
+            }
+        }
+        handed_on.sort_unstable_by_key(|entry| (entry.0, entry.2));
+        handed_on.dedup();
+        loop {
+            let count = used.len();
+            for &(parameter, callee, position) in &handed_on {
+                let is_used = match callee.file == file {
+                    true => used.contains(&(callee.function, position)),
+                    false => self
+                        .parameters_seen_to_be_constructors(callee.file)
+                        .binary_search(&(callee.function, position))
+                        .is_ok(),
+                };
+                if is_used && !used.contains(&parameter) {
+                    used.push(parameter);
+                }
+            }
+            if used.len() == count {
+                break;
+            }
+        }
+        used.sort_unstable();
+        list_in(self.c.arena, &used)
+    }
+
+    fn stands_where_a_constructor_stands(
+        &mut self,
+        file: FileId,
+        value: ExprId,
+        declares_this: bool,
+    ) -> bool {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        match find_standing(hir, bound, value, declares_this) {
+            Standing::AsConstructor => true,
+            Standing::AsSomethingElse => false,
+            Standing::AsArgument { call, argument } => {
+                let ends = self.end_finder(file);
+                let Some(NamedValue::Function(callee)) = ends.find_callee(call) else {
+                    return false;
+                };
+                let Some(position) = ends.find_position_of_argument(call, argument) else {
+                    return false;
+                };
+                let of_file = self.prototype_links(callee.file);
+                let used = *of_file
+                    .parameters_used_like_constructors
+                    .get_or_init(|| self.compute_parameters_used_like_constructors(callee.file));
+                used.binary_search(&(callee.function, position)).is_ok()
+            }
+        }
+    }
+
     fn compute_declarations_used_like_constructors(&mut self, file: FileId) -> &'s [SymbolId] {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let functions = (0..hir.fns.len() as u32).map(FnId);
@@ -210,9 +352,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 if let Binding::Symbol(symbol) = bound.binding(reference)
                     && unused.contains(&symbol)
                     && !bound.is_in_type_query(reference)
-                    && stands_where_a_constructor_stands(
-                        hir,
-                        bound,
+                    && self.stands_where_a_constructor_stands(
+                        file,
                         reference,
                         declaring_this.contains(&symbol),
                     )
@@ -335,9 +476,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         match bound.fns[function.idx()].owner {
             FnOwner::Expr(expression) => {
-                stands_where_a_constructor_stands(
-                    hir,
-                    bound,
+                self.stands_where_a_constructor_stands(
+                    file,
                     expression,
                     declares_this(hir, function),
                 ) && !(is_stored_into_member(hir, bound, expression)

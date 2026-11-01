@@ -1,8 +1,9 @@
-import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
+import { afterAll, describe as describeAnywhere, test } from "./listed";
 
 const describe = unsupported ? describeAnywhere.skip : describeAnywhere.concurrent;
 // No more commands at once than the machine has cores.

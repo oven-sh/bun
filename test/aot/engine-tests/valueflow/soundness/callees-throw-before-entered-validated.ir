@@ -381,34 +381,33 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ValidateFirstRun variable=g8
 # CHECK-NEXT: v65: f12 = FinishClass v63 layout=L2
 # CHECK-NEXT: v66: anything = CallDirect v65 function=f28 accessSite=30
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectGetOwnPropertyDescriptor
-# CHECK-NEXT: v68: L4 = NewObject layout=L4 allocationSite=13 allocationClass=3
-# CHECK-NEXT: v69: f13 = NewClosure function=f13 allocationSite=14
-# CHECK-NEXT: DefineGetter v68, v69 key="g"
-# CHECK-NEXT: v71: L4 = FinishObject v68
-# CHECK-NEXT: v72: "g" = String string="g"
-# CHECK-NEXT: v73: undefined = CallBuiltin -, v71, v72 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=31
-# CHECK-NEXT: v74: boolean = ResultAt v73
-# CHECK-NEXT: v75: 1 = Integer integer=1
-# CHECK-NEXT: v76: int[0, 1] = ToNumber v74
-# CHECK-NEXT: v77: int[1, 2] = LShift v75, v76
-# CHECK-NEXT: v78: anything = ResultAt v73 index=3
-# CHECK-NEXT: v79: 1 = Integer integer=1
-# CHECK-NEXT: v80: int[0, 1] = BitAnd v77, v79
-# CHECK-NEXT: v81: boolean = ToBoolean v80
-# CHECK-NEXT: Branch v81 -> taken b18(), notTaken b19()
+# CHECK-NEXT: v67: L4 = NewObject layout=L4 allocationSite=13 allocationClass=3
+# CHECK-NEXT: v68: f13 = NewClosure function=f13 allocationSite=14
+# CHECK-NEXT: DefineGetter v67, v68 key="g"
+# CHECK-NEXT: v70: L4 = FinishObject v67
+# CHECK-NEXT: v71: "g" = String string="g"
+# CHECK-NEXT: v72: undefined = CallBuiltin -, v70, v71 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=31
+# CHECK-NEXT: v73: boolean = ResultAt v72
+# CHECK-NEXT: v74: 1 = Integer integer=1
+# CHECK-NEXT: v75: int[0, 1] = ToNumber v73
+# CHECK-NEXT: v76: int[1, 2] = LShift v74, v75
+# CHECK-NEXT: v77: anything = ResultAt v72 index=3
+# CHECK-NEXT: v78: 1 = Integer integer=1
+# CHECK-NEXT: v79: int[0, 1] = BitAnd v76, v78
+# CHECK-NEXT: v80: boolean = ToBoolean v79
+# CHECK-NEXT: Branch v80 -> taken b18(), notTaken b19()
 # CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v82: undefined = Undefined
-# CHECK-NEXT: v83: never = RequireObjectCoercible v82 name="get"
+# CHECK-NEXT: v81: undefined = Undefined
+# CHECK-NEXT: v82: never = RequireObjectCoercible v81 name="get"
 # CHECK-NEXT: Unreachable cutBy=SinkAllocations
 # CHECK-NEXT: b19():
-# CHECK-NEXT: ValidateType v78 validatedType=undefined|f13
-# CHECK-NEXT: v85: undefined|f13 = AssumeType v78 provenType=undefined|f13
-# CHECK-NEXT: v86: anything = CallDirect v85 function=f29 accessSite=33
-# CHECK-NEXT: v87: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v88: undefined = CallBuiltin v87, v61, v66, v86 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=34
-# CHECK-NEXT: v89: undefined = Undefined
-# CHECK-NEXT: Return v89
+# CHECK-NEXT: ValidateType v77 validatedType=undefined|f13
+# CHECK-NEXT: v84: undefined|f13 = AssumeType v77 provenType=undefined|f13
+# CHECK-NEXT: v85: anything = CallDirect v84 function=f29 accessSite=33
+# CHECK-NEXT: v86: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v87: undefined = CallBuiltin v86, v61, v66, v85 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=34
+# CHECK-NEXT: v88: undefined = Undefined
+# CHECK-NEXT: Return v88
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="plain"
 # CHECK: module=m0 position=267 flags=[HasExplicitName] thisType={type=anything} results=[{type=1}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

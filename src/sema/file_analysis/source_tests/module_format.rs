@@ -25,6 +25,12 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"function f() { with (a) b; }"#, CommonJs),
     ("a.js", r#"if (false) { with (a) b; }"#, CommonJs),
     ("a.mjs", r#"module.exports = 1;"#, CommonJs),
+    ("a.js", r#"console.log(typeof this);"#, CommonJs),
+    ("a.cjs", r#"console.log(typeof this);"#, CommonJs),
+    ("a.mjs", r#"console.log(typeof this);"#, Esm),
+    ("a.mts", r#"console.log(typeof this);"#, Esm),
+    ("a.mjs", r#"if (this) module.exports = 1;"#, CommonJs),
+    ("a.mjs", r#"this.a = 1; exports.b = 2;"#, CommonJs),
     ("a.cjs", r#"import "m";"#, Esm),
     ("a.cjs", r#"import.meta;"#, Esm),
     ("a.cts", r#"import type {} from "a";"#, Esm),
@@ -1102,6 +1108,8 @@ fn site_kind_name(kind: ImportSiteKind) -> &'static str {
         ImportSiteKind::ImportMetaResolve(_) => "ImportMetaResolve",
         ImportSiteKind::GetBuiltinModule(_) => "GetBuiltinModule",
         ImportSiteKind::MockModule(_) => "MockModule",
+        ImportSiteKind::ImportByTestRunner(_) => "ImportByTestRunner",
+        ImportSiteKind::RequireByTestRunner(_) => "RequireByTestRunner",
     }
 }
 
@@ -1113,7 +1121,9 @@ fn site_call(kind: ImportSiteKind) -> Option<ExprId> {
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
         | ImportSiteKind::GetBuiltinModule(call)
-        | ImportSiteKind::MockModule(call) => Some(call),
+        | ImportSiteKind::MockModule(call)
+        | ImportSiteKind::ImportByTestRunner(call)
+        | ImportSiteKind::RequireByTestRunner(call) => Some(call),
         _ => None,
     }
 }

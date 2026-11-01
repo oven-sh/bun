@@ -289,92 +289,90 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f6 callPosition=1087 module=m0}, {callee=f5 callPosition=1087 module=m0}, {callee=f4 callPosition=1087 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: InitializeBuiltin builtin=JSONParse
-# CHECK-NEXT: v1: "{\"a\":1}" = String string="{\"a\":1}"
-# CHECK-NEXT: v2: undefined = Undefined
-# CHECK-NEXT: v3: null|boolean|number|string|object = CallBuiltin -, v1, v2 overload=JSONParse/0 accessSite=1
-# CHECK-NEXT: v4: null|boolean|number|string|object ~ null|object = Upcast v3 castType=anything
-# CHECK-NEXT: PutModuleVariable v4 variable=g3
-# CHECK-NEXT: v6: TextEncoder = CallBuiltin overload=TextEncoder/1 accessSite=3
-# CHECK-NEXT: PropSet v4, v6 key="encoder" accessSite=4
-# CHECK-NEXT: v8: 64 = Integer integer=64
-# CHECK-NEXT: v9: Uint8Array = CallBuiltin -, v8 overload=Uint8Array/4 accessSite=5
-# CHECK-NEXT: PropSet v4, v9 key="view" accessSite=6
-# CHECK-NEXT: v11: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v12: f2 = GetModuleVariable variable=g1
-# CHECK-NEXT: v13: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: v14: Array<f1|f2|f3, Contiguous> = NewArray v11, v12, v13 contents=f1|f2|f3 allocationSite=0 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v15: Array<f1|f2|f3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<f1|f2|f3, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: SetGlobalBinding v15 key="kept" level=Expected accessSite=8
+# CHECK-NEXT: v0: "{\"a\":1}" = String string="{\"a\":1}"
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: null|boolean|number|string|object = CallBuiltin -, v0, v1 overload=JSONParse/0 accessSite=1
+# CHECK-NEXT: v3: null|boolean|number|string|object ~ null|object = Upcast v2 castType=anything
+# CHECK-NEXT: PutModuleVariable v3 variable=g3
+# CHECK-NEXT: v5: TextEncoder = CallBuiltin overload=TextEncoder/1 accessSite=3
+# CHECK-NEXT: PropSet v3, v5 key="encoder" accessSite=4
+# CHECK-NEXT: v7: 64 = Integer integer=64
+# CHECK-NEXT: v8: Uint8Array = CallBuiltin -, v7 overload=Uint8Array/4 accessSite=5
+# CHECK-NEXT: PropSet v3, v8 key="view" accessSite=6
+# CHECK-NEXT: v10: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v11: f2 = GetModuleVariable variable=g1
+# CHECK-NEXT: v12: f3 = GetModuleVariable variable=g2
+# CHECK-NEXT: v13: Array<f1|f2|f3, Contiguous> = NewArray v10, v11, v12 contents=f1|f2|f3 allocationSite=0 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v14: Array<f1|f2|f3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<f1|f2|f3, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: SetGlobalBinding v14 key="kept" level=Expected accessSite=8
+# CHECK-NEXT: v16: 0 = Integer
 # CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: v18: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v17, v18)
-# CHECK-NEXT: b1(v19: number, v20: int[0, 1000]):
+# CHECK-NEXT: Jump -> next b1(v16, v17)
+# CHECK-NEXT: b1(v18: number, v19: int[0, 1000]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v22: 1000 = Integer integer=1000
-# CHECK-NEXT: v23: boolean = Less v20, v22
-# CHECK-NEXT: Branch v23 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v24: int[0, 999]):
-# CHECK-NEXT: v25: "row" = String string="row"
-# CHECK-NEXT: v26: string = Add v25, v24
-# CHECK-NEXT: v27: number = CallDirect v26 function=f1 accessSite=9
-# CHECK-NEXT: v28: "x" = String string="x"
-# CHECK-NEXT: v29: string = Add v28, v24
-# CHECK-NEXT: v30: number = CallDirect v29 function=f2 accessSite=10
-# CHECK-NEXT: v31: number = Add v27, v30
-# CHECK-NEXT: v32: 63 = Integer integer=63
-# CHECK-NEXT: v33: int[0, 63] = BitAnd v24, v32
-# CHECK-NEXT: v34: number = CallDirect v33 function=f3 accessSite=11
-# CHECK-NEXT: v35: number = Add v31, v34
-# CHECK-NEXT: v36: number = Add v19, v35
-# CHECK-NEXT: v37: int[1, 1000] = Increment v24
-# CHECK-NEXT: Jump -> next b1(v36, v37)
+# CHECK-NEXT: v21: 1000 = Integer integer=1000
+# CHECK-NEXT: v22: boolean = Less v19, v21
+# CHECK-NEXT: Branch v22 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v23: int[0, 999]):
+# CHECK-NEXT: v24: "row" = String string="row"
+# CHECK-NEXT: v25: string = Add v24, v23
+# CHECK-NEXT: v26: number = CallDirect v25 function=f1 accessSite=9
+# CHECK-NEXT: v27: "x" = String string="x"
+# CHECK-NEXT: v28: string = Add v27, v23
+# CHECK-NEXT: v29: number = CallDirect v28 function=f2 accessSite=10
+# CHECK-NEXT: v30: number = Add v26, v29
+# CHECK-NEXT: v31: 63 = Integer integer=63
+# CHECK-NEXT: v32: int[0, 63] = BitAnd v23, v31
+# CHECK-NEXT: v33: number = CallDirect v32 function=f3 accessSite=11
+# CHECK-NEXT: v34: number = Add v30, v33
+# CHECK-NEXT: v35: number = Add v18, v34
+# CHECK-NEXT: v36: int[1, 1000] = Increment v23
+# CHECK-NEXT: Jump -> next b1(v35, v36)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v38: undefined = CallBuiltin -, v19 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectCreate
-# CHECK-NEXT: v40: builtin(TextEncoderPrototype) = Builtin builtin=TextEncoderPrototype
-# CHECK-NEXT: v41: Object = CallBuiltin -, v40 overload=ObjectCreate/0
-# CHECK-NEXT: PropSet v4, v41 key="encoder" accessSite=17
-# CHECK-NEXT: v43: builtin(Uint8ArrayPrototype) = Builtin builtin=Uint8ArrayPrototype
-# CHECK-NEXT: v44: Object = CallBuiltin -, v43 overload=ObjectCreate/0
-# CHECK-NEXT: PropSet v4, v44 key="view" accessSite=18
+# CHECK-NEXT: v37: undefined = CallBuiltin -, v18 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v38: builtin(TextEncoderPrototype) = Builtin builtin=TextEncoderPrototype
+# CHECK-NEXT: v39: Object = CallBuiltin -, v38 overload=ObjectCreate/0
+# CHECK-NEXT: PropSet v3, v39 key="encoder" accessSite=17
+# CHECK-NEXT: v41: builtin(Uint8ArrayPrototype) = Builtin builtin=Uint8ArrayPrototype
+# CHECK-NEXT: v42: Object = CallBuiltin -, v41 overload=ObjectCreate/0
+# CHECK-NEXT: PropSet v3, v42 key="view" accessSite=18
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5():
-# CHECK-NEXT: v46: "a" = String string="a"
-# CHECK-NEXT: v47: number = CallDirect v46 function=f1 accessSite=41 @1018:3 tail
-# CHECK-NEXT: v48: undefined = CallBuiltin -, v47 overload=ConsoleLog/0 accessSite=22
+# CHECK-NEXT: v44: "a" = String string="a"
+# CHECK-NEXT: v45: number = CallDirect v44 function=f1 accessSite=41 @1018:3 tail
+# CHECK-NEXT: v46: undefined = CallBuiltin -, v45 overload=ConsoleLog/0 accessSite=22
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b5() role=CatchHandler:
-# CHECK-NEXT: v49: anything = CatchValue
-# CHECK-NEXT: v50: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v51: anything = PropGet v49 key="name" accessSite=25
-# CHECK-NEXT: v52: undefined = CallBuiltin v50, v51 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
+# CHECK-NEXT: v47: anything = CatchValue
+# CHECK-NEXT: v48: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v49: anything = PropGet v47 key="name" accessSite=25
+# CHECK-NEXT: v50: undefined = CallBuiltin v48, v49 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6() handler=b7():
-# CHECK-NEXT: v53: "b" = String string="b"
-# CHECK-NEXT: v54: number = CallDirect v53 function=f2 accessSite=42 @1035:2 tail
-# CHECK-NEXT: v55: undefined = CallBuiltin -, v54 overload=ConsoleLog/0 accessSite=22
+# CHECK-NEXT: v51: "b" = String string="b"
+# CHECK-NEXT: v52: number = CallDirect v51 function=f2 accessSite=42 @1035:2 tail
+# CHECK-NEXT: v53: undefined = CallBuiltin -, v52 overload=ConsoleLog/0 accessSite=22
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b7() role=CatchHandler:
-# CHECK-NEXT: v56: anything = CatchValue
-# CHECK-NEXT: v57: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v58: anything = PropGet v56 key="name" accessSite=25
-# CHECK-NEXT: v59: undefined = CallBuiltin v57, v58 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
+# CHECK-NEXT: v54: anything = CatchValue
+# CHECK-NEXT: v55: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v56: anything = PropGet v54 key="name" accessSite=25
+# CHECK-NEXT: v57: undefined = CallBuiltin v55, v56 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8() handler=b9():
-# CHECK-NEXT: v60: 3 = Integer integer=3
-# CHECK-NEXT: v61: number = CallDirect v60 function=f3 accessSite=43 @1055:1 tail
-# CHECK-NEXT: v62: undefined = CallBuiltin -, v61 overload=ConsoleLog/0 accessSite=22
+# CHECK-NEXT: v58: 3 = Integer integer=3
+# CHECK-NEXT: v59: number = CallDirect v58 function=f3 accessSite=43 @1055:1 tail
+# CHECK-NEXT: v60: undefined = CallBuiltin -, v59 overload=ConsoleLog/0 accessSite=22
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b9() role=CatchHandler:
-# CHECK-NEXT: v63: anything = CatchValue
-# CHECK-NEXT: v64: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v65: anything = PropGet v63 key="name" accessSite=25
-# CHECK-NEXT: v66: undefined = CallBuiltin v64, v65 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
+# CHECK-NEXT: v61: anything = CatchValue
+# CHECK-NEXT: v62: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v63: anything = PropGet v61 key="name" accessSite=25
+# CHECK-NEXT: v64: undefined = CallBuiltin v62, v63 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v67: undefined = Undefined
-# CHECK-NEXT: Return v67
+# CHECK-NEXT: v65: undefined = Undefined
+# CHECK-NEXT: Return v65
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="into"
 # CHECK: module=m0 position=424 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=number}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

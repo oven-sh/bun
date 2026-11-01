@@ -163,11 +163,11 @@ function f3 name="Lamp" module=m0 position=54 kind=BaseConstructor flags=[HasNew
   b0(v0: anything):
     Jump -> next b1() @54
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @48
-    v2 = NewObject v1 layout=L0 @48
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @48
-    v4 = CallDirect v3 function=f4 @48
-    Return v3 @48
+    v1 = GetConstructPrototype v0 layout=L0 @54
+    v2 = NewObject v1 layout=L0 @54
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @54
+    v4 = CallDirect v3 function=f4 @54
+    Return v3 @54
 }
 function f4 module=m0 position=54 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0):
@@ -185,7 +185,7 @@ function f4 module=m0 position=54 kind=Initializer flags=[HasThis, IsChecked, Is
 }
 # -- generated: f0 describe Lamp
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=488 module=m0}, {callee=f8 callPosition=401 isConstruction=true module=m0}, {callee=f4 callPosition=48 parent=2 module=m0}, {callee=f1 callPosition=207 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=488 module=m0}, {callee=f8 callPosition=401 isConstruction=true module=m0}, {callee=f4 callPosition=54 parent=2 module=m0}, {callee=f1 callPosition=207 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: false = Boolean
 # CHECK-NEXT: v1: 0 = Integer
@@ -211,7 +211,7 @@ function f4 module=m0 position=54 kind=Initializer flags=[HasThis, IsChecked, Is
 # CHECK-NEXT: PutSlot v6, -, v18 key="level" receivers=[L0] level=Proven accessSite=13
 # CHECK-NEXT: v20: 1 = Integer integer=1
 # CHECK-NEXT: v21: string = CallDirect v6, v20 function=f1 accessSite=9 [isNeverInlined] @308:4 tail
-# CHECK-NEXT: v22: int[0, 4294967295] = CallBuiltin v4, v21 overload=ArrayPrototypePush/0 accessSite=3
+# CHECK-NEXT: AppendElement v4, v21, v7, v7, v9
 # CHECK-NEXT: v23: int[1, 10] = Increment v11
 # CHECK-NEXT: Jump -> next b1(v23)
 # CHECK-NEXT: b3():
@@ -249,7 +249,7 @@ function f4 module=m0 position=54 kind=Initializer flags=[HasThis, IsChecked, Is
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Lamp"
-# CHECK: module=m0 position=54 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f4 callPosition=48 module=m0}] {
+# CHECK: module=m0 position=54 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f4 callPosition=54 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f3 = AssumeType v0 provenType=f3
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0

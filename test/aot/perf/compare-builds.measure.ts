@@ -56,6 +56,15 @@ describe("compare()", () => {
     const [other] = compare(readings({ a: [100, 200] }), readings({ a: [110, 200] }), 2);
     expect(other.runtimeMovedToo).toBe(false);
   });
+
+  test("marks a row whose JIT column moved by about as many instructions, up or down", () => {
+    const [slower] = compare(readings({ a: [26, 39.6] }), readings({ a: [32, 45.1] }), 2);
+    expect(slower.runtimeMovedToo).toBe(true);
+    const [faster] = compare(readings({ a: [71, 138] }), readings({ a: [67, 134.6] }), 2);
+    expect(faster.runtimeMovedToo).toBe(true);
+    const [other] = compare(readings({ a: [26, 45] }), readings({ a: [36, 45.4] }), 2);
+    expect(other.runtimeMovedToo).toBe(false);
+  });
 });
 
 describe.skipIf(!!skipped)("compare-builds", () => {

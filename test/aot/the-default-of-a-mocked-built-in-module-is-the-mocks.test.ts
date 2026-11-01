@@ -130,7 +130,7 @@ for (const [way, words] of [
     expect(plain.exitCode).toBe(0);
     expect(plain.stdout.length).toBe(modules.length * 5);
     expect(plain.stdout).toContain(
-      "SEEN node-buffer mocked at the top: T mock | N.default mock | S.default mock | TOP.default mock | in a function mock | in an arrow mock | Q.default mock | D mock | N mock | require function | one object true",
+      "SEEN node-buffer mocked at the top: T mock | N.default mock | S.default mock | TOP.default mock | in a function mock | in an arrow mock | Q.default mock | D mock | N mock | require mock | one object true",
     );
     expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
   }, 300_000);

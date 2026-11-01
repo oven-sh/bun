@@ -1,0 +1,6 @@
+[8.774s]  bundle  1 modules
+[3.357s] compile  .exe
+        build id  6ffee30afbd9921fd9891c00104e0b77
+Built with developer options: --aot-validate
+Untyped code works, but runs slower. Run with --explain to see what to fix.
+0% of property accesses are one load: 0 free, 0 tested, 9 by name (9)

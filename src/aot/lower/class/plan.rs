@@ -311,6 +311,46 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
     }
 }
 
+// Decorators are evaluated where keys are. `bun run` writes them into the next key that is no private name, and those that are left into the last such key.
+fn find_members_with_decorators_in_key(
+    hir: &hir::File<'_>,
+    class: ClassId,
+) -> SmallVec<[MemberId; 4]> {
+    let mut hosts = SmallVec::new();
+    let mut last_key = None;
+    let mut are_waiting = false;
+    for member in runtime_members(hir, class) {
+        let node = hir[member];
+        let has_key = match hir.runtime_member_kind(member) {
+            MemberKind::Property => !is_declaration_only(node),
+            MemberKind::Method | MemberKind::Getter | MemberKind::Setter => true,
+            MemberKind::Constructor
+            | MemberKind::StaticBlock
+            | MemberKind::CallSignature
+            | MemberKind::ConstructSignature
+            | MemberKind::IndexSignature => false,
+        };
+        if !has_key {
+            continue;
+        }
+        are_waiting |= has_decorators(hir, node.modifiers);
+        if matches!(hir.runtime_member_key(member), PropKey::Private(_)) {
+            continue;
+        }
+        last_key = Some(member);
+        if std::mem::take(&mut are_waiting) {
+            hosts.push(member);
+        }
+    }
+    if let Some(member) = last_key
+        && are_waiting
+        && hosts.last() != Some(&member)
+    {
+        hosts.push(member);
+    }
+    hosts
+}
+
 pub(super) fn plan_class(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -349,6 +389,10 @@ pub(super) fn plan_class(
         injected_elements: Vec::new(),
         static_elements: Vec::new(),
         decorations: Vec::new(),
+        members_with_decorators_in_key: match transform {
+            ClassTransform::Standard => find_members_with_decorators_in_key(hir, class),
+            ClassTransform::None | ClassTransform::Legacy => SmallVec::new(),
+        },
         instance_method_initializers: None,
         initializer_list_count: 0,
     };

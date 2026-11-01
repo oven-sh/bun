@@ -123,10 +123,27 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
         add_target_defines(ctx);
     }
 
+    if let Some(aot) = ctx.bundler_options.aot.as_mut()
+        && aot.runs_in_place
+        && ctx
+            .args
+            .tsconfig_override
+            .as_deref()
+            .is_some_and(|path| !bun_sys::exists(path))
+    {
+        aot.missing_tsconfig_override = ctx.args.tsconfig_override.take();
+    }
+    let reads_no_configuration = (ctx.bundler_options.aot.as_ref())
+        .is_some_and(|aot| aot.missing_tsconfig_override.is_some());
+
     let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
     // In the arena: the build takes `&'a mut Transpiler<'a>`, which no stack local satisfies.
     let this_transpiler: &'static mut Transpiler<'static> =
         arena.alloc(Transpiler::init(arena, ctx.log, ctx.args.clone(), None)?);
+    if reads_no_configuration {
+        this_transpiler.options.load_tsconfig_json = false;
+        this_transpiler.resolver.opts.load_tsconfig_json = false;
+    }
     bun_core::asan::register_root_region(
         std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
         core::mem::size_of::<Transpiler>(),
@@ -236,6 +253,15 @@ fn apply_bundler_options(ctx: &ContextData, this_transpiler: &mut Transpiler<'st
     } else {
         bun_ast::runtime::ReactCompilerMode::Disabled
     };
+    let runs_tests = (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| aot.runs_tests);
+    if let Some(scope) = (ctx.test_options.react_compiler.as_ref()).filter(|_| runs_tests) {
+        this_transpiler.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
+        this_transpiler.options.react_compiler_filter =
+            Some(crate::cli::test_command::react_compiler_filter(
+                scope,
+                FileSystem::get().top_level_dir(),
+            ));
+    }
     this_transpiler.options.inline_entrypoint_import_meta_main =
         ctx.bundler_options.inline_entrypoint_import_meta_main;
     this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;

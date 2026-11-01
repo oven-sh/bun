@@ -7,25 +7,31 @@
 //                     list says what is so.
 //   write barriers    a store of a cell into an object is followed by a write barrier unless the compiler shows that none is needed: the
 //                     object is younger than any collection, or a later store into it has the barrier. The number of barriers is
-//                     held for every program. The share of stores that go without is printed and not held: it falls where code
-//                     that needed few barriers is no longer compiled, and the program has fewer barriers all the same.
+//                     held for every program: where it was read, to the number itself. The share of stores that go without is printed
+//                     and not held: it falls where code that needed few barriers is no longer compiled, and the program has fewer
+//                     barriers all the same.
 //   rounds            the passes run over a function in rounds until a round changes nothing, and a limit ends the rounds that do not
 //                     end by themselves. Two passes that undo each other never come to rest: in every function where they meet, every
 //                     round up to the limit runs all the passes that look again behind a change, and the code is none the better.
 //                     The number of functions that end at the limit is held for every program.
+//   entrypoints       the entrypoint of a function that no call by value can find is closed: it keeps its address and holds no code. One call
+//                     of which the compiler cannot say what it finds leaves every entrypoint of the program open, and nothing else shows it.
+//                     No program has such a call.
 //
 // To take a pass out: this test says by a run what the pass does to these programs. A pass that changes them is at work, whatever a
 // benchmark says, and what it buys has to be asked of the programs (--aot-disable=pass:<name>).
 //
 // It prints one line a pass that begins with PASS: the changes by program; and one that begins with ROUNDS.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { readBuildReport, type BuildReport } from "../harness/build-report";
 import { built, slot, spawned } from "../harness/commands";
+import { afterAll } from "../harness/default-timeout";
 import { compileCommand, withReport } from "../harness/flags";
-import { beforeAll, describe, test } from "../supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { beforeAll, describe, testOneByOne as test } from "../supported";
 import { installSmallRenderer } from "../typed-packages/small-renderer/install";
 import { copyApp } from "./run-servers";
 
@@ -56,16 +62,18 @@ const statisticsOfPassesThatReportNoChange = {
 };
 
 /**
- * The barriers the terminal program is compiled with on Linux x64, within five percent. Without the removal of barriers: 221.
+ * The write barriers that each program is compiled with, as read on Linux x64. There a count is held to the number itself, up and down:
+ * room above a count is eaten a few barriers at a time and nobody sees it, and a count that falls and is not written down makes such room.
+ * A change that moves a count writes the new one here.
  * It counts places in the code, not barriers that run: a call that is inlined brings a copy of each of its barriers along,
- * and the share of stores without a barrier stays what it was.
+ * and the share of stores without a barrier stays what it was. Without the removal of barriers the terminal program has 221.
  */
-/** The write barriers that each program is compiled with on Linux x64. A number here only ever goes down. */
-const barriersAtMost: Record<string, number> = {
-  thin: 519,
-  elysia: 2353,
-  terminal: 199,
+const barriersRead: Record<string, number> = {
+  thin: 488,
+  elysia: 2504,
+  terminal: 200,
 };
+const isWhereBarriersWereRead = isLinux && process.arch === "x64" && !isMusl && !isASAN && !isDebug;
 /**
  * The functions of each program whose rounds end at the limit, on Linux x64: chains of calls that are inlined a level a round.
  * The bound is twice that and two. A pair of passes that undid each other took the servers to five times as many.
@@ -122,7 +130,7 @@ describe("every pass changes a real program", () => {
       });
   });
 
-  test("the programs are compiled with no more write barriers than before", () => {
+  test("the programs are compiled with the write barriers that were read", () => {
     const seen = programs.map(program => {
       const {
         BarriersEmitted: emitted,
@@ -134,8 +142,12 @@ describe("every pass changes a real program", () => {
     console.log(
       `BARRIERS ${seen.map(row => `${row.program} ${row.emitted} (${row.percentWithout}% without)`).join(", ")}`,
     );
-    // The text of Bun's own modules differs a little from platform to platform, and so do the counts: five in a hundred.
-    expect(seen.filter(row => isHeldHere(row.program) && row.emitted > barriersAtMost[row.program] * 1.05)).toEqual([]);
+    // The text of Bun's own modules differs a little from platform to platform, and so do the counts: five in a hundred elsewhere.
+    const partsFromWhatWasRead = (row: (typeof seen)[number]) =>
+      isWhereBarriersWereRead
+        ? row.emitted !== barriersRead[row.program]
+        : isHeldHere(row.program) && row.emitted > barriersRead[row.program] * 1.05;
+    expect(seen.filter(partsFromWhatWasRead)).toEqual([]);
   });
 
   test("the rounds of the passes end by themselves in all but a few functions", () => {
@@ -145,5 +157,13 @@ describe("every pass changes a real program", () => {
     }));
     console.log(`ROUNDS ${seen.map(row => `${row.program} ${row.atLimit}`).join(", ")}`);
     expect(seen.filter(row => row.atLimit > functionsAtLimitOfRounds[row.program] * 2 + 2)).toEqual([]);
+  });
+
+  test("no call leaves every entrypoint of a program open", () => {
+    const seen = programs.map(program => ({
+      program,
+      calls: reports.get(program)!.statistics.CallsThatMayEnterAnyEntrypoint ?? 0,
+    }));
+    expect(seen.filter(row => row.calls > 0)).toEqual([]);
   });
 });

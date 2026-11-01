@@ -390,11 +390,9 @@ function f10 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v103: number = Add v101, v102
 # CHECK-NEXT: v104: undefined = Undefined
 # CHECK-NEXT: v105: undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number = GetArrayElement v75, v101 arrayStorage=Contiguous level=Proven accessSite=12 [keyIsIntegral]
-# CHECK-NEXT: v106: undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number = Upcast v105 castType=undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number
-# CHECK-NEXT: v107: undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number = AssumeType v106 provenType=undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number
-# CHECK-NEXT: v108: anything ~ object = Construct v2, -, v103, v101, v104, v107 calleeName="Measured" accessSite=14 callees=[f6]
-# CHECK-NEXT: v109: int[1, 4294967295] ~ int[1, 2147483648] = Increment v101
-# CHECK-NEXT: Jump -> next b5(v109)
+# CHECK-NEXT: v106: anything ~ object = Construct v2, -, v103, v101, v104, v105 calleeName="Measured" accessSite=14 callees=[f6]
+# CHECK-NEXT: v107: int[1, 4294967295] ~ int[1, 2147483648] = Increment v101
+# CHECK-NEXT: Jump -> next b5(v107)
 # CHECK-NEXT: b7():
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }

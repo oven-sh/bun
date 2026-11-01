@@ -44,7 +44,7 @@ use crate::ir::generated::{ModuleFlags, VariableFlags};
 use crate::ir::{Id, InParallel, Program, drop_each, for_each_mut};
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind, Sources};
 use crate::modules::{ModuleGraph, Shape};
-use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
+use crate::statistics::{Counters, LimitId, LimitValues, Stage, StatisticId, StepClock};
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::LoadedProgram;
@@ -86,6 +86,8 @@ pub struct LinkInput<'a, 's> {
     pub projects: PerProject<LinkProject<'a, 's>>,
     pub limits: &'a LimitValues,
     pub reports_type_mismatches: bool,
+    /// `AotOptions::imports_are_in_other_images`
+    pub has_programs_below: bool,
     pub in_parallel: InParallel<'a>,
     pub beside: Beside<'a>,
 }
@@ -162,6 +164,7 @@ pub fn link_while(
         projects,
         limits,
         reports_type_mismatches,
+        has_programs_below,
         in_parallel,
         beside,
     } = input;
@@ -346,7 +349,10 @@ pub fn link_while(
         },
         || {
             let build_records = || {
-                build_module_records(
+                // On one thread, beside what else this step does: its processors' time is that of all of them.
+                let mut steps =
+                    StepClock::new(Stage::LinkAndEmit, "link, beside the rest of its step");
+                let records = build_module_records(
                     &mut units,
                     &RecordInput {
                         projects: &projects,
@@ -359,7 +365,9 @@ pub fn link_while(
                         progress: RecordProgress::default(),
                     },
                     &mut strings,
-                )
+                );
+                steps.end("build_module_records");
+                records
             };
             run_beside(beside, build_records, || meanwhile(&keys)).0
         },
@@ -377,6 +385,7 @@ pub fn link_while(
                 property_keys: &merged_property_keys.table,
                 strings: &strings,
                 origins_in_logging_build: reports_type_mismatches.then_some(&module_origins[..]),
+                has_programs_below,
                 in_parallel,
             };
             writes_preload = mark_unused_records(defined, &uses, b"preload");

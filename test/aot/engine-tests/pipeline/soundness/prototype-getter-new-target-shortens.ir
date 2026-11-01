@@ -20,7 +20,7 @@ entry module=m0
 typesite w0 module=m1 position=4142 kind=Variable
 typesite w1 module=m1 position=4344 kind=Variable
 layout L0 kind=Instance name="B" module=m0 position=140 constructor=f2 flags=[HasHeritage]
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=boolean|absent flags=[IsExpected]}}, {key=@"this.1" declared={type=absent|L0 flags=[IsFromCompiler]}}] ownFieldCount=2
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=boolean|absent flags=[IsExpected]} variableName="first"}, {key=@"this.1" declared={type=absent|L0 flags=[IsFromCompiler]} variableName="this"}] ownFieldCount=2
 layout L2 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="get" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
 data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
 data d1 root=Array{contents=anything} module=m0

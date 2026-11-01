@@ -1,0 +1,5 @@
+[7.658s]  bundle  1 modules
+ [676ms] compile  .exe
+        build id  a45dfb7d5488347a69a3dfe58f7a147c
+Untyped code works, but runs slower. Run with --explain to see what to fix.
+0% of property accesses are one load: 0 free, 0 tested, 9 by name (9)

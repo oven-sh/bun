@@ -278,7 +278,7 @@ static JSValue getOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* obj
 static bool isJSFunctionOrCompiledCallee(JSObject* object)
 {
 #if ENABLE(AOT)
-    if (JSC::AOT::CompiledCallee::isCompiledCallee(object))
+    if (object->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(object))
         return true;
 #endif
     return object->inherits<JSC::JSFunction>();
@@ -504,7 +504,7 @@ public:
                 nameToUse = asString(nameValue)->value(global);
         };
 #if ENABLE(AOT)
-        if (JSObject* callee = value.getObject(); callee && JSC::AOT::CompiledCallee::isCompiledCallee(callee)) {
+        if (JSObject* callee = value.getObject(); callee && callee->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(callee)) {
             nameToUse = JSC::AOT::closureDeclaredName(callee);
             if (nameToUse.isEmpty()) {
                 useNameProperty(callee);
@@ -1793,7 +1793,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionConstruct, __attribute__(
     // Jest calls the implementation on the new object instead of constructing it, except for a class, which can't be called.
     bool isPlainFunction = constructData.type == JSC::CallData::Type::JS && !constructData.js.functionExecutable->isClassConstructorFunction();
 #if ENABLE(AOT)
-    isPlainFunction |= constructor && constructor.isCell() && JSC::AOT::declaredAs(constructor.asCell()) == JSC::AOT::DeclaredAs::Function;
+    isPlainFunction |= constructor && constructor.isCell() && constructor.asCell()->vm().hasCompiledCode() && JSC::AOT::declaredAs(constructor.asCell()) == JSC::AOT::DeclaredAs::Function;
 #endif
     if (!fn->isVitest && isPlainFunction)
         constructData = {};
@@ -3051,6 +3051,15 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     // A module mock's exports are read live from the object its factory returned, so spy on that object.
+#if ENABLE(AOT)
+    while (globalObject->aotInstance()) {
+        JSObject* exports = Bun::objectHoldingExportOfCompiledModuleMock(globalObject, object, propertyKey);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!exports)
+            break;
+        object = exports;
+    }
+#endif
     while (auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object)) {
         JSObject* exports = Bun::objectHoldingExportOfModuleMock(globalObject, moduleNamespaceObject, propertyKey);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3094,8 +3103,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 #if ENABLE(AOT)
     // The lock of a built-in object lists the members that a program could change. A member that the language makes read-only and not configurable is not listed, and putDirect asks no attribute.
     constexpr unsigned fixedByLanguage = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
-    bool isFixedMemberOfLockedObject = object->structure()->mayHaveImmutableProperties() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
-    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject)) {
+    bool isFixedMember = vm.hasCompiledCode() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
+    bool isLocked = object->structure()->mayHaveImmutableProperties();
+    bool isFixedMemberOfLockedObject = isFixedMember && isLocked && !JSC::AOT::isMemberUnlockedForTests(object, propertyKey.impl());
+    bool isFixedMemberOfOpenObject = isFixedMember && !isLocked && JSC::AOT::isMemberTakenForConstant(object, propertyKey.impl());
+    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject || isFixedMemberOfOpenObject)) {
         String message = JSC::AOT::refusedSpyMessage(globalObject, object, propertyKey.impl());
         if (message.isNull())
             message = makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
@@ -3114,7 +3126,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 #if ENABLE(AOT)
         if (JSC::AOT::isModuleNamespace(object)) {
             if (!JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement))
-                throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because module exports can't be replaced in a compiled executable"_s));
+                throwTypeError(globalObject, scope, JSC::AOT::refusedSpyOnExportMessage(object, propertyKey.impl()));
             return true;
         }
 #endif

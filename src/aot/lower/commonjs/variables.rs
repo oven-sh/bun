@@ -153,6 +153,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut replaces_exports = self.inputs.modules.keeps_module_object(own_module)
             || self.inputs.modules.may_be_mocked(own_module)
             || self.inputs.modules.may_be_evicted(own_module)
+            || self.inputs.modules.runs_again(self.file)
             || hir.ids(hir.body).any(assigns_exports);
         let mut names_exports = false;
         for &(name, binding) in bound.ident_bindings() {

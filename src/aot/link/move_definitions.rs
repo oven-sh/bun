@@ -1,5 +1,5 @@
 use super::beside::{Beside, run_beside};
-use super::definitions::{empty_layout, synthetic_export_variable};
+use super::definitions::{empty_layout, synthetic_export_variable, variable_that_holds_mock};
 use super::keys::MergedKeys;
 use super::numbering::ProgramDefinitions;
 use super::program_keys::ProgramLayoutKey;
@@ -322,7 +322,8 @@ pub(super) fn move_definitions(
                 is_known_member,
                 is_replaceable,
             }) => Some((id?, module, name, writer, is_known_member, is_replaceable)),
-            Some(VariableDefinition::Unit(_)) | None => None,
+            Some(VariableDefinition::MockOfRuntimeModule { .. } | VariableDefinition::Unit(_))
+            | None => None,
         })
         .collect();
     synthetic_exports.shared_sort_unstable_by_key(|&(id, ..)| id);
@@ -335,6 +336,16 @@ pub(super) fn move_definitions(
             variable.flags |= VariableFlags::IS_REPLACEABLE;
         }
         variables.insert(id, variable);
+    }
+    let definitions = input.definitions.variables.iter();
+    for (&definition, &id) in definitions.zip(&numbering.variables) {
+        if let (Some(VariableDefinition::MockOfRuntimeModule { module }), Some(id)) =
+            (definition, id)
+        {
+            let module = numbering.modules[module as usize]
+                .expect("the mark keeps the module whose mock a retained variable holds");
+            variables.insert(id, variable_that_holds_mock(module));
+        }
     }
     let (type_sites, expected_results, eval_scopes, data) = joined;
     assert_eq!(

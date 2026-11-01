@@ -1,4 +1,5 @@
 # Several property reads after a test of the object, where the test is written in one or in two steps or applies to a merged value.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f2
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -484,5 +485,5 @@ function f21 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # -- generated: f2
 # CHECK-LABEL: function f2 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 180, patchpoints: 29, rare instructions: 170, polls: 1
+# CHECK-NEXT: instructions: 180, patchpoints: 33, rare instructions: 170, polls: 1
 # CHECK-NEXT: end of function f2

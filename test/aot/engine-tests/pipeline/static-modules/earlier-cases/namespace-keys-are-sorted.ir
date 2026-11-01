@@ -1,5 +1,6 @@
 # The keys of a namespace object are sorted by code unit.
 # @ts-nocheck
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f28
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -808,7 +809,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f36 visibility=Private
 # -- generated: filter
 # CHECK-LABEL: function {{*}}name="filter"
 # CHECK: role=Library
-# CHECK-NEXT: instructions: 100, patchpoints: 9, rare instructions: 85, polls: 1
+# CHECK-NEXT: instructions: 99, patchpoints: 9, rare instructions: 85, polls: 1
 # CHECK-NEXT: end of function f28
 # CHECK-LABEL: function {{*}}name="filter"
 # CHECK: role=GenericEntrypoint
@@ -816,5 +817,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f36 visibility=Private
 # CHECK-NEXT: end of function f42
 # CHECK-LABEL: function {{*}}name="filter"
 # CHECK: role=CalleeVersion
-# CHECK-NEXT: instructions: 100, patchpoints: 9, rare instructions: 85, polls: 1
+# CHECK-NEXT: instructions: 99, patchpoints: 9, rare instructions: 85, polls: 1
 # CHECK-NEXT: end of function f45

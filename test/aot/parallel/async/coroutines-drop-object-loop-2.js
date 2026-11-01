@@ -914,3 +914,147 @@ main().then(print, error => {
   note("main failed", error);
   print();
 });
+// What is printed follows from the program. Plain Bun now and then finds an object still there that nobody reaches.
+/* Output:
+behind 139: null {first:1} 1253909745
+behind 139: [1,2] null -1942559785
+behind 171: {first:1} undefined 175.625 undefined 147046026
+behind 171: null undefined 175.625 undefined -1258225679
+behind 203: null undefined 1102234845
+behind 203: [1,2] undefined 250349279
+behind 260: 215.625 function>233 2039098655
+in the finally 261: null 2039098655
+end: null {first:1} 215.625 undefined undefined undefined function>233 2039098655
+behind 260: 215.625 function>233 -1889437275
+in the finally 261: [1,2] -1889437275
+end: [1,2] null 215.625 undefined undefined undefined function>233 -1889437275
+async arrow 0: "fulfilled" 2039098655
+async arrow 0: "fulfilled" -1889437275
+behind 26: undefined {first:1} -2089944115
+behind 26: undefined 7n -1823859475
+behind 48: undefined null 1 -367691259
+behind 48: undefined null [1,2] 1867284908
+behind 26: undefined {first:1} -1070633892
+behind 26: undefined 7n -554429296
+behind 48: undefined null 1 671607330
+one turn 49: null undefined 1 undefined undefined 671607330
+behind 48: undefined null [1,2] -1336834600
+one turn 49: null undefined [1,2] undefined undefined -1336834600
+behind 26: undefined {first:1} -575138316
+behind 26: undefined 7n -1278084744
+behind 48: undefined null 1 -230312632
+behind 48: undefined null [1,2] 764696947
+behind 26: undefined {first:1} 1134084900
+behind 26: undefined 7n 1133519736
+behind 48: undefined null 1 -481670626
+behind 48: undefined null [1,2] -1458183789
+behind 139: 109.375 undefined undefined 1250749693
+in the finally 142: 1 1250749693
+behind 139: 109.375 undefined undefined 1345590352
+in the finally 142: [1,2] 1345590352
+before 176: 86 undefined 519n 88 416806727
+before 176: 86 undefined 519n 88 -1216611248
+behind 204: 1 {first:1} -1889211743
+behind 204: [1,2] 7n -118843227
+behind 260: 1 207 undefined 519n -4186137
+before 268: undefined "s262" 903950146
+behind 260: [1,2] 207 undefined 519n 706727211
+before 268: undefined "s262" 767182257
+behind 289: {first:1} undefined undefined 519n 1876114363
+in the finally 290: 1 519n undefined false 1876114363
+end: 1 {first:1} false 88 519n undefined "s262" undefined 1876114363
+behind 289: 7n undefined undefined 519n 897000225
+in the finally 290: [1,2] 519n undefined false 897000225
+end: [1,2] 7n false 88 519n undefined "s262" undefined 897000225
+async function 1: "fulfilled" 1876114363
+async function 1: "fulfilled" 897000225
+behind 26: undefined {first:1} -2089944115
+behind 26: undefined 7n -1823859475
+behind 48: undefined null 1 -367691259
+behind 48: undefined null [1,2] 1867284908
+behind 26: undefined {first:1} -1070633892
+behind 26: undefined 7n -554429296
+behind 48: undefined null 1 671607330
+one turn 49: null undefined 1 undefined undefined 671607330
+behind 48: undefined null [1,2] -1336834600
+one turn 49: null undefined [1,2] undefined undefined -1336834600
+behind 26: undefined {first:1} -575138316
+behind 26: undefined 7n -1278084744
+behind 48: undefined null 1 -230312632
+behind 48: undefined null [1,2] 764696947
+behind 26: undefined {first:1} 1134084900
+behind 26: undefined 7n 1133519736
+behind 48: undefined null 1 -481670626
+behind 48: undefined null [1,2] -1458183789
+behind 139: 109.375 undefined undefined 1250749693
+in the finally 142: 1 1250749693
+behind 139: 109.375 undefined undefined 1345590352
+in the finally 142: [1,2] 1345590352
+before 176: 86 undefined 519n 88 416806727
+before 176: 86 undefined 519n 88 -1216611248
+behind 204: 1 {first:1} -1889211743
+behind 204: [1,2] 7n -118843227
+behind 260: 1 207 undefined 519n -4186137
+before 268: undefined "s262" 903950146
+behind 260: [1,2] 207 undefined 519n 706727211
+before 268: undefined "s262" 767182257
+behind 289: {first:1} undefined undefined 519n 1876114363
+in the finally 290: 1 519n undefined false 1876114363
+end: 1 {first:1} false 88 519n undefined "s262" undefined 1876114363
+behind 289: 7n undefined undefined 519n 897000225
+in the finally 290: [1,2] 519n undefined false 897000225
+end: [1,2] 7n false 88 519n undefined "s262" undefined 897000225
+async function 1: "fulfilled" 1876114363
+async function 1: "fulfilled" 897000225
+behind 26: undefined {first:1} -2089944115
+behind 26: undefined 7n -1823859475
+behind 48: undefined null 1 -367691259
+behind 48: undefined null [1,2] 1867284908
+behind 26: undefined {first:1} -1070633892
+behind 26: undefined 7n -554429296
+behind 48: undefined null 1 671607330
+one turn 49: null undefined 1 undefined undefined 671607330
+behind 48: undefined null [1,2] -1336834600
+one turn 49: null undefined [1,2] undefined undefined -1336834600
+behind 26: undefined {first:1} -575138316
+behind 26: undefined 7n -1278084744
+behind 48: undefined null 1 -230312632
+behind 48: undefined null [1,2] 764696947
+behind 26: undefined {first:1} 1134084900
+behind 26: undefined 7n 1133519736
+behind 48: undefined null 1 -481670626
+behind 48: undefined null [1,2] -1458183789
+behind 139: 109.375 undefined undefined 1250749693
+in the finally 142: 1 1250749693
+behind 139: 109.375 undefined undefined 1345590352
+in the finally 142: [1,2] 1345590352
+before 176: 86 undefined 519n 88 416806727
+before 176: 86 undefined 519n 88 -1216611248
+behind 204: 1 {first:1} -1889211743
+behind 204: [1,2] 7n -118843227
+behind 260: 1 207 undefined 519n -4186137
+before 268: undefined "s262" 903950146
+behind 260: [1,2] 207 undefined 519n 706727211
+before 268: undefined "s262" 767182257
+behind 289: {first:1} undefined undefined 519n 1876114363
+in the finally 290: 1 519n undefined false 1876114363
+end: 1 {first:1} false 88 519n undefined "s262" undefined 1876114363
+behind 289: 7n undefined undefined 519n 897000225
+in the finally 290: [1,2] 519n undefined false 897000225
+end: [1,2] 7n false 88 519n undefined "s262" undefined 897000225
+async function 1: "fulfilled" 1876114363
+async function 1: "fulfilled" 897000225
+behind 33: undefined -1327860110
+one turn 63: undefined -781853687
+behind 89: undefined undefined 600421930
+behind 131: undefined undefined undefined 1913995792
+one turn 132: undefined {first:1} undefined 1913995792
+behind 89: undefined undefined -1764324157
+behind 131: undefined undefined undefined -75442602
+one turn 133: undefined 2044055623
+watched: "collected"
+end: {first:1} 7n 3n undefined undefined undefined undefined undefined undefined undefined undefined 561090510
+async function 2: "fulfilled" 561090510
+registry: "function"
+140 1201396994
+*/

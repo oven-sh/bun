@@ -151,7 +151,7 @@ export function run(value) {
     text
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum Order {
     AsWritten,
     LastFirst,
@@ -168,8 +168,17 @@ fn ask_for_parameters_and_count(
     order: Order,
     max_inference_nodes: u64,
 ) -> (Vec<String>, QueryStatistics) {
-    let files = [("main.ts", text)];
-    with_program(&files, &["./main.ts"], 1, |program| {
+    ask_for_parameters_of("main.ts", text, order, max_inference_nodes)
+}
+
+fn ask_for_parameters_of(
+    name: &str,
+    text: &str,
+    order: Order,
+    max_inference_nodes: u64,
+) -> (Vec<String>, QueryStatistics) {
+    let files = [(name, text)];
+    with_program(&files, &[&format!("./{name}")], 1, |program| {
         let all = program.files();
         let roles = vec![FileRole::Inferred; all.modules.len()];
         let inputs = QueryInputs {
@@ -178,14 +187,15 @@ fn ask_for_parameters_and_count(
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
             max_inference_nodes,
+            limits: Default::default(),
         };
-        let main = program.file("main.ts");
+        let main = program.file(name);
         let answers = Mutex::new((Vec::new(), QueryStatistics::default()));
         check(program, &|checker, file| {
             if file != main {
                 return;
             }
-            checker.with_queries(file, inputs, |queries| {
+            checker.with_queries(file, &inputs, |queries| {
                 let count = queries.hir().params.len();
                 let mut asked: Vec<usize> = (0..count).collect();
                 match order {
@@ -196,7 +206,9 @@ fn ask_for_parameters_and_count(
                 let mut texts = vec![String::new(); count];
                 for index in asked {
                     let pattern = queries.hir().params[index].pat;
-                    let ty = queries.binding_type(pattern).unwrap();
+                    let ty = (queries.binding_type(pattern)).unwrap_or_else(|refusal| {
+                        panic!("parameter {index}, {order:?}: {refusal:?}")
+                    });
                     texts[index] = String::from_utf8(queries.type_text(ty)).unwrap();
                 }
                 *answers.lock().unwrap() = (texts, queries.statistics());
@@ -204,6 +216,27 @@ fn ask_for_parameters_and_count(
         });
         answers.into_inner().unwrap()
     })
+}
+
+/// Row 4033. A method named by any symbol gives `Top` an index signature. Nothing lists the members of a class in a file
+/// that isn't checked until the first question about it.
+#[test]
+fn an_inherited_index_signature_does_not_depend_on_which_class_is_asked_for_first() {
+    let text = "/** @type {symbol} */
+let name;
+class Top { [name]() { return 1; } }
+class Middle extends Top { middle = 1; }
+class Bottom extends Middle { bottom = 2; }
+/** @param {Middle} it */
+export function ofMiddle(it, found = it[name]) {}
+/** @param {Bottom} it */
+export function ofBottom(it, found = it[name]) {}
+";
+    for order in [Order::LastFirst, Order::AsWritten] {
+        let answers = ask_for_parameters_of("main.js", text, order, 4096).0;
+        let expected = ["Middle", "() => number", "Bottom", "() => number"];
+        assert_eq!(answers, expected, "{order:?}");
+    }
 }
 
 #[test]

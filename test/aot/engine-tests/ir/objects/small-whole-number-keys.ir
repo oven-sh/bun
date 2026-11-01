@@ -366,7 +366,7 @@ function f6 name="copies" module=m0 position=2535 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Void b@36 = Jump(Terminal, v6:CallInline)
 # CHECK-NEXT: Successors: #14
 # CHECK-NEXT: Known properties:
-# CHECK-NEXT: b@25: dereferenceableBytes = 8
+# CHECK-NEXT: b@25: dereferenceableBytes = 16
 # CHECK-NEXT: b@101: range = [0,200]
 # CHECK-NEXT: b@101: induction, next = b@122, step = 1, test = b@70, doesNotWrap
 # CHECK-NEXT: end of function f12

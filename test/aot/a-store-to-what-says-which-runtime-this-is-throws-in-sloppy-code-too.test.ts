@@ -71,17 +71,14 @@ for (const file of ["sloppy.cjs", "strict.mjs"]) {
   });
 }
 
-// A test may pose as another runtime, as under plain `bun test`, so a test run does not fold the two versions. It folds process.release.name.
+// A test may pose as another runtime, as under plain `bun test`, so a test run folds none of the three.
 for (const [form, words] of [
   ["as one program", "TestRunLayers:0"],
   ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
 ])
-  test.concurrent(`a test run ${form} takes the versions and refuses the name aloud`, async () => {
+  test.concurrent(`a test run ${form} takes every change`, async () => {
     using directory = tempDir("runtime-identity-test-run", files);
     const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
     const { stdout } = await run([bunExe(), "test", "--aot", "./changes.test.mjs"], String(directory), env);
-    expect(answersIn(stdout)).toEqual([
-      ...othersAnswer,
-      ...linesFor((member, change) => (member === "process.release.name" ? refusal(member, change) : "taken, changed")),
-    ]);
+    expect(answersIn(stdout)).toEqual([...othersAnswer, ...linesFor(() => "taken, changed")]);
   });

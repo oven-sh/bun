@@ -57,13 +57,14 @@ fn file_directive_makes_every_scope_strict() {
 }
 
 #[test]
-fn function_directive_makes_no_scope_strict() {
+fn function_directive_makes_scopes_of_function_strict() {
     analyzed(
         "a.cjs",
         r#"function f() { "use strict"; { let a; } }"#,
         |s| {
-            for scope in (0..s.bound.scopes.len() as u32).map(ScopeId) {
-                assert!(!s.bound.is_strict_scope(scope), "{scope:?}");
+            assert!(!s.bound.is_strict_scope(ScopeId(0)));
+            for scope in (1..s.bound.scopes.len() as u32).map(ScopeId) {
+                assert!(s.bound.is_strict_scope(scope), "{scope:?}");
             }
         },
     );

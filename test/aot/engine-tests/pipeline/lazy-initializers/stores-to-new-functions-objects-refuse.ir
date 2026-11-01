@@ -309,7 +309,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b16():
     Jump -> next b17() @1979
   b17() handler=b24():
-    v166 = IteratorOpen v74 elementCount=2 [isDestructuring] @1960
+    v166 = IteratorOpen v74 elementCount=2 [isDestructuring] @1971 constructs
     Jump -> next b18() @1960
   b18() handler=b23():
     v167 = IteratorResume v166 stepIndex=0 @1960
@@ -632,7 +632,7 @@ function f20 name="onceUnderASymbol" module=m0 position=5056 flags=[HasExplicitN
     v9 = Convert v8 declared={type=undefined|null|function|f56 flags=[IsExpected]} @5188
     Return v9 @5188
 }
-function f21 module=m0 position=2345 kind=Arrow captures=[{type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16 flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|function|f57 flags=[IsExpected]}] functionTypes=[f103] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f21 module=m0 position=2345 kind=Arrow captures=[{type=undefined|null|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16 flags=[IsExpected] variableName="make"}] thisType={type=anything} results=[{type=undefined|null|function|f57 flags=[IsExpected]}] functionTypes=[f103] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16):
     Jump -> next b1() @2345
   b1():
@@ -1020,13 +1020,13 @@ function f53 module=m0 position=1892 flags=[IsAsync, HasThis] thisType={type=any
     v1 = Undefined @1892
     Return v1 @1892
 }
-function f54 module=m0 position=4594 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f136] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f54 module=m0 position=4594 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f136] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @4594
   b1():
     Return v0 @4600
 }
-function f55 name="read" module=m0 position=4822 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f137] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f55 name="read" module=m0 position=4822 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f137] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @4822
   b1():
@@ -1041,109 +1041,109 @@ function f55 name="read" module=m0 position=4822 kind=Arrow captures=[{type=anyt
     v5 = Add v3, v4 @4888
     Return v5 @4888
 }
-function f56 module=m0 position=5188 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f138] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f56 module=m0 position=5188 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f138] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @5188
   b1():
     Return v0 @5194
 }
-function f57 module=m0 position=2414 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f102] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f57 module=m0 position=2414 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f102] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @2414
   b1():
     Return v0 @2420
 }
-function f58 module=m0 position=2544 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f104] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f58 module=m0 position=2544 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f104] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @2544
   b1():
     Return v0 @2550
 }
-function f59 module=m0 position=2679 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f106] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f59 module=m0 position=2679 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f106] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @2679
   b1():
     Return v0 @2685
 }
-function f60 module=m0 position=2824 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f108] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f60 module=m0 position=2824 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f108] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @2824
   b1():
     Return v0 @2830
 }
-function f61 module=m0 position=2961 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f110] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f61 module=m0 position=2961 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f110] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @2961
   b1():
     Return v0 @2967
 }
-function f62 module=m0 position=3088 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f112] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f62 module=m0 position=3088 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f112] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @3088
   b1():
     Return v0 @3094
 }
-function f63 module=m0 position=3215 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f114] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f63 module=m0 position=3215 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f114] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @3215
   b1():
     Return v0 @3221
 }
-function f64 module=m0 position=3342 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f116] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f64 module=m0 position=3342 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f116] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @3342
   b1():
     Return v0 @3348
 }
-function f65 module=m0 position=3469 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f118] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f65 module=m0 position=3469 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f118] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @3469
   b1():
     Return v0 @3475
 }
-function f66 module=m0 position=3604 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f120] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f66 module=m0 position=3604 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f120] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @3604
   b1():
     Return v0 @3610
 }
-function f67 module=m0 position=3731 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f122] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f67 module=m0 position=3731 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f122] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @3731
   b1():
     Return v0 @3737
 }
-function f68 module=m0 position=3862 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f124] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f68 module=m0 position=3862 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f124] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @3862
   b1():
     Return v0 @3868
 }
-function f69 module=m0 position=3985 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f126] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f69 module=m0 position=3985 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f126] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @3985
   b1():
     Return v0 @3991
 }
-function f70 module=m0 position=4108 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f128] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f70 module=m0 position=4108 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f128] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @4108
   b1():
     Return v0 @4114
 }
-function f71 module=m0 position=4229 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f130] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f71 module=m0 position=4229 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f130] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @4229
   b1():
     Return v0 @4235
 }
-function f72 module=m0 position=4342 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f132] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f72 module=m0 position=4342 kind=Arrow captures=[{type=anything variableName="result"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f132] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @4342
   b1():
     Return v0 @4348
 }
-function f73 module=m0 position=4467 kind=Arrow captures=[{type=undefined|null|function|f53 flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|function|f53 flags=[IsExpected]}] functionTypes=[f134] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f73 module=m0 position=4467 kind=Arrow captures=[{type=undefined|null|function|f53 flags=[IsExpected] variableName="result"}] thisType={type=anything} results=[{type=undefined|null|function|f53 flags=[IsExpected]}] functionTypes=[f134] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|function|f53):
     Jump -> next b1() @4467
   b1():
@@ -1425,7 +1425,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f145 visibility=Private
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f21 module=
-# CHECK: m0 position=2345 kind=Arrow role=ResultWrapper captures=[{type=undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16}] thisType={type=anything} results=[{type=f57}] functionTypes=[f103] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f147} inlineFrames=[{}, {callee=f147 callPosition=2345 module=m0}] {
+# CHECK: m0 position=2345 kind=Arrow role=ResultWrapper captures=[{type=undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16 variableName="make"}] thisType={type=anything} results=[{type=f57}] functionTypes=[f103] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f147} inlineFrames=[{}, {callee=f147 callPosition=2345 module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16):
 # CHECK-NEXT: v1: fact = Entered function=f147
 # CHECK-NEXT: v2: anything = Call v0 calleeName="make" accessSite=90 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16]
@@ -1656,7 +1656,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f145 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f57 module=
-# CHECK: m0 position=2414 kind=Arrow captures=[{type=undefined|f53}] thisType={type=anything} results=[{type=undefined|f53}] functionTypes=[f102] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=2414 kind=Arrow captures=[{type=undefined|f53 variableName="result"}] thisType={type=anything} results=[{type=undefined|f53}] functionTypes=[f102] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|f53):
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
@@ -1751,7 +1751,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f145 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f73 module=
-# CHECK: m0 position=4467 kind=Arrow captures=[{type=f53}] thisType={type=anything} results=[{type=f53}] functionTypes=[f134] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4467 kind=Arrow captures=[{type=f53 variableName="result"}] thisType={type=anything} results=[{type=f53}] functionTypes=[f134] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: f53):
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }

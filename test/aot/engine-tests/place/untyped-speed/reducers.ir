@@ -400,5 +400,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f31 visibility=Private
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
 # CHECK-NEXT: Void b@21 = Return(b@18, Terminal)
 # CHECK-NEXT: Known properties:
-# CHECK-NEXT: b@18: dereferenceableBytes = 8
+# CHECK-NEXT: b@18: dereferenceableBytes = 16
 # CHECK-NEXT: end of function f1

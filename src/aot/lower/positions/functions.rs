@@ -8,6 +8,7 @@ use super::{FunctionPositions, SiteOrigin, add_type_site};
 use crate::ir::generated::TypeSiteKind;
 use crate::ir::{ContentsSlot, DeclaredType, Mapped, PositionFlags, Type, TypeId, TypeTable};
 use crate::lower::FileLowering;
+use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::types::find_contents_type;
 
 pub(super) fn compute_function_positions(
@@ -80,7 +81,8 @@ impl FileLowering<'_, '_, '_, '_> {
         match member {
             Some(member) if !is_receiver_known => {
                 let is_written_here = class.file == self.file && member.func.is_some();
-                let position = is_written_here.then(|| hir[member.func].start);
+                let is_tested = is_written_here && self.is_receiver_tested(member.func);
+                let position = is_tested.then(|| hir[member.func].start);
                 self.create_receiver_position(instance, position)
             }
             Some(_) | None => DeclaredType::from_compiler(instance),
@@ -121,13 +123,20 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // A closure's copy of `this` goes by the site of the function that it is copied from.
+    fn is_receiver_tested(&self, function: FnId) -> bool {
+        let this = BindingRef::Slot(self.bound.fns[function.idx()].scope, ScopeSlot::This);
+        let placement = self.scopes.placement(this);
+        self.is_checked() || placement.is_some_and(|placement| placement.is_shared)
+    }
+
     // Whoever holds a method can call it on anything, so the entry tests `this` like a parameter. It tests what has a site.
     fn create_receiver_position(
         &mut self,
         receiver: TypeId,
         position: Option<u32>,
     ) -> DeclaredType {
-        let Some(position) = position.filter(|_| self.is_checked()) else {
+        let Some(position) = position else {
             return expect_type(receiver);
         };
         let origin = SiteOrigin {
@@ -192,7 +201,9 @@ fn compute_this_position(
             && let Some(layout) = file.constructor_function_layout(source)
         {
             let instance = file.fragment.types.intern(Type::layout(layout));
-            return file.create_receiver_position(instance, Some(file.hir[func.this_param].pos));
+            let is_tested = file.is_receiver_tested(source.function);
+            let position = is_tested.then(|| file.hir[func.this_param].pos);
+            return file.create_receiver_position(instance, position);
         }
         let origin = SiteOrigin {
             kind: TypeSiteKind::This,
@@ -214,7 +225,8 @@ fn compute_this_position(
             .stores_into_instances_or_prototype_object(source)
     {
         let instance = file.fragment.types.intern(Type::layout(layout));
-        return file.create_receiver_position(instance, Some(func.start));
+        let is_tested = file.is_receiver_tested(source.function);
+        return file.create_receiver_position(instance, is_tested.then_some(func.start));
     }
     // Nobody wrote it, so no entry tests it.
     match file.choose_source(shape.this_type, None) {

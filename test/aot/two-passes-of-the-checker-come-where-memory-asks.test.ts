@@ -7,9 +7,10 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { afterAll } from "./harness/default-timeout";
 import { buildEnvironment } from "./harness/flags";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 const moduleCount = 64;
 
@@ -68,33 +69,47 @@ test("an executable is built in one pass", async () => {
   expect(built.stderr + built.stdout).toContain("AOT round of the checker | ");
   expect(passesIn(built.stderr + built.stdout)).toBe(0);
   expect((await run([executable], directory, bunEnv)).stdout).toBe(expected.stdout);
-}, 240_000);
+});
 
-test("a test run takes two passes where its memory is short, and answers the same", async () => {
-  using dir = tempDir("aot-two-passes-where-memory-is-short", files());
-  async function report(...flags: string[]) {
-    const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), logging);
-    return {
-      passes: passesIn(stdout + stderr),
-      answers: {
-        seen: (stdout + stderr)
-          .split("\n")
-          .filter(line => line.includes(" sees "))
-          .sort(),
-        results: [...stderr.matchAll(/^\((pass|fail|skip)\) (\S+)/gm)].map(match => `${match[1]} ${match[2]}`).sort(),
-        exitCode,
-      },
-    };
-  }
-  const plain = await report();
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof report>>;
+async function report(...flags: string[]) {
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), logging);
+  return {
+    passes: passesIn(stdout + stderr),
+    answers: {
+      seen: (stdout + stderr)
+        .split("\n")
+        .filter(line => line.includes(" sees "))
+        .sort(),
+      results: [...stderr.matchAll(/^\((pass|fail|skip)\) (\S+)/gm)].map(match => `${match[1]} ${match[2]}`).sort(),
+      exitCode,
+    },
+  };
+}
+beforeAll(async () => {
+  dir = tempDir("aot-two-passes-where-memory-is-short", files());
+  plain = await report();
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("what plain Bun answers", () => {
   expect(plain.answers.results).toEqual(["pass a", "pass b", "pass c"]);
   expect(plain.answers.exitCode).toBe(0);
-  for (const form of [[], ["--parallel=2"]]) {
-    const withRoom = await report("--aot", ...form, "--aot-memory-limit=64GB");
-    expect(withRoom).toEqual({ passes: 0, answers: plain.answers });
-    // No build fits into this.
-    const short = await report("--aot", ...form, "--aot-memory-limit=64KB");
-    expect(short.answers).toEqual(plain.answers);
-    expect(short.passes).toBeGreaterThanOrEqual(2);
-  }
-}, 240_000);
+});
+
+const forms: [string, string[]][] = [
+  ["in one process", []],
+  ["in two processes", ["--parallel=2"]],
+];
+
+test.each(forms)("a test run with room takes one pass, and answers the same: %s", async (_, form) => {
+  expect(await report("--aot", ...form, "--aot-memory-limit=64GB")).toEqual({ passes: 0, answers: plain.answers });
+});
+
+test.each(forms)("a test run takes two passes where its memory is short, and answers the same: %s", async (_, form) => {
+  // No build fits into this.
+  const short = await report("--aot", ...form, "--aot-memory-limit=64KB");
+  expect(short.answers).toEqual(plain.answers);
+  expect(short.passes).toBeGreaterThanOrEqual(2);
+});

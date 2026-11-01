@@ -11,11 +11,13 @@ use super::bindings::{ExportBinding, ModuleExport, RequiredName};
 use super::commonjs_exports::{CommonJsImport, CommonJsTexts};
 use super::compare_code_units;
 use super::failures::{FailureOrder, ModuleFailureKind, PendingFailure};
+use super::imports::MockedModules;
 use super::interop::{ImportPhase, ModuleKind};
 use super::module_set::ModuleSet;
 use super::requests::{ScannedSite, Scans, phase_towards};
 use super::synthetic_exports::SyntheticExports;
 use crate::builtins::{RuntimeModule, table};
+use crate::statistics::{Stage, StepClock};
 use bun_sema::atom::{Atom, known};
 use bun_sema::components::strongly_connected_components;
 use bun_sema::program::{FileId, Files, Sym};
@@ -340,21 +342,46 @@ fn compute_star_exports(
     scans: &Scans,
     entries: &[ExportEntries],
     files: &[FileId],
+    mocked: &MockedModules,
 ) -> (Vec<u32>, Vec<StarExports>, Vec<Vec<u32>>) {
+    // A mock that stands in place of a file answers for every name, and a star hands on what it answers.
+    let targets_of_mock =
+        |module: &ExportEntries| match mocked.contains(ModuleRef::File(module.file)) {
+            true => DynamicStarTargets::Many,
+            false => DynamicStarTargets::Empty,
+        };
     let edges_of = |module: &ExportEntries| -> Vec<u32> {
         let tables = star_targets(scans, module).filter_map(|target| find_table(files, target));
         tables.map(|table| table as u32).collect()
     };
     let edges: Vec<Vec<u32>> = entries.iter().map(edges_of).collect();
+    let mut is_taken_by_star = vec![false; entries.len()];
+    for &target in edges.iter().flatten() {
+        is_taken_by_star[target as usize] = true;
+    }
     let (component_of, components) = strongly_connected_components(&edges);
     let mut star_exports: Vec<StarExports> = Vec::with_capacity(components.len());
     for (component, members) in components.iter().enumerate() {
+        // Most files: no `export *` in them, and none that names them. Nobody asks for the list.
+        if let [member] = members[..]
+            && entries[member].stars.is_empty()
+            && !is_taken_by_star[member]
+        {
+            star_exports.push(StarExports {
+                names: Vec::new(),
+                dynamic_targets: targets_of_mock(&entries[member]),
+            });
+            continue;
+        }
         let members = members.iter().map(|&member| &entries[member]);
         let (mut names, mut seen) = (Vec::new(), FxHashSet::default());
         let own_names = members.clone().flat_map(|module| &module.own);
         let own_names = own_names.map(|&(name, _)| name);
         names.extend(own_names.filter(|&name| name != known::default && seen.insert(name)));
         let mut dynamic_targets = DynamicStarTargets::Empty;
+        for module in members.clone() {
+            dynamic_targets = dynamic_targets.join(targets_of_mock(module));
+        }
         for target in members.flat_map(|module| star_targets(scans, module)) {
             let Some(table) = find_table(files, target) else {
                 dynamic_targets = dynamic_targets.join(DynamicStarTargets::One(target));
@@ -381,6 +408,7 @@ struct FileTable {
     own_count: u32,
     dynamic_targets: DynamicStarTargets,
     follows_every_star: bool,
+    may_be_mocked: bool,
 }
 
 impl FileTable {
@@ -397,10 +425,20 @@ struct NameNodes {
 }
 
 impl NameNodes {
-    fn add_file(&mut self, module: &ExportEntries, star_exports: &StarExports) {
+    fn add_file(
+        &mut self,
+        module: &ExportEntries,
+        star_exports: &StarExports,
+        may_be_mocked: bool,
+    ) {
         let start = self.keys.len() as u32;
         let own_names = module.own.iter().map(|&(name, _)| name);
-        for name in own_names.chain(star_exports.names.iter().copied()) {
+        // Without an `export *` the list holds the file's own names and no other.
+        let star_names: &[Atom] = match module.stars.is_empty() {
+            true => &[],
+            false => &star_exports.names,
+        };
+        for name in own_names.chain(star_names.iter().copied()) {
             if let Entry::Vacant(entry) = self.index.entry((module.file, name)) {
                 entry.insert(self.keys.len() as u32);
                 self.keys.push((module.file, name));
@@ -411,6 +449,7 @@ impl NameNodes {
             own_count: module.own.len() as u32,
             dynamic_targets: star_exports.dynamic_targets,
             follows_every_star: false,
+            may_be_mocked,
         });
     }
 
@@ -533,20 +572,44 @@ impl ResolutionGraph<'_> {
 
     /// What each name comes to, and the tables that follow every star.
     fn solve(self) -> (Vec<(Atom, ResolvedName)>, Vec<usize>) {
-        let (component_of, components) = strongly_connected_components(&self.edges);
+        // Most names are variables of their own files. Such a name leads nowhere and is its own answer: only the others are a graph.
+        const LEADS_NOWHERE: u32 = u32::MAX;
+        let leads_on = |&node: &usize| !self.edges[node].is_empty();
+        let nodes_that_lead_on: Vec<usize> = (0..self.edges.len()).filter(leads_on).collect();
+        let mut place_of = vec![LEADS_NOWHERE; self.edges.len()];
+        for (place, &node) in (0..).zip(&nodes_that_lead_on) {
+            place_of[node] = place;
+        }
+        let edges_between = |&node: &usize| -> Vec<u32> {
+            let places = self.edges[node]
+                .iter()
+                .map(|&target| place_of[target as usize]);
+            places.filter(|&place| place != LEADS_NOWHERE).collect()
+        };
+        let edges: Vec<Vec<u32>> = nodes_that_lead_on.iter().map(edges_between).collect();
+        let (component_of, components) = strongly_connected_components(&edges);
+        // Joined with nothing, a summary is itself.
+        let end_at = |node: usize| self.starts[node];
         let mut summaries: Vec<Summary> = Vec::with_capacity(components.len());
-        for (component, members) in components.iter().enumerate() {
-            let is_star_name = |&&node: &&usize| self.nodes.find_star_table(node as u32).is_some();
-            let representative = match members[..] {
-                [node] => node,
-                _ => *members.iter().find(is_star_name).unwrap_or(&members[0]),
+        for (component, places) in components.iter().enumerate() {
+            let members = places.iter().map(|&place| nodes_that_lead_on[place]);
+            let is_star_name = |&node: &usize| self.nodes.find_star_table(node as u32).is_some();
+            let first = nodes_that_lead_on[places[0]];
+            let representative = match places.len() {
+                1 => first,
+                _ => members.clone().find(is_star_name).unwrap_or(first),
             };
             let key = self.nodes.keys[representative];
             let mut summary = Summary::EMPTY;
-            for &member in members {
+            for member in members {
                 summary = summary.join(self.starts[member], key);
                 for &target in &self.edges[member] {
-                    let target_component = component_of[target as usize] as usize;
+                    let place = place_of[target as usize];
+                    if place == LEADS_NOWHERE {
+                        summary = summary.join(end_at(target as usize), key);
+                        continue;
+                    }
+                    let target_component = component_of[place as usize] as usize;
                     if target_component != component {
                         summary = summary.join(summaries[target_component], key);
                     }
@@ -554,7 +617,10 @@ impl ResolutionGraph<'_> {
             }
             summaries.push(summary);
         }
-        let summary_of = |node: usize| summaries[component_of[node] as usize];
+        let summary_of = |node: usize| match place_of[node] {
+            LEADS_NOWHERE => end_at(node),
+            place => summaries[component_of[place as usize] as usize],
+        };
         let keys = self.nodes.keys.iter().enumerate();
         let results = keys.map(|(node, &(_, name))| (name, summary_of(node).resolve()));
         let is_followed = |&node: &u32| summary_of(node as usize).should_follow_every_star();
@@ -657,6 +723,7 @@ pub(super) fn resolve_exports(
     modules: &ModuleSet,
     entries: CollectedEntries,
     commonjs: &CommonJsTexts,
+    mocked: &MockedModules,
 ) -> ExportTables {
     let CollectedEntries {
         tables: entries,
@@ -667,12 +734,19 @@ pub(super) fn resolve_exports(
     let has_table = |file: &&FileId| modules.table_file(ModuleRef::File(**file)).is_some();
     let files_with_table = modules.record_files.iter().filter(has_table);
     debug_assert!(table_files.iter().eq(files_with_table));
+    let mut steps = StepClock::new(Stage::BindModules, "resolve_exports");
     let (component_of, star_exports, star_tables) =
-        compute_star_exports(scans, &entries, &table_files);
+        compute_star_exports(scans, &entries, &table_files, mocked);
+    steps.end("compute_star_exports");
     let mut nodes = NameNodes::default();
+    let own_names: usize = entries.iter().map(|module| module.own.len()).sum();
+    nodes.keys.reserve(own_names);
+    nodes.index.reserve(own_names);
     for (module, &component) in entries.iter().zip(&component_of) {
-        nodes.add_file(module, &star_exports[component as usize]);
+        let may_be_mocked = mocked.contains(ModuleRef::File(module.file));
+        nodes.add_file(module, &star_exports[component as usize], may_be_mocked);
     }
+    steps.end("a node for each name");
     let mut graph = ResolutionGraph {
         scans,
         modules,
@@ -684,7 +758,9 @@ pub(super) fn resolve_exports(
     for (table, module) in nodes.tables.iter().zip(&entries) {
         graph.add_file(table, module);
     }
+    steps.end("the edges");
     let (results, followed_tables) = graph.solve();
+    steps.end("solve");
     for table in followed_tables {
         nodes.tables[table].follows_every_star = true;
     }
@@ -718,7 +794,9 @@ pub(super) fn resolve_exports(
         failures,
         ..ExportTables::default()
     };
+    steps.end("failures, indirect sites");
     tables.commonjs = resolve_commonjs_names(files, modules, &tables, commonjs.entries());
+    steps.end("resolve_commonjs_names");
     for position in 0..tables.results.len() {
         let resolved = tables.follow(tables.results[position].1);
         tables.results[position].1 = resolved;
@@ -731,6 +809,7 @@ pub(super) fn resolve_exports(
             commonjs_namespace_loads.push(file);
         }
     }
+    steps.end("every result is followed");
     let mut absent_names = Vec::new();
     for written in &commonjs_imports {
         if let Some((pending, imported)) = find_absent_name(&tables, modules, written) {
@@ -764,6 +843,7 @@ pub(super) fn resolve_exports(
     commonjs_namespace_loads.sort_unstable();
     commonjs_namespace_loads.dedup();
     tables.commonjs_namespace_loads = commonjs_namespace_loads;
+    steps.end("names of CommonJS files");
     tables
 }
 
@@ -821,7 +901,7 @@ impl ExportTables {
         }
         let resolved = ResolvedName::new(match self.table_of(module) {
             None => captured_resolution(modules, ModuleRef::File(module), name),
-            Some(_) if name == known::default => Resolution::NotFound,
+            Some(table) if name == known::default && !table.may_be_mocked => Resolution::NotFound,
             Some(table) => table.dynamic_targets.for_name(modules, module, name),
         });
         self.follow(resolved)
@@ -975,6 +1055,13 @@ impl ExportTables {
         let start = failures.partition_point(|pending| pending.failure.importer < file);
         let end = failures.partition_point(|pending| pending.failure.importer <= file);
         &failures[start..end]
+    }
+
+    /// The files that `export *` names in the file, in the order of the text.
+    pub(super) fn files_named_by_stars(&self, file: FileId) -> impl Iterator<Item = FileId> + '_ {
+        let table = find_table(&self.files, ModuleRef::File(file));
+        let targets = table.map_or(&[][..], |table| &self.star_tables[table][..]);
+        targets.iter().map(|&target| self.files[target as usize])
     }
 
     fn table_of(&self, file: FileId) -> Option<&FileTable> {

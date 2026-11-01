@@ -852,41 +852,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21
 # CHECK-LABEL: function {{*}}name="makeCounter"
 # CHECK: module=m1 position=1077 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int site=w19}] results=[{type=f16 site=w20 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f23}
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m1 position=1246 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=L1 site=w22 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: L1):
-# CHECK-NEXT: v2: boolean = HasBirthFieldsFilled v1
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v3: guard):
-# CHECK-NEXT: v4: number = GetSlot v1, v3 key="up" receivers=[L1] level=Expected accessSite=119 [holdsDeclaredType]
-# CHECK-NEXT: v5: int|whole = GetSlot v1 key="down" receivers=[L1] level=Proven accessSite=120
-# CHECK-NEXT: v6: int|whole = GetSlot v1, v3 key="any" receivers=[L1] level=Expected accessSite=121 [holdsDeclaredType]
-# CHECK-NEXT: v7: int[-2147483643, 2147483647] = GetSlot v1 key="other" receivers=[L1] level=Proven accessSite=122
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
-# CHECK-NEXT: v9: whole = Double number=-0
-# CHECK-NEXT: v10: boolean = CallBuiltin -, v4, v9 overload=ObjectIs/0 accessSite=124
-# CHECK-NEXT: v11: "number" = String string="number"
-# CHECK-NEXT: v12: undefined = CallBuiltin -, v0, v4, v5, v6, v7, v10, v11 overload=ConsoleLog/0 accessSite=126
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: Return v13
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v14: anything ~ number = PropGet v1 key="up" accessSite=119 receivers=[L1]
-# CHECK-NEXT: v15: number|string ~ number = AssumeType v14 provenType=number|string
-# CHECK-NEXT: v16: int|whole = GetSlot v1 key="down" receivers=[L1] level=Proven accessSite=120
-# CHECK-NEXT: v17: anything ~ int|whole = PropGet v1 key="any" accessSite=121 receivers=[L1]
-# CHECK-NEXT: v18: undefined|int|whole ~ int|whole = AssumeType v17 provenType=undefined|int|whole
-# CHECK-NEXT: v19: int[-2147483643, 2147483647] = GetSlot v1 key="other" receivers=[L1] level=Proven accessSite=122
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
-# CHECK-NEXT: v21: anything ~ number = PropGet v1 key="up" accessSite=123 receivers=[L1]
-# CHECK-NEXT: v22: number|string ~ number = AssumeType v21 provenType=number|string
-# CHECK-NEXT: v23: whole = Double number=-0
-# CHECK-NEXT: v24: boolean = CallBuiltin -, v22, v23 overload=ObjectIs/0 accessSite=124
-# CHECK-NEXT: v25: anything ~ number = PropGet v1 key="up" accessSite=125 receivers=[L1]
-# CHECK-NEXT: v26: string = TypeOf v25
-# CHECK-NEXT: v27: undefined = CallBuiltin -, v0, v15, v16, v18, v19, v24, v26 overload=ConsoleLog/0 accessSite=126
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: }
+# CHECK: module=m1 position=1246 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=L1 site=w22 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f16 module=
 # CHECK: m1 position=1176 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int site=w96}] results=[{type=int|whole site=w97}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f17 module=

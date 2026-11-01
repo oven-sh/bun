@@ -52,6 +52,9 @@ pub(super) struct LoadInputs<'a, 's> {
     pub(super) is_only_imported: bool,
     pub(super) imported_requires: &'a [ImportedRequire],
     pub(super) imported_constants: &'a [ImportedConstant],
+    pub(super) texts_of_data_files: &'a [TextOfDataFile],
+    pub(super) imported_file_changers: &'a [ImportedFileChanger],
+    pub(super) texts_of_other_files: &'a [TextOfOtherFile],
 }
 
 pub(super) fn load_code_file<'s, 'r>(
@@ -59,7 +62,7 @@ pub(super) fn load_code_file<'s, 'r>(
     arena: &'s Arena,
     target: CodeTarget<'r>,
     text: Cow<'static, [u8]>,
-    inputs: LoadInputs<'_, 's>,
+    inputs: &LoadInputs<'_, 's>,
 ) -> ParsedCodeFile<'s, 'r> {
     let &CodeLoadContext {
         resolver,
@@ -67,12 +70,15 @@ pub(super) fn load_code_file<'s, 'r>(
         ref atoms,
         ..
     } = context;
-    let LoadInputs {
+    let &LoadInputs {
         is_called_before_it_runs,
         stored_by_mocks,
         is_only_imported,
         imported_requires,
         imported_constants,
+        texts_of_data_files,
+        imported_file_changers,
+        texts_of_other_files,
     } = inputs;
     let key = target.key;
     let path = key.path;
@@ -82,6 +88,12 @@ pub(super) fn load_code_file<'s, 'r>(
     debug_assert!(tree.hir.kind != FileKind::Declaration);
     tree.hir.imported_requires = ArenaFew::from_iter_in(imported_requires.iter().copied(), arena);
     tree.hir.imported_constants = ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
+    tree.hir.texts_of_data_files =
+        ArenaFew::from_iter_in(texts_of_data_files.iter().copied(), arena);
+    tree.hir.imported_file_changers =
+        ArenaFew::from_iter_in(imported_file_changers.iter().copied(), arena);
+    tree.hir.texts_of_other_files =
+        ArenaFew::from_iter_in(texts_of_other_files.iter().copied(), arena);
     let is_script_for_project = match tree.request.options.written_module_detection {
         ModuleDetection::Force => false,
         ModuleDetection::Legacy => true,
@@ -114,7 +126,7 @@ pub(super) fn load_code_file<'s, 'r>(
         &mut tree,
     );
     if !tree.request.options.keeps_comments {
-        tree.hir.comments = Default::default();
+        crate::erasure::keep_only_comments_beside_types(&mut tree.hir, arena);
     }
     rename_private_names_with(&mut tree.hir, &bound, atoms, path, |reference, _| {
         bound.runtime.private_class(reference)
@@ -230,6 +242,7 @@ pub(super) fn fold_code_file_again<'s, 'r>(
         is_library: context.host.is_library_file(key.path),
         host_values: previous.host_values,
         jsx: previous.jsx_mode,
+        own_name: arena.alloc_slice_copy(bun_paths::basename_posix(key.path)),
     };
     let FoldedAgain {
         analysis,
@@ -415,6 +428,7 @@ fn analyze<'s, 'r>(
         is_library: host.is_library_file(path),
         host_values: tree.host_values,
         jsx: jsx_mode,
+        own_name: arena.alloc_slice_copy(bun_paths::basename_posix(path)),
     };
     let fold = fold_inputs_of(context, arena, is_called_before_it_runs, stored_by_mocks);
     let (bound, analysis, host_values) =
@@ -426,6 +440,8 @@ fn analyze<'s, 'r>(
         jsx,
         jsx_mode,
         declared_module_type,
+        type_where_imported: declared_module_type_of(context, path, true),
+        runs_inside_require: false,
         is_package_type_module: resolver.is_package_type_module(path),
         package: resolver.enclosing_package(path),
         side_effects: resolver.declared_side_effects(path),
@@ -488,6 +504,10 @@ fn analyze_with_host<'s>(
             };
             match host.transform_tree(arena, atoms, &mut request, &mut tree.payload) {
                 TreeChange::Changed => continue,
+                TreeChange::ChangedAndUnfinished => {
+                    is_transformed = false;
+                    continue;
+                }
                 TreeChange::Unchanged => {}
             }
         }

@@ -270,7 +270,7 @@ console.log("await of what is no promise: " + describe(await awaits22()));
 // CHECK-NEXT: Return v20
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="awaits22"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|Array> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|Array> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

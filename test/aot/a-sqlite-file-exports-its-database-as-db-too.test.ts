@@ -65,3 +65,25 @@ test("a test run", async () => {
   const { stdout } = await run([bunExe(), "test", "--aot", "./main.test.mjs"], String(directory), env);
   expect(stdout.split("\n").filter(line => line && !line.startsWith("bun test "))).toEqual(printed);
 }, 240_000);
+
+// Over layers the test file is a program of its own, and another.mjs lies in the program below it. Both import one file, so both hold one Database.
+test("a test file and what it imports hold one database over layers", async () => {
+  using directory = tempDir("sqlite-exports-layers", {
+    "package.json": `{}`,
+    "data.sqlite": "",
+    "another.mjs": files["another.mjs"],
+    "main.test.mjs": `import { test } from "bun:test";
+import theDefault, { db } from "./data.sqlite" with { type: "sqlite" };
+import inAnotherFile from "./another.mjs";
+console.log(db === theDefault, db === inAnotherFile, db.constructor.name);
+test("runs", () => {});
+`,
+  });
+  const shown = async (flags: string[]) => {
+    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" };
+    const { stdout } = await run([bunExe(), "test", ...flags, "./main.test.mjs"], String(directory), env);
+    return stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
+  };
+  expect(await shown([])).toEqual(["true true Database"]);
+  expect(await shown(["--aot"])).toEqual(["true true Database"]);
+}, 240_000);

@@ -13,6 +13,4 @@ export const knownChanges: ReadonlyMap<string, readonly OperandUse[]> = new Map(
   ["ArrayFrom/5", definesOnNewInstance],
   ["ArrayFromAsync/1", definesOnNewInstance],
   ["ArrayOf/1", definesOnNewInstance],
-  // It defines the matchers on expect itself and on the prototypes behind it.
-  ["ExpectExtend/0", storesIntoReceiver],
 ]);

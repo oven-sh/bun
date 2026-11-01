@@ -77,6 +77,20 @@ pub(super) fn can_lose_trust(origin: FileOrigin, role: FileRole) -> bool {
         .any(|class| effect_of(origin, class, Category::Error) == Effect::WithdrawsTrust)
 }
 
+pub(super) fn requested_diagnostics_of_file(
+    files: &Files<'_>,
+    file: FileId,
+    origin: FileOrigin,
+    role: FileRole,
+) -> Requested {
+    match requested_diagnostics(origin, role) {
+        Requested::All if files.hir(file).syntax_errors().next().is_some() => {
+            Requested::EarlyErrors
+        }
+        requested => requested,
+    }
+}
+
 pub(super) fn requested_diagnostics(origin: FileOrigin, role: FileRole) -> Requested {
     match (origin, role) {
         (FileOrigin::Runtime, FileRole::Inferred | FileRole::TypesOnly) => return Requested::Types,
@@ -317,6 +331,13 @@ impl ProgramOrigins<'_, '_> {
                     Effect::Warns
                 }
                 Effect::StopsBuild if names_missing_type_library => Effect::Warns,
+                Effect::StopsBuild
+                    if diagnostic.file.is_none()
+                        && self.project_origin == FileOrigin::TestedSource
+                        && diagnostic.class != DiagnosticClass::EarlyError =>
+                {
+                    Effect::Warns
+                }
                 Effect::WithdrawsTrust if diagnostic.file.is_none() => Effect::InternalError,
                 effect @ (Effect::StopsBuild
                 | Effect::Warns
@@ -550,6 +571,31 @@ mod tests {
             let class = DiagnosticClass::of_code(code);
             assert_eq!(class, DiagnosticClass::MissingDeclaration, "{code}");
             assert!(!stops_build(code, b"/a.ts", 3), "{code}");
+        }
+    }
+
+    #[test]
+    fn configuration_error_stops_an_executable_and_no_run_of_tests() {
+        let effect_in = |project_origin: FileOrigin, code: u32| {
+            let origins = ProgramOrigins {
+                files: None,
+                origins: &[],
+                project_origin,
+                without_bun_types: None,
+                lacks_installed_bun_types: false,
+            };
+            let diagnostic = Diagnostic {
+                class: DiagnosticClass::of_code(code),
+                ..crate::global(code, &["a"])
+            };
+            origins.apply_effects(vec![diagnostic])[0].effect
+        };
+        for code in [UNKNOWN_TYPE_LIBRARY_CODE, 5083] {
+            assert_eq!(
+                effect_in(FileOrigin::ProgramSource, code),
+                Effect::StopsBuild
+            );
+            assert_eq!(effect_in(FileOrigin::TestedSource, code), Effect::Warns);
         }
     }
 

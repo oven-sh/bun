@@ -94,12 +94,38 @@ impl<'s> Folder<'_, 's> {
             && !self.is_assignment_target(e)
             && !self.is_delete_operand(e);
         match self.file.import_meta_main {
-            Some(is_main) if is_main_read => {
+            Some(is_main) if is_main_read && !self.is_main_of_import_meta_written() => {
                 self.mark_folded_by_build_alone(e);
                 self.decide(e, Decision::Constant(Constant::Boolean(is_main)))
             }
             Some(_) | None => Folded::UNKNOWN,
         }
+    }
+
+    fn is_main_of_import_meta_written(&self) -> bool {
+        *self.is_main_of_import_meta_written.get_or_init(|| {
+            let mut exprs = (0..self.hir.exprs.len()).map(|index| ExprId(index as u32));
+            exprs.any(|e| {
+                if !matches!(self.hir[e].kind, ExprKind::ImportMeta) {
+                    return false;
+                }
+                let meta = self.find_outermost_cast(e);
+                let Some(member) = self.parent_expr(meta) else {
+                    return true;
+                };
+                match self.hir.member_key(member) {
+                    Some((object, MemberKey::Name(name)))
+                        if object == meta && name != known::main =>
+                    {
+                        false
+                    }
+                    Some((object, _)) if object == meta => {
+                        self.is_assignment_target(member) || self.is_delete_operand(member)
+                    }
+                    Some(_) | None => true,
+                }
+            })
+        })
     }
 
     pub(super) fn fold_short_circuit(

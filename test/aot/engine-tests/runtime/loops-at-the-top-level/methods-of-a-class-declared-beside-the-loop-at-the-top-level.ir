@@ -122,9 +122,9 @@ function f1 name="Vector" module=m0 position=124 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: number, v2: number):
     Jump -> next b1() @124
   b1():
-    v3 = GetConstructPrototype v0 layout=L0 @96
-    v4 = NewObject v3 layout=L0 @96
-    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @96
+    v3 = GetConstructPrototype v0 layout=L0 @124
+    v4 = NewObject v3 layout=L0 @124
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @124
     v6 = CallDirect v5 function=f4 @124
     PropSet v5, v1 key="x" @125
     PropSet v5, v2 key="y" @143

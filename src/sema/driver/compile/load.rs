@@ -18,6 +18,7 @@ use bun_sema::resolve::{
 };
 use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::cell::UnsafeCell;
 use std::sync::atomic::AtomicBool;
@@ -89,6 +90,7 @@ fn load<'u: 's, 's>(
             (project.files).retain(|path| !JAVASCRIPT.iter().any(|ending| path.ends_with(ending)));
         }
         project.options.no_resolve = true;
+        project.options.types = Some(Vec::new());
     }
     if request.code.transpiles_by_working_directory && request.code.tsconfig_override.is_none() {
         project
@@ -109,10 +111,13 @@ fn load<'u: 's, 's>(
     options
         .custom_conditions
         .extend_from_slice(&request.code.custom_conditions);
-    let has_bun_types_installed = choose_libraries(host, options, request.libs);
+    let has_bun_types_installed =
+        choose_libraries(host, options, request.libs, !types_stop_at_entry_points);
     let is_application = request.project_origin != FileOrigin::Runtime;
-    let brings_bun_types =
-        is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
+    let brings_bun_types = is_application
+        && !has_bun_types_installed
+        && !types_stop_at_entry_points
+        && take_bun_types_of_host(host, options);
     let has_bun_types = has_bun_types_installed || brings_bun_types;
     options.orders_files_as_listed = !is_application;
     if is_application && has_bun_types {
@@ -133,10 +138,28 @@ fn load<'u: 's, 's>(
         )
     };
     let listed_files = with_declarations(std::mem::take(&mut project.files));
+    let finds_entry_points = matches!(request.entry_points, EntryPoints::WrittenAndFound(..));
+    let config_path = project.config_path.clone();
+    let found_entry_paths: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+    let list_with_found = || {
+        let found = found_entry_paths.lock();
+        if !config_path.is_empty() || !found.iter().any(|path| is_typescript_file_name(path)) {
+            return None;
+        }
+        let all = [&entry_paths[..], &found[..]].concat();
+        Some(with_declarations(
+            default_project(host, request.code, &all).files,
+        ))
+    };
     let root_files = match unlisted_files {
         Some(_) => {
             options.own_roots = Some(usize::MAX);
             RootFileNames::Unlisted(&list_files)
+        }
+        None if finds_entry_points => {
+            options.own_roots = Some(usize::MAX);
+            options.files.clone_from(&listed_files);
+            RootFileNames::ListedAndFound(&listed_files, &list_with_found)
         }
         None => {
             options.own_roots = Some(listed_files.len());
@@ -145,7 +168,6 @@ fn load<'u: 's, 's>(
         }
     };
     options.emits_declarations = false;
-    let config_path = project.config_path.clone();
     let find_entry_points = |code: &dyn CodeView<'_>| match request.entry_points {
         EntryPoints::WrittenAndFound(_, _, find) if !types_stop_at_entry_points => {
             let mut found = find(code);
@@ -153,11 +175,11 @@ fn load<'u: 's, 's>(
             if !is_project_the_same_with(host, code, &config_path, &entry_paths, &found) {
                 found.clear();
             }
+            found_entry_paths.lock().extend_from_slice(&found);
             found
         }
         _ => Vec::new(),
     };
-    let finds_entry_points = matches!(request.entry_points, EntryPoints::WrittenAndFound(..));
     let files = Files::load_for_compile_with_parsed_files(
         session,
         parsed,
@@ -209,6 +231,8 @@ fn load<'u: 's, 's>(
         checker_session,
         node_counts,
         is_checker_freed: AtomicBool::new(false),
+        cycles_entered: Default::default(),
+        has_checked_for_roles: AtomicBool::new(false),
         origins,
         project_origin: request.project_origin,
         diagnostics,
@@ -307,12 +331,25 @@ impl<'a> FileFinder<'a> {
 
     /// The file that an import leads to which `importer` writes so, whichever program holds the file. `None`: it leads to no file.
     pub fn find_import(&self, importer: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_loaded(importer, specifier, CodeImportKind::Import)
+    }
+
+    pub fn find_required(&self, importer: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_loaded(importer, specifier, CodeImportKind::Require)
+    }
+
+    fn find_loaded(
+        &self,
+        importer: &[u8],
+        specifier: &[u8],
+        kind: CodeImportKind,
+    ) -> Option<Vec<u8>> {
         // As for a macro: the file itself is looked for. A host leaves an import of another form to the loader as it is written.
         let resolution = self.resolver.resolve_code(&CodeRequest {
             specifier,
             importer,
             directory: &self.host.directory_of(importer),
-            kind: CodeImportKind::Import,
+            kind,
             form: CodeImportForm::Macro,
         });
         match resolution {
@@ -402,7 +439,6 @@ fn resolve_entry_points(
     })
 }
 
-/// Whether `find_project` and `add_files_of_other_projects` answer for `entry_paths` and `further` together what they have answered for `entry_paths`: the project at `config_path`.
 fn is_project_the_same_with(
     host: &dyn CodeHost,
     code: &CodeOptions,
@@ -413,15 +449,11 @@ fn is_project_the_same_with(
     if code.tsconfig_override.is_some() {
         return true;
     }
-    // Without a configuration the program lists the entry points that are TypeScript.
-    if config_path.is_empty() {
-        return !further.iter().any(|path| is_typescript_file_name(path));
-    }
     let all = [entry_paths, further].concat();
     first_entry_point_of_largest_project(host, code, &all)
         == first_entry_point_of_largest_project(host, code, entry_paths)
         && further.iter().all(|path| {
-            config::find_config(host, &host.directory_of(path))
+            find_config_of_program(host, code, &host.directory_of(path))
                 .is_none_or(|nearest| nearest == config_path)
         })
 }
@@ -478,6 +510,9 @@ fn find_project(
     let Some(config_path) = config_path else {
         return Ok(default_project(host, code, entry_paths));
     };
+    if code.tsconfig_override.is_some() && !code.builds_executable && !host.is_file(&config_path) {
+        return Ok(default_project(host, code, entry_paths));
+    }
     let project = config::load_for_build_with_unlisted_files(host, &Session::new(), &config_path);
     let project = project.map(|project| match code.tsconfig_override {
         Some(_) => project,
@@ -704,15 +739,21 @@ fn default_project(
     project
 }
 
-fn choose_libraries(host: &dyn Host, options: &mut Options, libs: Libs<'_>) -> bool {
+fn choose_libraries(
+    host: &dyn Host,
+    options: &mut Options,
+    libs: Libs<'_>,
+    reads_packages_of_types: bool,
+) -> bool {
     options.lib_dir = match libs {
         Libs::Bundled(_) => host::BUNDLED_LIBS.to_vec(),
         Libs::Directory(directory) => host::from_native(directory),
     };
-    let has_bun_types_installed = options
-        .effective_type_roots()
-        .iter()
-        .any(|root| host.is_file(&[&root[..], b"/bun/package.json"].concat()));
+    let has_bun_types_installed = reads_packages_of_types
+        && options
+            .effective_type_roots()
+            .iter()
+            .any(|root| host.is_file(&[&root[..], b"/bun/package.json"].concat()));
     if has_bun_types_installed {
         name_bun_types(options);
     }

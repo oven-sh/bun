@@ -186,16 +186,16 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: ByName Looping Derived
 # CHECK-LABEL: function {{*}}name="ByName"
-# CHECK: module=m0 position=1306 flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=object} parameters=[{type=number site=w7 flags=[IsExpected]}, {type=undefined site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: object, v1: anything ~ number, v2: undefined):
+# CHECK: module=m0 position=1306 flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=Object} parameters=[{type=number site=w7 flags=[IsExpected]}, {type=undefined site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Object, v1: anything ~ number, v2: undefined):
 # CHECK-NEXT: v3: 1 = Integer integer=1
 # CHECK-NEXT: PropSet v0, v3 key="undefined" accessSite=8
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Looping"
-# CHECK: module=m0 position=1852 role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=object} parameters=[{type=number site=w9 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f14 fallback=f15} {
-# CHECK-NEXT: b0(v0: object, v1: anything ~ number):
+# CHECK: module=m0 position=1852 role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=Object} parameters=[{type=number site=w9 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f14 fallback=f15} {
+# CHECK-NEXT: b0(v0: Object, v1: anything ~ number):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: number):
@@ -211,8 +211,8 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Looping"
-# CHECK: module=m0 position=1852 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=object} parameters=[{type=number site=w9}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}, {original=1}]} {
-# CHECK-NEXT: b0(v0: object, v1: number):
+# CHECK: module=m0 position=1852 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=Object} parameters=[{type=number site=w9}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}, {original=1}]} {
+# CHECK-NEXT: b0(v0: Object, v1: number):
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: boolean = Less v2, v1
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b12()
@@ -260,8 +260,8 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Looping"
-# CHECK: module=m0 position=1852 role=GenericVersion flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=object} parameters=[{type=number site=w9 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f14} {
-# CHECK-NEXT: b0(v0: object, v1: anything) frequency=Unlikely:
+# CHECK: module=m0 position=1852 role=GenericVersion flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=Object} parameters=[{type=number site=w9 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f14} {
+# CHECK-NEXT: b0(v0: Object, v1: anything) frequency=Unlikely:
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v2)
 # CHECK-NEXT: b1(v3: int|whole) frequency=Unlikely:
@@ -279,7 +279,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="ByName"
 # CHECK: module=m0 position=1306 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} inlineFrames=[{}, {callee=f3 callPosition=1306 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: object = AssumeType v1 provenType=object
+# CHECK-NEXT: v4: Object = AssumeType v1 provenType=Object
 # CHECK-NEXT: v5: 1 = Integer integer=1
 # CHECK-NEXT: PropSet v4, v5 key="undefined" accessSite=8
 # CHECK-NEXT: v7: undefined = Undefined
@@ -288,7 +288,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="Looping"
 # CHECK: module=m0 position=1852 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything):
-# CHECK-NEXT: v3: object = AssumeType v1 provenType=object
+# CHECK-NEXT: v3: Object = AssumeType v1 provenType=Object
 # CHECK-NEXT: v4: undefined = CallDirect v3, v2 function=f4
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }

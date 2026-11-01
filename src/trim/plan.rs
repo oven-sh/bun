@@ -1170,7 +1170,7 @@ mod tests {
             request: &TrimRequest::default(),
         };
         let planned = plan_encoded_input(&table, &input);
-        assert_eq!(planned.removed(), Feature::all_outside_compiled_programs());
+        assert_eq!(planned.removed(), Feature::all_that_leave_unasked());
         assert_eq!(planned.ranges.len(), 1);
         assert_eq!(planned.ranges[0].named_feature, Feature::Jit);
     }

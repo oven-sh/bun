@@ -305,10 +305,12 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => self.queries.canonical_symbol(self.file, symbol),
         };
         let position = self.variable_position(variable);
+        // A mock that is laid over the module stores what its factory gives into the variable.
+        let is_replaceable = self.inputs.modules.is_replaceable(variable);
         let positions = &mut self.types.positions;
         let named = NamedVariable {
             position,
-            is_constant_zero: positions.constant_zeros.contains(&variable),
+            is_constant_zero: positions.constant_zeros.contains(&variable) && !is_replaceable,
         };
         let memo = &mut positions.named_variables;
         if memo.is_empty() {

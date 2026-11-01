@@ -247,94 +247,95 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=664 module=m0}, {callee=f1 callPosition=620 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: builtin(MathMax) = Builtin builtin=MathMax
-# CHECK-NEXT: v1: builtin(Math) = Builtin builtin=Math
-# CHECK-NEXT: v2: "max" = String string="max"
-# CHECK-NEXT: v3: L0 = NewObject -, v0 layout=L0 fields=[0] allocationSite=2 allocationClass=0
-# CHECK-NEXT: v4: builtin(Math) = CallBuiltin -, v1, v2, v3 overload=ObjectDefineProperty/0 accessSite=2
-# CHECK-NEXT: v5: builtin(Math) = Builtin builtin=Math
-# CHECK-NEXT: v6: "min" = String string="min"
-# CHECK-NEXT: v7: builtin(MathMin) = Builtin builtin=MathMin
-# CHECK-NEXT: v8: L2 = NewObject -, v7 layout=L2 fields=[4] allocationSite=4 allocationClass=2
-# CHECK-NEXT: v9: L2 = FinishObject v8
-# CHECK-NEXT: v10: builtin(Math) = CallBuiltin -, v5, v6, v9 overload=ObjectDefineProperty/0 accessSite=4
-# CHECK-NEXT: v11: builtin(Math) = Builtin builtin=Math
-# CHECK-NEXT: v12: "abs" = String string="abs"
-# CHECK-NEXT: v13: builtin(MathAbs) = Builtin builtin=MathAbs
-# CHECK-NEXT: v14: false = Boolean
-# CHECK-NEXT: v15: L2 = NewObject -, v13, v14 layout=L2 fields=[4, 5] allocationSite=5 allocationClass=2
-# CHECK-NEXT: v16: L2 = FinishObject v15
-# CHECK-NEXT: v17: builtin(Math) = CallBuiltin -, v11, v12, v16 overload=ObjectDefineProperty/0 accessSite=6
-# CHECK-NEXT: v18: builtin(Math) = Builtin builtin=Math
-# CHECK-NEXT: v19: "floor" = String string="floor"
-# CHECK-NEXT: v20: L1 = NewObject layout=L1 allocationSite=6 allocationClass=1
-# CHECK-NEXT: v21: builtin(Math) = CallBuiltin -, v18, v19, v20 overload=ObjectDefineProperty/0 accessSite=8
-# CHECK-NEXT: v22: builtin(Math) = Builtin builtin=Math
-# CHECK-NEXT: v23: "ceil" = String string="ceil"
-# CHECK-NEXT: v24: false = Boolean
-# CHECK-NEXT: v25: L3 = NewObject -, v24 layout=L3 fields=[0] allocationSite=7 allocationClass=3
-# CHECK-NEXT: v26: builtin(Math) = CallBuiltin -, v22, v23, v25 overload=ObjectDefineProperty/0 accessSite=34
-# CHECK-NEXT: v27: builtin(Math) = Builtin builtin=Math
-# CHECK-NEXT: v28: "round" = String string="round"
-# CHECK-NEXT: v29: builtin(MathRound) = Builtin builtin=MathRound
-# CHECK-NEXT: v30: L1 = NewObject -, v29 layout=L1 fields=[0] allocationSite=8 allocationClass=1
-# CHECK-NEXT: v31: L1 = FinishObject v30
-# CHECK-NEXT: v32: builtin(Math) = CallBuiltin -, v27, v28, v31 overload=ObjectDefineProperty/0 accessSite=34
-# CHECK-NEXT: v33: builtin(MapPrototype) = Builtin builtin=MapPrototype
-# CHECK-NEXT: v34: "size" = String string="size"
-# CHECK-NEXT: v35: undefined = CallBuiltin -, v33, v34 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=12
-# CHECK-NEXT: v36: boolean = ResultAt v35
-# CHECK-NEXT: v37: 1 = Integer integer=1
-# CHECK-NEXT: v38: int[0, 1] = ToNumber v36
-# CHECK-NEXT: v39: int[1, 2] = LShift v37, v38
-# CHECK-NEXT: v40: anything = ResultAt v35 index=3
-# CHECK-NEXT: v41: 1 = Integer integer=1
-# CHECK-NEXT: v42: int[0, 1] = BitAnd v39, v41
-# CHECK-NEXT: v43: boolean = ToBoolean v42
-# CHECK-NEXT: Branch v43 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationSite=2 allocationClass=0
+# CHECK-NEXT: v2: L0 = FinishObject v1
+# CHECK-NEXT: v3: builtin(Math) = Builtin builtin=Math
+# CHECK-NEXT: v4: "max" = String string="max"
+# CHECK-NEXT: v5: builtin(Math) = CallBuiltin -, v3, v4, v2 overload=ObjectDefineProperty/0 accessSite=2
+# CHECK-NEXT: v6: builtin(Math) = Builtin builtin=Math
+# CHECK-NEXT: v7: "min" = String string="min"
+# CHECK-NEXT: v8: builtin(MathMin) = Builtin builtin=MathMin
+# CHECK-NEXT: v9: L2 = NewObject -, v8 layout=L2 fields=[4] allocationSite=4 allocationClass=2
+# CHECK-NEXT: v10: L2 = FinishObject v9
+# CHECK-NEXT: v11: builtin(Math) = CallBuiltin -, v6, v7, v10 overload=ObjectDefineProperty/0 accessSite=4
+# CHECK-NEXT: v12: builtin(Math) = Builtin builtin=Math
+# CHECK-NEXT: v13: "abs" = String string="abs"
+# CHECK-NEXT: v14: builtin(MathAbs) = Builtin builtin=MathAbs
+# CHECK-NEXT: v15: false = Boolean
+# CHECK-NEXT: v16: L2 = NewObject -, v14, v15 layout=L2 fields=[4, 5] allocationSite=5 allocationClass=2
+# CHECK-NEXT: v17: L2 = FinishObject v16
+# CHECK-NEXT: v18: builtin(Math) = CallBuiltin -, v12, v13, v17 overload=ObjectDefineProperty/0 accessSite=6
+# CHECK-NEXT: v19: builtin(Math) = Builtin builtin=Math
+# CHECK-NEXT: v20: "floor" = String string="floor"
+# CHECK-NEXT: v21: L1 = NewObject layout=L1 allocationSite=6 allocationClass=1
+# CHECK-NEXT: v22: builtin(Math) = CallBuiltin -, v19, v20, v21 overload=ObjectDefineProperty/0 accessSite=8
+# CHECK-NEXT: v23: builtin(Math) = Builtin builtin=Math
+# CHECK-NEXT: v24: "ceil" = String string="ceil"
+# CHECK-NEXT: v25: false = Boolean
+# CHECK-NEXT: v26: L3 = NewObject -, v25 layout=L3 fields=[0] allocationSite=7 allocationClass=3
+# CHECK-NEXT: v27: builtin(Math) = CallBuiltin -, v23, v24, v26 overload=ObjectDefineProperty/0 accessSite=34
+# CHECK-NEXT: v28: builtin(Math) = Builtin builtin=Math
+# CHECK-NEXT: v29: "round" = String string="round"
+# CHECK-NEXT: v30: builtin(MathRound) = Builtin builtin=MathRound
+# CHECK-NEXT: v31: L1 = NewObject -, v30 layout=L1 fields=[0] allocationSite=8 allocationClass=1
+# CHECK-NEXT: v32: L1 = FinishObject v31
+# CHECK-NEXT: v33: builtin(Math) = CallBuiltin -, v28, v29, v32 overload=ObjectDefineProperty/0 accessSite=34
+# CHECK-NEXT: v34: builtin(MapPrototype) = Builtin builtin=MapPrototype
+# CHECK-NEXT: v35: "size" = String string="size"
+# CHECK-NEXT: v36: undefined = CallBuiltin -, v34, v35 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=12
+# CHECK-NEXT: v37: boolean = ResultAt v36
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: int[0, 1] = ToNumber v37
+# CHECK-NEXT: v40: int[1, 2] = LShift v38, v39
+# CHECK-NEXT: v41: anything = ResultAt v36 index=3
+# CHECK-NEXT: v42: 1 = Integer integer=1
+# CHECK-NEXT: v43: int[0, 1] = BitAnd v40, v42
+# CHECK-NEXT: v44: boolean = ToBoolean v43
+# CHECK-NEXT: Branch v44 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v44: undefined = Undefined
-# CHECK-NEXT: v45: never = RequireObjectCoercible v44 name="get"
+# CHECK-NEXT: v45: undefined = Undefined
+# CHECK-NEXT: v46: never = RequireObjectCoercible v45 name="get"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v46: anything ~ undefined|null|function = Upcast v40 castType=anything
-# CHECK-NEXT: v47: L2 = NewObject -, v46 layout=L2 fields=[2] allocationSite=9 allocationClass=2
-# CHECK-NEXT: v48: L2 = FinishObject v47
-# CHECK-NEXT: v49: builtin(MapPrototype) = Builtin builtin=MapPrototype
-# CHECK-NEXT: v50: "size" = String string="size"
-# CHECK-NEXT: v51: builtin(MapPrototype) = CallBuiltin -, v49, v50, v48 overload=ObjectDefineProperty/0 accessSite=15
-# CHECK-NEXT: v52: builtin(Math) = Builtin builtin=Math
-# CHECK-NEXT: v53: "PI" = String string="PI"
-# CHECK-NEXT: v54: fractional = Double number=3.141592653589793
-# CHECK-NEXT: v55: L2 = NewObject -, v54 layout=L2 fields=[4] allocationSite=10 allocationClass=2
-# CHECK-NEXT: v56: L2 = FinishObject v55
-# CHECK-NEXT: v57: builtin(Math) = CallBuiltin -, v52, v53, v56 overload=ObjectDefineProperty/0 accessSite=17
-# CHECK-NEXT: v58: builtin(GlobalThis) = Builtin builtin=GlobalThis
-# CHECK-NEXT: v59: "Array" = String string="Array"
-# CHECK-NEXT: v60: builtin(Array) = Builtin builtin=Array
-# CHECK-NEXT: v61: L2 = NewObject -, v60 layout=L2 fields=[4] allocationSite=11 allocationClass=2
-# CHECK-NEXT: v62: L2 = FinishObject v61
-# CHECK-NEXT: v63: builtin(GlobalThis) = CallBuiltin -, v58, v59, v62 overload=ObjectDefineProperty/0 accessSite=19
-# CHECK-NEXT: v64: 2 = Integer integer=2
-# CHECK-NEXT: v65: 1 = Integer integer=1
+# CHECK-NEXT: v47: anything ~ undefined|null|function = Upcast v41 castType=anything
+# CHECK-NEXT: v48: L2 = NewObject -, v47 layout=L2 fields=[2] allocationSite=9 allocationClass=2
+# CHECK-NEXT: v49: L2 = FinishObject v48
+# CHECK-NEXT: v50: builtin(MapPrototype) = Builtin builtin=MapPrototype
+# CHECK-NEXT: v51: "size" = String string="size"
+# CHECK-NEXT: v52: builtin(MapPrototype) = CallBuiltin -, v50, v51, v49 overload=ObjectDefineProperty/0 accessSite=15
+# CHECK-NEXT: v53: builtin(Math) = Builtin builtin=Math
+# CHECK-NEXT: v54: "PI" = String string="PI"
+# CHECK-NEXT: v55: fractional = Double number=3.141592653589793
+# CHECK-NEXT: v56: L2 = NewObject -, v55 layout=L2 fields=[4] allocationSite=10 allocationClass=2
+# CHECK-NEXT: v57: L2 = FinishObject v56
+# CHECK-NEXT: v58: builtin(Math) = CallBuiltin -, v53, v54, v57 overload=ObjectDefineProperty/0 accessSite=17
+# CHECK-NEXT: v59: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v60: "Array" = String string="Array"
+# CHECK-NEXT: v61: builtin(Array) = Builtin builtin=Array
+# CHECK-NEXT: v62: L2 = NewObject -, v61 layout=L2 fields=[4] allocationSite=11 allocationClass=2
+# CHECK-NEXT: v63: L2 = FinishObject v62
+# CHECK-NEXT: v64: builtin(GlobalThis) = CallBuiltin -, v59, v60, v63 overload=ObjectDefineProperty/0 accessSite=19
+# CHECK-NEXT: v65: 2 = Integer integer=2
 # CHECK-NEXT: v66: 1 = Integer integer=1
-# CHECK-NEXT: v67: fractional = Double number=1.5
-# CHECK-NEXT: v68: int|whole = CallBuiltin -, v67 overload=MathFloor/0 accessSite=25
-# CHECK-NEXT: v69: fractional = Double number=1.5
-# CHECK-NEXT: v70: int|whole = CallBuiltin -, v69 overload=MathCeil/0 accessSite=26
-# CHECK-NEXT: v71: fractional = Double number=1.4
-# CHECK-NEXT: v72: int|whole = CallBuiltin -, v71 overload=MathRound/0 accessSite=27
-# CHECK-NEXT: v73: 1 = Integer integer=1
-# CHECK-NEXT: v74: 2 = Integer integer=2
-# CHECK-NEXT: v75: Map<1, 2> = NewMapFromData data=d3
-# CHECK-NEXT: v76: Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v75 provenType=Map<undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v77: int[0, 2147483647] = CallBuiltin v76 overload=MapPrototypeSize/0 accessSite=29
-# CHECK-NEXT: v78: true = Boolean boolean=true
-# CHECK-NEXT: v79: builtin(Array) = Builtin builtin=Array
-# CHECK-NEXT: v80: 1 = Integer integer=1
-# CHECK-NEXT: v81: Array<1> = CallBuiltin v79, v80 overload=ArrayOf/0 accessSite=31
-# CHECK-NEXT: v82: Array<int, proven, pristine[Storage, Names, Dense]> = AssumeType v81 provenType=Array<int, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v83: int[0, 4294967295] = CallBuiltin v82 overload=ArrayPrototypeLength/0 accessSite=32
-# CHECK-NEXT: v84: undefined = CallBuiltin -, v64, v65, v66, v68, v70, v72, v77, v78, v83 overload=ConsoleLog/0 accessSite=33
-# CHECK-NEXT: v85: undefined = Undefined
-# CHECK-NEXT: Return v85
+# CHECK-NEXT: v67: 1 = Integer integer=1
+# CHECK-NEXT: v68: fractional = Double number=1.5
+# CHECK-NEXT: v69: int|whole = CallBuiltin -, v68 overload=MathFloor/0 accessSite=25
+# CHECK-NEXT: v70: fractional = Double number=1.5
+# CHECK-NEXT: v71: int|whole = CallBuiltin -, v70 overload=MathCeil/0 accessSite=26
+# CHECK-NEXT: v72: fractional = Double number=1.4
+# CHECK-NEXT: v73: int|whole = CallBuiltin -, v72 overload=MathRound/0 accessSite=27
+# CHECK-NEXT: v74: 1 = Integer integer=1
+# CHECK-NEXT: v75: 2 = Integer integer=2
+# CHECK-NEXT: v76: Map<1, 2> = NewMapFromData data=d3
+# CHECK-NEXT: v77: Map<int, int, proven, pristine[Storage, Names]> = AssumeType v76 provenType=Map<int, int, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v78: int[0, 2147483647] = CallBuiltin v77 overload=MapPrototypeSize/0 accessSite=29
+# CHECK-NEXT: v79: true = Boolean boolean=true
+# CHECK-NEXT: v80: builtin(Array) = Builtin builtin=Array
+# CHECK-NEXT: v81: 1 = Integer integer=1
+# CHECK-NEXT: v82: Array<1> = CallBuiltin v80, v81 overload=ArrayOf/0 accessSite=31
+# CHECK-NEXT: v83: Array<int, proven, pristine[Storage, Names, Dense]> = AssumeType v82 provenType=Array<int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v84: int[0, 4294967295] = CallBuiltin v83 overload=ArrayPrototypeLength/0 accessSite=32
+# CHECK-NEXT: v85: undefined = CallBuiltin -, v65, v66, v67, v69, v71, v73, v78, v79, v84 overload=ConsoleLog/0 accessSite=33
+# CHECK-NEXT: v86: undefined = Undefined
+# CHECK-NEXT: Return v86
 # CHECK-NEXT: }

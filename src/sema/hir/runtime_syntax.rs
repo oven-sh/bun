@@ -1,10 +1,9 @@
 use super::{
     ClassId, ExprFlags, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList,
     MemberId, MemberKind, ModifierId, ModifierKind, NameKind, PatPropId, Prop, PropId, PropKey,
-    PropKind, Span, StmtId, StmtKind, Storage, VarDeclId, has_body, is_nested_namespace, rare,
+    PropKind, Span, StmtId, StmtKind, Storage, VarDeclId, has_body, is_nested_namespace,
 };
 use crate::atom::{Atom, known};
-use crate::node::Node;
 use bun_core::strings;
 use std::ops::Range;
 
@@ -182,38 +181,6 @@ impl<S: Storage> FileIn<S> {
 }
 
 impl File<'_> {
-    pub fn follows_dropped_directive(&self, node: Node) -> bool {
-        if self.rare_syntax & rare::DROPPED_STRICT_DIRECTIVE == 0 {
-            return false;
-        }
-        let start = self.start(node);
-        let mut enclosing = self.get_containing_function(node);
-        while enclosing.is_some() {
-            let directive = self.find_own_strict_directive(self.function_of(enclosing));
-            if directive.is_some_and(|directive| self[directive].start < start) {
-                return true;
-            }
-            enclosing = self.get_containing_function(enclosing);
-        }
-        false
-    }
-
-    pub fn has_parameters_read_as_strict(&self, function: FnId) -> bool {
-        self.rare_syntax & rare::DROPPED_STRICT_DIRECTIVE != 0
-            && (self.find_own_strict_directive(function).is_some()
-                || self.follows_dropped_directive(self.node(function)))
-    }
-
-    fn find_own_strict_directive(&self, function: FnId) -> Option<StmtId> {
-        let FnBody::Block(statements) = self.fns.get(function.idx())?.body else {
-            return None;
-        };
-        let mut directives = self.directives(statements);
-        directives
-            .find(|directive| directive.1 == known::use_strict)
-            .map(|directive| directive.0)
-    }
-
     pub fn set_strict(&mut self) {
         self.is_strict = true;
         for function in self.fns.iter_mut() {

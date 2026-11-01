@@ -379,11 +379,11 @@ function f12 name="Logger" module=m0 position=1043 kind=BaseConstructor flags=[H
   b0(v0: anything):
     Jump -> next b1() @1043
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @1037
-    v2 = NewObject v1 layout=L0 @1037
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1037
-    v4 = CallDirect v3 function=f15 @1037
-    Return v3 @1037
+    v1 = GetConstructPrototype v0 layout=L0 @1043
+    v2 = NewObject v1 layout=L0 @1043
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1043
+    v4 = CallDirect v3 function=f15 @1043
+    Return v3 @1043
 }
 function f13 name="write" module=m0 position=1067 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=3 thisType={type=L0 site=w36} parameters=[{type=number site=w33}, {type=number site=w34}, {type=number site=w35}] results=[{type=number site=w37}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: number, v2: number, v3: number):

@@ -29,7 +29,7 @@ pub use self::registry::{is_optional_pass, operation_names};
 pub use self::shared::{
     EngineModuleId, ExecutableIdentity, RejectedOptionWord, TargetImageForm,
     describe_difference_of_runtime, describe_regexp_syntax_error, has_compiler, image_alignment,
-    relocate_image,
+    place_of_string_headers_behind, relocate_image,
 };
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
@@ -260,6 +260,10 @@ impl EngineOptions {
 
     pub fn check_only(&mut self) {
         self.record.action = CompileAction::CheckOnly;
+    }
+
+    pub fn refuse_code_outside_image(&mut self) {
+        self.record.excluded_code |= ExcludedCode::CODE_OUTSIDE_IMAGE;
     }
 
     pub fn makes_image(&self) -> bool {

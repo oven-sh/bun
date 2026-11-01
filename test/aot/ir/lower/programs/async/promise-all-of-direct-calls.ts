@@ -154,7 +154,7 @@ main().then(() => {
 // CHECK-NEXT: ReturnCall v12 casts=[{declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="givesThenable"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_4]]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=number site=[[w_4]]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -171,7 +171,7 @@ main().then(() => {
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="nested"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_12]]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=number site=[[w_12]]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

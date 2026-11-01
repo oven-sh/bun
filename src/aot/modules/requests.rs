@@ -16,8 +16,11 @@ use crate::builtins::{RuntimeModule, table};
 use crate::diagnostics::{Span, range_of_node};
 use crate::ir::for_each_mut;
 use crate::load::Sources;
-use crate::load::named_loads::{NamedModule, is_path_that_program_may_write, modules_named_in};
-use crate::load::sources::parsed_source;
+use crate::load::named_loads::{
+    NamedModule, is_followed_further_than_bundler, is_path_that_program_may_write,
+    modules_named_in, names_plugin,
+};
+use crate::load::sources::{SourceKind, parsed_source};
 use crate::options::ReplacedModule;
 use crate::statistics::ComputedImport;
 use bun_core::strings;
@@ -95,6 +98,14 @@ impl Scans {
     }
 }
 
+/// A plugin answers for the whole program, so a package's own program goes by the application's word.
+pub(super) fn program_names_plugin(input: &BindInput<'_, '_>) -> bool {
+    match input.application {
+        Some(application) => application.graph.names_plugin(),
+        None => names_plugin(input.files),
+    }
+}
+
 pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
     let (files, sources) = (input.files, input.sources);
     let compiled_files = files.compiled_files().iter();
@@ -104,10 +115,13 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
     // The test file that holds the mock may lie in another program than the file that imports the name.
     let told = input.mocked_modules.iter();
     mocked_paths.extend(told.filter_map(ReplacedModule::file_path).cloned());
+    let names_plugin = program_names_plugin(input);
     let program = Program {
         runs_tests: input.runs_tests,
         loads_code_from_disk: input.loads_code_from_disk,
         mocks_any_module: input.mocks_any_module,
+        asks_loader_where_bundler_does: !input.runs_tests && names_plugin,
+        asks_loader_for_names_not_found: input.runs_tests && names_plugin,
     };
     for_each_mut(&mut slots, input.in_parallel, &|(file, scan)| {
         *scan = Some(scan_file(files, sources, &mocked_paths, program, *file));
@@ -232,6 +246,44 @@ pub(super) fn leave_imports_of_test_files_to_loader(
     !statements.is_empty()
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Spelling {
+    WithoutExtension,
+    UnderAnotherExtension,
+    AsFolder,
+}
+
+fn without_extension_of_file(path: &[u8]) -> &[u8] {
+    let start_of_name = strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
+    match strings::last_index_of_char(path, b'.') {
+        Some(dot) if dot > start_of_name => &path[..dot],
+        _ => path,
+    }
+}
+
+pub(super) fn find_spelling(
+    sources: &Sources,
+    importer: FileId,
+    specifier: &[u8],
+    target: FileId,
+) -> Option<Spelling> {
+    if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
+        return None;
+    }
+    let written = path_named(sources, importer, specifier);
+    let path = sources.public_path(target);
+    let folder = strings::last_index_of_char(path, b'/').map(|slash| &path[..slash]);
+    match &written[..] {
+        written if written == path => None,
+        written if written == without_extension_of_file(path) => Some(Spelling::WithoutExtension),
+        written if Some(written) == folder => Some(Spelling::AsFolder),
+        written if without_extension_of_file(written) == without_extension_of_file(path) => {
+            Some(Spelling::UnderAnotherExtension)
+        }
+        _ => None,
+    }
+}
+
 // What `specifier` names from the file: the path of a relative one, else its text.
 fn path_named(sources: &Sources, file: FileId, specifier: &[u8]) -> Vec<u8> {
     // `mock.module("file:./a.ts", ..)`
@@ -284,6 +336,8 @@ struct Program {
     runs_tests: bool,
     loads_code_from_disk: bool,
     mocks_any_module: bool,
+    asks_loader_where_bundler_does: bool,
+    asks_loader_for_names_not_found: bool,
 }
 
 fn scan_file(
@@ -302,6 +356,8 @@ fn scan_file(
         runs_tests: program.runs_tests,
         loads_code_from_disk: program.loads_code_from_disk,
         mocks_any_module: program.mocks_any_module,
+        asks_loader_where_bundler_does: program.asks_loader_where_bundler_does,
+        asks_loader_for_names_not_found: program.asks_loader_for_names_not_found,
         hir: files.hir(file),
         compiled: compiled.expect("the loader analyzes every compiled file"),
         named_in_choices: parsed_source(files, file)
@@ -357,6 +413,8 @@ struct FileScanner<'a, 's> {
     runs_tests: bool,
     loads_code_from_disk: bool,
     mocks_any_module: bool,
+    asks_loader_where_bundler_does: bool,
+    asks_loader_for_names_not_found: bool,
     hir: &'a hir::File<'s>,
     compiled: &'a CompiledModule<'s>,
     named_in_choices: &'a [NamedModule],
@@ -379,6 +437,12 @@ impl FileScanner<'_, '_> {
     }
 
     fn scan_site(&mut self, index: u32, site: &ImportSite, answer: CodeAnswer<'_>) -> ScannedSite {
+        if self.asks_loader_where_bundler_does
+            && is_followed_further_than_bundler(self.files, self.file, site)
+            && let Some(scanned) = self.leave_site_to_loader(answer)
+        {
+            return scanned;
+        }
         match site.specifier {
             ImportSpecifier::Constant(specifier) => {
                 let scanned = self.scan_constant_site(index, site, specifier, answer);
@@ -388,6 +452,25 @@ impl FileScanner<'_, '_> {
             | ImportSpecifier::OneOf(_)
             | ImportSpecifier::Unknown => self.scan_computed_site(site, answer),
         }
+    }
+
+    // No spelling: the call asks the loader whatever the name is.
+    // The loader finds an entry point and no other file with code: where the build has not made the file one, the call stays linked.
+    fn leave_site_to_loader(&mut self, answer: CodeAnswer<'_>) -> Option<ScannedSite> {
+        let CodeAnswer::File(target) = answer else {
+            return None;
+        };
+        let is_found_by_loader = match self.sources.kind(target) {
+            SourceKind::Program => self.files.entry_points().contains(&target),
+            SourceKind::Data => true,
+            _ => false,
+        };
+        if !is_found_by_loader {
+            return None;
+        }
+        self.candidates.push(ModuleRef::File(target));
+        let at = self.spellings.len() as u32;
+        Some(ScannedSite::Candidates(at..at))
     }
 
     // `import data from "./data.txt" with { type: "toml" }` of a file outside the program. `bun run` hands the loader the types that it knows, of import statements alone.
@@ -551,8 +634,10 @@ impl FileScanner<'_, '_> {
                 | SiteForm::Mock,
             ) => return answer,
             // `virtual:config`: no file and no package has such a name, so only a plugin answers for it, and a preload or a test may bring one. The loader of the run time is asked. A name that may be a package stays a failure: code that nobody has seen costs the whole program, and an optional dependency that is absent is common.
+            // Not so in a test run that names `Bun.plugin`: `onResolve({ filter: /^aliased$/ }, ..)` answers for any name, and what a plugin loads is code that nobody has seen.
             (Err(_), SiteForm::Declaration | SiteForm::Load)
                 if (self.runs_tests && self.has_scheme_of_its_own(specifier))
+                    || self.asks_loader_for_names_not_found
                     || (!self.mocked_paths.is_empty() && self.is_answered_by_mock(specifier))
                     || self.may_be_answered_by_mock_out_of_sight() =>
             {
@@ -689,7 +774,11 @@ fn find_type_attribute(
     hir: &hir::File<'_>,
     site: &ImportSite,
 ) -> Option<bun_ast::Loader> {
-    let (ImportSiteKind::Import(_), Some(attributes)) = (site.kind, site.attributes.some()) else {
+    let is_statement = matches!(
+        site.kind,
+        ImportSiteKind::Import(_) | ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
+    );
+    let (true, Some(attributes)) = (is_statement, site.attributes.some()) else {
         return None;
     };
     let written = hir.import_attribute(attributes, bun_sema::atom::known::r#type);
@@ -738,7 +827,7 @@ pub(super) fn site_form(site: ImportSiteKind) -> SiteForm {
     }
 }
 
-fn is_jsx_site(site: ImportSiteKind) -> bool {
+pub(super) fn is_jsx_site(site: ImportSiteKind) -> bool {
     matches!(
         site,
         ImportSiteKind::JsxRuntime | ImportSiteKind::JsxPackage
@@ -761,7 +850,9 @@ fn diagnostic_node(hir: &hir::File<'_>, site: &ImportSite) -> NodeData {
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
         | ImportSiteKind::GetBuiltinModule(call)
-        | ImportSiteKind::MockModule(call) => NodeData::Expr(call),
+        | ImportSiteKind::MockModule(call)
+        | ImportSiteKind::ImportByTestRunner(call)
+        | ImportSiteKind::RequireByTestRunner(call) => NodeData::Expr(call),
     }
 }
 
@@ -826,6 +917,40 @@ pub(super) struct FinishedRequests {
     pub inner_modules: Vec<(ModuleRef, Vec<ModuleRequest>)>,
 }
 
+/// The modules that a mock names, and those that hand their names on by `export *`.
+fn find_modules_with_names_of_mocks(
+    scans: &Scans,
+    modules: &ModuleSet,
+    mocked_modules: &FxHashSet<ModuleRef>,
+) -> FxHashSet<ModuleRef> {
+    let mut found = mocked_modules.clone();
+    if found.is_empty() {
+        return found;
+    }
+    let mut files_with_star_over: FxHashMap<ModuleRef, Vec<FileId>> = FxHashMap::default();
+    for &file in &modules.record_files {
+        let requests = scans.find(file).map_or(&[][..], |scan| &scan.requests[..]);
+        for draft in requests.iter().filter(|draft| draft.is_star_export) {
+            files_with_star_over
+                .entry(draft.target)
+                .or_default()
+                .push(file);
+        }
+    }
+    let mut pending: Vec<ModuleRef> = found.iter().copied().collect();
+    while let Some(module) = pending.pop() {
+        for &file in files_with_star_over
+            .get(&module)
+            .map_or(&[][..], |files| &files[..])
+        {
+            if found.insert(ModuleRef::File(file)) {
+                pending.push(ModuleRef::File(file));
+            }
+        }
+    }
+    found
+}
+
 /// What a module imports, which runs in front of its body, and then what its sites evaluate, in the order of the text.
 pub(super) fn finish_requests(
     scans: &Scans,
@@ -833,9 +958,14 @@ pub(super) fn finish_requests(
     tables: &ExportTables,
     order: &EvaluationOrder,
     sites: &PlannedSites,
+    mocked_modules: &FxHashSet<ModuleRef>,
 ) -> FinishedRequests {
+    let has_names_of_mock = find_modules_with_names_of_mocks(scans, modules, mocked_modules);
     let finish_file = |&file: &FileId| {
-        let follows_every_star = tables.follows_every_star(file);
+        // The names of a mock that comes ahead of the load are the names of the module. Which of them a star hands on, beside what the other stars of the file have, is known when the mock has run.
+        let follows_every_star = tables.follows_every_star(file)
+            || (has_names_of_mock.contains(&ModuleRef::File(file))
+                && !mocked_modules.contains(&ModuleRef::File(file)));
         let finish_request = |draft: &RequestDraft| ModuleRequest {
             phase: draft.phase,
             is_dynamic_star_export: draft.is_star_export

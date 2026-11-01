@@ -1,4 +1,5 @@
 # A method is replaced by a generator function.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -426,7 +427,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-NEXT: end of function f26
 # CHECK-LABEL: function {{*}}name="firstTwo"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 158, patchpoints: 18, rare instructions: 96
+# CHECK-NEXT: instructions: 158, patchpoints: 18, rare instructions: 95
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="kind"
 # CHECK: role=Source
@@ -435,7 +436,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-LABEL: function {{*}}name="round"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 4, patchpoints: 2
-# CHECK-NEXT: end of function f40
+# CHECK-NEXT: end of function f41
 # CHECK-LABEL: function {{*}}name="Range"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 10, patchpoints: 1, rare instructions: 37
@@ -443,7 +444,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-LABEL: function {{*}}name="Range"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 2, patchpoints: 1, rare instructions: 8
-# CHECK-NEXT: end of function f31
+# CHECK-NEXT: end of function f32
 # CHECK-LABEL: function {{*}}name="values"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 28, patchpoints: 1, rare instructions: 95
@@ -451,10 +452,10 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-LABEL: function {{*}}name="values"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 1, patchpoints: 1
-# CHECK-NEXT: end of function f33
+# CHECK-NEXT: end of function f34
 # CHECK-LABEL: function f7 role=
 # CHECK: CoroutineRamp
-# CHECK-NEXT: instructions: 17, patchpoints: 5
+# CHECK-NEXT: instructions: 18, patchpoints: 5
 # CHECK-NEXT: end of function f7
 # CHECK-LABEL: function f8 role=
 # CHECK: Source
@@ -466,5 +467,5 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-NEXT: end of function f9
 # CHECK-LABEL: function f10 role=
 # CHECK: CoroutineRamp
-# CHECK-NEXT: instructions: 17, patchpoints: 5
+# CHECK-NEXT: instructions: 18, patchpoints: 5
 # CHECK-NEXT: end of function f10

@@ -975,6 +975,12 @@ Pass `--asset` multiple times to embed several directories (for example `--asset
 
 With `--aot`, your modules and the files you embed keep their places relative to one another. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`.
 
+Without `--aot`, a single file is embedded under its base name: `--asset ./a/config.json` is at `/$bunfs/root/config.json`. With `--aot` it's at `/$bunfs/root/a/config.json`, and `/$bunfs/root/config.json` finds it too, so code written for either keeps working. Three things differ:
+
+- The base name only resolves. `fs.readdirSync()` and `Bun.embeddedFiles` list the file once, as `a/config.json`.
+- If a module, another embedded file or a directory is already at that path, the path keeps meaning that.
+- `--asset ./a/config.json --asset ./b/config.json` is an error without `--aot`, because both files would be `config.json`. With `--aot` it builds. Each file is at its own path and `/$bunfs/root/config.json` doesn't exist.
+
 `__dirname`, `__filename` and `require.resolve()` give the path your source file had on the machine that ran the build, with and without `--aot`. An executable that uses one of them contains that path, so two builds in different directories differ. `import.meta.dir`, `import.meta.path` and `import.meta.url` start with `/$bunfs/root/` instead.
 
 With `--aot`, those paths keep working after you ship the executable. If a path under the build directory doesn't exist on the machine, Bun looks in the executable: `path.join(__dirname, "public")` finds the files of `--asset ./public`, `require(path.join(__dirname, "commands", file))` loads the compiled file, and `process.chdir(__dirname)` succeeds. If the path does exist, the file on disk wins, so on the build machine you can also read a file that you didn't embed.

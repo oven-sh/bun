@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 use super::variables::BodyForm;
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{BlockFrequency, ImportPhase, NullishAccess};
+use crate::ir::generated::{BlockFrequency, NullishAccess};
 use crate::ir::{FunctionKey, ModuleId, TypeTable, ValueId, VariableId, VariableKey};
 use crate::lower::captures::Capture;
 use crate::lower::member::{Holder, PropertyName, Reference};
@@ -351,9 +351,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_evaluated_namespace(&mut self, module: ModuleRef) -> ValueId {
-        let module = self.file.fragment.declare_module(module);
-        let phase = ImportPhase::Evaluation;
-        self.builder.module_namespace(module, phase)
+        self.emit_namespace_asked_by_name(module)
     }
 
     // The module whose exports stand in front of the last dot of `R.N(..)`.

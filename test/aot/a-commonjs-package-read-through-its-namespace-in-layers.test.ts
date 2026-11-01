@@ -2,8 +2,9 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // `import * as pkg from "a-commonjs-package"; pkg.member` where the package lies in another image than the reader: a shared layer holds node_modules, another one src, and each test file is a piece.
 // The names of such a namespace object are those the file had exported when it had run, and their values lie in a table of the object. Every read went through the object's own lookup.
@@ -110,45 +111,63 @@ import * as pkg from "cjs-pkg";
 test("m${i}", () => { expect(pkg.one + ${i}).toBe(${i + 1}); });
 `;
 
-test("it says what plain Bun says as one image and in layers, and the reads across a border are cached", async () => {
-  using dir = tempDir("aot-commonjs-namespace-in-layers", files);
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof said>>;
+async function said(flags: string[], words: string, files = ["."], counts?: string) {
   const directory = String(dir);
-  const counts = join(directory, "counts.txt");
-  const said = async (flags: string[], words: string, files = ["."], counted = false) => {
-    const env = {
-      ...bunEnv,
-      BUN_DEBUG_TEST_AOT_WORDS: words,
-      BUN_TMPDIR: directory,
-      BUN_JSC_aotCountsPath: counted ? counts : undefined,
-    };
-    const ran = await run([bunExe(), "test", ...flags, "--isolate", "--parallel=1", ...files], directory, env);
-    return {
-      lines: ran.stdout.split("\n").filter(line => line.startsWith("SAID")),
-      summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
-    };
+  const env = {
+    ...bunEnv,
+    BUN_DEBUG_TEST_AOT_WORDS: words,
+    BUN_TMPDIR: directory,
+    BUN_JSC_aotCountsPath: counts,
   };
-  const plain = await said([], "");
+  const ran = await run([bunExe(), "test", ...flags, "--isolate", "--parallel=1", ...files], directory, env);
+  return {
+    lines: ran.stdout.split("\n").filter(line => line.startsWith("SAID")),
+    summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
+  };
+}
+beforeAll(async () => {
+  dir = tempDir("aot-commonjs-namespace-in-layers", files);
+  plain = await said([], "");
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("what plain Bun says", () => {
   expect(plain.summary).toEqual([" 23 pass", " 0 fail"]);
   expect(plain.lines.length).toBe(5);
-  expect(await said(["--aot"], "TestRunLayers:0")).toEqual(plain);
-  expect(await said(["--aot"], "TestRunLayers:1,TestRunPartFiles:1")).toEqual(plain);
-  expect(await said(["--aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
+});
 
-  // The counts that a run leaves are those of its last file.
-  const readsWithoutCaches = (names: RegExp) =>
-    readFileSync(counts, "utf8")
-      .split("\n")
-      .filter(line => line.includes("miss by site:read without caches:") && names.test(line))
-      .reduce((sum, line) => sum + parseInt(line), 0);
-  // TODO: with the counts on, a worker of a layered run that loads node:util aborts. So the library is counted as one program, where `util.inspect` went uncached as well.
+test.each([
+  ["as one image", "TestRunLayers:0"],
+  ["in one layer", "TestRunLayers:1,TestRunPartFiles:1"],
+  ["in two layers", "TestRunLayers:2,TestRunPartFiles:1"],
+])("it says what plain Bun says %s", async (_, words) => {
+  expect(await said(["--aot"], words)).toEqual(plain);
+});
+
+// The counts that a run leaves are those of its last file.
+const readsWithoutCaches = (counts: string, names: RegExp) =>
+  readFileSync(counts, "utf8")
+    .split("\n")
+    .filter(line => line.includes("miss by site:read without caches:") && names.test(line))
+    .reduce((sum, line) => sum + parseInt(line), 0);
+
+test("the reads of the package across a border are cached", async () => {
+  const counts = join(String(dir), "counts-of-the-package.txt");
   const withoutLibrary = Object.keys(files)
     .filter(file => /^(m\d+|z)\.test\.ts$/.test(file))
     .map(file => "./" + file);
-  expect((await said(["--aot"], "TestRunLayers:2,TestRunPartFiles:1", withoutLibrary, true)).summary).toEqual([
+  expect((await said(["--aot"], "TestRunLayers:2,TestRunPartFiles:1", withoutLibrary, counts)).summary).toEqual([
     " 17 pass",
     " 0 fail",
   ]);
-  expect(readsWithoutCaches(/:(one|add):Module$/)).toBeLessThan(20);
-  expect((await said(["--aot"], "TestRunLayers:0", ["./y.test.ts"], true)).summary).toEqual([" 1 pass", " 0 fail"]);
-  expect(readsWithoutCaches(/:inspect:Module$/)).toBeLessThan(20);
-}, 240_000);
+  expect(readsWithoutCaches(counts, /:(one|add):Module$/)).toBeLessThan(20);
+});
+
+// TODO: with the counts on, a worker of a layered run that loads node:util aborts. So the library is counted as one program, where `util.inspect` went uncached as well.
+test("the reads of the library are cached", async () => {
+  const counts = join(String(dir), "counts-of-the-library.txt");
+  expect((await said(["--aot"], "TestRunLayers:0", ["./y.test.ts"], counts)).summary).toEqual([" 1 pass", " 0 fail"]);
+  expect(readsWithoutCaches(counts, /:inspect:Module$/)).toBeLessThan(20);
+});

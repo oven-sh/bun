@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """generate.py <folder> [row,row,.. to leave out of the TypeScript]: writes alone/<row>.ts and opened/<row>.ts (what ../operations.test.ts builds and counts: it runs this script itself), typed.ts (all rows in one program), and the same rows in Go and C++ for comparison: main.go, kit.h, rows.cc, main.cc; rows.tsv.
 One method for every column: a function with 12 sites of the operation and one with 4, the same but for the number of sites; a site's result is the next site's operand.
+Both stay calls: a copy of the small one alone in its caller would count the call as eight sites. Go: noinline; C++: a file of their own; TypeScript: each counts its calls in CALLS, which the program prints.
   bytes a site        = (bytes of f12 - bytes of f4) / 8
   instructions a site = (executed by N calls of f12 - executed by N calls of f4) / (8 N), each as a difference of two runs (perf stat -e instructions:u), callees included
 Every program is `prog <row>_<4|12> <calls> <array length> <word> <verb0> <verb1>`: nothing the rows work on is a constant of the program text."""
@@ -411,6 +412,7 @@ def sites(form, n):
 BULKN = 60
 def bulk(fmt): return ' '.join(fmt % (i % 13 + 1, (i + 3) % 13 + 1, 2 * i + 3, (i + 7) % 13 + 1) for i in range(BULKN))
 TSB = 'if (G15 > 1000000) { ' + bulk('G%d = ((G%d + %d) ^ G%d) | 0;') + ' } '
+COUNTED = 'CALLS = (CALLS + 1) | 0; '
 GOB = 'if G15 > 1000000 { ' + bulk('G%d = (G%d + %d) ^ G%d;') + ' }; '
 CCB = 'if (G15 > 1000000) { ' + bulk('G%d = (G%d + %d) ^ G%d;') + ' } '
 
@@ -421,6 +423,7 @@ def item(names, text): ITEMS.append((names.split(), text))
 item('argv', 'const argv: string[] = process.argv;')
 item('ROW COUNT LEN WORD VERB0 VERB1', 'const ROW: string = argv[2] ?? "", COUNT: number = parseInt(argv[3] ?? "0", 10) | 0, LEN: number = parseInt(argv[4] ?? "2", 10) | 0, WORD: string = argv[5] ?? "lit_zz", VERB0: string = argv[6] ?? "DELETE", VERB1: string = argv[7] ?? "PATCH";')
 item(' '.join('G%d' % i for i in R16), 'let ' + ', '.join('G%d = (LEN + %d) | 0' % (i, i - 2) for i in R16) + ';')
+item('CALLS', 'let CALLS = 0;')
 item('fill', 'function fill(n: number, v: number): number[] { const r: number[] = []; for (let i = 0; i < n; ++i) r.push((v + i) | 0); return r; }')
 item('T', 'class T {\n    next: T; nn: T | null; any: unknown; s: string; e: string; m: string;\n    ' + ' '.join('f%d: number; d%d: number; r%d: T; l%d: number[]; ss%d: string;' % ((i,) * 5) for i in R16)
           + '\n    constructor(seed: number, verb: string) {\n        this.next = this; this.nn = null; this.any = this; this.s = WORD.slice(0, 5) + (seed & 7); this.e = WORD.slice(0, 3) + WORD.slice(3); this.m = verb;\n        '
@@ -572,7 +575,7 @@ def split0(text, mark):
         else: cur += c
     out.append(cur); return out
 def opened(names, text):
-    if not text.startswith(('const ', 'let ')) or names[0] in ('argv', 'ROW', 'G0'): return text
+    if not text.startswith(('const ', 'let ')) or names[0] in ('argv', 'ROW', 'G0', 'CALLS'): return text
     head, sep, tail = text.partition('\nfunction ')
     head = re.sub(r'<[A-Za-z0-9_ ,|\[\]]+>', lambda m: m.group(0).replace(',', '\x00'), head)
     out = []; again = []
@@ -595,7 +598,7 @@ def program(rows, isopen=False):
         sig, pre, site, ret = r['ts']; inner = []
         for n in N:
             f = '%s_%d' % (r['name'], n); names.append((f, r['isasync']))
-            (inner if r['nested'] else body).append('%sfunction %s%s {\n    %s\n%s    %s\n    %s\n}' % ('async ' if r['isasync'] else '', f, sig, TSB, '    ' + pre + '\n' if pre else '', '\n    '.join(sites(site, n)), 'return %s;' % ret if ret else ''))
+            (inner if r['nested'] else body).append('%sfunction %s%s {\n    %s\n%s    %s\n    %s\n}' % ('async ' if r['isasync'] else '', f, sig, COUNTED + TSB, '    ' + pre + '\n' if pre else '', '\n    '.join(sites(site, n)), 'return %s;' % ret if ret else ''))
             if r['nested'] and n == N[-1]:
                 body.append(('function make_%s(initial: string, seed: number) {\n%s\n%s\n    return { set, sum, f%d: %s_%d, f%d: %s_%d };\n}\n' + ('const %s_A = launder(make_%s(codes, LEN)), %s_B = launder(make_%s(codes, LEN + 1));' if isopen else 'const %s_A = make_%s(codes, LEN), %s_B = make_%s(codes, LEN + 1);'))
                             % (r['name'], NEST, '\n'.join(inner), N[0], r['name'], N[0], N[1], r['name'], N[1], r['name'], r['name'], r['name'], r['name']))
@@ -605,7 +608,7 @@ def program(rows, isopen=False):
     sync = [f for f, a in names if not a]; asy = [f for f, a in names if a]
     if sync: tail.append('const rows = new Map<string, (n: number) => number>([' + ', '.join('["%s", drive_%s]' % (f, f) for f in sync) + ']);\nconst chosen = rows.get(ROW);')
     if asy: tail.append('const asyncRows = new Map<string, (n: number) => Promise<number>>([' + ', '.join('["%s", drive_%s]' % (f, f) for f in asy) + ']);\nconst chosenAsync = asyncRows.get(ROW);')
-    tail.append(('if (chosen !== undefined) console.log(ROW, chosen(COUNT)); else ' if sync else '') + ('if (chosenAsync !== undefined) chosenAsync(COUNT).then((v: number): void => { console.log(ROW, v); }); else ' if asy else '') + 'console.log("no row", ROW);')
+    tail.append(('if (chosen !== undefined) console.log(ROW, chosen(COUNT), CALLS); else ' if sync else '') + ('if (chosenAsync !== undefined) chosenAsync(COUNT).then((v: number): void => { console.log(ROW, v, CALLS); }); else ' if asy else '') + 'console.log("no row", ROW);')
     items = [(d, opened(d, t)) for d, t in ITEMS] if isopen else ITEMS
     used = set(WORDS.findall('\n'.join(body + tail + ([LAUNDER] if isopen else [])))); take = [False] * len(items); more = True
     while more:

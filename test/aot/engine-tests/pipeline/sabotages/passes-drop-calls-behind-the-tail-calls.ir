@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls: behind the pass a call of an unknown function is gone. The pass turns a tail call of the function itself into a jump, and answers for that call alone: the build stops
+# FORM: Prepared
+# RUN: pass EliminateTailRecursion
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-beside-a-tail-call-and-a-generator-left-alone.ir

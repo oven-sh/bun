@@ -1,10 +1,10 @@
 # let name; name = "./plugins/one"; name = "./lib/../plugins/two.js"; name = "./plugins/folder"; require(name)()      in /app/main.cjs beside plugins/{one.cjs,two.cjs,folder/index.cjs,other.cjs}
 # The values say what the name may be, and a relative path starts at the folder of the file that loads. An extension may be missing or differ, and a folder stands for its index file.
-# So the call finds what those three files export and not what other.cjs does, which another written path finds. undefined (primitive 0) is what the variable of a module begins as.
+# So the call finds what those three files export and not what other.cjs does, which another written path finds.
 # The image keeps every file that a name may find findable, so other.cjs is evaluated all the same.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-why values=f0:v8
-# CHECK: operand 0 {{*}} 4 members: primitive0 f5 f6 f7
+# CHECK: operand 0 {{*}} 3 members: f5 f6 f7
 # RUN(UNREACHED): valueflow-solve unreached
 # UNREACHED-NOT: unreached f4
 # UNREACHED: unreached f8

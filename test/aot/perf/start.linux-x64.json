@@ -1,4 +1,9 @@
 {
+  "a-hundred-graphs-imported-in-turn-above-200-loaded-modules": {
+    "thousandInstructions": 4241,
+    "pageFaults": 813,
+    "systemCalls": 234
+  },
   "bun-serve": {
     "thousandInstructions": 3086,
     "thousandInstructionsWithMusl": 8664,

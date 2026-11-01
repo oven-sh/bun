@@ -3,7 +3,8 @@ import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness
 import { join } from "path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
-import { describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { describe, testOneByOne as test } from "./supported";
 
 // `bun run --debug-aot` and `bun test --debug-aot` compile the program as `bun compile` does and then run it. They write no executable.
 // `--aot` on the two commands only checks the program and then runs it from its source: aot-flag-runs-from-source.test.ts.

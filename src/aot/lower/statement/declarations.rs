@@ -83,7 +83,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     .file
                     .given_name_key(initializer, binding, name, hir[decl.pat].pos);
                 let is_returned = self.file.find_return_printed_with(declaration).is_some();
-                let is_tail = is_returned && control::allows_tail_call(self);
+                let is_tail = is_returned && control::allows_tail_call_of(self, initializer);
                 let is_annotated = decl.ty.is_some() && self.file.is_checked();
                 let annotation = (is_tail && is_annotated).then(|| TailCast {
                     position: self
@@ -384,7 +384,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         };
         let member = bound.export_symbol_of_value_symbol_if_exported(binding);
-        if member == binding {
+        // `class K` beside `export namespace K` is not exported itself.
+        if member == binding || !bound.symbol(member).decls.contains(&declaration) {
             return;
         }
         let value = self.get_binding(Binding::Symbol(binding), name);

@@ -1,8 +1,8 @@
 // Helpers of the tests of this folder that build a server in a copy of ./app.
 import { expect } from "bun:test";
-import { cpSync, existsSync, rmSync, symlinkSync } from "fs";
+import { cpSync, existsSync, readFileSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows } from "harness";
-import { basename, join } from "path";
+import { basename, delimiter, join } from "path";
 import { spawned } from "../harness/commands";
 
 export const requestedServers = process.env.AOT_SERVERS;
@@ -19,10 +19,49 @@ export const moreFlags = (process.env.AOT_SERVERS_FLAGS ?? "").split(" ").filter
 /** AOT_SERVERS_ENVIRONMENT="A=1 B=2": more variables for every run of an executable that was built with --aot. */
 export const moreEnvironment = Object.fromEntries((process.env.AOT_SERVERS_ENVIRONMENT ?? "").split(" ").filter(Boolean).map(pair => pair.split("="))); // prettier-ignore
 
-/** Runs `bun install` in the folder, by its bun.lock if it has one, or links AOT_SERVERS_MODULES as its node_modules. */
+/** Returns a line for each package of the lockfile that the node_modules folder holds in another version or not at all. */
+export function packagesUnlikeLockfile(lockfile: string, modules: string) {
+  const { packages } = Bun.JSONC.parse(readFileSync(lockfile, "utf8")) as { packages: Record<string, [string]> };
+  return Object.entries(packages).flatMap(([key, [resolved]]) => {
+    const expected = resolved.slice(resolved.lastIndexOf("@") + 1);
+    const manifest = join(modules, key.match(/(@[^/]+\/)?[^/]+/g)!.join("/node_modules/"), "package.json");
+    const found = existsSync(manifest) ? JSON.parse(readFileSync(manifest, "utf8")).version : "nothing";
+    return found === expected ? [] : [`${key}: the lockfile has ${expected}, the folder has ${found}`];
+  });
+}
+
+/** Runs `bun install` in the folder, by its bun.lock if it has one, or links AOT_SERVERS_MODULES, which must hold the same packages, as its node_modules. */
+/** Returns a line for each direct dependency of the manifest that the node_modules folder holds in another version or not at all. */
+export function packagesUnlikeManifest(manifest: string, modules: string) {
+  const { dependencies, devDependencies } = JSON.parse(readFileSync(manifest, "utf8"));
+  return Object.entries<string>({ ...dependencies, ...devDependencies }).flatMap(([name, expected]) => {
+    const found = join(modules, name, "package.json");
+    const version = existsSync(found) ? JSON.parse(readFileSync(found, "utf8")).version : "nothing";
+    return version === expected ? [] : [`${name}: the manifest has ${expected}, ${modules} has ${version}`];
+  });
+}
+
+/**
+ * Installs the packages of the folder's manifest. Where AOT_SERVERS_MODULES names a node_modules folder, nothing is
+ * installed: the folder is handed that one, or the first of AOT_SERVERS_MORE_MODULES, that holds what its manifest names.
+ */
 export async function installPackages(folder: string) {
-  if (process.env.AOT_SERVERS_MODULES)
-    return symlinkSync(process.env.AOT_SERVERS_MODULES, join(folder, "node_modules"), "junction");
+  const given = [process.env.AOT_SERVERS_MODULES, ...(process.env.AOT_SERVERS_MORE_MODULES?.split(delimiter) ?? [])];
+  if (given[0]) {
+    const unlikeManifest = given.map(modules => packagesUnlikeManifest(join(folder, "package.json"), modules!));
+    const modules = given[unlikeManifest.findIndex(lines => !lines.length)];
+    if (!modules)
+      throw new Error(
+        `neither AOT_SERVERS_MODULES nor AOT_SERVERS_MORE_MODULES names a folder that holds what ${basename(folder)}/package.json names:\n${unlikeManifest.flat().join("\n")}`,
+      );
+    const lockfile = join(folder, "bun.lock");
+    const unlike = existsSync(lockfile) ? packagesUnlikeLockfile(lockfile, modules) : [];
+    if (unlike.length)
+      throw new Error(
+        `AOT_SERVERS_MODULES=${modules} does not hold the packages of bun.lock, so nothing counted here would be what CI counts:\n${unlike.join("\n")}`,
+      );
+    return symlinkSync(modules, join(folder, "node_modules"), "junction");
+  }
   const byLockfile = existsSync(join(folder, "bun.lock")) ? ["--frozen-lockfile"] : [];
   const install = await spawned(
     [bunExe(), "install", ...byLockfile, "--ignore-scripts", "--linker", "hoisted"],

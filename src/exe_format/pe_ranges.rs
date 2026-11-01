@@ -1,3 +1,4 @@
+use bun_sort_by_number::SortByNumber;
 use core::mem::size_of;
 use core::ops::Range;
 
@@ -514,7 +515,7 @@ fn create_new_sections(headers: &Headers, cuts: &[AddressRange]) -> Result<Vec<N
             new_sections.push(create_removed_section(*cut)?);
         }
         new_sections[first_new_section..]
-            .sort_unstable_by_key(|new_section| new_section.header.virtual_address);
+            .sort_by_u32(|new_section| new_section.header.virtual_address);
     }
     join_holes_that_touch(&mut new_sections);
     if new_sections.len() + slots_kept_for_a_program(&headers.sections) > MAX_SECTIONS {

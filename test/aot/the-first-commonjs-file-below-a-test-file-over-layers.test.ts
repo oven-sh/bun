@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // `bun run` and `bun test` give the id "." and the parent null to the first CommonJS file that the loader of ES modules finds below the
 // entry point: level by level, and in a level in the order of the text. `bun test --aot` in layers: the graph below a test file goes
@@ -58,9 +59,15 @@ async function runTests(directory: string, words: string, ...flags: string[]) {
   return { stdout: printed.sort(), results: results.sort(), exitCode };
 }
 
-test("one file of the realm is the first, whichever program holds it", async () => {
-  using dir = tempDir("aot-the-first-commonjs-file", files);
-  const plain = await runTests(String(dir), "");
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof runTests>>;
+beforeAll(async () => {
+  dir = tempDir("aot-the-first-commonjs-file", files);
+  plain = await runTests(String(dir), "");
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("one file of the realm is the first: plain Bun", () => {
   expect(plain.results.length).toBe(20);
   expect(plain.stdout).toEqual([
     "below a package: old . null | own, required later its path object 0",
@@ -68,7 +75,11 @@ test("one file of the realm is the first, whichever program holds it", async () 
     "beside: old . null | own, imported later its path undefined 0",
     "required: old its path object | own, imported later its path undefined 0",
   ]);
-  expect(await runTests(String(dir), "TestRunLayers:0", "--aot")).toEqual(plain);
-  expect(await runTests(String(dir), "TestRunLayers:2", "--aot")).toEqual(plain);
-  expect(await runTests(String(dir), "TestRunLayers:3", "--aot")).toEqual(plain);
-}, 240_000);
+});
+
+test.each(["TestRunLayers:0", "TestRunLayers:2", "TestRunLayers:3"])(
+  "one file of the realm is the first, whichever program holds it: %s",
+  async words => {
+    expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
+  },
+);

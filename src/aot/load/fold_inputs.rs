@@ -10,13 +10,16 @@ use bun_sema::session::Arena;
 use crate::builtins::Platforms;
 use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
-use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
+use crate::load::locked_builtin_defines::{
+    RuntimeIdentity, locked_builtin_defines, runtime_identity_defines,
+};
 use crate::statistics::{LimitId, LimitValues};
 
 // What the build tells Bun's own sources about the program. They are read after the program.
 #[derive(Copy, Clone)]
 pub(crate) struct ProgramFacts {
     pub can_load_code_at_run_time: bool,
+    pub can_load_addons_at_run_time: bool,
     pub can_be_cluster_worker: bool,
     pub can_replace_builtins: bool,
 }
@@ -34,15 +37,18 @@ pub(crate) fn create_application_fold_inputs<'s>(
     runs_in_place: bool,
     replaced_builtins: &[u32],
 ) -> FoldInputs<'s> {
-    let mut defines =
-        after_constant_globals(provided.defines, platform, replaced_builtins, arena, atoms);
-    // A test may redefine `process.versions.bun` to pose as another runtime, as under plain `bun test`.
-    if runs_in_place {
-        let open = defines
-            .iter()
-            .filter(|define| !names_version_of_runtime(define, atoms));
-        defines = arena.alloc_slice_copy(&open.copied().collect::<Vec<_>>());
-    }
+    let identity = match runs_in_place {
+        true => RuntimeIdentity::MayBeReplaced,
+        false => RuntimeIdentity::IsLocked,
+    };
+    let defines = after_constant_globals(
+        provided.defines,
+        platform,
+        replaced_builtins,
+        identity,
+        arena,
+        atoms,
+    );
     let options = FoldOptions {
         defines,
         max_string_bytes: max_string_bytes(limits),
@@ -70,12 +76,23 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
             b"CAN_LOAD_CODE_AT_RUN_TIME",
             facts.can_load_code_at_run_time,
         ),
+        define_fact(
+            b"CAN_LOAD_ADDONS_AT_RUN_TIME",
+            facts.can_load_addons_at_run_time,
+        ),
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
         define_fact(b"CAN_REPLACE_BUILT_INS", facts.can_replace_builtins),
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
     ]);
     let options = FoldOptions {
-        defines: after_constant_globals(&defines, platform, &[], arena, atoms),
+        defines: after_constant_globals(
+            &defines,
+            platform,
+            &[],
+            RuntimeIdentity::IsLocked,
+            arena,
+            atoms,
+        ),
         minifies_syntax: true,
         max_string_bytes: max_string_bytes(limits),
         ..FoldOptions::default()
@@ -88,6 +105,7 @@ fn after_constant_globals<'s>(
     defines: &[Define<'s>],
     platform: Platforms,
     replaced_builtins: &[u32],
+    identity: RuntimeIdentity,
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> &'s [Define<'s>] {
@@ -104,7 +122,7 @@ fn after_constant_globals<'s>(
         value: DefineValue::Constant(value),
     });
     let mut held_in_every_run = locked_builtin_defines(platform, replaced_builtins, arena, atoms);
-    held_in_every_run.extend(runtime_identity_defines(arena, atoms));
+    held_in_every_run.extend(runtime_identity_defines(identity, arena, atoms));
     // A define replaces what is written, so it says nothing about the object of the run, and neither does this list from there on.
     held_in_every_run.retain(|held| {
         defines
@@ -122,19 +140,6 @@ fn after_constant_globals<'s>(
 
 fn is_at_or_under(path: DefinePath<'_>, holder: DefinePath<'_>) -> bool {
     path.root == holder.root && path.members.starts_with(holder.members)
-}
-
-fn names_version_of_runtime(define: &Define<'_>, atoms: &Interner<'_>) -> bool {
-    let mut names = define
-        .path
-        .members
-        .iter()
-        .rev()
-        .map(|&name| atoms.bytes(name));
-    let (name, holder) = (names.next(), names.next());
-    matches!(define.value, DefineValue::RuntimeConstant(_))
-        && holder == Some(&b"versions"[..])
-        && matches!(name, Some(b"bun" | b"node"))
 }
 
 // `bun build --compile` defines `process.versions.bun` as the text that the run has there.
@@ -231,6 +236,7 @@ mod tests {
 
     const NO_FACTS: ProgramFacts = ProgramFacts {
         can_load_code_at_run_time: false,
+        can_load_addons_at_run_time: false,
         can_be_cluster_worker: false,
         can_replace_builtins: false,
     };
@@ -278,7 +284,7 @@ mod tests {
             experimental_decorators: false,
             every_file_is_a_module: false,
             reads_jsdoc: false,
-            keeps_function_directives: false,
+            ignores_pure_comments: false,
         };
         let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), atoms);
         hir.text = Cow::Borrowed(source.as_bytes());
@@ -292,6 +298,7 @@ mod tests {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
+            own_name: b"",
         };
         analyze_file(&mut hir, bind_options, fold, file, atoms, arena).1
     }
@@ -653,7 +660,8 @@ mod tests {
         atoms: &Interner<'s>,
     ) -> Option<DefineValue<'s>> {
         let path = global_path(names, arena, atoms);
-        after_constant_globals(&[provided], Platforms::LINUX, &[], arena, atoms)
+        let identity = RuntimeIdentity::IsLocked;
+        after_constant_globals(&[provided], Platforms::LINUX, &[], identity, arena, atoms)
             .iter()
             .rfind(|define| define.path == path)
             .map(|define| define.value)
@@ -721,7 +729,9 @@ mod tests {
             path: global_path(&[b"Object"], arena, &atoms),
             value: DefineValue::GlobalPath(arena.alloc_slice_copy(&[atoms.intern(b"Mine")])),
         }];
-        let defines = after_constant_globals(&renamed, Platforms::LINUX, &[], arena, &atoms);
+        let identity = RuntimeIdentity::IsLocked;
+        let defines =
+            after_constant_globals(&renamed, Platforms::LINUX, &[], identity, arena, &atoms);
         let below = |root: &[u8]| {
             let root = DefineRoot::Global(atoms.intern(root));
             defines

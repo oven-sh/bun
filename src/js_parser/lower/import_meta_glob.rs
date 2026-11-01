@@ -1,6 +1,8 @@
 //! Expands Vite's `import.meta.glob()` into `{ [file]: () => import(file) }`, or static imports with `eager`.
 
 use std::borrow::Cow;
+use std::cell::Cell;
+use std::ptr::NonNull;
 
 use bun_alloc::Arena;
 use bun_ast::expr::Data as ExprData;
@@ -40,6 +42,81 @@ impl ImportMetaGlobHost {
         // SAFETY: the contract of `new`.
         unsafe { (self.resolve_alias)(self.resolver, importer_dir, glob) }
     }
+}
+
+pub struct ExpandedImportMetaGlob {
+    pub start: i32,
+    pub result: Result<ImportMetaGlobFiles, InvalidImportMetaGlob>,
+}
+
+pub struct ImportMetaGlobFiles {
+    pub only_keys: bool,
+    pub eager: bool,
+    pub import: Vec<u8>,
+    pub import_type: Option<&'static [u8]>,
+    pub entries: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+pub struct InvalidImportMetaGlob {
+    pub start: i32,
+    pub message: Vec<u8>,
+}
+
+thread_local! {
+    static RECORDED: Cell<Option<NonNull<Vec<ExpandedImportMetaGlob>>>> = const { Cell::new(None) };
+    static LEFT_AS_WRITTEN: Cell<bool> = const { Cell::new(false) };
+}
+
+pub fn leave_import_meta_globs_as_written<R>(parse: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LEFT_AS_WRITTEN.set(self.0);
+        }
+    }
+    let _restore = Restore(LEFT_AS_WRITTEN.replace(true));
+    parse()
+}
+
+pub fn record_import_meta_globs<R>(
+    expanded: &mut Vec<ExpandedImportMetaGlob>,
+    parse: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<NonNull<Vec<ExpandedImportMetaGlob>>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RECORDED.set(self.0);
+        }
+    }
+    let _restore = Restore(RECORDED.replace(Some(NonNull::from(expanded))));
+    parse()
+}
+
+#[cold]
+fn record(loc: Loc, only_keys: bool, expansion: &Result<Expansion<'_>, Invalid<'_>>) {
+    let Some(mut recorded) = RECORDED.get() else {
+        return;
+    };
+    let result = match expansion {
+        Ok(expansion) => Ok(ImportMetaGlobFiles {
+            only_keys,
+            eager: expansion.eager,
+            import: expansion.import.to_vec(),
+            import_type: expansion.loader.map(|(_, r#type)| r#type),
+            entries: (expansion.entries.iter())
+                .map(|&(key, path)| (key.to_vec(), path.to_vec()))
+                .collect(),
+        }),
+        Err(invalid) => Err(InvalidImportMetaGlob {
+            start: invalid.loc.start,
+            message: invalid.message.to_vec(),
+        }),
+    };
+    // SAFETY: `record_import_meta_globs` borrows the list until it clears `RECORDED`, and nothing else reads it meanwhile.
+    unsafe { recorded.as_mut() }.push(ExpandedImportMetaGlob {
+        start: loc.start,
+        result,
+    });
 }
 
 /// Variant order matters, because the parser keeps the `max` over every use in the file.
@@ -956,6 +1033,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             && !self.is_control_flow_dead
             && call.optional_chain.is_none()
             && is_import_meta_glob(call.target)
+            && !LEFT_AS_WRITTEN.get()
     }
 
     /// Must run before `call` is visited, since `bun run` and `bun build` fold and inline different things into literals.
@@ -1013,6 +1091,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             Ok(literals) => finder.expand(literals, loc, host, is_bundling),
             Err(invalid) => Err(*invalid),
         };
+        record(loc, only_keys, &expansion);
         let expansion = match expansion {
             Ok(expansion) => expansion,
             Err(invalid) => {

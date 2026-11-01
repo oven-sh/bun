@@ -293,12 +293,21 @@ class Image:
         self.name(numbers, "module-variable", False)
         self.notes.append("module-variable %d" % len(numbers))
         o, count = self.tables["namedCaptures"]
-        cursor, numbers = start + o, []
+        cursor, numbers, recent = start + o, [], []
         while cursor < start + o + count:
             varint()
-            for _ in range(varint()):
-                varint()
-                name = varint()
+            word = varint()
+            if word & 1:
+                if word >> 1 >= len(recent):
+                    raise Refusal("ProgramTables: namedCaptures names list %d of the last %d" % (word >> 1, len(recent)))
+                names = recent.pop(word >> 1)
+            elif word:
+                names = [varint() for _ in range(bin(word >> 1).count("1"))]
+            else:
+                names = [(varint(), varint())[1] for _ in range(varint())]
+            recent.insert(0, names)
+            del recent[64:]
+            for name in names:
                 if name >= self.numberOfStrings:
                     raise Refusal("ProgramTables: namedCaptures names string %d of %d" % (name, self.numberOfStrings))
                 numbers.append(name)
@@ -310,7 +319,7 @@ class Image:
         column("indirectExports", 4, 4, "indirect-export", True)
         column("syntheticExports", 0, 3, "synthetic-export", True)
         column("requiredNames", 4, 4, "required-name", True)
-        column("parsedRecordFields", 0, 4, "parsed-record-field", True)
+        column("parsedRecordFields", 0, 3, "parsed-record-field", True)
         column("addedNames", 4, 4, "added-name", True, skip=(0xffffffff, 0xfffffffe))
         column("removedFields", 4, 4, "removed-field", True, skip=(0xffffffff,))
         column("classPrototypeNames", 4, 4, "class-prototype-name", True, skip=(0xffffffff, 0xfffffffe))
@@ -346,7 +355,8 @@ class Image:
                 if at < prefix:
                     raise Refusal("ProgramTables: the class of shape %d begins in front of the section" % shape)
                 numberOfMethods, numberOfStaticMethods, staticFields, guardWord = struct.unpack_from("<IIII", data, start + at - prefix + 20)
-                methods, guards = numberOfMethods + numberOfStaticMethods, guardWord & (1 << 30) - 1
+                # ClassData: the count in 29 bits, then instancesCarryBrand, hasMemberGuardAggregates, guardsHoldWhileClear.
+                methods, guards = numberOfMethods + numberOfStaticMethods, guardWord & (1 << 29) - 1
                 aggregates = guards if guardWord >> 30 & 1 else 0
             p = at + LAYOUT
             end = p + FIELD * numberOfFields + 4 * numberOfOperands + METHOD * methods + FIELD * staticFields + GUARD * guards + AGGREGATES * aggregates

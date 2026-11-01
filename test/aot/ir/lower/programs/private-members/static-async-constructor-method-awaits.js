@@ -32,7 +32,7 @@ console.log(results.join("\n"));
 
 // GENERATED: constructor Both
 // CHECK-LABEL: function {{*}}name="constructor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=function flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=function flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: function, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -65,7 +65,7 @@ console.log(results.join("\n"));
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="constructor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] thisType={type=function flags=[IsExpected]} results=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=function flags=[IsExpected]} results=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

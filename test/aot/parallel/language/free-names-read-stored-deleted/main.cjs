@@ -88,3 +88,33 @@ let stableLength = 0;
 for (let i = 0; i < 100; i++) stableLength += readNeverChanged().length;
 for (let i = 0; i < 40; i++) globalThis["later" + i] = i;
 console.log(stableLength, readNeverChanged());
+/* Output:
+ReferenceError: neverBound is not defined
+undefined
+1 {
+  value: 1,
+  writable: true,
+  enumerable: true,
+  configurable: true,
+}
+ReferenceError: strictAbsent is not defined
+undefined
+3
+100
+200
+99 99
+139 0 39
+70 10
+setter 8
+9
+9
+TypeError: Attempted to assign to readonly property.
+true
+ReferenceError: changing is not defined
+undefined
+12 true
+false false false
+true
+true undefined
+600 stable
+*/

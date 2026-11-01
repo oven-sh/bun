@@ -234,6 +234,15 @@ pub enum Candidates<'g> {
     Modules(&'g [SpelledModule]),
 }
 
+impl<'g> Candidates<'g> {
+    pub fn spelled_modules(self) -> &'g [SpelledModule] {
+        match self {
+            Candidates::All => &[],
+            Candidates::Modules(spelled_modules) => spelled_modules,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SiteAnswer<'g> {
     Module(ModuleRef),

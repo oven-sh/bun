@@ -10,6 +10,9 @@
 #include "InternalModuleRegistry.h"
 #include "Performance.h"
 #include "WebCoreJSBuiltins.h"
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTBuiltinModules.h>
+#endif
 #include <JavaScriptCore/DateConstructor.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -138,9 +141,32 @@ enum class FakeTimerFunction : uint8_t {
     PerformanceNow,
 };
 
+#if ENABLE(AOT)
+static bool isOpenOnGlobalObject(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    return !globalObject->structure()->isImmutablePropertyForReader(Identifier::fromString(globalObject->vm(), name).impl());
+}
+
+static ASCIILiteral nameOf(FakeTimerFunction function)
+{
+    switch (function) {
+    case FakeTimerFunction::SetInterval:
+        return "setInterval"_s;
+    case FakeTimerFunction::SetImmediate:
+        return "setImmediate"_s;
+    default:
+        return "setTimeout"_s;
+    }
+}
+#endif
+
 // Compiled code calls the built-in function, whatever useFakeTimers() has put on globalThis.
 static ALWAYS_INLINE bool isFakedForCompiledCode(JSGlobalObject* globalObject, FakeTimerFunction function)
 {
+#if ENABLE(AOT)
+    if (isBunTest && globalObject->vm().hasCompiledCode() && Bun__FakeTimers__fakes(static_cast<uint8_t>(function)) && isOpenOnGlobalObject(globalObject, nameOf(function))) [[unlikely]]
+        return false;
+#endif
     return isBunTest && globalObject->vm().hasCompiledCode() && Bun__FakeTimers__fakes(static_cast<uint8_t>(function));
 }
 
@@ -404,6 +430,9 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJS
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* create = JSFunction::create(vm, globalObject, useFakeTimersCreatePerformanceCodeGenerator(vm), globalObject);
+#if ENABLE(AOT)
+    JSC::AOT::admitFunctionOfTestRunner(vm, *create->jsExecutable());
+#endif
     MarkedArgumentBuffer args;
     args.append(JSValue::decode(original));
     args.append(JSFunction::create(vm, globalObject, 0, "now"_s, functionFakePerformanceNow, ImplementationVisibility::Public));
@@ -458,6 +487,10 @@ extern "C" void Bun__FakeTimers__markBuiltinForCompiledCode(Zig::GlobalObject* g
     auto* function = dynamicDowncast<JSFunction>(JSValue::decode(setTimeout));
     if (!function || !vm.hasCompiledCode())
         return;
+#if ENABLE(AOT)
+    if (isOpenOnGlobalObject(globalObject, "setTimeout"_s))
+        return;
+#endif
     auto clock = Identifier::fromString(vm, "clock"_s);
     if (isFaked) {
         function->putDirect(vm, clock, jsBoolean(true));
@@ -472,9 +505,11 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__FakeTimers__loadNodeTimers(Zig::
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimers, "bun:test");
+    if (Bun::DeclaredModuleLoad::canLoad(globalObject, Bun::InternalModuleRegistry::Field::NodeTimers))
+        BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimers, "node:timers");
     RETURN_IF_EXCEPTION(scope, );
-    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimersPromises, "bun:test");
+    if (Bun::DeclaredModuleLoad::canLoad(globalObject, Bun::InternalModuleRegistry::Field::NodeTimersPromises))
+        BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimersPromises, "node:timers/promises");
     RETURN_IF_EXCEPTION(scope, );
 }
 

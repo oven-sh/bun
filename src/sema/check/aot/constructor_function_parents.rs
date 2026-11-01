@@ -1,6 +1,6 @@
 use super::answers::{
     CheckedType, ClassDeclaration, ClassMember, ClassMemberSource, ClassParent, ClassRef,
-    ClassShape, FunctionRef, GaveUp, MemberName, ObjectMemberKind, PositionTypes,
+    ClassShape, FunctionRef, GaveUp, MemberName, ObjectMemberKind, PositionTypes, QueryLimit,
 };
 use super::prototype_links::{LinkEnd, PrototypeLink, PrototypeLinks, list_in};
 use super::queries::Queries;
@@ -18,10 +18,6 @@ use crate::types::{TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
 use std::rc::Rc;
-
-const MAX_NESTED_FOLLOWED_CALLS: usize = 8;
-const MAX_CHAIN_OF_PARENTS: usize = 64;
-const MAX_FUNCTIONS_GIVEN_THIS: usize = 32;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct FunctionLink {
@@ -143,7 +139,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn constructor_function_parent(&mut self, function: FunctionRef) -> Option<ClassParent> {
         let parent = self.find_linked_parent(function)?;
         let mut ancestor = parent;
-        for _ in 0..MAX_CHAIN_OF_PARENTS {
+        for _ in 0..self.limit(QueryLimit::ConstructorParentsFollowed) {
             let above = match ancestor {
                 ClassParent::Declared(ClassDeclaration::Function(linked)) => {
                     self.find_linked_parent(linked)
@@ -156,6 +152,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 None => return Some(parent),
             }
         }
+        self.note_walk_ended_by(QueryLimit::ConstructorParentsFollowed);
         None
     }
 
@@ -279,9 +276,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if let Some(known) = followed.links_of_parameters.get(&function) {
             return Some(Rc::clone(known));
         }
-        if followed.in_progress.len() == MAX_NESTED_FOLLOWED_CALLS
-            || followed.in_progress.contains(&function)
+        if followed.in_progress.contains(&function) {
+            return None;
+        }
+        if followed.in_progress.len() as u64
+            >= self.limit(QueryLimit::HelpersFollowedToPrototypeLink)
         {
+            self.note_walk_ended_by(QueryLimit::HelpersFollowedToPrototypeLink);
             return None;
         }
         followed.in_progress.push(function);
@@ -401,7 +402,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         given_this: &mut Vec<FunctionRef>,
         fields: &mut Vec<ClassMember>,
     ) {
-        if given_this.len() == MAX_FUNCTIONS_GIVEN_THIS || given_this.contains(&function) {
+        if given_this.contains(&function) {
+            return;
+        }
+        if given_this.len() as u64 >= self.limit(QueryLimit::FunctionsGivenThis) {
+            self.note_walk_ended_by(QueryLimit::FunctionsGivenThis);
             return;
         }
         given_this.push(function);

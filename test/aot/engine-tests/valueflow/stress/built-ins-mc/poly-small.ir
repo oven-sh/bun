@@ -242,74 +242,71 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v5: builtin(Array)|builtin(Function) = RequireObjectCoercible v4 name="prototype"
 # CHECK-NEXT: v6: anything = PropGet v5 key="prototype" accessSite=13
 # CHECK-NEXT: v7: builtin(ArrayPrototype)|builtin(FunctionPrototype) = AssumeType v6 provenType=builtin(ArrayPrototype)|builtin(FunctionPrototype)
-# CHECK-NEXT: InitializeBuiltin builtin=ReflectOwnKeys
-# CHECK-NEXT: v9: Array<string|symbol> = CallBuiltin -, v1 overload=ReflectOwnKeys/0 accessSite=14
-# CHECK-NEXT: v10: Array<"demethodize"|"lastOfTheProgram", proven, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<"demethodize"|"lastOfTheProgram", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v11: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v11)
-# CHECK-NEXT: b1(v12: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v12)
-# CHECK-NEXT: b2(v13: int[0, 4294967295]):
+# CHECK-NEXT: v8: Array<string|symbol> = CallBuiltin -, v1 overload=ReflectOwnKeys/0 accessSite=14
+# CHECK-NEXT: v9: Array<"demethodize"|"lastOfTheProgram", proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<"demethodize"|"lastOfTheProgram", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v10)
+# CHECK-NEXT: b1(v11: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v11)
+# CHECK-NEXT: b2(v12: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v15: int[0, 4294967295] = CallBuiltin v10 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v16: boolean = Less v13, v15
-# CHECK-NEXT: Branch v16 -> taken b3(| 0), notTaken b14()
-# CHECK-NEXT: b3(v17: int[0, 4294967294]):
-# CHECK-NEXT: v18: boolean = HasArrayStorage v10 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v18 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v19: guard):
-# CHECK-NEXT: v20: boolean = IsInBounds v10, v17
-# CHECK-NEXT: Branch v20 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v21: guard):
-# CHECK-NEXT: v22: guard = AllGuards v19, v21
-# CHECK-NEXT: v23: "demethodize"|"lastOfTheProgram" = GetArrayElement v10, v17, v22 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[1, 4294967295] = Add v17, v24
-# CHECK-NEXT: v26: boolean = ElemHas v7, v23 accessSite=15
-# CHECK-NEXT: Jump -> next b8(v25, v23, v26)
+# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v9 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v15: boolean = Less v12, v14
+# CHECK-NEXT: Branch v15 -> taken b3(| 0), notTaken b14()
+# CHECK-NEXT: b3(v16: int[0, 4294967294]):
+# CHECK-NEXT: v17: boolean = HasArrayStorage v9 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v18: guard):
+# CHECK-NEXT: v19: boolean = IsInBounds v9, v16
+# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: b5(v20: guard):
+# CHECK-NEXT: v21: guard = AllGuards v18, v20
+# CHECK-NEXT: v22: "demethodize"|"lastOfTheProgram" = GetArrayElement v9, v16, v21 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v23: 1 = Integer integer=1
+# CHECK-NEXT: v24: int[1, 4294967295] = Add v16, v23
+# CHECK-NEXT: v25: boolean = ElemHas v7, v22 accessSite=15
+# CHECK-NEXT: Jump -> next b8(v24, v22, v25)
 # CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v27: undefined|"demethodize"|"lastOfTheProgram" = ElemGet v10, v17 [keyIsIntegral]
-# CHECK-NEXT: v28: 1 = Integer integer=1
-# CHECK-NEXT: v29: int[1, 4294967295] = Add v17, v28
-# CHECK-NEXT: v30: boolean = ElemHas v7, v27 accessSite=15
-# CHECK-NEXT: v31: boolean = TypeTest v27 testedType="demethodize"|"lastOfTheProgram"
-# CHECK-NEXT: Branch v31 -> taken b7(| 0), notTaken b11()
-# CHECK-NEXT: b7(v32: "demethodize"|"lastOfTheProgram") frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8(v29, v32, v30)
-# CHECK-NEXT: b8(v33: int[1, 4294967295], v34: "demethodize"|"lastOfTheProgram", v35: boolean):
-# CHECK-NEXT: Branch v35 -> taken b9(), notTaken b10()
+# CHECK-NEXT: v26: undefined|"demethodize"|"lastOfTheProgram" = ElemGet v9, v16 [keyIsIntegral]
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: int[1, 4294967295] = Add v16, v27
+# CHECK-NEXT: v29: boolean = ElemHas v7, v26 accessSite=15
+# CHECK-NEXT: v30: boolean = TypeTest v26 testedType="demethodize"|"lastOfTheProgram"
+# CHECK-NEXT: Branch v30 -> taken b7(| 0), notTaken b11()
+# CHECK-NEXT: b7(v31: "demethodize"|"lastOfTheProgram") frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b8(v28, v31, v29)
+# CHECK-NEXT: b8(v32: int[1, 4294967295], v33: "demethodize"|"lastOfTheProgram", v34: boolean):
+# CHECK-NEXT: Branch v34 -> taken b9(), notTaken b10()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: Jump -> next b2(v33)
+# CHECK-NEXT: Jump -> next b2(v32)
 # CHECK-NEXT: b10():
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectDefineProperty
-# CHECK-NEXT: v37: anything = ElemGet v1, v34 accessSite=16 receivers=[L0, L1]
-# CHECK-NEXT: v38: undefined|f2|f3 = AssumeType v37 provenType=undefined|f2|f3
-# CHECK-NEXT: v39: false = Boolean
-# CHECK-NEXT: v40: true = Boolean boolean=true
-# CHECK-NEXT: v41: true = Boolean boolean=true
-# CHECK-NEXT: v42: L2 = NewObject -, v38, v39, v40, v41 layout=L2 fields=[4, 1, 5, 0] allocationSite=7 allocationClass=2
-# CHECK-NEXT: v43: L2 = FinishObject v42
-# CHECK-NEXT: v44: builtin(ArrayPrototype)|builtin(FunctionPrototype) = CallBuiltin -, v7, v34, v43 overload=ObjectDefineProperty/0 accessSite=20
-# CHECK-NEXT: Jump -> next b2(v33)
+# CHECK-NEXT: v35: anything = ElemGet v1, v33 accessSite=16 receivers=[L0, L1]
+# CHECK-NEXT: v36: undefined|f2|f3 = AssumeType v35 provenType=undefined|f2|f3
+# CHECK-NEXT: v37: false = Boolean
+# CHECK-NEXT: v38: true = Boolean boolean=true
+# CHECK-NEXT: v39: true = Boolean boolean=true
+# CHECK-NEXT: v40: L2 = NewObject -, v36, v37, v38, v39 layout=L2 fields=[4, 1, 5, 0] allocationSite=7 allocationClass=2
+# CHECK-NEXT: v41: L2 = FinishObject v40
+# CHECK-NEXT: v42: builtin(ArrayPrototype)|builtin(FunctionPrototype) = CallBuiltin -, v7, v33, v41 overload=ObjectDefineProperty/0 accessSite=20
+# CHECK-NEXT: Jump -> next b2(v32)
 # CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: Branch v30 -> taken b12(), notTaken b13()
+# CHECK-NEXT: Branch v29 -> taken b12(), notTaken b13()
 # CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v29)
+# CHECK-NEXT: Jump -> next b1(v28)
 # CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectDefineProperty
-# CHECK-NEXT: v46: anything = ElemGet v1, v27 accessSite=16 receivers=[L0, L1]
-# CHECK-NEXT: v47: undefined|f2|f3 = AssumeType v46 provenType=undefined|f2|f3
-# CHECK-NEXT: v48: false = Boolean
-# CHECK-NEXT: v49: true = Boolean boolean=true
-# CHECK-NEXT: v50: true = Boolean boolean=true
-# CHECK-NEXT: v51: L2 = NewObject -, v47, v48, v49, v50 layout=L2 fields=[4, 1, 5, 0] allocationSite=7 allocationClass=2
-# CHECK-NEXT: v52: L2 = FinishObject v51
-# CHECK-NEXT: v53: string|symbol = ToPropertyKey v27 calledBuiltin=ObjectDefineProperty
-# CHECK-NEXT: v54: builtin(ArrayPrototype)|builtin(FunctionPrototype) = CallBuiltin -, v7, v53, v52 overload=ObjectDefineProperty/0 accessSite=20
-# CHECK-NEXT: Jump -> next b1(v29)
+# CHECK-NEXT: v43: anything = ElemGet v1, v26 accessSite=16 receivers=[L0, L1]
+# CHECK-NEXT: v44: undefined|f2|f3 = AssumeType v43 provenType=undefined|f2|f3
+# CHECK-NEXT: v45: false = Boolean
+# CHECK-NEXT: v46: true = Boolean boolean=true
+# CHECK-NEXT: v47: true = Boolean boolean=true
+# CHECK-NEXT: v48: L2 = NewObject -, v44, v45, v46, v47 layout=L2 fields=[4, 1, 5, 0] allocationSite=7 allocationClass=2
+# CHECK-NEXT: v49: L2 = FinishObject v48
+# CHECK-NEXT: v50: string|symbol = ToPropertyKey v26 calledBuiltin=ObjectDefineProperty
+# CHECK-NEXT: v51: builtin(ArrayPrototype)|builtin(FunctionPrototype) = CallBuiltin -, v7, v50, v49 overload=ObjectDefineProperty/0 accessSite=20
+# CHECK-NEXT: Jump -> next b1(v28)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v55: undefined = Undefined
-# CHECK-NEXT: Return v55
+# CHECK-NEXT: v52: undefined = Undefined
+# CHECK-NEXT: Return v52
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="lastOfTheProgram"
 # CHECK: module=m0 position=371 kind=Method flags=[HasThis, HasExplicitName] thisType={type=undefined|null|string|Array flags=[IsExpected]} results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {

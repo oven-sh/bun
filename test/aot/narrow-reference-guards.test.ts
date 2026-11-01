@@ -5,10 +5,11 @@
 // `--aot-check=validate-reference-guards` proves the pointers over the machine-independent code of every function. A check that never
 // fails shows nothing, so here the pointers are left out and the build must fail. With the scan's knowledge of the numbers turned off,
 // the pointers alone must keep every object alive.
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
 const program = `
 class Link {

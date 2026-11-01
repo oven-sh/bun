@@ -4,6 +4,8 @@ use crate::builtins::table::{self, HostReadContext, HostReadUse};
 use crate::ir::StringTable;
 use crate::ir::generated::{Entry, HostRead};
 use crate::load::{EntryPointKind, ProgramFile, ProjectId};
+use crate::modules::ModuleExport;
+use bun_sema::util::SharedSort;
 
 pub(super) fn host_reads_of(
     kind: EntryPointKind,
@@ -34,7 +36,9 @@ pub(super) fn build_entries(input: &RecordInput<'_, '_>, strings: &mut StringTab
     let mut entries = Vec::new();
     for entry_point in input.projects.application.sources.entry_points() {
         match entry_point.kind {
-            EntryPointKind::Main | EntryPointKind::Additional => {}
+            EntryPointKind::Main
+            | EntryPointKind::Additional
+            | EntryPointKind::LoadedByTestRunner => {}
             _ => continue,
         }
         let file = ProgramFile {
@@ -44,12 +48,36 @@ pub(super) fn build_entries(input: &RecordInput<'_, '_>, strings: &mut StringTab
         let index = input.modules.index_of(ProgramModule::File(file));
         let module = input.numbering.modules[index as usize];
         let host_reads = host_reads_of(entry_point.kind);
+        let mut host_reads: Vec<HostRead> = host_reads
+            .map(|read| build_host_read(read, strings))
+            .collect();
+        if entry_point.kind == EntryPointKind::LoadedByTestRunner {
+            let exports = input.projects.application.graph.exports(entry_point.file);
+            host_reads.extend(read_everything(input, exports, strings));
+        }
         entries.push(Entry {
             module: module.expect("the mark evaluates every entry point"),
-            host_reads: host_reads
-                .map(|read| build_host_read(read, strings))
-                .collect(),
+            host_reads,
         });
     }
     entries
+}
+
+// What a CommonJS file exports is what its importers find under `default`.
+fn read_everything(
+    input: &RecordInput<'_, '_>,
+    exports: &[ModuleExport],
+    strings: &mut StringTable,
+) -> Vec<HostRead> {
+    let names = exports.iter().map(|export| input.atoms.bytes(export.name));
+    let names = names.chain([&b"default"[..]]);
+    let mut names: Vec<&[u8]> = names.collect();
+    names.shared_sort_unstable();
+    names.dedup();
+    let read = |name: &[u8]| HostRead {
+        export_name: strings.intern(name),
+        builtin: None,
+        parameter: 0,
+    };
+    names.into_iter().map(read).collect()
 }

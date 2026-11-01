@@ -127,11 +127,14 @@ function set(frame: Frame | undefined) {
 
 function isMasked(frame: Frame | undefined, storage: AsyncLocalStorage): boolean {
   if (frame === undefined || frame.masked === undefined) return false;
-  var masked = frame.masked;
-  for (var i = 0, n = masked.length; i < n; i++) {
-    if (masked[i] === storage) return true;
+  else {
+    ("unlikely");
+    var masked = frame.masked;
+    for (var i = 0, n = masked.length; i < n; i++) {
+      if (masked[i] === storage) return true;
+    }
+    return false;
   }
-  return false;
 }
 
 function unmask(masked: AsyncLocalStorage[] | undefined, storage: AsyncLocalStorage): AsyncLocalStorage[] | undefined {

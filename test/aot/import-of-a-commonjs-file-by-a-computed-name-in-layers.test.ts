@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 // `bun test --aot` compiles node_modules, src and the test files as programs of their own, and all of them run in one realm.
 // `await import(path)` of a CommonJS file of src answered with the exports of a CommonJS package, or the other way round, whichever had been imported first.

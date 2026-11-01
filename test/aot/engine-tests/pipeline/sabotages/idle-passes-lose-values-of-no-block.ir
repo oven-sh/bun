@@ -1,0 +1,6 @@
+# sabotage=IdlePassesLoseValuesOfNoBlock: the pass has lost a value, has made the log forget and says that it changed nothing: the build stops and names the pass
+# FORM: Prepared
+# RUN: pass FoldConstants
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=IdlePassesLoseValuesOfNoBlock
+# PROGRAM-OF: idle-passes-lose-values-of-no-block-left-alone.ir

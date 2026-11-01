@@ -11,6 +11,7 @@ use bun_sema::atom::Interner;
 use bun_sema::hir_from_data::{DataModule, DataValue};
 
 use super::assets::EmbeddedFiles;
+use super::css_modules;
 use super::data_values::{data_value_from_expr, report_not_data};
 use super::services::{BuildContext, with_ast_scope};
 
@@ -65,10 +66,13 @@ pub(crate) fn parse_data<'s>(
         Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
             Ok(create_string_module(b"", arena, atoms))
         }
-        Loader::Css => Ok(DataModule::Value {
-            default: arena.alloc(DataValue::Object(&[])),
-            exports_keys: false,
+        Loader::Css if css_modules::is_module_path(file.path) => Ok(DataModule::Value {
+            default: css_modules::exported_names(context, file, arena, atoms, log)?,
+            exports_keys: true,
         }),
+        Loader::Css => Ok(DataModule::MarkedDefault(
+            arena.alloc(DataValue::Object(&[])),
+        )),
         Loader::File | Loader::Wasm => {
             let path = embedded.embed_file(context, file, log)?;
             let runs_in_place = context.module_prefix.is_empty();
@@ -378,10 +382,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn css_is_empty_object_without_embedded_file() {
         load(Loader::Css, b".c { color: red }", |outcome| {
-            let module = DataModule::Value {
-                default: &DataValue::Object(&[]),
-                exports_keys: false,
-            };
+            let module = DataModule::MarkedDefault(&DataValue::Object(&[]));
             assert_eq!(outcome.result.unwrap(), module);
             assert!(outcome.embedded.into_output_files().is_empty());
         });

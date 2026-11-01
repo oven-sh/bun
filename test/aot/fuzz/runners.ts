@@ -43,7 +43,7 @@ export interface Program {
   meant?: (plain: string, compiled: string) => string | undefined;
   /**
    * It has a `plainEnvironment`, and without it plain Bun's output differs from run to run: an executable is right if
-   * it prints what one of forty such runs prints.
+   * it prints what one of some four hundred such runs prints.
    */
   unstablePlainOutput?: string;
   /**
@@ -766,23 +766,30 @@ export class ProductRunner implements Runner {
           ? { build, run: await this.#run(home, [executable], flags) }
           : { build };
       let verdict = compare(this, program, plain, compiled);
+      // One run first: most executables print what plain Bun usually prints. One after another its runs all print that,
+      // on a busy machine too. The orders that it prints once in a hundred runs show where many run at once.
       for (
-        let again = 0;
-        again < 40 &&
+        let burst = 0;
+        burst < 7 &&
         program.unstablePlainOutput &&
         compiled.run &&
         (verdict.kind === "different output" || verdict.kind === "different exit code");
-        again++
+        burst++
       ) {
-        const other = await spawned(
-          [this.options.reference ?? this.bun, `./${file}`],
-          home,
-          this.options.runSeconds,
-          undefined,
-          this.options.memory,
-          true,
+        const { stdout, exitCode } = compiled.run;
+        const others = await Promise.all(
+          Array.from({ length: burst ? 64 : 1 }, () =>
+            spawned(
+              [this.options.reference ?? this.bun, `./${file}`],
+              home,
+              this.options.runSeconds,
+              undefined,
+              this.options.memory,
+              true,
+            ),
+          ),
         );
-        if (other.stdout === compiled.run.stdout && other.exitCode === compiled.run.exitCode)
+        if (others.some(other => other.stdout === stdout && other.exitCode === exitCode))
           verdict = { kind: "skipped", why: program.unstablePlainOutput };
       }
       return [{ plain, compiled, verdict: this.#judged(program, flags, verdict) }];

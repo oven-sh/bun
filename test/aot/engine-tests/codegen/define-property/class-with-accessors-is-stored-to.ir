@@ -58,9 +58,9 @@ function f1 name="State" module=m0 position=150 kind=BaseConstructor flags=[HasN
   b0(v0: anything):
     Jump -> next b1() @150
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @123
-    v2 = NewObject v1 layout=L0 @123
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @123
+    v1 = GetConstructPrototype v0 layout=L0 @155
+    v2 = NewObject v1 layout=L0 @155
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @155
     v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]} @155
     v5 = Integer @167
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @155

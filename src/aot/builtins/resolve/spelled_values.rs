@@ -3,6 +3,7 @@
 
 use super::resolver::Resolver;
 use crate::builtins::table::{self, BuiltinId, MemberLookup};
+use bun_core::StackCheck;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Decl, FnOwner, Parent, PatParent, SymbolId};
 use bun_sema::hir::{
@@ -29,6 +30,36 @@ pub(super) struct Walk {
     seen: FxHashSet<ExprId>,
     /// The first of `SpelledValues::waiting` that it came round to.
     comes_round_to: usize,
+}
+
+struct Handed<T>(T);
+
+// SAFETY: whoever hands it over waits until the other thread has ended: one of the two runs at a time.
+unsafe impl<T> Send for Handed<T> {}
+
+impl<T> Handed<T> {
+    fn take(self) -> T {
+        self.0
+    }
+}
+
+/// The way from name to name is as long as the program makes it: ten thousand functions that each hand a parameter to the next. Where the stack of this thread
+/// runs low, the walk goes on on the stack of another thread, and this one waits for it.
+pub(super) fn on_a_stack_with_room<Found>(walk: impl FnOnce() -> Found) -> Found {
+    StackCheck::configure_thread();
+    if StackCheck::init().is_safe_to_recurse() {
+        return walk();
+    }
+    let walk = Handed(walk);
+    let thread = std::thread::Builder::new().stack_size(16 << 20);
+    let found = std::thread::scope(|scope| {
+        (thread.spawn_scoped(scope, move || Handed(walk.take()())))
+            .expect("a thread for the rest of the walk")
+            .join()
+    });
+    found
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        .take()
 }
 
 fn without_repeats(values: Vec<ExprId>) -> Vec<ExprId> {
@@ -77,13 +108,13 @@ impl Resolver<'_, '_> {
             seen: FxHashSet::default(),
             comes_round_to: place,
         };
-        match declaration {
+        on_a_stack_with_room(|| match declaration {
             Decl::Var(pattern) => self.push_values_of_variable(pattern, &mut from_name, &mut found),
             Decl::Param(pattern) => {
                 self.push_values_of_parameter(pattern, &mut from_name, &mut found);
             }
             _ => {}
-        }
+        });
         let mut spelled = self.spelled_values.borrow_mut();
         if from_name.comes_round_to < place {
             walk.comes_round_to = walk.comes_round_to.min(from_name.comes_round_to);
@@ -262,10 +293,14 @@ impl Resolver<'_, '_> {
     // `for (const [holder, name] of [[Math, "max"]])`, `pairs.forEach(([holder, name]) => { .. })`, `for (const { holder, name } of [{ holder: Math, name: "max" }])`
     fn push_values_of_part(&self, pattern: PatId, walk: &mut Walk, values: &mut Vec<ExprId>) {
         let (hir, bound) = (self.input.hir, self.input.bound);
-        let whole = match bound.pat_parent[pattern.idx()] {
-            PatParent::Elem(whole, _) | PatParent::Prop(whole, _) => whole,
+        let (whole, default) = match bound.pat_parent[pattern.idx()] {
+            PatParent::Elem(whole, element) => (whole, hir[element].default),
+            PatParent::Prop(whole, property) => (whole, hir[property].default),
             _ => return,
         };
+        if default.is_some() {
+            self.push_values_spelled_for(default, walk, values);
+        }
         let mut wholes = Vec::new();
         match bound.pat_parent[whole.idx()] {
             PatParent::Var(_) => self.push_values_of_variable(whole, walk, &mut wholes),
@@ -301,6 +336,78 @@ impl Resolver<'_, '_> {
                 self.push_values_spelled_for(part, walk, values);
             }
         }
+    }
+
+    /// `stubs` for `name` in `for (const name in stubs)`, `for (const name of Object.keys(stubs))`, `for (const [name, value] of Object.entries(stubs))`,
+    /// `Object.keys(stubs).forEach(name => { .. })` and `Object.entries(stubs).forEach(([name, value]) => { .. })`.
+    pub(super) fn find_object_whose_keys_are_listed_for(&self, key: ExprId) -> Option<ExprId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let key = hir.skip_type_assertions(key);
+        let (ExprKind::Ident(_), Binding::Symbol(symbol)) = (hir[key].kind, bound.binding(key))
+        else {
+            return None;
+        };
+        let &[Decl::Var(pattern) | Decl::Param(pattern)] = bound.symbol(symbol).decls else {
+            return None;
+        };
+        let (whole, is_first_of_pair) = match bound.pat_parent[pattern.idx()] {
+            PatParent::Elem(whole, element) => {
+                let PatKind::Array(elements) = hir[whole].kind else {
+                    return None;
+                };
+                let is_first = elements.iter().next() == Some(element) && !hir[element].is_rest;
+                (whole, is_first.then_some(true)?)
+            }
+            _ => (pattern, false),
+        };
+        let list = match bound.pat_parent[whole.idx()] {
+            PatParent::Var(declaration) if hir[declaration].init.is_none() => {
+                let statement = bound.var_stmt[declaration.idx()];
+                let Parent::Stmt(above) = bound.parent_of_stmt(statement) else {
+                    return None;
+                };
+                match hir[above].kind {
+                    StmtKind::ForIn { left, expr, .. } if left == statement => {
+                        return (!is_first_of_pair).then_some(expr);
+                    }
+                    StmtKind::ForOf { left, expr, .. } if left == statement => expr,
+                    _ => return None,
+                }
+            }
+            PatParent::Param(parameter) => {
+                let function = bound.param_fn[parameter.idx()];
+                let is_first = hir[function].params.iter().next() == Some(parameter);
+                let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
+                    return None;
+                };
+                let Parent::Expr(above) = bound.parent_of_expr(expression) else {
+                    return None;
+                };
+                let ExprKind::Call(call) = hir[above].kind else {
+                    return None;
+                };
+                let is_operand = hir.ids(hir[call].args).next() == Some(expression);
+                let callee = hir.skip_type_assertions(hir[call].callee);
+                let (list, MemberKey::Name(_)) = hir.member_key(callee)? else {
+                    return None;
+                };
+                (is_first && is_operand).then_some(list)?
+            }
+            _ => return None,
+        };
+        let ExprKind::Call(call) = hir[hir.skip_type_assertions(list)].kind else {
+            return None;
+        };
+        let lists_pairs = match self.value_of(hir[call].callee)?.path.id {
+            BuiltinId::ObjectKeys
+            | BuiltinId::ObjectGetOwnPropertyNames
+            | BuiltinId::ReflectOwnKeys => false,
+            BuiltinId::ObjectEntries => true,
+            _ => return None,
+        };
+        (lists_pairs == is_first_of_pair)
+            .then(|| hir.ids(hir[call].args).next())
+            .flatten()
     }
 
     fn collect_calls_by_name(&self) -> FxHashMap<SymbolId, Vec<CallId>> {

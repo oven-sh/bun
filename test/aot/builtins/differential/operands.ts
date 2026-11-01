@@ -377,7 +377,7 @@ function combinationsOf({ receiver, base }: Product, outcomes: Outcomes): Operan
 }
 
 // A length between these makes the built-in allocate and fill gigabytes.
-const allocatesByLength = /^(%CompilerHelpers%\.(\w+Array|array\w+)|%TypedArray%|\w+Array|ArrayBuffer|SharedArrayBuffer|Buffer(\.\w+)?|String\.prototype\.(repeat|padStart|padEnd)|Bun\.allocUnsafe|\w*ArrayBuffer\.prototype\.\w+)$/;
+const allocatesByLength = /^(%CompilerHelpers%\.(\w+Array|array\w+)|%TypedArray%|\w+Array|ArrayBuffer|SharedArrayBuffer|Buffer(\.\w+)?|String\.prototype\.(repeat|padStart|padEnd)|Bun\.allocUnsafe|node:buffer\.SlowBuffer|\w*ArrayBuffer\.prototype\.\w+)$/;
 const smallestHugeLength = 2 ** 24;
 const largestHugeLength = 2 ** 40;
 

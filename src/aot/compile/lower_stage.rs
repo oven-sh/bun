@@ -276,6 +276,18 @@ struct ProjectToLower<'a, 'b, 's> {
     source_that_fits_in_memory: Option<u64>,
     // --aot-sabotage=LoweringPanics
     panics: bool,
+    // --aot-sabotage=LoweringOverflowsStack
+    overflows_stack: bool,
+}
+
+// A walk that does not end, on the thread that lowers a file. No guard of the stack stands in it.
+#[inline(never)]
+fn overflow_stack(depth: u64) -> u64 {
+    if core::hint::black_box(depth) == u64::MAX {
+        return 0;
+    }
+    let filler = core::hint::black_box([depth; 16]);
+    core::hint::black_box(overflow_stack(depth + 1) + filler[(depth % 16) as usize])
 }
 
 impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
@@ -301,6 +313,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             threads,
             source_that_fits_in_memory,
             panics: false,
+            overflows_stack: false,
         }
     }
 
@@ -325,6 +338,9 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 let path = self.loaded.loaded.files().module(file).file_name();
                 let _work = current_work::working_on(current_work::Step::Lower, path);
                 assert!(!self.panics, "--aot-sabotage=LoweringPanics");
+                if self.overflows_stack {
+                    overflow_stack(0);
+                }
                 if !is_well_formed(self.loaded.loaded.files(), file)
                     || checker.found_early_error(file)
                     || self.decided.roles.reported_early_error(file)
@@ -655,6 +671,7 @@ impl Build<'_> {
             self.caches,
             self.limits.clone(),
         );
+        let packages_mock_any_module = self.packages_mock_any_module;
         let lowered: Vec<Guarded<Option<LoweredWorld>>> =
             to_lower.iter().map(|_| Guarded::new(None)).collect();
         let decisions = WorldDecisions::new(to_lower.len());
@@ -662,6 +679,8 @@ impl Build<'_> {
             let _decides = DecidesAtTheLatestOnDrop(&decisions, index);
             let lowered_world = {
                 let mut build = Build::new(options, provider, caches, limits.clone());
+                // Found out of the whole program, and the plan of the application goes by it: an import that leads nowhere is left to the loader.
+                build.packages_mock_any_module = packages_mock_any_module;
                 let mut world = Worlds::default();
                 let decide = |decision: WorldDecision| decisions.decide(index, decision);
                 build.lower_world(&inputs, &to_lower[index], &mut world, &decide);
@@ -945,6 +964,8 @@ impl Build<'_> {
                 let words = &self.options.aot.option_words;
                 of_application.panics =
                     (words.iter()).any(|it| **it == *b"sabotage=LoweringPanics");
+                of_application.overflows_stack =
+                    (words.iter()).any(|it| **it == *b"sabotage=LoweringOverflowsStack");
                 self.with_inputs_for_reached_code(
                     loaded,
                     bound,
@@ -1091,6 +1112,8 @@ impl Build<'_> {
             minifies_identifiers: self.options.minifies_identifiers,
             obfuscates: self.options.aot.obfuscates,
             counts_executions: self.options.aot.counts_executions,
+            imports_are_untyped: super::holds_test_files_alone(self.options),
+            runs_tests: self.options.load.runs_tests,
         }
     }
 

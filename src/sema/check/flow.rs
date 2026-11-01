@@ -121,6 +121,17 @@ pub(super) struct Reference {
 }
 
 impl Reference {
+    fn path_key(&self) -> u64 {
+        self.path.iter().fold(0, |key: u64, step| {
+            let part = match step.name.get() {
+                AccessedName::Some(name) => u64::from(name.0) << 2 | 1,
+                AccessedName::None => u64::from(root_key(step.variable)) << 2 | 2,
+                AccessedName::Unresolved(at) => u64::from(at.0) << 2 | 3,
+            };
+            (key.rotate_left(5) ^ part).wrapping_mul(0x517c_c1b7_2722_0a95)
+        })
+    }
+
     /// A reference that isn't an expression in the source: `root`, or `root.a.b`.
     fn synthetic(file: FileId, root: Root, path: SmallVec<[Step; 4]>, node: Node) -> Reference {
         Reference {
@@ -151,19 +162,17 @@ impl PartialEq for Reference {
 /// overwriting what a nested computation for the same node assigned.
 #[derive(Default)]
 pub(super) struct FlowMemo {
-    /// Built by `index_narrowing_subjects`, in field order: the file the index is for; by symbol,
-    /// the first flow node with a test, `switch` or assignment that concerns it (empty if the file
-    /// has no such filter); one bit per symbol, set while some call statement that mentions it
-    /// isn't known to be idle; those calls, by symbol.
     narrowing_index_file: Option<FileId>,
     first_narrowing_node: Vec<u32>,
     in_call_statements: Vec<u64>,
     call_statements_by_symbol: Vec<(SymbolId, FlowId)>,
+    idle_call_statements_in_front: Vec<u32>,
     /// Indexed by flow node: an upper bound on the node numbers reachable through its antecedents.
     /// (Only the back edge of a loop leads to a higher one.)
     max_antecedent: Vec<u32>,
     /// The same for a lower bound, up to the start of its function.
     min_antecedent: Vec<u32>,
+    deepest_walk_from: Vec<u32>,
     /// The flow nodes at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<(u32, ResolvesKey)>,
     /// The call statements and the clauses of a `switch (true)` with a union
@@ -216,7 +225,8 @@ pub(super) struct FlowMemo {
     equal_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
     /// `flowLoopCache`, keyed by the loop label and `getFlowReferenceKey`: the declared and the
     /// initial type, then the reference.
-    flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(Reference, TypeId); 1]>>,
+    flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(u32, TypeId); 1]>>,
+    flow_loop_references: Vec<Reference>,
     /// `Checker::work` when it got its latest entry.
     flow_loop_cached_at: u64,
     /// `switchStatementLinks`
@@ -377,7 +387,7 @@ struct ElementsSoFar {
 
 /// `FlowLoopKey`, with the `root_key` of the reference in its place. Without that, n names in n nested loops take n * n * n
 /// comparisons.
-type FlowLoopKey = (FileId, FlowId, TypeId, TypeId, u32);
+type FlowLoopKey = (FileId, FlowId, TypeId, TypeId, u32, u64);
 
 /// `SwitchStatementLinks`. tsgo assigns both unconditionally, so they keep the first computation's
 /// result even if it saw a loop's incomplete types.
@@ -438,7 +448,19 @@ impl FlowMemo {
 
     fn cached_flow_loop_type(&self, key: &FlowLoopKey, reference: &Reference) -> Option<TypeId> {
         let cached = self.flow_loop_cache.get(key)?;
-        cached.iter().find(|c| c.0 == *reference).map(|c| c.1)
+        let is_same = |c: &&(u32, TypeId)| self.flow_loop_references[c.0 as usize] == *reference;
+        cached.iter().find(is_same).map(|c| c.1)
+    }
+
+    fn cache_flow_loop_type(&mut self, key: FlowLoopKey, reference: &Reference, ty: TypeId) {
+        if self.flow_loop_references.last() != Some(reference) {
+            self.flow_loop_references.push(reference.clone());
+        }
+        let index = (self.flow_loop_references.len() - 1) as u32;
+        self.flow_loop_cache
+            .entry(key)
+            .or_default()
+            .push((index, ty));
     }
 }
 
@@ -5392,13 +5414,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Not in tsgo. Indexes the symbols of `file` that some node of its flow graph refers to: a
-    /// condition (`note_test`, as for `is_test_about`), a `switch`, an assignment target, a
-    /// `for in` expression. Nothing else can change the type of a reference rooted at a name,
-    /// except an assertion call (see `FlowMemo::in_call_statements`). The index is left empty if
-    /// some backward path through the graph may take `MAX_FLOW_DEPTH` invocations, because the walk
-    /// that detects that has to report it. The same nodes resolve the names of keys
-    /// (`FlowMemo::computed_key_nodes`).
     #[inline(never)]
     fn index_narrowing_subjects(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -5548,7 +5563,11 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if longest >= MAX_FLOW_DEPTH {
-            first_nodes.clear();
+            for length in &mut lengths {
+                *length = length.saturating_add(bound.flow_depth_added_by_loops);
+            }
+        } else {
+            lengths.clear();
         }
         for &(symbol, _) in &call_statements_by_symbol {
             mentioned_in_calls[symbol.idx() / 64] |= 1 << (symbol.idx() % 64);
@@ -5556,6 +5575,9 @@ impl<'p, 's> Checker<'p, 's> {
         call_statements_by_symbol.shared_sort_unstable_by_key(|&(symbol, flow)| (symbol.0, flow.0));
         let memo = &mut self.flow_memo;
         memo.narrowing_index_file = Some(file);
+        memo.idle_call_statements_in_front.clear();
+        memo.idle_call_statements_in_front
+            .resize(call_statements_by_symbol.len() + 1, 0);
         (
             memo.first_narrowing_node,
             memo.in_call_statements,
@@ -5563,6 +5585,7 @@ impl<'p, 's> Checker<'p, 's> {
         ) = (first_nodes, mentioned_in_calls, call_statements_by_symbol);
         (memo.max_antecedent, memo.declaration_node) = (highest, declaration_node);
         (memo.min_antecedent, memo.computed_key_nodes) = (lowest, computed_key_nodes);
+        memo.deepest_walk_from = lengths;
         memo.union_nodes = union_nodes;
         memo.finally_blocks = finally_blocks;
         finally_block_ends.sort_unstable();
@@ -5791,26 +5814,30 @@ impl<'p, 's> Checker<'p, 's> {
     /// in progress, and tsgo resolves it when a walk reaches it.
     #[inline(never)]
     fn are_call_statements_idle(&mut self, file: FileId, s: SymbolId, highest: u32) -> bool {
-        let memo = &self.flow_memo;
+        let memo = &mut self.flow_memo;
         let from = memo
             .call_statements_by_symbol
             .partition_point(|about| about.0.0 < s.0);
-        let calls = memo.call_statements_by_symbol[from..]
-            .iter()
-            .take_while(|about| about.0 == s);
-        let mut is_all = true;
-        for &(_, flow) in calls {
-            if !memo.is_idle_call(file, flow) {
-                if flow.0 <= highest {
-                    return false;
+        let mut next = from + memo.idle_call_statements_in_front[from] as usize;
+        let first_busy = loop {
+            match memo.call_statements_by_symbol.get(next) {
+                Some(&(symbol, flow)) if symbol == s => {
+                    if !memo.is_idle_call(file, flow) {
+                        break Some(flow);
+                    }
+                    next += 1;
                 }
-                is_all = false;
+                _ => break None,
+            }
+        };
+        memo.idle_call_statements_in_front[from] = (next - from) as u32;
+        match first_busy {
+            Some(flow) => flow.0 > highest,
+            None => {
+                memo.in_call_statements[s.idx() / 64] &= !(1 << (s.idx() % 64));
+                true
             }
         }
-        if is_all {
-            self.flow_memo.in_call_statements[s.idx() / 64] &= !(1 << (s.idx() % 64));
-        }
-        true
     }
 
     /// Not in tsgo. True if the walk for `reference` (the expression `e`), which passes no node
@@ -5863,6 +5890,10 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let memo = &self.flow_memo;
         let flow = bound.flow_of_expr(e);
+        let deepest_walk = memo.deepest_walk_from.get(flow.idx());
+        if deepest_walk.is_some_and(|&deepest| deepest >= MAX_FLOW_DEPTH) {
+            return false;
+        }
         // Nothing matches `f()["a"]` or `a[i]`, and an assignment to `a` leaves `a[i]` as declared.
         let matches_nothing =
             |step: &Step| step.name.get() == AccessedName::None && step.variable == Root::Other;
@@ -7230,6 +7261,7 @@ impl<'p, 's> Checker<'p, 's> {
                         walk.declared,
                         initial,
                         root_key(walk.reference.root),
+                        walk.reference.path_key(),
                     );
                     if let Some(cached) =
                         self.flow_memo.cached_flow_loop_type(&key, &walk.reference)
@@ -7324,10 +7356,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && interruptions_before == self.interruptions()
                     {
                         self.flow_memo
-                            .flow_loop_cache
-                            .entry(key)
-                            .or_default()
-                            .push((walk.reference.clone(), result.ty));
+                            .cache_flow_loop_type(key, &walk.reference, result.ty);
                         self.flow_memo.flow_loop_cached_at = self.work;
                         walk.deepest = deepest_at_label;
                     } else {
@@ -8992,6 +9021,7 @@ impl<'p, 's> Checker<'p, 's> {
             memo.settled_calls_of = Some(file);
             memo.settled_calls.clear();
             memo.settled_calls.resize(words, (0, 0));
+            memo.idle_call_statements_in_front.fill(0);
             memo.idle_runs.clear();
             memo.runs.file = None;
         }

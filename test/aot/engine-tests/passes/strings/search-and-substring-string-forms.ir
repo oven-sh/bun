@@ -308,13 +308,13 @@ function f30 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1180 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1255 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f5, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
@@ -326,24 +326,24 @@ function f30 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1410 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f7}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f7, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1547 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f8, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1609 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f9}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f9, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1673 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f10}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f10, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'make' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

@@ -123,7 +123,7 @@ function f1 name="merge" module=m0 position=209 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v4: 3 = Integer integer=3
 # CHECK-NEXT: v5: boolean = Less v2, v4
-# CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b28()
+# CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b26()
 # CHECK-NEXT: b3(v6: int[0, 2]):
 # CHECK-NEXT: v7: 1 = Integer integer=1
 # CHECK-NEXT: v8: Array<"t"> = Data data=d1 allocationSite=5
@@ -167,7 +167,7 @@ function f1 name="merge" module=m0 position=209 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v41: undefined|L2 = AssumeType v40 provenType=undefined|L2|L3|Object
 # CHECK-NEXT: v42: L2 = RequireObjectCoercible v41 name="n"
 # CHECK-NEXT: v43: int[-2147483643, 2147483647] = GetSlot v42 key="n" receivers=[L2] level=Proven accessSite=6
-# CHECK-NEXT: Jump -> next b14(v43, v40)
+# CHECK-NEXT: Jump -> next b13(v43, v40)
 # CHECK-NEXT: b8() frequency=Rare:
 # CHECK-NEXT: v44: anything ~ undefined|null|L2 = PropGet v16 key="inner" accessSite=5 receivers=[L1]
 # CHECK-NEXT: v45: undefined|L2|L3|Object ~ undefined|L2 = AssumeType v44 provenType=undefined|L2|L3|Object
@@ -183,65 +183,62 @@ function f1 name="merge" module=m0 position=209 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: Jump -> next b11(v52)
 # CHECK-NEXT: b11(v53: undefined|int ~ int[-2147483643, 2147483647]) frequency=Rare:
 # CHECK-NEXT: v54: anything ~ undefined|null|L2 = PropGet v16 key="inner" accessSite=7 receivers=[L1]
-# CHECK-NEXT: v55: boolean ~ true = TypeTest v54 testedType=undefined|null|L2
-# CHECK-NEXT: Branch v55 -> taken b12(| 0), notTaken b16()
-# CHECK-NEXT: b12(v56: undefined|null|L2) frequency=Rare:
-# CHECK-NEXT: v57: boolean ~ true = TypeTest v53 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v57 -> taken b13(| 0), notTaken b15()
-# CHECK-NEXT: b13(v58: int[-2147483643, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b14(v58, v56)
-# CHECK-NEXT: b14(v59: int[-2147483643, 2147483647], v60: undefined|null|L2) frequency=Unlikely:
-# CHECK-NEXT: v61: undefined|L2 = AssumeType v60 provenType=undefined|L2|L3|Object
-# CHECK-NEXT: v62: L2 = RequireObjectCoercible v61 name="tags"
-# CHECK-NEXT: v63: Array<"t", proven, pristine[Storage, Names, Dense]> = GetSlot v62 key="tags" receivers=[L2] level=Proven accessSite=8
-# CHECK-NEXT: Jump -> next b23(v63, v59)
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: Jump -> next b17()
-# CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: v55: boolean ~ true = TypeTest v53 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v55 -> taken b12(| 0), notTaken b21()
+# CHECK-NEXT: b12(v56: int[-2147483643, 2147483647]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b13(v56, v54)
+# CHECK-NEXT: b13(v57: int[-2147483643, 2147483647], v58: anything ~ undefined|null|L2) frequency=Unlikely:
+# CHECK-NEXT: v59: undefined|L2|L3|Object ~ undefined|L2 = AssumeType v58 provenType=undefined|L2|L3|Object
+# CHECK-NEXT: v60: L2|L3|Object ~ L2 = RequireObjectCoercible v59 name="tags"
+# CHECK-NEXT: v61: boolean ~ true = TypeTest v60 testedType=L2
+# CHECK-NEXT: Branch v61 -> taken b16(| 0), notTaken b14()
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: v62: boolean ~ true = TypeTest v60 testedType=L2|L3
+# CHECK-NEXT: Branch v62 -> taken b15(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b15(v63: L2|L3 ~ L2) frequency=Unlikely:
+# CHECK-NEXT: v64: boolean ~ true = TypeTest v63 testedType=L2
+# CHECK-NEXT: Branch v64 -> taken b16(| 0), notTaken b17()
+# CHECK-NEXT: b16(v65: L2) frequency=Unlikely:
+# CHECK-NEXT: v66: Array<"t", proven, pristine[Storage, Names, Dense]> = GetSlot v65 key="tags" receivers=[L2] level=Proven accessSite=8
+# CHECK-NEXT: Jump -> next b18(v66)
 # CHECK-NEXT: b17() frequency=Rare:
-# CHECK-NEXT: v64: fact = Specified
-# CHECK-NEXT: v65: undefined|L2|L3|Object ~ undefined|L2 = AssumeType v54, v64 provenType=undefined|L2|L3|Object
-# CHECK-NEXT: v66: L2|L3|Object ~ L2 = RequireObjectCoercible v65 name="tags"
-# CHECK-NEXT: v67: boolean ~ true = TypeTest v66 testedType=L2|L3
-# CHECK-NEXT: Branch v67 -> taken b18(| 0), notTaken b19(| 0)
-# CHECK-NEXT: b18(v68: L2|L3 ~ L2) frequency=Rare:
-# CHECK-NEXT: v69: anything ~ Array<"t", proven, pristine[Storage, Names, Dense]> = PropGet v68 key="tags" accessSite=8 receivers=[L2, L3]
-# CHECK-NEXT: Jump -> next b20(v69)
-# CHECK-NEXT: b19(v70: Object) frequency=Rare:
-# CHECK-NEXT: v71: anything = PropGet v70 key="tags" accessSite=8 receivers=[L2, ..]
+# CHECK-NEXT: v67: undefined = Undefined
+# CHECK-NEXT: Jump -> next b18(v67)
+# CHECK-NEXT: b18(v68: undefined|Array<"t", proven, pristine[Storage, Names, Dense]> ~ Array<"t", proven, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b20(v68)
+# CHECK-NEXT: b19(v69: Object) frequency=Rare:
+# CHECK-NEXT: v70: anything = PropGet v69 key="tags" accessSite=8 receivers=[L2, ..]
+# CHECK-NEXT: v71: undefined|Array<"t", proven, pristine[Storage, Names, Dense]> = AssumeType v70 provenType=undefined|Array<"t", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b20(v71)
-# CHECK-NEXT: b20(v72: anything ~ Array<"t", proven, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v73: boolean ~ true = TypeTest v72 testedType=Array<"t">
-# CHECK-NEXT: Branch v73 -> taken b21(| 0), notTaken b25()
-# CHECK-NEXT: b21(v74: Array<"t"> ~ Array<"t", proven, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v75: boolean ~ true = TypeTest v53 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v75 -> taken b22(| 0), notTaken b24()
-# CHECK-NEXT: b22(v76: int[-2147483643, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v77: fact = Specified
-# CHECK-NEXT: v78: Array<"t", proven, pristine[Storage, Names, Dense]> = AssumeType v74, v77 provenType=undefined|Array<"t", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b23(v78, v76)
-# CHECK-NEXT: b23(v79: Array<"t", proven, pristine[Storage, Names, Dense]>, v80: int[-2147483643, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v81: string = CallBuiltin v79 overload=ArrayPrototypeJoin/0 accessSite=10
-# CHECK-NEXT: v82: int[-2147483643, 2147483647] = GetSlot v10 key="n" receivers=[L2] level=Proven accessSite=12
-# CHECK-NEXT: Jump -> next b27(v82, v80, v81)
-# CHECK-NEXT: b24() frequency=Rare:
-# CHECK-NEXT: Jump -> next b26()
-# CHECK-NEXT: b25() frequency=Rare:
-# CHECK-NEXT: Jump -> next b26()
-# CHECK-NEXT: b26() frequency=Rare:
-# CHECK-NEXT: v83: fact = Specified
-# CHECK-NEXT: v84: undefined|Array<"t", proven, pristine[Storage, Names, Dense]> ~ Array<"t", proven, pristine[Storage, Names, Dense]> = AssumeType v72, v83 provenType=undefined|Array<"t", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v85: Array<"t", proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v84 name="join"
-# CHECK-NEXT: v86: string = CallBuiltin v85 overload=ArrayPrototypeJoin/0 accessSite=10
-# CHECK-NEXT: v87: int[-2147483643, 2147483647] = GetSlot v10 key="n" receivers=[L2, L3] level=Proven accessSite=12
-# CHECK-NEXT: Jump -> next b27(v87, v53, v86)
-# CHECK-NEXT: b27(v88: int[-2147483643, 2147483647], v89: undefined|int ~ int[-2147483643, 2147483647], v90: string) frequency=Unlikely:
-# CHECK-NEXT: v91: "x" = String string="x"
-# CHECK-NEXT: v92: undefined = CallBuiltin -, v6, v91, v89, v90, v88 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v93: int[1, 3] = Increment v6
-# CHECK-NEXT: Jump -> next b1(v93)
-# CHECK-NEXT: b28():
-# CHECK-NEXT: v94: undefined = Undefined
-# CHECK-NEXT: Return v94
+# CHECK-NEXT: b20(v72: undefined|Array<"t", proven, pristine[Storage, Names, Dense]> ~ Array<"t", proven, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v73: Array<"t", proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v72 name="join"
+# CHECK-NEXT: v74: string = CallBuiltin v73 overload=ArrayPrototypeJoin/0 accessSite=10
+# CHECK-NEXT: v75: int[-2147483643, 2147483647] = GetSlot v10 key="n" receivers=[L2] level=Proven accessSite=12
+# CHECK-NEXT: Jump -> next b25(v75, v57, v74)
+# CHECK-NEXT: b21() frequency=Rare:
+# CHECK-NEXT: v76: fact = Specified
+# CHECK-NEXT: v77: undefined|L2|L3|Object ~ undefined|L2 = AssumeType v54, v76 provenType=undefined|L2|L3|Object
+# CHECK-NEXT: v78: L2|L3|Object ~ L2 = RequireObjectCoercible v77 name="tags"
+# CHECK-NEXT: v79: boolean ~ true = TypeTest v78 testedType=L2|L3
+# CHECK-NEXT: Branch v79 -> taken b22(| 0), notTaken b23(| 0)
+# CHECK-NEXT: b22(v80: L2|L3 ~ L2) frequency=Rare:
+# CHECK-NEXT: v81: anything ~ Array<"t", proven, pristine[Storage, Names, Dense]> = PropGet v80 key="tags" accessSite=8 receivers=[L2, L3]
+# CHECK-NEXT: Jump -> next b24(v81)
+# CHECK-NEXT: b23(v82: Object) frequency=Rare:
+# CHECK-NEXT: v83: anything = PropGet v82 key="tags" accessSite=8 receivers=[L2, ..]
+# CHECK-NEXT: Jump -> next b24(v83)
+# CHECK-NEXT: b24(v84: anything ~ Array<"t", proven, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v85: undefined|Array<"t", proven, pristine[Storage, Names, Dense]> ~ Array<"t", proven, pristine[Storage, Names, Dense]> = AssumeType v84 provenType=undefined|Array<"t", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v86: Array<"t", proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v85 name="join"
+# CHECK-NEXT: v87: string = CallBuiltin v86 overload=ArrayPrototypeJoin/0 accessSite=10
+# CHECK-NEXT: v88: int[-2147483643, 2147483647] = GetSlot v10 key="n" receivers=[L2, L3] level=Proven accessSite=12
+# CHECK-NEXT: Jump -> next b25(v88, v53, v87)
+# CHECK-NEXT: b25(v89: int[-2147483643, 2147483647], v90: undefined|int ~ int[-2147483643, 2147483647], v91: string) frequency=Unlikely:
+# CHECK-NEXT: v92: "x" = String string="x"
+# CHECK-NEXT: v93: undefined = CallBuiltin -, v6, v92, v90, v91, v89 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v94: int[1, 3] = Increment v6
+# CHECK-NEXT: Jump -> next b1(v94)
+# CHECK-NEXT: b26():
+# CHECK-NEXT: v95: undefined = Undefined
+# CHECK-NEXT: Return v95
 # CHECK-NEXT: }

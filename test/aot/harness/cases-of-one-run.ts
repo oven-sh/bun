@@ -1,6 +1,7 @@
 // The cases of a test file as the test files of one project, which is run once for each way of running it.
-import { afterAll } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "../supported";
 import { run } from "./run";
 
 export type CaseOfRun = {
@@ -10,12 +11,28 @@ export type CaseOfRun = {
   printed: string;
 };
 
-export function casesOfOneRun(name: string, shared: Record<string, string> = {}) {
+/** The arguments of `ran`. */
+export type Way = [flags: string[], words?: string];
+
+/**
+ * `ways`: each gets a case of its own ahead of the cases that read it. Else the first of them waits for every run, one after another, in the time of one case.
+ * `declare`: the `test` of the file, where that is not the one of ../supported.
+ */
+export function casesOfOneRun(
+  name: string,
+  shared: Record<string, string> = {},
+  ways: Way[] = [],
+  declare: typeof test = test,
+) {
   const files: Record<string, string> = { ...shared };
   const runs = new Map<string, Promise<Map<string, CaseOfRun>>>();
   let count = 0;
   let folder: ReturnType<typeof tempDir> | undefined;
   afterAll(() => folder?.[Symbol.dispose]());
+  for (const [flags, words] of ways)
+    declare(`${name} runs: ${[...flags, words].filter(Boolean).join(" ") || "plain"}`, async () => {
+      expect((await ran(flags, words)).size).toBeGreaterThan(0);
+    });
 
   /**
    * Adds a folder with a test file and what it imports. `testFile` gets the name of the case: its one test has that name, and what

@@ -7,8 +7,16 @@ export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.any } });
 
 const js = { capability: "js", throws: true } as const;
 
-/** `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. Outside of `bun test`, and in a preload, it takes anything. */
-export const jest = b.fn({ args: { path: b.string.utf8.otherAsNull }, returns: b.any, ...js });
+/**
+ * `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. Outside of `bun test`, and in a preload, it takes anything.
+ * `byWhoLoads` is for a file that `bun test --aot` compiled: the module that `bun test` would take the file's globals from if it transpiled the file now.
+ */
+export const jest = b.fn({
+  args: { path: b.string.utf8.otherAsNull, byWhoLoads: b.bool.loose },
+  returns: b.any,
+  length: 1,
+  ...js,
+});
 /** Also `jest.setTimeout`. */
 export const setDefaultTimeout = b.fn({
   export: "Bun__Jest__setDefaultTimeout",

@@ -7,7 +7,9 @@
 //!
 //! A compiled run (`--aot`) under `--parallel` also measures by how much each file's worker grew, with what it started, and writes
 //! `"memory": { "relative/path.test.ts": megabytes }` beside `"files"`. The next such run keeps the files that took over a
-//! gigabyte apart: those that run at once took no more together than the largest of them took alone.
+//! gigabyte apart: those that run at once took no more together than the largest of them took alone. It also writes
+//! `"workers": count`, how many test files ran at once while the times were taken: `--shard` under `--aot` weighs a shard's build
+//! and its longest file against the sum of its times by that, which every shard reads alike, and not by its own `--parallel`.
 
 use std::io::Write as _;
 
@@ -32,8 +34,8 @@ pub(crate) struct Timings {
     /// The same keys → the megabytes by which the file's worker grew at most while it ran the file, with what it started.
     growth: StringArrayHashMap<u32>,
     measured_growth: StringArrayHashMap<u32>,
-    /// A file that took more megabytes is heavy. With `--aot-memory-limit` that is a worker's share of the limit.
-    pub(crate) heavy_over: u32,
+    /// How many test files ran at once while the times were taken: the most that a file read says. 0: none says.
+    workers: u32,
     /// Cost assigned to files with no entry when packing shards.
     median: u32,
     /// Nine files in ten take no longer.
@@ -45,8 +47,9 @@ impl Timings {
     pub(crate) fn load(paths: &[Box<[u8]>]) -> Timings {
         let mut map: StringArrayHashMap<u32> = StringArrayHashMap::new();
         let mut growth: StringArrayHashMap<u32> = StringArrayHashMap::new();
+        let mut workers = 0;
         for path in paths {
-            Self::load_one(path, &mut map, &mut growth);
+            Self::load_one(path, &mut map, &mut growth, &mut workers);
         }
         let (median, slow) = {
             let mut known: Vec<u32> = map.values().to_vec();
@@ -60,7 +63,7 @@ impl Timings {
             measured: StringArrayHashMap::new(),
             growth,
             measured_growth: StringArrayHashMap::new(),
-            heavy_over: 1024,
+            workers,
             median,
             slow,
         }
@@ -70,6 +73,7 @@ impl Timings {
         path: &[u8],
         map: &mut StringArrayHashMap<u32>,
         growth: &mut StringArrayHashMap<u32>,
+        workers: &mut u32,
     ) {
         let contents = match File::read_from(Fd::cwd(), path) {
             Ok(contents) => contents,
@@ -126,8 +130,24 @@ impl Timings {
                 }
             });
         }
+        let count = root.as_property(b"workers");
+        if let Some(count) = count.and_then(|count| count.expr.as_number())
+            && count.is_finite()
+            && count >= 0.0
+        {
+            *workers = (*workers).max(count.round().min(u32::MAX as f64) as u32);
+        }
         bun_ast::Expr::data_store_reset();
         bun_ast::Stmt::data_store_reset();
+    }
+
+    pub(crate) fn workers(&self) -> u32 {
+        self.workers
+    }
+
+    /// Only a compiled run says: what the table has stays through a plain one.
+    pub(crate) fn record_workers(&mut self, workers: u32) {
+        self.workers = workers;
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -152,6 +172,9 @@ impl Timings {
         let key = Self::key_for(abs_path);
         let _ = self.map.put(&key, ms);
         let _ = self.measured.put(&key, ms);
+        if let Some(&megabytes) = self.growth.get(&key) {
+            let _ = self.measured_growth.put(&key, megabytes);
+        }
     }
 
     pub(crate) fn growth_of(&self, abs_path: &[u8]) -> Option<u32> {
@@ -161,7 +184,7 @@ impl Timings {
     /// Its worker grew by over a gigabyte when the file was last measured.
     pub(crate) fn is_heavy(&self, abs_path: &[u8]) -> bool {
         self.growth_of(abs_path)
-            .is_some_and(|megabytes| megabytes > self.heavy_over)
+            .is_some_and(|megabytes| megabytes > 1024)
     }
 
     /// What the heaviest of `files` took. A run needs room for it, so heavy files that took no more together may run at once.
@@ -179,17 +202,6 @@ impl Timings {
             .filter_map(|file| self.growth_of(file.as_bytes()));
         let sum: u64 = growths.map(u64::from).sum();
         u32::try_from(sum * u64::from(count) / (files.len() as u64).max(1)).unwrap_or(u32::MAX)
-    }
-
-    /// What a file that is not heavy took that runs at a moment taken at random: the longer a file runs, the more it counts.
-    pub(crate) fn growth_of_running_light_file(&self, files: &[Interned]) -> u32 {
-        let (mut growth, mut time) = (0u64, 0u64);
-        for file in files.iter().filter(|file| !self.is_heavy(file.as_bytes())) {
-            let ms = u64::from(self.get(file.as_bytes()).unwrap_or(self.median));
-            growth += ms * u64::from(self.growth_of(file.as_bytes()).unwrap_or(0));
-            time += ms;
-        }
-        u32::try_from(growth / time.max(1)).unwrap_or(u32::MAX)
     }
 
     pub(crate) fn record_growth(&mut self, abs_path: &[u8], megabytes: u32) {
@@ -301,6 +313,7 @@ impl Timings {
     /// run ran; otherwise everything read is carried through so a local partial
     /// run doesn't shrink the table.
     pub(crate) fn write(&mut self, only_measured: bool) {
+        let workers = self.workers;
         let (map, growth) = if only_measured {
             (&mut self.measured, &mut self.measured_growth)
         } else {
@@ -308,6 +321,9 @@ impl Timings {
         };
         let mut out: Vec<u8> = Vec::with_capacity((map.count() + growth.count()) * 48 + 60);
         out.extend_from_slice(b"{\n  \"version\": 1");
+        if workers != 0 {
+            let _ = write!(&mut out, ",\n  \"workers\": {workers}");
+        }
         for (name, numbers) in [("files", map), ("memory", growth)] {
             if name == "memory" && numbers.count() == 0 {
                 continue;

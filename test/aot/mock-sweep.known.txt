@@ -1,0 +1,221 @@
+# Projects of mock-sweep-<part>.test.ts that print something else under `bun test --aot` than in a plain run: `<project>: one` as one program, `two` over two layers.
+# A project that differs and isn't named fails, and so does one that is named and agrees: take its line out with the fix. `~ <project>`: it changes from run to run.
+# CI runs every fifth project as one program. All of them, both ways: BUN_AOT_WHOLE_MOCK_SWEEP=1. To write this list anew: BUN_AOT_REWRITE_MOCK_SWEEP=1.
+~ cjs-jest-mock-none-first
+~ cjs-jest-mock-none-behind-imports
+~ cjs-jest-mock-none-in-test-unloaded
+~ cjs-jest-mock-none-in-test-loaded
+~ cjs-jest-mock-none-preload
+~ cjs-jest-mock-none-before-all
+~ cjs-vi-mock-none-first
+~ cjs-vi-mock-none-behind-imports
+~ cjs-vi-mock-none-in-test-unloaded
+~ cjs-vi-mock-none-in-test-loaded
+~ cjs-vi-mock-none-preload
+~ cjs-vi-mock-none-before-all
+~ cjs-jest-doMock-none-first
+~ cjs-jest-doMock-none-behind-imports
+~ cjs-jest-doMock-none-in-test-unloaded
+~ cjs-jest-doMock-none-in-test-loaded
+~ cjs-jest-doMock-none-preload
+~ cjs-jest-doMock-none-before-all
+~ cjs-vi-doMock-none-first
+~ cjs-vi-doMock-none-behind-imports
+~ cjs-vi-doMock-none-in-test-unloaded
+~ cjs-vi-doMock-none-in-test-loaded
+~ cjs-vi-doMock-none-preload
+~ cjs-vi-doMock-none-before-all
+~ mjs-jest-mock-none-first
+~ mjs-jest-mock-none-behind-imports
+~ mjs-jest-mock-none-in-test-unloaded
+~ mjs-jest-mock-none-in-test-loaded
+~ mjs-jest-mock-none-preload
+~ mjs-jest-mock-none-before-all
+~ mjs-vi-mock-none-first
+~ mjs-vi-mock-none-behind-imports
+~ mjs-vi-mock-none-in-test-unloaded
+~ mjs-vi-mock-none-in-test-loaded
+~ mjs-vi-mock-none-preload
+~ mjs-vi-mock-none-before-all
+~ mjs-jest-doMock-none-first
+~ mjs-jest-doMock-none-behind-imports
+~ mjs-jest-doMock-none-in-test-unloaded
+~ mjs-jest-doMock-none-in-test-loaded
+~ mjs-jest-doMock-none-preload
+~ mjs-jest-doMock-none-before-all
+~ mjs-vi-doMock-none-first
+~ mjs-vi-doMock-none-behind-imports
+~ mjs-vi-doMock-none-in-test-unloaded
+~ mjs-vi-doMock-none-in-test-loaded
+~ mjs-vi-doMock-none-preload
+~ mjs-vi-doMock-none-before-all
+cjs-jest-doMock-actual-before-all: one two
+cjs-jest-doMock-actual-in-test-unloaded: one two
+cjs-jest-doMock-actual-preload: one two
+cjs-jest-doMock-partial-before-all-user-alone: one two
+cjs-jest-doMock-partial-behind-imports-user-alone: one two
+cjs-jest-doMock-partial-first-user-alone: one two
+cjs-jest-doMock-partial-in-test-loaded-user-alone: one two
+cjs-jest-doMock-partial-in-test-unloaded-user-alone: one two
+cjs-jest-doMock-throws-preload-user-alone: one two
+cjs-jest-doMock-throws-preload: one two
+cjs-jest-doMock-timer-in-test-loaded: one two
+cjs-jest-doMock-whole-before-all-user-alone: one two
+cjs-jest-doMock-whole-behind-imports-user-alone: one two
+cjs-jest-doMock-whole-first-user-alone: one two
+cjs-jest-doMock-whole-in-test-loaded-user-alone: one two
+cjs-jest-doMock-whole-in-test-unloaded-user-alone: one two
+cjs-jest-mock-actual-before-all: one two
+cjs-jest-mock-actual-behind-imports: one two
+cjs-jest-mock-actual-first: one two
+cjs-jest-mock-actual-in-test-unloaded: one two
+cjs-jest-mock-actual-preload: one two
+cjs-jest-mock-earlier-preload: one two
+cjs-jest-mock-partial-before-all-user-alone: one two
+cjs-jest-mock-partial-behind-imports-user-alone: one two
+cjs-jest-mock-partial-first-user-alone: one two
+cjs-jest-mock-partial-in-test-loaded-user-alone: one two
+cjs-jest-mock-partial-in-test-unloaded-user-alone: one two
+cjs-jest-mock-throws-preload-user-alone: one two
+cjs-jest-mock-throws-preload: one two
+cjs-jest-mock-timer-in-test-loaded: one two
+cjs-jest-mock-whole-before-all-user-alone: one two
+cjs-jest-mock-whole-behind-imports-user-alone: one two
+cjs-jest-mock-whole-first-user-alone: one two
+cjs-jest-mock-whole-in-test-loaded-user-alone: one two
+cjs-jest-mock-whole-in-test-unloaded-user-alone: one two
+cjs-mock-module-actual-before-all: one two
+cjs-mock-module-actual-in-test-unloaded: one two
+cjs-mock-module-actual-preload: one two
+cjs-mock-module-partial-before-all-user-alone: one two
+cjs-mock-module-partial-behind-imports-user-alone: one two
+cjs-mock-module-partial-first-user-alone: one two
+cjs-mock-module-partial-in-test-loaded-user-alone: one two
+cjs-mock-module-partial-in-test-unloaded-user-alone: one two
+cjs-mock-module-throws-preload-user-alone: one two
+cjs-mock-module-throws-preload: one two
+cjs-mock-module-timer-in-test-loaded: one two
+cjs-mock-module-whole-before-all-user-alone: one two
+cjs-mock-module-whole-behind-imports-user-alone: one two
+cjs-mock-module-whole-first-user-alone: one two
+cjs-mock-module-whole-in-test-loaded-user-alone: one two
+cjs-mock-module-whole-in-test-unloaded-user-alone: one two
+cjs-vi-doMock-actual-before-all: one two
+cjs-vi-doMock-actual-in-test-unloaded: one two
+cjs-vi-doMock-actual-preload: one two
+cjs-vi-doMock-partial-before-all-user-alone: one two
+cjs-vi-doMock-partial-behind-imports-user-alone: one two
+cjs-vi-doMock-partial-first-user-alone: one two
+cjs-vi-doMock-partial-in-test-loaded-user-alone: one two
+cjs-vi-doMock-partial-in-test-unloaded-user-alone: one two
+cjs-vi-doMock-throws-preload-user-alone: one two
+cjs-vi-doMock-throws-preload: one two
+cjs-vi-doMock-whole-before-all-user-alone: one two
+cjs-vi-doMock-whole-behind-imports-user-alone: one two
+cjs-vi-doMock-whole-first-user-alone: one two
+cjs-vi-doMock-whole-in-test-loaded-user-alone: one two
+cjs-vi-doMock-whole-in-test-unloaded-user-alone: one two
+cjs-vi-mock-actual-before-all: one two
+cjs-vi-mock-actual-behind-imports: one two
+cjs-vi-mock-actual-first: one two
+cjs-vi-mock-actual-in-test-unloaded: one two
+cjs-vi-mock-actual-preload: one two
+cjs-vi-mock-earlier-preload: one two
+cjs-vi-mock-partial-before-all-user-alone: one two
+cjs-vi-mock-partial-behind-imports-user-alone: one two
+cjs-vi-mock-partial-first-user-alone: one two
+cjs-vi-mock-partial-in-test-loaded-user-alone: one two
+cjs-vi-mock-partial-in-test-unloaded-user-alone: one two
+cjs-vi-mock-throws-preload-user-alone: one two
+cjs-vi-mock-throws-preload: one two
+cjs-vi-mock-timer-in-test-loaded: one two
+cjs-vi-mock-whole-before-all-user-alone: one two
+cjs-vi-mock-whole-behind-imports-user-alone: one two
+cjs-vi-mock-whole-first-user-alone: one two
+cjs-vi-mock-whole-in-test-loaded-user-alone: one two
+cjs-vi-mock-whole-in-test-unloaded-user-alone: one two
+mjs-jest-doMock-actual-before-all: one two
+mjs-jest-doMock-actual-in-test-unloaded: one two
+mjs-jest-doMock-actual-preload: one two
+mjs-jest-doMock-partial-before-all-user-alone: one two
+mjs-jest-doMock-partial-behind-imports-user-alone: one two
+mjs-jest-doMock-partial-first-user-alone: one two
+mjs-jest-doMock-partial-in-test-loaded-user-alone: one two
+mjs-jest-doMock-partial-in-test-unloaded-user-alone: one two
+mjs-jest-doMock-throws-preload-user-alone: one two
+mjs-jest-doMock-throws-preload: one two
+mjs-jest-doMock-timer-in-test-loaded: one two
+mjs-jest-doMock-whole-before-all-user-alone: one two
+mjs-jest-doMock-whole-behind-imports-user-alone: one two
+mjs-jest-doMock-whole-first-user-alone: one two
+mjs-jest-doMock-whole-in-test-loaded-user-alone: one two
+mjs-jest-doMock-whole-in-test-unloaded-user-alone: one two
+mjs-jest-mock-actual-before-all: one two
+mjs-jest-mock-actual-behind-imports: one two
+mjs-jest-mock-actual-first: one two
+mjs-jest-mock-actual-in-test-unloaded: one two
+mjs-jest-mock-actual-preload: one two
+mjs-jest-mock-earlier-preload: one two
+mjs-jest-mock-partial-before-all-user-alone: one two
+mjs-jest-mock-partial-behind-imports-user-alone: one two
+mjs-jest-mock-partial-first-user-alone: one two
+mjs-jest-mock-partial-in-test-loaded-user-alone: one two
+mjs-jest-mock-partial-in-test-unloaded-user-alone: one two
+mjs-jest-mock-throws-preload-user-alone: one two
+mjs-jest-mock-throws-preload: one two
+mjs-jest-mock-timer-in-test-loaded: one two
+mjs-jest-mock-whole-before-all-user-alone: one two
+mjs-jest-mock-whole-behind-imports-user-alone: one two
+mjs-jest-mock-whole-first-user-alone: one two
+mjs-jest-mock-whole-in-test-loaded-user-alone: one two
+mjs-jest-mock-whole-in-test-unloaded-user-alone: one two
+mjs-mock-module-actual-before-all: one two
+mjs-mock-module-actual-in-test-unloaded: one two
+mjs-mock-module-actual-preload: one two
+mjs-mock-module-partial-before-all-user-alone: one two
+mjs-mock-module-partial-behind-imports-user-alone: one two
+mjs-mock-module-partial-first-user-alone: one two
+mjs-mock-module-partial-in-test-loaded-user-alone: one two
+mjs-mock-module-partial-in-test-unloaded-user-alone: one two
+mjs-mock-module-throws-preload-user-alone: one two
+mjs-mock-module-throws-preload: one two
+mjs-mock-module-timer-in-test-loaded: one two
+mjs-mock-module-whole-before-all-user-alone: one two
+mjs-mock-module-whole-behind-imports-user-alone: one two
+mjs-mock-module-whole-first-user-alone: one two
+mjs-mock-module-whole-in-test-loaded-user-alone: one two
+mjs-mock-module-whole-in-test-unloaded-user-alone: one two
+mjs-vi-doMock-actual-before-all: one two
+mjs-vi-doMock-actual-in-test-unloaded: one two
+mjs-vi-doMock-actual-preload: one two
+mjs-vi-doMock-partial-before-all-user-alone: one two
+mjs-vi-doMock-partial-behind-imports-user-alone: one two
+mjs-vi-doMock-partial-first-user-alone: one two
+mjs-vi-doMock-partial-in-test-loaded-user-alone: one two
+mjs-vi-doMock-partial-in-test-unloaded-user-alone: one two
+mjs-vi-doMock-throws-preload-user-alone: one two
+mjs-vi-doMock-throws-preload: one two
+mjs-vi-doMock-whole-before-all-user-alone: one two
+mjs-vi-doMock-whole-behind-imports-user-alone: one two
+mjs-vi-doMock-whole-first-user-alone: one two
+mjs-vi-doMock-whole-in-test-loaded-user-alone: one two
+mjs-vi-doMock-whole-in-test-unloaded-user-alone: one two
+mjs-vi-mock-actual-before-all: one two
+mjs-vi-mock-actual-behind-imports: one two
+mjs-vi-mock-actual-first: one two
+mjs-vi-mock-actual-in-test-unloaded: one two
+mjs-vi-mock-actual-preload: one two
+mjs-vi-mock-earlier-preload: one two
+mjs-vi-mock-partial-before-all-user-alone: one two
+mjs-vi-mock-partial-behind-imports-user-alone: one two
+mjs-vi-mock-partial-first-user-alone: one two
+mjs-vi-mock-partial-in-test-loaded-user-alone: one two
+mjs-vi-mock-partial-in-test-unloaded-user-alone: one two
+mjs-vi-mock-throws-preload-user-alone: one two
+mjs-vi-mock-throws-preload: one two
+mjs-vi-mock-timer-in-test-loaded: one two
+mjs-vi-mock-whole-before-all-user-alone: one two
+mjs-vi-mock-whole-behind-imports-user-alone: one two
+mjs-vi-mock-whole-first-user-alone: one two
+mjs-vi-mock-whole-in-test-loaded-user-alone: one two
+mjs-vi-mock-whole-in-test-unloaded-user-alone: one two

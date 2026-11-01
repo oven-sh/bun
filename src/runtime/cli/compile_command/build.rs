@@ -135,7 +135,7 @@ fn write_product(
 ) -> Result<(), CompileFailure> {
     let started = Instant::now();
     let options = request.options;
-    add_assets(
+    let assets_named_at_root = add_assets(
         request,
         product.outfile,
         &build.root_directory,
@@ -200,10 +200,14 @@ fn write_product(
             is_base_url: alias.is_base_url,
         })
         .collect();
-    let root_below_working_directory = match options.loads_code_from_disk && !options.runs_in_place
-    {
-        true => find_root_below_working_directory(&build.root_directory),
-        false => None,
+    let names_no_folder = |way: &Vec<u8>| {
+        let mut parts = way.split(|&byte| bun_paths::is_sep_native(byte));
+        parts.all(|name| name.is_empty() || name == b"..")
+    };
+    let root_below_working_directory = match options.runs_in_place {
+        true => None,
+        false => find_root_below_working_directory(&build.root_directory)
+            .filter(|way| options.loads_code_from_disk || names_no_folder(way)),
     };
     let root_from_executable = match &request.product {
         CompileProduct::Executable { outfile }
@@ -234,6 +238,7 @@ fn write_product(
             // The program holds `__dirname` or the like, so it tells the folder itself, and asks for its own modules by paths below it.
             root_on_build_machine: (build.holds_source_paths && !options.runs_in_place)
                 .then(|| trim_trailing_separators(&build.root_directory)),
+            assets_named_at_root: &assets_named_at_root,
             further_package_names: &build.further_package_names,
             root_folders_spelled: match options.runs_in_place {
                 true => b"",
@@ -245,7 +250,9 @@ fn write_product(
         }),
     };
     let Some(outfile) = product.outfile else {
-        outcome.graph_bytes = Some(to_graph_bytes(&graph).map_err(CompileFailure::Graph)?);
+        let place = crate::cli::run_compiled::place_of_program_being_built();
+        outcome.graph_bytes =
+            Some(to_graph_bytes(&graph, place.as_ref()).map_err(CompileFailure::Graph)?);
         if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
             let bytes = outcome.graph_bytes.as_ref().map_or(0, |bytes| bytes.len());
             bun_core::print_errorln!("AOT test build | program bytes {}", bytes);
@@ -489,13 +496,13 @@ fn add_assets(
     outfile: Option<&[u8]>,
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), CompileFailure> {
+) -> Result<Vec<u8>, CompileFailure> {
     let assets = request.executable.assets;
     if assets.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let added = if request.options.runs_in_place {
-        add_assets_in_place(assets, output_files)
+        add_assets_in_place(assets, output_files).map(|()| Vec::new())
     } else {
         let entry_name = outfile.map_or(&b""[..], configuration::compile_outfile);
         add_assets_under_root(assets, entry_name, root_directory, output_files)
@@ -549,10 +556,11 @@ fn add_assets_under_root(
     entry_name: &[u8],
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), AssetError> {
+) -> Result<Vec<u8>, AssetError> {
     let working_directory =
         bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;
     let mut modules_without_text = modules_without_text(output_files);
+    let mut paths_of_files_given: Vec<Box<[u8]>> = Vec::new();
     let mut taken: std::collections::BTreeMap<Box<[u8]>, Option<usize>> = output_files
         .iter()
         .enumerate()
@@ -581,12 +589,16 @@ fn add_assets_under_root(
             });
         }
         for mut file in files {
+            let is_file_given = file.dest_path[..] == asset_name[..];
             if let Some(under_root) = &under_root {
                 let path_in_asset = file
                     .dest_path
                     .strip_prefix(&asset_name[..])
                     .expect("collect_compile_assets names files under the asset's name");
                 file.dest_path = graph_path(under_root, path_in_asset).into_boxed_slice();
+            }
+            if is_file_given {
+                paths_of_files_given.push(file.dest_path.clone());
             }
             let Some(earlier) = taken.insert(file.dest_path.clone(), None) else {
                 add_asset(file, &mut modules_without_text, output_files);
@@ -603,7 +615,39 @@ fn add_assets_under_root(
             }
         }
     }
-    Ok(())
+    Ok(find_assets_named_at_root(
+        &paths_of_files_given,
+        output_files,
+    ))
+}
+
+fn find_assets_named_at_root(
+    paths_of_files_given: &[Box<[u8]>],
+    output_files: &[OutputFile],
+) -> Vec<u8> {
+    let is_taken = |base_name: &[u8]| {
+        output_files
+            .iter()
+            .filter(|file| file.output_kind.is_file_in_standalone_mode())
+            .filter_map(|file| {
+                bun_core::strings::remove_leading_dot_slash(&file.dest_path).strip_prefix(base_name)
+            })
+            .any(|rest| matches!(rest, [] | [b'/', ..]))
+    };
+    let is_shared = |base_name: &[u8]| {
+        let base_names = paths_of_files_given
+            .iter()
+            .map(|path| bun_paths::basename(path));
+        base_names.filter(|&name| name == base_name).count() > 1
+    };
+    paths_of_files_given
+        .iter()
+        .filter(|path| {
+            let base_name = bun_paths::basename(path);
+            !is_shared(base_name) && !is_taken(base_name)
+        })
+        .flat_map(|path| path.iter().copied().chain([0]))
+        .collect()
 }
 
 fn path_under_root(

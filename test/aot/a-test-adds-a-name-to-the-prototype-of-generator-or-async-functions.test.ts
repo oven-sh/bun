@@ -88,3 +88,15 @@ runsAsPlain(
   `function* walk() {}
       const walker = walk();`,
 );
+runsAsPlain(
+  "out of an object that holds it, under a key that nobody spells",
+  `held[Object.keys(held)[0]]`,
+  `function* () {}`,
+  `const held = { generatorFunction: Object.getPrototypeOf(function* () {}) };`,
+);
+runsAsPlain(
+  "out of a list that holds it, at an index that nobody spells",
+  `held[held.length - 1]`,
+  `(async function* () {})()`,
+  `const held = [Object.getPrototypeOf(async function* () {}).prototype];`,
+);

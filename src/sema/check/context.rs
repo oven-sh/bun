@@ -1745,20 +1745,37 @@ impl<'p, 's> Checker<'p, 's> {
             && self.reverse_mapped_source_stack.is_empty()
             && self.flow_loops.is_empty()
             && self.reporting_nonexistent.is_empty()
-            && self.stack.iter().all(|q| {
-                matches!(
-                    q,
-                    Query::Expr(..)
-                        | Query::Call(..)
-                        | Query::LiteralProp(..)
-                        | Query::Pat(..)
-                        | Query::ParameterSymbol(..)
-                        | Query::Symbol(_)
-                        | Query::Return(..)
-                        | Query::ReturnOfSignature(_)
-                        | Query::ReturnAtFirstLook(..)
-                )
-            })
+            && self.do_queries_in_progress_allow_caching()
+    }
+
+    fn do_queries_in_progress_allow_caching(&self) -> bool {
+        let (forbidding, serial) = self.query_that_forbids_caching.get();
+        if (self.frames.get(forbidding)).is_some_and(|frame| frame.serial == serial) {
+            return false;
+        }
+        let seen = self.queries_seen_to_allow_caching.get();
+        for (at, frame) in self.frames.iter().enumerate().rev() {
+            if frame.serial <= seen {
+                break;
+            }
+            if !matches!(
+                self.stack[at],
+                Query::Expr(..)
+                    | Query::Call(..)
+                    | Query::LiteralProp(..)
+                    | Query::Pat(..)
+                    | Query::ParameterSymbol(..)
+                    | Query::Symbol(_)
+                    | Query::Return(..)
+                    | Query::ReturnOfSignature(_)
+                    | Query::ReturnAtFirstLook(..)
+            ) {
+                self.query_that_forbids_caching.set((at, frame.serial));
+                return false;
+            }
+        }
+        self.queries_seen_to_allow_caching.set(self.work);
+        true
     }
 
     /// `discriminateContextualTypeByJSXAttributes`: narrows the union `context`, the contextual

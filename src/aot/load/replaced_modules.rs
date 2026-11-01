@@ -3,11 +3,12 @@
 //! A spy on an object that is no module object by its binding counts for nothing: a module object gets there only from a file that hands it on, and that file says so.
 
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
+use bun_sema::bind::{Binding, BindingStability, Bound, Decl, Parent, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    ExportSpecId, ExprId, ExprKind, File, Flags, MemberKey, PatId, PatKind, PropKey, StmtKind, UnOp,
+    BinOp, ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, MemberKey, PatId, PatKind,
+    PropKey, StmtId, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_module_call_of_plugin};
 use bun_sema::program::Files;
@@ -16,8 +17,9 @@ use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
 use crate::load::is_in_node_modules;
 use crate::load::runtime_modules::find_module_named;
 use crate::load::sources::parsed_source;
+use crate::module_keys::places_of_form;
 use crate::modules::evicted::{
-    FileOfKey, find_file_of_key, find_files_named_with_query,
+    FileOfKey, PathChangedOnDisk, find_file_of_key, find_files_named_with_query,
     find_names_that_unspelled_keys_may_be, find_paths_changed_on_disk,
     stands_where_a_throw_is_caught,
 };
@@ -39,11 +41,13 @@ pub(super) struct ReplacedModules {
     /// `delete require.cache[require.resolve("./a")]`
     pub evicted: Vec<Atom>,
     /// `find_paths_changed_on_disk`
-    pub changed_on_disk: Vec<(Atom, bool)>,
+    pub changed_on_disk: Vec<PathChangedOnDisk<Atom>>,
     /// As `evicted`, of a file that this one does not spell.
     pub evicts_any: bool,
     /// `ReplacedByTests::files_required_where_throws_are_caught`
     pub required_where_throws_are_caught: Vec<Atom>,
+    /// `ReplacedByTests::data_files_imported_with_types`
+    pub imported_with_types: Vec<Atom>,
     /// `import("./a?again")`
     pub names_file_with_query: bool,
     /// `ReplacedByTests::files_imported_by_statements`, `files_imported_by_calls` and `files_required`
@@ -52,58 +56,16 @@ pub(super) struct ReplacedModules {
     pub required: Vec<Atom>,
 }
 
+/// Whether the loader keeps a file that is imported with this `type` in one place with what the other such types make of it. "json" has a place of its own.
+pub(crate) fn shares_place_in_loader(type_attribute: &[u8]) -> bool {
+    type_attribute != b"json" && places_of_form(b"", type_attribute).is_some()
+}
+
 fn is_spy(builtin: BuiltinId) -> bool {
     matches!(
         builtin,
         BuiltinId::BunTestSpyOn | BuiltinId::BunTestJestSpyOn | BuiltinId::BunTestViSpyOn
     )
-}
-
-/// `Bun.jest(path)` answers with what `bun:test` exports, under names that stand for nothing.
-fn names_bun_jest(
-    hir: &File<'_>,
-    analysis: &FileAnalysis<'_>,
-    builtins: &ResolvedBuiltins,
-) -> bool {
-    (0..hir.exprs.len() as u32).map(ExprId).any(|mention| {
-        builtins.builtin_of_expression(mention) == Some(BuiltinId::BunJest)
-            && !analysis.decisions.is_dead_expr(mention)
-    })
-}
-
-/// `const { test, expect } = Bun.jest(path)` and `Bun.jest(path).test` take by name what mocks nothing.
-fn gets_what_mocks_modules_from_bun_jest(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    analysis: &FileAnalysis<'_>,
-    builtins: &ResolvedBuiltins,
-) -> bool {
-    let mocks = |name: Atom| name == known::mock || name == known::jest || name == known::vi;
-    (0..hir.exprs.len() as u32).map(ExprId).any(|mention| {
-        if builtins.builtin_of_expression(mention) != Some(BuiltinId::BunJest)
-            || analysis.decisions.is_dead_expr(mention)
-        {
-            return false;
-        }
-        let Parent::Expr(answer) = bound.parent_of_expr(mention) else {
-            return true;
-        };
-        if !matches!(hir[answer].kind, ExprKind::Call(call) if hir[call].callee == mention) {
-            return true;
-        }
-        match bound.parent_of_expr(answer) {
-            Parent::VarInit(declaration) => match hir[hir[declaration].pat].kind {
-                PatKind::Object(properties) => properties.iter().any(|it| {
-                    hir[it].is_rest || !matches!(hir[it].key, PropKey::Name(name) if !mocks(name))
-                }),
-                _ => true,
-            },
-            Parent::Expr(user) => !matches!(hir.member_key(user),
-                Some((object, MemberKey::Name(name))) if object == answer && !mocks(name)),
-            Parent::Stmt(_) => false,
-            _ => true,
-        }
-    })
 }
 
 fn leads_to_spy(builtin: BuiltinId) -> bool {
@@ -120,8 +82,6 @@ pub(crate) struct SpiesOnUnknownObjects {
     /// Such a spy under a name that the file does not spell, as in a helper that takes the name: whoever calls the helper spells it.
     /// A name that nobody spells opens nothing, and the spy that meets an export under it fails by name.
     pub takes_names_from_outside: bool,
-    /// Such a spy under a name that is no constant where it is called, spelled or not: `for (const name of ["a", "b"]) spyOn(holder.it, name)`.
-    pub has_name_that_is_no_constant: bool,
     /// A spy on an object for which the file spells built-ins and objects of modules alone, through a variable, a list or a parameter: the names that stand
     /// for the objects of modules there: `fs` in `const files = fs as Record<string, F>; spyOn(files, name)`.
     pub module_objects_behind_other_names: Vec<ExprId>,
@@ -184,12 +144,282 @@ fn takes_names_alone<'s>(
     }
 }
 
+/// Whether `value` is only tested where it stands, so that what it stands for goes nowhere: `typeof jest !== "undefined"`, as react-dom and
+/// many more packages ask whether a test runs them, `jest === undefined`, `!jest`, `if (jest)`, `jest ? a : b`, `jest && ..`, which
+/// answers its left side only where that is no object. Both the look for spies and the look for mocks ask here.
+fn is_only_tested(hir: &File<'_>, bound: &Bound<'_>, mut value: ExprId) -> bool {
+    loop {
+        let user = match bound.parent_of_expr(value) {
+            Parent::Expr(user) => user,
+            Parent::Stmt(statement) => {
+                return match hir[statement].kind {
+                    StmtKind::Expr(_) => true,
+                    StmtKind::If { test, .. }
+                    | StmtKind::While { test, .. }
+                    | StmtKind::DoWhile { test, .. }
+                    | StmtKind::For { test, .. } => test == value,
+                    _ => false,
+                };
+            }
+            _ => return false,
+        };
+        match hir[user].kind {
+            ExprKind::Unary {
+                op: UnOp::Typeof | UnOp::Not | UnOp::Void,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq,
+                ..
+            } => return true,
+            ExprKind::Binary {
+                op: BinOp::And,
+                left,
+                ..
+            } if left == value => return true,
+            ExprKind::Cond { test, .. } if test == value => return true,
+            // `typeof jest !== "undefined" && jest ? a : b`: it may be what the whole answers, so it goes where that goes.
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                ..
+            }
+            | ExprKind::Cond { .. } => value = user,
+            _ if hir.type_assertion_operand(user) == Some(value) => value = user,
+            _ => return false,
+        }
+    }
+}
+
+fn outermost_assertion_of(hir: &File<'_>, bound: &Bound<'_>, mut value: ExprId) -> ExprId {
+    while let Parent::Expr(parent) = bound.parent_of_expr(value)
+        && hir.type_assertion_operand(parent) == Some(value)
+    {
+        value = parent;
+    }
+    value
+}
+
+/// Where the object of `bun:test` may go in a file that holds it as a value.
+struct ObjectOfTestRunner<'a, 's> {
+    hir: &'a File<'s>,
+    bound: &'a Bound<'s>,
+    analysis: &'a FileAnalysis<'s>,
+    names_read: Vec<Atom>,
+    followed: Vec<SymbolId>,
+    /// A name in a `with` statement, or in the text of a direct eval, may stand for a name of the file without being bound to it.
+    names_are_read_unseen: bool,
+}
+
+impl ObjectOfTestRunner<'_, '_> {
+    /// `value` may be the object. Whether the file shows all that becomes of it.
+    fn follow(&mut self, value: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let value = outermost_assertion_of(hir, bound, value);
+        if is_only_tested(hir, bound, value) {
+            return true;
+        }
+        match bound.parent_of_expr(value) {
+            Parent::VarInit(declaration) => {
+                let pattern = hir[declaration].pat;
+                match hir[pattern].kind {
+                    PatKind::Object(properties) => properties.iter().map(|it| hir[it]).all(|it| {
+                        let PropKey::Name(name) = it.key else {
+                            return false;
+                        };
+                        self.names_read.push(name);
+                        !it.is_rest && it.default.is_none()
+                    }),
+                    PatKind::Ident(_) => self.follow_mentions(Decl::Var(pattern), false),
+                    _ => false,
+                }
+            }
+            Parent::Expr(user) => match hir.member_key(user) {
+                Some((object, MemberKey::Name(name))) if object == value => {
+                    self.names_read.push(name);
+                    true
+                }
+                _ => false,
+            },
+            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Return(_)) => self
+                .function_around(statement)
+                .is_some_and(|function| self.follow_answers_of(function)),
+            Parent::FnBody(function) => self.follow_answers_of(function),
+            _ => false,
+        }
+    }
+
+    fn function_around(&self, mut statement: StmtId) -> Option<FnId> {
+        loop {
+            match self.bound.parent_of_stmt(statement) {
+                Parent::Stmt(above) => statement = above,
+                Parent::FnBody(function) => return Some(function),
+                _ => return None,
+            }
+        }
+    }
+
+    /// `function runner() { return Bun.jest(path); }`: whoever calls it gets the object.
+    fn follow_answers_of(&mut self, function: FnId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let made = &hir[function];
+        if made.flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
+            return false;
+        }
+        let declaration = match made.kind {
+            FnKind::Decl => Decl::Fn(function),
+            // `const runner = () => Bun.jest(path)`. The name of a function expression is one more name for it.
+            FnKind::Expr | FnKind::Arrow if made.name.is_none() => {
+                let mut values = (0..hir.exprs.len() as u32).map(ExprId);
+                let value =
+                    values.find(|&it| matches!(hir[it].kind, ExprKind::Fn(id) if id == function));
+                let holder =
+                    value.map(|it| bound.parent_of_expr(outermost_assertion_of(hir, bound, it)));
+                match holder {
+                    Some(Parent::VarInit(declaration))
+                        if matches!(hir[hir[declaration].pat].kind, PatKind::Ident(_)) =>
+                    {
+                        Decl::Var(hir[declaration].pat)
+                    }
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+        self.follow_mentions(declaration, true)
+    }
+
+    /// The mentions of a name that holds the object or, with `is_function`, a function that answers it and may only be called.
+    /// The name is bound once and stays in the file.
+    fn follow_mentions(&mut self, declaration: Decl, is_function: bool) -> bool {
+        let (hir, bound, analysis) = (self.hir, self.bound, self.analysis);
+        let symbol = bound.declared_symbol(declaration);
+        if self.followed.contains(&symbol) {
+            return true;
+        }
+        self.followed.push(symbol);
+        let is_dead_store = |target: ExprId| analysis.decisions.is_dead_expr(target);
+        let is_bound_once = matches!(declaration, Decl::ImportNamespace(_))
+            || bound.binding_stability_ignoring(symbol, &is_dead_store) == BindingStability::Stable;
+        if !symbol.is_some()
+            || !is_bound_once
+            || self.names_are_read_unseen
+            || (bound.modifier_flags(hir, declaration)).contains(Flags::EXPORT)
+        {
+            return false;
+        }
+        let holds = |binding: Binding| binding == Binding::Symbol(symbol);
+        let exported = (0..hir.export_specs.len() as u32)
+            .map(|spec| bound.exported_binding(ExportSpecId(spec)));
+        if exported
+            .chain(analysis.bindings_read_without_expression(hir, bound))
+            .any(holds)
+        {
+            return false;
+        }
+        (0..hir.exprs.len() as u32).map(ExprId).all(|mention| {
+            if !matches!(hir[mention].kind, ExprKind::Ident(_))
+                || !bound.is_evaluated_ident(mention)
+                || !holds(bound.binding(mention))
+                || analysis.decisions.is_dead_expr(mention)
+            {
+                return true;
+            }
+            if !is_function {
+                return self.follow(mention);
+            }
+            let callee = outermost_assertion_of(hir, bound, mention);
+            match bound.parent_of_expr(callee) {
+                Parent::Expr(answer) if matches!(hir[answer].kind, ExprKind::Call(call) if hir[call].callee == callee) => {
+                    self.follow(answer)
+                }
+                _ => false,
+            }
+        })
+    }
+}
+
+/// The members of the object of `bun:test` that hold neither a spy nor what mocks a module. Whatever else is read off the object may hold both:
+/// `default` of the namespace is the whole object once more.
+const MEMBERS_WITHOUT_SPY_OR_MOCK: [&[u8]; 17] = [
+    b"afterAll",
+    b"afterEach",
+    b"aroundAll",
+    b"aroundEach",
+    b"beforeAll",
+    b"beforeEach",
+    b"describe",
+    b"expect",
+    b"expectTypeOf",
+    b"it",
+    b"onTestFinished",
+    b"setDefaultTimeout",
+    b"setSystemTime",
+    b"test",
+    b"xdescribe",
+    b"xit",
+    b"xtest",
+];
+
+/// The names that a file reads off the object of `bun:test` where it holds the object as a value: what `Bun.jest(path)` answers, `runner` of
+/// `import * as runner from "bun:test"`. They stand for nothing, so whoever asks goes by what the object has under them. Without those of `MEMBERS_WITHOUT_SPY_OR_MOCK`.
+/// `None`: the object goes where the file does not show what becomes of it.
+fn find_names_read_off_test_runner<'s>(
+    hir: &File<'s>,
+    bound: &Bound<'s>,
+    analysis: &FileAnalysis<'s>,
+    builtins: &ResolvedBuiltins,
+    atoms: &Interner<'s>,
+    is_test_runner: &dyn Fn(usize) -> bool,
+) -> Option<Vec<Atom>> {
+    let mut object = ObjectOfTestRunner {
+        hir,
+        bound,
+        analysis,
+        names_read: Vec::new(),
+        followed: Vec::new(),
+        names_are_read_unseen: !bound.runtime.eval_scopes().is_empty()
+            || (hir.stmts.iter()).any(|it| matches!(it.kind, StmtKind::With { .. })),
+    };
+    for mention in (0..hir.exprs.len() as u32).map(ExprId) {
+        if builtins.builtin_of_expression(mention) != Some(BuiltinId::BunJest)
+            || analysis.decisions.is_dead_expr(mention)
+        {
+            continue;
+        }
+        let callee = outermost_assertion_of(hir, bound, mention);
+        if is_only_tested(hir, bound, callee) {
+            continue;
+        }
+        let Parent::Expr(answer) = bound.parent_of_expr(callee) else {
+            return None;
+        };
+        if !matches!(hir[answer].kind, ExprKind::Call(call) if hir[call].callee == callee)
+            || !object.follow(answer)
+        {
+            return None;
+        }
+    }
+    for (index, site) in analysis.import_sites.iter().enumerate() {
+        if let ImportSiteKind::Import(import) = site.kind
+            && is_test_runner(index)
+            && hir[import].namespace.is_some()
+            && !object.follow_mentions(Decl::ImportNamespace(import), false)
+        {
+            return None;
+        }
+    }
+    let mut names = object.names_read;
+    names.retain(|&name| !MEMBERS_WITHOUT_SPY_OR_MOCK.contains(&atoms.bytes(name)));
+    Some(names)
+}
+
 /// `is_test_runner`: whether the site loads `bun:test`. `is_module_object`: whether the name stands for the object of a module: whoever asks looks at such a spy itself.
 pub(crate) fn find_spies_on_unknown_objects<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
     analysis: &FileAnalysis<'s>,
     builtins: &ResolvedBuiltins,
+    atoms: &Interner<'s>,
     is_test_runner: &dyn Fn(usize) -> bool,
     is_module_object: &dyn Fn(ExprId) -> bool,
 ) -> SpiesOnUnknownObjects {
@@ -197,8 +427,10 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
         is_any_name: true,
         ..SpiesOnUnknownObjects::default()
     };
-    if names_bun_jest(hir, analysis, builtins) {
-        return under_any_name;
+    match find_names_read_off_test_runner(hir, bound, analysis, builtins, atoms, is_test_runner) {
+        // `mock` has `module` and no spy.
+        Some(names) if names.iter().all(|&name| name == known::mock) => {}
+        _ => return under_any_name,
     }
     let mut loads_test_runner = false;
     for (index, site) in analysis.import_sites.iter().enumerate() {
@@ -208,11 +440,11 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
         loads_test_runner = true;
         // Whoever gets the object of `bun:test`, or imports from this file what it exports from there, has `spyOn` under a name that stands for nothing.
         match site.kind {
-            ImportSiteKind::Import(import) if hir[import].namespace.is_none() => {}
+            ImportSiteKind::Import(_) => {}
             ImportSiteKind::ImportCall(_)
             | ImportSiteKind::Require(_)
             | ImportSiteKind::ImportMetaRequire(_)
-                if takes_names_alone(hir, bound, builtins, site.kind, &|it| !leads_to_spy(it)) => {}
+                if takes_names_alone(hir, bound, builtins, site.kind, &|_| true) => {}
             ImportSiteKind::MockModule(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaResolve(_) => {}
@@ -236,7 +468,6 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
     }
     let mut names = Vec::new();
     let mut takes_names_from_outside = false;
-    let mut has_name_that_is_no_constant = false;
     let mut module_objects_behind_other_names = Vec::new();
     for mention in (0..hir.exprs.len() as u32).map(ExprId) {
         let Some(builtin) = builtins
@@ -253,6 +484,9 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
             && hir.type_assertion_operand(parent) == Some(outermost)
         {
             outermost = parent;
+        }
+        if is_only_tested(hir, bound, outermost) {
+            continue;
         }
         let Parent::Expr(user) = bound.parent_of_expr(outermost) else {
             return under_any_name;
@@ -287,7 +521,6 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
             FoldedValue::Constant(Constant::String(name)) => Some(name),
             _ => None,
         };
-        has_name_that_is_no_constant |= constant.is_none();
         let objects = builtins.objects_spelled_for(name);
         if !objects.is_empty()
             && (objects.iter()).all(|it| it.is_builtin || is_module_object(it.object))
@@ -311,17 +544,16 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
         names,
         is_any_name: false,
         takes_names_from_outside,
-        has_name_that_is_no_constant,
         module_objects_behind_other_names,
     }
 }
 
-/// The member of an export of `bun:test` that mocks modules.
-fn member_that_mocks_modules(builtin: BuiltinId) -> Option<Atom> {
+/// The members of an export of `bun:test` that mock modules.
+fn members_that_mock_modules(builtin: BuiltinId) -> &'static [Atom] {
     match builtin {
-        BuiltinId::BunTestMock => Some(known::module),
-        BuiltinId::BunTestJest | BuiltinId::BunTestVi => Some(known::mock),
-        _ => None,
+        BuiltinId::BunTestMock => &[known::module],
+        BuiltinId::BunTestJest | BuiltinId::BunTestVi => &[known::mock, known::doMock],
+        _ => &[],
     }
 }
 
@@ -333,25 +565,42 @@ fn mocks_modules_out_of_sight<'s>(
     bound: &Bound<'s>,
     analysis: &FileAnalysis<'s>,
     builtins: &ResolvedBuiltins,
+    atoms: &Interner<'s>,
     is_test_runner: &dyn Fn(usize) -> bool,
 ) -> bool {
-    if gets_what_mocks_modules_from_bun_jest(hir, bound, analysis, builtins) {
-        return true;
+    match find_names_read_off_test_runner(hir, bound, analysis, builtins, atoms, is_test_runner) {
+        Some(names) if names.iter().all(|&name| atoms.bytes(name) == b"spyOn") => {}
+        _ => return true,
     }
     let mut loads_test_runner = false;
+    let mut may_only_test_what_mocks = false;
     for (index, site) in analysis.import_sites.iter().enumerate() {
         if !is_test_runner(index) {
             continue;
         }
         loads_test_runner = true;
         match site.kind {
-            ImportSiteKind::Import(import) if hir[import].namespace.is_none() => {}
+            ImportSiteKind::Import(_) => {}
             ImportSiteKind::ImportCall(_)
             | ImportSiteKind::Require(_)
             | ImportSiteKind::ImportMetaRequire(_)
                 if takes_names_alone(hir, bound, builtins, site.kind, &|it| {
-                    member_that_mocks_modules(it).is_none()
+                    members_that_mock_modules(it).is_empty()
                 }) => {}
+            // `const { jest } = require("bun:test")`, as in a CommonJS file that got the names of the test runner: a call of `jest.mock(..)` is a site, as with an import.
+            // `require("bun:test").jest.mock(..)` makes none, so all that the file may do with what mocks modules there is to test it.
+            ImportSiteKind::Require(call) | ImportSiteKind::ImportMetaRequire(call)
+                if takes_names_alone(hir, bound, builtins, site.kind, &|_| true) =>
+            {
+                let mut loaded = call;
+                while let Parent::Expr(parent) = bound.parent_of_expr(loaded)
+                    && hir.type_assertion_operand(parent) == Some(loaded)
+                {
+                    loaded = parent;
+                }
+                may_only_test_what_mocks |=
+                    !matches!(bound.parent_of_expr(loaded), Parent::VarInit(_));
+            }
             ImportSiteKind::MockModule(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaResolve(_) => {}
@@ -365,7 +614,7 @@ fn mocks_modules_out_of_sight<'s>(
         (0..hir.export_specs.len() as u32).map(|spec| bound.exported_binding(ExportSpecId(spec)));
     let is_exported = |binding: Binding| {
         matches!(binding, Binding::Symbol(symbol)
-        if builtins.of_symbol(symbol).is_some_and(|path| member_that_mocks_modules(path.id).is_some()))
+        if builtins.of_symbol(symbol).is_some_and(|path| !members_that_mock_modules(path.id).is_empty()))
     };
     if exported
         .chain(analysis.bindings_read_without_expression(hir, bound))
@@ -387,26 +636,147 @@ fn mocks_modules_out_of_sight<'s>(
             if matches!(hir[user].kind, ExprKind::Call(call) if hir[call].callee == callee))
     };
     (0..hir.exprs.len() as u32).map(ExprId).any(|mention| {
-        let Some(member) = builtins
+        let members = builtins
             .builtin_of_expression(mention)
-            .and_then(member_that_mocks_modules)
-        else {
+            .map_or(&[][..], members_that_mock_modules);
+        if members.is_empty() {
             return false;
-        };
+        }
         if analysis.decisions.is_dead_expr(mention) {
             return false;
         }
         let holder = outermost_of(mention);
+        if is_only_tested(hir, bound, holder) {
+            return false;
+        }
+        if may_only_test_what_mocks {
+            return true;
+        }
         let Parent::Expr(user) = bound.parent_of_expr(holder) else {
             return true;
         };
         match hir.member_key(user) {
+            // `typeof mock.module === "function"` asks whether it is there, and the function goes nowhere.
             Some((object, MemberKey::Name(name))) if object == holder => {
-                name == member && !is_called(outermost_of(user))
+                let member = outermost_of(user);
+                members.contains(&name) && !is_called(member) && !is_only_tested(hir, bound, member)
             }
             Some((object, _)) if object == holder => true,
             // `mock(() => 1)`
             _ => !is_called(holder),
+        }
+    })
+}
+
+/// What `mock`, `jest` and `vi` offer that has nothing to do with the modules of the run. Whatever else a file reads off them may take a mock back or ask for what stands behind it.
+const MEMBERS_THAT_LEAVE_MODULES_ALONE: [&[u8]; 30] = [
+    b"advanceTimersByTime",
+    b"advanceTimersToNextTimer",
+    b"clearAllMocks",
+    b"clearAllTimers",
+    b"fn",
+    b"getMockedSystemTime",
+    b"getRealSystemTime",
+    b"getTimerCount",
+    b"hoisted",
+    b"isFakeTimers",
+    b"isMockFunction",
+    b"mocked",
+    b"now",
+    b"resetAllMocks",
+    b"restore",
+    b"restoreAllMocks",
+    b"runAllTicks",
+    b"runAllTimers",
+    b"runOnlyPendingTimers",
+    b"setSystemTime",
+    b"setTimeout",
+    b"spyOn",
+    b"stubEnv",
+    b"stubGlobal",
+    b"unstubAllEnvs",
+    b"unstubAllGlobals",
+    b"useFakeTimers",
+    b"useRealTimers",
+    b"waitFor",
+    b"waitUntil",
+];
+
+/// Whether the file may get at the original of a file beside its mock. The test runner loads that from disk, as a copy that the build has not compiled: `vi.importActual()`,
+/// `jest.requireActual()` and their kin, the parameter of a factory, a mock without a factory, `{ spy: true }`, a mock that is taken back.
+/// `mock.module(path, () => ..)` with a factory that is written out and takes nothing asks for nothing. Everything that this does not read counts as asking.
+/// `is_test_runner`: whether the site loads `bun:test`.
+pub(crate) fn asks_for_original_beside_mock<'s>(
+    hir: &File<'s>,
+    bound: &Bound<'s>,
+    analysis: &FileAnalysis<'s>,
+    builtins: &ResolvedBuiltins,
+    atoms: &Interner<'s>,
+    is_test_runner: &dyn Fn(usize) -> bool,
+) -> bool {
+    // The host goes by the text of a factory too, comments and strings with it: `mentionsOriginalModule()` in src/jsc/bindings/BunPlugin.cpp.
+    let text_names_original = |factory: ExprId| {
+        let written = hir[factory].pos as usize..hir[factory].end as usize;
+        hir.text.get(written).is_none_or(|text| {
+            [&b"importOriginal"[..], b"importActual", b"requireActual"]
+                .iter()
+                .any(|word| bun_core::strings::contains(text, word))
+        })
+    };
+    let takes_nothing = |factory: ExprId| {
+        let factory = hir.skip_type_assertions(factory);
+        let ExprKind::Fn(function) = hir[factory].kind else {
+            return false;
+        };
+        // A function that is no arrow function has `arguments`.
+        hir[function].kind == FnKind::Arrow
+            && hir[function].params.is_empty()
+            && !text_names_original(factory)
+    };
+    for site in analysis.import_sites {
+        match site.kind {
+            ImportSiteKind::ImportByTestRunner(_) | ImportSiteKind::RequireByTestRunner(_) => {
+                return true;
+            }
+            ImportSiteKind::MockModule(call) if !is_module_call_of_plugin(hir, bound, call) => {
+                let ExprKind::Call(call) = hir[call].kind else {
+                    return true;
+                };
+                let arguments = hir[call].args;
+                if arguments.len() != 2 || !takes_nothing(hir.id_at::<ExprId>(arguments, 1)) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    if mocks_modules_out_of_sight(hir, bound, analysis, builtins, atoms, is_test_runner) {
+        return true;
+    }
+    (0..hir.exprs.len() as u32).map(ExprId).any(|mention| {
+        let members = builtins
+            .builtin_of_expression(mention)
+            .map_or(&[][..], members_that_mock_modules);
+        if members.is_empty() || analysis.decisions.is_dead_expr(mention) {
+            return false;
+        }
+        let mut holder = mention;
+        while let Parent::Expr(parent) = bound.parent_of_expr(holder)
+            && hir.type_assertion_operand(parent) == Some(holder)
+        {
+            holder = parent;
+        }
+        let Parent::Expr(user) = bound.parent_of_expr(holder) else {
+            return !is_only_tested(hir, bound, holder);
+        };
+        match hir.member_key(user) {
+            Some((object, MemberKey::Name(name))) if object == holder => {
+                !members.contains(&name)
+                    && !MEMBERS_THAT_LEAVE_MODULES_ALONE.contains(&atoms.bytes(name))
+                    && !is_only_tested(hir, bound, user)
+            }
+            // What else becomes of the object is `mocks_modules_out_of_sight`'s to say.
+            _ => false,
         }
     })
 }
@@ -451,7 +821,7 @@ pub(super) fn find_replaced_modules<'s>(
 /// A package of test helpers: `exports.mockModule = (path, factory) => mock.module(path, factory)`. The look through the test files follows what they name beside them
 /// and reads no installed package, so the build that holds the package finds it out. Few packages take anything from the test runner, and only those are looked at.
 pub(crate) fn packages_mock_modules_that_they_do_not_spell(files: &Files<'_>) -> bool {
-    find_what_packages_do_with_test_runner(files).mocks_any_module
+    find_what_packages_do_with_test_runner(files, false).mocks_any_module
 }
 
 /// What the installed packages of a program do with what they take from the test runner, where they do not spell on what.
@@ -465,7 +835,10 @@ pub(crate) struct TestRunnerInPackages {
     pub names_spied_on_unknown_objects: Vec<Vec<u8>>,
 }
 
-pub(crate) fn find_what_packages_do_with_test_runner(files: &Files<'_>) -> TestRunnerInPackages {
+pub(crate) fn find_what_packages_do_with_test_runner(
+    files: &Files<'_>,
+    logs: bool,
+) -> TestRunnerInPackages {
     let atoms = &files.atoms;
     let module_of = |specifier: ImportSpecifier| match specifier {
         ImportSpecifier::Constant(text) => match atoms.bytes(text) {
@@ -489,6 +862,14 @@ pub(crate) fn find_what_packages_do_with_test_runner(files: &Files<'_>) -> TestR
         let found =
             find_replaced_modules(hir, bound, analysis, &source.builtins, &module_of, atoms);
         let spies = found.spies_on_unknown_objects;
+        if logs && (found.any || spies.is_any_name || spies.takes_names_from_outside) {
+            bun_core::print_errorln!(
+                "AOT test run | a package takes from the test runner: {} | mocks a module that it does not spell {} | spies under a name that it does not spell {}",
+                bstr::BStr::new(files.module(file).file_name()),
+                found.any,
+                spies.is_any_name || spies.takes_names_from_outside,
+            );
+        }
         all.mocks_any_module |= found.any;
         all.spies_on_unknown_objects |= spies.is_any_name || spies.takes_names_from_outside;
         let names = spies.names.iter().map(|&name| atoms.bytes(name).to_vec());
@@ -666,7 +1047,7 @@ impl Look<'_, '_> {
                 FileOfKey::Unknown => self.found.evicts_any = true,
             }
         }
-        self.found.changed_on_disk = find_paths_changed_on_disk(analysis);
+        self.found.changed_on_disk = find_paths_changed_on_disk(self.atoms, analysis);
         let names =
             find_names_that_unspelled_keys_may_be(hir, bound, analysis, self.atoms, self.builtins);
         let names = names.into_iter().map(|name| self.atoms.intern(name));
@@ -684,6 +1065,14 @@ impl Look<'_, '_> {
     }
 
     fn find_how_files_are_loaded(&mut self) {
+        for site in self.analysis.import_sites {
+            let written = (site.attributes.some()).filter(|_| site.kind.hands_type_to_loader());
+            let written = written.and_then(|it| self.hir.import_attribute(it, known::r#type));
+            if written.is_some_and(|it| shares_place_in_loader(self.atoms.bytes(it))) {
+                let files = self.specifiers_of(&site.specifier).unwrap_or_default();
+                self.found.imported_with_types.extend(files);
+            }
+        }
         for site in self.analysis.import_sites {
             let loaded = match site.kind {
                 ImportSiteKind::Import(_)
@@ -764,7 +1153,7 @@ impl Look<'_, '_> {
             _ => None,
         };
         self.found.any |=
-            mocks_modules_out_of_sight(hir, bound, analysis, self.builtins, &|site| {
+            mocks_modules_out_of_sight(hir, bound, analysis, self.builtins, self.atoms, &|site| {
                 (self.module_of)(analysis.import_sites[site].specifier)
                     == Some(RuntimeModule::BunTest)
             });
@@ -773,6 +1162,7 @@ impl Look<'_, '_> {
             bound,
             analysis,
             self.builtins,
+            self.atoms,
             &|site| {
                 (self.module_of)(analysis.import_sites[site].specifier)
                     == Some(RuntimeModule::BunTest)

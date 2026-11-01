@@ -18,7 +18,7 @@ import {
 import { encodeNumbers, moveBundledNamesToSecondText } from "./bundled-positions";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { rangesSeenByEveryFile } from "./part-seen-by-every-file";
-import { define, globalsToPrefix } from "./replacements";
+import { define, globalsToPrefix, nativeFunctions, nativeGlobals } from "./replacements";
 
 const output = process.argv[3];
 const archive = process.argv[4]?.startsWith("--") ? undefined : process.argv[4];
@@ -65,6 +65,8 @@ for (const [key, value] of Object.entries({ ...define, ...fixed })) {
   const name = key.startsWith("__intrinsic__") ? "$" + key.slice("__intrinsic__".length) : key;
   lines.push(`define\t${name}\t${canonicalJSON(name, value)}`);
 }
+for (const name of nativeFunctions) lines.push(`native\t${name}\tname`);
+for (const name of nativeGlobals) lines.push(`native\t${name}\tname-or-member`);
 
 for (let id = 0; id < moduleList.length; id++) {
   const file = moduleList[id];

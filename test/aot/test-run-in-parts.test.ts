@@ -5,7 +5,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
 import { envOf, files, runTests, twoFiles } from "./harness/test-run-in-parts";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 test("a test run in parts reads as one run", async () => {
   using dir = tempDir("aot-test-run-in-parts", files);
@@ -20,7 +21,7 @@ test("under --parallel the parts run at once, with the same report", async () =>
   expect(await runTests(String(dir), twoFiles, "--aot", "--parallel=3")).toEqual(plain);
 }, 120_000);
 
-test("with --timings the parts take about as long as one another, and each begins with its slowest file", async () => {
+test("with --timings the parts are cut from the files in their order, the slowest first", async () => {
   using dir = tempDir("aot-test-run-in-parts-timings", {
     ...files,
     // No time for c: a file nobody has timed may be slow, so it is dealt first, and it counts as one of the slowest tenth, 5000 ms.
@@ -34,11 +35,12 @@ test("with --timings the parts take about as long as one another, and each begin
     String(dir),
     envOf(twoFiles),
   );
-  // Each file goes to the part that has the least so far: c | f | d | e b a g. A worker runs a part to its end.
+  // A part is full when it takes the mean of four parts, 2,740 ms, or holds four files: c | f | d e b a | g. A worker runs a part to its end.
+  // Three parts are built at once and the worker takes the one that is ready first, so the order of the parts is not asked.
   // g imports a file that is not there, and whether its name is printed is not asked here.
   const order = [...stderr.matchAll(/^([a-f])\.test\.ts:$/gm)].map(match => match[1]).join("");
-  expect(order).toContain("eba");
   expect(order).toHaveLength(6);
+  expect(order).toContain("deba");
   const plain = await runTests(String(dir), undefined, "--parallel=3");
   expect(await runTests(String(dir), twoFiles, "--aot", "--parallel=3", "--timings=timings.json")).toEqual(plain);
 }, 120_000);

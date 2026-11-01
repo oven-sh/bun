@@ -972,50 +972,43 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # -- generated: attempt numbersThenAText f6 f7 f8 f10 f11 f13 f14 f15 f17 f18 f19 f20
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=639 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}, {type=f20 site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f20 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: string, v1: f20) handler=b4():
+# CHECK-NEXT: b0(v0: string, v1: f20) handler=b1():
 # CHECK-NEXT: v2: " -> " = String string=" -> "
 # CHECK-NEXT: v3: string = Add v0, v2
 # CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v5: anything ~ undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 = GetCapture v1 function=f20
+# CHECK-NEXT: v5: f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 = GetCapture v1 function=f20
 # CHECK-NEXT: v6: "a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" = GetCapture v1 function=f20 index=1
-# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v8: undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19) handler=b4():
-# CHECK-NEXT: v9: number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v8, v6 function=f86 @4265:1 tail
-# CHECK-NEXT: Jump -> next b3(v9)
-# CHECK-NEXT: b2() frequency=Unlikely handler=b4():
-# CHECK-NEXT: v10: number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v5, v6 function=f87 @4265:1 tail
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b3(v11: number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>) handler=b4():
-# CHECK-NEXT: v12: undefined|null|string = Call v4, -, v11 calleeName="show" accessSite=22 callees=[f1]
-# CHECK-NEXT: v13: string = Add v3, v12
-# CHECK-NEXT: Jump -> next b5(v13)
-# CHECK-NEXT: b4() role=CatchHandler:
-# CHECK-NEXT: v14: anything = CatchValue
-# CHECK-NEXT: v15: " threw " = String string=" threw "
-# CHECK-NEXT: v16: string = Add v0, v15
-# CHECK-NEXT: v17: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v18: boolean = HasInPrototypeChain v14, v17
-# CHECK-NEXT: v19: anything ~ undefined|null|Error = Upcast v14 castType=anything
-# CHECK-NEXT: v20: anything = PropGet v19 key="constructor" accessSite=24
-# CHECK-NEXT: v21: anything ~ undefined|null|function = Expect v20 expectedType=undefined|null|function
-# CHECK-NEXT: v22: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v21 name="name"
-# CHECK-NEXT: v23: anything = PropGet v22 key="name" accessSite=25
-# CHECK-NEXT: v24: anything ~ undefined|null|string = Expect v23 expectedType=undefined|null|string
-# CHECK-NEXT: v25: string = Add v16, v24
-# CHECK-NEXT: Jump -> next b5(v25)
-# CHECK-NEXT: b5(v26: string):
-# CHECK-NEXT: v27: " | " = String string=" | "
-# CHECK-NEXT: v28: string = Add v26, v27
-# CHECK-NEXT: v29: absent = GetModuleVariable variable=g3
-# CHECK-NEXT: v30: never = CheckInitialized v29 name="log"
+# CHECK-NEXT: v7: anything = Call v5, -, v6 calleeName="run" accessSite=44 callees=[f10, f11, f12, f13, f14, f15, f16, f17, f18, f19] @0:1 tail
+# CHECK-NEXT: v8: number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v9: undefined|null|string = Call v4, -, v8 calleeName="show" accessSite=22 callees=[f1]
+# CHECK-NEXT: v10: string = Add v3, v9
+# CHECK-NEXT: Jump -> next b2(v10)
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: v11: anything = CatchValue
+# CHECK-NEXT: v12: " threw " = String string=" threw "
+# CHECK-NEXT: v13: string = Add v0, v12
+# CHECK-NEXT: v14: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v15: boolean = HasInPrototypeChain v11, v14
+# CHECK-NEXT: v16: anything ~ undefined|null|Error = Upcast v11 castType=anything
+# CHECK-NEXT: v17: anything = PropGet v16 key="constructor" accessSite=24
+# CHECK-NEXT: v18: anything ~ undefined|null|function = Expect v17 expectedType=undefined|null|function
+# CHECK-NEXT: v19: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v18 name="name"
+# CHECK-NEXT: v20: anything = PropGet v19 key="name" accessSite=25
+# CHECK-NEXT: v21: anything ~ undefined|null|string = Expect v20 expectedType=undefined|null|string
+# CHECK-NEXT: v22: string = Add v13, v21
+# CHECK-NEXT: Jump -> next b2(v22)
+# CHECK-NEXT: b2(v23: string):
+# CHECK-NEXT: v24: " | " = String string=" | "
+# CHECK-NEXT: v25: string = Add v23, v24
+# CHECK-NEXT: v26: absent = GetModuleVariable variable=g3
+# CHECK-NEXT: v27: never = CheckInitialized v26 name="log"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="numbersThenAText"
-# CHECK: module=m0 position=1092 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Generator<undefined|null|1|"2", pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f5 body=f129} {
+# CHECK: module=m0 position=1092 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Generator<undefined|null|1|"2", pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f5 body=f128} {
 # CHECK-NEXT: b0(v0: anything, v1: function):
-# CHECK-NEXT: v2: Generator = NewGenerator v1 function=f5
-# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f129 numberOfWords=3
+# CHECK-NEXT: v2: Generator = NewGenerator v1 function=f5 [getsHeapFrame]
+# CHECK-NEXT: v5: anything = NewHeapFrame v2, v1 function=f128 numberOfWords=3
 # CHECK-NEXT: PutHeapFrameWord v5, v2
 # CHECK-NEXT: PutHeapFrameWord v5, v0 index=1
 # CHECK-NEXT: PutHeapFrameWord v5, v1 index=2
@@ -1052,14 +1045,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f10 module=
-# CHECK: m0 position=2336 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w20 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w21 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f88} inlineFrames=[{}, {callee=f88 callPosition=2336 module=m0}] {
+# CHECK: m0 position=2336 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w20 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w21 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f86} inlineFrames=[{}, {callee=f86 callPosition=2336 module=m0}] {
 # CHECK-NEXT: b0(v0: "a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done"):
 # CHECK-NEXT: v1: Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> = Data data=d17 allocationSite=44 arrayStorage=Contiguous [isNeverToldApart]
 # CHECK-NEXT: v2: Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f11 module=
-# CHECK: m0 position=2555 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w22 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w23 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f35] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f89} inlineFrames=[{}, {callee=f89 callPosition=2555 module=m0}] {
+# CHECK: m0 position=2555 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w22 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w23 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f35] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f87} inlineFrames=[{}, {callee=f87 callPosition=2555 module=m0}] {
 # CHECK-NEXT: b0(v0: "a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done"):
 # CHECK-NEXT: v1: Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=number|string|Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v2: Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
@@ -1072,7 +1065,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
-# CHECK: m0 position=3141 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w29 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f90} inlineFrames=[{}, {callee=f90 callPosition=3141 module=m0}, {callee=f131 callPosition=4294967295 parent=1 module=m4}, {callee=f128 callPosition=5210 parent=2 module=m12}, {callee=f84 callPosition=2337 parent=3 module=m12}, {callee=f82 callPosition=4294967295 parent=4 isTailCall=true module=m12}] {
+# CHECK: m0 position=3141 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w29 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f88} inlineFrames=[{}, {callee=f88 callPosition=3141 module=m0}, {callee=f130 callPosition=4294967295 parent=1 module=m4}, {callee=f127 callPosition=5210 parent=2 module=m12}, {callee=f84 callPosition=2337 parent=3 module=m12}, {callee=f82 callPosition=4294967295 parent=4 isTailCall=true module=m12}] {
 # CHECK-NEXT: b0(v0: "a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done") frequency=Rare:
 # CHECK-NEXT: v1: Array<never> = NewArray contents=never allocationSite=47 [contentsAreProven]
 # CHECK-NEXT: v2: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
@@ -1089,9 +1082,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=3276 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w30 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w31 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f39] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f91} {
+# CHECK: m0 position=3276 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w30 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w31 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f39] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f89} {
 # CHECK-NEXT: b0(v0: "a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done"):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f91
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f89
 # CHECK-NEXT: v2: number|string|bigint = ResultAt v1
 # CHECK-NEXT: v3: 8 = Integer integer=8
 # CHECK-NEXT: v4: Array<never, proven, pristine[Storage, Names, Dense]> = ResultAt v1 index=1
@@ -1100,12 +1093,12 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f17 module=
-# CHECK: m0 position=3491 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w34 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w35 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f41] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f92} inlineFrames=[{}, {callee=f92 callPosition=3491 module=m0}, {callee=f9 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK: m0 position=3491 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w34 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w35 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f41] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f90} inlineFrames=[{}, {callee=f90 callPosition=3491 module=m0}, {callee=f9 callPosition=4294967295 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: "a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done"):
 # CHECK-NEXT: v1: fact = Entered function=f9
-# CHECK-NEXT: v2: Map<"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done", "12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = GetModuleVariable fact=v1 variable=g4
-# CHECK-NEXT: v3: undefined|"12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = CallBuiltin v2, v0 overload=MapPrototypeGet/0 accessSite=29 @0:2 tail
-# CHECK-NEXT: v4: undefined|"12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|Array<int[1, 3], proven, pristine[Storage, Names]> = Upcast v3 castType=anything
+# CHECK-NEXT: v2: Map<"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done", "12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<int, "one", proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = GetModuleVariable fact=v1 variable=g4
+# CHECK-NEXT: v3: undefined|"12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<int, "one", proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = CallBuiltin v2, v0 overload=MapPrototypeGet/0 accessSite=29 @0:2 tail
+# CHECK-NEXT: v4: undefined|"12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<int, "one", proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|Array<int[1, 3], proven, pristine[Storage, Names]> = Upcast v3 castType=anything
 # CHECK-NEXT: v5: Set ~ Set<int[1, 3]> = CallBuiltin -, v4 overload=Set/2 accessSite=40
 # CHECK-NEXT: v6: Set<anything, proven, pristine[Storage, Names]> = AssumeType v5 provenType=Set<anything, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v7: 0 = Integer
@@ -1121,7 +1114,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: undefined = Undefined
 # CHECK-NEXT: v4: Generator = NewGenerator function=f25
-# CHECK-NEXT: v6: anything = NewHeapFrame v4 function=f130 numberOfWords=3
+# CHECK-NEXT: v6: anything = NewHeapFrame v4 function=f129 numberOfWords=3
 # CHECK-NEXT: PutHeapFrameWord v6, v4
 # CHECK-NEXT: PutHeapFrameWord v6, v0 index=1
 # CHECK-NEXT: PutHeapFrameWord v6, v1 index=2
@@ -1133,9 +1126,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK: m0 position=3891 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w38 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> site=w39 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f9 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: "a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done"):
 # CHECK-NEXT: v1: fact = Entered function=f9
-# CHECK-NEXT: v2: Map<"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done", "12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = GetModuleVariable fact=v1 variable=g4
-# CHECK-NEXT: v3: undefined|"12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = CallBuiltin v2, v0 overload=MapPrototypeGet/0 accessSite=29 @0:1 tail
-# CHECK-NEXT: v4: undefined|"12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, undefined|int|"one"|Array<1|"one", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = Upcast v3 castType=anything
+# CHECK-NEXT: v2: Map<"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done", "12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<int, "one", proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = GetModuleVariable fact=v1 variable=g4
+# CHECK-NEXT: v3: undefined|"12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<int, "one", proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = CallBuiltin v2, v0 overload=MapPrototypeGet/0 accessSite=29 @0:1 tail
+# CHECK-NEXT: v4: undefined|"12"|"\u{1f600}"|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<int, "one", proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|L2|L3|L5|L7|Array<int[1, 3], proven, pristine[Storage, Names]>|Map<int, "one", proven, pristine[Storage, Names]>|Set<int|"2", proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = Upcast v3 castType=anything
 # CHECK-NEXT: v5: enumerator = ForInOpen v4
 # CHECK-NEXT: v6: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v6)
@@ -1148,24 +1141,14 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: Jump -> next b1(v12)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=
-# CHECK: m0 position=4265 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 site=w40 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w44 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f44] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f86 fallback=f87} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19, v1: "a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done"):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
-# CHECK-NEXT: v4: number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v3, v1 function=f86
-# CHECK-NEXT: ReturnCall v4
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0, v1 function=f87
-# CHECK-NEXT: ReturnCall v5
-# CHECK-NEXT: }
+# CHECK: m0 position=4265 kind=Arrow flags=[IsChecked] captures=[{type=f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 site=w40 flags=[OmitsNull, OmitsUndefined]}, {type="a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w44 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="numbersThenAText"
-# CHECK: module=m0 position=1092 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f5 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f5 body=f96 promiseParameter=2}
+# CHECK: module=m0 position=1092 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f5 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f5 body=f94 promiseParameter=2}
 # CHECK-LABEL: function {{*}}name="numbersThenAText"
 # CHECK: module=m0 position=1092 role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} inlineFrames=[{}, {callee=f5 callPosition=1092 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f5, v1: anything):
-# CHECK-NEXT: v2: Generator = NewGenerator v0 function=f5
-# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f129 numberOfWords=3
+# CHECK-NEXT: v2: Generator = NewGenerator v0 function=f5 [getsHeapFrame]
+# CHECK-NEXT: v5: anything = NewHeapFrame v2, v0 function=f128 numberOfWords=3
 # CHECK-NEXT: PutHeapFrameWord v5, v2
 # CHECK-NEXT: PutHeapFrameWord v5, v1 index=1
 # CHECK-NEXT: PutHeapFrameWord v5, v0 index=2
@@ -1175,7 +1158,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="numbersThenAText"
-# CHECK: module=m0 position=1092 role=CoroutineBody flags=[IsGenerator, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f5 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f5 body=f129} {
+# CHECK: module=m0 position=1092 role=CoroutineBody flags=[IsGenerator, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f5 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f5 body=f128} {
 # CHECK-NEXT: b0(v0: anything, v1: int[0, 2], v2: anything):
 # CHECK-NEXT: v3: int = GetResumeIndex v0
 # CHECK-NEXT: Switch v3 cases=[0, 1] -> case b1(), case b5(), otherwise b9()

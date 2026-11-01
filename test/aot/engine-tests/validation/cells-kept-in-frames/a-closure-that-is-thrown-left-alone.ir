@@ -140,7 +140,7 @@ function f2 name="fail" module=m0 position=219 flags=[IsChecked, HasExplicitName
     v1 = NewClosure v0 function=f3 @261
     Throw v1 @285
 }
-function f3 module=m0 position=261 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number site=w4}] thisType={type=anything} parameters=[{type=number site=w9}] results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 module=m0 position=261 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number site=w4 variableName="a"}] thisType={type=anything} parameters=[{type=number site=w9}] results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number, v1: number):
     Jump -> next b1() @261
   b1():

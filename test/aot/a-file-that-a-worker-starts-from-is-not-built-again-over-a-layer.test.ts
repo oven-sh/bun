@@ -64,7 +64,9 @@ test("the same files, imported", () => {
 async function seenIn(words: string | undefined, ...flags: string[]) {
   using dir = tempDir("aot-worker-file-of-a-layer-below", files);
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  const { stdout, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], String(dir), env);
+  const command = [bunExe(), "test", "--timeout=60000", "--isolate", ...flags];
+  const { stdout, stderr, exitCode } = await run(command, String(dir), env);
+  if (exitCode !== 0) console.error(stderr);
   const seen = stdout.split("\n").filter(line => line.startsWith("SEEN "));
   return { seen: seen.sort(), exitCode };
 }

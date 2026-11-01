@@ -44,8 +44,12 @@ bun_aot_interface::define_linked_functions! {
     fn bun_aot_write_build_report(_input: &ReportInput<'_>, _detail: ReportDetail, _build_id: Option<&[u8]>) -> Vec<u8> { absent() }
     fn bun_aot_write_registry() -> Vec<u8> { absent() }
     fn bun_aot_unlinked_named_values<'a, 's>(_files: &'a Files<'s>, _atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a> { absent() }
-    fn bun_aot_find_what_tests_replace(_files: &[Vec<u8>], _threads: usize, _resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests { absent() }
+    fn bun_aot_find_what_tests_replace(_test_files: &[Vec<u8>], _preloads: &[Vec<u8>], _reached_by_preloads_alone: &[Vec<u8>], _threads: usize, _product_replaces_nothing: bool, _resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests { absent() }
     fn bun_aot_everything_that_tests_replace() -> ReplacedByTests { absent() }
+    fn bun_aot_globals_that_a_window_replaces() -> Vec<u32> { absent() }
+    fn bun_aot_lists_laid_anew_between_test_files() -> Vec<u32> { absent() }
+    fn bun_aot_imports_vitest(_path: &[u8], _text: &[u8]) -> bool { absent() }
+    fn bun_aot_find_importer_outside_tests(_root: &[u8], _file: &[u8]) -> Option<Vec<u8>> { absent() }
     fn bun_aot_library_modules_that_programs_load() -> Vec<&'static [u8]> { absent() }
     fn bun_aot_builtins_that_load_library_modules() -> Vec<String> { absent() }
     fn bun_aot_library_modules_spelled_in(_text: &[u8]) -> Option<Vec<&'static [u8]>> { absent() }

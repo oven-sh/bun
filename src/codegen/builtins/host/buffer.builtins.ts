@@ -323,7 +323,7 @@ export default b.declarations(
           implementation: b.hostCall,
         },
         {
-          args: { list: b.object, totalLength: b.f64.optional },
+          args: { list: b.union(b.instance("Array"), b.instance("Proxy")), totalLength: b.f64.optional },
           returns: newBuffer,
           capability: "js",
           throws: true,
@@ -545,4 +545,6 @@ export default b.declarations(
   // The module takes the constructors from the realm, not from the names of the global object.
   b.same("node:buffer.Buffer", "Buffer"),
   b.same("node:buffer.Blob", "Blob"),
+  b.same("node:buffer.atob", "atob"),
+  b.same("node:buffer.btoa", "btoa"),
 );

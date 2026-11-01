@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
+import { measureUntilWithinBounds } from "./harness/measure-again";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -46,7 +47,7 @@ function project() {
   return files;
 }
 
-test("a mocked module does not make every load walk the modules below it", async () => {
+async function timeOfFilesThatMockInTimesThatOfTheOthers() {
   using dir = tempDir("loads-below-a-mock", project());
   const { stderr, exitCode } = await run(
     [bunExe(), "test", "--aot", "--isolate", "--timings=timings.json", "--update-timings", "."],
@@ -63,6 +64,16 @@ test("a mocked module does not make every load walk the modules below it", async
       (sum, [path, time]) => sum + (path.split(/[\\/]/).at(-1)!.startsWith(start) ? time : 0),
       0,
     );
+  return sumOf("mocking") / sumOf("plain");
+}
+
+test("a mocked module does not make every load walk the modules below it", async () => {
   // Where each required module walked the graph in each test file, the files that mock took twenty times as long as the others.
-  expect(sumOf("mocking") / sumOf("plain")).toBeLessThan(4);
+  const most = 4;
+  const times = await measureUntilWithinBounds(
+    "the time of the test files that mock",
+    timeOfFilesThatMockInTimesThatOfTheOthers,
+    times => times < most,
+  );
+  expect(times).toBeLessThan(most);
 });

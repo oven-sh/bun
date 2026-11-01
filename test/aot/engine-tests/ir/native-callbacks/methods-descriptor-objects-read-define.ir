@@ -192,9 +192,9 @@ function f2 name="Descriptor" module=m0 position=280 kind=BaseConstructor flags=
   b0(v0: anything, v1: number):
     Jump -> next b1() @280
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @248
-    v3 = NewObject v2 layout=L0 @248
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @248
+    v2 = GetConstructPrototype v0 layout=L0 @280
+    v3 = NewObject v2 layout=L0 @280
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @280
     v5 = CallDirect v4 function=f5 @280
     PropSet v4, v1 key="held" @281
     v7 = Undefined @281

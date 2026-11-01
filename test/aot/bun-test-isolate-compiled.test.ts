@@ -220,9 +220,14 @@ test("headers", done => {
     "a.test.ts": file,
     "b.test.ts": file,
   });
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), bunEnv);
-  expect((stdout + stderr).match(/^ \d+ (pass|fail)$/gm)).toEqual([" 2 pass", " 0 fail"]);
-  expect(exitCode).toBe(0);
+  const cmd = [bunExe(), "test", "--aot", "--isolate", "--timeout=60000"];
+  const { stdout, stderr, exitCode } = await run(cmd, String(dir), bunEnv);
+  const summary = (stdout + stderr).match(/^ \d+ (pass|fail)$/gm);
+  expect({ summary, exitCode, said: exitCode === 0 ? "" : stdout + stderr }).toEqual({
+    summary: [" 2 pass", " 0 fail"],
+    exitCode: 0,
+    said: "",
+  });
 });
 
 test("method calls on strings stay cached in later test files", async () => {
@@ -253,17 +258,26 @@ test("${name}", () => { expect(sliced(JSON.parse('["abc","defg","hi"]'))).toBe(2
   expect(operations).toBeLessThan(1_000);
 });
 
+// The frame of the runner's own function may still name the global of the file before the last, as it does in plain Bun: each build lays that frame out anew.
+// So the file that is asked about hangs a mark on its global, another file follows, and the last one counts the marks.
+const mark = `(globalThis as any).mark = new BigInt64Array(1);`;
+const fileThatDoesNothing = `
+import { expect, test } from "bun:test";
+test("nothing", () => { expect(1).toBe(1); });`;
 const lastFile = (imports: string) => `
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 ${imports}
 Bun.gc(true);
-const globals = heapStats().globalObjectCount;
-test("only this file's global is left", () => { expect(globals).toBe(1); });`;
+const { globalObjectCount, objectTypeCounts } = heapStats();
+test("the global of the marked file is gone", () => {
+  expect(objectTypeCounts.BigInt64Array ?? 0).toBe(0);
+  expect(globalObjectCount).toBeLessThanOrEqual(2);
+});`;
 
-test("the global of a finished test file goes at the first collection behind it", async () => {
+test("the global of a finished test file is gone once another file has run", async () => {
   // A function that is renamed at run time names its frames by its function object, which each call writes down for the collector.
-  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts"], {
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
     "named.ts": `
 export function make(label: string) {
   return function inner(depth: number): string {
@@ -276,14 +290,16 @@ export function rename(target: any, name: string) {
     "d.test.ts": `
 import { expect, test } from "bun:test";
 import { make, rename } from "./named";
+${mark}
 test("frames are named by the function object", () => {
   const made = [make("one"), make("two"), make("three")];
   for (const each of made) rename(JSON.parse("[0]")[0] ? {} : each, "renamed");
   for (let i = 0; i < 50; i++) for (const each of made) expect(each(i & 7)).toContain("renamed");
 });`,
-    "e.test.ts": lastFile(`import "./named";`),
+    "e.test.ts": fileThatDoesNothing,
+    "f.test.ts": lastFile(`import "./named";`),
   });
-  expect({ summary, exitCode }).toEqual({ summary: [" 2 pass", " 0 fail"], exitCode: 0 });
+  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
 });
 
 test("heapStats() does not keep the test file that called it", async () => {
@@ -291,15 +307,17 @@ test("heapStats() does not keep the test file that called it", async () => {
     "d.test.ts": `
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
+${mark}
 heapStats();
 test("nothing", () => { expect(1).toBe(1); });`,
-    "e.test.ts": lastFile(""),
+    "e.test.ts": fileThatDoesNothing,
+    "f.test.ts": lastFile(""),
   });
-  const cmd = [bunExe(), "test", "--aot", "--isolate", "./d.test.ts", "./e.test.ts"];
+  const cmd = [bunExe(), "test", "--aot", "--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"];
   // Collections between the two files would write over the stack that heapStats() left behind.
   const env = { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
   const { stdout, stderr, exitCode } = await run(cmd, String(dir), env);
-  expect((stdout + stderr).match(/^ \d+ (pass|fail)$/gm)).toEqual([" 2 pass", " 0 fail"]);
+  expect((stdout + stderr).match(/^ \d+ (pass|fail)$/gm)).toEqual([" 3 pass", " 0 fail"]);
   expect(exitCode).toBe(0);
 });
 
@@ -314,6 +332,7 @@ export function yearOf(text: string): string {
     "d.test.ts": `
 import { expect, test } from "bun:test";
 import { yearOf } from "./dates";
+${mark}
 test("matches", () => { expect(yearOf("2026-10")).toBe("2026"); });`,
     "e.test.ts": `
 import { expect, test } from "bun:test";
@@ -330,6 +349,7 @@ test.skipIf(isWindows)("a read that never ends does not keep the test file that 
 import { expect, test } from "bun:test";
 import { constants, openSync } from "node:fs";
 import { join } from "node:path";
+${mark}
 test("reads a pipe that nobody writes", async () => {
   const path = join(import.meta.dir, "never-written");
   expect(Bun.spawnSync(["mkfifo", path]).exitCode).toBe(0);
@@ -400,6 +420,7 @@ test("bun:sql does not keep the test file that loaded it", async () => {
     "d.test.ts": `
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
+${mark}
 test("loads both adapters", () => {
   expect(typeof new SQL("postgres://localhost:1/nothing").close).toBe("function");
   expect(typeof new SQL("mysql://localhost:1/nothing").close).toBe("function");
@@ -407,6 +428,27 @@ test("loads both adapters", () => {
     "e.test.ts": `
 import { expect, test } from "bun:test";
 test("nothing", () => { expect(1).toBe(1); });`,
+    "f.test.ts": lastFile(""),
+  });
+  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
+});
+
+test("a stand-in does not keep the test file that read it", async () => {
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
+    "d.test.ts": `
+import { expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+${mark}
+const hidden = (text: string) => new Function(JSON.parse(JSON.stringify(text)))();
+test("reads what no code that the compiler can follow reads", () => {
+  // A member that the host makes, a getter of the library, and the error of a call.
+  const sql = (Bun as any)["s" + "ql".slice(0)];
+  expect(Reflect.ownKeys(sql).includes("unsafe")).toBe(false);
+  expect(typeof hidden('return process.getBuiltinModule("node:fs").promises')).toBe("function");
+  expect(() => sql("select 1")).toThrow();
+  expect(existsSync(".")).toBe(true);
+});`,
+    "e.test.ts": fileThatDoesNothing,
     "f.test.ts": lastFile(""),
   });
   expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });

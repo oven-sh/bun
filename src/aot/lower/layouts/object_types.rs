@@ -1,3 +1,4 @@
+use bun_sort_by_number::SortByNumber;
 use core::cell::{Cell, RefCell};
 use core::cmp::Ordering;
 use std::rc::Rc;
@@ -18,7 +19,9 @@ use super::{
     DefinedObjectType, HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE,
     NamesOfObjectType, ObjectTypeKey, OwnFields, slot_of,
 };
+use crate::builtins::id::BuiltinId;
 use crate::builtins::resolve::SourceDialect;
+use crate::builtins::table;
 use crate::ir::generated::{
     Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
@@ -31,8 +34,6 @@ use crate::modules::ModuleRef;
 
 const _: () = assert!(PropertyKeyKind::COUNT <= 1 << u8::BITS);
 const _: () = assert!(WellKnownSymbol::COUNT <= 1 << u8::BITS);
-
-const MAX_ROUNDS_OF_FIELD_TYPES: usize = 4;
 
 type Member = (PropertyKeyId, ObjectMemberKind);
 type Members = SmallVec<[Member; 8]>;
@@ -191,16 +192,18 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // Every member of such a type is a type that nothing has made yet, with the same layout, and looking at its members makes the next ones.
     fn grows_without_end(&mut self, ty: CheckerTypeId) -> bool {
-        const LONGEST_PATH: usize = 64;
+        let longest_path = self.inputs.limits.get(LimitId::MaxHoldersFollowed) as usize;
         let holder = match self.layouts.holder_in_progress {
             Some(holder) if holder != ty => holder,
             Some(_) | None => return false,
         };
         self.layouts.holders.insert(ty, holder);
         let mut path = vec![ty];
-        while let Some(&holder) = self.layouts.holders.get(&path[path.len() - 1])
-            && path.len() < LONGEST_PATH
-        {
+        while let Some(&holder) = self.layouts.holders.get(&path[path.len() - 1]) {
+            if path.len() >= longest_path {
+                self.gave_up_at_no_position(LimitId::MaxHoldersFollowed);
+                break;
+            }
             path.push(holder);
         }
         path.reverse();
@@ -358,7 +361,14 @@ impl FileLowering<'_, '_, '_, '_> {
             return OwnFields::default();
         }
         // The type of a field may be the first mention of another type with this very layout (`interface Even { other: Odd }`), which then adds to the fields that have been looked at.
-        for _ in 0..MAX_ROUNDS_OF_FIELD_TYPES {
+        let mut rounds_left = self.inputs.limits.get(LimitId::MaxRoundsOfFieldTypes);
+        loop {
+            let Some(left) = rounds_left.checked_sub(1) else {
+                let position = self.find_position_in_file(layout);
+                self.gave_up(LimitId::MaxRoundsOfFieldTypes, position);
+                break;
+            };
+            rounds_left = left;
             let number_of_types = self.layouts.source_types(layout).len();
             for index in 0..listed.fields.len() as u32 {
                 self.listed_field_position(layout, &listed, index);
@@ -451,7 +461,7 @@ impl FileLowering<'_, '_, '_, '_> {
         site.is_some_and(|(home, _)| self.has_module(home))
     }
 
-    fn has_module(&self, home: FileId) -> bool {
+    pub(super) fn has_module(&self, home: FileId) -> bool {
         self.queries.files().is_compiled(home) && !self.inputs.is_left_out(home)
     }
 
@@ -733,6 +743,17 @@ impl FileLowering<'_, '_, '_, '_> {
         can_be_field(self, key)
     }
 
+    /// An assignment under such a name to an object right below `Object.prototype` is no definition: `__proto__` has a setter there, and the others are refused
+    /// once the program has frozen it.
+    pub(in crate::lower) fn is_name_on_object_prototype(&self, name: Atom) -> bool {
+        self.inputs.builtin_names.get(name).is_some_and(|name| {
+            !matches!(
+                table::member(BuiltinId::ObjectPrototype, name),
+                table::MemberLookup::Absent
+            )
+        })
+    }
+
     fn collect_literal_members(&mut self, literal: ExprId) -> Members {
         let hir = self.hir;
         let mut members = Members::new();
@@ -982,7 +1003,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
 fn find_declared_order(listed: &[SortedMember]) -> Vec<u32> {
     let mut order: Vec<u32> = (0..listed.len() as u32).collect();
-    order.sort_by_key(|&field| listed[field as usize].1.property_index);
+    order.sort_by_u32(|&field| listed[field as usize].1.property_index);
     match order.iter().zip(0..).all(|(&field, place)| field == place) {
         true => Vec::new(),
         false => order,

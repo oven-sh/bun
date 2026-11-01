@@ -3,7 +3,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 // A test run in layers has three programs in one realm: the packages and Bun's own library, the files of the project, and the test files.
 // Each was compiled without the others' code, so each could take an object of the realm for one that its own copy of the library made, or make a second one.

@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { fixture, measure, stacks } from "../js/node/http/node-http-fast-path-coverage";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { beforeAll, describe, test } from "./supported";
+import { beforeAll, describe, test } from "./measures";
 
 raiseDefaultTimeout(240_000);
 

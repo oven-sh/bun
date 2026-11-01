@@ -1160,7 +1160,8 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSObject* moduleConstructor = JSModuleConstructor::create(
                 init.vm, static_cast<Zig::GlobalObject*>(init.owner));
             init.set(moduleConstructor);
-            JSC::AOT::hostDidCreateNodeModule(init.owner, moduleConstructor);
+            if (init.vm.hasCompiledCode()) [[unlikely]]
+                JSC::AOT::hostDidCreateNodeModule(init.owner, moduleConstructor);
         });
 
     globalObject->m_nodeModuleSourceMapEntryStructure.initLater(

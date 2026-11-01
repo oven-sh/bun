@@ -1,4 +1,5 @@
 use super::import_graph::ImportGraph;
+use super::program_reach;
 use super::runtime_reach::ReachWhileLoading;
 use super::{
     Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, StartedWorkers,
@@ -15,9 +16,11 @@ use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
+use crate::load::importers_on_disk::find_importers_on_disk;
 use crate::load::is_in_archive_of_bun;
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::named_loads::{
+    find_files_followed_further_than_bundler, gives_unknown_name_to_imported_loader,
     leave_named_library_modules_to_loader, resolve_loads_through_imported_loaders,
 };
 use crate::load::replaced_modules::packages_mock_modules_that_they_do_not_spell;
@@ -37,16 +40,17 @@ use crate::load::worker_files::{
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
 use crate::options::{LoadOptions, PathOptions};
 use crate::statistics::{
-    LimitId, LimitValues, Stage, StatisticId, Statistics, log_why_files_are_loaded_again,
+    LimitId, LimitValues, Stage, StatisticId, Statistics, StepClock, log_why_files_are_loaded_again,
 };
 use bun_ast::Loader;
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
+use bun_paths::resolve_path::{dirname, platform::Posix};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
-use bun_sema::import_sites::ImportSpecifier;
-use bun_sema::program::{CodeView, FileId, Files, MainModule, Run};
-use bun_sema::resolve::{CodeHost, CodeOptions, is_declaration_file_name};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::program::{CodeAnswer, CodeView, FileId, Files, MainModule, Run};
+use bun_sema::resolve::{CodeHost, CodeOptions, ancestors, inside, is_declaration_file_name};
 use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::Disk;
@@ -110,6 +114,253 @@ fn read_assets<'scope>(scope: &'scope Scope<'scope, '_>, host: &'scope LoadHost<
     start_asset_readers(scope, host, std::sync::Arc::new(Guarded::new(paths)), count);
 }
 
+/// The files of a test run that an executable of the product holds too: the files of the project that are not of the tests, and whatever those load, directly or through
+/// others: the packages of the product. A package that the files of the tests alone load is there to help them: nock and msw patch `fetch`, sinon whatever a test names.
+/// A layer of packages does not see who imports them: `LoadOptions::package_files_that_product_imports`, `package_files_imported_beside_tests`.
+fn mark_files_of_product(
+    options: &Options<'_>,
+    host: &LoadHost<'_>,
+    files: &Files<'_>,
+    graph: &ImportGraph,
+) {
+    if !options.aot.only_tests_load_code_from_disk {
+        return;
+    }
+    let compiled = || files.compiled_files().iter().copied();
+    for source in compiled().filter_map(|file| parsed_source(files, file)) {
+        source.set_loads_for_tests_alone(false);
+    }
+    // No executable holds a preload, nor what the preloads alone load: `import "./patch"` in setup/preload.ts.
+    let is_preload = |file: &u32| {
+        let path = bun_sema_driver::host::to_native(files.module(FileId(*file)).file_name());
+        (options.load.paths_of_preloads.iter()).any(|it| it[..] == *path)
+    };
+    let entry_points = files.entry_points().iter().map(|file| file.idx() as u32);
+    let (preloads, others): (Vec<u32>, Vec<u32>) = entry_points.partition(is_preload);
+    if !preloads.is_empty() {
+        let others: FxHashSet<u32> =
+            (graph.find_files_loaded_from(others, &|_| false).into_iter()).collect();
+        for file in graph.find_files_loaded_from(preloads, &|file| others.contains(&file)) {
+            if let Some(source) = parsed_source(files, FileId(file)).filter(|it| !it.is_in_package)
+            {
+                source.set_is_of_tests();
+            }
+        }
+    }
+    // No executable holds a file of the project that nothing but the files of the tests imports: `export const load = path => import(path)` in support/, beside tests/.
+    // One step, and no further: everything in a test run is reached from a test file in the end.
+    let ways_in = find_ways_into_project(options, host);
+    let mut helpers: Vec<(FileId, FxHashSet<FileId>)> = Vec::new();
+    for file in compiled() {
+        let loads_what_it_is_told = parsed_source(files, file).is_some_and(|it| {
+            !it.is_in_package
+                && !it.is_of_tests()
+                && (it.loads_by_unknown_name
+                    || !it.unknown_names_at.is_empty()
+                    || gives_unknown_name_to_imported_loader(files, file))
+        });
+        let mut taken_through = FxHashSet::default();
+        if loads_what_it_is_told
+            && is_taken_by_tests_alone(files, graph, &ways_in, file, &mut taken_through)
+        {
+            helpers.push((file, taken_through));
+        }
+    }
+    // `main.ts` imports it, and no test imports `main.ts`.
+    if !helpers.is_empty() {
+        let started = Instant::now();
+        let mut asked: Vec<Vec<u8>> = (helpers.iter().flat_map(|it| &it.1))
+            .map(|&file| files.module(file).file_name().to_vec())
+            .collect();
+        asked.shared_sort_unstable();
+        asked.dedup();
+        // Where the runner looks for test files.
+        let root = bun_core::getcwd(&mut bun_paths::path_buffer_pool::get())
+            .map_or_else(|_| Vec::new(), |it| it.as_bytes().to_vec());
+        let root = bun_sema_driver::host::from_native(&root);
+        let is_read = |path: &[u8]| {
+            let path = bun_sema_driver::host::to_native(path);
+            graph.file_at(path).is_some()
+        };
+        let found = find_importers_on_disk(&root, &asked, &|path| host.is_of_tests(path), &is_read);
+        if crate::statistics::logs_stages() {
+            bun_core::print_errorln!(
+                "AOT test run | files that load what they are told and that the tests alone import {} | of them imported by a file on disk that the run does not reach {} | {} ms",
+                helpers.len(),
+                found.len(),
+                started.elapsed().as_millis(),
+            );
+        }
+        helpers.retain(|(_, taken_through)| {
+            let name_of = |file: &FileId| files.module(*file).file_name();
+            !(taken_through.iter()).any(|file| found.iter().any(|it| it.imported == name_of(file)))
+        });
+    }
+    for (file, _) in helpers {
+        if let Some(source) = parsed_source(files, file) {
+            source.set_loads_for_tests_alone(true);
+        }
+    }
+    let is_of_tests =
+        |file: u32| parsed_source(files, FileId(file)).is_none_or(|it| it.is_of_tests());
+    let own = files.compiled_files().iter().map(|file| file.idx() as u32);
+    let own = own.filter(|&file| {
+        parsed_source(files, FileId(file)).is_some_and(|it| !it.is_of_tests() && !it.is_in_package)
+    });
+    let told = options.load.package_files_that_product_imports.iter();
+    let first = own.chain(told.filter_map(|path| graph.file_at(path)));
+    for file in graph.find_files_loaded_from(first.collect(), &is_of_tests) {
+        if let Some(source) = parsed_source(files, FileId(file)) {
+            source.set_finds_builtins_read_only();
+        }
+    }
+    // No executable holds a package that only the tests themselves reach. webpack loads `ts-loader` by `require(loader.path)`, and so do babel, eslint and rollup load what a test
+    // names for them. The file that writes such a load is the tests'. The rest of the package stays as it is: nothing there asks to leave.
+    // `src/app.ts` beside `src/app.test.ts` is the product, whatever its folder says, and so are the packages that it reaches.
+    let is_of_tests_by_itself =
+        |file: u32| parsed_source(files, FileId(file)).is_none_or(|it| it.is_of_tests_by_itself);
+    let own = compiled().map(|file| file.idx() as u32).filter(|&file| {
+        !is_of_tests_by_itself(file)
+            && parsed_source(files, FileId(file)).is_some_and(|it| !it.is_in_package)
+    });
+    let told = (options.load.package_files_that_product_imports.iter())
+        .chain(&options.load.package_files_imported_beside_tests);
+    let first = own.chain(told.filter_map(|path| graph.file_at(path)));
+    let package_of = |file: FileId| program_reach::package_of(files.module(file).file_name());
+    // `src/main.ts` imports "@nestjs/core", and no test loads `src/main.ts`. What the project says that it needs when it runs is the product's.
+    let declared = find_packages_that_product_declares(options, host);
+    let is_declared = |&file: &FileId| {
+        const FOLDER: &[u8] = b"/node_modules/";
+        let package = package_of(file);
+        bun_core::strings::last_index_of(package, FOLDER)
+            .is_some_and(|at| declared.contains(&package[at + FOLDER.len()..]))
+    };
+    let first = first.chain(compiled().filter(is_declared).map(|file| file.idx() as u32));
+    let reached = graph.find_files_loaded_from(first.collect(), &is_of_tests_by_itself);
+    let of_product: FxHashSet<&[u8]> = (reached.into_iter())
+        .map(|file| package_of(FileId(file)))
+        .collect();
+    for file in compiled() {
+        if let Some(source) = parsed_source(files, file).filter(|it| it.is_in_package)
+            && !of_product.contains(package_of(file))
+            && (!source.unknown_names_at.is_empty()
+                || gives_unknown_name_to_imported_loader(files, file))
+        {
+            source.set_loads_for_tests_alone(true);
+        }
+    }
+}
+
+/// `export { load } from "./load"` takes nothing for itself: whoever imports that file does. A layer below the test files begins at what they import.
+/// `seen`: `file`, and the files that it is taken through.
+fn is_taken_by_tests_alone(
+    files: &Files<'_>,
+    graph: &ImportGraph,
+    ways_in: &FxHashSet<Vec<u8>>,
+    file: FileId,
+    seen: &mut FxHashSet<FileId>,
+) -> bool {
+    if !seen.insert(file) {
+        return true;
+    }
+    let referrers = graph.referrers_of(file.idx() as u32);
+    let only_exports_again = |referrer: FileId| {
+        let sites = files.analysis(referrer).import_sites.iter();
+        let answers = files
+            .compiled(referrer)
+            .map_or(&[][..], |it| it.code_answers);
+        sites.zip(answers).all(|(site, answer)| {
+            !matches!(*answer, CodeAnswer::File(found) if found == file)
+                || matches!(
+                    site.kind,
+                    ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
+                )
+        })
+    };
+    (!referrers.is_empty() || files.entry_points().contains(&file))
+        && !ways_in.contains(files.module(file).file_name())
+        && referrers.iter().all(|&referrer| {
+            let referrer = FileId(referrer);
+            let Some(source) = parsed_source(files, referrer) else {
+                return true;
+            };
+            source.is_of_tests()
+                || (!source.is_in_package
+                    && only_exports_again(referrer)
+                    && is_taken_by_tests_alone(files, graph, ways_in, referrer, seen))
+        })
+}
+
+/// The files that `main`, `module` and `bin` of each package.json above a test file name, and `index.js` beside one that names none.
+fn find_ways_into_project(options: &Options<'_>, host: &dyn CodeHost) -> FxHashSet<Vec<u8>> {
+    let session = Session::new();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut paths = FxHashSet::default();
+    for test_file in &options.load.test_files {
+        let test_file = bun_sema_driver::host::from_native(test_file);
+        for folder in ancestors(dirname::<Posix>(&test_file)) {
+            if !seen.insert(folder.to_vec()) {
+                break;
+            }
+            let text = host.read(&inside(folder, b"package.json"));
+            let fields = text.and_then(|it| host.parse_runtime_package_json(session.arena(), &it));
+            let Some(fields) = fields else {
+                continue;
+            };
+            let mut named: Vec<Vec<u8>> = Vec::new();
+            for field in [&b"main"[..], b"module", b"bin"] {
+                let Some(value) = fields.get(field) else {
+                    continue;
+                };
+                named.extend(value.as_str().map(|it| it.to_vec()));
+                let several = value.as_object().into_iter().flatten();
+                named.extend(several.filter_map(|it| it.1.as_str().map(|it| it.to_vec())));
+            }
+            if named.is_empty() {
+                named.push(b"index.js".to_vec());
+            }
+            for name in named {
+                let name = name.strip_prefix(b"./").unwrap_or(&name);
+                paths.insert(inside(folder, name));
+            }
+        }
+    }
+    paths
+}
+
+/// The names under `dependencies`, `peerDependencies` and `optionalDependencies` of each package.json above a test file: the nearest, and the root's in a workspace.
+fn find_packages_that_product_declares(
+    options: &Options<'_>,
+    host: &dyn CodeHost,
+) -> FxHashSet<Vec<u8>> {
+    let session = Session::new();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut names = FxHashSet::default();
+    for test_file in &options.load.test_files {
+        let test_file = bun_sema_driver::host::from_native(test_file);
+        for folder in ancestors(dirname::<Posix>(&test_file)) {
+            // What lies above it has been read with it.
+            if !seen.insert(folder.to_vec()) {
+                break;
+            }
+            let text = host.read(&inside(folder, b"package.json"));
+            let Some(fields) = text.and_then(|it| host.parse_package_json(session.arena(), &it))
+            else {
+                continue;
+            };
+            for field in [
+                &b"dependencies"[..],
+                b"peerDependencies",
+                b"optionalDependencies",
+            ] {
+                let named = fields.get(field).and_then(|it| it.as_object());
+                names.extend(named.into_iter().flatten().map(|it| it.0.clone()));
+            }
+        }
+    }
+    names
+}
+
 /// The locked members of built-in objects that files of a test run replace and that the load does not know of.
 fn find_replaced_builtins_spelled(options: &Options<'_>, files: &Files<'_>) -> Vec<u32> {
     if !is_test_run(options) {
@@ -117,7 +368,9 @@ fn find_replaced_builtins_spelled(options: &Options<'_>, files: &Files<'_>) -> V
     }
     if crate::statistics::logs_stages() {
         for &file in files.compiled_files() {
-            let members = parsed_source(files, file).map(|it| it.builtins.replaced_members());
+            let source = parsed_source(files, file);
+            let source = source.filter(|it| !it.finds_builtins_read_only());
+            let members = source.map(|it| it.builtins.replaced_members());
             let members: Vec<String> = (members.unwrap_or_default().iter())
                 .map(|&member| table::text_of(member))
                 .collect();
@@ -132,6 +385,7 @@ fn find_replaced_builtins_spelled(options: &Options<'_>, files: &Files<'_>) -> V
     }
     let sources = files.compiled_files().iter();
     let sources = sources.filter_map(|&file| parsed_source(files, file));
+    let sources = sources.filter(|it| !it.finds_builtins_read_only());
     let known = &options.load.replaced_builtins;
     let mut spelled: Vec<u32> = sources
         .flat_map(|source| source.builtins.replaced_members().iter())
@@ -314,6 +568,8 @@ fn asks_the_same(a: &RuntimeRoots, b: &RuntimeRoots) -> bool {
         && a.imports_cluster == b.imports_cluster
         && a.imports_uncompiled_code == b.imports_uncompiled_code
         && a.loads_by_unknown_path == b.loads_by_unknown_path
+        && a.leaves_compiled_files == b.leaves_compiled_files
+        && a.files_of_tests_may_leave == b.files_of_tests_may_leave
         && a.keeps_code_without_names == b.keeps_code_without_names
         && a.holds_guessed_code == b.holds_guessed_code
 }
@@ -397,6 +653,9 @@ impl<'a> Build<'a> {
         debug_assert!(core::ptr::eq(atoms.session(), application_session));
         let builtin_names = BuiltinNames::new(&atoms);
         let archive = Archive::embedded();
+        let natives = archive.manifest().natives().iter();
+        let natives = natives.map(|native| (&*native.name, native.is_also_member_of_global_this));
+        crate::builtins::resolve::set_natives(natives);
         let runtime_modules = create_runtime_modules(archive, options);
         let messages = LoadMessages::default();
         let provided = messages.with_log(|log| {
@@ -456,6 +715,7 @@ impl<'a> Build<'a> {
         let options = self.options;
         let code = CodeOptions {
             mocks_any_file: options.load.mocks_any_module || options.load.runs_tests,
+            follows_paths_to_functions_of_other_files: options.load.runs_tests,
             ..options.code.clone()
         };
         let limits = self.limits.clone();
@@ -618,7 +878,9 @@ impl<'a> Build<'a> {
         let provider = self.provider;
         // One resolver for each search, made at its first question. Not one for all: between two searches the host is told to leave other files alone.
         let is_built_upon = options.aot.shares_realms && !options.aot.is_part_of_test_files;
+        let takes_words_of_packages = is_built_upon;
         let find_code = |files: &dyn CodeView<'_>,
+                         all: &dyn CodeView<'_>,
                          (paths, is_built_upon): (&PathOptions, bool),
                          in_parallel: InParallel<'_>| {
             let tables = [FileFinderTables::default(), FileFinderTables::default()];
@@ -649,11 +911,20 @@ impl<'a> Build<'a> {
                 },
                 working_directory: &request.code.working_directory,
                 is_held_below: &is_held_below,
+                holds_file: &|path| {
+                    let mut compiled = all.compiled_files().iter();
+                    compiled.any(|&file| all.file_name(file) == path)
+                },
                 parameters_below,
                 resolve_import: &|importer, written| from_here().find_import(importer, written),
+                resolve_require: &|importer, written| from_here().find_required(importer, written),
                 is_built_upon,
+                takes_words_of_packages,
             };
-            find_code_that_starts_workers(files, &search, in_parallel)
+            let mut steps = StepClock::new(Stage::Load, "a round of the load");
+            let found = find_code_that_starts_workers(files, &search, in_parallel);
+            steps.end("find_code_that_starts_workers");
+            found
         };
         // The files that Workers start from are entry points of the one program of such a build. The load looks for them once all its files are parsed, and goes on
         // with them: a load of everything for the search and a second one with what it found would parse every file twice.
@@ -668,6 +939,30 @@ impl<'a> Build<'a> {
         let taken_in: Guarded<Vec<(Vec<u8>, WorkerFile)>> = Guarded::new(Vec::new());
         // The files that were searched and start no Worker themselves. A file that does is looked at again beside the new ones: a call there may hand it the file of the next Worker.
         let searched_before: Guarded<FxHashSet<Vec<u8>>> = Guarded::new(FxHashSet::default());
+        // `require(require("./config.json").plugin)`: the name stays open, and the build takes the advice of the refusal by itself: the file is one more entry point.
+        let find_files_named_by_data = |code: &dyn CodeView<'_>, paths: &PathOptions| {
+            let tables = FileFinderTables::default();
+            let finder = FileFinder::new(&tables, host, request.code);
+            let asking = code.compiled_files().iter().flat_map(|&file| {
+                let names = code.analysis(file).names_out_of_data_files.iter();
+                names.map(move |&name| (file, name))
+            });
+            let named = asking.filter_map(|(file, name)| {
+                let name = code.atoms().bytes(name);
+                let path = finder.find_import(code.file_name(file), name)?;
+                let loaders = &options.load.loaders;
+                WorkerFile::named_by_data(paths, loaders, options.aot.runs_in_place, &path)
+            });
+            let followed = match options.load.runs_tests {
+                true => Vec::new(),
+                false => find_files_followed_further_than_bundler(code),
+            };
+            let followed = followed.iter().filter_map(|path| {
+                let loaders = &options.load.loaders;
+                WorkerFile::named_by_data(paths, loaders, options.aot.runs_in_place, path)
+            });
+            named.chain(followed).collect::<Vec<WorkerFile>>()
+        };
         let find_entry_points = |code: &dyn CodeView<'_>| -> Vec<Vec<u8>> {
             let mut taken_in = taken_in.lock();
             let known: Vec<WorkerFile> = taken_in.iter().map(|it| it.1.clone()).collect();
@@ -680,7 +975,7 @@ impl<'a> Build<'a> {
                     .filter(|&file| !searched_before.contains(code.file_name(file)))
                     .collect(),
             };
-            let found = find_code(&some, (&longer.paths, false), &in_parallel);
+            let found = find_code(&some, code, (&longer.paths, false), &in_parallel);
             let with_starts: FxHashSet<Vec<u8>> = found.files_with_starts.into_iter().collect();
             let searched = some.searched.iter().map(|&file| code.file_name(file));
             searched_before.extend(
@@ -688,12 +983,31 @@ impl<'a> Build<'a> {
                     .filter(|&name| !with_starts.contains(name))
                     .map(<[u8]>::to_vec),
             );
+            let tables = FileFinderTables::default();
+            let finder = FileFinder::new(&tables, host, request.code);
+            let mut named_by_data = find_files_named_by_data(code, &longer.paths);
+            named_by_data.extend(
+                found
+                    .modules_named_for_parameters
+                    .iter()
+                    .filter_map(|path| {
+                        let loaders = &options.load.loaders;
+                        WorkerFile::named_by_data(
+                            &longer.paths,
+                            loaders,
+                            options.aot.runs_in_place,
+                            path,
+                        )
+                    }),
+            );
+            // Whoever loads such a file is in the program that names it.
+            let joins_named_files = !named_by_data.is_empty();
             let started = StartedWorkers {
-                files: found.files,
+                files: found.files.into_iter().chain(named_by_data).collect(),
                 constructs_node_workers: found.constructs_node_workers,
                 ..Default::default()
             };
-            if taken_in.is_empty() && !joins_workers(splits, &started) {
+            if taken_in.is_empty() && !joins_named_files && !joins_workers(splits, &started) {
                 return Vec::new();
             }
             let mut entry_points: FxHashSet<Vec<u8>> = longer.entry_points.into_iter().collect();
@@ -702,14 +1016,20 @@ impl<'a> Build<'a> {
             let left_out = left_out.as_deref().unwrap_or_default();
             let further =
                 find_further_worker_files(&started, left_out, |path| entry_points.contains(path));
-            let tables = FileFinderTables::default();
-            let finder = FileFinder::new(&tables, host, request.code);
-            // What else a Worker starts from is read in another way where it is an entry point, or is no file. The search behind the load finds it.
+            let held = || taken_in.iter().map(|it| &it.1);
+            let texts = held().chain(&further).filter_map(WorkerFile::entry_text);
+            host.begin_at_texts(texts.collect());
+            // What else a Worker starts from is read in another way where it is an entry point. The search behind the load finds it.
             let path_of = |file: &WorkerFile| {
-                let loader = loader_named_by_path(&options.load.loaders, &file.source_path)?;
-                let is_plain_code = script_kind_of(loader).is_some()
-                    && !is_declaration_file_name(&file.source_path)
-                    && file.text.is_none();
+                let is_plain_code = match &file.text {
+                    Some(_) => file.entry_text().is_some(),
+                    None => {
+                        let loaders = &options.load.loaders;
+                        let loader = loader_named_by_path(loaders, &file.source_path)?;
+                        script_kind_of(loader).is_some()
+                            && !is_declaration_file_name(&file.source_path)
+                    }
+                };
                 finder
                     .find_entry_point(&file.source_path)
                     .filter(|_| is_plain_code)
@@ -719,6 +1039,7 @@ impl<'a> Build<'a> {
                 .map(path_of)
                 .collect::<Option<Vec<Vec<u8>>>>()
             else {
+                host.begin_at_texts(held().filter_map(WorkerFile::entry_text).collect());
                 return Vec::new();
             };
             taken_in.extend(paths.iter().cloned().zip(further));
@@ -742,6 +1063,7 @@ impl<'a> Build<'a> {
             }
         });
         host.begin_at(&[]);
+        host.begin_at_texts(Vec::new());
         let loaded = request_that_finds.as_ref().unwrap_or(request);
         let application = match self.load_application(session, host, loaded, shared) {
             Ok(application) => application,
@@ -812,13 +1134,17 @@ impl<'a> Build<'a> {
         // Whoever started the build of a part is told which of its test files do not run, be it the only one.
         self.names_refused_entry_points =
             (options.aot.checks_only || options.aot.runs_tests || is_joined)
-                && (options.entry_points.len() > 1 || options.aot.is_part_of_test_files);
+                && (options.entry_points.len() > 1
+                    || options.aot.is_part_of_test_files
+                    || options.aot.runs_tests);
         // `find_files_to_leave_to_loader`: what such a file loads is known here for the last time.
         if self.names_refused_entry_points
             || options.load.runs_tests
             || ImportGraph::holds_files_that_no_site_spells(application.files())
         {
-            self.import_graph = Some(ImportGraph::of(application.files()));
+            let graph = ImportGraph::of(application.files());
+            mark_files_of_product(options, host, application.files(), &graph);
+            self.import_graph = Some(graph);
         }
         match options.aot.imports_are_in_other_images {
             true => leave_named_library_modules_to_loader(application.files()),
@@ -839,20 +1165,37 @@ impl<'a> Build<'a> {
         }
         let mut files_with_starts: FxHashSet<Vec<u8>> = FxHashSet::default();
         // A file that names no constructor starts a Worker too, where it calls a function of a program below that does.
+        let mut modules_named_for_parameters = Vec::new();
         if !options.aot.checks_only
-            && (mentions_worker_constructor(files) || !parameters_below.is_empty())
+            && (mentions_worker_constructor(files)
+                || !parameters_below.is_empty()
+                || !taken_in.is_empty())
         {
             let asked = (&options.paths, is_built_upon);
-            let found = find_code(files, asked, &self.parallel_runner());
+            let found = find_code(files, files, asked, &self.parallel_runner());
+            modules_named_for_parameters = found.modules_named_for_parameters;
             files_with_starts.extend(found.files_with_starts);
             self.replaced_builtins.parameters_that_start_workers = found.parameters;
             self.started_workers.files = found.files;
             self.started_workers.names = found.names;
+            self.started_workers.starts_of_files = found.starts_of_files;
             self.started_workers.code = found.code;
             self.started_workers.constructs_node_workers = found.constructs_node_workers;
         }
+        let named_by_data = match taken_in.is_empty() {
+            true => Vec::new(),
+            false => {
+                let mut named = find_files_named_by_data(files, &options.paths);
+                named.extend(modules_named_for_parameters.iter().filter_map(|path| {
+                    let loaders = &options.load.loaders;
+                    let runs_in_place = options.aot.runs_in_place;
+                    WorkerFile::named_by_data(&options.paths, loaders, runs_in_place, path)
+                }));
+                named
+            }
+        };
         let is_started = |file: &WorkerFile| {
-            let mut started = self.started_workers.files.iter();
+            let mut started = self.started_workers.files.iter().chain(&named_by_data);
             started.any(|it| it.source_path == file.source_path)
         };
         if !taken_in.iter().all(is_started) {
@@ -919,7 +1262,7 @@ impl<'a> Build<'a> {
                     };
                     let files = further.files();
                     let asked = (&options.paths, is_built_upon);
-                    let found = find_code(files, asked, &self.parallel_runner());
+                    let found = find_code(files, files, asked, &self.parallel_runner());
                     files_with_starts.extend(found.files_with_starts);
                     let started = StartedWorkers {
                         files: found.files,
@@ -941,12 +1284,36 @@ impl<'a> Build<'a> {
                 return Err(Stage::Load);
             }
         }
+        self.loaded_by_workers_too = self.find_files_of_tests_that_workers_load(files);
+        if !self.loaded_by_workers_too.is_empty() {
+            return Err(Stage::Load);
+        }
         if !self.started_workers.copies.is_empty() || !self.started_workers.files.is_empty() {
             self.started_workers.held_texts = texts_of_program_files(files)
                 .map(|(path, size)| (path.to_vec(), size))
                 .collect();
         }
         self.compile_loaded(shared, project, application, then, kept_runtime)
+    }
+
+    /// `LoadOptions::loaded_by_workers_too`, as far as this load has bound the names in them.
+    fn find_files_of_tests_that_workers_load(&self, files: &Files<'_>) -> Vec<Vec<u8>> {
+        let Some(graph) = self.import_graph.as_ref() else {
+            return Vec::new();
+        };
+        let started = self.started_workers.files.iter();
+        let started: Vec<u32> = started
+            .filter_map(|file| graph.file_at(&file.source_path))
+            .collect();
+        let mut found: Vec<Vec<u8>> = (graph.find_files_loaded_from(started, &|_| false).iter())
+            .map(|&file| FileId(file))
+            .filter(|&file| {
+                parsed_source(files, file).is_some_and(|source| source.binds_names_of_test_runner)
+            })
+            .map(|file| files.module(file).file_name().to_vec())
+            .collect();
+        found.shared_sort_unstable();
+        found
     }
 
     fn compile_loaded<'s, R>(
@@ -962,13 +1329,13 @@ impl<'a> Build<'a> {
         let files = application.files();
         // Every file was resolved as if they were locked.
         self.replaced_builtins_spelled = find_replaced_builtins_spelled(options, files);
-        // Every file was bound as if no mock could reach it.
+        if !self.replaced_builtins_spelled.is_empty() {
+            return Err(Stage::Load);
+        }
+        // The load of a test run takes every file for one that a mock may reach. What follows asks `Build::mocks_any_module`.
         self.packages_mock_any_module = is_test_run(options)
             && !options.load.mocks_any_module
             && packages_mock_modules_that_they_do_not_spell(files);
-        if !self.replaced_builtins_spelled.is_empty() || self.packages_mock_any_module {
-            return Err(Stage::Load);
-        }
         let view = |first: Option<FileId>| {
             // SAFETY: the load has ended, and between two programs no thread works for the build.
             unsafe { files.view_program(first) };
@@ -1075,10 +1442,18 @@ impl<'a> Build<'a> {
                         || preload_of(options).is_some(),
                     is_served_by_other_images: options.aot.imports_are_in_other_images,
                     holds_test_files_alone: super::holds_test_files_alone(options),
+                    working_directory_of_test_run: (options.load.runs_tests)
+                        .then_some(&request.code.working_directory[..]),
+                    only_tests_load_code_from_disk: options.aot.only_tests_load_code_from_disk,
                 };
                 collect_runtime_roots(files, shared.runtime_modules, self.platform, further)
             })
             .collect();
+        self.stays_in_compiled_files = options.aot.only_tests_load_code_from_disk
+            && !options.aot.is_part_of_test_run
+            && !options.can_load_code_at_run_time()
+            && !options.aot.host_runs_files_from_disk
+            && (roots.iter()).all(|it| !it.files_of_tests_may_leave && !it.imports_uncompiled_code);
         let mut groups: Vec<Vec<usize>> = Vec::new();
         for (index, asked) in roots.iter().enumerate() {
             match (groups.iter_mut()).find(|group| asks_the_same(&roots[group[0]], asked)) {
@@ -1266,7 +1641,7 @@ impl<'a> Build<'a> {
         // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
         let is_told_of_code = options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
         let loads_code_by_unknown_names_alone =
-            !is_told_of_code && roots.loads_by_unknown_path && options.aot.loads_code_from_disk;
+            !is_told_of_code && roots.leaves_compiled_files && options.aot.loads_code_from_disk;
         let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
         RuntimeLoadInputs {
             fold: create_runtime_fold_inputs(
@@ -1278,6 +1653,9 @@ impl<'a> Build<'a> {
                 self.platform,
                 ProgramFacts {
                     can_load_code_at_run_time,
+                    can_load_addons_at_run_time: can_load_code_at_run_time
+                        || (options.aot.only_tests_load_code_from_disk
+                            && roots.loads_by_unknown_path),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
                     can_replace_builtins: !options.load.replaced_builtins.is_empty(),
                 },

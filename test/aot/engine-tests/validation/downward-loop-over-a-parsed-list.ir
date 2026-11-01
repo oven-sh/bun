@@ -116,7 +116,7 @@ function f1 name="printValue" module=m0 position=14 flags=[HasRestParameter, IsC
     IteratorClose v1 completion=Throw @75
     Rethrow v23 @75
 }
-function f2 name="look2" module=m0 position=199 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="look2" module=m0 position=199 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @199
   b1():

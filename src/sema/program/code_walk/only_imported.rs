@@ -62,7 +62,7 @@ fn visit_loaded_files(
 fn find_files_that_require_may_load(
     context: &CodeLoadContext<'_, '_, '_>,
     state: &WalkState<'_, '_>,
-) -> Vec<bool> {
+) -> (Vec<bool>, Vec<bool>) {
     let files = &state.files;
     let is_module = |file: u32| {
         let parsed = files[file as usize].parsed.as_ref();
@@ -78,6 +78,10 @@ fn find_files_that_require_may_load(
         }
         let index = state.index_of[&context.canonical_key(entry_point.key)];
         may_be_required[index as usize] = true;
+        if context.is_required_from_above(entry_point.key) && is_module(index) {
+            runs_inside_require[index as usize] = true;
+            to_visit.push(index);
+        }
     }
     for file in files {
         visit_loaded_files(file, &mut |target, kind| {
@@ -101,7 +105,7 @@ fn find_files_that_require_may_load(
             }
         });
     }
-    may_be_required
+    (may_be_required, runs_inside_require)
 }
 
 fn is_another_format_where_imported(
@@ -127,9 +131,10 @@ pub(super) fn forget_files_that_another_loader_reads(
     state: &mut WalkState<'_, '_>,
 ) -> bool {
     let depends_on_loader = |file: &WalkedFile<'_, '_>| match file.loaded_by {
-        LoadedBy::Require => is_another_format_where_imported(context, file),
+        LoadedBy::Require | LoadedBy::RequireAfterAll => {
+            is_another_format_where_imported(context, file)
+        }
         LoadedBy::ImportAlone => true,
-        LoadedBy::RequireAfterAll => false,
     };
     let candidates: Vec<u32> = (0..state.files.len() as u32)
         .filter(|&file| depends_on_loader(&state.files[file as usize]))
@@ -137,10 +142,13 @@ pub(super) fn forget_files_that_another_loader_reads(
     if candidates.is_empty() {
         return false;
     }
-    let may_be_required = find_files_that_require_may_load(context, state);
+    let (may_be_required, runs_inside_require) = find_files_that_require_may_load(context, state);
     let mut has_changed = false;
     for index in candidates {
         let file = &mut state.files[index as usize];
+        if let Some(parsed) = &mut file.parsed {
+            parsed.code.analyzed.runs_inside_require = runs_inside_require[index as usize];
+        }
         file.loaded_by = match (file.loaded_by, may_be_required[index as usize]) {
             (LoadedBy::Require, false) => LoadedBy::ImportAlone,
             (LoadedBy::ImportAlone, true) => LoadedBy::RequireAfterAll,

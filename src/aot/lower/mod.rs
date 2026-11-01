@@ -44,7 +44,7 @@ mod yield_star;
 use bun_sema::check::Checker;
 use bun_sema::check::aot::{FunctionRef, Queries, QueryStatistics};
 use bun_sema::hir::{FnId, FnKind};
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, ReadingTask};
 
 use crate::diagnostics::DiagnosticBuffer;
 use crate::ir::generated::MethodKind;
@@ -84,7 +84,7 @@ pub fn lower_file<'s>(
     file: FileId,
 ) -> Option<LoweredFile> {
     inputs.prepared.note_lowering(file);
-    checker.with_queries(file, inputs.query_inputs(), |queries| {
+    checker.with_queries(file, &inputs.query_inputs(), |queries| {
         lower_with_queries(inputs, queries, file)
     })
 }
@@ -96,12 +96,16 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
 ) -> Option<LoweredFile> {
     let mut lowering = FileLowering::new(inputs, queries, file);
     lowering.refuse_invalid_regexp_literals();
+    lowering.warn_where_modules_are_reset();
+    lowering.warn_where_every_file_may_load_again();
     let roots = lowering.declare_module_roots();
     while let Some(function) = lowering.take_next_function() {
         lowering.queries.note_idle();
         if lowering.queries.is_discarded() {
             return None;
         }
+        // SAFETY: between two functions, `lowering`, its queries and the checker borrow from no module but `file`, whose commit follows.
+        unsafe { ReadingTask::repin() };
         lowering.lower_function(function);
     }
     lowering.queries.note_idle();

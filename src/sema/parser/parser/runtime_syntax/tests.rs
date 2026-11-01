@@ -52,10 +52,9 @@ fn expect_compiled(code: u32, expected: &[DiagnosticClass], texts: &[&str]) {
     }
 }
 
-fn function_strictness(text: &str, keeps_function_directives: bool) -> Vec<bool> {
+fn function_strictness(text: &str) -> Vec<bool> {
     let options = Options {
         compiles: true,
-        keeps_function_directives,
         ..typescript()
     };
     let (file, _) = parsed(text, options);

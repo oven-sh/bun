@@ -1,0 +1,27 @@
+# A module that a test may mock is listed once for each kind of name under which a file loads it. A module that no test mocks is not listed.
+# RUN: tables
+
+module m0 path="/a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
+module m1 path="/b.ts" displayPath="b.ts" flags=[MayBeMocked, IsReachedWithoutExtension, IsReachedUnderAnotherExtension] body=f1
+module m2 path="/c/index.ts" displayPath="c/index.ts" flags=[MayBeMocked, IsReachedAsFolder] body=f2
+module m3 path="/d.ts" displayPath="d.ts" flags=[IsReachedWithoutExtension] body=f3
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="second" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="third" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="fourth" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# CHECK: modulesReachedUnderOtherNames 3 12

@@ -62,12 +62,23 @@ pub struct LoadsBelowFilesLeftToLoader {
     pub left_count: usize,
 }
 
+#[derive(Clone, Copy)]
+pub struct PathFilter(pub &'static (dyn Fn(&[u8]) -> bool + Sync));
+
+impl core::fmt::Debug for PathFilter {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("PathFilter")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LoadOptions {
     pub project_root: Vec<u8>,
     pub loaders: Vec<(Vec<u8>, Loader)>,
     pub externals: Externals,
     pub react_compiler: ReactCompilerMode,
+    /// Of `bun test`: which files of the project it compiles, by their native paths. Those may be `.ts` files.
+    pub react_compiler_filter: Option<PathFilter>,
     pub runs_macros: bool,
     pub in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
     /// Sorted. The key of each of `in_memory_files` as the build's options write it, and its path. An import that spells the key means the file, wherever the import stands.
@@ -77,6 +88,8 @@ pub struct LoadOptions {
     pub omits_builtin_modules: bool,
     pub runs_tests: bool,
     pub has_globals_of_vitest: bool,
+    /// `ReplacedByTests::entry_point_imports_vitest`
+    pub entry_point_imports_vitest: bool,
     /// What the run time provides is of type `any` where `@types/bun` is not installed.
     pub takes_runtime_as_any: bool,
     /// `BuildFailed::errors_with_bun_types` of the compile that `takes_runtime_as_any` comes from.
@@ -99,6 +112,8 @@ pub struct LoadOptions {
     pub replaced_exports: Vec<ReplacedExport>,
     /// Ascending. Files of the test run that the build does not see mock them, or hand their objects on: `ReplacedByTests::modules`.
     pub mocked_modules: Vec<ReplacedModule>,
+    /// Ascending. `ReplacedByTests::modules_that_mocked_files_export_whole`
+    pub modules_that_mocked_files_export_whole: Vec<ReplacedModule>,
     /// As if a file called `mock.module` with a specifier that the build does not know: every export can be replaced, and every module mocked.
     /// An earlier compile of the same tests was not analyzed, by the word of the engine, so nobody knows what their spies and mocks replace.
     pub mocks_any_module: bool,
@@ -116,6 +131,8 @@ pub struct LoadOptions {
     pub names_spied_in_text: Vec<Vec<u8>>,
     /// Ascending. The modules that such code replaces whole, as it writes them: `"../lib.js"`, whose folder depends on where the file is written.
     pub modules_replaced_in_text: Vec<Vec<u8>>,
+    /// `ReplacedByTests::loads_by_unknown_path`
+    pub tests_load_by_unknown_path: bool,
     /// Ascending. `ReplacedByTests::evicted_modules`
     pub evicted_modules: Vec<ReplacedModule>,
     /// `ReplacedByTests::evicts_any_module`
@@ -131,9 +148,24 @@ pub struct LoadOptions {
     pub left_to_loader: Vec<Vec<u8>>,
     /// One of each compile that added to `left_to_loader`.
     pub loads_below_files_left_to_loader: Vec<Arc<LoadsBelowFilesLeftToLoader>>,
+    /// The entry points that the build has added because Workers start from them, or data names them.
+    pub entry_points_added_by_build: Vec<Vec<u8>>,
+    /// Ascending. Of a test run: the test files and preloads that, as an earlier compile of the same tests found, a Worker loads as well.
+    /// `bun test` hands the names of the test runner to what the thread of the tests loads, so such a file reads them by its realm.
+    pub loaded_by_workers_too: Vec<Vec<u8>>,
     /// `AotOptions::host_runs_files_from_disk`: the entry point that says what those files do with the program. Nothing loads it.
     /// Each import statement in it stands for a load by one of those files, so a module that cannot load fails none of the others.
     pub stand_in_for_files_from_disk: Option<Vec<u8>>,
+    /// A layer of a test run: the test files above it, the preloads, and the entry point that does what the test files may do.
+    pub files_of_tests: Vec<Vec<u8>>,
+    /// `AotOptions::test_files_of_run`, spelled as the entry points are.
+    pub test_files: Vec<Vec<u8>>,
+    /// `ReplacedByTests::package_files_that_product_imports`
+    pub package_files_that_product_imports: Vec<Vec<u8>>,
+    /// `ReplacedByTests::package_files_imported_beside_tests`
+    pub package_files_imported_beside_tests: Vec<Vec<u8>>,
+    /// `AotOptions::preloads_of_test_run`: the whole path of each, and the one that its links lead to.
+    pub paths_of_preloads: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -248,6 +280,7 @@ impl LoadOptions {
             loaders: default_loaders(),
             externals: Externals::default(),
             react_compiler: ReactCompilerMode::Disabled,
+            react_compiler_filter: None,
             runs_macros: true,
             in_memory_files: Vec::new(),
             in_memory_file_keys: Vec::new(),
@@ -255,6 +288,7 @@ impl LoadOptions {
             omits_builtin_modules: false,
             runs_tests: false,
             has_globals_of_vitest: false,
+            entry_point_imports_vitest: false,
             takes_runtime_as_any: false,
             errors_with_bun_types: None,
             library_code_lacked: LibraryCode::default(),
@@ -266,6 +300,7 @@ impl LoadOptions {
             ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
             replaced_exports: Vec::new(),
             mocked_modules: Vec::new(),
+            modules_that_mocked_files_export_whole: Vec::new(),
             mocks_any_module: false,
             every_export_is_asked_for: false,
             handed_on_modules: Vec::new(),
@@ -274,6 +309,7 @@ impl LoadOptions {
             names_spied_on_unknown_objects: Vec::new(),
             names_spied_in_text: Vec::new(),
             modules_replaced_in_text: Vec::new(),
+            tests_load_by_unknown_path: false,
             evicted_modules: Vec::new(),
             evicts_any_module: false,
             files_that_tests_load: FilesThatTestsLoad::default(),
@@ -281,7 +317,14 @@ impl LoadOptions {
             opened_names: Vec::new(),
             left_to_loader: Vec::new(),
             loads_below_files_left_to_loader: Vec::new(),
+            entry_points_added_by_build: Vec::new(),
+            loaded_by_workers_too: Vec::new(),
             stand_in_for_files_from_disk: None,
+            files_of_tests: Vec::new(),
+            test_files: Vec::new(),
+            package_files_that_product_imports: Vec::new(),
+            package_files_imported_beside_tests: Vec::new(),
+            paths_of_preloads: Vec::new(),
         }
     }
 }

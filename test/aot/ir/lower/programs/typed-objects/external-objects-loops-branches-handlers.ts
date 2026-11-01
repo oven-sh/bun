@@ -153,7 +153,7 @@ for (let k = 0; k < makers.length; k++) awaiting(makers[k](k + 2)).then((v) => {
 // CHECK-NEXT: Throw v36
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="awaiting"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

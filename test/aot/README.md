@@ -66,9 +66,9 @@ last section.
   every `.cjs` file for CommonJS and every `.mjs` file for an ES module. Without the variable, and under `--aot`, a file that only
   `import` loads and whose text says neither is what the "type" of its package says. So a CommonJS file of a program names `module`
   or `exports`, an ES module has an `import` or an `export`, and a program about what a file is taken for has the line
-  `// Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0`. So has a program about what users see where a CommonJS file that a module
-  imports calls `import()`: without the variable the text comes in a later turn of the event loop, under `bun run` and in an
-  executable. Plain Bun is steady there only while no two texts are being read at once: otherwise the program stores its lines.
+  `// Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0`. So has a program about when users see a file run that `import()` asks
+  for: without the variable the text comes in a later turn of the event loop, under `bun run` and in an executable. Plain Bun is
+  steady there only while no two texts are being read at once: otherwise the program stores its lines.
 - **What changes code is a flag.** No environment variable changes the code that a build generates. A program asks for a flag, hidden
   `--aot-<word>` flags included, with `// Flags:`.
 - **A declaration file anywhere under `parallel/` is read for every program there**, because `parallel/tsconfig.json` includes it, as
@@ -128,6 +128,8 @@ The cheapest kind that still asks the question.
 | That `--trim` changes nothing about a program                              | a section in `trimmed-is-whole/cases/<subject>.js.txt`. The top of `trimmed-is-whole/run.ts` says how one is written, and when it is built alone                                                          |
 | Anything that needs several builds, a server, or looks into the executable | a `<what-it-tests>.test.ts` of its own. A build is what costs: one build for many cases                                                                                                                   |
 | Programs that a script writes                                              | a source of `fuzz/run.ts` ([`fuzz/README.md`](fuzz/README.md)). What it finds is cut down and becomes one of the kinds above, with the fix                                                                |
+
+A function of a sloppy file that starts with `"use strict"` is strict mode code in an executable and in a test run, as in Node, and plain Bun drops the directive. A program that can tell has a stored `/* Output: .. */`. What to store is what plain Bun prints for the text as it is written: with `// @bun @bun-cjs` as the first line and `(function(exports, require, module, __filename, __dirname) {` .. `})` round the rest nothing is transpiled, so the engine itself reads the directive.
 
 ## The tools
 

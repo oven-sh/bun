@@ -707,6 +707,7 @@ impl<'s> StatementParser<'_, '_, 's> {
             mode: ResolutionMode::None,
             stmt: StmtId::NONE,
             attributes,
+            loaded_as: Atom::NONE,
         });
         Some(self.add_statement(StmtKind::Import(import), start))
     }

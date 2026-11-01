@@ -5,6 +5,7 @@ use super::lookup::{COMMONJS_VARIABLES, Lookup};
 use super::namespace_exports::ExportedBlockBindings;
 use super::queries::IDENTS_IN_RUN;
 use super::storage::RuntimeReferencesIn;
+use super::stores::is_object_of_read;
 use super::type_only_code::TypeOnlyCode;
 use super::{
     Binding, CodeUnit, CommonJsVariable, FunctionFlags, RuntimeBindOptions, RuntimeInput,
@@ -45,6 +46,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         eval_symbol_ids: Vec::new(),
         references: RuntimeReferencesIn::<Growable>::default(),
         uses_arguments: Vec::new(),
+        hands_arguments_on: Vec::new(),
         has_direct_eval: Vec::new(),
         import_meta_may_be_modified: false,
         has_import_meta: false,
@@ -67,6 +69,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         references,
         eval_symbol_ids,
         uses_arguments,
+        hands_arguments_on,
         has_direct_eval,
         import_meta_may_be_modified,
         has_import_meta,
@@ -96,6 +99,9 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
             }
             CodeUnit::FieldInitializer(_) => {}
         }
+    }
+    for function in hands_arguments_on {
+        bound.runtime.function_flags[function.idx()] |= FunctionFlags::HANDS_ARGUMENTS_ON;
     }
     for function in has_direct_eval {
         bound.runtime.function_flags[function.idx()] |= FunctionFlags::HAS_DIRECT_EVAL;
@@ -145,6 +151,7 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) eval_symbol_ids: Vec<u32>,
     pub(super) references: RuntimeReferencesIn<Growable>,
     pub(super) uses_arguments: Vec<CodeUnit>,
+    pub(super) hands_arguments_on: Vec<FnId>,
     pub(super) has_direct_eval: Vec<FnId>,
     pub(super) import_meta_may_be_modified: bool,
     pub(super) has_import_meta: bool,
@@ -167,6 +174,11 @@ impl ReferencePass<'_, '_> {
             }
             if let Binding::Arguments(unit) = found.binding {
                 self.uses_arguments.push(unit);
+                if let CodeUnit::Function(function) = unit
+                    && !is_object_of_read(hir, bound, ident)
+                {
+                    self.hands_arguments_on.push(function);
+                }
             }
             let mut dynamic_scope = found.dynamic_scope;
             if self.lookup.is_behind_eval_variables(&found, hir[ident].pos) {
@@ -302,7 +314,12 @@ impl ReferencePass<'_, '_> {
                 continue;
             }
             if let Some(root) = hir.texts(names).next() {
-                let binding = self.lookup.find_binding(scope, root);
+                let mut binding = self.lookup.find_binding(scope, root);
+                if binding == Binding::Free
+                    && let Some((variable, _)) = hir.find_name_of_loaded_import(root)
+                {
+                    binding = self.lookup.find_binding(scope, variable);
+                }
                 let entry = (ImportEqualsId(index as u32), binding);
                 self.references.entity_root_bindings.push(entry);
             }

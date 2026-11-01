@@ -1,0 +1,6 @@
+# sabotage=EmittersTakeStringsForFlat: the emitter reads the characters of every string as if the string were flat. Only the result of FlattenString and a text written at the place are: the build stops
+# FORM: Selected
+# RUN: lower-to-b3 f0
+# DIAGNOSTIC: EmitterAssumesFlatString 1
+# OPTIONS: sabotage=EmittersTakeStringsForFlat
+# PROGRAM-OF: emitters-take-strings-for-flat-left-alone.ir

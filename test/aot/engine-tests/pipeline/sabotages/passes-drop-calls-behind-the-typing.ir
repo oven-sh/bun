@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls: behind the pass a call is gone. Typing lets go what control never comes to, and says so itself: the table answers for nothing: the build stops
+# FORM: Prepared
+# RUN: pass RetypeValues
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-in-a-loop-left-alone.ir

@@ -462,31 +462,31 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="marked"
 # CHECK: module=m0 position=602 flags=[HasExplicitName] thisType={type=anything} results=[{type=Array<int[0, 100], proven, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v16: 64 = Integer integer=64
-# CHECK-NEXT: v0: Array<int[0, 100]> = NewArray contents=int[0, 100] capacity=v16 allocationSite=4
-# CHECK-NEXT: v1: Array<int[0, 100], proven, pristine[Storage, Names]> = AssumeType v0 provenType=Array<int[0, 100], proven, pristine[Storage, Names]>
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v2)
-# CHECK-NEXT: b1(v3: int[0, 64]):
+# CHECK-NEXT: v0: 64 = Integer integer=64
+# CHECK-NEXT: v1: Array<int[0, 100]> = NewArray contents=int[0, 100] capacity=v0 allocationSite=4 [isFilledToCapacity]
+# CHECK-NEXT: v2: Array<int[0, 100], proven, pristine[Storage, Names]> = AssumeType v1 provenType=Array<int[0, 100], proven, pristine[Storage, Names]>
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v3)
+# CHECK-NEXT: b1(v4: int[0, 64]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v5: 64 = Integer integer=64
-# CHECK-NEXT: v6: boolean = Less v3, v5
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b6()
-# CHECK-NEXT: b2(v7: int[0, 63]):
-# CHECK-NEXT: v8: 16 = Integer integer=16
-# CHECK-NEXT: v9: int[0, 15] = Mod v7, v8
-# CHECK-NEXT: v10: 7 = Integer integer=7
-# CHECK-NEXT: v11: boolean = StrictEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4()
+# CHECK-NEXT: v6: 64 = Integer integer=64
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: b2(v8: int[0, 63]):
+# CHECK-NEXT: v9: 16 = Integer integer=16
+# CHECK-NEXT: v10: int[0, 15] = Mod v8, v9
+# CHECK-NEXT: v11: 7 = Integer integer=7
+# CHECK-NEXT: v12: boolean = StrictEq v10, v11
+# CHECK-NEXT: Branch v12 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v12: 100 = Integer integer=100
-# CHECK-NEXT: Jump -> next b5(v12)
+# CHECK-NEXT: v13: 100 = Integer integer=100
+# CHECK-NEXT: Jump -> next b5(v13)
 # CHECK-NEXT: b4():
-# CHECK-NEXT: Jump -> next b5(v7)
-# CHECK-NEXT: b5(v13: int[0, 100]):
-# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v1, v13 overload=ArrayPrototypePush/0 accessSite=29
-# CHECK-NEXT: v15: int[1, 64] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v15)
+# CHECK-NEXT: Jump -> next b5(v8)
+# CHECK-NEXT: b5(v14: int[0, 100]):
+# CHECK-NEXT: AppendElement v2, v14, v4, v4, v6
+# CHECK-NEXT: v16: int[1, 64] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v16)
 # CHECK-NEXT: b6():
-# CHECK-NEXT: Return v1
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }

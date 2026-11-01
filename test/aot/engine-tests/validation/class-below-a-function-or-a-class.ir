@@ -221,9 +221,9 @@ function f4 name="Base4_0" module=m0 position=29 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: anything):
     Jump -> next b1() @29
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @0
-    v3 = NewObject v2 layout=L0 @0
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = GetConstructPrototype v0 layout=L0 @29
+    v3 = NewObject v2 layout=L0 @29
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @29
     v5 = Undefined @30
     v6 = TypeTest v5 testedType=object @30
     Branch v6 -> taken b2(| 0), notTaken b3(| 0) @30

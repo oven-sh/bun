@@ -35,9 +35,9 @@ mod written_type;
 pub use answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexKey, IndexSignature,
-    ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, ObjectMember, ObjectMemberKind,
-    PositionTypes, QueryStatistics, SignatureParameter, SignatureShape, SymbolCreation,
-    TypeArgument, TypeDisplayName, TypeParameterRef, WrittenType,
+    ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove, ObjectMember,
+    ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics, SignatureParameter,
+    SignatureShape, SymbolCreation, TypeArgument, TypeDisplayName, TypeParameterRef, WrittenType,
 };
 pub use builtin_types::{
     BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,
@@ -52,7 +52,7 @@ pub use enum_constants::{find_link_followed_by_transpiler, is_member_visited_bef
 pub(crate) use kept_answers::KeptAnswers;
 pub use kept_answers::KeptFact;
 pub use left_out_bodies::LeftOutBodies;
-pub use program_symbols::COMPILER_DECLARATIONS_PATH;
+pub use program_symbols::{COMPILER_DECLARATIONS_PATH, MODULES_IN_OTHER_IMAGES_PATH};
 pub use prototype_links::{NamedValue, NamedValues, PrototypeOperation};
 pub use queries::{Queries, QueryInputs};
 pub use query_writer::write_queries;
@@ -66,7 +66,7 @@ pub use type_shape::{
 pub use written_type::declares_type_alone;
 
 pub(in crate::check) use class_stores::StoreIndex;
-pub(in crate::check) use dead_code::DeadCodeRanges;
+pub(in crate::check) use dead_code::{DeadCodeRanges, is_in_outermost};
 pub(in crate::check) use left_out_bodies::LeftOutOfCheck;
 pub(in crate::check) use program_symbols::ProgramSymbols;
 pub(in crate::check) use prototype_links::PrototypeLinks;

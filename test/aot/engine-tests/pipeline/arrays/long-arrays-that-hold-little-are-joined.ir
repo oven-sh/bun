@@ -856,7 +856,7 @@ function f7 name="toString" module=m0 position=3224 kind=Method flags=[IsChecked
     v6 = Convert v5 declared={type=undefined|null|string site=w45 flags=[OmitsNull, OmitsUndefined]} @3273
     Return v6 @3273
 }
-function f8 name="get" module=m0 position=3562 kind=Arrow flags=[IsChecked] captures=[{type=number site=w48}] thisType={type=anything} results=[{type=undefined site=w50}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f8 name="get" module=m0 position=3562 kind=Arrow flags=[IsChecked] captures=[{type=number site=w48 variableName="index"}] thisType={type=anything} results=[{type=undefined site=w50}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):
     Jump -> next b1() @3562
   b1():
@@ -1623,7 +1623,7 @@ runtimefunction id=ObjectsToLocaleString function=f30
 # CHECK-LABEL: function {{*}}name="toString"
 # CHECK: module=m0 position=3224 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type="first" site=w45 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
 # CHECK-LABEL: function {{*}}name="get"
-# CHECK: module=m0 position=3562 kind=Arrow flags=[IsChecked] captures=[{type=int site=w48}] thisType={type=anything} results=[{type=undefined site=w50}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
+# CHECK: module=m0 position=3562 kind=Arrow flags=[IsChecked] captures=[{type=int site=w48 variableName="index"}] thisType={type=anything} results=[{type=undefined site=w50}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] {
 # CHECK-NEXT: b0(v0: int):
 # CHECK-NEXT: v1: Array<int, proven, Double, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g5
 # CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v1, v0 overload=ArrayPrototypePush/0 accessSite=107
@@ -1631,7 +1631,7 @@ runtimefunction id=ObjectsToLocaleString function=f30
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f9 module=
-# CHECK: m0 position=333 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w78 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=string site=w79 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f11] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] creator=EntryChecks{body=f33 fallback=f35} {
+# CHECK: m0 position=333 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w78 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=string site=w79 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f11] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] creator=EntryChecks{body=f33 fallback=f35} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: anything):
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=string
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()

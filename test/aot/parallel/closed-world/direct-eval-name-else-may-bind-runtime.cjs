@@ -67,3 +67,10 @@ function strict() {
   ].join(" | ");
 }
 console.log(strict());
+/* Output:
+declared by a text
+declared by a text around strict code
+of the file | of the file || of the file | declared later
+of the object | the binding
+bound | bound | bound | bound1 | ReferenceError | undefined | object | undefined | 0 | undefined | null | bound | SyntaxError | bound
+*/

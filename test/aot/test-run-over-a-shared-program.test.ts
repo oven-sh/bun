@@ -15,7 +15,9 @@ const files = Object.fromEntries(
 async function runTests(directory: string, ...flags: string[]) {
   // Not CI: the plain run writes the snapshot that the compiled run is held to.
   const env = { ...bunEnv, CI: "false", BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" };
-  const { stderr, exitCode } = await run([bunExe(), "test", "--preload", "./pre.ts", ...flags], directory, env);
+  // With a sanitizer, on a busy machine, the slowest of the tests has passed the five seconds that a test has.
+  const command = [bunExe(), "test", "--timeout=60000", "--preload", "./pre.ts", ...flags];
+  const { stderr, exitCode } = await run(command, directory, env);
   const results = [...stderr.matchAll(/^\((pass|fail|skip)\) (.*?)(?: \[.*\])?$/gm)].map(
     match => `${match[1]} ${match[2]}`,
   );

@@ -40,7 +40,9 @@ export function separatePrograms(
         ],
         folder,
       );
-      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      // Past MaxProgramsPerBuild a build joins its entry points into one program, warns, and compiles none of them as it is compiled alone.
+      const joined = /^.*\bTS100074\b.*$/m.exec(stdout + stderr)?.[0] ?? "";
+      expect({ stderr: exitCode ? stderr : joined, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       return { stdout, stderr };
     })());
 

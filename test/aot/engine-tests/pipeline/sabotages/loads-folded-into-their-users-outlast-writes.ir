@@ -2,6 +2,7 @@
 # FORM: AsRead
 # REQUIRES: x86_64
 # RUN: run-in-shell
-# OPTIONS: sabotage=LoadsFoldedIntoTheirUsersOutlastWrites
+# The element is read and stored to at one address in a loop. Held in a register from turn to turn it would not be loaded at all, and there would be no load to fold.
+# OPTIONS: disable=b3:PromoteLoopMemory sabotage=LoadsFoldedIntoTheirUsersOutlastWrites
 # CHECK-NOT: 1068 180
 # PROGRAM-OF: loads-folded-into-their-users-outlast-writes-left-alone.ir

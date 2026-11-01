@@ -770,6 +770,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-list <STR>"),
         parse_param!("--aot-verify-each-pass"),
         parse_param!("--aot-references <STR>"),
+        parse_param!("--aot-cpu <STR>"),
         parse_param!("--aot-threads <STR>"),
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),
@@ -1027,7 +1028,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
     ),
     parse_param!(
-        "--aot-memory-limit <STR>         With --aot --parallel: the memory that the run may take, e.g. 5GB. What doesn't fit as one program is compiled as several. Defaults to the container's limit, or the memory that is free. When given, a test file starts only where there is room for what --timings says it took."
+        "--aot-memory-limit <STR>         With --aot --parallel: the memory that the build may take, e.g. 5GB. What wouldn't fit as one program is compiled as several. Doesn't limit the tests that run. Defaults to the container's limit, or the memory that is free."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -1375,7 +1376,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;
         if may_refuse_options {
-            startup_options::reject_unusable_bunfig_settings(ctx);
+            let named_file = args.option(b"--config").filter(|file| !file.is_empty());
+            startup_options::reject_unusable_bunfig_settings(ctx, named_file);
         }
     }
 

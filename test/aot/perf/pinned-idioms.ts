@@ -1,4 +1,6 @@
 // What ./idioms.test.ts runs. It says how.
+// A row in which a built-in does the work moves with the build of Bun: a change under src/ can make the linker and the compiler lay native code out anew. Of the 106 idioms of
+// ./idioms/built-in 30 moved by 10 to 20% behind one such change, 14 down and 16 up, with the same compiled code. ./symbols.ts says in which functions the instructions lie.
 import { afterAll, expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isCI, isDebug, isMusl, isWindows, tempDir } from "harness";

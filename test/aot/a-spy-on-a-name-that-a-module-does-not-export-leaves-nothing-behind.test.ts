@@ -3,9 +3,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// `spyOn(await import("./m"), "notExported")`: plain Bun hands back a mock that stands nowhere: the object does not get the name, and the mock records nothing. So does a compiled run.
-// But mockRestore() and mock.restore() put `undefined` "back" under the name, and a CommonJS file takes a name that it is handed:
-// a module that was loaded later and said `import { notExported } from "./c.cjs"` linked, where plain throws a SyntaxError, and `export * from "./c.cjs"` showed the name.
+// `spyOn(await import("./m"), "notExported")` throws a TypeError, and the object does not get the name. So in a compiled run.
+// A module that is loaded later and says `import { notExported } from "./c.cjs"` throws a SyntaxError, and `export * from "./c.cjs"` does not show the name.
 const files: Record<string, string> = {
   "package.json": `{ "type": "module" }`,
   "src/m.mjs": `export const value = 1;
@@ -49,11 +48,12 @@ test("a CommonJS file that some test mocks", async () => {
   const ns = await import("./src/c.cjs");
   const shown = () => [typeof ns.notExported, "notExported" in ns, Object.keys(ns).join()].join(" ");
   tell("before", shown);
-  const spy = spyOn(ns, "notExported");
+  let spy;
+  tell("spyOn", () => { spy = spyOn(ns, "notExported"); return typeof spy; });
   tell("spied", shown);
-  spy.mockRestore();
+  spy?.mockRestore();
   tell("restored", shown);
-  spyOn(ns, "alsoAbsent");
+  tell("another spyOn", () => typeof spyOn(ns, "alsoAbsent"));
   mock.restore();
   tell("restored by mock.restore()", () => ["alsoAbsent" in ns, Object.keys(ns).join()].join(" "));
   tell("required", () => Object.keys(require("./src/c.cjs")).join());
@@ -79,11 +79,11 @@ test("a name that a mock in front of the load leaves out", async () => {
 const tell = async (name, ask) => { try { console.log(name + ":", await ask()); } catch (error) { console.log(name + " throws:", error.name, String(error.message).split("/").pop().slice(0, 90)); } };
 test("a module that links to the name behind the restore", async () => {
   const ns = await import("./src/c.cjs");
-  spyOn(ns, "notExported").mockRestore();
+  await tell("spyOn and mockRestore", () => { spyOn(ns, "notExported").mockRestore(); return "done"; });
   await tell("a later import of the name", async () => (await import("./src/late.mjs")).seen);
   await tell("another holder of the object", async () => { const star = await import("./src/star.mjs"); return [star.keys(), star.has("notExported")].join(" "); });
   const barrel = await import("./src/barrel.mjs");
-  spyOn(barrel, "absentBehindAStar").mockRestore();
+  await tell("spyOn and mockRestore through a star", () => { spyOn(barrel, "absentBehindAStar").mockRestore(); return "done"; });
   await tell("through a star", async () => [Object.keys(barrel).join(), "absentBehindAStar" in barrel, "absentBehindAStar" in ns].join(" "));
 });
 `,
@@ -91,11 +91,11 @@ test("a module that links to the name behind the restore", async () => {
 const tell = async (name, ask) => { try { console.log(name + ":", await ask()); } catch (error) { console.log(name + " throws:", error.name, String(error.message).split("/").pop().slice(0, 90)); } };
 test("the same where the file may be mocked", async () => {
   const ns = await import("./src/c.cjs");
-  spyOn(ns, "notExported").mockRestore();
+  await tell("spyOn and mockRestore", () => { spyOn(ns, "notExported").mockRestore(); return "done"; });
   await tell("a later import of the name", async () => (await import("./src/late.mjs")).seen);
   await tell("another holder of the object", async () => { const star = await import("./src/star.mjs"); return [star.keys(), star.has("notExported")].join(" "); });
   const barrel = await import("./src/barrel.mjs");
-  spyOn(barrel, "absentBehindAStar").mockRestore();
+  await tell("spyOn and mockRestore through a star", () => { spyOn(barrel, "absentBehindAStar").mockRestore(); return "done"; });
   await tell("through a star", async () => [Object.keys(barrel).join(), "absentBehindAStar" in barrel, "absentBehindAStar" in ns].join(" "));
 });
 test("the mock", () => { mock.module("./src/c.cjs", () => ({ exported: () => "mocked" })); });
@@ -117,17 +117,34 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   return { stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), exitCode };
 }
 
+const { "d.test.mjs": aNameThatAMockLeavesOut, ...others } = files;
+
 for (const [way, words] of [
   ["as one program", "TestRunLayers:0"],
   ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
 ]) {
-  test(`a spy on a name that a module does not export leaves nothing behind, ${way}`, async () => {
-    using dir = tempDir("aot-a-spy-on-a-name-that-is-not-exported", files);
+  // The namespace object of a mock reads and writes what the factory gave: the spy is laid on that object.
+  test(`a spy on a name that a mock in front of the load leaves out, ${way}`, async () => {
+    using dir = tempDir("aot-a-spy-on-a-name-that-a-mock-leaves-out", {
+      "package.json": files["package.json"],
+      "src/m.mjs": files["src/m.mjs"],
+      "d.test.mjs": aNameThatAMockLeavesOut,
+    });
     const plain = await runTests(String(dir), undefined);
     expect(plain.exitCode).toBe(0);
-    expect(plain.stdout).toContain("spyOn of a name that is not exported: function");
-    expect(plain.stdout).toContain("the name afterwards: undefined,false,false,false");
-    expect(plain.stdout).toContain("called through the object: undefined,0");
+    expect(plain.stdout).toContain("spied: undefined true");
+    expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
+  }, 180_000);
+
+  test(`a spy on a name that a module does not export leaves nothing behind, ${way}`, async () => {
+    using dir = tempDir("aot-a-spy-on-a-name-that-is-not-exported", others);
+    const plain = await runTests(String(dir), undefined);
+    expect(plain.exitCode).toBe(0);
+    expect(plain.stdout).toContain(
+      "spyOn of a name that is not exported throws: TypeError spyOn(target, prop) expects the module namespace object to export `notExported`",
+    );
+    expect(plain.stdout).toContain("the name afterwards: undefined,false,false,true");
+    expect(plain.stdout).toContain("called through the object: undefined,");
     expect(plain.stdout).toContain("a later import of the name throws: SyntaxError c.cjs'.");
     expect(plain.stdout).toContain("through a star: exported,value false false");
     expect(plain.stdout).toContain("without a spy, a later import of the name throws: SyntaxError c.cjs'.");

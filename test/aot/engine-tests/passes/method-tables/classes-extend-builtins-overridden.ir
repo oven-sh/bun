@@ -396,7 +396,7 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: Then:#18, Else:Rare:#5
 # CHECK-NEXT: BB#18: ; frequency = 5.021927
 # CHECK-NEXT: Predecessors: #14
-# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = 7928, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:TypeTest)
+# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = 8008, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:TypeTest)
 # CHECK-NEXT: Int64 b@88 = Load(b@87, offset = 32, ControlDependent|Reads:AllocatorState, v22:TypeTest)
 # CHECK-NEXT: Void b@92 = Upsilon($1(b@84), ^105, WritesLocalState, v22:TypeTest)
 # CHECK-NEXT: Int64 b@93 = Load(b@82, offset = 112, ControlDependent|ReadsImmutable|Reads:BrandedStructure_brand, v22:TypeTest)
@@ -458,19 +458,19 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int32 b@194 = Below(b@70, b@223, v12:Less)
 # CHECK-NEXT: Void b@31 = Branch(b@194, Terminal, v12:Less)
 # CHECK-NEXT: Successors: Then:#13, Else:#11
-# CHECK-NEXT: BB#13: ; frequency = 6.555264
+# CHECK-NEXT: BB#13: ; frequency = 6.552015
 # CHECK-NEXT: Predecessors: #36
 # CHECK-NEXT: Void b@100 = Upsilon(b@158, ^182, WritesLocalState, v16:GetArrayElement)
 # CHECK-NEXT: Void b@117 = Upsilon(b@70, ^181, WritesLocalState, v16:GetArrayElement)
 # CHECK-NEXT: Void b@118 = Upsilon(b@25, ^173, WritesLocalState, v16:GetArrayElement)
 # CHECK-NEXT: Void b@187 = Jump(Terminal, v16:GetArrayElement)
 # CHECK-NEXT: Successors: #14
-# CHECK-NEXT: BB#11: ; frequency = 0.724752
+# CHECK-NEXT: BB#11: ; frequency = 0.728002
 # CHECK-NEXT: Predecessors: #36
 # CHECK-NEXT: Void b@179 = Upsilon(b@158, ^183, WritesLocalState)
 # CHECK-NEXT: Void b@186 = Jump(Terminal)
 # CHECK-NEXT: Successors: #12
-# CHECK-NEXT: BB#12: ; frequency = 1.226994
+# CHECK-NEXT: BB#12: ; frequency = 1.230243
 # CHECK-NEXT: Predecessors: #10, #11
 # CHECK-NEXT: Double b@183 = Phi(ReadsLocalState, v8:Parameter)
 # CHECK-NEXT: Void b@244 = Return(b@183, Terminal)
@@ -635,7 +635,7 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #12
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@10: dereferenceableBytes = 409600
-# CHECK-NEXT: b@18: dereferenceableBytes = 8
+# CHECK-NEXT: b@18: dereferenceableBytes = 16
 # CHECK-NEXT: b@20: range = [0,4294967295]
 # CHECK-NEXT: b@22: range = [0,4294967295]
 # CHECK-NEXT: b@181: range = [0,4294967295]

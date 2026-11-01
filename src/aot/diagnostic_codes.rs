@@ -43,6 +43,9 @@ diagnostic_codes! {
         ProgramTooLarge = 100055, Error, "The program is too large to compile: its IR is {0} bytes, and the limit is 4 GB";
         FileNestedTooDeeply = 100060, Error, "The code in \"{0}\" is nested too deeply to be compiled";
         OutputNotWritten = 100061, Error, "Cannot write \"{0}\": {1}";
+        EveryFileMayLoadAgain = 100079, Warning, "{0}. After that any file of this test run may load again, so the whole run is compiled for that, and not as an executable is. The tests still work, but they don't test the code that ships";
+        ModulesLoadAgainUncompiled = 100078, Warning, "What loads again after resetModules() runs from source, not compiled. The tests still work, but from there on they don't test compiled code";
+        TextQuotedAsWritten = 100077, Warning, "Error messages quote the code of \"{0}\" as it's written, not as bun run prints it. The program still works. This is a bug in Bun: {1}";
         ShadowRealmIsAbsent = 100076, Warning, "A compiled program has no ShadowRealm. This throws a ReferenceError when it runs";
         WorkerFileNotCompiled = 100071, Warning, "This Worker may start from an embedded file that isn't compiled, and then it fails to load: {0}. Add the file as an entry point, or pass its import straight to new Worker()";
         WorkerTextNotCompiled = 100072, Warning, "The code that this Worker starts from can't be compiled, so the Worker fails to load";

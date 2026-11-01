@@ -510,7 +510,8 @@ JSValue requireCacheOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JS
 JSValue createRequireCacheObject(JSC::JSGlobalObject* globalObject, JSC::JSMap* requireMap, JSCommonJSModule* owner)
 {
     auto& vm = globalObject->vm();
-    auto* createRequireCache = JSFunction::create(vm, globalObject, commonJSCreateRequireCacheCodeGenerator(vm), globalObject);
+    auto code = Bun::hasCompiledModules() ? commonJSCreateRequireCacheOverCompiledProgramCodeGenerator(vm) : commonJSCreateRequireCacheCodeGenerator(vm);
+    auto* createRequireCache = JSFunction::create(vm, globalObject, code, globalObject);
     MarkedArgumentBuffer args;
     args.append(requireMap);
     args.append(owner ? JSValue(owner) : jsUndefined());
@@ -749,6 +750,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
+#if ENABLE(AOT)
+    if (thisObject->compiledModule != JSCommonJSModule::noCompiledModule) [[unlikely]]
+        Bun::dropNewChildrenOfCompiledModule(thisObject);
+#endif
     {
         WTF::Locker locker { thisObject->cellLock() };
         thisObject->m_children.clear();

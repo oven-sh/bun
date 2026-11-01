@@ -22,6 +22,7 @@ use crate::diagnostics::LoadMessages;
 use crate::load::is_in_node_modules;
 use crate::load::source_provider::{ComponentFile, ModuleName, SourceProvider};
 use crate::load::sources::{ParsedSource, SourceKind};
+use crate::options::PathFilter;
 
 pub(crate) const DECLARATIONS_PATH: &[u8] = b"/$bun/react-compiler/runtime.d.ts";
 pub(crate) const DECLARATIONS: &[u8] =
@@ -29,6 +30,7 @@ pub(crate) const DECLARATIONS: &[u8] =
 
 pub(crate) struct ReactCompiler<'a> {
     mode: ReactCompilerMode,
+    filter: Option<PathFilter>,
     provider: &'a dyn SourceProvider,
     messages: &'a LoadMessages,
 }
@@ -41,13 +43,22 @@ impl<'a> ReactCompiler<'a> {
     ) -> ReactCompiler<'a> {
         ReactCompiler {
             mode,
+            filter: None,
             provider,
             messages,
         }
     }
 
+    pub(crate) fn with_filter(self, filter: Option<PathFilter>) -> ReactCompiler<'a> {
+        ReactCompiler { filter, ..self }
+    }
+
     pub(crate) fn applies_to(&self, path: &[u8], loader: Loader) -> bool {
-        self.mode.is_enabled() && loader.is_jsx() && !is_in_node_modules(path)
+        let is_wanted = match self.filter {
+            Some(PathFilter(is_compiled)) => loader.is_javascript_like() && is_compiled(path),
+            None => loader.is_jsx(),
+        };
+        self.mode.is_enabled() && is_wanted && !is_in_node_modules(path)
     }
 
     pub(crate) fn transform<'s>(
@@ -118,6 +129,7 @@ impl<'a> ReactCompiler<'a> {
             settings: request.settings,
             is_entry_point: request.import_meta_main != Some(false),
             can_import_macros: tree.imports.iter().any(|it| it.attributes.is_some()),
+            expanded_globs: None,
         };
         let is_parsed = self.provider.compile_components(&file, &mut output);
         match output.failure {

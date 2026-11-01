@@ -157,19 +157,19 @@ function f2 name="Other" module=m0 position=249 kind=BaseConstructor flags=[HasN
   b0(v0: anything):
     Jump -> next b1() @249
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @243
-    v2 = NewObject v1 layout=L0 @243
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @243
-    v4 = CallDirect v3 function=f5 @243
-    Return v3 @243
+    v1 = GetConstructPrototype v0 layout=L0 @249
+    v2 = NewObject v1 layout=L0 @249
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @249
+    v4 = CallDirect v3 function=f5 @249
+    Return v3 @249
 }
 function f3 name="Holder" module=m0 position=359 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
   b0(v0: anything, v1: number):
     Jump -> next b1() @359
   b1():
-    v2 = GetConstructPrototype v0 layout=L1 @290
-    v3 = NewObject v2 layout=L1 @290
-    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @290
+    v2 = GetConstructPrototype v0 layout=L1 @359
+    v3 = NewObject v2 layout=L1 @359
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @359
     v5 = CallDirect v4 function=f6 @359
     v6 = Convert v1 declared={type=number site=w16} @380
     PropSet v4, v6 key="kept" @380
@@ -187,9 +187,9 @@ function f4 name="Source" module=m0 position=448 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: undefined|null|L1):
     Jump -> next b1() @448
   b1():
-    v2 = GetConstructPrototype v0 layout=L2 @404
-    v3 = NewObject v2 layout=L2 @404
-    v4 = Convert v3 declared={type=L2|L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @404
+    v2 = GetConstructPrototype v0 layout=L2 @448
+    v3 = NewObject v2 layout=L2 @448
+    v4 = Convert v3 declared={type=L2|L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @448
     v5 = CallDirect v4 function=f7 @448
     v6 = Convert v1 declared={type=undefined|null|L1 site=w17 flags=[OmitsNull, OmitsUndefined]} @469
     PropSet v4, v6 key="from" @469
@@ -245,7 +245,7 @@ function f8 name="get" module=m0 position=279 kind=Arrow flags=[IsChecked] thisT
     v1 = Convert v0 declared={type=number site=w18} @285
     Return v1 @285
 }
-function f9 name="get" module=m0 position=329 kind=Arrow flags=[IsChecked] captures=[{type=L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=w19}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f9 name="get" module=m0 position=329 kind=Arrow flags=[IsChecked] captures=[{type=L1 flags=[IsFromCompiler] variableName="this"}] thisType={type=anything} results=[{type=number site=w19}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L1):
     Jump -> next b1() @329
   b1():
@@ -272,7 +272,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v9: undefined = Undefined
 # CHECK-NEXT: v10: null|boolean|number|string|object = CallBuiltin -, v8, v9 overload=JSONParse/0 accessSite=6
 # CHECK-NEXT: v11: null|boolean|number|string|object ~ null|L0 = Upcast v10 castType=anything
-# CHECK-NEXT: v12: L2 = NewObject -, v3 layout=L2 fields=[0] storage=Frame allocationClass=2 [listsOnlyStoredValues]
+# CHECK-NEXT: v12: L2 = NewObject -, v3 layout=L2 fields=[0] storage=Frame allocationClass=2 [listsOnlyStoredValues, isMadeForOneUse]
 # CHECK-NEXT: v13: undefined = CallDirect v11, v12 function=f1 accessSite=8
 # CHECK-NEXT: v14: "[]" = String string="[]"
 # CHECK-NEXT: v15: undefined = Undefined

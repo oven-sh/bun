@@ -1,7 +1,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { beforeAll, testOneByOne as test } from "./supported";
 
 // `export { Shape } from "./shapes"` in a TypeScript file may name a type, of which nothing is left in "./shapes" when it runs.
 // Where `bun test` isolates its files (--isolate, --parallel) the loader knows which modules are TypeScript, and links such a module
@@ -126,20 +128,32 @@ async function runTests(folder: string, flags: string[], words = ""): Promise<Re
 
 const withoutText = ({ stderr, ...report }: Report & { stderr: string }): Report => report;
 
-test("a TypeScript module is linked without the exports that find nothing, where the run isolates its files", async () => {
-  using dir = tempDir("a-typescript-module-is-linked-without-the-exports-that-find-nothing", files);
-  const folder = String(dir);
-  const plain = withoutText(await runTests(folder, ["--isolate"]));
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Report;
+beforeAll(async () => {
+  dir = tempDir("a-typescript-module-is-linked-without-the-exports-that-find-nothing", files);
+  plain = withoutText(await runTests(String(dir), ["--isolate"]));
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("what plain Bun says where the run isolates its files", () => {
   expect(plain.printed).toContain("a name of a CommonJS file: one undefined 1 false true false");
   expect(plain.byFile["whoever-imports-the-name-fails.test.mjs:"]).toEqual([
     expect.stringMatching(/^SyntaxError: Export named 'renamed' not found in module '.*again\.ts'\.$/),
   ]);
-  for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
-    const compiled = await runTests(folder, ["--aot", "--isolate"], words);
+});
+
+test.each([
+  ["one program", "TestRunLayers:0"],
+  ["two layers", "TestRunLayers:2,TestRunPartFiles:1"],
+])(
+  "a TypeScript module is linked without the exports that find nothing, where the run isolates its files: %s",
+  async (_, words) => {
+    const compiled = await runTests(String(dir), ["--aot", "--isolate"], words);
     expect(compiled.stderr).not.toContain(`for import "absent"`);
-    expect({ words, ...withoutText(compiled) }).toEqual({ words, ...plain });
-  }
-}, 180_000);
+    expect(withoutText(compiled)).toEqual(plain);
+  },
+);
 
 test("without isolation the link fails", async () => {
   using dir = tempDir("a-typescript-module-without-isolation", files);
@@ -155,4 +169,4 @@ test("without isolation the link fails", async () => {
     "SyntaxError: export 'renamed' not found in './file.cjs'",
   ]);
   expect(withoutText(await runTests(folder, ["--aot", ...names]))).toEqual(plain);
-}, 90_000);
+});

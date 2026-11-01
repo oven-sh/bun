@@ -6,17 +6,16 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 import type { Found } from "./built-ins-alone/fresh-results";
-import { findBuiltinTable } from "./harness/builtin-table";
+import { builtinTableOf } from "./harness/builtin-table";
 import { test } from "./supported";
 
-const table = findBuiltinTable(bunExe());
-
 // The calls that are written by hand name commands and paths of POSIX.
-test.skipIf(table === undefined || isWindows)(
+test.skipIf(isWindows)(
   "what a row of the table of built-ins makes holds the names that the row and its class list",
   () => {
+    const table = builtinTableOf(bunExe());
     const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "--expose-internals", join(import.meta.dir, "built-ins-alone/fresh-results.ts"), table!],
+      cmd: [bunExe(), "--expose-internals", join(import.meta.dir, "built-ins-alone/fresh-results.ts"), table],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

@@ -30,6 +30,6 @@ let widget: of the script
 after: number /path 1 object string
 in a later script: number /path 1 object string
 var process: TypeError: Cannot assign to process because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-function URL: TypeError: Can't declare global function 'URL': property must be either configurable or both writable and enumerable
+function URL: TypeError: Cannot declare 'URL': compiled code treats the global 'URL' as a constant, so code from a string can't replace it with a top-level function (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 in a new context: of the context
 */

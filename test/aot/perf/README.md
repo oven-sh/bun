@@ -47,7 +47,7 @@ The same text is not compiled the same way everywhere, and a change often moves 
 | Size         | What it models                                                                                                                                       |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `small`      | The benchmark is the whole program. Its loop calls `turn()` directly, so `turn()` is usually copied into the loop                                    |
-| `called`     | The loop finds `turn()` at run time. `turn()` stays a function with a caller, like most functions of a real program                                  |
+| `called`     | The loop finds `turn()` at run time. `turn()` stays a function with a caller, like most functions of a real program, in typed text too               |
 | `very-large` | The same, compiled the way it would be inside a very large program, where only code in a loop or with several callers counts as code that runs often |
 
 ### How a number is made
@@ -82,6 +82,9 @@ Other ways in, none of which needs a counter of the processor:
 | Which property accesses got worse between two builds?   | `sites-that-got-worse.ts`                                              |
 | What does the compiler say about a program?             | `bun build --compile --aot --explain`                                  |
 
+`symbols.ts <benchmark> <a Bun> <another Bun>` needs the counter and perf(1): it says in which functions the instructions of a benchmark lie in two builds, for a pin that moved although the
+compiled code did not.
+
 ## Compare with the JIT
 
 ```sh
@@ -108,17 +111,17 @@ a change to the compiler lands, and after one that was meant to make programs fa
 | Files                                                              | What they hold                                                                                                                                                                                   |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `idioms`, `idioms-in-parts-*`                                      | Instructions per turn of each benchmark of `idioms/` (`pins.linux-x64.json`)                                                                                                                     |
-| `pinned-everyday-idioms-*`                                         | The same for `everyday/` (`everyday-pins.linux-x64.json`): 1,163 benchmarks, as TypeScript and as JavaScript. 128 of them are the entry points of one executable, and nothing runs under the JIT |
+| `pinned-everyday-idioms-*`                                         | The same for every benchmark of `everyday/` (`everyday-pins.linux-x64.json`), as TypeScript and as JavaScript, within 2% and 2 instructions. 128 of them are the entry points of one executable, and nothing runs under the JIT |
+| `pinned-everyday-idioms-cold-*`                                    | Every benchmark of `everyday/` again, compiled the way most functions of a large application are (`everyday-pins-in-a-very-large-program.linux-x64.json`). What `behind-the-jit-in-a-very-large-program.linux-x64.json` excuses from the line against the JIT is held to its pin here |
 | `pinned-applications`                                              | zod, and the type checker of the `typescript` package (`application-pins.linux-x64.json`)                                                                                                        |
 | `idioms-against-the-jit`, `idioms-in-a-very-large-program`         | No benchmark takes over 1.35 times the JIT's instructions, unless `behind-the-jit.linux-x64.json` lists it. What a list names has a pin                                                          |
-| `generated-code-of-idioms-*`, `generated-code-of-operations-*`     | The same programs by their generated code: instructions and patchpoints of each function and loop. Nothing runs, so it needs no counter, only time                                               |
 | `operations`, `small-benchmarks`, `plain-bun-costs`, `serial-time` | Single operations, whole small programs, what a program pays that never asks for the compiler, how much of a build runs on one thread                                                            |
 | `copies-of-ordinary-objects-in-cold-code` ..                       | One loop against another of the same executable. Nothing is pinned                                                                                                                               |
 | `compare-builds`                                                   | `compare-builds.ts` finds no difference between a Bun and itself: its numbers repeat on a busy machine                                                                                           |
 | `../long-functions-build-instructions`, `../startup-scaling` ..    | What a build or a start costs as a program grows                                                                                                                                                 |
 | `../minifying-first-saves-no-code-*`                               | Bytes of code and classes of accesses: one build against another of the same program                                                                                                             |
 
-A pin only goes down: `AOT_PERF=lower bun test/aot/perf/measure.ts idioms` rewrites the pins that got better.
+A pin only goes down: `AOT_PERF=lower bun test/aot/perf/measure.ts idioms` rewrites the pins that got better, and pins a new benchmark of `everyday/`.
 
 ### How many turns a number needs
 
@@ -154,6 +157,12 @@ turn (`mostlyWaits()` in `measure-idioms.ts`; `%w` of GNU time, `voluntary conte
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `start.test.ts`                   | Page faults, system calls and private memory of a start. Its instructions only where they can be counted                                                      |
 | `threads-of-a-build.test.ts`      | How many threads a build starts                                                                                                                               |
+| `counted-idioms-*.test.ts`        | Every benchmark of `idioms/` and `everyday/`, as TypeScript and as JavaScript: accesses by name, calls of the run time, branches, cells and bytes of a thousand turns (`idiom-counts.json`): exact counts. They see what makes the compiler know less. They do not see the same events in more instructions: for that, the next row |
+| `stepped-idioms-*.test.ts`        | The same benchmarks, built as a user builds them: the instructions that a turn takes in compiled code (`idiom-steps.linux-<arch>.json`), counted without a counter of the processor: `count-steps.ts` lets the program go one instruction at a time over a few turns. The numbers are exact; a row fails over its pin by more than 2% and 2 instructions, more loosely where its pin says `wavers` or `owed`. Linux with glibc, x64 and arm64, where one process may watch another |
+| `stepped-idioms-called-once-*.test.ts` | The benchmarks of `everyday/` again, in the form of `main()` and of the body of a test: the function that holds the loop is called once (`idiom-steps-called-once.linux-<arch>.json`) |
+| `stepped-idioms-in-a-very-large-program-*.test.ts` | The benchmarks of `everyday/` again, compiled the way most functions of a large application are: `turn()` is a function of its own that its caller finds at run time, and nothing marks it as code that runs often (`idiom-steps-in-a-very-large-program.linux-<arch>.json`). Here a read that the other forms resolve may look its name up |
+| `counted-idioms-cold-*.test.ts` | The same form by exact counts (`idiom-counts-in-a-very-large-program.json`): a call of the run time at every turn shows here and not in the row above, which counts compiled code alone. Linux with glibc |
+| `stepped-operations-*.test.ts`    | Single operations of the language (`operations/generate.py`): the instructions that one site takes in compiled code, counted the same way (`operation-steps.linux-<arch>.json`). Each row twice: `alone`, with the whole program in sight, and `opened`, where every object, closure and string of the row has been handed to text that is evaluated at run time: the state of most accesses of a large program, which no benchmark of `idioms/` or `everyday/` is in |
 | `../servers/budgets-of-*.test.ts` | Bytes of code, tests that fail, accesses by name, calls of the run time, allocations of one round of requests to each server: exact counts of branch counters |
 | `../build-scaling`                | Peak memory of a build as a program grows, and its instructions where they can be counted                                                                     |
 | `a-cost-that-comes-in-lumps-*`    | The plan of a measurement takes so many turns that a lump more or less moves no reading: arithmetic, no counter                                               |

@@ -15,8 +15,8 @@ pub(crate) use bun_sema::hir_from_data::{
 };
 pub(crate) use bun_sema::import_sites::{
     AutomaticJsx, ImportSite, ImportSiteKind, ImportSpecifier, JsxCallee, JsxImport, JsxImportSet,
-    JsxMode, ResolvedForm, find_key_attribute, is_ignored_key, jsx_callee, jsx_children,
-    macro_callee,
+    JsxMode, ResolvedForm, ResolvedFrom, find_key_attribute, is_ignored_key, jsx_callee,
+    jsx_children, macro_callee,
 };
 pub(crate) use bun_sema::module_format::{CommonJsEvidence, DeclaredModuleType, ModuleFormat};
 pub(crate) use bun_sema::session::{Arena, Session};
@@ -318,7 +318,7 @@ impl<'s> Workspace<'s> {
             experimental_decorators: source.experimental_decorators,
             every_file_is_a_module: false,
             reads_jsdoc: source.reads_jsdoc,
-            keeps_function_directives: false,
+            ignores_pure_comments: false,
         };
         let mut hir = parse_for_compile(self.arena, &options, source.text, &self.atoms);
         hir.text = Cow::Borrowed(self.arena.alloc_slice_copy(source.text));
@@ -382,6 +382,7 @@ impl<'s> Workspace<'s> {
             user_defined: self.map_slice(fold.user_defined, |&path| self.define_path(path)),
             dropped_calls: self.map_slice(fold.dropped_calls, |&path| self.define_path(path)),
             features: self.intern_all(fold.features),
+            features_are_unknown: false,
             preserves_unused_imports: fold.preserves_unused_imports,
             minifies_syntax: fold.minifies_syntax,
             max_string_bytes: fold.max_string_bytes,
@@ -416,6 +417,7 @@ impl<'s> Workspace<'s> {
             is_library: source.is_library,
             host_values: self.arena.alloc_slice_copy(host_values),
             jsx: source.jsx,
+            own_name: self.arena.alloc_slice_copy(source.path.as_bytes()),
         };
         analyze_file(hir, options, fold, file, &self.atoms, self.arena)
     }

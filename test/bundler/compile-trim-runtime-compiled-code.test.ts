@@ -1,11 +1,12 @@
 // --compile --aot --trim: what an executable that only runs code that was compiled into it keeps, removes and says.
 // What it says without --trim: ../aot/cli/admitted-code.test.ts.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, isWindows } from "harness";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
 import { run } from "../aot/harness/run";
 import { sharedBuilds, sizeOf, type Build } from "../aot/harness/shared-builds";
+import { describe, test } from "../aot/listed";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import {
   canTrim,
@@ -201,10 +202,15 @@ function removedFeaturesOf(executable: Build) {
       },
     );
 
-    test("in a bunfig.toml that the executable was built to read, preload is ignored and install.auto fails at startup", async () => {
+    const ignoresPreload = {
+      ...saysHello,
+      stderr: `warn: "preload" in bunfig.toml is ignored by this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code\n`,
+    };
+
+    test("in a bunfig.toml that the executable was built to read, preload is ignored with a warning and install.auto fails at startup", async () => {
       const readsIt = await build("hello.ts", "--trim", "--compile-autoload-bunfig");
       // The file may be there for `bun run`.
-      expect(await run([readsIt.executable], join(folder, "preloads"))).toEqual(saysHello);
+      expect(await run([readsIt.executable], join(folder, "preloads"))).toEqual(ignoresPreload);
       expect(await run([readsIt.executable], join(folder, "installs"))).toEqual({
         stdout: "",
         stderr: `error: "install.auto" in bunfig.toml ${cantBeUsed} because it doesn't include the Bun command line. Run bun instead\n`,
@@ -215,7 +221,7 @@ function removedFeaturesOf(executable: Build) {
         expect(await run([hello.executable], join(folder, besideTheFile))).toEqual(saysHello);
     });
 
-    test("BUN_INSPECT_PRELOAD fails at startup, and a preload in the file that --config points to is ignored", async () => {
+    test("BUN_INSPECT_PRELOAD fails at startup, and so does a preload in the file that --config points to", async () => {
       const { executable } = await build("hello.ts", "--trim");
       const startedWith = (env: Record<string, string>) => run([executable], folder, { ...bunEnv, ...env });
       expect(await startedWith({ BUN_OPTIONS: "--smol", BUN_INSPECT_PRELOAD: "./preloaded.js" })).toEqual({
@@ -223,7 +229,11 @@ function removedFeaturesOf(executable: Build) {
         stderr: `error: BUN_INSPECT_PRELOAD ${runsOnlyCompiledCode}\n`,
         exitCode: 1,
       });
-      expect(await startedWith({ BUN_OPTIONS: "--config=own.toml" })).toEqual(saysHello);
+      expect(await startedWith({ BUN_OPTIONS: "--config=own.toml" })).toEqual({
+        stdout: "",
+        stderr: `error: "preload" in own.toml ${runsOnlyCompiledCode}\n`,
+        exitCode: 1,
+      });
       expect(await startedWith({ BUN_INSPECT_PRELOAD: "./preloaded.js" })).toEqual(saysHello);
     });
 

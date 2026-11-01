@@ -113,7 +113,7 @@ function f1 name="differenceOfProducts" module=m0 position=1758 flags=[IsChecked
 # CHECK-NEXT: Successors: #4
 # CHECK-NEXT: BB#6: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #3
-# CHECK-NEXT: Int64 b@48 = Patchpoint(b@33:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000097(children), ControlDependent, v12:BitOr)
+# CHECK-NEXT: Int64 b@48 = Patchpoint(b@33:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000098(children), ControlDependent, v12:BitOr)
 # CHECK-NEXT: Int32 b@49 = Trunc(b@48, v12:BitOr)
 # CHECK-NEXT: Void b@50 = Upsilon(b@49, ^52, WritesLocalState, v12:BitOr)
 # CHECK-NEXT: Void b@51 = Jump(Terminal, v12:BitOr)

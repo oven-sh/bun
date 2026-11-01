@@ -27,3 +27,35 @@ for (const nothing of [undefined, null]) {
   try { read(nothing); } catch (error) { log.push(error.constructor.name + " " + error.message.replace(/ \(evaluating.*/, "")); }
 }
 console.log(log.join("\n"));
+/* Output:
+object|holder
+object|heir
+object|heir of heir
+object|heir of heir
+number|5
+object|named
+string|text
+number|5
+number|1.5
+boolean|true
+bigint|10
+symbol|Symbol(Symbol.iterator)
+undefined
+undefined
+object|holder
+object|heir
+object|heir of heir
+object|heir of heir
+object|5
+object|named
+object|text
+object|5
+object|1.5
+object|true
+object|10
+object|Symbol(Symbol.iterator)
+undefined
+undefined
+TypeError undefined is not an object
+TypeError null is not an object
+*/

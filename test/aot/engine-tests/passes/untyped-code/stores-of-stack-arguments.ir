@@ -1,5 +1,6 @@
 # A constructor that declares one parameter and reads the others from `arguments`, as Node's IncomingMessage does in Bun, stores them one after the other.
 # What the objects have. Only the jsc shell can count. Elsewhere the program checks the answers alone.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f1
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -396,5 +397,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f73 visibility=Private
 # CHECK-NEXT: end of function f76
 # CHECK-LABEL: function {{*}}name="Message"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 68, patchpoints: 14, rare instructions: 46
+# CHECK-NEXT: instructions: 68, patchpoints: 15, rare instructions: 46
 # CHECK-NEXT: end of function f77

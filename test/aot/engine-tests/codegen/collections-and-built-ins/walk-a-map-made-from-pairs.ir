@@ -1804,5 +1804,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f15 visibility=Private
 # -- generated: sumOfKeys
 # CHECK-LABEL: function {{*}}name="sumOfKeys"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 95, patchpoints: 3, rare instructions: 48, polls: 2
+# CHECK-NEXT: instructions: 77, patchpoints: 2, rare instructions: 13, polls: 2
 # CHECK-NEXT: end of function f1

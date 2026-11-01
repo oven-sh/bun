@@ -93,12 +93,12 @@ impl Resolver<'_, '_> {
         let Some(mut current) = self.find_global(first) else {
             return ExprState::Unresolved;
         };
-        self.output.mentioned.push(current.id);
+        self.mention(current.id);
         for &name in rest {
             let Some(found) = self.find_named_member(ResolvedValue::object(current), name) else {
                 return ExprState::Unresolved;
             };
-            self.output.mentioned.push(found.id);
+            self.mention(found.id);
             current = found;
         }
         ExprState::of_path(Some(current))
@@ -164,6 +164,13 @@ impl Resolver<'_, '_> {
         };
         if let Some(child) = find_child_module(holder, key) {
             return ExprState::Held(child);
+        }
+        if input.dialect == SourceDialect::Runtime
+            && holder.path.id == BuiltinId::GlobalThis
+            && let MemberKey::Name(name) = key
+            && let Some(intrinsic) = self.find_native(name, true)
+        {
+            return ExprState::Intrinsic(intrinsic);
         }
         let module_object = find_module_object_in(holder);
         let is_held = held.is_some() || known.is_none() || module_object.is_some();

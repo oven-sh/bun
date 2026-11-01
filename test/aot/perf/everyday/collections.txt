@@ -202,6 +202,41 @@ const members = new Set([3, 1, 4, 5, 9]);
 function turn(i: number): number {
   return [...members][i % 5]!;
 }
+//// set-spread-behind-an-element
+const members = new Set([3, 1, 4, 5, 9]);
+function turn(i: number): number {
+  return [i, ...members][i % 6]!;
+}
+//// set-spread-in-front-of-an-element
+const members = new Set([3, 1, 4, 5, 9]);
+function turn(i: number): number {
+  return [...members, i][i % 6]!;
+}
+//// set-spread-of-two-sets
+const left = new Set([1, 2, 3]);
+const right = new Set([4, 5, 6, 7]);
+function turn(i: number): number {
+  return [...left, ...right][i % 7]!;
+}
+//// set-spread-of-texts-behind-a-text
+const colors = new Set(["red", "green", "blue", "cyan", "pink"]);
+function turn(i: number): number {
+  return ["none", ...colors][i % 6]!.length;
+}
+//// set-spread-of-forty-behind-an-element
+const members = new Set<number>();
+for (let k = 0; k < 40; k++) members.add(k * 3);
+function turn(i: number): number {
+  return [i, ...members][i % 41]!;
+}
+//// set-spread-as-arguments-behind-one
+const members = new Set([3, 1, 4, 5, 9]);
+function count(...all: number[]): number {
+  return all.length + all[0]!;
+}
+function turn(i: number): number {
+  return count(i, ...members);
+}
 //// set-intersection-by-filter
 const left = new Set([1, 2, 3, 4, 5]);
 const right = new Set([4, 5, 6, 7]);

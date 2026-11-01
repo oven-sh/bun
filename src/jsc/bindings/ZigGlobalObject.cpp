@@ -575,6 +575,7 @@ void updateOnEachMicrotaskTick(JSC::VM&);
 }
 
 static thread_local bool newNextTickQueueWaitsForMicrotaskToEnd;
+static thread_local bool didDrainFirstNextTickQueueOfThread;
 
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
@@ -585,8 +586,10 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
         globalObject->resetOnEachMicrotaskTick();
     if (!drainsNextTickQueue)
         return;
-    if (auto queue = globalObject->m_nextTickQueue.get())
+    if (auto queue = globalObject->m_nextTickQueue.get()) {
+        didDrainFirstNextTickQueueOfThread = true;
         queue->drain(vm, globalObject);
+    }
 }
 
 void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)
@@ -639,6 +642,8 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
 {
+    if (didDrainFirstNextTickQueueOfThread)
+        return;
     newNextTickQueueWaitsForMicrotaskToEnd = true;
     vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 }
@@ -1010,6 +1015,18 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         }
         unfinished.append(WTF::move(key));
     });
+#if ENABLE(AOT)
+    if (Bun::hasCompiledModules()) {
+        JSC::AOT::forEachFileAwaitingAtTopLevel(globalObject, [&](int64_t order, const String& specifier) {
+            if (awaiting.containsIf([&](auto& entry) { return entry.second == specifier; }))
+                return;
+            size_t index = awaiting.size();
+            while (index && awaiting[index - 1].first > order)
+                --index;
+            awaiting.insert(index, std::pair { order, specifier });
+        });
+    }
+#endif
     for (auto& key : unfinished)
         loader->removeEntry(key);
 
@@ -1153,14 +1170,10 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-// Without an argument: whether the cache lists modules of the compiled program at all.
-// With a third: whether a require() has put the built-in module there. No entry is made.
 JSC_DEFINE_HOST_FUNCTION(functionRequireCacheCompiledEntry, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    if (!callFrame->argumentCount())
-        return JSValue::encode(jsBoolean(Bun::hasCompiledModules()));
-    JSValue keyValue = callFrame->uncheckedArgument(0);
+    JSValue keyValue = callFrame->argument(0);
     if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
         return JSValue::encode(jsUndefined());
     WTF::String key = asString(keyValue)->value(globalObject);
@@ -1177,7 +1190,7 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     if (!Bun::hasCompiledModules()) [[likely]]
         return JSValue::encode(jsBoolean(false));
     // A file can come back from the disk there: the cache shows it, as plain's does.
-    if (Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject)))
+    if (Bun::requireCacheListsCompiledFiles())
         return JSValue::encode(jsBoolean(false));
     if (!callFrame->argumentCount())
         return JSValue::encode(jsBoolean(true));
@@ -1187,7 +1200,8 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(Bun::isHiddenFromRequireCache(key)));
+    std::optional<bool> isHidden = Bun::isHiddenFromRequireCache(key);
+    return JSValue::encode(isHidden ? jsBoolean(*isHidden) : jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -2465,7 +2479,7 @@ extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
 JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
 {
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
+    if (thisValue.isCell() && globalObject->vm().hasCompiledCode() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
         return JSC::JSValue::encode(JSC::AOT::hasESModuleMarker(thisValue.asCell()) ? jsBoolean(true) : jsUndefined());
     JSModuleNamespaceObject* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(thisValue);
     if (!moduleNamespaceObject || moduleNamespaceObject->m_hasESModuleMarker != WTF::TriState::True) {
@@ -2479,7 +2493,7 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
 {
     auto& vm = JSC::getVM(globalObject);
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell())) {
+    if (thisValue.isCell() && vm.hasCompiledCode() && JSC::AOT::isModuleNamespace(thisValue.asCell())) {
         JSC::AOT::setESModuleMarker(thisValue.asCell(), JSValue::decode(encodedValue).toBoolean(globalObject));
         return true;
     }
@@ -3233,7 +3247,8 @@ void GlobalObject::finishCreation(VM& vm)
 
             init.set(process);
             // The global object adds its `process` at the first read of the name. A program may come to the object without it: import process from "node:process".
-            JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
+            if (init.vm.hasCompiledCode()) [[unlikely]]
+                JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
         });
 
     m_streamsRuntime.initialize(this);
@@ -3279,7 +3294,8 @@ void GlobalObject::finishCreation(VM& vm)
 
 void GlobalObject::didCreateDOMConstructor(JSC::JSObject* constructor)
 {
-    JSC::AOT::hostDidCreateConstructor(this, constructor);
+    if (vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::hostDidCreateConstructor(this, constructor);
 }
 
 void GlobalObject::didCreateDOMStructure(JSC::Structure* structure)
@@ -3402,7 +3418,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
 
 #if ENABLE(AOT)
-    if (JSC::AOT::CompiledCallee::isCompiledCallee(target)) {
+    if (target->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(target)) {
         target->methodTable()->setPrototype(target, globalObject, base, true);
         RETURN_IF_EXCEPTION(scope, {});
         JSC::AOT::CompiledCallee::setPrototypeProperty(vm, target, prototype, PropertyAttribute::DontEnum | 0);
@@ -3713,6 +3729,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
         RETURN_IF_EXCEPTION(scope, );
     }
+#if ENABLE(AOT)
+    if (isBunTest && Bun::hasCompiledModules()) {
+        consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
+        RETURN_IF_EXCEPTION(scope, );
+    }
+#endif
 }
 
 // ===================== start conditional builtin globals =====================
@@ -4160,7 +4182,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false) || (vm.hasCompiledCode() && globalObject->onLoadPlugins.hasVirtualModules() && JSC::AOT::isResolvingImportCall(vm));
+#else
     const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false);
+#endif
 
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
@@ -4348,6 +4374,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+#if ENABLE(AOT)
+        if (imported && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
+            Bun::didStartDynamicImport(globalObject, imported, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+#endif
         if (imported)
             return imported;
     }
@@ -4405,11 +4437,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
         JSC::AOT::AskerOfModule asker(globalObject, referrer);
         JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
-        if (scope.exception()) [[unlikely]] {
-            JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
-            rejected->markAsHandled();
-            return rejected->rejectWithCaughtException(vm, scope);
-        }
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)
             return compiled;
     }

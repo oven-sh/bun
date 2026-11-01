@@ -136,6 +136,7 @@ pub(crate) fn describe_checker_queries(
         builtin_types: &builtin_types,
         named_values: &*named_values,
         max_inference_nodes: limits.get(LimitId::MaxInferenceNodes),
+        limits: limits.for_queries(),
     };
     let checked = check_and_lower(
         &loaded,
@@ -145,7 +146,7 @@ pub(crate) fn describe_checker_queries(
         files_to_lower,
         &|checker, file| {
             let mut out = Vec::new();
-            checker.with_queries(file, inputs, |queries| {
+            checker.with_queries(file, &inputs, |queries| {
                 write_queries(queries, &root, &mut out)
             });
             Some(out)

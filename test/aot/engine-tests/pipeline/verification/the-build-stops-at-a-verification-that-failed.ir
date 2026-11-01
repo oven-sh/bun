@@ -1,0 +1,23 @@
+# Behind each pass that runs on a function the sabotage takes a call out of it. The first function holds an object, so the first pass runs on it and its verification fails.
+# The second holds none: only the second pass runs on it. The build has stopped by then, so nothing is said about it.
+# FORM: Prepared
+# RUN: pass SinkAllocations EliminateDeadCode
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="holdsAnObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Call v0, -
+    v4 = Call v0, -
+    v5 = Call v1, -, v2
+    Return v5
+}
+
+function f1 name="holdsNoObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -
+    v3 = Call v0, -
+    Return v3
+}

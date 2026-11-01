@@ -108,7 +108,7 @@ Promise.all([inAsync(plain, 1), inAsync(thrower, 2)]).then(results => { say("asy
 // CHECK-NEXT: Throw v28
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inAsync"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|Promise flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|Promise flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|object, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

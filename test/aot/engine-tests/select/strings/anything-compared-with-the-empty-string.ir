@@ -848,9 +848,9 @@ function f3 name="Named" module=m0 position=197 kind=BaseConstructor flags=[HasN
   b0(v0: anything, v1: undefined|null|string, v2: undefined|null|string, v3: undefined|null|string, v4: anything):
     Jump -> next b1() @197
   b1():
-    v5 = GetConstructPrototype v0 layout=L0 @78
-    v6 = NewObject v5 layout=L0 @78
-    v7 = Convert v6 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @78
+    v5 = GetConstructPrototype v0 layout=L0 @197
+    v6 = NewObject v5 layout=L0 @197
+    v7 = Convert v6 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @197
     v8 = CallDirect v7 function=f6 @197
     v9 = Convert v1 declared={type=undefined|null|string site=w64 flags=[OmitsNull, OmitsUndefined]} @288
     PropSet v7, v9 key="name" @288

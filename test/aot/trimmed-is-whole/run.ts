@@ -19,7 +19,7 @@
 //   //@ todo <why>          it does not pass today
 //   //@ not-seen            the build does not see that the call reaches an evaluator: both executables end with the same EvalError
 //   //@ evaluated-code-uses-removed-api   where --trim removed the feature, the call in the evaluated code throws
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -27,6 +27,7 @@ import { canTrim, featureOf, model } from "../../bundler/compile-trim-features";
 import { unsupported } from "../harness/compiler";
 import { inTurn } from "../harness/shared-builds";
 import { withoutDebugInformation } from "../harness/without-debug-information";
+import { describe, test } from "../listed";
 import { readRemovedFeatures } from "../trimmed-against-whole/removed-features";
 
 interface Program {

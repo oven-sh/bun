@@ -152,7 +152,7 @@ export {};
 
 // GENERATED: observe Account returnList awaitTable
 // CHECK-LABEL: function {{*}}name="observe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=3 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|string, v2: undefined|null|Promise, v3: undefined|null|Promise):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

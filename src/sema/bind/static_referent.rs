@@ -1,9 +1,10 @@
+mod stored_by_calls;
 mod walk;
 
 use super::{BindingStability, Bound, SymbolId};
 use crate::atom::Atom;
 use crate::check::aot::{ClassRef, FunctionRef};
-use crate::hir::{ExprId, File};
+use crate::hir::{CallId, ExprId, File};
 use crate::program::{FileId, Sym};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -50,6 +51,7 @@ pub struct ResolvedReferent<B, M> {
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum LinkedBinding<B, M> {
+    ExportOfCommonJs { file: FileId, name: Option<Atom> },
     Binding(Sym),
     Namespace(M),
     Builtin(B),
@@ -61,6 +63,20 @@ pub enum LoadedValue<M> {
     Namespace(M),
     DefaultExport(FileId),
     ModuleExports(FileId),
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct MemberAssignment {
+    pub(super) holder: SymbolId,
+    pub(super) name: Atom,
+    pub(super) target: ExprId,
+    pub(super) value: ExprId,
+}
+
+#[derive(Default)]
+pub struct MemberStores {
+    pub(super) assignments: Vec<MemberAssignment>,
+    pub(super) copies: Vec<(SymbolId, CallId)>,
 }
 
 pub trait ReferentContext<'s> {
@@ -94,6 +110,14 @@ pub trait ReferentContext<'s> {
     fn find_target_of_copied_properties(&self, _: Self::Builtin) -> Option<u32> {
         None
     }
+
+    fn member_stores(&self, _: FileId) -> Option<&MemberStores> {
+        None
+    }
+}
+
+pub fn index_member_stores<'s, C: ReferentContext<'s>>(context: &C, file: FileId) -> MemberStores {
+    walk::index_member_stores(context, file)
 }
 
 pub fn static_referent<'s, C: ReferentContext<'s>>(

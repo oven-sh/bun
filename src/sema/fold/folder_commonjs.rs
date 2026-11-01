@@ -73,6 +73,7 @@ impl<'s> Folder<'_, 's> {
 
     fn is_this_of_commonjs_file(&self, e: ExprId) -> bool {
         matches!(self.hir[e].kind, ExprKind::This)
+            && !self.file.is_named_es_module()
             && self.loader_names().esm_syntax == EsmSyntax::None
             && self
                 .this_of_file

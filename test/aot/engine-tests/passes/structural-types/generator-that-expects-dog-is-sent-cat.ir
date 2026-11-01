@@ -621,7 +621,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f4 = NewClosure function=f4 allocationSite=1
 # CHECK-NEXT: v1: Generator = NewGenerator v0 function=f4
-# CHECK-NEXT: v2: anything = NewHeapFrame v1 function=f121 numberOfWords=4
+# CHECK-NEXT: v2: anything = NewHeapFrame v1, v0 function=f121 numberOfWords=4
 # CHECK-NEXT: PutHeapFrameWord v2, v1
 # CHECK-NEXT: PutHeapFrameWord v2, v0 index=1
 # CHECK-NEXT: SuspendInHeapFrame v1, v2 [isFirstRun]

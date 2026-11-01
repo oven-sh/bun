@@ -6,11 +6,17 @@ pub(crate) mod disk_delegation;
 pub(crate) mod evaluated_texts;
 pub(crate) mod externals;
 pub(crate) mod fold_inputs;
+pub(crate) mod globals_of_a_window;
+pub(crate) mod hoisted_mocks;
 pub(crate) mod host;
+mod import_meta_glob;
+pub mod importers_on_disk;
 pub(crate) mod loader_aliases;
 pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;
 pub(crate) mod macros;
+mod made_own_require;
+pub(crate) mod manual_mocks;
 pub(crate) mod module_paths;
 pub(crate) mod modules_with_queries;
 pub(crate) mod named_loads;
@@ -68,6 +74,12 @@ pub(crate) fn is_in_archive_of_bun(path: &[u8]) -> bool {
 
 pub(crate) fn is_in_node_modules(path: &[u8]) -> bool {
     contains(dirname::<Posix>(path), b"/node_modules/")
+}
+
+/// One of the modules that `bun test --aot` writes itself to stand for files of another build of the run (src/runtime/cli/test_command.rs: `bun-test-files-from-disk`,
+/// `bun-test-files-above-packages`). No file lies there, and what it says is no word of the project's.
+pub(crate) fn is_written_by_test_runner(path: &[u8]) -> bool {
+    contains(path, b"/node_modules/.cache/bun-test-files-")
 }
 
 pub(crate) fn read_file_bytes(path: &[u8]) -> Option<Vec<u8>> {

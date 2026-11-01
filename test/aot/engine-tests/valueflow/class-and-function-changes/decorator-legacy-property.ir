@@ -17,7 +17,7 @@ typesite w0 module=m0 position=21 kind=Parameter
 typesite w1 module=m0 position=135 kind=Field
 typesite w2 module=m0 position=172 kind=CallResult
 typesite w3 module=m0 position=64 kind=Result
-typesite w4 module=m1 position=950 kind=Variable
+typesite w4 module=m1 position=1179 kind=Variable
 layout L0 kind=Instance name="C" module=m0 position=126 constructor=f2 fields=[{key="x" declared={type=undefined|number site=w1} flags=[IsRequired]}] ownFieldCount=1
 layout L1 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function|f3 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
 layout L2 name="PropertyDescriptor" fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
@@ -77,10 +77,10 @@ function f2 name="C" module=m0 position=126 kind=BaseConstructor flags=[HasNewTa
   b0(v0: anything):
     Jump -> next b1() @126
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @120
-    v2 = NewObject v1 layout=L0 @120
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @120
-    Return v3 @120
+    v1 = GetConstructPrototype v0 layout=L0 @126
+    v2 = NewObject v1 layout=L0 @126
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @126
+    Return v3 @126
 }
 function f3 name="get" module=m0 position=64 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w3}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -101,109 +101,109 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
 function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f9 name="decorateMember" module=m1 position=646 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f9 name="decorateMember" module=m1 position=845 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 syntax=[IsShownInModuleOfHelpers] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything):
-    Jump -> next b1() @646
+    Jump -> next b1() @845
   b1():
-    v4 = Boolean boolean=true @767
-    v5 = ToBoolean v4 @767
-    Branch v5 -> taken b2(| 0), notTaken b7(| 0) @767
+    v4 = Boolean boolean=true @996
+    v5 = ToBoolean v4 @996
+    Branch v5 -> taken b2(| 0), notTaken b7(| 0) @996
   b2(v6):
-    Jump -> next b3() @767
+    Jump -> next b3() @996
   b3():
-    v7 = Builtin builtin=Reflect @806
-    v8 = Convert v7 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @806
-    v9 = PropGet v8 key="decorate" @806
-    v10 = TypeTest v9 testedType=function @798
-    Branch v10 -> taken b4(| 0), notTaken b6(| 0) @798
+    v7 = Builtin builtin=Reflect @1035
+    v8 = Convert v7 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1035
+    v9 = PropGet v8 key="decorate" @1035
+    v10 = TypeTest v9 testedType=function @1027
+    Branch v10 -> taken b4(| 0), notTaken b6(| 0) @1027
   b4(v11):
-    Jump -> next b5() @798
+    Jump -> next b5() @1027
   b5():
-    v12 = Builtin builtin=Reflect @863
-    v13 = Convert v12 declared={type=undefined|null|object flags=[IsExpected]} @863
-    v14 = PropGet v13 key="decorate" @863
-    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]} @862
-    v16 = Call v15, v13, v0, v1, v2, v3 calleeKey="decorate" calleeName="Reflect.decorate" @879
-    Jump -> next b23(v16) @853
+    v12 = Builtin builtin=Reflect @1092
+    v13 = Convert v12 declared={type=undefined|null|object flags=[IsExpected]} @1092
+    v14 = PropGet v13 key="decorate" @1092
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]} @1091
+    v16 = Call v15, v13, v0, v1, v2, v3 calleeKey="decorate" calleeName="Reflect.decorate" @1108
+    Jump -> next b23(v16) @1082
   b6(v17):
-    Jump -> next b8() @798
+    Jump -> next b8() @1027
   b7(v18):
-    Jump -> next b8() @767
+    Jump -> next b8() @996
   b8():
-    v19 = PropGet v0 key="length" @954
-    v20 = Convert v19 declared={type=number flags=[IsExpected]} @954
-    v21 = Integer integer=1 @974
-    v22 = Sub v20, v21 @954
-    v23 = Convert v22 declared={type=number site=w4} @954
-    Jump -> next b9(v3, v23) @950
+    v19 = PropGet v0 key="length" @1183
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @1183
+    v21 = Integer integer=1 @1203
+    v22 = Sub v20, v21 @1183
+    v23 = Convert v22 declared={type=number site=w4} @1183
+    Jump -> next b9(v3, v23) @1179
   b9(v24, v25: number):
-    LoopHint @950
-    v27 = Integer @982
-    v28 = GreaterEq v25, v27 @977
-    Branch v28 -> taken b10(| 0), notTaken b21(| 0) @977
+    LoopHint @1179
+    v27 = Integer @1211
+    v28 = GreaterEq v25, v27 @1206
+    Branch v28 -> taken b10(| 0), notTaken b21(| 0) @1206
   b10(v29):
-    Jump -> next b11() @977
+    Jump -> next b11() @1206
   b11():
-    v30 = Convert v0 declared={type=undefined|null|Array<undefined|null|function> flags=[IsExpected]} @1016
-    v31 = ElemGet v30, v29 @1016
-    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]} @1016
-    v33 = ToBoolean v32 @1041
-    Branch v33 -> taken b12(| 0), notTaken b18(| 0) @1041
+    v30 = Convert v0 declared={type=undefined|null|Array<undefined|null|function> flags=[IsExpected]} @1245
+    v31 = ElemGet v30, v29 @1245
+    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]} @1245
+    v33 = ToBoolean v32 @1270
+    Branch v33 -> taken b12(| 0), notTaken b18(| 0) @1270
   b12(v34):
-    Jump -> next b13() @1041
+    Jump -> next b13() @1270
   b13():
-    v35 = Convert v34 declared={type=undefined|null|function flags=[IsExpected]} @1061
-    v36 = Convert v24 declared={type=undefined|null|boolean|number|string|symbol|bigint|L2 flags=[IsExpected]} @1084
-    v37 = Call v35, -, v1, v2, v36 calleeName="decorator" @1061
-    v38 = ToBoolean v37 @1061
-    Branch v38 -> taken b14(| 0), notTaken b15(| 0) @1061
+    v35 = Convert v34 declared={type=undefined|null|function flags=[IsExpected]} @1290
+    v36 = Convert v24 declared={type=undefined|null|boolean|number|string|symbol|bigint|L2 flags=[IsExpected]} @1313
+    v37 = Call v35, -, v1, v2, v36 calleeName="decorator" @1290
+    v38 = ToBoolean v37 @1290
+    Branch v38 -> taken b14(| 0), notTaken b15(| 0) @1290
   b14(v39):
-    Jump -> next b17(v39) @1061
+    Jump -> next b17(v39) @1290
   b15(v40):
-    Jump -> next b16() @1061
+    Jump -> next b16() @1290
   b16():
-    Jump -> next b17(v36) @1095
+    Jump -> next b17(v36) @1324
   b17(v41):
-    Jump -> next b19(v41) @1052
+    Jump -> next b19(v41) @1281
   b18(v42):
-    Jump -> next b19(v24) @1041
+    Jump -> next b19(v24) @1270
   b19(v43):
-    Jump -> next b20() @1052
+    Jump -> next b20() @1281
   b20():
-    v44 = Decrement v29 @1095
-    v45 = Convert v44 declared={type=number site=w4} @985
-    Jump -> next b9(v43, v45) @985
+    v44 = Decrement v29 @1324
+    v45 = Convert v44 declared={type=number site=w4} @1214
+    Jump -> next b9(v43, v45) @1214
   b21(v46):
-    Jump -> next b22() @977
+    Jump -> next b22() @1206
   b22():
-    Jump -> next b23(v24) @985
+    Jump -> next b23(v24) @1214
   b23(v47):
-    v48 = Convert v47 declared={type=undefined|null|boolean|number|string|symbol|bigint|L2 flags=[IsExpected]} @1119
-    v49 = ToBoolean v48 @1119
-    Branch v49 -> taken b24(| 0), notTaken b26(| 0) @1119
+    v48 = Convert v47 declared={type=undefined|null|boolean|number|string|symbol|bigint|L2 flags=[IsExpected]} @1348
+    v49 = ToBoolean v48 @1348
+    Branch v49 -> taken b24(| 0), notTaken b26(| 0) @1348
   b24(v50):
-    Jump -> next b25() @1119
+    Jump -> next b25() @1348
   b25():
-    v51 = Builtin builtin=Object @1127
-    v52 = Builtin builtin=ObjectDefineProperty @1127
-    v53 = Convert v2 declared={type=undefined|null|number|string|symbol flags=[IsExpected]} @1157
-    v54 = Convert v50 declared={type=undefined|null|boolean|number|string|symbol|bigint|L2 flags=[IsExpected]} @1162
-    v55 = Call v52, v51, v1, v53, v54 calleeName="Object.defineProperty" @1134
-    Jump -> next b27(v54) @1127
+    v51 = Builtin builtin=Object @1356
+    v52 = Builtin builtin=ObjectDefineProperty @1356
+    v53 = Convert v2 declared={type=undefined|null|number|string|symbol flags=[IsExpected]} @1386
+    v54 = Convert v50 declared={type=undefined|null|boolean|number|string|symbol|bigint|L2 flags=[IsExpected]} @1391
+    v55 = Call v52, v51, v1, v53, v54 calleeName="Object.defineProperty" @1363
+    Jump -> next b27(v54) @1356
   b26(v56):
-    Jump -> next b27(v56) @1119
+    Jump -> next b27(v56) @1348
   b27(v57):
-    v58 = Convert v57 declared={type=undefined|null|boolean|number|string|symbol|bigint|L2 flags=[IsExpected]} @1180
-    Return v58 @1180
+    v58 = Convert v57 declared={type=undefined|null|boolean|number|string|symbol|bigint|L2 flags=[IsExpected]} @1409
+    Return v58 @1409
 }
-function f10 name="decorateProperty" module=m1 position=1368 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=DecoratorsDecorateProperty thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f10 name="decorateProperty" module=m1 position=1745 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 syntax=[IsShownInModuleOfHelpers] enclosingRuntimeFunction=DecoratorsDecorateProperty thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
-    Jump -> next b1() @1368
+    Jump -> next b1() @1745
   b1():
-    v3 = GetModuleVariable variable=g1 @1457
-    v4 = Undefined @1497
-    v5 = Call v3, -, v0, v1, v2, v4 calleeName="decorateMember" @1457
-    ReturnCall v5 @1457
+    v3 = GetModuleVariable variable=g1 @1872
+    v4 = Undefined @1912
+    v5 = Call v3, -, v0, v1, v2, v4 calleeName="decorateMember" @1872
+    Return v5 @1933
 }
 runtimefunction id=DecoratorsDecorateProperty function=f10
 # -- generated: f0 dec C get
@@ -213,7 +213,7 @@ runtimefunction id=DecoratorsDecorateProperty function=f10
 # CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
 # CHECK-NEXT: v1: f2 = GetModuleVariable variable=g0
 # CHECK-NEXT: v2: f2 = FinishClass v1 layout=L0
-# CHECK-NEXT: v3: Array<f1, Contiguous> = NewArray v0 contents=f1 allocationSite=2 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v3: Array<f1, Contiguous> = NewArray v0 contents=f1 allocationSite=2 storage=Frame arrayStorage=Contiguous [contentsAreProven, isMadeForOneUse]
 # CHECK-NEXT: v4: Array<f1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<f1, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v5: anything = PropGet v2 key="prototype" accessSite=0
 # CHECK-NEXT: v6: object = AssumeType v5 provenType=object

@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "../aot/harness/run";
 import { withoutDebugInformation } from "../aot/harness/without-debug-information";
+import { test } from "../aot/listed";
 
 // Trimming replaces the native getters and setters of a removed feature. Where nothing is trimmed, under `bun run` and in
 // an executable built without --trim, every native accessor answers as it always has: read, stored, read again at one

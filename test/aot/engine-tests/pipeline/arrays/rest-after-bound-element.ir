@@ -1370,8 +1370,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="union"
-# CHECK: module=m0 position=1960 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<boolean|1|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]> site=w24 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|boolean|int|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]> site=w25 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<boolean|1|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK: module=m0 position=1960 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<boolean|int[1, 3]|"a"|"all"|"anys"|"b"|"generic"|"skipped"|"two"|"unknowns"|"usedBehind"|"usesFirst"|f1|f2|f3|f4|f5|f6|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]> site=w24 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|boolean|int|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]> site=w25 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<boolean|int[1, 3]|"a"|"all"|"anys"|"b"|"generic"|"skipped"|"two"|"unknowns"|"usedBehind"|"usesFirst"|f1|f2|f3|f4|f5|f6|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v3: boolean = Less v1, v2
@@ -1400,14 +1400,14 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: v19: boolean = IsInBounds v0, v18, v11
 # CHECK-NEXT: Branch v19 -> taken b8(| 0), notTaken b9()
 # CHECK-NEXT: b8(v20: guard):
-# CHECK-NEXT: v21: boolean|1|"a"|"b" = GetArrayElement v0, v18, v20, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v21: boolean|int[1, 3]|"a"|"all"|"anys"|"b"|"generic"|"skipped"|"two"|"unknowns"|"usedBehind"|"usesFirst"|f1|f2|f3|f4|f5|f6|f7|f8 = GetArrayElement v0, v18, v20, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v22: 1 = Integer integer=1
 # CHECK-NEXT: v23: int[1, 4294967295] = Add v18, v22
 # CHECK-NEXT: v24: false = Boolean
 # CHECK-NEXT: AppendElement v10, v21
 # CHECK-NEXT: Jump -> next b5(v24, v23)
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v26: undefined|boolean|1|"a"|"b" = GetArrayElement v0, v18, -, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v26: undefined|boolean|int[1, 3]|"a"|"all"|"anys"|"b"|"generic"|"skipped"|"two"|"unknowns"|"usedBehind"|"usesFirst"|f1|f2|f3|f4|f5|f6|f7|f8 = GetArrayElement v0, v18, -, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral]
 # CHECK-NEXT: v27: 1 = Integer integer=1
 # CHECK-NEXT: v28: int[1, 4294967295] = Add v18, v27
 # CHECK-NEXT: v29: false = Boolean
@@ -1417,8 +1417,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f13 module=
-# CHECK: m0 position=2160 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=Array<int[1, 3], proven, Int32, pristine[Storage, Names, Dense]> site=w58 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> site=w59 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<int[1, 3], proven, Int32, pristine[Storage, Names, Dense]>):
+# CHECK: m0 position=2160 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=Array<boolean|int[1, 3]|"a"|"all"|"anys"|"b"|"generic"|"skipped"|"two"|"unknowns"|"usedBehind"|"usesFirst"|f1|f2|f3|f4|f5|f6|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]> site=w58 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> site=w59 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<boolean|int[1, 3]|"a"|"all"|"anys"|"b"|"generic"|"skipped"|"two"|"unknowns"|"usedBehind"|"usesFirst"|f1|f2|f3|f4|f5|f6|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v3: boolean = Less v1, v2
@@ -1447,19 +1447,23 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: v19: boolean = IsInBounds v0, v18, v11
 # CHECK-NEXT: Branch v19 -> taken b8(| 0), notTaken b9()
 # CHECK-NEXT: b8(v20: guard):
-# CHECK-NEXT: v21: int[1, 3] = GetArrayElement v0, v18, v20, v11 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v21: boolean|int[1, 3]|"a"|"all"|"anys"|"b"|"generic"|"skipped"|"two"|"unknowns"|"usedBehind"|"usesFirst"|f1|f2|f3|f4|f5|f6|f7|f8 = GetArrayElement v0, v18, v20, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v22: 1 = Integer integer=1
 # CHECK-NEXT: v23: int[1, 4294967295] = Add v18, v22
 # CHECK-NEXT: v24: false = Boolean
-# CHECK-NEXT: AppendElement v10, v21
+# CHECK-NEXT: v25: fact = Specified
+# CHECK-NEXT: v26: int[1, 3] = AssumeType v21, v25 provenType=undefined|int
+# CHECK-NEXT: AppendElement v10, v26
 # CHECK-NEXT: Jump -> next b5(v24, v23)
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v26: undefined|int[1, 3] = GetArrayElement v0, v18, -, v11 arrayStorage=Int32 level=Proven [keyIsIntegral]
-# CHECK-NEXT: v27: 1 = Integer integer=1
-# CHECK-NEXT: v28: int[1, 4294967295] = Add v18, v27
-# CHECK-NEXT: v29: false = Boolean
-# CHECK-NEXT: AppendElement v10, v26
-# CHECK-NEXT: Jump -> next b4(v29, v28)
+# CHECK-NEXT: v28: undefined|boolean|int[1, 3]|"a"|"all"|"anys"|"b"|"generic"|"skipped"|"two"|"unknowns"|"usedBehind"|"usesFirst"|f1|f2|f3|f4|f5|f6|f7|f8 = GetArrayElement v0, v18, -, v11 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v29: 1 = Integer integer=1
+# CHECK-NEXT: v30: int[1, 4294967295] = Add v18, v29
+# CHECK-NEXT: v31: false = Boolean
+# CHECK-NEXT: v32: fact = Specified
+# CHECK-NEXT: v33: undefined|int[1, 3] = AssumeType v28, v32 provenType=undefined|int
+# CHECK-NEXT: AppendElement v10, v33
+# CHECK-NEXT: Jump -> next b4(v31, v30)
 # CHECK-NEXT: b10():
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }

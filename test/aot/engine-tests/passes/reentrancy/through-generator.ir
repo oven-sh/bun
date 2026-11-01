@@ -183,25 +183,28 @@ runtimefunction id=ArrayTraversalTraverseArray function=f18 visibility=Private
 # CHECK-LABEL: function {{*}}name="once"
 # CHECK: module=m0 position=171 role=CoroutineBody flags=[IsGenerator, HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f1 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f1 body=f25} inlineFrames=[{}, {callee=f11 callPosition=4294967295 module=m2}, {callee=f20 callPosition=25 parent=1 module=m2}, {callee=f1 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: anything, v1: int[0, 2], v2: anything):
-# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b2(), case b3(), otherwise b1()
-# CHECK-NEXT: b1():
+# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b3():
 # CHECK-NEXT: v3: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: v5: Generator = NewGenerator function=f1
 # CHECK-NEXT: v6: Generator<never, pristine[Storage, Names]> = AssumeType v5 provenType=Generator<never, pristine[Storage, Names]>
 # CHECK-NEXT: MarkGeneratorRunning v6
-# CHECK-NEXT: v11: anything = NewHeapFrame v5 function=f25 numberOfWords=2
-# CHECK-NEXT: PutHeapFrameWord v11, v5
-# CHECK-NEXT: PutHeapFrameWord v11, v3 index=1
-# CHECK-NEXT: SuspendInHeapFrame v5, v11 [isFirstRun, staysRunning]
-# CHECK-NEXT: v15: 0 = Integer
-# CHECK-NEXT: v16: undefined = Undefined
-# CHECK-NEXT: v8: anything = CallDirect v11, v15, v16 function=f25 [isNeverInlined]
+# CHECK-NEXT: v14: anything = NewHeapFrame v5 function=f25 numberOfWords=2
+# CHECK-NEXT: PutHeapFrameWord v14, v5
+# CHECK-NEXT: PutHeapFrameWord v14, v3 index=1
+# CHECK-NEXT: SuspendInHeapFrame v5, v14 [isFirstRun, staysRunning]
+# CHECK-NEXT: v18: 0 = Integer
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: v8: anything = CallDirect v14, v18, v19 function=f25 [isNeverInlined]
 # CHECK-NEXT: v9: int[0, 2] = TakeGeneratorStepStatus v6
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: Throw v2
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: v10: absent = Absent
+# CHECK-NEXT: PutHeapFrameWord v0, v10 index=1
+# CHECK-NEXT: ReleaseHint v6
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }

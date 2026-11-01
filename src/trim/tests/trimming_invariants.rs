@@ -600,7 +600,8 @@ fn close_over_followed_edges(table: &ToyTable, seed: FeatureSet) -> FeatureSet {
 
 fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
     use UnseenCodeCause::{
-        EvaluatesText, LoadsCodeByName, LoadsModuleByName, RunsMachineCode, RunsUnseenCode,
+        EvaluatesText, LoadsCodeByName, LoadsModuleByName, ReportMissing, RunsMachineCode,
+        RunsUnseenCode,
     };
 
     let program_features = Feature::all_entered_from(EnteredFrom::Program);
@@ -630,6 +631,11 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
                         && !has_to_be_named)
             })
             .collect(),
+        ReportMissing => {
+            let mut features = program_features;
+            features.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+            features
+        }
         _ => program_features,
     }
 }
@@ -679,6 +685,9 @@ fn check_plan(
         }
         let mut entered_by_programs = FeatureSet::all();
         entered_by_programs.subtract(&Feature::all_outside_compiled_programs());
+        if !request.is_template {
+            entered_by_programs.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+        }
         seed.union_with(&entered_by_programs);
     }
     let retained = close_over_followed_edges(table, seed);

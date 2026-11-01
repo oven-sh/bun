@@ -137,11 +137,11 @@ function f2 name="Counter" module=m0 position=222 kind=BaseConstructor flags=[Ha
   b0(v0: anything):
     Jump -> next b1() @222
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @216
-    v2 = NewObject v1 layout=L0 @216
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @216
-    v4 = CallDirect v3 function=f4 @216
-    Return v3 @216
+    v1 = GetConstructPrototype v0 layout=L0 @222
+    v2 = NewObject v1 layout=L0 @222
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @222
+    v4 = CallDirect v3 function=f4 @222
+    Return v3 @222
 }
 function f3 name="write" module=m0 position=261 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w6} parameters=[{type=number site=w5}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: number):

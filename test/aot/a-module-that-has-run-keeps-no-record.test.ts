@@ -2,7 +2,8 @@ import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // What the loader makes to load, link and run an ES module of the program goes when no graph is being loaded any more:
 // behind a hundred and twenty modules a program holds a handful of records.

@@ -1,4 +1,5 @@
 # `return f.apply(this, arguments)` passes on exactly what the function was called with, whatever was done to the parameters and to the object before
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f4 f6
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls

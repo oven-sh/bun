@@ -346,6 +346,39 @@ fn loader_answers_require_of_a_data_file_that_import_call_names() {
 }
 
 #[test]
+fn loader_answers_require_of_a_data_file_that_stands_no_higher_than_a_commonjs_file() {
+    let files = [
+        (
+            "main.js",
+            "import './above.json'; import './between.js'; export {};",
+        ),
+        (
+            "between.js",
+            "import './beside.json'; import './early.cjs'; import './deeper.js'; export {};",
+        ),
+        ("early.cjs", "module.exports = require('./below.json');"),
+        (
+            "deeper.js",
+            "import './below.json'; import './note.txt'; export {};",
+        ),
+        ("above.json", r#"{ "x": 1 }"#),
+        ("beside.json", r#"{ "x": 1 }"#),
+        ("below.json", r#"{ "x": 1 }"#),
+        ("note.txt", "text"),
+    ];
+    with_graph(&files, |graph, input| {
+        let result_of = |name: &str| {
+            let file = file_named(input, name);
+            graph.interop(ModuleRef::File(file)).require_result
+        };
+        assert_eq!(result_of("above.json"), RequireResult::Namespace);
+        assert_eq!(result_of("beside.json"), RequireResult::NamespaceIfImported);
+        assert_eq!(result_of("below.json"), RequireResult::NamespaceIfImported);
+        assert_eq!(result_of("note.txt"), RequireResult::Namespace);
+    });
+}
+
+#[test]
 fn data_module_without_default_requires_as_namespace() {
     let files = [
         ("main.js", "import './named.js'; import './default.js';"),

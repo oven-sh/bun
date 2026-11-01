@@ -1,4 +1,5 @@
 # What a reader sees of a member that the literal left out: nothing of its own, and whatever the prototypes have.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f1
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -544,5 +545,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f18 visibility=Private
 # -- generated: read
 # CHECK-LABEL: function {{*}}name="read"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 71, patchpoints: 7, rare instructions: 30, polls: 1
+# CHECK-NEXT: instructions: 72, patchpoints: 7, rare instructions: 30, polls: 1
 # CHECK-NEXT: end of function f1

@@ -249,7 +249,7 @@ function f27 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v6: "b" = String string="b"
 # CHECK-NEXT: v7: 2 = Integer integer=2
 # CHECK-NEXT: v8: Map<string, int[1, 2]> = NewMapFromData data=d6
-# CHECK-NEXT: v9: Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage]> = AssumeType v8 provenType=Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>
+# CHECK-NEXT: v9: Map<"a"|"b", int, proven, pristine[Storage]> = AssumeType v8 provenType=Map<"a"|"b", int, proven, pristine[Storage]>
 # CHECK-NEXT: v10: 1 = Integer integer=1
 # CHECK-NEXT: v11: 2 = Integer integer=2
 # CHECK-NEXT: v12: 3 = Integer integer=3
@@ -300,7 +300,7 @@ function f27 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v52: 4 = Integer integer=4
 # CHECK-NEXT: v53: int[0, 3] = Mod v51, v52
 # CHECK-NEXT: Switch v53 cases=[0, 1, 2] -> case b7(v3), case b7(v9), case b7(v15), otherwise b7(v18)
-# CHECK-NEXT: b7(v54: L1|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>):
+# CHECK-NEXT: b7(v54: L1|Map<"a"|"b", int, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>):
 # CHECK-NEXT: v55: 3 = Integer integer=3
 # CHECK-NEXT: v56: int[0, 3] = BitAnd v38, v55
 # CHECK-NEXT: v57: boolean = TypeTest v54 testedType=L1
@@ -308,7 +308,7 @@ function f27 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b8(v58: L1):
 # CHECK-NEXT: PutSlot v58, -, v56 key="mark" receivers=[L1] level=Proven accessSite=25
 # CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b9(v60: Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>) frequency=Unlikely:
+# CHECK-NEXT: b9(v60: Map<"a"|"b", int, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>) frequency=Unlikely:
 # CHECK-NEXT: PropSet v60, v56 key="mark" accessSite=25 receivers=[L1, ..]
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
@@ -333,18 +333,18 @@ function f27 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v72: 4 = Integer integer=4
 # CHECK-NEXT: v73: int[0, 3] = Mod v38, v72
 # CHECK-NEXT: Switch v73 cases=[0, 1, 2] -> case b15(v3), case b15(v9), case b15(v15), otherwise b15(v18)
-# CHECK-NEXT: b15(v74: L1|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>):
+# CHECK-NEXT: b15(v74: L1|Map<"a"|"b", int, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>):
 # CHECK-NEXT: Jump -> next b16(v74)
-# CHECK-NEXT: b16(v75: undefined|null|L1|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>) handler=b28():
-# CHECK-NEXT: v76: L1|Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]> = RequireObjectCoercible v75 name="size"
+# CHECK-NEXT: b16(v75: undefined|null|L1|Map<"a"|"b", int, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>) handler=b28():
+# CHECK-NEXT: v76: L1|Map<"a"|"b", int, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]> = RequireObjectCoercible v75 name="size"
 # CHECK-NEXT: v77: boolean = TypeTest v76 testedType=L1
 # CHECK-NEXT: Branch v77 -> taken b17(), notTaken b18(| 0)
 # CHECK-NEXT: b17():
 # CHECK-NEXT: Jump -> next b24()
-# CHECK-NEXT: b18(v78: Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>):
+# CHECK-NEXT: b18(v78: Map<"a"|"b", int, proven, pristine[Storage]>|Set<int, proven, pristine[Storage]>):
 # CHECK-NEXT: v79: boolean = TypeTest v78 testedType=Map
 # CHECK-NEXT: Branch v79 -> taken b19(| 0), notTaken b22(| 0)
-# CHECK-NEXT: b19(v80: Map<undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, undefined|int|"a"|"b"|Array<int[1, 2]|"a"|"b", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>):
+# CHECK-NEXT: b19(v80: Map<"a"|"b", int, proven, pristine[Storage]>):
 # CHECK-NEXT: v81: boolean = IsPristine v80 builtinClass=Map aspects=[Names]
 # CHECK-NEXT: Branch v81 -> taken b20(), notTaken b21()
 # CHECK-NEXT: b20():

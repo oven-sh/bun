@@ -1,3 +1,4 @@
+use bun_sort_by_number::SortByNumber;
 use core::mem::offset_of;
 use core::ops::Range;
 
@@ -198,7 +199,7 @@ fn merge_removable_bytes(
         can_be_cut: planned.can_be_cut,
         can_be_filled: planned.can_be_filled,
     }));
-    removable.sort_by_key(|item| item.range.start);
+    removable.sort_by_u64(|item| item.range.start);
     removable
 }
 
@@ -359,7 +360,7 @@ fn write_removal_state(
     let is_trimmed = u32::from(
         !plan
             .removed()
-            .is_subset_of(&Feature::all_outside_compiled_programs()),
+            .is_subset_of(&Feature::all_that_leave_unasked()),
     );
     write_state_field(
         state,
@@ -417,7 +418,7 @@ fn collect_removed_ranges(plan: &TrimPlan, state_address: u64) -> Vec<RemovedRan
         .iter()
         .map(|entry| (entry.range, entry.named_feature));
     let mut ascending: Vec<(AddressRange, Feature)> = removed.chain(refused).collect();
-    ascending.sort_by_key(|(range, _)| range.start);
+    ascending.sort_by_u64(|(range, _)| range.start);
     let mut records = Vec::with_capacity(ascending.len());
     for (range, feature) in ascending {
         push_removed_range(&mut records, range, feature, state_address);

@@ -1,4 +1,5 @@
 # Each variable is stored once. Each loop reads it only in a branch, and the branch is not taken as long as the variable is empty: a read that ran in front of the loop would run where the program never reads.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # OPTIONS: validate
 # RUN: lower-to-air size f1
@@ -95,5 +96,5 @@ function f2 name="readVar" module=m0 position=2499 flags=[HasExplicitName] lengt
 # -- generated: readInBranch
 # CHECK-LABEL: function {{*}}name="readInBranch"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 70, patchpoints: 24, rare instructions: 40, polls: 1
+# CHECK-NEXT: instructions: 68, patchpoints: 24, rare instructions: 38, polls: 1
 # CHECK-NEXT: end of function f6

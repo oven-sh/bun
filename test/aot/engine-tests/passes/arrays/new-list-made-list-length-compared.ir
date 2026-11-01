@@ -296,7 +296,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v54: undefined = CallBuiltin -, v53 overload=ConsoleLog/0 accessSite=11
 # CHECK-NEXT: v55: "a" = String string="a"
 # CHECK-NEXT: v56: "b" = String string="b"
-# CHECK-NEXT: v57: Array<int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v55, v56 contents=int[1, 21]|"a"|"b"|f2 allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v57: Array<int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v55, v56 contents=int[1, 21]|"a"|"b"|f2 allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven, isMadeForOneUse]
 # CHECK-NEXT: v58: Array<int[1, 21]|"a"|"b"|f2, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v57 provenType=Array<int[1, 21]|"a"|"b"|f2, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v59: undefined = CallDirect v58 function=f5
 # CHECK-NEXT: v60: i32 = ResultAt v59
@@ -332,7 +332,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v83: undefined = CallBuiltin -, v82 overload=ConsoleLog/0 accessSite=17
 # CHECK-NEXT: v84: 21 = Integer integer=21
 # CHECK-NEXT: v85: f2 = NewClosure function=f2 allocationSite=1
-# CHECK-NEXT: v86: Array<int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v84, v85 contents=int[1, 21]|"a"|"b"|f2 allocationSite=5 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v86: Array<int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v84, v85 contents=int[1, 21]|"a"|"b"|f2 allocationSite=5 storage=Frame arrayStorage=Contiguous [contentsAreProven, isMadeForOneUse]
 # CHECK-NEXT: v87: Array<int[1, 21]|"a"|"b"|f2, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v86 provenType=Array<int[1, 21]|"a"|"b"|f2, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v88: undefined = CallDirect v87 function=f5
 # CHECK-NEXT: v89: i32 = ResultAt v88
@@ -359,18 +359,21 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v104: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v95, v102 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: Jump -> next b16(v103, v104)
 # CHECK-NEXT: b16(v105: undefined|null|int[1, 21]|"a"|"b"|L0|f2, v106: undefined|null|int[1, 21]|"a"|"b"|f2):
-# CHECK-NEXT: v107: boolean = TypeTest v106 testedType=f2
-# CHECK-NEXT: v108: undefined|null|int[1, 21]|"a"|"b"|L0|f2 ~ int[1, 21] = Expect v105 expectedType=number
-# CHECK-NEXT: v109: boolean = TypeTest v106 testedType=f2
-# CHECK-NEXT: Branch v109 -> taken b17(), notTaken b18(| 0)
+# CHECK-NEXT: v107: undefined|int[1, 21]|"a"|"b"|L0|f2 = AssumeType v105 provenType=undefined|int|"a"|"b"|L0|f2
+# CHECK-NEXT: v108: null|f2 = AssumeType v106 provenType=null|f2
+# CHECK-NEXT: v109: boolean = TypeTest v108 testedType=f2
+# CHECK-NEXT: v110: undefined|int[1, 21]|"a"|"b"|L0|f2 ~ int[1, 21] = Expect v107 expectedType=number
+# CHECK-NEXT: v111: boolean = TypeTest v108 testedType=f2
+# CHECK-NEXT: Branch v111 -> taken b17(), notTaken b18()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v110: number = CallDirect v108 function=f2 accessSite=21
-# CHECK-NEXT: v111: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v112: undefined = CallBuiltin v111, v105, v107, v110 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=22
-# CHECK-NEXT: v113: undefined = Undefined
-# CHECK-NEXT: Return v113
-# CHECK-NEXT: b18(v114: undefined|null|int[1, 21]|"a"|"b") frequency=Unlikely:
-# CHECK-NEXT: v115: never = Call v114, -, v108 calleeName="last" accessSite=21 callees=[f2, ..]
+# CHECK-NEXT: v112: number = CallDirect v110 function=f2 accessSite=21
+# CHECK-NEXT: v113: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v114: undefined = CallBuiltin v113, v107, v109, v112 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=22
+# CHECK-NEXT: v115: undefined = Undefined
+# CHECK-NEXT: Return v115
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v116: null = Null
+# CHECK-NEXT: v117: never = Call v116, -, v110 calleeName="last" accessSite=21 callees=[f2, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pairOf"
@@ -378,7 +381,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-LABEL: function {{*}}name="double"
 # CHECK: module=m0 position=457 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w2 flags=[IsExpected]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ number):
-# CHECK-NEXT: v1: undefined|null|int|"a"|"b"|L0|f2 ~ int = AssumeType v0 provenType=undefined|null|int|"a"|"b"|L0|f2
+# CHECK-NEXT: v1: undefined|int|"a"|"b"|L0|f2 ~ int = AssumeType v0 provenType=undefined|int|"a"|"b"|L0|f2
 # CHECK-NEXT: v2: 2 = Integer integer=2
 # CHECK-NEXT: v3: number ~ int|whole = Mul v1, v2
 # CHECK-NEXT: Return v3

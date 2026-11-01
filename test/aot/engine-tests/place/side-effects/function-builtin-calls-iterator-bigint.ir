@@ -35,7 +35,7 @@ module m2 path="/$bun/js/engine/models/Objects.ts" displayPath="/$bun/js/engine/
 entry module=m0
 typesite w0 module=m1 position=1528 kind=Result
 typesite w1 module=m1 position=1595 kind=Variable
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent flags=[IsExpected]}}] ownFieldCount=1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent flags=[IsExpected]} variableName="ran"}] ownFieldCount=1
 layout L1 kind=Instance name="Held" module=m0 position=201 constructor=f3
 layout L2 module=m0 position=272 fields=[{key="value" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 layout L3 module=m0 position=311 fields=[{key="size" declared={type=undefined|null|L2 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1

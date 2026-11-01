@@ -1,9 +1,10 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { cpSync, readFileSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { built, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { buildEnvironment, compileCommand, withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import {
@@ -18,7 +19,8 @@ import {
 } from "./impostors-keep-their-fast-paths/look";
 import { projects, type Row } from "./impostors-keep-their-fast-paths/rows";
 import { whyInstructionsCannotBeCounted, type CompiledFunction } from "./instruction-counts/count-instructions";
-import { beforeAll, describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 const slack = 1.5;
 const instructionsOfBlockRefills = 500;

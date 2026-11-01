@@ -21,6 +21,7 @@ const mismatches =
 
 // The flow analysis takes `globalThis.name` for absent where the table lists no such member and no statement stores one. So the table has to list every own name
 // that the engine and the host give the global object, also those that appear when another is touched, and nothing but Object.prototype may lie above it.
+// It takes `globalThis[Symbol.for(text)]` so too: the engine and the host lay nothing on the global object under a symbol.
 const namesOfGlobalObject = [
   'import { aotBuiltinEntries } from "bun:internal-for-testing";',
   'const listed = new Set(aotBuiltinEntries().entries.filter(entry => entry.holder === "GlobalThis").map(entry => entry.name));',
@@ -32,12 +33,14 @@ const namesOfGlobalObject = [
   "  } catch {}",
   "}",
   "const unlisted = Object.getOwnPropertyNames(globalThis).filter(name => !listed.has(name));",
-  "console.log(JSON.stringify({ unlisted, isBelowObjectPrototype: Object.getPrototypeOf(globalThis) === Object.prototype }));",
+  "const symbols = Object.getOwnPropertySymbols(globalThis).map(String);",
+  "console.log(JSON.stringify({ unlisted, symbols, isBelowObjectPrototype: Object.getPrototypeOf(globalThis) === Object.prototype }));",
 ].join("\n");
 
 test("the table lists every own name of the global object but ShadowRealm, which a compiled program does not have", async () => {
   expect(JSON.parse((await runFile(namesOfGlobalObject)).stdout)).toEqual({
     unlisted: ["ShadowRealm"],
+    symbols: [],
     isBelowObjectPrototype: true,
   });
 });
@@ -51,7 +54,7 @@ test(
       const executable = await buildExecutable(folder);
       const ran = await spawned([executable], folder, bunEnv);
       expect({ names: JSON.parse(ran.stdout), exitCode: ran.exitCode, signal: ran.signal }).toEqual({
-        names: { unlisted: [], isBelowObjectPrototype: true },
+        names: { unlisted: [], symbols: [], isBelowObjectPrototype: true },
         exitCode: 0,
         signal: null,
       });
@@ -83,6 +86,53 @@ const keysOfConstructors = [
 
 test("the table lists every own key of the constructors that a program can name", async () => {
   expect(JSON.parse((await runFile(keysOfConstructors)).stdout)).toEqual({ unlisted: [], comparesMany: true });
+});
+
+// The flow analysis takes what `new` makes of a function for an object of the program's where the table says only what a call does. So the table has to say what `new` does of every function that
+// can be constructed: what the function answers may take the place of the new object.
+const functionsThatCanBeConstructed = [
+  'import { aotBuiltinEntries } from "bun:internal-for-testing";',
+  "const { entries } = aotBuiltinEntries();",
+  "const byToken = new Map(entries.map(entry => [entry.token, entry]));",
+  "const load = path => {",
+  "  try {",
+  "    return require(path);",
+  "  } catch {}",
+  "};",
+  "const find = entry => {",
+  '  if (entry.token === "GlobalThis") return globalThis;',
+  "  if (/^(node|bun):[^.]*$/.test(entry.path)) return load(entry.path);",
+  "  const holder = entry.holder && find(byToken.get(entry.holder));",
+  '  if ((typeof holder !== "object" && typeof holder !== "function") || holder === null) return undefined;',
+  "  return Object.getOwnPropertyDescriptor(holder, entry.isSymbolName ? Symbol[entry.name] : entry.name)?.value;",
+  "};",
+  "const isConstructor = value => {",
+  "  try {",
+  "    Reflect.construct(Object, [], value);",
+  "    return true;",
+  "  } catch {",
+  "    return false;",
+  "  }",
+  "};",
+  "const withoutSignature = [];",
+  "let compared = 0;",
+  "for (const entry of entries) {",
+  '  if (entry.sameObjectAs || !entry.overloads.some(overload => overload.mode === "Call")) continue;',
+  '  if (entry.overloads.some(overload => overload.mode === "Construct")) continue;',
+  "  const value = find(entry);",
+  '  if (typeof value !== "function") continue;',
+  "  compared++;",
+  "  if (isConstructor(value)) withoutSignature.push(entry.path);",
+  "}",
+  "console.log(JSON.stringify({ withoutSignature, comparesMany: compared > 1000 }));",
+  "process.exit(0);",
+].join("\n");
+
+test("the table says what `new` does of every function that a program can name and construct", async () => {
+  expect(JSON.parse((await runFile(functionsThatCanBeConstructed)).stdout)).toEqual({
+    withoutSignature: [],
+    comparesMany: true,
+  });
 });
 
 test("an object of the table passes the instance test of no class that the table keeps it out of", async () => {

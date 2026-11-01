@@ -68,7 +68,7 @@ compiled code sees the globals: 2 [1] 0 true true function
 so does a later script: 2 [1] 0 true true function
 var Math in sloppy code: TypeError: Cannot assign to Math because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 var Math in strict code: TypeError: Cannot assign to Math because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-function Math: TypeError: Can't declare global function 'Math': property must be either configurable or both writable and enumerable
+function Math: TypeError: Cannot declare 'Math': compiled code treats the global 'Math' as a constant, so code from a string can't replace it with a top-level function (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 a store to globalThis.globalThis: TypeError: Cannot assign to globalThis because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 compiled code still sees the globals: 2 true
 a block of a script: of the script

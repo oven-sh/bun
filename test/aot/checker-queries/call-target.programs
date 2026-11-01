@@ -2597,12 +2597,12 @@ function f(a) { "use strict"; }
 function f(a = 1) { "use sloppy"; }
 function f(a,) {}
 (a) =>⏎1;
-// ECMAScript rejects the next four. bun run starts them: its transpiler removes the "use strict" directive of a function.
+//// early-errors/parameters.rejected.js
+// A "use strict" directive behind parameters that are not plain names. bun run starts these four: its transpiler removes the directive of a function.
 function f(a = 1) { "use strict"; }
 function f({ a }) { "use strict"; }
 (a = 1) => { "use strict"; };
 function f(...a) { "use strict"; }
-//// early-errors/parameters.rejected.js
 // A rest parameter that is not last or has a default, and a line break before =>.
 function f(...a, b) {}
 function f(...a = []) {}
@@ -2761,9 +2761,6 @@ function f() { "use strict"; 010; }
 "use strict"; var a = "\101";
 class C { m() { 010; } }
 class C { a = "\8"; }
-// ECMAScript rejects the next two. bun run starts them: its transpiler removes the "use strict" directive of a function, so JavaScriptCore reads sloppy mode code.
-function f(eval) { "use strict"; }
-function f() { "use strict"; delete f; }
 //// early-errors/strict-mode.accepted.js
 // Strict mode code allows delete of a property, reserved words as property names, 0o10 and "\0".
 var a = {}; delete a.b;
@@ -2786,6 +2783,9 @@ function f() { "use strict"; var public; }
 class C { m() { with ({}) {} } }
 class C { m() { var let; } }
 class C extends (function () { with ({}) {} }) {}
+// bun run starts the next two: its transpiler removes the "use strict" directive of a function, so JavaScriptCore reads sloppy mode code.
+function f(eval) { "use strict"; }
+function f() { "use strict"; delete f; }
 //// early-errors/strict-mode.rejected.js
 // Strict mode code, here a module: with, delete of a name, eval and arguments as targets or declared names, reserved words as names.
 export {}; with ({}) {}

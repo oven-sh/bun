@@ -727,6 +727,10 @@ export default b.declarations(
       rawListeners: listsListeners,
     },
   }),
+  b.constructionOfFunction(
+    "process.nextTick",
+    queuesTick.map(overload => ("returns" in overload ? overload : { ...overload, returns: b.object })),
+  ),
   b.inherits("process", "%EventEmitter%.prototype"),
   b.inherits("process.report", "Object.prototype"),
   changedByNativeCode.flatMap(name => b.extend(`process.${name}`, { mutability: "ChangesOnItsOwn" })),

@@ -1,4 +1,21 @@
 # `[1, 2, ...rest]`: the constants in front are no whole literal: what follows is appended to the same array.
+# -- source: literals-that-go-on-behind-constants.ts
+# // `[1, 2, ...rest]`: the constants in front are no whole literal: what follows is appended to the same array.
+# function spreadBehind(rest: number[]): number[] { return [1, 2, ...rest]; }
+# function spreadBetween(rest: number[]): number[] { return [1, 2, ...rest, 3, 4]; }
+# function spreadOfStrings(rest: string[]): string[] { return ["a", "b", ...rest, "c"]; }
+# function spreadOfIterable(rest: Iterable<number>): number[] { return [0.5, 1.5, ...rest]; }
+# function twoSpreads(a: number[], b: number[]): number[] { return [7, ...a, 8, ...b]; }
+# function spreadOfConstants(): number[] { return [1, 2, ...[3, 4], ...[5, 6]]; }
+# function holeBehind(rest: number[]): (number | undefined)[] { return [1, 2, ...rest, , 5]; }
+# function* numbers(n: number) { for (let i = 0; i < n; i++) yield i * 10; }
+# const show = (a: unknown[]) => JSON.stringify(a) + a.length;
+# for (let round = 0; round < 3; round++) {
+#   console.log(show(spreadBehind([])), show(spreadBehind([9])), show(spreadBehind([9, 8, 7, 6, 5, 4, 3, 2, 1])), show(spreadBetween([round])), show(spreadOfStrings(["x", "y"])), show(spreadOfIterable(numbers(round + 1))), show(spreadOfIterable(new Set([1, 2]))));
+#   console.log(show(twoSpreads([1], [2, 3])), show(spreadOfConstants()), show(holeBehind([round])), 3 in holeBehind([round]), spreadBehind([]) !== spreadBehind([]));
+# }
+# let sum = 0; for (let i = 0; i < 20000; i++) { const a = spreadBehind([i]), b = spreadOfStrings([String(i & 3)]); sum += a[2] + a.length + b[2].length + spreadOfConstants()[5]; } console.log(sum);
+# -- end of source
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -6,6 +23,7 @@
 module m0 path="literals-that-go-on-behind-constants.ts" displayPath="literals-that-go-on-behind-constants.ts" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 module m2 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/SetIteratorPrototype.ts" displayPath="/$bun/js/engine/SetIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
 entry module=m0
 typesite w0 module=m0 position=791 kind=Variable
 typesite w1 module=m0 position=1322 kind=Variable
@@ -64,6 +82,7 @@ typesite w53 module=m0 position=1471 kind=Element
 typesite w54 module=m0 position=750 kind=Variable
 typesite w55 module=m0 position=816 kind=CallResult
 typesite w56 module=m0 position=836 kind=PropertyRead
+typesite w57 module=m2 position=302 kind=Variable
 data d0 root=Array{contents=number} module=m0
 data d1 root=Array{contents=number elements=[Number{value=9}]} module=m0
 data d2 root=Array{contents=number elements=[Number{value=9}, Number{value=8}, Number{value=7}, Number{value=6}, Number{value=5}, Number{value=4}, Number{value=3}, Number{value=2}, Number{value=1}]} module=m0
@@ -75,259 +94,419 @@ data d7 root=Array{contents=number} module=m0
 data d8 root=Array{contents=number} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f2
-    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f3
-    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = NewClosure function=f4
-    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v8 = NewClosure function=f5
-    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v10 = NewClosure function=f6
-    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v12 = NewClosure function=f7
-    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v14 = NewClosure function=f8
-    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v16 = NewClosure function=f9
-    v17 = Convert v16 declared={type=undefined|null|function|f9 site=w0 flags=[OmitsNull, OmitsUndefined]}
-    v18 = Integer
-    v19 = Convert v18 declared={type=number site=w19}
-    Jump -> next b1(v19)
-  b1(v20: number):
-    LoopHint
-    v22 = Integer integer=3
-    v23 = Less v20, v22
-    Branch v23 -> taken b2(| 0), notTaken b3(| 0)
-  b2(v24):
-    v25 = Builtin builtin=GlobalThis
-    v26 = PropGet v25 key="console" [isFreeName]
-    v27 = Convert v26 declared={type=builtin(Console) flags=[IsExpected]}
-    v28 = PropGet v27 key="log"
-    v29 = Convert v28 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v30 = Data data=d0
-    v31 = Call v1, -, v30 calleeName="spreadBehind"
-    v32 = Convert v31 declared={type=undefined|null|Array<number> site=w20 flags=[OmitsNull, OmitsUndefined]}
-    v33 = Call v17, -, v32 calleeName="show"
-    v34 = Convert v33 declared={type=undefined|null|string site=w21 flags=[OmitsNull, OmitsUndefined]}
-    v35 = Data data=d1
-    v36 = Call v1, -, v35 calleeName="spreadBehind"
-    v37 = Convert v36 declared={type=undefined|null|Array<number> site=w22 flags=[OmitsNull, OmitsUndefined]}
-    v38 = Call v17, -, v37 calleeName="show"
-    v39 = Convert v38 declared={type=undefined|null|string site=w23 flags=[OmitsNull, OmitsUndefined]}
-    v40 = Data data=d2
-    v41 = Call v1, -, v40 calleeName="spreadBehind"
-    v42 = Convert v41 declared={type=undefined|null|Array<number> site=w24 flags=[OmitsNull, OmitsUndefined]}
-    v43 = Call v17, -, v42 calleeName="show"
-    v44 = Convert v43 declared={type=undefined|null|string site=w25 flags=[OmitsNull, OmitsUndefined]}
-    v45 = NewArray v24 contents=number
-    v46 = Call v3, -, v45 calleeName="spreadBetween"
-    v47 = Convert v46 declared={type=undefined|null|Array<number> site=w26 flags=[OmitsNull, OmitsUndefined]}
-    v48 = Call v17, -, v47 calleeName="show"
-    v49 = Convert v48 declared={type=undefined|null|string site=w27 flags=[OmitsNull, OmitsUndefined]}
-    v50 = Data data=d3
-    v51 = Call v5, -, v50 calleeName="spreadOfStrings"
-    v52 = Convert v51 declared={type=undefined|null|Array<undefined|null|string> site=w28 flags=[OmitsNull, OmitsUndefined]}
-    v53 = Call v17, -, v52 calleeName="show"
-    v54 = Convert v53 declared={type=undefined|null|string site=w29 flags=[OmitsNull, OmitsUndefined]}
-    v55 = Integer integer=1
-    v56 = Add v24, v55
-    v57 = Call v15, -, v56 calleeName="numbers"
-    v58 = Convert v57 declared={type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-    v59 = Call v7, -, v58 calleeName="spreadOfIterable"
-    v60 = Convert v59 declared={type=undefined|null|Array<number> site=w30 flags=[OmitsNull, OmitsUndefined]}
-    v61 = Call v17, -, v60 calleeName="show"
-    v62 = Convert v61 declared={type=undefined|null|string site=w31 flags=[OmitsNull, OmitsUndefined]}
-    v63 = Builtin builtin=Set
-    v64 = Data data=d4
-    v65 = Construct v63, -, v64 calleeName="Set"
-    v66 = Convert v65 declared={type=undefined|null|Set<number> site=w32 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v67 = Call v7, -, v66 calleeName="spreadOfIterable"
-    v68 = Convert v67 declared={type=undefined|null|Array<number> site=w33 flags=[OmitsNull, OmitsUndefined]}
-    v69 = Call v17, -, v68 calleeName="show"
-    v70 = Convert v69 declared={type=undefined|null|string site=w34 flags=[OmitsNull, OmitsUndefined]}
-    v71 = Call v29, v27, v34, v39, v44, v49, v54, v62, v70 calleeKey="log" calleeName="console.log"
-    v72 = Builtin builtin=GlobalThis
-    v73 = PropGet v72 key="console" [isFreeName]
-    v74 = Convert v73 declared={type=builtin(Console) flags=[IsExpected]}
-    v75 = PropGet v74 key="log"
-    v76 = Convert v75 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v77 = Data data=d5
-    v78 = Data data=d6
-    v79 = Call v9, -, v77, v78 calleeName="twoSpreads"
-    v80 = Convert v79 declared={type=undefined|null|Array<number> site=w35 flags=[OmitsNull, OmitsUndefined]}
-    v81 = Call v17, -, v80 calleeName="show"
-    v82 = Convert v81 declared={type=undefined|null|string site=w36 flags=[OmitsNull, OmitsUndefined]}
-    v83 = Call v11 calleeName="spreadOfConstants"
-    v84 = Convert v83 declared={type=undefined|null|Array<number> site=w37 flags=[OmitsNull, OmitsUndefined]}
-    v85 = Call v17, -, v84 calleeName="show"
-    v86 = Convert v85 declared={type=undefined|null|string site=w38 flags=[OmitsNull, OmitsUndefined]}
-    v87 = NewArray v24 contents=number
-    v88 = Call v13, -, v87 calleeName="holeBehind"
-    v89 = Convert v88 declared={type=undefined|null|Array<undefined|number> site=w39 flags=[OmitsNull, OmitsUndefined]}
-    v90 = Call v17, -, v89 calleeName="show"
-    v91 = Convert v90 declared={type=undefined|null|string site=w40 flags=[OmitsNull, OmitsUndefined]}
-    v92 = Integer integer=3
-    v93 = NewArray v24 contents=number
-    v94 = Call v13, -, v93 calleeName="holeBehind"
-    v95 = Convert v94 declared={type=undefined|null|Array<undefined|number> site=w41 flags=[OmitsNull, OmitsUndefined]}
-    v96 = ElemHas v95, v92
-    v97 = Data data=d7
-    v98 = Call v1, -, v97 calleeName="spreadBehind"
-    v99 = Convert v98 declared={type=undefined|null|Array<number> site=w42 flags=[OmitsNull, OmitsUndefined]}
-    v100 = Data data=d8
-    v101 = Call v1, -, v100 calleeName="spreadBehind"
-    v102 = Convert v101 declared={type=undefined|null|Array<number> site=w43 flags=[OmitsNull, OmitsUndefined]}
-    v103 = StrictEq v99, v102
-    v104 = LogicalNot v103
-    v105 = Call v76, v74, v82, v86, v91, v96, v104 calleeKey="log" calleeName="console.log"
-    v106 = Increment v24
-    v107 = Convert v106 declared={type=number site=w19}
-    Jump -> next b1(v107)
-  b3(v108):
-    v109 = Integer
-    v110 = Convert v109 declared={type=number site=w1}
-    v111 = Integer
-    v112 = Convert v111 declared={type=number site=w44}
-    Jump -> next b4(v110, v112)
-  b4(v113: number, v114: number):
-    LoopHint
-    v116 = Convert v114 declared={type=i32 flags=[IsExpected]}
-    v117 = Integer integer=20000
-    v118 = Less v116, v117
-    Branch v118 -> taken b5(| 0), notTaken b6(| 0)
-  b5(v119):
-    v120 = Convert v119 declared={type=i32 flags=[IsExpected]}
-    v121 = NewArray v120 contents=number
-    v122 = Call v1, -, v121 calleeName="spreadBehind"
-    v123 = Convert v122 declared={type=undefined|null|Array<number> site=w45 flags=[OmitsNull, OmitsUndefined]}
-    v124 = Builtin builtin=String
-    v125 = Integer integer=3
-    v126 = BitAnd v120, v125
-    v127 = Call v124, -, v126 calleeName="String"
-    v128 = Convert v127 declared={type=undefined|null|string site=w46 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v129 = NewArray v128 contents=undefined|null|string
-    v130 = Call v5, -, v129 calleeName="spreadOfStrings"
-    v131 = Convert v130 declared={type=undefined|null|Array<undefined|null|string> site=w47 flags=[OmitsNull, OmitsUndefined]}
-    v132 = Integer integer=2
-    v133 = ElemGet v123, v132
-    v134 = Convert v133 declared={type=number site=w48} illTypedCause=ContainerWriterUnseen
-    v135 = PropGet v123 key="length"
-    v136 = Convert v135 declared={type=number site=w49} illTypedCause=Assertion
-    v137 = Add v134, v136
-    v138 = Integer integer=2
-    v139 = ElemGet v131, v138
-    v140 = Convert v139 declared={type=undefined|null|string site=w50 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v141 = PropGet v140 key="length"
-    v142 = Convert v141 declared={type=number site=w51} illTypedCause=Assertion
-    v143 = Add v137, v142
-    v144 = Call v11 calleeName="spreadOfConstants"
-    v145 = Convert v144 declared={type=undefined|null|Array<number> site=w52 flags=[OmitsNull, OmitsUndefined]}
-    v146 = Integer integer=5
-    v147 = ElemGet v145, v146
-    v148 = Convert v147 declared={type=number site=w53} illTypedCause=ContainerWriterUnseen
-    v149 = Add v143, v148
-    v150 = Add v113, v149
-    v151 = Convert v150 declared={type=number site=w1}
-    v152 = Increment v120
-    v153 = Convert v152 declared={type=number site=w44}
-    Jump -> next b4(v151, v153)
-  b6(v154):
-    v155 = Builtin builtin=GlobalThis
-    v156 = PropGet v155 key="console" [isFreeName]
-    v157 = Convert v156 declared={type=builtin(Console) flags=[IsExpected]}
-    v158 = PropGet v157 key="log"
-    v159 = Convert v158 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v160 = Call v159, v157, v113 calleeKey="log" calleeName="console.log"
-    v161 = Undefined
-    Return v161
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v12 = NewClosure function=f7 @0
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v14 = NewClosure function=f8 @0
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v16 = NewClosure function=f9 @798
+    v17 = Convert v16 declared={type=undefined|null|function|f9 site=w0 flags=[OmitsNull, OmitsUndefined]} @798
+    v18 = Integer @863
+    v19 = Convert v18 declared={type=number site=w19} @863
+    Jump -> next b2(v19) @855
+  b2(v20: number):
+    LoopHint @855
+    v22 = Integer integer=3 @874
+    v23 = Less v20, v22 @866
+    Branch v23 -> taken b3(| 0), notTaken b6(| 0) @866
+  b3(v24):
+    Jump -> next b4() @866
+  b4():
+    v25 = Builtin builtin=GlobalThis @890
+    v26 = PropGet v25 key="console" [isFreeName] @890
+    v27 = Convert v26 declared={type=builtin(Console) flags=[IsExpected]} @890
+    v28 = PropGet v27 key="log" @890
+    v29 = Convert v28 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @890
+    v30 = Data data=d0 @920
+    v31 = Call v1, -, v30 calleeName="spreadBehind" @907
+    v32 = Convert v31 declared={type=undefined|null|Array<number> site=w20 flags=[OmitsNull, OmitsUndefined]} @907
+    v33 = Call v17, -, v32 calleeName="show" @902
+    v34 = Convert v33 declared={type=undefined|null|string site=w21 flags=[OmitsNull, OmitsUndefined]} @902
+    v35 = Data data=d1 @944
+    v36 = Call v1, -, v35 calleeName="spreadBehind" @931
+    v37 = Convert v36 declared={type=undefined|null|Array<number> site=w22 flags=[OmitsNull, OmitsUndefined]} @931
+    v38 = Call v17, -, v37 calleeName="show" @926
+    v39 = Convert v38 declared={type=undefined|null|string site=w23 flags=[OmitsNull, OmitsUndefined]} @926
+    v40 = Data data=d2 @969
+    v41 = Call v1, -, v40 calleeName="spreadBehind" @956
+    v42 = Convert v41 declared={type=undefined|null|Array<number> site=w24 flags=[OmitsNull, OmitsUndefined]} @956
+    v43 = Call v17, -, v42 calleeName="show" @951
+    v44 = Convert v43 declared={type=undefined|null|string site=w25 flags=[OmitsNull, OmitsUndefined]} @951
+    v45 = NewArray v24 contents=number @1019
+    v46 = Call v3, -, v45 calleeName="spreadBetween" @1005
+    v47 = Convert v46 declared={type=undefined|null|Array<number> site=w26 flags=[OmitsNull, OmitsUndefined]} @1005
+    v48 = Call v17, -, v47 calleeName="show" @1000
+    v49 = Convert v48 declared={type=undefined|null|string site=w27 flags=[OmitsNull, OmitsUndefined]} @1000
+    v50 = Data data=d3 @1051
+    v51 = Call v5, -, v50 calleeName="spreadOfStrings" @1035
+    v52 = Convert v51 declared={type=undefined|null|Array<undefined|null|string> site=w28 flags=[OmitsNull, OmitsUndefined]} @1035
+    v53 = Call v17, -, v52 calleeName="show" @1030
+    v54 = Convert v53 declared={type=undefined|null|string site=w29 flags=[OmitsNull, OmitsUndefined]} @1030
+    v55 = Integer integer=1 @1103
+    v56 = Add v24, v55 @1095
+    v57 = Call v15, -, v56 calleeName="numbers" @1087
+    v58 = Convert v57 declared={type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]} @1087
+    v59 = Call v7, -, v58 calleeName="spreadOfIterable" @1070
+    v60 = Convert v59 declared={type=undefined|null|Array<number> site=w30 flags=[OmitsNull, OmitsUndefined]} @1070
+    v61 = Call v17, -, v60 calleeName="show" @1065
+    v62 = Convert v61 declared={type=undefined|null|string site=w31 flags=[OmitsNull, OmitsUndefined]} @1065
+    v63 = Builtin builtin=Set @1135
+    v64 = Data data=d4 @1139
+    v65 = Construct v63, -, v64 calleeName="Set" @1135 constructs
+    v66 = Convert v65 declared={type=undefined|null|Set<number> site=w32 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1131
+    v67 = Call v7, -, v66 calleeName="spreadOfIterable" @1114
+    v68 = Convert v67 declared={type=undefined|null|Array<number> site=w33 flags=[OmitsNull, OmitsUndefined]} @1114
+    v69 = Call v17, -, v68 calleeName="show" @1109
+    v70 = Convert v69 declared={type=undefined|null|string site=w34 flags=[OmitsNull, OmitsUndefined]} @1109
+    v71 = Call v29, v27, v34, v39, v44, v49, v54, v62, v70 calleeKey="log" calleeName="console.log" @898
+    v72 = Builtin builtin=GlobalThis @1153
+    v73 = PropGet v72 key="console" [isFreeName] @1153
+    v74 = Convert v73 declared={type=builtin(Console) flags=[IsExpected]} @1153
+    v75 = PropGet v74 key="log" @1153
+    v76 = Convert v75 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1153
+    v77 = Data data=d5 @1181
+    v78 = Data data=d6 @1186
+    v79 = Call v9, -, v77, v78 calleeName="twoSpreads" @1170
+    v80 = Convert v79 declared={type=undefined|null|Array<number> site=w35 flags=[OmitsNull, OmitsUndefined]} @1170
+    v81 = Call v17, -, v80 calleeName="show" @1165
+    v82 = Convert v81 declared={type=undefined|null|string site=w36 flags=[OmitsNull, OmitsUndefined]} @1165
+    v83 = Call v11 calleeName="spreadOfConstants" @1201
+    v84 = Convert v83 declared={type=undefined|null|Array<number> site=w37 flags=[OmitsNull, OmitsUndefined]} @1201
+    v85 = Call v17, -, v84 calleeName="show" @1196
+    v86 = Convert v85 declared={type=undefined|null|string site=w38 flags=[OmitsNull, OmitsUndefined]} @1196
+    v87 = NewArray v24 contents=number @1239
+    v88 = Call v13, -, v87 calleeName="holeBehind" @1228
+    v89 = Convert v88 declared={type=undefined|null|Array<undefined|number> site=w39 flags=[OmitsNull, OmitsUndefined]} @1228
+    v90 = Call v17, -, v89 calleeName="show" @1223
+    v91 = Convert v90 declared={type=undefined|null|string site=w40 flags=[OmitsNull, OmitsUndefined]} @1223
+    v92 = Integer integer=3 @1250
+    v93 = NewArray v24 contents=number @1266
+    v94 = Call v13, -, v93 calleeName="holeBehind" @1255
+    v95 = Convert v94 declared={type=undefined|null|Array<undefined|number> site=w41 flags=[OmitsNull, OmitsUndefined]} @1255
+    v96 = ElemHas v95, v92 @1255
+    v97 = Data data=d7 @1289
+    v98 = Call v1, -, v97 calleeName="spreadBehind" @1276
+    v99 = Convert v98 declared={type=undefined|null|Array<number> site=w42 flags=[OmitsNull, OmitsUndefined]} @1276
+    v100 = Data data=d8 @1310
+    v101 = Call v1, -, v100 calleeName="spreadBehind" @1297
+    v102 = Convert v101 declared={type=undefined|null|Array<number> site=w43 flags=[OmitsNull, OmitsUndefined]} @1297
+    v103 = StrictEq v99, v102 @1276
+    v104 = LogicalNot v103 @1276
+    v105 = Call v76, v74, v82, v86, v91, v96, v104 calleeKey="log" calleeName="console.log" @1161
+    Jump -> next b5() @1153
+  b5():
+    v106 = Increment v24 @1161
+    v107 = Convert v106 declared={type=number site=w19} @877
+    Jump -> next b2(v107) @877
+  b6(v108):
+    Jump -> next b7() @866
+  b7():
+    v109 = Integer @1328
+    v110 = Convert v109 declared={type=number site=w1} @1328
+    v111 = Integer @1344
+    v112 = Convert v111 declared={type=number site=w44} @1344
+    Jump -> next b8(v110, v112) @1340
+  b8(v113: number, v114: number):
+    LoopHint @1340
+    v116 = Convert v114 declared={type=i32 flags=[IsExpected]} @1347
+    v117 = Integer integer=20000 @1351
+    v118 = Less v116, v117 @1347
+    Branch v118 -> taken b9(| 0), notTaken b12(| 0) @1347
+  b9(v119):
+    Jump -> next b10() @1347
+  b10():
+    v120 = Convert v119 declared={type=i32 flags=[IsExpected]} @1389
+    v121 = NewArray v120 contents=number @1388
+    v122 = Call v1, -, v121 calleeName="spreadBehind" @1375
+    v123 = Convert v122 declared={type=undefined|null|Array<number> site=w45 flags=[OmitsNull, OmitsUndefined]} @1375
+    v124 = Builtin builtin=String @1415
+    v125 = Integer integer=3 @1426
+    v126 = BitAnd v120, v125 @1422
+    v127 = Call v124, -, v126 calleeName="String" @1415
+    v128 = Convert v127 declared={type=undefined|null|string site=w46 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1415
+    v129 = NewArray v128 contents=undefined|null|string @1414
+    v130 = Call v5, -, v129 calleeName="spreadOfStrings" @1398
+    v131 = Convert v130 declared={type=undefined|null|Array<undefined|null|string> site=w47 flags=[OmitsNull, OmitsUndefined]} @1398
+    v132 = Integer integer=2 @1439
+    v133 = ElemGet v123, v132 @1439
+    v134 = Convert v133 declared={type=number site=w48} illTypedCause=ContainerWriterUnseen @1439
+    v135 = PropGet v123 key="length" @1446
+    v136 = Convert v135 declared={type=number site=w49} illTypedCause=Assertion @1446
+    v137 = Add v134, v136 @1439
+    v138 = Integer integer=2 @1457
+    v139 = ElemGet v131, v138 @1457
+    v140 = Convert v139 declared={type=undefined|null|string site=w50 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1457
+    v141 = PropGet v140 key="length" @1459
+    v142 = Convert v141 declared={type=number site=w51} illTypedCause=Assertion @1457
+    v143 = Add v137, v142 @1439
+    v144 = Call v11 calleeName="spreadOfConstants" @1471
+    v145 = Convert v144 declared={type=undefined|null|Array<number> site=w52 flags=[OmitsNull, OmitsUndefined]} @1471
+    v146 = Integer integer=5 @1471
+    v147 = ElemGet v145, v146 @1489
+    v148 = Convert v147 declared={type=number site=w53} illTypedCause=ContainerWriterUnseen @1471
+    v149 = Add v143, v148 @1439
+    v150 = Add v113, v149 @1439
+    v151 = Convert v150 declared={type=number site=w1} @1432
+    Jump -> next b11() @1432
+  b11():
+    v152 = Increment v120 @1439
+    v153 = Convert v152 declared={type=number site=w44} @1358
+    Jump -> next b8(v151, v153) @1358
+  b12(v154):
+    Jump -> next b13() @1347
+  b13():
+    v155 = Builtin builtin=GlobalThis @1497
+    v156 = PropGet v155 key="console" [isFreeName] @1497
+    v157 = Convert v156 declared={type=builtin(Console) flags=[IsExpected]} @1497
+    v158 = PropGet v157 key="log" @1497
+    v159 = Convert v158 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1497
+    v160 = Call v159, v157, v113 calleeKey="log" calleeName="console.log" @1505
+    v161 = Undefined @1497
+    Return v161 @1497
 }
 function f1 name="spreadBehind" module=m0 position=111 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>):
-    v1 = Integer integer=1
-    v2 = Integer integer=2
-    v3 = NewArray v1, v2 contents=number
-    AppendSpread v3, v0
-    v5 = Convert v3 declared={type=undefined|null|Array<number> site=w3 flags=[OmitsNull, OmitsUndefined]}
-    Return v5
+    Jump -> next b1() @111
+  b1():
+    v1 = Integer integer=1 @169
+    v2 = Integer integer=2 @172
+    v3 = NewArray v1, v2 contents=number @168
+    AppendSpread v3, v0 @178
+    v5 = Convert v3 declared={type=undefined|null|Array<number> site=w3 flags=[OmitsNull, OmitsUndefined]} @178
+    Return v5 @178
 }
-function f2 name="spreadBetween" module=m0 position=187 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="spreadBetween" module=m0 position=187 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @187
+  b1():
+    v1 = Integer integer=1 @246
+    v2 = Integer integer=2 @249
+    v3 = NewArray v1, v2 contents=number @245
+    AppendSpread v3, v0 @255
+    v5 = Integer integer=3 @261
+    AppendElement v3, v5 @261
+    v7 = Integer integer=4 @264
+    AppendElement v3, v7 @264
+    v9 = Convert v3 declared={type=undefined|null|Array<number> site=w5 flags=[OmitsNull, OmitsUndefined]} @264
+    Return v9 @264
+}
 function f3 name="spreadOfStrings" module=m0 position=270 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|string>):
-    v1 = String string="a"
-    v2 = String string="b"
-    v3 = NewArray v1, v2 contents=undefined|null|string
-    AppendSpread v3, v0
-    v5 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> site=w7 flags=[OmitsNull, OmitsUndefined]}
-    Return v5
+    Jump -> next b1() @270
+  b1():
+    v1 = String string="a" @331
+    v2 = String string="b" @336
+    v3 = NewArray v1, v2 contents=undefined|null|string @330
+    AppendSpread v3, v0 @344
+    v5 = String string="c" @350
+    AppendElement v3, v5 @350
+    v7 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> site=w7 flags=[OmitsNull, OmitsUndefined]} @350
+    Return v7 @350
 }
 function f4 name="spreadOfIterable" module=m0 position=358 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>):
-    v1 = Double number=0.5
-    v2 = Double number=1.5
-    v3 = NewArray v1, v2 contents=number
-    AppendSpread v3, v0
-    v5 = Convert v3 declared={type=undefined|null|Array<number> site=w8 flags=[OmitsNull, OmitsUndefined]}
-    Return v5
+    Jump -> next b1() @358
+  b1():
+    v1 = Double number=0.5 @428
+    v2 = Double number=1.5 @433
+    v3 = NewArray v1, v2 contents=number @427
+    AppendSpread v3, v0 @441
+    v5 = Convert v3 declared={type=undefined|null|Array<number> site=w8 flags=[OmitsNull, OmitsUndefined]} @441
+    Return v5 @441
 }
 function f5 name="twoSpreads" module=m0 position=450 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w9 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>):
-    v2 = Integer integer=7
-    v3 = NewArray v2 contents=number
-    AppendSpread v3, v0
-    AppendSpread v3, v1
-    v6 = Convert v3 declared={type=undefined|null|Array<number> site=w11 flags=[OmitsNull, OmitsUndefined]}
-    Return v6
+    Jump -> next b1() @450
+  b1():
+    v2 = Integer integer=7 @516
+    v3 = NewArray v2 contents=number @515
+    AppendSpread v3, v0 @522
+    v5 = Integer integer=8 @525
+    AppendElement v3, v5 @525
+    AppendSpread v3, v1 @531
+    v8 = Convert v3 declared={type=undefined|null|Array<number> site=w11 flags=[OmitsNull, OmitsUndefined]} @531
+    Return v8 @531
 }
 function f6 name="spreadOfConstants" module=m0 position=537 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<number> site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = Integer integer=1
-    v1 = Integer integer=2
-    v2 = NewArray v0, v1 contents=number
-    v3 = Integer integer=3
-    AppendElement v2, v3
-    v5 = Integer integer=4
-    AppendElement v2, v5
-    v7 = Integer integer=5
-    AppendElement v2, v7
-    v9 = Integer integer=6
-    AppendElement v2, v9
-    v11 = Convert v2 declared={type=undefined|null|Array<number> site=w12 flags=[OmitsNull, OmitsUndefined]}
-    Return v11
+    Jump -> next b1() @537
+  b1():
+    v0 = Integer integer=1 @586
+    v1 = Integer integer=2 @589
+    v2 = NewArray v0, v1 contents=number @585
+    v3 = Integer integer=3 @596
+    AppendElement v2, v3 @596
+    v5 = Integer integer=4 @599
+    AppendElement v2, v5 @599
+    v7 = Integer integer=5 @607
+    AppendElement v2, v7 @607
+    v9 = Integer integer=6 @610
+    AppendElement v2, v9 @610
+    v11 = Convert v2 declared={type=undefined|null|Array<number> site=w12 flags=[OmitsNull, OmitsUndefined]} @610
+    Return v11 @610
 }
 function f7 name="holeBehind" module=m0 position=617 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w13 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|number> site=w14 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>):
-    v1 = Integer integer=1
-    v2 = Integer integer=2
-    v3 = NewArray v1, v2 contents=undefined|number
-    AppendSpread v3, v0
-    AppendHole v3
-    v6 = Convert v3 declared={type=undefined|null|Array<undefined|number> site=w14 flags=[OmitsNull, OmitsUndefined]}
-    Return v6
+    Jump -> next b1() @617
+  b1():
+    v1 = Integer integer=1 @687
+    v2 = Integer integer=2 @690
+    v3 = NewArray v1, v2 contents=undefined|number @686
+    AppendSpread v3, v0 @696
+    AppendHole v3 @702
+    v6 = Integer integer=5 @704
+    AppendElement v3, v6 @704
+    v8 = Convert v3 declared={type=undefined|null|Array<undefined|number> site=w14 flags=[OmitsNull, OmitsUndefined]} @704
+    Return v8 @704
 }
-function f8 name="numbers" module=m0 position=710 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w15}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost]
+function f8 name="numbers" module=m0 position=710 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w15}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: number):
+    Jump -> next b1() @710
+  b1():
+    InitialYield v2 @728
+    v4 = Integer @754
+    v5 = Convert v4 declared={type=number site=w54} @754
+    Jump -> next b2(v5) @750
+  b2(v6: number):
+    LoopHint @750
+    v8 = Less v6, v2 @757
+    Branch v8 -> taken b3(| 0, 1), notTaken b9(| 0, 1) @757
+  b3(v9, v10):
+    Jump -> next b4() @757
+  b4():
+    v11 = Integer integer=10 @779
+    v12 = Mul v9, v11 @775
+    v13 = Convert v12 declared={type=number site=w16} @769
+    v14 = Yield v13, v10 @769
+    v15 = ResultAt v14 @769
+    v16 = ResultAt v14 index=1 @769
+    Switch v16 cases=[1, 2] -> case b5(), case b6(), otherwise b7() @769
+  b5():
+    Throw v15 @769
+  b6():
+    Return v15 @769
+  b7():
+    Jump -> next b8() @769
+  b8():
+    v17 = Increment v9 @775
+    v18 = Convert v17 declared={type=number site=w54} @764
+    Jump -> next b2(v18) @764
+  b9(v19, v20):
+    Jump -> next b10() @757
+  b10():
+    v21 = Undefined @764
+    Return v21 @764
+}
 function f9 name="show" module=m0 position=798 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    v1 = Builtin builtin=JSON
-    v2 = PropGet v1 key="stringify"
-    v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v4 = Call v3, v1, v0 calleeKey="stringify" calleeName="JSON.stringify"
-    v5 = Convert v4 declared={type=undefined|null|string site=w55 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v6 = PropGet v0 key="length"
-    v7 = Convert v6 declared={type=number site=w56} illTypedCause=Assertion
-    v8 = Add v5, v7
-    v9 = Convert v8 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]}
-    Return v9
+    Jump -> next b1() @798
+  b1():
+    v1 = Builtin builtin=JSON @816
+    v2 = PropGet v1 key="stringify" @816
+    v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]} @816
+    v4 = Call v3, v1, v0 calleeKey="stringify" calleeName="JSON.stringify" @821
+    v5 = Convert v4 declared={type=undefined|null|string site=w55 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @816
+    v6 = PropGet v0 key="length" @836
+    v7 = Convert v6 declared={type=number site=w56} illTypedCause=Assertion @836
+    v8 = Add v5, v7 @816
+    v9 = Convert v8 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]} @816
+    Return v9 @816
 }
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f12 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeNext thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=ArrayIteratorPrototypeNext function=f11
+function f11 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f12 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeNext thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @25
+  b1():
+    v2 = StepGenerator v0, v1 check=IsGenerator @91
+    v3 = ResultAt v2 @186
+    v4 = ResultAt v2 index=1 @249
+    v5 = Integer integer=1 @320
+    v6 = StrictEq v4, v5 @309
+    v7 = Convert v6 declared={type=boolean site=w57} @309
+    v8 = Integer integer=2 @370
+    v9 = StrictEq v4, v8 @359
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @359
+  b2(v10):
+    Jump -> next b3() @359
+  b3():
+    v11 = ResumeGenerator v0, v1 @427
+    v12 = PropGet v11 key="value" @492
+    v13 = PropGet v11 key="done" @521
+    v14 = Boolean boolean=true @537
+    v15 = StrictEq v13, v14 @521
+    v16 = Convert v15 declared={type=boolean site=w57} @514
+    Jump -> next b5(v12, v16) @514
+  b4(v17):
+    Jump -> next b5(v3, v7) @359
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @560
+    v21 = CreateIteratorResult v18, v20 @560
+    Return v21 @560
+}
+function f13 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=SetIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=10 last=10 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepSetIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%SetIteratorPrototype%.next requires that |this| be a Set Iterator instance" @108
+    Unreachable @108
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 runtimefunction id=GeneratorPrototypeNext function=f12 visibility=Private
+runtimefunction id=SetIteratorPrototypeNext function=f13 visibility=Private
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 1858, patchpoints: 124, rare instructions: 1303, polls: 15
+# CHECK-NEXT: instructions: 1293, patchpoints: 105, rare instructions: 1870, polls: 9
 # CHECK-NEXT: end of function f0

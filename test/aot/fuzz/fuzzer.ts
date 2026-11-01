@@ -34,7 +34,16 @@ import {
 import { parses, reprinted } from "./mutate";
 import { Random } from "./random";
 import { reduce, reduceFiles, shape, type Reduction, type Whole } from "./reduce";
-import { allSources, multiFileSuffix, rewrittenSuffix, type Generated } from "./sources";
+import {
+  allSources,
+  anotherCallSuffix,
+  fourCallersSuffix,
+  multiFileSuffix,
+  neverTakenSuffix,
+  ownCopiesSuffix,
+  rewrittenSuffix,
+  type Generated,
+} from "./sources";
 import { typeChecker, type Checker } from "./type-check";
 
 export interface Settings {
@@ -62,6 +71,10 @@ export interface Settings {
   /** Also use the multi-file variant of each of `sources`, equally often, on runners that support it. */
   alsoMultiFile?: boolean;
   alsoRewritten?: boolean;
+  alsoNeverTaken?: boolean;
+  alsoAnotherCall?: boolean;
+  alsoOwnCopies?: boolean;
+  alsoFourCallers?: boolean;
   /** The clock that decides when the run is over. A test passes its own so that it never waits. */
   now?: () => number;
 }
@@ -103,12 +116,17 @@ export async function fuzz(settings: Settings): Promise<Summary> {
 
   const rejected = new Set<string>();
   const sources = await allSources(settings.programsRoot, rejected, true);
-  const wanted = (
-    settings.sources ??
-    Object.keys(sources).filter(name => !name.endsWith(multiFileSuffix) && !name.endsWith(rewrittenSuffix))
-  ).filter(name => sources[name]);
+  const isVariant = (name: string) =>
+    name.endsWith(multiFileSuffix) ||
+    name.endsWith(rewrittenSuffix) ||
+    name.endsWith(neverTakenSuffix) ||
+    name.endsWith(anotherCallSuffix) ||
+    name.endsWith(ownCopiesSuffix) ||
+    name.endsWith(fourCallersSuffix);
+  const wanted = (settings.sources ?? Object.keys(sources).filter(name => !isVariant(name))).filter(
+    name => sources[name],
+  );
   if (!wanted.length) throw new Error("no source of programs");
-  const isVariant = (name: string) => name.endsWith(multiFileSuffix) || name.endsWith(rewrittenSuffix);
   const wantedWithVariants = wanted.flatMap(name =>
     isVariant(name)
       ? [name]
@@ -116,6 +134,10 @@ export async function fuzz(settings: Settings): Promise<Summary> {
           name,
           ...(settings.alsoMultiFile ? [name + multiFileSuffix] : []),
           ...(settings.alsoRewritten ? [name + rewrittenSuffix] : []),
+          ...(settings.alsoNeverTaken ? [name + neverTakenSuffix] : []),
+          ...(settings.alsoAnotherCall ? [name + anotherCallSuffix] : []),
+          ...(settings.alsoOwnCopies ? [name + ownCopiesSuffix] : []),
+          ...(settings.alsoFourCallers ? [name + fourCallersSuffix] : []),
         ],
   );
 
@@ -337,7 +359,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const until = now() > deadline ? 0 : now() + settings.reduceSeconds * 1000;
     for (let size = Math.max(1, others.length >> 1); others.length && now() < until; size = Math.max(1, size >> 1)) {
       let removed = false;
-      for (let at = 0; at < others.length && now() < until; ) {
+      for (let at = 0; at < others.length && now() < until;) {
         const fewer = [...others.slice(0, at), ...others.slice(at + size)];
         if (await failsWith(generated, fewer)) [others, removed] = [fewer, true];
         else at += size;
@@ -735,6 +757,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       if (avoided) return void (avoided.count++, bump(counts.skipped, "has a known bug in it"));
       return generated;
     } catch (error) {
+      bump(counts.skipped, "the source threw");
       appendFileSync(join(out, "generator-errors.txt"), `${source}:${seed} ${error}\n`);
     }
   }

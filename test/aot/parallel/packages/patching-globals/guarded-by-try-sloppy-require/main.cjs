@@ -5,5 +5,5 @@ const ta = async (name, f) => { try { console.log(name, show(await f())); } catc
 const keys = (o) => Object.keys(o).filter((k) => k !== "__esModule").sort().join();
 t("ok", () => require("pf_guarded_by_try_sloppy").ok);
 /* Output:
-ok ["defined","fell back"]
+ok ["defined","number"]
 */

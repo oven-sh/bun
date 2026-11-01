@@ -700,6 +700,7 @@ impl CompiledCounts {
                     blocks.push(range);
                 }
                 b"o" => printed_twice.push((range, in_units(number()?))),
+                b"m" => {}
                 b"e" => {
                     let is_known = count_of(number()? as usize) > 0;
                     called_where_they_stand.push((range, in_units(number()?), is_known));

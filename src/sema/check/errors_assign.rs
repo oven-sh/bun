@@ -1381,7 +1381,7 @@ impl Checker<'_, '_> {
         if self.try_is_type_related_to(source, target, Relation::Assignable, false) == Ok(true) {
             return true;
         }
-        if error_node.is_none() {
+        if error_node.is_none() || self.task.was_discarded() {
             return false;
         }
         let output = diagnostic_output.as_deref_mut();
@@ -1665,6 +1665,9 @@ impl Checker<'_, '_> {
             )
         {
             return true;
+        }
+        if self.task.was_discarded() {
+            return false;
         }
         let specific_source = if next.is_some() {
             self.check_expression_for_mutable_location_with_contextual_type(

@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{
-    BindingKind, CommonJsVariable, InitialState, ScopeId, ScopeKind, SymbolId,
+    Binding, BindingKind, CommonJsVariable, InitialState, ScopeId, ScopeKind, SymbolId,
     has_simple_parameter_list,
 };
 use bun_sema::check::aot::ClassRef;
@@ -119,12 +119,16 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// What the source calls the binding. A heap snapshot shows what it holds under that name.
+    /// What the source calls the binding, or its short name where identifiers are minified. A heap snapshot shows what it holds under that name.
     pub(in crate::lower) fn written_name(&mut self, binding: BindingRef) -> Option<StringId> {
         match binding {
             BindingRef::Symbol(symbol) => {
                 let name = self.bound.symbol(symbol).name;
-                (name != Atom::NONE).then(|| self.intern_atom(name))
+                (name != Atom::NONE).then(|| {
+                    // One of a few names, as in a message: a name of its own for each variable is a string more for each.
+                    self.short_binding_name(Binding::Symbol(symbol))
+                        .unwrap_or_else(|| self.intern_atom(name))
+                })
             }
             BindingRef::Slot(_, ScopeSlot::This) => Some(self.intern_bytes(b"this")),
             BindingRef::Slot(_, ScopeSlot::Arguments) => Some(self.intern_bytes(b"arguments")),

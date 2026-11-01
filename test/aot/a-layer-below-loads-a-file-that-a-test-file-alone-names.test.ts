@@ -1,7 +1,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { beforeAll, testOneByOne as test } from "./supported";
 
 // A loader of plugins in a package, or in the application, is handed the path of a file. Over layers the file may be compiled into the piece of the test file
 // that alone names it, under a name that only the build of the piece puts together. The layers below are built without the piece, so their import() finds the
@@ -63,9 +65,15 @@ async function seenIn(directory: string, words: string | undefined, ...flags: st
   return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
 }
 
-test("a layer below loads, by a path it is handed, a file that a test file alone names", async () => {
-  using dir = tempDir("aot-a-layer-below-loads-a-file-of-a-piece", files);
-  const plain = await seenIn(String(dir), undefined);
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof seenIn>>;
+beforeAll(async () => {
+  dir = tempDir("aot-a-layer-below-loads-a-file-of-a-piece", files);
+  plain = await seenIn(String(dir), undefined);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("what plain Bun sees", () => {
   expect(plain).toEqual({
     seen: [
       'SEEN a package imports it | ["an export that is read only off what came back",true,true,1]',
@@ -77,7 +85,12 @@ test("a layer below loads, by a path it is handed, a file that a test file alone
     ],
     exitCode: 0,
   });
-  expect(await seenIn(String(dir), "TestRunLayers:0", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:1,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot")).toEqual(plain);
-}, 180_000);
+});
+
+test.each([
+  ["one program", "TestRunLayers:0"],
+  ["one layer", "TestRunLayers:1,TestRunPartFiles:1"],
+  ["two layers", "TestRunLayers:2,TestRunPartFiles:1"],
+])("a layer below loads, by a path it is handed, a file that a test file alone names: %s", async (_, words) => {
+  expect(await seenIn(String(dir), words, "--aot")).toEqual(plain);
+});

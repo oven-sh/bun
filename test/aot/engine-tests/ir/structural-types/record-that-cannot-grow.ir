@@ -779,7 +779,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f69 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
-# CHECK: m0 position=1754 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22 site=w51 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w53 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f71 fallback=f72}
+# CHECK: m0 position=1754 kind=Arrow flags=[IsChecked] captures=[{type=f13|f14|f15|f16|f17|f18|f19|f20|f21|f22 site=w51 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w53 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f29 module=
 # CHECK: m0 position=2773 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int|whole site=w66}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
@@ -801,7 +801,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f69 visibility=Private
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
-# CHECK: m0 position=2945 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w69 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f30 callPosition=4294967295 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f30 callPosition=4294967295 module=m0 calledBuiltin=ArrayPrototypeMap}, {callee=f96 callPosition=4294967295 parent=1 module=m3}, {callee=f96 callPosition=2337 parent=3 module=m3}, {callee=f69 callPosition=2337 parent=4 module=m3}, {callee=f69 callPosition=4294967295 parent=2 module=m3}] {
+# CHECK: m0 position=2945 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w69 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f30 callPosition=4294967295 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f30 callPosition=4294967295 module=m0 calledBuiltin=ArrayPrototypeMap}, {callee=f93 callPosition=4294967295 parent=1 module=m3}, {callee=f93 callPosition=2337 parent=3 module=m3}, {callee=f69 callPosition=2337 parent=4 module=m3}, {callee=f69 callPosition=4294967295 parent=2 module=m3}] {
 # CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: Array<L4|L5|L6, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g7
 # CHECK-NEXT: v1: undefined = Undefined

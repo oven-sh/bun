@@ -438,7 +438,7 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     f.comment_directives = comment_directives;
-    if !options.keeps_function_directives {
+    if !options.ignores_pure_comments {
         pure_calls::mark_pure_calls(&mut f, text);
     }
     let names = &mut scratch.names;

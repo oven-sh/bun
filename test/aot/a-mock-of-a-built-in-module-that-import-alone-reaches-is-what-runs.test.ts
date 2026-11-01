@@ -1,12 +1,16 @@
 import { expect } from "bun:test";
-import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
+import { casesOfOneRun, sayOf, type Way } from "./harness/cases-of-one-run";
 import { test } from "./supported";
 
-const project = (name: string) =>
-  casesOfOneRun("a-mock-of-a-built-in-module-" + name, {
-    "package.json": `{ "name": "p", "type": "module" }`,
-    "tsconfig.json": "{}",
-  });
+const project = (name: string, ways: Way[] = [[[]], [["--debug-aot"]]]) =>
+  casesOfOneRun(
+    "a-mock-of-a-built-in-module-" + name,
+    {
+      "package.json": `{ "name": "p", "type": "module" }`,
+      "tsconfig.json": "{}",
+    },
+    ways,
+  );
 // The cases of a project are compiled as one program, so what one of them says about a module holds for all. No file of the first imports a
 // module by a statement, which would list its exports. In the others no module is imported by a statement in one case and without one in another.
 const byImportAlone = project("by-import-alone");
@@ -18,7 +22,7 @@ const byOtherStatements = project("by-other-statements");
 const byComputedNames = project("by-computed-names");
 // Each test file is an image of its own over the image of the library, so the loader of the host stands between them. A run in layers builds
 // the library anew, so there is one.
-const inLayers = project("in-layers");
+const inLayers = project("in-layers", [[["--debug-aot"], "TestRunLayers:2,TestRunPartFiles:1"]]);
 
 function runsAsPlain(
   group: ReturnType<typeof project>,

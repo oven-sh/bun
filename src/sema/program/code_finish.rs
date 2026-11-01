@@ -124,6 +124,8 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             jsx,
             jsx_mode: analyzed.jsx_mode,
             declared_module_type: analyzed.declared_module_type,
+            type_where_imported: analyzed.type_where_imported,
+            runs_inside_require: analyzed.runs_inside_require,
             is_package_type_module: analyzed.is_package_type_module,
             package: entry.package,
             side_effects: entry.side_effects,

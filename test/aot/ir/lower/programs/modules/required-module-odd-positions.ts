@@ -75,7 +75,7 @@ export function labelled() { const m = require("./lib.ts"); const o = { m }; ret
 // CHECK-NEXT: Return v22
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="evalOfAwaited"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasNewTarget, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: int[0, 4294967295], v3: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

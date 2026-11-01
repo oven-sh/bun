@@ -596,7 +596,7 @@ function f14 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Void b@99 = Branch(b@39, Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: Then:#24, Else:Rare:#12
 # CHECK-NEXT: Known properties:
-# CHECK-NEXT: b@18: dereferenceableBytes = 8
+# CHECK-NEXT: b@18: dereferenceableBytes = 16
 # CHECK-NEXT: b@23: dereferenceableBytes = 16
 # CHECK-NEXT: b@87: dereferenceableBytes = 16
 # CHECK-NEXT: b@142: dereferenceableBytes = 16

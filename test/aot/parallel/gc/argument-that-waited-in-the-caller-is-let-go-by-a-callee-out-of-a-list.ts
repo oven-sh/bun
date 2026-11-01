@@ -1,5 +1,6 @@
 // The functions that set their parameter to null are also values in a list, so a call may find out only at run time which of them it calls. What the caller passed is collected all the same while the callee still runs.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 // Todo on win32 x64: Not every time: row 3517: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 type Thing = { id: number; payload: number[] };
 let made = 0;

@@ -342,6 +342,10 @@ impl<'s> Task<'s> {
         (self.is_first_in_component).set(is_first_in_component);
     }
 
+    pub(super) fn is_trusted_about_every_cycle(&self) -> bool {
+        self.is_first_in_order.get() || self.is_trusted
+    }
+
     /// The task has re-entered a query that's in progress, and the results of that cycle's members depend on where the
     /// cycle was entered. tsc enters it from the first file in program order that reaches it. That's this task if every
     /// earlier file is final: none of them reached the cycle, or the task would have hit the members' results. Any

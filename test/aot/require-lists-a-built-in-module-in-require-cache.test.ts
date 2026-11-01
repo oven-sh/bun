@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 const project = {
   "package.json": `{}`,
@@ -43,11 +44,22 @@ async function runTests(directory: string, words: string, ...flags: string[]) {
   return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
 }
 
-test("require() lists a built-in module in require.cache in a test run, as one program and over layers", async () => {
-  using dir = tempDir("aot-require-lists-a-built-in-module", project);
-  const plain = await runTests(String(dir), "");
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof runTests>>;
+beforeAll(async () => {
+  dir = tempDir("aot-require-lists-a-built-in-module", project);
+  plain = await runTests(String(dir), "");
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("require() lists a built-in module in require.cache under plain Bun", () => {
   expect(plain.seen).toContain("SEEN required: ws,bun:sqlite true false");
   expect(plain.seen).toContain("SEEN stored: stored stored");
-  expect(await runTests(String(dir), "TestRunLayers:0", "--aot")).toEqual(plain);
-  expect(await runTests(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot")).toEqual(plain);
+});
+
+test.each([
+  ["as one program", "TestRunLayers:0"],
+  ["over layers", "TestRunLayers:2,TestRunPartFiles:1"],
+])("require() lists a built-in module in require.cache in a test run, %s", async (_, words) => {
+  expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
 });

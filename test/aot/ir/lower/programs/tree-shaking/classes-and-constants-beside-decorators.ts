@@ -70,7 +70,7 @@ console.log(log.join("\n"));
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="method"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName, IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

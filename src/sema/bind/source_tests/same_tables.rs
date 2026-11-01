@@ -221,7 +221,7 @@ fn describe(
         import_equals_scope, export_scope, expr_scope: _, private_class,
         private_names_outside_class_bodies, classes_of_private_names, free_idents, alias_idents,
         arguments_objects, identifiers_in_parameters, jsdoc_param_errors,
-        names_resolved_for_arguments, flow, flow_edges, flow_shared, flow_depth,
+        names_resolved_for_arguments, flow, flow_edges, flow_shared, flow_depth, flow_depth_added_by_loops,
         has_loop_types_that_depend_on_order, expr_kinds, expr_kind_counts, kind_counts,
         runtime: _,
     } = bound;
@@ -284,7 +284,7 @@ fn describe(
     ));
 
     push_fields!(described, scalar_text: ran_out_of_stack, is_unbound, is_bound_in_part, file_symbol, commonjs_indicator,
-        module_exports_property, flow_depth, has_loop_types_that_depend_on_order);
+        module_exports_property, flow_depth, flow_depth_added_by_loops, has_loop_types_that_depend_on_order);
     push_fields!(described, list_text: entries, nested_names, export_stars, ambient_modules,
         pattern_ambient_modules, global_augmentations, redeclarations, umd_globals, specifiers,
         module_augmentations, ambient_specifiers, expr_parent, stmt_parent,

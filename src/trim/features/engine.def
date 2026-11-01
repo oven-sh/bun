@@ -118,3 +118,123 @@ feature RegExpFromString "regular expressions created from strings at run time w
 feature ShadowRealm "ShadowRealm"
 
 feature ElementsToLocaleString "toLocaleString on arrays and typed arrays"
+
+feature OperationsOfChecks "what compiled code calls for the checks that compiled code makes of itself under the flags that ask for them"
+  entered-from compiled-code
+
+feature OperationsOnProxies "what compiled code calls for proxies"
+  entered-from compiled-code
+
+feature OperationsOfJSONParse "what compiled code calls for JSON.parse of a text whose shape the compiler knows"
+  entered-from compiled-code
+
+feature OperationsOfJSONStringify "what compiled code calls for JSON.stringify"
+  entered-from compiled-code
+
+feature OperationsOnStringBuilders "what compiled code calls for strings that are built piece by piece"
+  entered-from compiled-code
+
+feature OperationsOnTypedArrays "what compiled code calls for typed arrays"
+  entered-from compiled-code
+
+feature OperationsOnEncodedText "what compiled code calls for TextEncoder and TextDecoder"
+  entered-from compiled-code
+
+feature OperationsOnPrivateNames "what compiled code calls for private names of classes"
+  entered-from compiled-code
+
+feature OperationsOnSuper "what compiled code calls for super"
+  entered-from compiled-code
+
+feature OperationsOnClasses "what compiled code calls for classes"
+  entered-from compiled-code
+
+feature OperationsOfDynamicImport "what compiled code calls for import() and names of modules that are computed"
+  entered-from compiled-code
+
+feature OperationsOnReExports "what compiled code calls for exports that CommonJS files pass on"
+  entered-from compiled-code
+
+feature OperationsOnModulesThatFail "what compiled code calls for modules that throw, are mocked or are loaded again"
+  entered-from compiled-code
+
+feature OperationsOnGlobalBindings "what compiled code calls for global variables that are found by name"
+  entered-from compiled-code
+
+feature OperationsOnArgumentsObjects "what compiled code calls for the arguments object"
+  entered-from compiled-code
+
+feature OperationsOnAsyncIterators "what compiled code calls for for await and async generators"
+  entered-from compiled-code
+
+feature OperationsOnGenerators "what compiled code calls for generators"
+  entered-from compiled-code
+
+feature OperationsOfAwait "what compiled code calls for await"
+  entered-from compiled-code
+
+feature OperationsOnPromises "what compiled code calls for promises"
+  entered-from compiled-code
+
+feature OperationsOnKeysOfParts "what compiled code calls for maps and sets whose keys are made of parts"
+  entered-from compiled-code
+
+feature OperationsOnMapsAndSets "what compiled code calls for Map, Set and WeakMap"
+  entered-from compiled-code
+
+feature OperationsThatCopyObjects "what compiled code calls for object spread, rest and Object.assign"
+  entered-from compiled-code
+
+feature OperationsThatListProperties "what compiled code calls for Object.keys, values, entries and for in"
+  entered-from compiled-code
+
+feature OperationsThatDescribeProperties "what compiled code calls for property descriptors, accessors and prototypes"
+  entered-from compiled-code
+
+feature OperationsThatDeleteProperties "what compiled code calls for delete"
+  entered-from compiled-code
+
+feature OperationsThatChangeArrays "what compiled code calls for Array.prototype.splice, unshift, sort and join"
+  entered-from compiled-code
+
+feature OperationsThatSearchArrays "what compiled code calls for Array.prototype.indexOf and includes"
+  entered-from compiled-code
+
+feature OperationsThatMakeArrays "what compiled code calls for array literals, spread and lists"
+  entered-from compiled-code
+
+feature OperationsThatSearchStrings "what compiled code calls for searches in strings"
+  entered-from compiled-code
+
+feature OperationsThatMakeStrings "what compiled code calls for strings made of strings and numbers"
+  entered-from compiled-code
+
+feature OperationsThatCompareStrings "what compiled code calls for comparisons of strings"
+  entered-from compiled-code
+
+feature OperationsOfArithmetic "what compiled code calls for arithmetic on values of any type"
+  entered-from compiled-code
+
+feature OperationsOfComparison "what compiled code calls for comparisons of values of any type"
+  entered-from compiled-code
+
+feature OperationsOfConversion "what compiled code calls for conversions of values of any type"
+  entered-from compiled-code
+
+feature OperationsOfMembershipTests "what compiled code calls for in, instanceof and hasOwn"
+  entered-from compiled-code
+
+feature OperationsOfCalls "what compiled code calls for calls with a list, bound functions and constructors"
+  entered-from compiled-code
+
+feature OperationsOfErrors "what compiled code calls for errors that compiled code makes and throws"
+  entered-from compiled-code
+
+feature OperationsOnDates "what compiled code calls for Date and formats with a pattern"
+  entered-from compiled-code
+
+feature OperationsOnData "what compiled code calls for objects, maps and sets that are made from data of the image"
+  entered-from compiled-code
+
+feature OperationsOfDirectEval "what compiled code calls for a direct eval, which throws where the build forbids code from strings"
+  entered-from compiled-code

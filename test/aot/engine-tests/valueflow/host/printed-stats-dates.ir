@@ -1,0 +1,38 @@
+# printed = { __proto__: Stats.prototype, atimeMs: input }; other = { a: input }; never = { __proto__: Stats.prototype, atimeMs: input }; Bun.inspect(printed); Bun.inspect(other)
+# The formatter prints the value of an accessor of native code that it meets above an object, and the date accessors of Stats lay their answer on the object that they are entered with.
+# So a printed object with Stats.prototype above may get a property: the entry of the accessor says so, and it is entered with the printed object. One that is never printed gets none.
+# `other` has nothing of Stats above it and is marked too. THAT IS WIDER THAN NEED BE: what one printer is handed is asked together, and an accessor of the table is entered with all of it.
+# Whoever narrows that to the objects that may have the accessor above them restates OTHER to OTHER-NOT.
+# RUN(PRINTED): valueflow-why marks=f0:v3
+# PRINTED: AddProperty:
+# PRINTED-NEXT: CallGroup group detail 2
+# RUN(OTHER): valueflow-why marks=f0:v7
+# OTHER: AddProperty:
+# OTHER-NEXT: CallGroup group detail 2
+# RUN(NEVER): valueflow-why marks=f0:v8
+# NEVER-NOT: AddProperty:
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Times" fields=[{key="atimeMs" declared={type=anything}}]
+layout L1 name="Other" fields=[{key="a" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=StatsPrototype
+    v3 = NewObject layout=L0
+    SetLiteralPrototype v3, v2
+    PropDefine v3, v1 key="atimeMs"
+    v6 = FinishObject v3
+    v7 = NewObject -, v1 layout=L1 fields=[0]
+    v8 = NewObject layout=L0
+    SetLiteralPrototype v8, v2
+    PropDefine v8, v1 key="atimeMs"
+    v11 = FinishObject v8
+    v12 = Builtin builtin=Bun
+    v13 = Builtin builtin=BunInspect
+    v14 = Call v13, v12, v6
+    v15 = Call v13, v12, v7
+    Return
+}

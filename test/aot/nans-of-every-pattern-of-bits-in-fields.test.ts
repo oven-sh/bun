@@ -1,10 +1,11 @@
 // NaNs of every pattern of bits on their way into fields that keep a number beside undefined, null and nothing: out of bytes in five ways, through eighteen operators, into four kinds of holders.
 // One program holds all of them, each with declarations of its own. It runs under plain Bun and as an --aot executable, with its types and without, and prints the same.
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, describe, test } from "./listed";
 
 const patterns = [
   "0x7ffa000000000000n",

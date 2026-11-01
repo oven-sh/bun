@@ -34,7 +34,8 @@ impl CodeImportKind {
             | ImportSiteKind::Require(_)
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaRequire(_)
-            | ImportSiteKind::GetBuiltinModule(_) => CodeImportKind::Require,
+            | ImportSiteKind::GetBuiltinModule(_)
+            | ImportSiteKind::RequireByTestRunner(_) => CodeImportKind::Require,
             _ => CodeImportKind::Import,
         }
     }
@@ -52,7 +53,9 @@ pub enum CodeImportForm {
 impl CodeImportForm {
     pub fn from_site(kind: ImportSiteKind) -> CodeImportForm {
         match kind {
-            ImportSiteKind::ImportCall(_) => CodeImportForm::Dynamic,
+            ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportByTestRunner(_) => {
+                CodeImportForm::Dynamic
+            }
             ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaResolve(_)
             | ImportSiteKind::MockModule(_) => CodeImportForm::ResolveOnly,

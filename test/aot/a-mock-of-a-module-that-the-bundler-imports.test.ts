@@ -46,6 +46,17 @@ test("a mock of bun:wrap", async () => {
         console.log("worker: on a text | " + JSON.stringify(said));
         await worker.terminate();
       }, 20000);`,
+    "helpers/added.js": `
+      import * as all from "bun:wrap";
+      export const seen = () => [all.added ?? null, all.default?.added ?? null, Object.keys(all).sort(), "__callDispose" in all];`,
+    "adds-a-name.test.js": `
+      import { mock, test } from "bun:test";
+      test("a later file reads what the mock adds", async () => {
+        ${say}
+        say("added: the mock", () => mock.module("bun:wrap", () => ({ added: 1, default: { added: 1 } })) ?? "taken");
+        const helper = await import("./helpers/added.js");
+        say("added: a later file by its namespace", () => helper.seen());
+      });`,
     "helpers/names.js": `
       import { __callDispose as named } from "bun:wrap";
       import * as all from "bun:wrap";
@@ -69,7 +80,8 @@ test("a mock of bun:wrap", async () => {
       });`,
   });
   const seen = async (env: Record<string, string | undefined>, ...flags: string[]) => {
-    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], String(dir), env);
+    const command = [bunExe(), "test", "--timeout=60000", "--isolate", ...flags];
+    const { stdout, stderr, exitCode } = await run(command, String(dir), env);
     if (exitCode !== 0) console.error(stderr);
     // The parts of a run end in any order.
     return {
@@ -82,7 +94,8 @@ test("a mock of bun:wrap", async () => {
   };
   const plain = await seen(bunEnv);
   expect(plain.exitCode).toBe(0);
-  expect(plain.lines.length).toBe(11);
+  expect(plain.lines.length).toBe(13);
+  expect(plain.lines).toContain(`added: a later file by its namespace | [1,1,["added","default"],false]`);
   expect(plain.lines).toContain(`alone: import() | [1,1,["added","default"]]`);
   expect(await seen(bunEnv, "--aot")).toEqual(plain);
   expect(await seen({ ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" }, "--aot")).toEqual(

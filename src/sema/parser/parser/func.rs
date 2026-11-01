@@ -253,9 +253,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         // `None` only for a block that recovery parses without its `{`.
         let open_at = self.expect(T::OpenBrace).then_some(open);
-        if self.token() == T::String
-            && (!self.options.compiles || self.options.keeps_function_directives)
-        {
+        if self.token() == T::String {
             self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
         }
         self.open_function();

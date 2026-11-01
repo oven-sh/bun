@@ -273,7 +273,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v75: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v71, v72 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v76: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v70, v72 provenType=Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v77: boolean = HasArrayStorage v73 arrayStorage=Double [isWritable]
-# CHECK-NEXT: Branch v77 -> taken b9(| 0), notTaken b59(v48, v55, v28, v17, v25, v76, v62)
+# CHECK-NEXT: Branch v77 -> taken b9(| 0), notTaken b58(v48, v55, v28, v17, v25, v76, v62)
 # CHECK-NEXT: b9(v78: guard):
 # CHECK-NEXT: v79: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v74 castType=Array<int|whole>
 # CHECK-NEXT: v80: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v75 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -288,7 +288,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v89: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v79, v87 provenType=Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v90: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v80, v87 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v91: boolean = HasArrayStorage v88 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v91 -> taken b10(| 0), notTaken b60(v48, v55, v28, v17, v25, v62)
+# CHECK-NEXT: Branch v91 -> taken b10(| 0), notTaken b59(v48, v55, v28, v17, v25, v62)
 # CHECK-NEXT: b10(v92: guard):
 # CHECK-NEXT: v93: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v89 castType=Array<int|whole>
 # CHECK-NEXT: v94: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v90 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -297,7 +297,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v97: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v93, v95 provenType=Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v98: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v94, v95 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v99: boolean = IsElementPresent v96, v86, v92 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v99 -> taken b11(| 0), notTaken b60(v48, v55, v28, v17, v25, v62)
+# CHECK-NEXT: Branch v99 -> taken b11(| 0), notTaken b59(v48, v55, v28, v17, v25, v62)
 # CHECK-NEXT: b11(v100: guard):
 # CHECK-NEXT: v101: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v97 castType=Array<int|whole>
 # CHECK-NEXT: v102: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v98 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -335,7 +335,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v133: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v134: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v135: boolean = HasArrayStorage v121 arrayStorage=Double [isWritable]
-# CHECK-NEXT: Branch v135 -> taken b13(| 0), notTaken b62(v127, v128, v129, v130, v131, v132, v133, v134, v121, v48, v55, v28, v17, v25, v62)
+# CHECK-NEXT: Branch v135 -> taken b13(| 0), notTaken b61(v127, v128, v129, v130, v131, v132, v133, v134, v121, v48, v55, v28, v17, v25, v62)
 # CHECK-NEXT: b13(v136: guard):
 # CHECK-NEXT: v137: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v125 castType=Array<int|whole>
 # CHECK-NEXT: v138: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v126 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -402,12 +402,12 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v188: -1 = Integer integer=-1
 # CHECK-NEXT: v189: 0 = Integer
 # CHECK-NEXT: ElemSet v188, v189, v28 accessSite=11 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b64(v110, v111, v112, v113, v114, v115, v116, v117, v118, v119, v48, v55, v28, v17, v25, v62)
+# CHECK-NEXT: Jump -> next b63(v110, v111, v112, v113, v114, v115, v116, v117, v118, v119, v48, v55, v28, v17, v25, v62)
 # CHECK-NEXT: b21():
 # CHECK-NEXT: v191: 1500 = Integer integer=1500
 # CHECK-NEXT: v192: int[-1499, 1499]|whole ~ int[0, 1499] = Mod v28, v191
 # CHECK-NEXT: v193: boolean ~ true = TypeTest v192 testedType=i32
-# CHECK-NEXT: Branch v193 -> taken b22(| 0), notTaken b71(v192, v28, v17, v25)
+# CHECK-NEXT: Branch v193 -> taken b22(| 0), notTaken b70(v192, v28, v17, v25)
 # CHECK-NEXT: b22(v194: int[-1499, 1499] ~ int[0, 1499]):
 # CHECK-NEXT: v195: 0 = Integer
 # CHECK-NEXT: v196: boolean = StrictEq v194, v195
@@ -423,32 +423,32 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v204: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
 # CHECK-NEXT: v205: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
 # CHECK-NEXT: v206: boolean = HasArrayStorage v25 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v206 -> taken b24(| 0), notTaken b84(v28, v17, v25, v202, v204, v205)
+# CHECK-NEXT: Branch v206 -> taken b24(| 0), notTaken b83(v28, v17, v25, v202, v204, v205)
 # CHECK-NEXT: b24(v207: guard):
 # CHECK-NEXT: v208: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
 # CHECK-NEXT: v209: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
 # CHECK-NEXT: v210: boolean = IsElementPresent v25, v203, v207 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v210 -> taken b25(| 0), notTaken b83(v28, v17, v25, v202, v208, v209)
+# CHECK-NEXT: Branch v210 -> taken b25(| 0), notTaken b82(v28, v17, v25, v202, v208, v209)
 # CHECK-NEXT: b25(v211: guard):
 # CHECK-NEXT: v212: guard = AllGuards v207, v211
 # CHECK-NEXT: v213: -1|L0 ~ L0 = GetArrayElement v25, v203, v212 arrayStorage=Contiguous level=Expected accessSite=12 [keyIsIntegral, isPresent]
 # CHECK-NEXT: v214: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
 # CHECK-NEXT: v215: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
 # CHECK-NEXT: v216: boolean ~ true = TypeTest v213 testedType=L0
-# CHECK-NEXT: Branch v216 -> taken b26(), notTaken b81(v28, v17, v25, v202, v214, v215)
+# CHECK-NEXT: Branch v216 -> taken b26(), notTaken b80(v28, v17, v25, v202, v214, v215)
 # CHECK-NEXT: b26():
 # CHECK-NEXT: v217: 3 = Integer integer=3
 # CHECK-NEXT: v218: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
 # CHECK-NEXT: v219: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
 # CHECK-NEXT: v220: boolean = IsElementPresent v25, v217, v207 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v220 -> taken b27(| 0), notTaken b80(v28, v17, v25, v202, v218, v219)
+# CHECK-NEXT: Branch v220 -> taken b27(| 0), notTaken b79(v28, v17, v25, v202, v218, v219)
 # CHECK-NEXT: b27(v221: guard):
 # CHECK-NEXT: v222: guard = AllGuards v207, v221
 # CHECK-NEXT: v223: -1|L0 ~ L0 = GetArrayElement v25, v217, v222 arrayStorage=Contiguous level=Expected accessSite=14 [keyIsIntegral, isPresent]
 # CHECK-NEXT: v224: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
 # CHECK-NEXT: v225: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
 # CHECK-NEXT: v226: boolean ~ true = TypeTest v223 testedType=L0
-# CHECK-NEXT: Branch v226 -> taken b28(), notTaken b78(v28, v17, v25, v202, v224, v225)
+# CHECK-NEXT: Branch v226 -> taken b28(), notTaken b77(v28, v17, v25, v202, v224, v225)
 # CHECK-NEXT: b28():
 # CHECK-NEXT: v227: 1 = Upcast v18 castType=int|whole
 # CHECK-NEXT: v228: 2 = Upcast v19 castType=int|whole
@@ -483,7 +483,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: b31(v255: int|whole ~ int[0, 999], v256: int|whole ~ int[0, 2147483647], v257: undefined|null|Array<number>, v258: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
 # CHECK-NEXT: v259: 0 = Integer
 # CHECK-NEXT: v260: boolean = StrictEq v255, v259
-# CHECK-NEXT: Branch v260 -> taken b32(), notTaken b70()
+# CHECK-NEXT: Branch v260 -> taken b32(), notTaken b69()
 # CHECK-NEXT: b32() frequency=Rare:
 # CHECK-NEXT: v261: 1 = Upcast v18 castType=int|whole
 # CHECK-NEXT: v262: 2 = Upcast v19 castType=int|whole
@@ -520,7 +520,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: b33(v292: Array<int|whole>, v293: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v294: int|whole ~ int[0, 1499], v295: int|whole ~ int[0, 2147483647], v296: undefined|null|Array<number>, v297: Array<-1|L0, proven, pristine[Storage, Names]>, v298: Array<number, proven, pristine[Storage, Names]>, v299: Array<int|whole, proven, pristine[Storage, Names]>, v300: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>) frequency=Rare:
 # CHECK-NEXT: v301: 0 = Integer
 # CHECK-NEXT: v302: boolean = StrictEq v294, v301
-# CHECK-NEXT: Branch v302 -> taken b34(), notTaken b116(v295)
+# CHECK-NEXT: Branch v302 -> taken b34(), notTaken b104(v295)
 # CHECK-NEXT: b34() frequency=Rare:
 # CHECK-NEXT: v303: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v299 castType=Array<int|whole>
 # CHECK-NEXT: v304: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v300 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -530,7 +530,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v308: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v304, v305 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v309: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v303, v305 provenType=Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v310: boolean = HasArrayStorage v306 arrayStorage=Double [isWritable]
-# CHECK-NEXT: Branch v310 -> taken b35(| 0), notTaken b59(v292, v293, v295, v296, v297, v309, v298)
+# CHECK-NEXT: Branch v310 -> taken b35(| 0), notTaken b58(v292, v293, v295, v296, v297, v309, v298)
 # CHECK-NEXT: b35(v311: guard) frequency=Rare:
 # CHECK-NEXT: v312: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v307 castType=Array<int|whole>
 # CHECK-NEXT: v313: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v308 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -545,7 +545,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v322: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v312, v320 provenType=Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v323: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v313, v320 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v324: boolean = HasArrayStorage v321 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v324 -> taken b36(| 0), notTaken b60(v292, v293, v295, v296, v297, v298)
+# CHECK-NEXT: Branch v324 -> taken b36(| 0), notTaken b59(v292, v293, v295, v296, v297, v298)
 # CHECK-NEXT: b36(v325: guard) frequency=Rare:
 # CHECK-NEXT: v326: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v322 castType=Array<int|whole>
 # CHECK-NEXT: v327: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v323 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -554,7 +554,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v330: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v326, v328 provenType=Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v331: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v327, v328 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v332: boolean = IsElementPresent v329, v319, v325 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v332 -> taken b37(| 0), notTaken b60(v292, v293, v295, v296, v297, v298)
+# CHECK-NEXT: Branch v332 -> taken b37(| 0), notTaken b59(v292, v293, v295, v296, v297, v298)
 # CHECK-NEXT: b37(v333: guard) frequency=Rare:
 # CHECK-NEXT: v334: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v330 castType=Array<int|whole>
 # CHECK-NEXT: v335: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v331 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -576,7 +576,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v351: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v352: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v353: boolean ~ true = TypeTest v339 testedType=Array
-# CHECK-NEXT: Branch v353 -> taken b38(| 0), notTaken b58()
+# CHECK-NEXT: Branch v353 -> taken b38(| 0), notTaken b57()
 # CHECK-NEXT: b38(v354: Array<int|whole, proven, pristine[Storage, Names]>) frequency=Rare:
 # CHECK-NEXT: v355: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v341 castType=Array<int|whole>
 # CHECK-NEXT: v356: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v342 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -594,7 +594,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v368: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v369: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v370: boolean = HasArrayStorage v354 arrayStorage=Double [isWritable]
-# CHECK-NEXT: Branch v370 -> taken b39(| 0), notTaken b57()
+# CHECK-NEXT: Branch v370 -> taken b39(| 0), notTaken b56()
 # CHECK-NEXT: b39(v371: guard) frequency=Rare:
 # CHECK-NEXT: v372: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v358 castType=Array<int|whole>
 # CHECK-NEXT: v373: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v359 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
@@ -652,7 +652,7 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v418: L2 = NewObject -, v416, v298, v296, v417, v297 layout=L2 fields=[0, 1, 2, 3, 4] allocationSite=6 allocationClass=2
 # CHECK-NEXT: v419: L2 = FinishObject v418
 # CHECK-NEXT: v420: int[0, 4294967295] = CallBuiltin v2, v419 overload=ArrayPrototypePush/0 accessSite=17
-# CHECK-NEXT: Jump -> next b116(v295)
+# CHECK-NEXT: Jump -> next b104(v295)
 # CHECK-NEXT: b45() frequency=Rare:
 # CHECK-NEXT: v421: -1 = Integer integer=-1
 # CHECK-NEXT: v422: anything = PropGet v421 key="more" accessSite=15
@@ -679,445 +679,367 @@ function f5 name="table" module=m0 position=377 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v455: 3 = Integer integer=3
 # CHECK-NEXT: v456: undefined|-1|L0 ~ undefined|L0 = ElemGet v453, v455 accessSite=14 [keyIsIntegral]
 # CHECK-NEXT: v457: -1|L0 ~ L0 = RequireObjectCoercible v456 name="more"
-# CHECK-NEXT: v458: fact = Specified
-# CHECK-NEXT: v459: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v449, v458 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v460: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v450, v458 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v461: boolean ~ true = TypeTest v457 testedType=L0
-# CHECK-NEXT: Branch v461 -> taken b52(), notTaken b53()
+# CHECK-NEXT: v458: boolean ~ true = TypeTest v457 testedType=L0
+# CHECK-NEXT: Branch v458 -> taken b52(), notTaken b53()
 # CHECK-NEXT: b52() frequency=Rare:
 # CHECK-NEXT: Jump -> next b54()
 # CHECK-NEXT: b53() frequency=Rare:
-# CHECK-NEXT: v462: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v459 castType=Array<int|whole>
-# CHECK-NEXT: v463: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v460 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
-# CHECK-NEXT: v464: -1 = Integer integer=-1
-# CHECK-NEXT: v465: anything = PropGet v464 key="more" accessSite=15
-# CHECK-NEXT: v466: anything ~ L1 = Upcast v465 castType=anything
-# CHECK-NEXT: v467: fact = Specified
-# CHECK-NEXT: v468: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v462, v467 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v469: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v463, v467 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v470: boolean ~ true = TypeTest v466 testedType=L1
-# CHECK-NEXT: Branch v470 -> taken b54(), notTaken b56()
+# CHECK-NEXT: v459: -1 = Integer integer=-1
+# CHECK-NEXT: v460: anything = PropGet v459 key="more" accessSite=15
+# CHECK-NEXT: Jump -> next b54()
 # CHECK-NEXT: b54() frequency=Rare:
 # CHECK-NEXT: Jump -> next b55(v449, v450, v451, v452, v453, v454)
-# CHECK-NEXT: b55(v471: Array<int|whole>, v472: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v473: int|whole ~ int[0, 2147483647], v474: undefined|null|Array<number>, v475: Array<-1|L0, proven, pristine[Storage, Names]>, v476: Array<number, proven, pristine[Storage, Names]>) frequency=Unlikely:
-# CHECK-NEXT: v477: fact = Specified
-# CHECK-NEXT: v478: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v471, v477 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v479: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v472, v477 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v480: L2 = NewObject -, v478, v476, v474, v479, v475 layout=L2 fields=[0, 1, 2, 3, 4] allocationSite=6 allocationClass=2
-# CHECK-NEXT: v481: L2 = FinishObject v480
-# CHECK-NEXT: v482: int[0, 4294967295] = CallBuiltin v2, v481 overload=ArrayPrototypePush/0 accessSite=17
-# CHECK-NEXT: Jump -> next b115(v473)
+# CHECK-NEXT: b55(v461: Array<int|whole>, v462: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v463: int|whole ~ int[0, 2147483647], v464: undefined|null|Array<number>, v465: Array<-1|L0, proven, pristine[Storage, Names]>, v466: Array<number, proven, pristine[Storage, Names]>) frequency=Unlikely:
+# CHECK-NEXT: v467: fact = Specified
+# CHECK-NEXT: v468: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v461, v467 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v469: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v462, v467 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v470: L2 = NewObject -, v468, v466, v464, v469, v465 layout=L2 fields=[0, 1, 2, 3, 4] allocationSite=6 allocationClass=2
+# CHECK-NEXT: v471: L2 = FinishObject v470
+# CHECK-NEXT: v472: int[0, 4294967295] = CallBuiltin v2, v471 overload=ArrayPrototypePush/0 accessSite=17
+# CHECK-NEXT: Jump -> next b103(v463)
 # CHECK-NEXT: b56() frequency=Rare:
-# CHECK-NEXT: v483: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v468 castType=Array<int|whole>
-# CHECK-NEXT: v484: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = Upcast v469 castType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
-# CHECK-NEXT: v485: fact = Specified
-# CHECK-NEXT: v486: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v483, v485 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v487: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v484, v485 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v488: L2 = NewObject -, v486, v454, v452, v487, v453 layout=L2 fields=[0, 1, 2, 3, 4] allocationSite=6 allocationClass=2
-# CHECK-NEXT: v489: L2 = FinishObject v488
-# CHECK-NEXT: v490: int[0, 4294967295] = CallBuiltin v2, v489 overload=ArrayPrototypePush/0 accessSite=17
-# CHECK-NEXT: Jump -> next b115(v451)
+# CHECK-NEXT: v473: 0 = Integer
+# CHECK-NEXT: ElemSet v354, v473, v295 accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b63(v360, v361, v362, v363, v364, v365, v366, v367, v368, v369, v292, v293, v295, v296, v297, v298)
 # CHECK-NEXT: b57() frequency=Rare:
-# CHECK-NEXT: v491: 0 = Integer
-# CHECK-NEXT: ElemSet v354, v491, v295 accessSite=11 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b64(v360, v361, v362, v363, v364, v365, v366, v367, v368, v369, v292, v293, v295, v296, v297, v298)
-# CHECK-NEXT: b58() frequency=Rare:
-# CHECK-NEXT: v493: -1 = Integer integer=-1
-# CHECK-NEXT: v494: 0 = Integer
-# CHECK-NEXT: ElemSet v493, v494, v295 accessSite=11 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b64(v343, v344, v345, v346, v347, v348, v349, v350, v351, v352, v292, v293, v295, v296, v297, v298)
-# CHECK-NEXT: b59(v496: Array<int|whole>, v497: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v498: int|whole ~ int[0, 2147483647], v499: undefined|null|Array<number>, v500: Array<-1|L0, proven, pristine[Storage, Names]>, v501: Array<int|whole, proven, pristine[Storage, Names]>, v502: Array<number, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v503: Array<number, proven, pristine[Storage, Names]> = Upcast v502 castType=unspecified|Array<number>
-# CHECK-NEXT: v504: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v501 castType=Array<int|whole>
-# CHECK-NEXT: v505: 0 = Integer
-# CHECK-NEXT: v506: fact = Specified
-# CHECK-NEXT: v507: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v504, v506 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: ElemSet v507, v505, v498 accessSite=7 [keyIsIntegral]
-# CHECK-NEXT: v509: fact = Specified
-# CHECK-NEXT: v510: Array<number, proven, pristine[Storage, Names]> = AssumeType v503, v509 provenType=Array<number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v511: fact = Specified
-# CHECK-NEXT: v512: Array<number, proven, pristine[Storage, Names]> = AssumeType v510, v511 provenType=Array<number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v513: int[0, 4294967295] = CallBuiltin v512, v498 overload=ArrayPrototypePush/0 accessSite=9
-# CHECK-NEXT: Jump -> next b60(v496, v497, v498, v499, v500, v502)
-# CHECK-NEXT: b60(v514: Array<int|whole>, v515: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v516: int|whole ~ int[0, 2147483647], v517: undefined|null|Array<number>, v518: Array<-1|L0, proven, pristine[Storage, Names]>, v519: Array<number, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v520: 1 = Integer integer=1
-# CHECK-NEXT: v521: fact = Specified
-# CHECK-NEXT: v522: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v515, v521 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v523: undefined|-1|Array<int|whole, proven, pristine[Storage, Names]> ~ undefined|Array<int|whole, proven, pristine[Storage, Names]> = ElemGet v522, v520 accessSite=10 [keyIsIntegral]
-# CHECK-NEXT: v524: -1|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]> = RequireObjectCoercible v523 nullishAccess=Write
-# CHECK-NEXT: v525: boolean ~ true = TypeTest v524 testedType=Array
-# CHECK-NEXT: Branch v525 -> taken b61(| 0), notTaken b63()
-# CHECK-NEXT: b61(v526: Array<int|whole, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v527: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v528: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v529: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v530: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v531: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v532: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v533: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v534: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Jump -> next b62(v527, v528, v529, v530, v531, v532, v533, v534, v526, v514, v515, v516, v517, v518, v519)
-# CHECK-NEXT: b62(v535: int|whole|unspecified, v536: int|whole|unspecified, v537: int|whole|unspecified, v538: int|whole|unspecified, v539: int|whole|unspecified, v540: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v541: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v542: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v543: Array<int|whole, proven, pristine[Storage, Names]>, v544: Array<int|whole>, v545: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v546: int|whole ~ int[0, 2147483647], v547: undefined|null|Array<number>, v548: Array<-1|L0, proven, pristine[Storage, Names]>, v549: Array<number, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v550: 4 = Integer integer=4
-# CHECK-NEXT: v551: 4 = Integer integer=4
-# CHECK-NEXT: v552: 0 = Integer
-# CHECK-NEXT: ElemSet v543, v552, v546 accessSite=11 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b64(v550, v535, v536, v537, v538, v539, v551, v540, v541, v542, v544, v545, v546, v547, v548, v549)
-# CHECK-NEXT: b63() frequency=Rare:
-# CHECK-NEXT: v554: -1 = Integer integer=-1
-# CHECK-NEXT: v555: 0 = Integer
-# CHECK-NEXT: ElemSet v554, v555, v516 accessSite=11 [keyIsIntegral]
-# CHECK-NEXT: v557: 1 = Integer integer=1
-# CHECK-NEXT: v558: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v559: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v560: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v561: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v562: int|whole|unspecified = Unspecified valueType=int|whole
-# CHECK-NEXT: v563: 1 = Integer integer=1
-# CHECK-NEXT: v564: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v565: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v566: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Jump -> next b64(v557, v558, v559, v560, v561, v562, v563, v564, v565, v566, v514, v515, v516, v517, v518, v519)
-# CHECK-NEXT: b64(v567: int[1, 4], v568: int|whole|unspecified, v569: int|whole|unspecified, v570: int|whole|unspecified, v571: int|whole|unspecified, v572: int|whole|unspecified, v573: int[1, 4], v574: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v575: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v576: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v577: Array<int|whole>, v578: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v579: int|whole ~ int[0, 2147483647], v580: undefined|null|Array<number>, v581: Array<-1|L0, proven, pristine[Storage, Names]>, v582: Array<number, proven, pristine[Storage, Names]>) frequency=Unlikely:
-# CHECK-NEXT: v583: Array<int|whole> = Upcast v577 castType=unspecified|Array<int|whole>
-# CHECK-NEXT: v584: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Upcast v578 castType=unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
-# CHECK-NEXT: v585: 2 = Integer integer=2
-# CHECK-NEXT: v586: boolean = HasArrayStorage v581 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v586 -> taken b65(| 0), notTaken b85(v582, v567, v583, v568, v569, v570, v571, v572, v573, v584, v574, v575, v576, v579, v580, v581)
-# CHECK-NEXT: b65(v587: guard) frequency=Unlikely:
-# CHECK-NEXT: v588: boolean = IsElementPresent v581, v585, v587 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v588 -> taken b66(| 0), notTaken b85(v582, v567, v583, v568, v569, v570, v571, v572, v573, v584, v574, v575, v576, v579, v580, v581)
-# CHECK-NEXT: b66(v589: guard) frequency=Unlikely:
-# CHECK-NEXT: v590: guard = AllGuards v587, v589
-# CHECK-NEXT: v591: -1|L0 ~ L0 = GetArrayElement v581, v585, v590 arrayStorage=Contiguous level=Expected accessSite=12 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v592: boolean ~ true = TypeTest v591 testedType=L0
-# CHECK-NEXT: Branch v592 -> taken b67(), notTaken b82(v582, v567, v583, v568, v569, v570, v571, v572, v573, v584, v574, v575, v576, v579, v580, v581)
-# CHECK-NEXT: b67() frequency=Unlikely:
-# CHECK-NEXT: v593: 3 = Integer integer=3
-# CHECK-NEXT: v594: boolean = IsElementPresent v581, v593, v587 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v594 -> taken b68(| 0), notTaken b89(v582, v567, v583, v568, v569, v570, v571, v572, v573, v584, v574, v575, v576, v579, v580, v581)
-# CHECK-NEXT: b68(v595: guard) frequency=Unlikely:
-# CHECK-NEXT: v596: guard = AllGuards v587, v595
-# CHECK-NEXT: v597: -1|L0 ~ L0 = GetArrayElement v581, v593, v596 arrayStorage=Contiguous level=Expected accessSite=14 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v598: boolean ~ true = TypeTest v597 testedType=L0
-# CHECK-NEXT: Branch v598 -> taken b69(), notTaken b79(v582, v567, v583, v568, v569, v570, v571, v572, v573, v584, v574, v575, v576, v579, v580, v581)
-# CHECK-NEXT: b69() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b93(v582, v567, v583, v568, v569, v570, v571, v572, v573, v584, v574, v575, v576, v579, v580, v581)
-# CHECK-NEXT: b70() frequency=Rare:
-# CHECK-NEXT: v599: 1500 = Integer integer=1500
-# CHECK-NEXT: v600: int|whole ~ int[0, 1499] = Mod v256, v599
-# CHECK-NEXT: Jump -> next b71(v600, v256, v257, v258)
-# CHECK-NEXT: b71(v601: int|whole ~ int[0, 1499], v602: int|whole ~ int[0, 2147483647], v603: undefined|null|Array<number>, v604: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v605: 0 = Integer
-# CHECK-NEXT: v606: boolean = StrictEq v601, v605
-# CHECK-NEXT: Branch v606 -> taken b72(), notTaken b116(v602)
-# CHECK-NEXT: b72() frequency=Rare:
-# CHECK-NEXT: v607: 4 = Integer integer=4
-# CHECK-NEXT: v608: Array<number> = NewArray v14, v15, v16 contents=number capacity=v607 allocationSite=9
-# CHECK-NEXT: v609: Array<number, proven, pristine[Storage, Names]> = AssumeType v608 provenType=Array<number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v610: int[0, 4294967295] = CallBuiltin v609, v602 overload=ArrayPrototypePush/0 accessSite=9
-# CHECK-NEXT: v611: fact = Specified
-# CHECK-NEXT: v612: Array<number, proven, pristine[Storage, Names]> = AssumeType v608, v611 provenType=Array<number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v613: int|whole ~ int[0, 2147483647] = Upcast v602 castType=int|whole
-# CHECK-NEXT: v614: 2 = Integer integer=2
-# CHECK-NEXT: v615: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
-# CHECK-NEXT: v616: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
-# CHECK-NEXT: v617: boolean = HasArrayStorage v604 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v617 -> taken b73(| 0), notTaken b84(v602, v603, v604, v612, v615, v616)
-# CHECK-NEXT: b73(v618: guard) frequency=Rare:
-# CHECK-NEXT: v619: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
-# CHECK-NEXT: v620: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
-# CHECK-NEXT: v621: boolean = IsElementPresent v604, v614, v618 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v621 -> taken b74(| 0), notTaken b83(v602, v603, v604, v612, v619, v620)
-# CHECK-NEXT: b74(v622: guard) frequency=Rare:
-# CHECK-NEXT: v623: guard = AllGuards v618, v622
-# CHECK-NEXT: v624: -1|L0 ~ L0 = GetArrayElement v604, v614, v623 arrayStorage=Contiguous level=Expected accessSite=12 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v625: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
-# CHECK-NEXT: v626: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
-# CHECK-NEXT: v627: boolean ~ true = TypeTest v624 testedType=L0
-# CHECK-NEXT: Branch v627 -> taken b75(), notTaken b81(v602, v603, v604, v612, v625, v626)
-# CHECK-NEXT: b75() frequency=Rare:
-# CHECK-NEXT: v628: 3 = Integer integer=3
-# CHECK-NEXT: v629: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
-# CHECK-NEXT: v630: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
-# CHECK-NEXT: v631: boolean = IsElementPresent v604, v628, v618 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v631 -> taken b76(| 0), notTaken b80(v602, v603, v604, v612, v629, v630)
-# CHECK-NEXT: b76(v632: guard) frequency=Rare:
-# CHECK-NEXT: v633: guard = AllGuards v618, v632
-# CHECK-NEXT: v634: -1|L0 ~ L0 = GetArrayElement v604, v628, v633 arrayStorage=Contiguous level=Expected accessSite=14 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v635: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
-# CHECK-NEXT: v636: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
-# CHECK-NEXT: v637: boolean ~ true = TypeTest v634 testedType=L0
-# CHECK-NEXT: Branch v637 -> taken b77(), notTaken b78(v602, v603, v604, v612, v635, v636)
-# CHECK-NEXT: b77() frequency=Rare:
-# CHECK-NEXT: v638: 1 = Upcast v18 castType=int|whole
-# CHECK-NEXT: v639: 2 = Upcast v19 castType=int|whole
-# CHECK-NEXT: v640: int|whole ~ int[0, 2147483647] = Upcast v602 castType=int|whole
-# CHECK-NEXT: v641: 4 = Upcast v21 castType=int|whole
-# CHECK-NEXT: v642: 5 = Upcast v22 castType=int|whole
-# CHECK-NEXT: v643: 6 = Upcast v23 castType=int|whole
-# CHECK-NEXT: v644: 2 = Upcast v10 castType=int|whole
-# CHECK-NEXT: v645: 3 = Upcast v11 castType=int|whole
-# CHECK-NEXT: v646: 4 = Upcast v12 castType=int|whole
-# CHECK-NEXT: v647: 5 = Upcast v13 castType=int|whole
-# CHECK-NEXT: v648: Array<int|whole> = NewArray v613, v644, v645, v646, v647 contents=int|whole allocationSite=8
-# CHECK-NEXT: v649: Array<int|whole> = NewArray v638, v639 contents=int|whole allocationSite=12
-# CHECK-NEXT: v650: Array<int|whole> = NewArray v640, v641 contents=int|whole allocationSite=13
-# CHECK-NEXT: v651: Array<int|whole> = NewArray v642, v643 contents=int|whole allocationSite=14
-# CHECK-NEXT: v652: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v649 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v653: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v650 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v654: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v651 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v655: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = NewArray v652, v653, v654 contents=-1|Array<int|whole, proven, pristine[Storage, Names]> allocationSite=10
-# CHECK-NEXT: v656: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v648 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v657: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v655 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v658: L2 = NewObject -, v656, v612, v603, v657, v604 layout=L2 fields=[0, 1, 2, 3, 4] allocationSite=6 allocationClass=2
-# CHECK-NEXT: v659: L2 = FinishObject v658
-# CHECK-NEXT: v660: int[0, 4294967295] = CallBuiltin v2, v659 overload=ArrayPrototypePush/0 accessSite=17
-# CHECK-NEXT: Jump -> next b116(v602)
-# CHECK-NEXT: b78(v661: int|whole ~ int[0, 2147483647], v662: undefined|null|Array<number>, v663: Array<-1|L0, proven, pristine[Storage, Names]>, v664: Array<number, proven, pristine[Storage, Names]>, v665: unspecified|Array<int|whole>, v666: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
-# CHECK-NEXT: v667: 1 = Upcast v18 castType=int|whole
-# CHECK-NEXT: v668: 2 = Upcast v19 castType=int|whole
-# CHECK-NEXT: v669: int|whole ~ int[0, 2147483647] = Upcast v661 castType=int|whole
-# CHECK-NEXT: v670: 4 = Upcast v21 castType=int|whole
-# CHECK-NEXT: v671: 5 = Upcast v22 castType=int|whole
-# CHECK-NEXT: v672: 6 = Upcast v23 castType=int|whole
-# CHECK-NEXT: v673: Array<int|whole> = NewArray v667, v668 contents=int|whole allocationSite=12
-# CHECK-NEXT: v674: Array<int|whole> = NewArray v669, v670 contents=int|whole allocationSite=13
-# CHECK-NEXT: v675: Array<int|whole> = NewArray v671, v672 contents=int|whole allocationSite=14
-# CHECK-NEXT: v676: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v673 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v677: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v674 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v678: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v675 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v679: 2 = Integer integer=2
-# CHECK-NEXT: v680: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b79(v664, v679, v665, v661, v10, v11, v12, v13, v680, v666, v676, v677, v678, v661, v662, v663)
-# CHECK-NEXT: b79(v681: Array<number, proven, pristine[Storage, Names]>, v682: int[1, 4] ~ 2, v683: unspecified|Array<int|whole>, v684: int|whole|unspecified ~ int[0, 2147483647], v685: int|whole|unspecified ~ 2, v686: int|whole|unspecified ~ 3, v687: int|whole|unspecified ~ 4, v688: int|whole|unspecified ~ 5, v689: int[1, 4] ~ 2, v690: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v691: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v692: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v693: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v694: int|whole ~ int[0, 2147483647], v695: undefined|null|Array<number>, v696: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v697: -1 = Integer integer=-1
-# CHECK-NEXT: v698: anything = PropGet v697 key="more" accessSite=15
-# CHECK-NEXT: Jump -> next b93(v681, v682, v683, v684, v685, v686, v687, v688, v689, v690, v691, v692, v693, v694, v695, v696)
-# CHECK-NEXT: b80(v699: int|whole ~ int[0, 2147483647], v700: undefined|null|Array<number>, v701: Array<-1|L0, proven, pristine[Storage, Names]>, v702: Array<number, proven, pristine[Storage, Names]>, v703: unspecified|Array<int|whole>, v704: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
-# CHECK-NEXT: v705: 1 = Upcast v18 castType=int|whole
-# CHECK-NEXT: v706: 2 = Upcast v19 castType=int|whole
-# CHECK-NEXT: v707: int|whole ~ int[0, 2147483647] = Upcast v699 castType=int|whole
-# CHECK-NEXT: v708: 4 = Upcast v21 castType=int|whole
-# CHECK-NEXT: v709: 5 = Upcast v22 castType=int|whole
-# CHECK-NEXT: v710: 6 = Upcast v23 castType=int|whole
-# CHECK-NEXT: v711: Array<int|whole> = NewArray v705, v706 contents=int|whole allocationSite=12
-# CHECK-NEXT: v712: Array<int|whole> = NewArray v707, v708 contents=int|whole allocationSite=13
-# CHECK-NEXT: v713: Array<int|whole> = NewArray v709, v710 contents=int|whole allocationSite=14
-# CHECK-NEXT: v714: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v711 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v715: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v712 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v475: -1 = Integer integer=-1
+# CHECK-NEXT: v476: 0 = Integer
+# CHECK-NEXT: ElemSet v475, v476, v295 accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b63(v343, v344, v345, v346, v347, v348, v349, v350, v351, v352, v292, v293, v295, v296, v297, v298)
+# CHECK-NEXT: b58(v478: Array<int|whole>, v479: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v480: int|whole ~ int[0, 2147483647], v481: undefined|null|Array<number>, v482: Array<-1|L0, proven, pristine[Storage, Names]>, v483: Array<int|whole, proven, pristine[Storage, Names]>, v484: Array<number, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v485: Array<number, proven, pristine[Storage, Names]> = Upcast v484 castType=unspecified|Array<number>
+# CHECK-NEXT: v486: Array<int|whole, proven, pristine[Storage, Names]> = Upcast v483 castType=Array<int|whole>
+# CHECK-NEXT: v487: 0 = Integer
+# CHECK-NEXT: v488: fact = Specified
+# CHECK-NEXT: v489: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v486, v488 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: ElemSet v489, v487, v480 accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v491: fact = Specified
+# CHECK-NEXT: v492: Array<number, proven, pristine[Storage, Names]> = AssumeType v485, v491 provenType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v493: fact = Specified
+# CHECK-NEXT: v494: Array<number, proven, pristine[Storage, Names]> = AssumeType v492, v493 provenType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v495: int[0, 4294967295] = CallBuiltin v494, v480 overload=ArrayPrototypePush/0 accessSite=9
+# CHECK-NEXT: Jump -> next b59(v478, v479, v480, v481, v482, v484)
+# CHECK-NEXT: b59(v496: Array<int|whole>, v497: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v498: int|whole ~ int[0, 2147483647], v499: undefined|null|Array<number>, v500: Array<-1|L0, proven, pristine[Storage, Names]>, v501: Array<number, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v502: 1 = Integer integer=1
+# CHECK-NEXT: v503: fact = Specified
+# CHECK-NEXT: v504: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v497, v503 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v505: undefined|-1|Array<int|whole, proven, pristine[Storage, Names]> ~ undefined|Array<int|whole, proven, pristine[Storage, Names]> = ElemGet v504, v502 accessSite=10 [keyIsIntegral]
+# CHECK-NEXT: v506: -1|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]> = RequireObjectCoercible v505 nullishAccess=Write
+# CHECK-NEXT: v507: boolean ~ true = TypeTest v506 testedType=Array
+# CHECK-NEXT: Branch v507 -> taken b60(| 0), notTaken b62()
+# CHECK-NEXT: b60(v508: Array<int|whole, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v509: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v510: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v511: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v512: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v513: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v514: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v515: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v516: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b61(v509, v510, v511, v512, v513, v514, v515, v516, v508, v496, v497, v498, v499, v500, v501)
+# CHECK-NEXT: b61(v517: int|whole|unspecified, v518: int|whole|unspecified, v519: int|whole|unspecified, v520: int|whole|unspecified, v521: int|whole|unspecified, v522: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v523: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v524: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v525: Array<int|whole, proven, pristine[Storage, Names]>, v526: Array<int|whole>, v527: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v528: int|whole ~ int[0, 2147483647], v529: undefined|null|Array<number>, v530: Array<-1|L0, proven, pristine[Storage, Names]>, v531: Array<number, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v532: 4 = Integer integer=4
+# CHECK-NEXT: v533: 4 = Integer integer=4
+# CHECK-NEXT: v534: 0 = Integer
+# CHECK-NEXT: ElemSet v525, v534, v528 accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b63(v532, v517, v518, v519, v520, v521, v533, v522, v523, v524, v526, v527, v528, v529, v530, v531)
+# CHECK-NEXT: b62() frequency=Rare:
+# CHECK-NEXT: v536: -1 = Integer integer=-1
+# CHECK-NEXT: v537: 0 = Integer
+# CHECK-NEXT: ElemSet v536, v537, v498 accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: v539: 1 = Integer integer=1
+# CHECK-NEXT: v540: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v541: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v542: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v543: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v544: int|whole|unspecified = Unspecified valueType=int|whole
+# CHECK-NEXT: v545: 1 = Integer integer=1
+# CHECK-NEXT: v546: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v547: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v548: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> = Unspecified valueType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b63(v539, v540, v541, v542, v543, v544, v545, v546, v547, v548, v496, v497, v498, v499, v500, v501)
+# CHECK-NEXT: b63(v549: int[1, 4], v550: int|whole|unspecified, v551: int|whole|unspecified, v552: int|whole|unspecified, v553: int|whole|unspecified, v554: int|whole|unspecified, v555: int[1, 4], v556: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v557: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v558: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v559: Array<int|whole>, v560: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v561: int|whole ~ int[0, 2147483647], v562: undefined|null|Array<number>, v563: Array<-1|L0, proven, pristine[Storage, Names]>, v564: Array<number, proven, pristine[Storage, Names]>) frequency=Unlikely:
+# CHECK-NEXT: v565: Array<int|whole> = Upcast v559 castType=unspecified|Array<int|whole>
+# CHECK-NEXT: v566: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Upcast v560 castType=unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
+# CHECK-NEXT: v567: 2 = Integer integer=2
+# CHECK-NEXT: v568: boolean = HasArrayStorage v563 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v568 -> taken b64(| 0), notTaken b84(v564, v549, v565, v550, v551, v552, v553, v554, v555, v566, v556, v557, v558, v561, v562, v563)
+# CHECK-NEXT: b64(v569: guard) frequency=Unlikely:
+# CHECK-NEXT: v570: boolean = IsElementPresent v563, v567, v569 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v570 -> taken b65(| 0), notTaken b84(v564, v549, v565, v550, v551, v552, v553, v554, v555, v566, v556, v557, v558, v561, v562, v563)
+# CHECK-NEXT: b65(v571: guard) frequency=Unlikely:
+# CHECK-NEXT: v572: guard = AllGuards v569, v571
+# CHECK-NEXT: v573: -1|L0 ~ L0 = GetArrayElement v563, v567, v572 arrayStorage=Contiguous level=Expected accessSite=12 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v574: boolean ~ true = TypeTest v573 testedType=L0
+# CHECK-NEXT: Branch v574 -> taken b66(), notTaken b81(v564, v549, v565, v550, v551, v552, v553, v554, v555, v566, v556, v557, v558, v561, v562, v563)
+# CHECK-NEXT: b66() frequency=Unlikely:
+# CHECK-NEXT: v575: 3 = Integer integer=3
+# CHECK-NEXT: v576: boolean = IsElementPresent v563, v575, v569 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v576 -> taken b67(| 0), notTaken b88(v564, v549, v565, v550, v551, v552, v553, v554, v555, v566, v556, v557, v558, v561, v562, v563)
+# CHECK-NEXT: b67(v577: guard) frequency=Unlikely:
+# CHECK-NEXT: v578: guard = AllGuards v569, v577
+# CHECK-NEXT: v579: -1|L0 ~ L0 = GetArrayElement v563, v575, v578 arrayStorage=Contiguous level=Expected accessSite=14 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v580: boolean ~ true = TypeTest v579 testedType=L0
+# CHECK-NEXT: Branch v580 -> taken b68(), notTaken b78(v564, v549, v565, v550, v551, v552, v553, v554, v555, v566, v556, v557, v558, v561, v562, v563)
+# CHECK-NEXT: b68() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b92(v564, v549, v565, v550, v551, v552, v553, v554, v555, v566, v556, v557, v558, v561, v562, v563)
+# CHECK-NEXT: b69() frequency=Rare:
+# CHECK-NEXT: v581: 1500 = Integer integer=1500
+# CHECK-NEXT: v582: int|whole ~ int[0, 1499] = Mod v256, v581
+# CHECK-NEXT: Jump -> next b70(v582, v256, v257, v258)
+# CHECK-NEXT: b70(v583: int|whole ~ int[0, 1499], v584: int|whole ~ int[0, 2147483647], v585: undefined|null|Array<number>, v586: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v587: 0 = Integer
+# CHECK-NEXT: v588: boolean = StrictEq v583, v587
+# CHECK-NEXT: Branch v588 -> taken b71(), notTaken b104(v584)
+# CHECK-NEXT: b71() frequency=Rare:
+# CHECK-NEXT: v589: 4 = Integer integer=4
+# CHECK-NEXT: v590: Array<number> = NewArray v14, v15, v16 contents=number capacity=v589 allocationSite=9
+# CHECK-NEXT: v591: Array<number, proven, pristine[Storage, Names]> = AssumeType v590 provenType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v592: int[0, 4294967295] = CallBuiltin v591, v584 overload=ArrayPrototypePush/0 accessSite=9
+# CHECK-NEXT: v593: fact = Specified
+# CHECK-NEXT: v594: Array<number, proven, pristine[Storage, Names]> = AssumeType v590, v593 provenType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v595: int|whole ~ int[0, 2147483647] = Upcast v584 castType=int|whole
+# CHECK-NEXT: v596: 2 = Integer integer=2
+# CHECK-NEXT: v597: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
+# CHECK-NEXT: v598: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
+# CHECK-NEXT: v599: boolean = HasArrayStorage v586 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v599 -> taken b72(| 0), notTaken b83(v584, v585, v586, v594, v597, v598)
+# CHECK-NEXT: b72(v600: guard) frequency=Rare:
+# CHECK-NEXT: v601: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
+# CHECK-NEXT: v602: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
+# CHECK-NEXT: v603: boolean = IsElementPresent v586, v596, v600 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v603 -> taken b73(| 0), notTaken b82(v584, v585, v586, v594, v601, v602)
+# CHECK-NEXT: b73(v604: guard) frequency=Rare:
+# CHECK-NEXT: v605: guard = AllGuards v600, v604
+# CHECK-NEXT: v606: -1|L0 ~ L0 = GetArrayElement v586, v596, v605 arrayStorage=Contiguous level=Expected accessSite=12 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v607: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
+# CHECK-NEXT: v608: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
+# CHECK-NEXT: v609: boolean ~ true = TypeTest v606 testedType=L0
+# CHECK-NEXT: Branch v609 -> taken b74(), notTaken b80(v584, v585, v586, v594, v607, v608)
+# CHECK-NEXT: b74() frequency=Rare:
+# CHECK-NEXT: v610: 3 = Integer integer=3
+# CHECK-NEXT: v611: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
+# CHECK-NEXT: v612: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
+# CHECK-NEXT: v613: boolean = IsElementPresent v586, v610, v600 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v613 -> taken b75(| 0), notTaken b79(v584, v585, v586, v594, v611, v612)
+# CHECK-NEXT: b75(v614: guard) frequency=Rare:
+# CHECK-NEXT: v615: guard = AllGuards v600, v614
+# CHECK-NEXT: v616: -1|L0 ~ L0 = GetArrayElement v586, v610, v615 arrayStorage=Contiguous level=Expected accessSite=14 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v617: unspecified|Array<int|whole> = Unspecified valueType=Array<int|whole>
+# CHECK-NEXT: v618: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = Unspecified valueType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>
+# CHECK-NEXT: v619: boolean ~ true = TypeTest v616 testedType=L0
+# CHECK-NEXT: Branch v619 -> taken b76(), notTaken b77(v584, v585, v586, v594, v617, v618)
+# CHECK-NEXT: b76() frequency=Rare:
+# CHECK-NEXT: v620: 1 = Upcast v18 castType=int|whole
+# CHECK-NEXT: v621: 2 = Upcast v19 castType=int|whole
+# CHECK-NEXT: v622: int|whole ~ int[0, 2147483647] = Upcast v584 castType=int|whole
+# CHECK-NEXT: v623: 4 = Upcast v21 castType=int|whole
+# CHECK-NEXT: v624: 5 = Upcast v22 castType=int|whole
+# CHECK-NEXT: v625: 6 = Upcast v23 castType=int|whole
+# CHECK-NEXT: v626: 2 = Upcast v10 castType=int|whole
+# CHECK-NEXT: v627: 3 = Upcast v11 castType=int|whole
+# CHECK-NEXT: v628: 4 = Upcast v12 castType=int|whole
+# CHECK-NEXT: v629: 5 = Upcast v13 castType=int|whole
+# CHECK-NEXT: v630: Array<int|whole> = NewArray v595, v626, v627, v628, v629 contents=int|whole allocationSite=8
+# CHECK-NEXT: v631: Array<int|whole> = NewArray v620, v621 contents=int|whole allocationSite=12
+# CHECK-NEXT: v632: Array<int|whole> = NewArray v622, v623 contents=int|whole allocationSite=13
+# CHECK-NEXT: v633: Array<int|whole> = NewArray v624, v625 contents=int|whole allocationSite=14
+# CHECK-NEXT: v634: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v631 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v635: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v632 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v636: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v633 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v637: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = NewArray v634, v635, v636 contents=-1|Array<int|whole, proven, pristine[Storage, Names]> allocationSite=10
+# CHECK-NEXT: v638: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v630 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v639: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v637 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v640: L2 = NewObject -, v638, v594, v585, v639, v586 layout=L2 fields=[0, 1, 2, 3, 4] allocationSite=6 allocationClass=2
+# CHECK-NEXT: v641: L2 = FinishObject v640
+# CHECK-NEXT: v642: int[0, 4294967295] = CallBuiltin v2, v641 overload=ArrayPrototypePush/0 accessSite=17
+# CHECK-NEXT: Jump -> next b104(v584)
+# CHECK-NEXT: b77(v643: int|whole ~ int[0, 2147483647], v644: undefined|null|Array<number>, v645: Array<-1|L0, proven, pristine[Storage, Names]>, v646: Array<number, proven, pristine[Storage, Names]>, v647: unspecified|Array<int|whole>, v648: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
+# CHECK-NEXT: v649: 1 = Upcast v18 castType=int|whole
+# CHECK-NEXT: v650: 2 = Upcast v19 castType=int|whole
+# CHECK-NEXT: v651: int|whole ~ int[0, 2147483647] = Upcast v643 castType=int|whole
+# CHECK-NEXT: v652: 4 = Upcast v21 castType=int|whole
+# CHECK-NEXT: v653: 5 = Upcast v22 castType=int|whole
+# CHECK-NEXT: v654: 6 = Upcast v23 castType=int|whole
+# CHECK-NEXT: v655: Array<int|whole> = NewArray v649, v650 contents=int|whole allocationSite=12
+# CHECK-NEXT: v656: Array<int|whole> = NewArray v651, v652 contents=int|whole allocationSite=13
+# CHECK-NEXT: v657: Array<int|whole> = NewArray v653, v654 contents=int|whole allocationSite=14
+# CHECK-NEXT: v658: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v655 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v659: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v656 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v660: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v657 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v661: 2 = Integer integer=2
+# CHECK-NEXT: v662: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b78(v646, v661, v647, v643, v10, v11, v12, v13, v662, v648, v658, v659, v660, v643, v644, v645)
+# CHECK-NEXT: b78(v663: Array<number, proven, pristine[Storage, Names]>, v664: int[1, 4] ~ 2, v665: unspecified|Array<int|whole>, v666: int|whole|unspecified ~ int[0, 2147483647], v667: int|whole|unspecified ~ 2, v668: int|whole|unspecified ~ 3, v669: int|whole|unspecified ~ 4, v670: int|whole|unspecified ~ 5, v671: int[1, 4] ~ 2, v672: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v673: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v674: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v675: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v676: int|whole ~ int[0, 2147483647], v677: undefined|null|Array<number>, v678: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v679: -1 = Integer integer=-1
+# CHECK-NEXT: v680: anything = PropGet v679 key="more" accessSite=15
+# CHECK-NEXT: Jump -> next b92(v663, v664, v665, v666, v667, v668, v669, v670, v671, v672, v673, v674, v675, v676, v677, v678)
+# CHECK-NEXT: b79(v681: int|whole ~ int[0, 2147483647], v682: undefined|null|Array<number>, v683: Array<-1|L0, proven, pristine[Storage, Names]>, v684: Array<number, proven, pristine[Storage, Names]>, v685: unspecified|Array<int|whole>, v686: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
+# CHECK-NEXT: v687: 1 = Upcast v18 castType=int|whole
+# CHECK-NEXT: v688: 2 = Upcast v19 castType=int|whole
+# CHECK-NEXT: v689: int|whole ~ int[0, 2147483647] = Upcast v681 castType=int|whole
+# CHECK-NEXT: v690: 4 = Upcast v21 castType=int|whole
+# CHECK-NEXT: v691: 5 = Upcast v22 castType=int|whole
+# CHECK-NEXT: v692: 6 = Upcast v23 castType=int|whole
+# CHECK-NEXT: v693: Array<int|whole> = NewArray v687, v688 contents=int|whole allocationSite=12
+# CHECK-NEXT: v694: Array<int|whole> = NewArray v689, v690 contents=int|whole allocationSite=13
+# CHECK-NEXT: v695: Array<int|whole> = NewArray v691, v692 contents=int|whole allocationSite=14
+# CHECK-NEXT: v696: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v693 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v697: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v694 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v698: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v695 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v699: 2 = Integer integer=2
+# CHECK-NEXT: v700: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b88(v684, v699, v685, v681, v10, v11, v12, v13, v700, v686, v696, v697, v698, v681, v682, v683)
+# CHECK-NEXT: b80(v701: int|whole ~ int[0, 2147483647], v702: undefined|null|Array<number>, v703: Array<-1|L0, proven, pristine[Storage, Names]>, v704: Array<number, proven, pristine[Storage, Names]>, v705: unspecified|Array<int|whole>, v706: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
+# CHECK-NEXT: v707: 1 = Upcast v18 castType=int|whole
+# CHECK-NEXT: v708: 2 = Upcast v19 castType=int|whole
+# CHECK-NEXT: v709: int|whole ~ int[0, 2147483647] = Upcast v701 castType=int|whole
+# CHECK-NEXT: v710: 4 = Upcast v21 castType=int|whole
+# CHECK-NEXT: v711: 5 = Upcast v22 castType=int|whole
+# CHECK-NEXT: v712: 6 = Upcast v23 castType=int|whole
+# CHECK-NEXT: v713: Array<int|whole> = NewArray v707, v708 contents=int|whole allocationSite=12
+# CHECK-NEXT: v714: Array<int|whole> = NewArray v709, v710 contents=int|whole allocationSite=13
+# CHECK-NEXT: v715: Array<int|whole> = NewArray v711, v712 contents=int|whole allocationSite=14
 # CHECK-NEXT: v716: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v713 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v717: 2 = Integer integer=2
-# CHECK-NEXT: v718: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b89(v702, v717, v703, v699, v10, v11, v12, v13, v718, v704, v714, v715, v716, v699, v700, v701)
-# CHECK-NEXT: b81(v719: int|whole ~ int[0, 2147483647], v720: undefined|null|Array<number>, v721: Array<-1|L0, proven, pristine[Storage, Names]>, v722: Array<number, proven, pristine[Storage, Names]>, v723: unspecified|Array<int|whole>, v724: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
-# CHECK-NEXT: v725: 1 = Upcast v18 castType=int|whole
-# CHECK-NEXT: v726: 2 = Upcast v19 castType=int|whole
-# CHECK-NEXT: v727: int|whole ~ int[0, 2147483647] = Upcast v719 castType=int|whole
-# CHECK-NEXT: v728: 4 = Upcast v21 castType=int|whole
-# CHECK-NEXT: v729: 5 = Upcast v22 castType=int|whole
-# CHECK-NEXT: v730: 6 = Upcast v23 castType=int|whole
-# CHECK-NEXT: v731: Array<int|whole> = NewArray v725, v726 contents=int|whole allocationSite=12
-# CHECK-NEXT: v732: Array<int|whole> = NewArray v727, v728 contents=int|whole allocationSite=13
-# CHECK-NEXT: v733: Array<int|whole> = NewArray v729, v730 contents=int|whole allocationSite=14
-# CHECK-NEXT: v734: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v731 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v735: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v732 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v736: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v733 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v737: 2 = Integer integer=2
-# CHECK-NEXT: v738: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b82(v722, v737, v723, v719, v10, v11, v12, v13, v738, v724, v734, v735, v736, v719, v720, v721)
-# CHECK-NEXT: b82(v739: Array<number, proven, pristine[Storage, Names]>, v740: int[1, 4] ~ 2, v741: unspecified|Array<int|whole>, v742: int|whole|unspecified ~ int[0, 2147483647], v743: int|whole|unspecified ~ 2, v744: int|whole|unspecified ~ 3, v745: int|whole|unspecified ~ 4, v746: int|whole|unspecified ~ 5, v747: int[1, 4] ~ 2, v748: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v749: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v750: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v751: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v752: int|whole ~ int[0, 2147483647], v753: undefined|null|Array<number>, v754: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v755: -1 = Integer integer=-1
-# CHECK-NEXT: v756: anything = PropGet v755 key="at" accessSite=13
-# CHECK-NEXT: Jump -> next b88(v739, v740, v741, v742, v743, v744, v745, v746, v747, v748, v749, v750, v751, v752, v753, v754)
-# CHECK-NEXT: b83(v757: int|whole ~ int[0, 2147483647], v758: undefined|null|Array<number>, v759: Array<-1|L0, proven, pristine[Storage, Names]>, v760: Array<number, proven, pristine[Storage, Names]>, v761: unspecified|Array<int|whole>, v762: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
-# CHECK-NEXT: v763: 1 = Upcast v18 castType=int|whole
-# CHECK-NEXT: v764: 2 = Upcast v19 castType=int|whole
-# CHECK-NEXT: v765: int|whole ~ int[0, 2147483647] = Upcast v757 castType=int|whole
-# CHECK-NEXT: v766: 4 = Upcast v21 castType=int|whole
-# CHECK-NEXT: v767: 5 = Upcast v22 castType=int|whole
-# CHECK-NEXT: v768: 6 = Upcast v23 castType=int|whole
-# CHECK-NEXT: v769: Array<int|whole> = NewArray v763, v764 contents=int|whole allocationSite=12
-# CHECK-NEXT: v770: Array<int|whole> = NewArray v765, v766 contents=int|whole allocationSite=13
-# CHECK-NEXT: v771: Array<int|whole> = NewArray v767, v768 contents=int|whole allocationSite=14
-# CHECK-NEXT: v772: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v769 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v773: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v770 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v717: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v714 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v718: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v715 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v719: 2 = Integer integer=2
+# CHECK-NEXT: v720: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b81(v704, v719, v705, v701, v10, v11, v12, v13, v720, v706, v716, v717, v718, v701, v702, v703)
+# CHECK-NEXT: b81(v721: Array<number, proven, pristine[Storage, Names]>, v722: int[1, 4] ~ 2, v723: unspecified|Array<int|whole>, v724: int|whole|unspecified ~ int[0, 2147483647], v725: int|whole|unspecified ~ 2, v726: int|whole|unspecified ~ 3, v727: int|whole|unspecified ~ 4, v728: int|whole|unspecified ~ 5, v729: int[1, 4] ~ 2, v730: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v731: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v732: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v733: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v734: int|whole ~ int[0, 2147483647], v735: undefined|null|Array<number>, v736: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v737: -1 = Integer integer=-1
+# CHECK-NEXT: v738: anything = PropGet v737 key="at" accessSite=13
+# CHECK-NEXT: Jump -> next b87(v721, v722, v723, v724, v725, v726, v727, v728, v729, v730, v731, v732, v733, v734, v735, v736)
+# CHECK-NEXT: b82(v739: int|whole ~ int[0, 2147483647], v740: undefined|null|Array<number>, v741: Array<-1|L0, proven, pristine[Storage, Names]>, v742: Array<number, proven, pristine[Storage, Names]>, v743: unspecified|Array<int|whole>, v744: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
+# CHECK-NEXT: v745: 1 = Upcast v18 castType=int|whole
+# CHECK-NEXT: v746: 2 = Upcast v19 castType=int|whole
+# CHECK-NEXT: v747: int|whole ~ int[0, 2147483647] = Upcast v739 castType=int|whole
+# CHECK-NEXT: v748: 4 = Upcast v21 castType=int|whole
+# CHECK-NEXT: v749: 5 = Upcast v22 castType=int|whole
+# CHECK-NEXT: v750: 6 = Upcast v23 castType=int|whole
+# CHECK-NEXT: v751: Array<int|whole> = NewArray v745, v746 contents=int|whole allocationSite=12
+# CHECK-NEXT: v752: Array<int|whole> = NewArray v747, v748 contents=int|whole allocationSite=13
+# CHECK-NEXT: v753: Array<int|whole> = NewArray v749, v750 contents=int|whole allocationSite=14
+# CHECK-NEXT: v754: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v751 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v755: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v752 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v756: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v753 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v757: 2 = Integer integer=2
+# CHECK-NEXT: v758: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b84(v742, v757, v743, v739, v10, v11, v12, v13, v758, v744, v754, v755, v756, v739, v740, v741)
+# CHECK-NEXT: b83(v759: int|whole ~ int[0, 2147483647], v760: undefined|null|Array<number>, v761: Array<-1|L0, proven, pristine[Storage, Names]>, v762: Array<number, proven, pristine[Storage, Names]>, v763: unspecified|Array<int|whole>, v764: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
+# CHECK-NEXT: v765: 1 = Upcast v18 castType=int|whole
+# CHECK-NEXT: v766: 2 = Upcast v19 castType=int|whole
+# CHECK-NEXT: v767: int|whole ~ int[0, 2147483647] = Upcast v759 castType=int|whole
+# CHECK-NEXT: v768: 4 = Upcast v21 castType=int|whole
+# CHECK-NEXT: v769: 5 = Upcast v22 castType=int|whole
+# CHECK-NEXT: v770: 6 = Upcast v23 castType=int|whole
+# CHECK-NEXT: v771: Array<int|whole> = NewArray v765, v766 contents=int|whole allocationSite=12
+# CHECK-NEXT: v772: Array<int|whole> = NewArray v767, v768 contents=int|whole allocationSite=13
+# CHECK-NEXT: v773: Array<int|whole> = NewArray v769, v770 contents=int|whole allocationSite=14
 # CHECK-NEXT: v774: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v771 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v775: 2 = Integer integer=2
-# CHECK-NEXT: v776: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b85(v760, v775, v761, v757, v10, v11, v12, v13, v776, v762, v772, v773, v774, v757, v758, v759)
-# CHECK-NEXT: b84(v777: int|whole ~ int[0, 2147483647], v778: undefined|null|Array<number>, v779: Array<-1|L0, proven, pristine[Storage, Names]>, v780: Array<number, proven, pristine[Storage, Names]>, v781: unspecified|Array<int|whole>, v782: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
-# CHECK-NEXT: v783: 1 = Upcast v18 castType=int|whole
-# CHECK-NEXT: v784: 2 = Upcast v19 castType=int|whole
-# CHECK-NEXT: v785: int|whole ~ int[0, 2147483647] = Upcast v777 castType=int|whole
-# CHECK-NEXT: v786: 4 = Upcast v21 castType=int|whole
-# CHECK-NEXT: v787: 5 = Upcast v22 castType=int|whole
-# CHECK-NEXT: v788: 6 = Upcast v23 castType=int|whole
-# CHECK-NEXT: v789: Array<int|whole> = NewArray v783, v784 contents=int|whole allocationSite=12
-# CHECK-NEXT: v790: Array<int|whole> = NewArray v785, v786 contents=int|whole allocationSite=13
-# CHECK-NEXT: v791: Array<int|whole> = NewArray v787, v788 contents=int|whole allocationSite=14
-# CHECK-NEXT: v792: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v789 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v793: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v790 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v794: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v791 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v775: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v772 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v776: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v773 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v777: 2 = Integer integer=2
+# CHECK-NEXT: v778: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b84(v762, v777, v763, v759, v10, v11, v12, v13, v778, v764, v774, v775, v776, v759, v760, v761)
+# CHECK-NEXT: b84(v779: Array<number, proven, pristine[Storage, Names]>, v780: int[1, 4] ~ 2, v781: unspecified|Array<int|whole>, v782: int|whole|unspecified ~ int[0, 2147483647], v783: int|whole|unspecified ~ 2, v784: int|whole|unspecified ~ 3, v785: int|whole|unspecified ~ 4, v786: int|whole|unspecified ~ 5, v787: int[1, 4] ~ 2, v788: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v789: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v790: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v791: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v792: int|whole ~ int[0, 2147483647], v793: undefined|null|Array<number>, v794: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
 # CHECK-NEXT: v795: 2 = Integer integer=2
-# CHECK-NEXT: v796: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b85(v780, v795, v781, v777, v10, v11, v12, v13, v796, v782, v792, v793, v794, v777, v778, v779)
-# CHECK-NEXT: b85(v797: Array<number, proven, pristine[Storage, Names]>, v798: int[1, 4] ~ 2, v799: unspecified|Array<int|whole>, v800: int|whole|unspecified ~ int[0, 2147483647], v801: int|whole|unspecified ~ 2, v802: int|whole|unspecified ~ 3, v803: int|whole|unspecified ~ 4, v804: int|whole|unspecified ~ 5, v805: int[1, 4] ~ 2, v806: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v807: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v808: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v809: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v810: int|whole ~ int[0, 2147483647], v811: undefined|null|Array<number>, v812: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v813: 2 = Integer integer=2
-# CHECK-NEXT: v814: undefined|-1|L0 ~ undefined|L0 = ElemGet v812, v813 accessSite=12 [keyIsIntegral]
-# CHECK-NEXT: v815: -1|L0 ~ L0 = RequireObjectCoercible v814 name="at"
-# CHECK-NEXT: v816: boolean ~ true = TypeTest v815 testedType=L0
-# CHECK-NEXT: Branch v816 -> taken b86(), notTaken b87()
+# CHECK-NEXT: v796: undefined|-1|L0 ~ undefined|L0 = ElemGet v794, v795 accessSite=12 [keyIsIntegral]
+# CHECK-NEXT: v797: -1|L0 ~ L0 = RequireObjectCoercible v796 name="at"
+# CHECK-NEXT: v798: boolean ~ true = TypeTest v797 testedType=L0
+# CHECK-NEXT: Branch v798 -> taken b85(), notTaken b86()
+# CHECK-NEXT: b85() frequency=Rare:
+# CHECK-NEXT: Jump -> next b87(v779, v780, v781, v782, v783, v784, v785, v786, v787, v788, v789, v790, v791, v792, v793, v794)
 # CHECK-NEXT: b86() frequency=Rare:
-# CHECK-NEXT: Jump -> next b88(v797, v798, v799, v800, v801, v802, v803, v804, v805, v806, v807, v808, v809, v810, v811, v812)
-# CHECK-NEXT: b87() frequency=Rare:
-# CHECK-NEXT: v817: -1 = Integer integer=-1
-# CHECK-NEXT: v818: anything = PropGet v817 key="at" accessSite=13
-# CHECK-NEXT: Jump -> next b88(v797, v798, v799, v800, v801, v802, v803, v804, v805, v806, v807, v808, v809, v810, v811, v812)
-# CHECK-NEXT: b88(v819: Array<number, proven, pristine[Storage, Names]>, v820: int[1, 4] ~ 2, v821: unspecified|Array<int|whole>, v822: int|whole|unspecified ~ int[0, 2147483647], v823: int|whole|unspecified ~ 2, v824: int|whole|unspecified ~ 3, v825: int|whole|unspecified ~ 4, v826: int|whole|unspecified ~ 5, v827: int[1, 4] ~ 2, v828: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v829: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v830: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v831: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v832: int|whole ~ int[0, 2147483647], v833: undefined|null|Array<number>, v834: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: Jump -> next b89(v819, v820, v821, v822, v823, v824, v825, v826, v827, v828, v829, v830, v831, v832, v833, v834)
-# CHECK-NEXT: b89(v835: Array<number, proven, pristine[Storage, Names]>, v836: int[1, 4] ~ 2, v837: unspecified|Array<int|whole>, v838: int|whole|unspecified ~ int[0, 2147483647], v839: int|whole|unspecified ~ 2, v840: int|whole|unspecified ~ 3, v841: int|whole|unspecified ~ 4, v842: int|whole|unspecified ~ 5, v843: int[1, 4] ~ 2, v844: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v845: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v846: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v847: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v848: int|whole ~ int[0, 2147483647], v849: undefined|null|Array<number>, v850: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v851: 3 = Integer integer=3
-# CHECK-NEXT: v852: undefined|-1|L0 ~ undefined|L0 = ElemGet v850, v851 accessSite=14 [keyIsIntegral]
-# CHECK-NEXT: v853: -1|L0 ~ L0 = RequireObjectCoercible v852 name="more"
-# CHECK-NEXT: v854: boolean ~ true = TypeTest v853 testedType=L0
-# CHECK-NEXT: Branch v854 -> taken b90(), notTaken b91()
+# CHECK-NEXT: v799: -1 = Integer integer=-1
+# CHECK-NEXT: v800: anything = PropGet v799 key="at" accessSite=13
+# CHECK-NEXT: Jump -> next b87(v779, v780, v781, v782, v783, v784, v785, v786, v787, v788, v789, v790, v791, v792, v793, v794)
+# CHECK-NEXT: b87(v801: Array<number, proven, pristine[Storage, Names]>, v802: int[1, 4] ~ 2, v803: unspecified|Array<int|whole>, v804: int|whole|unspecified ~ int[0, 2147483647], v805: int|whole|unspecified ~ 2, v806: int|whole|unspecified ~ 3, v807: int|whole|unspecified ~ 4, v808: int|whole|unspecified ~ 5, v809: int[1, 4] ~ 2, v810: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v811: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v812: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v813: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v814: int|whole ~ int[0, 2147483647], v815: undefined|null|Array<number>, v816: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: Jump -> next b88(v801, v802, v803, v804, v805, v806, v807, v808, v809, v810, v811, v812, v813, v814, v815, v816)
+# CHECK-NEXT: b88(v817: Array<number, proven, pristine[Storage, Names]>, v818: int[1, 4] ~ 2, v819: unspecified|Array<int|whole>, v820: int|whole|unspecified ~ int[0, 2147483647], v821: int|whole|unspecified ~ 2, v822: int|whole|unspecified ~ 3, v823: int|whole|unspecified ~ 4, v824: int|whole|unspecified ~ 5, v825: int[1, 4] ~ 2, v826: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v827: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v828: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v829: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]>, v830: int|whole ~ int[0, 2147483647], v831: undefined|null|Array<number>, v832: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v833: 3 = Integer integer=3
+# CHECK-NEXT: v834: undefined|-1|L0 ~ undefined|L0 = ElemGet v832, v833 accessSite=14 [keyIsIntegral]
+# CHECK-NEXT: v835: -1|L0 ~ L0 = RequireObjectCoercible v834 name="more"
+# CHECK-NEXT: v836: boolean ~ true = TypeTest v835 testedType=L0
+# CHECK-NEXT: Branch v836 -> taken b89(), notTaken b90()
+# CHECK-NEXT: b89() frequency=Rare:
+# CHECK-NEXT: Jump -> next b91()
 # CHECK-NEXT: b90() frequency=Rare:
-# CHECK-NEXT: Jump -> next b92()
+# CHECK-NEXT: v837: -1 = Integer integer=-1
+# CHECK-NEXT: v838: anything = PropGet v837 key="more" accessSite=15
+# CHECK-NEXT: Jump -> next b91()
 # CHECK-NEXT: b91() frequency=Rare:
-# CHECK-NEXT: v855: -1 = Integer integer=-1
-# CHECK-NEXT: v856: anything = PropGet v855 key="more" accessSite=15
-# CHECK-NEXT: v857: anything ~ L1 = Upcast v856 castType=anything
-# CHECK-NEXT: v858: boolean ~ true = TypeTest v857 testedType=L1
-# CHECK-NEXT: Branch v858 -> taken b92(), notTaken b104()
-# CHECK-NEXT: b92() frequency=Rare:
-# CHECK-NEXT: Jump -> next b93(v835, v836, v837, v838, v839, v840, v841, v842, v843, v844, v845, v846, v847, v848, v849, v850)
-# CHECK-NEXT: b93(v859: Array<number, proven, pristine[Storage, Names]>, v860: int[1, 4], v861: unspecified|Array<int|whole>, v862: int|whole|unspecified, v863: int|whole|unspecified, v864: int|whole|unspecified, v865: int|whole|unspecified, v866: int|whole|unspecified, v867: int[1, 4], v868: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v869: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v870: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v871: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v872: int|whole ~ int[0, 2147483647], v873: undefined|null|Array<number>, v874: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Unlikely:
-# CHECK-NEXT: v875: fact = Specified
-# CHECK-NEXT: v876: Array<number, proven, pristine[Storage, Names]> = AssumeType v859, v875 provenType=Array<number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Switch v860 cases=[1, 2, 4] -> case b94(), case b95(), case b96(), otherwise b97()
+# CHECK-NEXT: Jump -> next b92(v817, v818, v819, v820, v821, v822, v823, v824, v825, v826, v827, v828, v829, v830, v831, v832)
+# CHECK-NEXT: b92(v839: Array<number, proven, pristine[Storage, Names]>, v840: int[1, 4], v841: unspecified|Array<int|whole>, v842: int|whole|unspecified, v843: int|whole|unspecified, v844: int|whole|unspecified, v845: int|whole|unspecified, v846: int|whole|unspecified, v847: int[1, 4], v848: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>, v849: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v850: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v851: -1|unspecified|Array<int|whole, proven, pristine[Storage, Names]>, v852: int|whole ~ int[0, 2147483647], v853: undefined|null|Array<number>, v854: Array<-1|L0, proven, pristine[Storage, Names]>) frequency=Unlikely:
+# CHECK-NEXT: v855: fact = Specified
+# CHECK-NEXT: v856: Array<number, proven, pristine[Storage, Names]> = AssumeType v839, v855 provenType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: Switch v840 cases=[1, 2, 4] -> case b93(), case b94(), case b95(), otherwise b96()
+# CHECK-NEXT: b93() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b97(v841)
 # CHECK-NEXT: b94() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b98(v861)
+# CHECK-NEXT: v857: fact = Specified
+# CHECK-NEXT: v858: int|whole = AssumeType v842, v857 provenType=int|whole
+# CHECK-NEXT: v859: int|whole = AssumeType v843, v857 provenType=int|whole
+# CHECK-NEXT: v860: int|whole = AssumeType v844, v857 provenType=int|whole
+# CHECK-NEXT: v861: int|whole = AssumeType v845, v857 provenType=int|whole
+# CHECK-NEXT: v862: int|whole = AssumeType v846, v857 provenType=int|whole
+# CHECK-NEXT: v863: Array<int|whole> = NewArray v858, v859, v860, v861, v862 contents=int|whole allocationSite=8
+# CHECK-NEXT: Jump -> next b97(v863)
 # CHECK-NEXT: b95() frequency=Unlikely:
-# CHECK-NEXT: v877: fact = Specified
-# CHECK-NEXT: v878: int|whole = AssumeType v862, v877 provenType=int|whole
-# CHECK-NEXT: v879: int|whole = AssumeType v863, v877 provenType=int|whole
-# CHECK-NEXT: v880: int|whole = AssumeType v864, v877 provenType=int|whole
-# CHECK-NEXT: v881: int|whole = AssumeType v865, v877 provenType=int|whole
-# CHECK-NEXT: v882: int|whole = AssumeType v866, v877 provenType=int|whole
-# CHECK-NEXT: v883: Array<int|whole> = NewArray v878, v879, v880, v881, v882 contents=int|whole allocationSite=8
-# CHECK-NEXT: Jump -> next b98(v883)
+# CHECK-NEXT: Jump -> next b97(v841)
 # CHECK-NEXT: b96() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b98(v861)
-# CHECK-NEXT: b97() frequency=Unlikely:
-# CHECK-NEXT: v884: fact = Specified
-# CHECK-NEXT: v885: int|whole = AssumeType v862, v884 provenType=int|whole
-# CHECK-NEXT: v886: int|whole = AssumeType v863, v884 provenType=int|whole
-# CHECK-NEXT: v887: int|whole = AssumeType v864, v884 provenType=int|whole
-# CHECK-NEXT: v888: int|whole = AssumeType v865, v884 provenType=int|whole
-# CHECK-NEXT: v889: int|whole = AssumeType v866, v884 provenType=int|whole
-# CHECK-NEXT: v890: Array<int|whole> = NewArray v885, v886, v887, v888, v889 contents=int|whole allocationSite=8
-# CHECK-NEXT: Jump -> next b98(v890)
-# CHECK-NEXT: b98(v891: unspecified|Array<int|whole>) frequency=Unlikely:
-# CHECK-NEXT: Switch v867 cases=[1, 2, 4] -> case b99(), case b100(), case b101(), otherwise b102()
+# CHECK-NEXT: v864: fact = Specified
+# CHECK-NEXT: v865: int|whole = AssumeType v842, v864 provenType=int|whole
+# CHECK-NEXT: v866: int|whole = AssumeType v843, v864 provenType=int|whole
+# CHECK-NEXT: v867: int|whole = AssumeType v844, v864 provenType=int|whole
+# CHECK-NEXT: v868: int|whole = AssumeType v845, v864 provenType=int|whole
+# CHECK-NEXT: v869: int|whole = AssumeType v846, v864 provenType=int|whole
+# CHECK-NEXT: v870: Array<int|whole> = NewArray v865, v866, v867, v868, v869 contents=int|whole allocationSite=8
+# CHECK-NEXT: Jump -> next b97(v870)
+# CHECK-NEXT: b97(v871: unspecified|Array<int|whole>) frequency=Unlikely:
+# CHECK-NEXT: Switch v847 cases=[1, 2, 4] -> case b98(), case b99(), case b100(), otherwise b101()
+# CHECK-NEXT: b98() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b102(v848)
 # CHECK-NEXT: b99() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b103(v868)
+# CHECK-NEXT: v872: fact = Specified
+# CHECK-NEXT: v873: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v849, v872 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v874: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v850, v872 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v875: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v851, v872 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v876: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = NewArray v873, v874, v875 contents=-1|Array<int|whole, proven, pristine[Storage, Names]> allocationSite=10
+# CHECK-NEXT: Jump -> next b102(v876)
 # CHECK-NEXT: b100() frequency=Unlikely:
-# CHECK-NEXT: v892: fact = Specified
-# CHECK-NEXT: v893: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v869, v892 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v894: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v870, v892 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v895: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v871, v892 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v896: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = NewArray v893, v894, v895 contents=-1|Array<int|whole, proven, pristine[Storage, Names]> allocationSite=10
-# CHECK-NEXT: Jump -> next b103(v896)
+# CHECK-NEXT: Jump -> next b102(v848)
 # CHECK-NEXT: b101() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b103(v868)
-# CHECK-NEXT: b102() frequency=Unlikely:
-# CHECK-NEXT: v897: fact = Specified
-# CHECK-NEXT: v898: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v869, v897 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v899: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v870, v897 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v900: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v871, v897 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v901: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = NewArray v898, v899, v900 contents=-1|Array<int|whole, proven, pristine[Storage, Names]> allocationSite=10
-# CHECK-NEXT: Jump -> next b103(v901)
-# CHECK-NEXT: b103(v902: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Unlikely:
-# CHECK-NEXT: v903: unspecified|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v891 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v904: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v902 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v905: fact = Specified
-# CHECK-NEXT: v906: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v903, v905 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v907: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v904, v905 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v908: L2 = NewObject -, v906, v876, v873, v907, v874 layout=L2 fields=[0, 1, 2, 3, 4] allocationSite=6 allocationClass=2
-# CHECK-NEXT: v909: L2 = FinishObject v908
-# CHECK-NEXT: v910: int[0, 4294967295] = CallBuiltin v2, v909 overload=ArrayPrototypePush/0 accessSite=17
-# CHECK-NEXT: Jump -> next b115(v872)
-# CHECK-NEXT: b104() frequency=Rare:
-# CHECK-NEXT: v911: fact = Specified
-# CHECK-NEXT: v912: Array<number, proven, pristine[Storage, Names]> = AssumeType v835, v911 provenType=Array<number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Switch v836 cases=[1, 2, 4] -> case b105(), case b106(), case b107(), otherwise b108()
-# CHECK-NEXT: b105() frequency=Rare:
-# CHECK-NEXT: Jump -> next b109(v837)
+# CHECK-NEXT: v877: fact = Specified
+# CHECK-NEXT: v878: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v849, v877 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v879: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v850, v877 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v880: -1|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v851, v877 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v881: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = NewArray v878, v879, v880 contents=-1|Array<int|whole, proven, pristine[Storage, Names]> allocationSite=10
+# CHECK-NEXT: Jump -> next b102(v881)
+# CHECK-NEXT: b102(v882: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Unlikely:
+# CHECK-NEXT: v883: unspecified|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v871 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v884: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v882 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v885: fact = Specified
+# CHECK-NEXT: v886: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v883, v885 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v887: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v884, v885 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v888: L2 = NewObject -, v886, v856, v853, v887, v854 layout=L2 fields=[0, 1, 2, 3, 4] allocationSite=6 allocationClass=2
+# CHECK-NEXT: v889: L2 = FinishObject v888
+# CHECK-NEXT: v890: int[0, 4294967295] = CallBuiltin v2, v889 overload=ArrayPrototypePush/0 accessSite=17
+# CHECK-NEXT: Jump -> next b103(v852)
+# CHECK-NEXT: b103(v891: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v892: int|whole ~ int[1, 2147483648] = Increment v891
+# CHECK-NEXT: Jump -> next b1(v892)
+# CHECK-NEXT: b104(v893: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v894: int|whole ~ int[1, 2147483648] = Increment v893
+# CHECK-NEXT: v895: int|whole ~ int[1, 2147483647] = Upcast v894 castType=int|whole
+# CHECK-NEXT: v896: boolean ~ true = TypeTest v895 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v896 -> taken b105(| 0), notTaken b106()
+# CHECK-NEXT: b105(v897: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b2(v897)
 # CHECK-NEXT: b106() frequency=Rare:
-# CHECK-NEXT: v913: fact = Specified
-# CHECK-NEXT: v914: int|whole ~ int[0, 2147483647] = AssumeType v838, v913 provenType=int|whole
-# CHECK-NEXT: v915: int|whole ~ 2 = AssumeType v839, v913 provenType=int|whole
-# CHECK-NEXT: v916: int|whole ~ 3 = AssumeType v840, v913 provenType=int|whole
-# CHECK-NEXT: v917: int|whole ~ 4 = AssumeType v841, v913 provenType=int|whole
-# CHECK-NEXT: v918: int|whole ~ 5 = AssumeType v842, v913 provenType=int|whole
-# CHECK-NEXT: v919: Array<int|whole> = NewArray v914, v915, v916, v917, v918 contents=int|whole allocationSite=8
-# CHECK-NEXT: Jump -> next b109(v919)
-# CHECK-NEXT: b107() frequency=Rare:
-# CHECK-NEXT: Jump -> next b109(v837)
-# CHECK-NEXT: b108() frequency=Rare:
-# CHECK-NEXT: v920: fact = Specified
-# CHECK-NEXT: v921: int|whole ~ int[0, 2147483647] = AssumeType v838, v920 provenType=int|whole
-# CHECK-NEXT: v922: int|whole ~ 2 = AssumeType v839, v920 provenType=int|whole
-# CHECK-NEXT: v923: int|whole ~ 3 = AssumeType v840, v920 provenType=int|whole
-# CHECK-NEXT: v924: int|whole ~ 4 = AssumeType v841, v920 provenType=int|whole
-# CHECK-NEXT: v925: int|whole ~ 5 = AssumeType v842, v920 provenType=int|whole
-# CHECK-NEXT: v926: Array<int|whole> = NewArray v921, v922, v923, v924, v925 contents=int|whole allocationSite=8
-# CHECK-NEXT: Jump -> next b109(v926)
-# CHECK-NEXT: b109(v927: unspecified|Array<int|whole>) frequency=Rare:
-# CHECK-NEXT: Switch v843 cases=[1, 2, 4] -> case b110(), case b111(), case b112(), otherwise b113()
-# CHECK-NEXT: b110() frequency=Rare:
-# CHECK-NEXT: Jump -> next b114(v844)
-# CHECK-NEXT: b111() frequency=Rare:
-# CHECK-NEXT: v928: fact = Specified
-# CHECK-NEXT: v929: -1|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v845, v928 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v930: -1|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v846, v928 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v931: -1|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v847, v928 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v932: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = NewArray v929, v930, v931 contents=-1|Array<int|whole, proven, pristine[Storage, Names]> allocationSite=10
-# CHECK-NEXT: Jump -> next b114(v932)
-# CHECK-NEXT: b112() frequency=Rare:
-# CHECK-NEXT: Jump -> next b114(v844)
-# CHECK-NEXT: b113() frequency=Rare:
-# CHECK-NEXT: v933: fact = Specified
-# CHECK-NEXT: v934: -1|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v845, v933 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v935: -1|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v846, v933 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v936: -1|Array<int|whole, proven, pristine[Storage, Names]> ~ Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v847, v933 provenType=-1|Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v937: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>> = NewArray v934, v935, v936 contents=-1|Array<int|whole, proven, pristine[Storage, Names]> allocationSite=10
-# CHECK-NEXT: Jump -> next b114(v937)
-# CHECK-NEXT: b114(v938: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>>) frequency=Rare:
-# CHECK-NEXT: v939: unspecified|Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v927 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v940: unspecified|Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v938 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v941: fact = Specified
-# CHECK-NEXT: v942: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v939, v941 provenType=Array<int|whole, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v943: Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]> = AssumeType v940, v941 provenType=Array<-1|Array<int|whole, proven, pristine[Storage, Names]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v944: L2 = NewObject -, v942, v912, v849, v943, v850 layout=L2 fields=[0, 1, 2, 3, 4] allocationSite=6 allocationClass=2
-# CHECK-NEXT: v945: L2 = FinishObject v944
-# CHECK-NEXT: v946: int[0, 4294967295] = CallBuiltin v2, v945 overload=ArrayPrototypePush/0 accessSite=17
-# CHECK-NEXT: Jump -> next b115(v848)
-# CHECK-NEXT: b115(v947: int|whole ~ int[0, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v948: int|whole ~ int[1, 2147483648] = Increment v947
-# CHECK-NEXT: Jump -> next b1(v948)
-# CHECK-NEXT: b116(v949: int|whole ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v950: int|whole ~ int[1, 2147483648] = Increment v949
-# CHECK-NEXT: v951: int|whole ~ int[1, 2147483647] = Upcast v950 castType=int|whole
-# CHECK-NEXT: v952: boolean ~ true = TypeTest v951 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v952 -> taken b117(| 0), notTaken b118()
-# CHECK-NEXT: b117(v953: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b2(v953)
-# CHECK-NEXT: b118() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v955: undefined|null|Array<number> = Call v0 calleeName="long" accessSite=2 callees=[f3]
-# CHECK-NEXT: v956: Array<undefined|null|L0> = Data data=d4 allocationSite=11
-# CHECK-NEXT: v957: Array<-1|L0, proven, pristine[Storage, Names]> = AssumeType v956 provenType=Array<-1|L0, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Jump -> next b30(v951, v955, v957)
+# CHECK-NEXT: v899: undefined|null|Array<number> = Call v0 calleeName="long" accessSite=2 callees=[f3]
+# CHECK-NEXT: v900: Array<undefined|null|L0> = Data data=d4 allocationSite=11
+# CHECK-NEXT: v901: Array<-1|L0, proven, pristine[Storage, Names]> = AssumeType v900 provenType=Array<-1|L0, proven, pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b30(v895, v899, v901)
 # CHECK-NEXT: }

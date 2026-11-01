@@ -27,7 +27,5 @@ structural-types/package-runs-sources-typed-declaration	// IRT= 0 sumPoint = Typ
 structural-types/package-runs-sources-typed-declaration	// IRT= 1 sumPair = TypeTest
 structural-types/package-runs-sources-typed-declaration	// IRT= 2 sumPoint = GetSlot v\d+ key="[xy]" receivers=\[L\d+\] level=Proven
 # These failed when generated-code-is-what-the-programs-say.test.ts first ran this script over every program. Nobody has looked at them one by one.
-# Open: `new Map([["one", 1], ["three", 3.5]])`: the keys and the values of a Map made from pairs that the program writes are not told apart, so what a step of it holds is tested.
-builtins/key-and-value-of-a-pair-read-by-index	// IR= 0 ofAMap TypeTest
 # Open: a view that a function is handed is tested three times in a loop where one test would do. The pass that let one test stand for the three gave wrong answers and is out.
 arrays/views-over-one-buffer	// IR= 1 lengthsOfGivenView IsPristine

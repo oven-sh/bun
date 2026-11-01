@@ -105,9 +105,9 @@ function f2 name="Counter" module=m0 position=46 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @46
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @17
-    v2 = NewObject v1 layout=L0 @17
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @17
+    v1 = GetConstructPrototype v0 layout=L0 @55
+    v2 = NewObject v1 layout=L0 @55
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @55
     v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]} @55
     v5 = Integer integer=1 @64
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @55
@@ -188,9 +188,9 @@ function f8 name="Counter" module=m4 position=44 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @44
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @0
-    v2 = NewObject v1 layout=L1 @0
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v1 = GetConstructPrototype v0 layout=L1 @53
+    v2 = NewObject v1 layout=L1 @53
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @53
     v4 = Convert v3 declared={type=undefined|null|L1 flags=[IsExpected]} @53
     v5 = Integer integer=1 @62
     v6 = Convert v5 declared={type=number flags=[IsExpected]} @53

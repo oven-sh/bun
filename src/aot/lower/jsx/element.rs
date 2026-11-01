@@ -169,6 +169,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             None => self.get_binding_without_expression(reference.binding, reference.name),
         };
+        let function = if reference.member.is_some() {
+            let key = self.file.name_key(reference.member);
+            self.emit_get(function, PropertyName::Constant(key))
+        } else {
+            function
+        };
         let mut callee = Callee {
             function,
             this: None,
@@ -257,7 +263,7 @@ fn find_quoted_text(name: &[u8]) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use bun_sema::atom::known;
+    use bun_sema::atom::{Atom, known};
     use bun_sema::bind::decorator_metadata::MetadataReference;
     use bun_sema::bind::{Binding, ImplicitReference, ImplicitReferenceKind, SymbolId};
     use bun_sema::hir::{ExprId, MemberId, NodeData, ParamId, TypeNodeId};
@@ -270,6 +276,7 @@ mod tests {
             kind,
             name,
             binding: Binding::Free,
+            member: Atom::NONE,
         };
         let element = |index| NodeData::Expr(ExprId(index));
         let metadata = |index| {
@@ -315,6 +322,7 @@ mod tests {
             kind,
             name: known::React,
             binding,
+            member: Atom::NONE,
         };
         let shadowing = Binding::Symbol(SymbolId(1));
         let outer = Binding::Symbol(SymbolId(0));

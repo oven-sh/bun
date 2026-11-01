@@ -360,9 +360,9 @@ mod tests {
             errors_with_bun_types: None,
             has_early_errors: false,
             replaced_builtins: Vec::new(),
-            mocks_any_module: false,
             left_to_loader: Vec::new(),
             loads_below_files_left_to_loader: None,
+            loaded_by_workers_too: Vec::new(),
         }
     }
 

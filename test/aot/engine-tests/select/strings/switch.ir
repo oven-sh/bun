@@ -1,10 +1,177 @@
 # A `switch` on character codes whose cases test the value again. With fewer than 128 cases it compiles to compares and no jump table.
+# -- source: switch.ts
+# // switch over numbers, strings and with cases that fall through.
+# function classify(value: number | string | null): string {
+#   switch (value) {
+#     case 0:
+#     case 1:
+#       return "small";
+#     case 2:
+#       value = 3;
+#     case 3: {
+#       const inner = "three";
+#       return inner + value;
+#     }
+#     case "text":
+#       return "string";
+#     case null:
+#       return "null";
+#     default:
+#       break;
+#   }
+#   switch (typeof value) {
+#     case "number":
+#       return value > 100 ? "big" : "medium";
+#     default:
+#       return "other";
+#   }
+# }
+# console.log([0, 1, 2, 3, "text", null, 50, 500, "x"].map(classify));
+# function dynamic(x: number, y: number): string {
+#   switch (true) {
+#     case x > y:
+#       return "greater";
+#     case x === y:
+#       return "equal";
+#   }
+#   return "less";
+# }
+# console.log(dynamic(1, 2), dynamic(2, 2), dynamic(3, 2));
+# -- source: switch.ts
+# // A `switch` on character codes whose cases test the value again. With fewer than 128 cases it compiles to compares and no jump table.
+# // CALLS+ kindPlain tables 0
+# // CALLS+ kind tables 0
+# const print = (s: string) => console.log(s);
+# function show(x: unknown): string {
+#     if (typeof x !== "string")
+#         return Object.is(x, -0) ? "-0" : String(x);
+#     let out = '"';
+#     for (let i = 0; i < x.length; i++) {
+#         const c = x.charCodeAt(i);
+#         out += c >= 32 && c < 127 ? x[i] : "\\u" + (c + 0x10000).toString(16).slice(1);
+#     }
+#     return out + '"';
+# }
+# function attempt(f: () => unknown): string {
+#     try {
+#         return show(f());
+#     } catch (e) {
+#         return "throws " + (e as Error).name;
+#     }
+# }
+# function cat(a: string, b: string): string { return a + b; }
+# function cat3(a: string, b: string, c: string): string { return `${a}${b}${c}`; }
+# function part(s: string, from: number, to: number): string { return s.slice(from, to); }
+# function flattened(s: string): string { s.charCodeAt(0); return s; }
+# function isWhiteSpaceSingleLine(ch: number): boolean { return ch === 32 || ch === 9 || ch === 11 || ch === 12 || ch === 160 || ch === 133 || ch === 5760 || ch >= 8192 && ch <= 8203 || ch === 8239 || ch === 8287 || ch === 12288 || ch === 65279; }
+# function isLineBreak(ch: number): boolean { return ch === 10 || ch === 13 || ch === 8232 || ch === 8233; }
+# export function kindPlain(s: string, i: number): number {
+#     const ch = s.codePointAt(i) as number;
+#     switch (ch) {
+#         case 10: case 13: return 1;
+#         case 9: case 11: case 12: case 32: case 160: case 5760: case 8192: case 8193: case 8194: case 8195: case 8196: case 8197: case 8198: case 8199: case 8200: case 8201: case 8202: case 8203: case 8239: case 8287: case 12288: case 65279: return 2;
+#         case 33: return 3; case 34: case 39: return 4; case 96: return 5; case 37: return 6; case 38: return 7; case 40: return 8; case 41: return 9; case 42: return 10; case 43: return 11; case 44: return 12; case 45: return 13; case 46: return 14; case 47: return 15;
+#         case 48: return 16; case 49: case 50: case 51: case 52: case 53: case 54: case 55: case 56: case 57: return 17; case 58: return 18; case 59: return 19; case 60: return 20; case 61: return 21; case 62: return 22; case 63: return 23; case 91: return 24; case 93: return 25;
+#         case 94: return 26; case 123: return 27; case 124: return 28; case 125: return 29; case 126: return 30; case 64: return 31; case 92: return 32; case 35: return 33;
+#         default: return 0;
+#     }
+# }
+# export function kind(s: string, i: number): number {
+#     const ch = s.codePointAt(i) as number;
+#     switch (ch) {
+#         case 10: case 13: return 1;
+#         case 9: case 11: case 12: case 32: case 160: case 5760: case 8192: case 8193: case 8194: case 8195: case 8196: case 8197: case 8198: case 8199: case 8200: case 8201: case 8202: case 8203: case 8239: case 8287: case 12288: case 65279: return 2;
+#         case 33: return 3; case 34: case 39: return 4; case 96: return 5; case 37: return 6; case 38: return 7; case 40: return 8; case 41: return 9; case 42: return 10; case 43: return 11; case 44: return 12; case 45: return 13; case 46: return 14; case 47: return 15;
+#         case 48: return 16; case 49: case 50: case 51: case 52: case 53: case 54: case 55: case 56: case 57: return 17; case 58: return 18; case 59: return 19; case 60: return 20; case 61: return 21; case 62: return 22; case 63: return 23; case 91: return 24; case 93: return 25;
+#         case 94: return 26; case 123: return 27; case 124: return 28; case 125: return 29; case 126: return 30; case 64: return 31; case 92: return 32; case 35: return 33;
+#         default:
+#             if (isWhiteSpaceSingleLine(ch)) return 40;
+#             if (isLineBreak(ch)) return 41;
+#             return ch >= 65 ? 42 : 0;
+#     }
+# }
+# // The branches test it again too, and one test comes before the switch.
+# export function kindOfUnit(s: string, i: number): number {
+#     const ch = s.charCodeAt(i), again: number = ch;
+#     if (ch === 12) return -1;
+#     switch (ch) {
+#         case 10: case 13: return again === 13 ? 1 : 2;
+#         case 9: case 11: case 12: case 32: case 160: return again === 32 ? 3 : again === 12 ? 4 : isLineBreak(again) ? 5 : 6;
+#         case 33: case 34: case 35: case 36: case 37: case 38: case 39: case 40: case 41: case 42: return again === 10 ? 7 : again;
+#         default: return again === 9 || again === 32 || again === 10 ? 8 : again === 133 ? 9 : 0;
+#     }
+# }
+# // Another value is tested in between: no part of the switch.
+# export function twoSubjects(s: string, i: number, j: number): number {
+#     const a = s.charCodeAt(i), b = s.charCodeAt(j);
+#     const a2: number = a, b2: number = b;
+#     if (a === 10) return 1; if (b === 10) return 2; if (a === 13) return 3; if (b === 13) return 4; if (a === 32) return 5; if (a2 === 10) return 6; if (b === 32) return 7; if (a === 9) return 8; if (a === 11) return 9; if (a === 12) return 10;
+#     return a2 === 32 || b2 === 10 ? 11 : 0;
+# }
+# let all = "";
+# for (let c = 0; c < 140; c++) all += String.fromCharCode(c);
+# for (const c of [160, 161, 5760, 5761, 8191, 8192, 8197, 8203, 8204, 8232, 8233, 8234, 8239, 8287, 12288, 65279, 65280, 0xd83d, 0xde00, 0xffff]) all += String.fromCharCode(c);
+# all.charCodeAt(0);
+# let line = "";
+# for (let i = -1; i <= all.length; i++) {
+#     line += kindPlain(all, i) + "," + kind(all, i) + "," + kindOfUnit(all, i) + "," + twoSubjects(all, i, all.length - i) + " ";
+#     if (line.length > 150) { print(line); line = ""; }
+# }
+# print(line);
+# // The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
+# (globalThis as any).kept = [kindPlain, kind, kindOfUnit]; console.log("number");
+# -- end of source
 # FORM: AsRead
 # RUN: lower-to-air size f1 f2
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
 module m0 path="switch.ts" displayPath="switch.ts" body=f0 exports=[{name="kind" variable=g0}, {name="kindOfUnit" variable=g1}, {name="kindPlain" variable=g2}, {name="twoSubjects" variable=g3}] namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 entry module=m0
+typesite w0 module=m0 position=2558 kind=Parameter
+typesite w1 module=m0 position=2569 kind=Parameter
+typesite w2 module=m0 position=2537 kind=Result
+typesite w3 module=m0 position=3923 kind=Parameter
+typesite w4 module=m0 position=3934 kind=Parameter
+typesite w5 module=m0 position=3896 kind=Result
+typesite w6 module=m0 position=1399 kind=Parameter
+typesite w7 module=m0 position=1410 kind=Parameter
+typesite w8 module=m0 position=1373 kind=Result
+typesite w9 module=m0 position=4562 kind=Parameter
+typesite w10 module=m0 position=4573 kind=Parameter
+typesite w11 module=m0 position=4584 kind=Parameter
+typesite w12 module=m0 position=4534 kind=Result
+typesite w13 module=m0 position=1052 kind=Parameter
+typesite w14 module=m0 position=1020 kind=Result
+typesite w15 module=m0 position=1287 kind=Parameter
+typesite w16 module=m0 position=1266 kind=Result
+typesite w17 module=m0 position=195 kind=Variable
+typesite w18 module=m0 position=4994 kind=Variable
+typesite w19 module=m0 position=5264 kind=Variable
+typesite w20 module=m0 position=204 kind=Parameter
+typesite w21 module=m0 position=5013 kind=Variable
+typesite w22 module=m0 position=5041 kind=CallResult
+typesite w23 module=m0 position=5076 kind=Element
+typesite w24 module=m0 position=5217 kind=CallResult
+typesite w25 module=m0 position=5241 kind=CallResult
+typesite w26 module=m0 position=5284 kind=Variable
+typesite w27 module=m0 position=5297 kind=PropertyRead
+typesite w28 module=m0 position=5328 kind=CallResult
+typesite w29 module=m0 position=5354 kind=CallResult
+typesite w30 module=m0 position=5375 kind=CallResult
+typesite w31 module=m0 position=5422 kind=PropertyRead
+typesite w32 module=m0 position=5402 kind=CallResult
+typesite w33 module=m0 position=5453 kind=PropertyRead
+typesite w34 module=m0 position=2605 kind=CallResult
+typesite w35 module=m0 position=2625 kind=Assertion
+typesite w36 module=m0 position=3694 kind=CallResult
+typesite w37 module=m0 position=3749 kind=CallResult
+typesite w38 module=m0 position=3970 kind=CallResult
+typesite w39 module=m0 position=4208 kind=CallResult
+typesite w40 module=m0 position=1446 kind=CallResult
+typesite w41 module=m0 position=1466 kind=Assertion
+typesite w42 module=m0 position=4619 kind=CallResult
+typesite w43 module=m0 position=4640 kind=CallResult
 data d0 root=Array{contents=number elements=[Number{value=160}, Number{value=161}, Number{value=5760}, Number{value=5761}, Number{value=8191}, Number{value=8192}, Number{value=8197}, Number{value=8203}, Number{value=8204}, Number{value=8232}, Number{value=8233}, Number{value=8234}, Number{value=8239}, Number{value=8287}, Number{value=12288}, Number{value=65279}, Number{value=65280}, Number{value=55357}, Number{value=56832}, Number{value=65535}]} module=m0
 variable g0 name="kind" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="kindOfUnit" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
@@ -14,699 +181,1354 @@ variable g4 name="isWhiteSpaceSingleLine" module=m0 declared={type=f5 flags=[IsF
 variable g5 name="isLineBreak" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = String string=""
-    v1 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-    v2 = Integer
-    v3 = Convert v2 declared={type=number}
-    v4 = Integer integer=140
-    v5 = Data data=d0
-    v6 = IteratorOpen v5
-    Jump -> next b1(v1)
-  b1(v7: undefined|null|string):
-    LoopHint
-    v9 = IteratorResume v6
-    v10 = ResultAt v9
-    v11 = ResultAt v9 index=1
-    Branch v10 -> taken b2(), notTaken b6()
-  b2():
-    v12 = PropGet v7 key="charCodeAt"
-    v13 = Integer
-    v14 = Call v12, v7, v13 calleeKey="charCodeAt" calleeName="all.charCodeAt"
-    v15 = String string=""
-    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-    v17 = Integer integer=-1
-    v18 = Convert v17 declared={type=number}
-    Jump -> next b3(v16, v18)
-  b3(v19: undefined|null|string, v20: number):
-    LoopHint
-    v22 = PropGet v7 key="length"
-    v23 = Convert v22 declared={type=number} illTypedCause=Assertion
-    v24 = LessEq v20, v23
-    Branch v24 -> taken b4(| 0), notTaken b5(| 0)
-  b4(v25):
-    v26 = GetModuleVariable variable=g0
-    v27 = Call v26, -, v7, v25 calleeName="kind"
-    v28 = GetModuleVariable variable=g1
-    v29 = Call v28, -, v7, v25 calleeName="kindOfUnit"
-    v30 = GetModuleVariable variable=g3
-    v31 = PropGet v7 key="length"
-    v32 = Convert v31 declared={type=number} illTypedCause=Assertion
-    v33 = Sub v32, v25
-    v34 = Call v30, -, v7, v25, v33 calleeName="twoSubjects"
-    v35 = String string=""
-    v36 = Convert v35 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-    v37 = Increment v25
-    v38 = Convert v37 declared={type=number}
-    Jump -> next b3(v36, v38)
-  b5(v39):
-    v40 = GetModuleVariable variable=g1
-    v41 = Undefined
-    Return v41
-  b6():
-    Jump -> next b7()
-  b7() handler=b8():
-    v42 = Convert v11 declared={type=number} illTypedCause=ContainerWriterUnseen
-    v43 = Builtin builtin=String
-    v44 = Builtin builtin=StringFromCharCode
-    v45 = Call v44, v43, v42 calleeName="String.fromCharCode"
-    v46 = Convert v45 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v47 = Add v7, v46
-    v48 = Convert v47 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-    Jump -> next b1(v48)
-  b8() role=IterationCleanup subject=v6:
-    v49 = CatchException
-    Rethrow v49
-}
-function f1 name="kind" module=m0 position=2537 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string, v1: number):
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v2 = PropGet v0 key="codePointAt"
-    v3 = Call v2, v0, v1 calleeKey="codePointAt" calleeName="s.codePointAt"
-    v4 = Convert v3 declared={type=undefined|number} illTypedCause=DeclarationWithoutBody
-    v5 = Convert v4 declared={type=number} illTypedCause=Assertion
-    Switch v5 cases=[10, 13, 9, 11, 12, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8203, 8239, 8287, 12288, 65279, 33, 34, 39, 96, 37, 38, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 91, 93, 94, 123, 124, 125, 126, 64, 92, 35] -> case b2(| 0), case b3(| 0), case b5(| 0), case b6(| 0), case b7(| 0), case b8(| 0), case b9(| 0), case b10(| 0), case b11(| 0), case b12(| 0), case b13(| 0), case b14(| 0), case b15(| 0), case b16(| 0), case b17(| 0), case b18(| 0), case b19(| 0), case b20(| 0), case b21(| 0), case b22(| 0), case b23(| 0), case b24(| 0), case b25(| 0), case b26(| 0), case b28(| 0), case b30(| 0), case b31(| 0), case b33(| 0), case b35(| 0), case b37(| 0), case b39(| 0), case b41(| 0), case b43(| 0), case b45(| 0), case b47(| 0), case b49(| 0), case b51(| 0), case b53(| 0), case b55(| 0), case b57(| 0), case b58(| 0), case b59(| 0), case b60(| 0), case b61(| 0), case b62(| 0), case b63(| 0), case b64(| 0), case b65(| 0), case b67(| 0), case b69(| 0), case b71(| 0), case b73(| 0), case b75(| 0), case b77(| 0), case b79(| 0), case b81(| 0), case b83(| 0), case b85(| 0), case b87(| 0), case b89(| 0), case b91(| 0), case b93(| 0), case b95(| 0), case b97(| 0), otherwise b99()
-  b2(v6):
-    Jump -> next b4()
-  b3(v7):
-    Jump -> next b4()
-  b4():
-    v8 = Integer integer=1
-    v9 = Convert v8 declared={type=number}
-    Return v9
-  b5(v10):
-    Jump -> next b27()
-  b6(v11):
-    Jump -> next b27()
-  b7(v12):
-    Jump -> next b27()
-  b8(v13):
-    Jump -> next b27()
-  b9(v14):
-    Jump -> next b27()
-  b10(v15):
-    Jump -> next b27()
-  b11(v16):
-    Jump -> next b27()
-  b12(v17):
-    Jump -> next b27()
-  b13(v18):
-    Jump -> next b27()
-  b14(v19):
-    Jump -> next b27()
-  b15(v20):
-    Jump -> next b27()
-  b16(v21):
-    Jump -> next b27()
-  b17(v22):
-    Jump -> next b27()
-  b18(v23):
-    Jump -> next b27()
-  b19(v24):
-    Jump -> next b27()
-  b20(v25):
-    Jump -> next b27()
-  b21(v26):
-    Jump -> next b27()
-  b22(v27):
-    Jump -> next b27()
-  b23(v28):
-    Jump -> next b27()
-  b24(v29):
-    Jump -> next b27()
-  b25(v30):
-    Jump -> next b27()
-  b26(v31):
-    Jump -> next b27()
-  b27():
-    v32 = Integer integer=2
-    v33 = Convert v32 declared={type=number}
-    Return v33
-  b28(v34):
-    Jump -> next b29()
-  b29():
-    v35 = Integer integer=3
-    v36 = Convert v35 declared={type=number}
-    Return v36
-  b30(v37):
-    Jump -> next b32()
-  b31(v38):
-    Jump -> next b32()
-  b32():
-    v39 = Integer integer=4
-    v40 = Convert v39 declared={type=number}
-    Return v40
-  b33(v41):
-    Jump -> next b34()
-  b34():
-    v42 = Integer integer=5
-    v43 = Convert v42 declared={type=number}
-    Return v43
-  b35(v44):
-    Jump -> next b36()
-  b36():
-    v45 = Integer integer=6
-    v46 = Convert v45 declared={type=number}
-    Return v46
-  b37(v47):
-    Jump -> next b38()
-  b38():
-    v48 = Integer integer=7
-    v49 = Convert v48 declared={type=number}
-    Return v49
-  b39(v50):
-    Jump -> next b40()
-  b40():
-    v51 = Integer integer=8
-    v52 = Convert v51 declared={type=number}
-    Return v52
-  b41(v53):
-    Jump -> next b42()
-  b42():
-    v54 = Integer integer=9
-    v55 = Convert v54 declared={type=number}
-    Return v55
-  b43(v56):
-    Jump -> next b44()
-  b44():
-    v57 = Integer integer=10
-    v58 = Convert v57 declared={type=number}
-    Return v58
-  b45(v59):
-    Jump -> next b46()
-  b46():
-    v60 = Integer integer=11
-    v61 = Convert v60 declared={type=number}
-    Return v61
-  b47(v62):
-    Jump -> next b48()
-  b48():
-    v63 = Integer integer=12
-    v64 = Convert v63 declared={type=number}
-    Return v64
-  b49(v65):
-    Jump -> next b50()
-  b50():
-    v66 = Integer integer=13
-    v67 = Convert v66 declared={type=number}
-    Return v67
-  b51(v68):
-    Jump -> next b52()
-  b52():
-    v69 = Integer integer=14
-    v70 = Convert v69 declared={type=number}
-    Return v70
-  b53(v71):
-    Jump -> next b54()
-  b54():
-    v72 = Integer integer=15
-    v73 = Convert v72 declared={type=number}
-    Return v73
-  b55(v74):
-    Jump -> next b56()
-  b56():
-    v75 = Integer integer=16
-    v76 = Convert v75 declared={type=number}
-    Return v76
-  b57(v77):
-    Jump -> next b66()
-  b58(v78):
-    Jump -> next b66()
-  b59(v79):
-    Jump -> next b66()
-  b60(v80):
-    Jump -> next b66()
-  b61(v81):
-    Jump -> next b66()
-  b62(v82):
-    Jump -> next b66()
-  b63(v83):
-    Jump -> next b66()
-  b64(v84):
-    Jump -> next b66()
-  b65(v85):
-    Jump -> next b66()
-  b66():
-    v86 = Integer integer=17
-    v87 = Convert v86 declared={type=number}
-    Return v87
-  b67(v88):
-    Jump -> next b68()
-  b68():
-    v89 = Integer integer=18
-    v90 = Convert v89 declared={type=number}
-    Return v90
-  b69(v91):
-    Jump -> next b70()
-  b70():
-    v92 = Integer integer=19
-    v93 = Convert v92 declared={type=number}
-    Return v93
-  b71(v94):
-    Jump -> next b72()
-  b72():
-    v95 = Integer integer=20
-    v96 = Convert v95 declared={type=number}
-    Return v96
-  b73(v97):
-    Jump -> next b74()
-  b74():
-    v98 = Integer integer=21
-    v99 = Convert v98 declared={type=number}
-    Return v99
-  b75(v100):
-    Jump -> next b76()
-  b76():
-    v101 = Integer integer=22
-    v102 = Convert v101 declared={type=number}
-    Return v102
-  b77(v103):
-    Jump -> next b78()
-  b78():
-    v104 = Integer integer=23
-    v105 = Convert v104 declared={type=number}
-    Return v105
-  b79(v106):
-    Jump -> next b80()
-  b80():
-    v107 = Integer integer=24
-    v108 = Convert v107 declared={type=number}
-    Return v108
-  b81(v109):
-    Jump -> next b82()
-  b82():
-    v110 = Integer integer=25
-    v111 = Convert v110 declared={type=number}
-    Return v111
-  b83(v112):
-    Jump -> next b84()
-  b84():
-    v113 = Integer integer=26
-    v114 = Convert v113 declared={type=number}
-    Return v114
-  b85(v115):
-    Jump -> next b86()
-  b86():
-    v116 = Integer integer=27
-    v117 = Convert v116 declared={type=number}
-    Return v117
-  b87(v118):
-    Jump -> next b88()
-  b88():
-    v119 = Integer integer=28
-    v120 = Convert v119 declared={type=number}
-    Return v120
-  b89(v121):
-    Jump -> next b90()
-  b90():
-    v122 = Integer integer=29
-    v123 = Convert v122 declared={type=number}
-    Return v123
-  b91(v124):
-    Jump -> next b92()
-  b92():
-    v125 = Integer integer=30
-    v126 = Convert v125 declared={type=number}
-    Return v126
-  b93(v127):
-    Jump -> next b94()
-  b94():
-    v128 = Integer integer=31
-    v129 = Convert v128 declared={type=number}
-    Return v129
-  b95(v130):
-    Jump -> next b96()
-  b96():
-    v131 = Integer integer=32
-    v132 = Convert v131 declared={type=number}
-    Return v132
-  b97(v133):
-    Jump -> next b98()
-  b98():
-    v134 = Integer integer=33
-    v135 = Convert v134 declared={type=number}
-    Return v135
-  b99():
-    Jump -> next b100()
-  b100():
-    v136 = GetModuleVariable variable=g4
-    v137 = Call v136, -, v5 calleeName="isWhiteSpaceSingleLine"
-    v138 = Convert v137 declared={type=boolean}
-    v139 = ToBoolean v138
-    Jump -> next b101(v138)
-  b101(v140):
-    Jump -> next b102()
-  b102():
-    v141 = GetModuleVariable variable=g5
-    v142 = Call v141, -, v5 calleeName="isLineBreak"
-    v143 = Convert v142 declared={type=boolean}
-    v144 = ToBoolean v143
-    Jump -> next b103(v143)
-  b103(v145):
-    Jump -> next b104()
-  b104():
-    v146 = Integer integer=41
-    v147 = Convert v146 declared={type=number}
-    Return v147
-}
-function f2 name="kindOfUnit" module=m0 position=3896 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string, v1: number):
-    Jump -> next b1()
-  b1():
-    v2 = PropGet v0 key="charCodeAt"
-    v3 = Call v2, v0, v1 calleeKey="charCodeAt" calleeName="s.charCodeAt"
-    v4 = Convert v3 declared={type=number} illTypedCause=DeclarationWithoutBody
-    v5 = Integer integer=12
-    v6 = StrictEq v4, v5
-    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
-  b2(v7):
-    Jump -> next b3()
-  b3():
-    v8 = Integer integer=-1
-    v9 = Convert v8 declared={type=number}
-    Return v9
-  b4(v10):
-    Jump -> next b5()
-  b5():
-    Switch v10 cases=[10, 13, 9, 11, 12, 32, 160, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42] -> case b6(| 0), case b7(| 0), case b12(| 0), case b13(| 0), case b14(| 0), case b15(| 0), case b16(| 0), case b25(| 0), case b26(| 0), case b27(| 0), case b28(| 0), case b29(| 0), case b30(| 0), case b31(| 0), case b32(| 0), case b33(| 0), case b34(| 0), otherwise b39()
-  b6(v11):
-    Jump -> next b8()
-  b7(v12):
-    Jump -> next b8()
-  b8():
-    v13 = Integer integer=13
-    v14 = StrictEq v4, v13
-    Jump -> next b9(v4)
-  b9(v15):
-    Jump -> next b10()
-  b10():
-    v16 = Integer integer=1
-    Jump -> next b11(v16)
-  b11(v17):
-    v18 = Convert v17 declared={type=number}
-    Return v18
-  b12(v19):
-    Jump -> next b17()
-  b13(v20):
-    Jump -> next b17()
-  b14(v21):
-    Jump -> next b17()
-  b15(v22):
-    Jump -> next b17()
-  b16(v23):
-    Jump -> next b17()
-  b17():
-    v24 = Integer integer=32
-    v25 = StrictEq v4, v24
-    Jump -> next b18(v4)
-  b18(v26):
-    Jump -> next b19()
-  b19():
-    v27 = Integer integer=12
-    v28 = StrictEq v26, v27
-    Jump -> next b20(v26)
-  b20(v29):
-    Jump -> next b21()
-  b21():
-    v30 = GetModuleVariable variable=g5
-    v31 = Call v30, -, v29 calleeName="isLineBreak"
-    v32 = Convert v31 declared={type=boolean}
-    v33 = ToBoolean v32
-    Jump -> next b22(v32)
-  b22(v34):
-    Jump -> next b23()
-  b23():
-    v35 = Integer integer=5
-    Jump -> next b24(v35)
-  b24(v36):
-    v37 = Convert v36 declared={type=number}
-    Return v37
-  b25(v38):
-    Jump -> next b35()
-  b26(v39):
-    Jump -> next b35()
-  b27(v40):
-    Jump -> next b35()
-  b28(v41):
-    Jump -> next b35()
-  b29(v42):
-    Jump -> next b35()
-  b30(v43):
-    Jump -> next b35()
-  b31(v44):
-    Jump -> next b35()
-  b32(v45):
-    Jump -> next b35()
-  b33(v46):
-    Jump -> next b35()
-  b34(v47):
-    Jump -> next b35()
-  b35():
-    v48 = Integer integer=10
-    v49 = StrictEq v4, v48
-    Jump -> next b36(v4)
-  b36(v50):
-    Jump -> next b37()
-  b37():
-    v51 = Integer integer=7
-    Jump -> next b38(v51)
-  b38(v52):
-    v53 = Convert v52 declared={type=number}
-    Return v53
-  b39():
-    Jump -> next b40()
-  b40():
-    v54 = Integer integer=9
-    v55 = StrictEq v4, v54
-    Branch v55 -> taken b41(| 0), notTaken b42(| 0)
-  b41(v56):
-    Jump -> next b48()
-  b42(v57):
-    Jump -> next b43()
-  b43():
-    v58 = Integer integer=32
-    v59 = StrictEq v57, v58
-    Branch v59 -> taken b44(| 0), notTaken b45(| 0)
-  b44(v60):
-    Jump -> next b48()
-  b45(v61):
-    Jump -> next b46()
-  b46():
-    v62 = Integer integer=10
-    v63 = StrictEq v61, v62
-    Branch v63 -> taken b47(| 0), notTaken b49(| 0)
-  b47(v64):
-    Jump -> next b48()
-  b48():
-    v65 = Integer integer=8
-    Jump -> next b55(v65)
-  b49(v66):
-    Jump -> next b50()
-  b50():
-    v67 = Integer integer=133
-    v68 = StrictEq v66, v67
-    Branch v68 -> taken b51(| 0), notTaken b53(| 0)
-  b51(v69):
-    Jump -> next b52()
-  b52():
-    v70 = Integer integer=9
-    Jump -> next b55(v70)
-  b53(v71):
-    Jump -> next b54()
-  b54():
-    v72 = Integer
-    Jump -> next b55(v72)
-  b55(v73):
-    v74 = Convert v73 declared={type=number}
-    Return v74
-}
-function f3 name="kindPlain" module=m0 position=1373 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
-function f4 name="twoSubjects" module=m0 position=4534 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string, v1: number, v2: number):
-    v3 = PropGet v0 key="charCodeAt"
-    v4 = Call v3, v0, v1 calleeKey="charCodeAt" calleeName="s.charCodeAt"
-    v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody
-    v6 = PropGet v0 key="charCodeAt"
-    v7 = Call v6, v0, v2 calleeKey="charCodeAt" calleeName="s.charCodeAt"
-    v8 = Convert v7 declared={type=number} illTypedCause=DeclarationWithoutBody
-    v9 = Integer integer=10
-    v10 = StrictEq v5, v9
-    Branch v10 -> taken b1(| 0), notTaken b2(| 0)
-  b1(v11):
-    v12 = Integer integer=6
-    v13 = Convert v12 declared={type=number}
-    Return v13
-  b2(v14):
-    v15 = Integer integer=11
-    v16 = StrictEq v5, v15
-    v17 = Integer integer=12
-    v18 = StrictEq v5, v17
-    v19 = Integer integer=10
-    v20 = StrictEq v8, v19
-    Branch v20 -> taken b3(| 0), notTaken b4(| 0)
+    v0 = NewClosure function=f7 @0
+    v1 = Convert v0 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f8 @0
+    v3 = Convert v2 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f9 @0
+    v5 = Convert v4 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f10 @0
+    v7 = Convert v6 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f11 @0
+    v9 = Convert v8 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f12 @203
+    v11 = Convert v10 declared={type=undefined|null|function|f12 site=w17 flags=[OmitsNull, OmitsUndefined]} @203
+    v12 = String string="" @5000
+    v13 = Convert v12 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]} @5000
+    v14 = Integer @5017
+    v15 = Convert v14 declared={type=number site=w21} @5017
+    Jump -> next b2(v13, v15) @5013
+  b2(v16: undefined|null|string, v17: number):
+    LoopHint @5013
+    v19 = Integer integer=140 @5024
+    v20 = Less v17, v19 @5020
+    Branch v20 -> taken b3(| 0), notTaken b6(| 0) @5020
   b3(v21):
-    v22 = Integer integer=11
-    Jump -> next b5(v22)
-  b4(v23):
-    v24 = Integer
-    Jump -> next b5(v24)
-  b5(v25):
-    v26 = Convert v25 declared={type=number}
-    Return v26
-}
-function f5 name="isWhiteSpaceSingleLine" module=m0 position=1020 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: number):
-    Jump -> next b1()
-  b1():
-    v1 = Integer integer=32
-    v2 = StrictEq v0, v1
-    v3 = ToBoolean v2
-    Branch v3 -> taken b2(| 0), notTaken b3(| 0)
-  b2(v4):
-    Jump -> next b5(v4)
-  b3(v5):
-    Jump -> next b4()
+    Jump -> next b4() @5020
   b4():
-    v6 = Integer integer=9
-    v7 = StrictEq v0, v6
-    Jump -> next b5(v7)
-  b5(v8):
-    v9 = ToBoolean v8
-    Branch v9 -> taken b6(| 0), notTaken b7(| 0)
-  b6(v10):
-    Jump -> next b9(v10)
-  b7(v11):
-    Jump -> next b8()
-  b8():
-    v12 = Integer integer=11
-    v13 = StrictEq v0, v12
-    Jump -> next b9(v13)
-  b9(v14):
-    v15 = ToBoolean v14
-    Branch v15 -> taken b10(| 0), notTaken b11(| 0)
-  b10(v16):
-    Jump -> next b13(v16)
-  b11(v17):
-    Jump -> next b12()
+    v22 = Builtin builtin=String @5041
+    v23 = Builtin builtin=StringFromCharCode @5041
+    v24 = Call v23, v22, v21 calleeName="String.fromCharCode" @5048
+    v25 = Convert v24 declared={type=undefined|null|string site=w22 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @5041
+    v26 = Add v16, v25 @5048
+    v27 = Convert v26 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]} @5034
+    Jump -> next b5() @5034
+  b5():
+    v28 = Increment v21 @5048
+    v29 = Convert v28 declared={type=number site=w21} @5029
+    Jump -> next b2(v27, v29) @5029
+  b6(v30):
+    Jump -> next b7() @5020
+  b7():
+    v31 = Data data=d0 @5081
+    v32 = IteratorOpen v31 @5076
+    Jump -> next b8(v16) @5076
+  b8(v33: undefined|null|string):
+    LoopHint @5076
+    v35 = IteratorResume v32 @5076
+    v36 = ResultAt v35 @5076
+    v37 = ResultAt v35 index=1 @5076
+    Branch v36 -> taken b9(), notTaken b18() @5076
+  b9():
+    v38 = PropGet v33 key="charCodeAt" @5241
+    v39 = Integer @5256
+    v40 = Call v38, v33, v39 calleeKey="charCodeAt" calleeName="all.charCodeAt" @5245
+    v41 = Convert v40 declared={type=number site=w25} illTypedCause=DeclarationWithoutBody @5241
+    v42 = String string="" @5271
+    v43 = Convert v42 declared={type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]} @5271
+    v44 = Integer integer=-1 @5288
+    v45 = Convert v44 declared={type=number site=w26} @5288
+    Jump -> next b10(v43, v45) @5284
+  b10(v46: undefined|null|string, v47: number):
+    LoopHint @5284
+    v49 = PropGet v33 key="length" @5297
+    v50 = Convert v49 declared={type=number site=w27} illTypedCause=Assertion @5297
+    v51 = LessEq v47, v50 @5292
+    Branch v51 -> taken b11(| 0), notTaken b16(| 0) @5292
+  b11(v52):
+    Jump -> next b12() @5292
   b12():
-    v18 = Integer integer=12
-    v19 = StrictEq v0, v18
-    Jump -> next b13(v19)
-  b13(v20):
-    v21 = ToBoolean v20
-    Branch v21 -> taken b14(| 0), notTaken b15(| 0)
-  b14(v22):
-    Jump -> next b17(v22)
-  b15(v23):
-    Jump -> next b16()
-  b16():
-    v24 = Integer integer=160
-    v25 = StrictEq v0, v24
-    Jump -> next b17(v25)
-  b17(v26):
-    v27 = ToBoolean v26
-    Branch v27 -> taken b18(| 0), notTaken b19(| 0)
-  b18(v28):
-    Jump -> next b21(v28)
-  b19(v29):
-    Jump -> next b20()
-  b20():
-    v30 = Integer integer=133
-    v31 = StrictEq v0, v30
-    Jump -> next b21(v31)
-  b21(v32):
-    v33 = ToBoolean v32
-    Branch v33 -> taken b22(| 0), notTaken b23(| 0)
-  b22(v34):
-    Jump -> next b25(v34)
-  b23(v35):
-    Jump -> next b24()
-  b24():
-    v36 = Integer integer=5760
-    v37 = StrictEq v0, v36
-    Jump -> next b25(v37)
-  b25(v38):
-    v39 = ToBoolean v38
-    Branch v39 -> taken b26(| 0), notTaken b27(| 0)
-  b26(v40):
-    Jump -> next b32(v40)
-  b27(v41):
-    Jump -> next b28()
-  b28():
-    v42 = Integer integer=8192
-    v43 = GreaterEq v0, v42
-    v44 = ToBoolean v43
-    Jump -> next b29(v43)
-  b29(v45):
-    Jump -> next b30()
-  b30():
-    v46 = Integer integer=8203
-    v47 = LessEq v0, v46
-    Jump -> next b31(v47)
-  b31(v48):
-    Jump -> next b32(v48)
-  b32(v49):
-    v50 = ToBoolean v49
-    Branch v50 -> taken b33(| 0), notTaken b34(| 0)
-  b33(v51):
-    Jump -> next b36(v51)
-  b34(v52):
-    Jump -> next b35()
-  b35():
-    v53 = Integer integer=8239
-    v54 = StrictEq v0, v53
-    Jump -> next b36(v54)
-  b36(v55):
-    v56 = ToBoolean v55
-    Branch v56 -> taken b37(| 0), notTaken b38(| 0)
-  b37(v57):
-    Jump -> next b40(v57)
-  b38(v58):
-    Jump -> next b39()
-  b39():
-    v59 = Integer integer=8287
-    v60 = StrictEq v0, v59
-    Jump -> next b40(v60)
-  b40(v61):
-    v62 = ToBoolean v61
-    Branch v62 -> taken b41(| 0), notTaken b42(| 0)
-  b41(v63):
-    Jump -> next b44(v63)
-  b42(v64):
-    Jump -> next b43()
-  b43():
-    v65 = Integer integer=12288
-    v66 = StrictEq v0, v65
-    Jump -> next b44(v66)
-  b44(v67):
-    v68 = ToBoolean v67
-    Branch v68 -> taken b45(| 0), notTaken b46(| 0)
-  b45(v69):
-    Jump -> next b48(v69)
-  b46(v70):
-    Jump -> next b47()
-  b47():
-    v71 = Integer integer=65279
-    v72 = StrictEq v0, v71
-    Jump -> next b48(v72)
-  b48(v73):
-    v74 = Convert v73 declared={type=boolean}
-    Return v74
+    v53 = GetModuleVariable variable=g2 @5328
+    v54 = Call v53, -, v33, v52 calleeName="kindPlain" @5328
+    v55 = Convert v54 declared={type=number site=w28} @5328
+    v56 = String string="," @5348
+    v57 = Add v55, v56 @5328
+    v58 = GetModuleVariable variable=g0 @5354
+    v59 = Call v58, -, v33, v52 calleeName="kind" @5354
+    v60 = Convert v59 declared={type=number site=w29} @5354
+    v61 = Add v57, v60 @5354
+    v62 = String string="," @5369
+    v63 = Add v61, v62 @5354
+    v64 = GetModuleVariable variable=g1 @5375
+    v65 = Call v64, -, v33, v52 calleeName="kindOfUnit" @5375
+    v66 = Convert v65 declared={type=number site=w30} @5375
+    v67 = Add v63, v66 @5375
+    v68 = String string="," @5396
+    v69 = Add v67, v68 @5375
+    v70 = GetModuleVariable variable=g3 @5402
+    v71 = PropGet v33 key="length" @5422
+    v72 = Convert v71 declared={type=number site=w31} illTypedCause=Assertion @5422
+    v73 = Sub v72, v52 @5422
+    v74 = Call v70, -, v33, v52, v73 calleeName="twoSubjects" @5402
+    v75 = Convert v74 declared={type=number site=w32} @5402
+    v76 = Add v69, v75 @5402
+    v77 = String string=" " @5440
+    v78 = Add v76, v77 @5402
+    v79 = Add v46, v78 @5402
+    v80 = Convert v79 declared={type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]} @5320
+    v81 = PropGet v80 key="length" @5453
+    v82 = Convert v81 declared={type=number site=w33} illTypedCause=Assertion @5453
+    v83 = Integer integer=150 @5467
+    v84 = Greater v82, v83 @5453
+    Branch v84 -> taken b13(), notTaken b14(v80) @5453
+  b13():
+    v85 = Call v11, -, v80 calleeName="print" @5474
+    v86 = String string="" @5494
+    v87 = Convert v86 declared={type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]} @5487
+    Jump -> next b14(v87) @5487
+  b14(v88: undefined|null|string):
+    Jump -> next b15() @5487
+  b15():
+    v89 = Increment v52 @5474
+    v90 = Convert v89 declared={type=number site=w26} @5309
+    Jump -> next b10(v88, v90) @5309
+  b16(v91):
+    Jump -> next b17() @5292
+  b17():
+    v92 = Call v11, -, v46 calleeName="print" @5502
+    v93 = Builtin builtin=GlobalThis @5635
+    v94 = PropGet v93 key="globalThis" [isFreeName] @5635
+    v95 = Convert v94 declared={type=builtin(GlobalThis) flags=[IsExpected]} @5635
+    v96 = Convert v95 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @5635
+    v97 = GetModuleVariable variable=g2 @5662
+    v98 = GetModuleVariable variable=g0 @5673
+    v99 = GetModuleVariable variable=g1 @5689 @5679
+    v100 = NewArray v97, v98, v99 contents=anything @5661
+    PropSet v96, v100 key="kept" @5635
+    v102 = Builtin builtin=GlobalThis @5692
+    v103 = PropGet v102 key="console" [isFreeName] @5692
+    v104 = Convert v103 declared={type=builtin(Console) flags=[IsExpected]} @5692
+    v105 = PropGet v104 key="log" @5692
+    v106 = Convert v105 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @5692
+    v107 = String string="number" @5704
+    v108 = Call v106, v104, v107 calleeKey="log" calleeName="console.log" @5700
+    v109 = Undefined @5692
+    Return v109 @5692
+  b18():
+    Jump -> next b19() @5076
+  b19() handler=b21():
+    v110 = Convert v37 declared={type=number site=w23} illTypedCause=ContainerWriterUnseen @5076
+    v111 = Builtin builtin=String @5217
+    v112 = Builtin builtin=StringFromCharCode @5217
+    v113 = Call v112, v111, v110 calleeName="String.fromCharCode" @5224
+    v114 = Convert v113 declared={type=undefined|null|string site=w24 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @5217
+    v115 = Add v33, v114 @5224
+    v116 = Convert v115 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]} @5210
+    Jump -> next b20() @5210
+  b20() handler=b21():
+    Jump -> next b8(v116) @5210
+  b21() role=IterationCleanup subject=v32:
+    v117 = CatchException @5076
+    IteratorClose v32 completion=Throw @5076
+    Rethrow v117 @5076
 }
-function f6 name="isLineBreak" module=m0 position=1266 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
-function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
-function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f1 name="kind" module=m0 position=2537 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w1}] results=[{type=number site=w2}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    Jump -> next b1() @2537
+  b1():
+    v2 = PropGet v0 key="codePointAt" @2605
+    v3 = Call v2, v0, v1 calleeKey="codePointAt" calleeName="s.codePointAt" @2607
+    v4 = Convert v3 declared={type=undefined|number site=w34} illTypedCause=DeclarationWithoutBody @2605
+    v5 = Convert v4 declared={type=number site=w35} illTypedCause=Assertion @2605
+    Switch v5 cases=[10, 13, 9, 11, 12, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8203, 8239, 8287, 12288, 65279, 33, 34, 39, 96, 37, 38, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 91, 93, 94, 123, 124, 125, 126, 64, 92, 35] -> case b2(| 0), case b3(| 0), case b5(| 0), case b6(| 0), case b7(| 0), case b8(| 0), case b9(| 0), case b10(| 0), case b11(| 0), case b12(| 0), case b13(| 0), case b14(| 0), case b15(| 0), case b16(| 0), case b17(| 0), case b18(| 0), case b19(| 0), case b20(| 0), case b21(| 0), case b22(| 0), case b23(| 0), case b24(| 0), case b25(| 0), case b26(| 0), case b28(| 0), case b30(| 0), case b31(| 0), case b33(| 0), case b35(| 0), case b37(| 0), case b39(| 0), case b41(| 0), case b43(| 0), case b45(| 0), case b47(| 0), case b49(| 0), case b51(| 0), case b53(| 0), case b55(| 0), case b57(| 0), case b58(| 0), case b59(| 0), case b60(| 0), case b61(| 0), case b62(| 0), case b63(| 0), case b64(| 0), case b65(| 0), case b67(| 0), case b69(| 0), case b71(| 0), case b73(| 0), case b75(| 0), case b77(| 0), case b79(| 0), case b81(| 0), case b83(| 0), case b85(| 0), case b87(| 0), case b89(| 0), case b91(| 0), case b93(| 0), case b95(| 0), case b97(| 0), otherwise b99() @2664
+  b2(v6):
+    Jump -> next b4() @2664
+  b3(v7):
+    Jump -> next b4() @2664
+  b4():
+    v8 = Integer integer=1 @2684
+    v9 = Convert v8 declared={type=number site=w2} @2684
+    Return v9 @2684
+  b5(v10):
+    Jump -> next b27() @2664
+  b6(v11):
+    Jump -> next b27() @2664
+  b7(v12):
+    Jump -> next b27() @2664
+  b8(v13):
+    Jump -> next b27() @2664
+  b9(v14):
+    Jump -> next b27() @2664
+  b10(v15):
+    Jump -> next b27() @2664
+  b11(v16):
+    Jump -> next b27() @2664
+  b12(v17):
+    Jump -> next b27() @2664
+  b13(v18):
+    Jump -> next b27() @2664
+  b14(v19):
+    Jump -> next b27() @2664
+  b15(v20):
+    Jump -> next b27() @2664
+  b16(v21):
+    Jump -> next b27() @2664
+  b17(v22):
+    Jump -> next b27() @2664
+  b18(v23):
+    Jump -> next b27() @2664
+  b19(v24):
+    Jump -> next b27() @2664
+  b20(v25):
+    Jump -> next b27() @2664
+  b21(v26):
+    Jump -> next b27() @2664
+  b22(v27):
+    Jump -> next b27() @2664
+  b23(v28):
+    Jump -> next b27() @2664
+  b24(v29):
+    Jump -> next b27() @2664
+  b25(v30):
+    Jump -> next b27() @2664
+  b26(v31):
+    Jump -> next b27() @2664
+  b27():
+    v32 = Integer integer=2 @2936
+    v33 = Convert v32 declared={type=number site=w2} @2936
+    Return v33 @2936
+  b28(v34):
+    Jump -> next b29() @2664
+  b29():
+    v35 = Integer integer=3 @2963
+    v36 = Convert v35 declared={type=number site=w2} @2963
+    Return v36 @2963
+  b30(v37):
+    Jump -> next b32() @2664
+  b31(v38):
+    Jump -> next b32() @2664
+  b32():
+    v39 = Integer integer=4 @2991
+    v40 = Convert v39 declared={type=number site=w2} @2991
+    Return v40 @2991
+  b33(v41):
+    Jump -> next b34() @2664
+  b34():
+    v42 = Integer integer=5 @3010
+    v43 = Convert v42 declared={type=number site=w2} @3010
+    Return v43 @3010
+  b35(v44):
+    Jump -> next b36() @2664
+  b36():
+    v45 = Integer integer=6 @3029
+    v46 = Convert v45 declared={type=number site=w2} @3029
+    Return v46 @3029
+  b37(v47):
+    Jump -> next b38() @2664
+  b38():
+    v48 = Integer integer=7 @3048
+    v49 = Convert v48 declared={type=number site=w2} @3048
+    Return v49 @3048
+  b39(v50):
+    Jump -> next b40() @2664
+  b40():
+    v51 = Integer integer=8 @3067
+    v52 = Convert v51 declared={type=number site=w2} @3067
+    Return v52 @3067
+  b41(v53):
+    Jump -> next b42() @2664
+  b42():
+    v54 = Integer integer=9 @3086
+    v55 = Convert v54 declared={type=number site=w2} @3086
+    Return v55 @3086
+  b43(v56):
+    Jump -> next b44() @2664
+  b44():
+    v57 = Integer integer=10 @3105
+    v58 = Convert v57 declared={type=number site=w2} @3105
+    Return v58 @3105
+  b45(v59):
+    Jump -> next b46() @2664
+  b46():
+    v60 = Integer integer=11 @3125
+    v61 = Convert v60 declared={type=number site=w2} @3125
+    Return v61 @3125
+  b47(v62):
+    Jump -> next b48() @2664
+  b48():
+    v63 = Integer integer=12 @3145
+    v64 = Convert v63 declared={type=number site=w2} @3145
+    Return v64 @3145
+  b49(v65):
+    Jump -> next b50() @2664
+  b50():
+    v66 = Integer integer=13 @3165
+    v67 = Convert v66 declared={type=number site=w2} @3165
+    Return v67 @3165
+  b51(v68):
+    Jump -> next b52() @2664
+  b52():
+    v69 = Integer integer=14 @3185
+    v70 = Convert v69 declared={type=number site=w2} @3185
+    Return v70 @3185
+  b53(v71):
+    Jump -> next b54() @2664
+  b54():
+    v72 = Integer integer=15 @3205
+    v73 = Convert v72 declared={type=number site=w2} @3205
+    Return v73 @3205
+  b55(v74):
+    Jump -> next b56() @2664
+  b56():
+    v75 = Integer integer=16 @3233
+    v76 = Convert v75 declared={type=number site=w2} @3233
+    Return v76 @3233
+  b57(v77):
+    Jump -> next b66() @2664
+  b58(v78):
+    Jump -> next b66() @2664
+  b59(v79):
+    Jump -> next b66() @2664
+  b60(v80):
+    Jump -> next b66() @2664
+  b61(v81):
+    Jump -> next b66() @2664
+  b62(v82):
+    Jump -> next b66() @2664
+  b63(v83):
+    Jump -> next b66() @2664
+  b64(v84):
+    Jump -> next b66() @2664
+  b65(v85):
+    Jump -> next b66() @2664
+  b66():
+    v86 = Integer integer=17 @3325
+    v87 = Convert v86 declared={type=number site=w2} @3325
+    Return v87 @3325
+  b67(v88):
+    Jump -> next b68() @2664
+  b68():
+    v89 = Integer integer=18 @3345
+    v90 = Convert v89 declared={type=number site=w2} @3345
+    Return v90 @3345
+  b69(v91):
+    Jump -> next b70() @2664
+  b70():
+    v92 = Integer integer=19 @3365
+    v93 = Convert v92 declared={type=number site=w2} @3365
+    Return v93 @3365
+  b71(v94):
+    Jump -> next b72() @2664
+  b72():
+    v95 = Integer integer=20 @3385
+    v96 = Convert v95 declared={type=number site=w2} @3385
+    Return v96 @3385
+  b73(v97):
+    Jump -> next b74() @2664
+  b74():
+    v98 = Integer integer=21 @3405
+    v99 = Convert v98 declared={type=number site=w2} @3405
+    Return v99 @3405
+  b75(v100):
+    Jump -> next b76() @2664
+  b76():
+    v101 = Integer integer=22 @3425
+    v102 = Convert v101 declared={type=number site=w2} @3425
+    Return v102 @3425
+  b77(v103):
+    Jump -> next b78() @2664
+  b78():
+    v104 = Integer integer=23 @3445
+    v105 = Convert v104 declared={type=number site=w2} @3445
+    Return v105 @3445
+  b79(v106):
+    Jump -> next b80() @2664
+  b80():
+    v107 = Integer integer=24 @3465
+    v108 = Convert v107 declared={type=number site=w2} @3465
+    Return v108 @3465
+  b81(v109):
+    Jump -> next b82() @2664
+  b82():
+    v110 = Integer integer=25 @3485
+    v111 = Convert v110 declared={type=number site=w2} @3485
+    Return v111 @3485
+  b83(v112):
+    Jump -> next b84() @2664
+  b84():
+    v113 = Integer integer=26 @3513
+    v114 = Convert v113 declared={type=number site=w2} @3513
+    Return v114 @3513
+  b85(v115):
+    Jump -> next b86() @2664
+  b86():
+    v116 = Integer integer=27 @3534
+    v117 = Convert v116 declared={type=number site=w2} @3534
+    Return v117 @3534
+  b87(v118):
+    Jump -> next b88() @2664
+  b88():
+    v119 = Integer integer=28 @3555
+    v120 = Convert v119 declared={type=number site=w2} @3555
+    Return v120 @3555
+  b89(v121):
+    Jump -> next b90() @2664
+  b90():
+    v122 = Integer integer=29 @3576
+    v123 = Convert v122 declared={type=number site=w2} @3576
+    Return v123 @3576
+  b91(v124):
+    Jump -> next b92() @2664
+  b92():
+    v125 = Integer integer=30 @3597
+    v126 = Convert v125 declared={type=number site=w2} @3597
+    Return v126 @3597
+  b93(v127):
+    Jump -> next b94() @2664
+  b94():
+    v128 = Integer integer=31 @3617
+    v129 = Convert v128 declared={type=number site=w2} @3617
+    Return v129 @3617
+  b95(v130):
+    Jump -> next b96() @2664
+  b96():
+    v131 = Integer integer=32 @3637
+    v132 = Convert v131 declared={type=number site=w2} @3637
+    Return v132 @3637
+  b97(v133):
+    Jump -> next b98() @2664
+  b98():
+    v134 = Integer integer=33 @3657
+    v135 = Convert v134 declared={type=number site=w2} @3657
+    Return v135 @3657
+  b99():
+    Jump -> next b100() @2664
+  b100():
+    v136 = GetModuleVariable variable=g4 @3694
+    v137 = Call v136, -, v5 calleeName="isWhiteSpaceSingleLine" @3694
+    v138 = Convert v137 declared={type=boolean site=w36} @3694
+    v139 = ToBoolean v138 @3694
+    Branch v139 -> taken b101(| 0), notTaken b103(| 0) @3694
+  b101(v140):
+    Jump -> next b102() @3694
+  b102():
+    v141 = Integer integer=40 @3729
+    v142 = Convert v141 declared={type=number site=w2} @3729
+    Return v142 @3729
+  b103(v143):
+    Jump -> next b104() @3694
+  b104():
+    v144 = GetModuleVariable variable=g5 @3749
+    v145 = Call v144, -, v5 calleeName="isLineBreak" @3749
+    v146 = Convert v145 declared={type=boolean site=w37} @3749
+    v147 = ToBoolean v146 @3749
+    Branch v147 -> taken b105(| 0), notTaken b107(| 0) @3749
+  b105(v148):
+    Jump -> next b106() @3749
+  b106():
+    v149 = Integer integer=41 @3773
+    v150 = Convert v149 declared={type=number site=w2} @3773
+    Return v150 @3773
+  b107(v151):
+    Jump -> next b108() @3749
+  b108():
+    v152 = Integer integer=65 @3802
+    v153 = GreaterEq v5, v152 @3796
+    Branch v153 -> taken b109(| 0), notTaken b111(| 0) @3796
+  b109(v154):
+    Jump -> next b110() @3796
+  b110():
+    v155 = Integer integer=42 @3807
+    Jump -> next b113(v155) @3807
+  b111(v156):
+    Jump -> next b112() @3796
+  b112():
+    v157 = Integer @3812
+    Jump -> next b113(v157) @3812
+  b113(v158):
+    v159 = Convert v158 declared={type=number site=w2} @3812
+    Return v159 @3812
+}
+function f2 name="kindOfUnit" module=m0 position=3896 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w4}] results=[{type=number site=w5}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    Jump -> next b1() @3896
+  b1():
+    v2 = PropGet v0 key="charCodeAt" @3970
+    v3 = Call v2, v0, v1 calleeKey="charCodeAt" calleeName="s.charCodeAt" @3972
+    v4 = Convert v3 declared={type=number site=w38} illTypedCause=DeclarationWithoutBody @3970
+    v5 = Integer integer=12 @4022
+    v6 = StrictEq v4, v5 @4015
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @4015
+  b2(v7):
+    Jump -> next b3() @4015
+  b3():
+    v8 = Integer integer=-1 @4033
+    v9 = Convert v8 declared={type=number site=w5} @4033
+    Return v9 @4033
+  b4(v10):
+    Jump -> next b5() @4015
+  b5():
+    Switch v10 cases=[10, 13, 9, 11, 12, 32, 160, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42] -> case b6(| 0), case b7(| 0), case b14(| 0), case b15(| 0), case b16(| 0), case b17(| 0), case b18(| 0), case b33(| 0), case b34(| 0), case b35(| 0), case b36(| 0), case b37(| 0), case b38(| 0), case b39(| 0), case b40(| 0), case b41(| 0), case b42(| 0), otherwise b49() @4068
+  b6(v11):
+    Jump -> next b8() @4068
+  b7(v12):
+    Jump -> next b8() @4068
+  b8():
+    v13 = Integer integer=13 @4098
+    v14 = StrictEq v4, v13 @4088
+    Branch v14 -> taken b9(| 0), notTaken b11(| 0) @4088
+  b9(v15):
+    Jump -> next b10() @4088
+  b10():
+    v16 = Integer integer=1 @4103
+    Jump -> next b13(v16) @4103
+  b11(v17):
+    Jump -> next b12() @4088
+  b12():
+    v18 = Integer integer=2 @4107
+    Jump -> next b13(v18) @4107
+  b13(v19):
+    v20 = Convert v19 declared={type=number site=w5} @4107
+    Return v20 @4107
+  b14(v21):
+    Jump -> next b19() @4068
+  b15(v22):
+    Jump -> next b19() @4068
+  b16(v23):
+    Jump -> next b19() @4068
+  b17(v24):
+    Jump -> next b19() @4068
+  b18(v25):
+    Jump -> next b19() @4068
+  b19():
+    v26 = Integer integer=32 @4180
+    v27 = StrictEq v4, v26 @4170
+    Branch v27 -> taken b20(| 0), notTaken b22(| 0) @4170
+  b20(v28):
+    Jump -> next b21() @4170
+  b21():
+    v29 = Integer integer=3 @4185
+    Jump -> next b32(v29) @4185
+  b22(v30):
+    Jump -> next b23() @4170
+  b23():
+    v31 = Integer integer=12 @4199
+    v32 = StrictEq v30, v31 @4189
+    Branch v32 -> taken b24(| 0), notTaken b26(| 0) @4189
+  b24(v33):
+    Jump -> next b25() @4189
+  b25():
+    v34 = Integer integer=4 @4204
+    Jump -> next b32(v34) @4204
+  b26(v35):
+    Jump -> next b27() @4189
+  b27():
+    v36 = GetModuleVariable variable=g5 @4208
+    v37 = Call v36, -, v35 calleeName="isLineBreak" @4208
+    v38 = Convert v37 declared={type=boolean site=w39} @4208
+    v39 = ToBoolean v38 @4208
+    Branch v39 -> taken b28(| 0), notTaken b30(| 0) @4208
+  b28(v40):
+    Jump -> next b29() @4208
+  b29():
+    v41 = Integer integer=5 @4229
+    Jump -> next b32(v41) @4229
+  b30(v42):
+    Jump -> next b31() @4208
+  b31():
+    v43 = Integer integer=6 @4233
+    Jump -> next b32(v43) @4233
+  b32(v44):
+    v45 = Convert v44 declared={type=number site=w5} @4233
+    Return v45 @4233
+  b33(v46):
+    Jump -> next b43() @4068
+  b34(v47):
+    Jump -> next b43() @4068
+  b35(v48):
+    Jump -> next b43() @4068
+  b36(v49):
+    Jump -> next b43() @4068
+  b37(v50):
+    Jump -> next b43() @4068
+  b38(v51):
+    Jump -> next b43() @4068
+  b39(v52):
+    Jump -> next b43() @4068
+  b40(v53):
+    Jump -> next b43() @4068
+  b41(v54):
+    Jump -> next b43() @4068
+  b42(v55):
+    Jump -> next b43() @4068
+  b43():
+    v56 = Integer integer=10 @4351
+    v57 = StrictEq v4, v56 @4341
+    Branch v57 -> taken b44(| 0), notTaken b46(| 0) @4341
+  b44(v58):
+    Jump -> next b45() @4341
+  b45():
+    v59 = Integer integer=7 @4356
+    Jump -> next b48(v59) @4356
+  b46(v60):
+    Jump -> next b47() @4341
+  b47():
+    Jump -> next b48(v60) @4360
+  b48(v61):
+    v62 = Convert v61 declared={type=number site=w5} @4360
+    Return v62 @4360
+  b49():
+    Jump -> next b50() @4068
+  b50():
+    v63 = Integer integer=9 @4401
+    v64 = StrictEq v4, v63 @4391
+    Branch v64 -> taken b51(| 0), notTaken b52(| 0) @4391
+  b51(v65):
+    Jump -> next b58() @4391
+  b52(v66):
+    Jump -> next b53() @4391
+  b53():
+    v67 = Integer integer=32 @4416
+    v68 = StrictEq v66, v67 @4391
+    Branch v68 -> taken b54(| 0), notTaken b55(| 0) @4391
+  b54(v69):
+    Jump -> next b58() @4391
+  b55(v70):
+    Jump -> next b56() @4391
+  b56():
+    v71 = Integer integer=10 @4432
+    v72 = StrictEq v70, v71 @4391
+    Branch v72 -> taken b57(| 0), notTaken b59(| 0) @4391
+  b57(v73):
+    Jump -> next b58() @4391
+  b58():
+    v74 = Integer integer=8 @4437
+    Jump -> next b65(v74) @4437
+  b59(v75):
+    Jump -> next b60() @4391
+  b60():
+    v76 = Integer integer=133 @4451
+    v77 = StrictEq v75, v76 @4441
+    Branch v77 -> taken b61(| 0), notTaken b63(| 0) @4441
+  b61(v78):
+    Jump -> next b62() @4441
+  b62():
+    v79 = Integer integer=9 @4457
+    Jump -> next b65(v79) @4457
+  b63(v80):
+    Jump -> next b64() @4441
+  b64():
+    v81 = Integer @4461
+    Jump -> next b65(v81) @4461
+  b65(v82):
+    v83 = Convert v82 declared={type=number site=w5} @4461
+    Return v83 @4461
+}
+function f3 name="kindPlain" module=m0 position=1373 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w7}] results=[{type=number site=w8}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    Jump -> next b1() @1373
+  b1():
+    v2 = PropGet v0 key="codePointAt" @1446
+    v3 = Call v2, v0, v1 calleeKey="codePointAt" calleeName="s.codePointAt" @1448
+    v4 = Convert v3 declared={type=undefined|number site=w40} illTypedCause=DeclarationWithoutBody @1446
+    v5 = Convert v4 declared={type=number site=w41} illTypedCause=Assertion @1446
+    Switch v5 cases=[10, 13, 9, 11, 12, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8203, 8239, 8287, 12288, 65279, 33, 34, 39, 96, 37, 38, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 91, 93, 94, 123, 124, 125, 126, 64, 92, 35] -> case b2(| 0), case b3(| 0), case b5(| 0), case b6(| 0), case b7(| 0), case b8(| 0), case b9(| 0), case b10(| 0), case b11(| 0), case b12(| 0), case b13(| 0), case b14(| 0), case b15(| 0), case b16(| 0), case b17(| 0), case b18(| 0), case b19(| 0), case b20(| 0), case b21(| 0), case b22(| 0), case b23(| 0), case b24(| 0), case b25(| 0), case b26(| 0), case b28(| 0), case b30(| 0), case b31(| 0), case b33(| 0), case b35(| 0), case b37(| 0), case b39(| 0), case b41(| 0), case b43(| 0), case b45(| 0), case b47(| 0), case b49(| 0), case b51(| 0), case b53(| 0), case b55(| 0), case b57(| 0), case b58(| 0), case b59(| 0), case b60(| 0), case b61(| 0), case b62(| 0), case b63(| 0), case b64(| 0), case b65(| 0), case b67(| 0), case b69(| 0), case b71(| 0), case b73(| 0), case b75(| 0), case b77(| 0), case b79(| 0), case b81(| 0), case b83(| 0), case b85(| 0), case b87(| 0), case b89(| 0), case b91(| 0), case b93(| 0), case b95(| 0), case b97(| 0), otherwise b99() @1505
+  b2(v6):
+    Jump -> next b4() @1505
+  b3(v7):
+    Jump -> next b4() @1505
+  b4():
+    v8 = Integer integer=1 @1525
+    v9 = Convert v8 declared={type=number site=w8} @1525
+    Return v9 @1525
+  b5(v10):
+    Jump -> next b27() @1505
+  b6(v11):
+    Jump -> next b27() @1505
+  b7(v12):
+    Jump -> next b27() @1505
+  b8(v13):
+    Jump -> next b27() @1505
+  b9(v14):
+    Jump -> next b27() @1505
+  b10(v15):
+    Jump -> next b27() @1505
+  b11(v16):
+    Jump -> next b27() @1505
+  b12(v17):
+    Jump -> next b27() @1505
+  b13(v18):
+    Jump -> next b27() @1505
+  b14(v19):
+    Jump -> next b27() @1505
+  b15(v20):
+    Jump -> next b27() @1505
+  b16(v21):
+    Jump -> next b27() @1505
+  b17(v22):
+    Jump -> next b27() @1505
+  b18(v23):
+    Jump -> next b27() @1505
+  b19(v24):
+    Jump -> next b27() @1505
+  b20(v25):
+    Jump -> next b27() @1505
+  b21(v26):
+    Jump -> next b27() @1505
+  b22(v27):
+    Jump -> next b27() @1505
+  b23(v28):
+    Jump -> next b27() @1505
+  b24(v29):
+    Jump -> next b27() @1505
+  b25(v30):
+    Jump -> next b27() @1505
+  b26(v31):
+    Jump -> next b27() @1505
+  b27():
+    v32 = Integer integer=2 @1777
+    v33 = Convert v32 declared={type=number site=w8} @1777
+    Return v33 @1777
+  b28(v34):
+    Jump -> next b29() @1505
+  b29():
+    v35 = Integer integer=3 @1804
+    v36 = Convert v35 declared={type=number site=w8} @1804
+    Return v36 @1804
+  b30(v37):
+    Jump -> next b32() @1505
+  b31(v38):
+    Jump -> next b32() @1505
+  b32():
+    v39 = Integer integer=4 @1832
+    v40 = Convert v39 declared={type=number site=w8} @1832
+    Return v40 @1832
+  b33(v41):
+    Jump -> next b34() @1505
+  b34():
+    v42 = Integer integer=5 @1851
+    v43 = Convert v42 declared={type=number site=w8} @1851
+    Return v43 @1851
+  b35(v44):
+    Jump -> next b36() @1505
+  b36():
+    v45 = Integer integer=6 @1870
+    v46 = Convert v45 declared={type=number site=w8} @1870
+    Return v46 @1870
+  b37(v47):
+    Jump -> next b38() @1505
+  b38():
+    v48 = Integer integer=7 @1889
+    v49 = Convert v48 declared={type=number site=w8} @1889
+    Return v49 @1889
+  b39(v50):
+    Jump -> next b40() @1505
+  b40():
+    v51 = Integer integer=8 @1908
+    v52 = Convert v51 declared={type=number site=w8} @1908
+    Return v52 @1908
+  b41(v53):
+    Jump -> next b42() @1505
+  b42():
+    v54 = Integer integer=9 @1927
+    v55 = Convert v54 declared={type=number site=w8} @1927
+    Return v55 @1927
+  b43(v56):
+    Jump -> next b44() @1505
+  b44():
+    v57 = Integer integer=10 @1946
+    v58 = Convert v57 declared={type=number site=w8} @1946
+    Return v58 @1946
+  b45(v59):
+    Jump -> next b46() @1505
+  b46():
+    v60 = Integer integer=11 @1966
+    v61 = Convert v60 declared={type=number site=w8} @1966
+    Return v61 @1966
+  b47(v62):
+    Jump -> next b48() @1505
+  b48():
+    v63 = Integer integer=12 @1986
+    v64 = Convert v63 declared={type=number site=w8} @1986
+    Return v64 @1986
+  b49(v65):
+    Jump -> next b50() @1505
+  b50():
+    v66 = Integer integer=13 @2006
+    v67 = Convert v66 declared={type=number site=w8} @2006
+    Return v67 @2006
+  b51(v68):
+    Jump -> next b52() @1505
+  b52():
+    v69 = Integer integer=14 @2026
+    v70 = Convert v69 declared={type=number site=w8} @2026
+    Return v70 @2026
+  b53(v71):
+    Jump -> next b54() @1505
+  b54():
+    v72 = Integer integer=15 @2046
+    v73 = Convert v72 declared={type=number site=w8} @2046
+    Return v73 @2046
+  b55(v74):
+    Jump -> next b56() @1505
+  b56():
+    v75 = Integer integer=16 @2074
+    v76 = Convert v75 declared={type=number site=w8} @2074
+    Return v76 @2074
+  b57(v77):
+    Jump -> next b66() @1505
+  b58(v78):
+    Jump -> next b66() @1505
+  b59(v79):
+    Jump -> next b66() @1505
+  b60(v80):
+    Jump -> next b66() @1505
+  b61(v81):
+    Jump -> next b66() @1505
+  b62(v82):
+    Jump -> next b66() @1505
+  b63(v83):
+    Jump -> next b66() @1505
+  b64(v84):
+    Jump -> next b66() @1505
+  b65(v85):
+    Jump -> next b66() @1505
+  b66():
+    v86 = Integer integer=17 @2166
+    v87 = Convert v86 declared={type=number site=w8} @2166
+    Return v87 @2166
+  b67(v88):
+    Jump -> next b68() @1505
+  b68():
+    v89 = Integer integer=18 @2186
+    v90 = Convert v89 declared={type=number site=w8} @2186
+    Return v90 @2186
+  b69(v91):
+    Jump -> next b70() @1505
+  b70():
+    v92 = Integer integer=19 @2206
+    v93 = Convert v92 declared={type=number site=w8} @2206
+    Return v93 @2206
+  b71(v94):
+    Jump -> next b72() @1505
+  b72():
+    v95 = Integer integer=20 @2226
+    v96 = Convert v95 declared={type=number site=w8} @2226
+    Return v96 @2226
+  b73(v97):
+    Jump -> next b74() @1505
+  b74():
+    v98 = Integer integer=21 @2246
+    v99 = Convert v98 declared={type=number site=w8} @2246
+    Return v99 @2246
+  b75(v100):
+    Jump -> next b76() @1505
+  b76():
+    v101 = Integer integer=22 @2266
+    v102 = Convert v101 declared={type=number site=w8} @2266
+    Return v102 @2266
+  b77(v103):
+    Jump -> next b78() @1505
+  b78():
+    v104 = Integer integer=23 @2286
+    v105 = Convert v104 declared={type=number site=w8} @2286
+    Return v105 @2286
+  b79(v106):
+    Jump -> next b80() @1505
+  b80():
+    v107 = Integer integer=24 @2306
+    v108 = Convert v107 declared={type=number site=w8} @2306
+    Return v108 @2306
+  b81(v109):
+    Jump -> next b82() @1505
+  b82():
+    v110 = Integer integer=25 @2326
+    v111 = Convert v110 declared={type=number site=w8} @2326
+    Return v111 @2326
+  b83(v112):
+    Jump -> next b84() @1505
+  b84():
+    v113 = Integer integer=26 @2354
+    v114 = Convert v113 declared={type=number site=w8} @2354
+    Return v114 @2354
+  b85(v115):
+    Jump -> next b86() @1505
+  b86():
+    v116 = Integer integer=27 @2375
+    v117 = Convert v116 declared={type=number site=w8} @2375
+    Return v117 @2375
+  b87(v118):
+    Jump -> next b88() @1505
+  b88():
+    v119 = Integer integer=28 @2396
+    v120 = Convert v119 declared={type=number site=w8} @2396
+    Return v120 @2396
+  b89(v121):
+    Jump -> next b90() @1505
+  b90():
+    v122 = Integer integer=29 @2417
+    v123 = Convert v122 declared={type=number site=w8} @2417
+    Return v123 @2417
+  b91(v124):
+    Jump -> next b92() @1505
+  b92():
+    v125 = Integer integer=30 @2438
+    v126 = Convert v125 declared={type=number site=w8} @2438
+    Return v126 @2438
+  b93(v127):
+    Jump -> next b94() @1505
+  b94():
+    v128 = Integer integer=31 @2458
+    v129 = Convert v128 declared={type=number site=w8} @2458
+    Return v129 @2458
+  b95(v130):
+    Jump -> next b96() @1505
+  b96():
+    v131 = Integer integer=32 @2478
+    v132 = Convert v131 declared={type=number site=w8} @2478
+    Return v132 @2478
+  b97(v133):
+    Jump -> next b98() @1505
+  b98():
+    v134 = Integer integer=33 @2498
+    v135 = Convert v134 declared={type=number site=w8} @2498
+    Return v135 @2498
+  b99():
+    Jump -> next b100() @1505
+  b100():
+    v136 = Integer @2526
+    v137 = Convert v136 declared={type=number site=w8} @2526
+    Return v137 @2526
+}
+function f4 name="twoSubjects" module=m0 position=4534 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w10}, {type=number site=w11}] results=[{type=number site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number, v2: number):
+    Jump -> next b1() @4534
+  b1():
+    v3 = PropGet v0 key="charCodeAt" @4619
+    v4 = Call v3, v0, v1 calleeKey="charCodeAt" calleeName="s.charCodeAt" @4621
+    v5 = Convert v4 declared={type=number site=w42} illTypedCause=DeclarationWithoutBody @4619
+    v6 = PropGet v0 key="charCodeAt" @4640
+    v7 = Call v6, v0, v2 calleeKey="charCodeAt" calleeName="s.charCodeAt" @4642
+    v8 = Convert v7 declared={type=number site=w43} illTypedCause=DeclarationWithoutBody @4640
+    v9 = Integer integer=10 @4713
+    v10 = StrictEq v5, v9 @4707
+    Branch v10 -> taken b2(| 0), notTaken b4(| 0) @4707
+  b2(v11):
+    Jump -> next b3() @4707
+  b3():
+    v12 = Integer integer=1 @4724
+    v13 = Convert v12 declared={type=number site=w12} @4724
+    Return v13 @4724
+  b4(v14):
+    Jump -> next b5() @4707
+  b5():
+    v15 = Integer integer=10 @4737
+    v16 = StrictEq v8, v15 @4731
+    Branch v16 -> taken b6(| 0), notTaken b8(| 0) @4731
+  b6(v17):
+    Jump -> next b7() @4731
+  b7():
+    v18 = Integer integer=2 @4748
+    v19 = Convert v18 declared={type=number site=w12} @4748
+    Return v19 @4748
+  b8(v20):
+    Jump -> next b9() @4731
+  b9():
+    v21 = Integer integer=13 @4761
+    v22 = StrictEq v14, v21 @4755
+    Branch v22 -> taken b10(| 0), notTaken b12(| 0) @4755
+  b10(v23):
+    Jump -> next b11() @4755
+  b11():
+    v24 = Integer integer=3 @4772
+    v25 = Convert v24 declared={type=number site=w12} @4772
+    Return v25 @4772
+  b12(v26):
+    Jump -> next b13() @4755
+  b13():
+    v27 = Integer integer=13 @4785
+    v28 = StrictEq v20, v27 @4779
+    Branch v28 -> taken b14(| 0), notTaken b16(| 0) @4779
+  b14(v29):
+    Jump -> next b15() @4779
+  b15():
+    v30 = Integer integer=4 @4796
+    v31 = Convert v30 declared={type=number site=w12} @4796
+    Return v31 @4796
+  b16(v32):
+    Jump -> next b17() @4779
+  b17():
+    v33 = Integer integer=32 @4809
+    v34 = StrictEq v26, v33 @4803
+    Branch v34 -> taken b18(| 0), notTaken b20(| 0) @4803
+  b18(v35):
+    Jump -> next b19() @4803
+  b19():
+    v36 = Integer integer=5 @4820
+    v37 = Convert v36 declared={type=number site=w12} @4820
+    Return v37 @4820
+  b20(v38):
+    Jump -> next b21() @4803
+  b21():
+    v39 = Integer integer=10 @4834
+    v40 = StrictEq v5, v39 @4827
+    Branch v40 -> taken b22(| 0), notTaken b24(| 0) @4827
+  b22(v41):
+    Jump -> next b23() @4827
+  b23():
+    v42 = Integer integer=6 @4845
+    v43 = Convert v42 declared={type=number site=w12} @4845
+    Return v43 @4845
+  b24(v44):
+    Jump -> next b25() @4827
+  b25():
+    v45 = Integer integer=32 @4858
+    v46 = StrictEq v32, v45 @4852
+    Branch v46 -> taken b26(| 0), notTaken b28(| 0) @4852
+  b26(v47):
+    Jump -> next b27() @4852
+  b27():
+    v48 = Integer integer=7 @4869
+    v49 = Convert v48 declared={type=number site=w12} @4869
+    Return v49 @4869
+  b28(v50):
+    Jump -> next b29() @4852
+  b29():
+    v51 = Integer integer=9 @4882
+    v52 = StrictEq v38, v51 @4876
+    Branch v52 -> taken b30(| 0), notTaken b32(| 0) @4876
+  b30(v53):
+    Jump -> next b31() @4876
+  b31():
+    v54 = Integer integer=8 @4892
+    v55 = Convert v54 declared={type=number site=w12} @4892
+    Return v55 @4892
+  b32(v56):
+    Jump -> next b33() @4876
+  b33():
+    v57 = Integer integer=11 @4905
+    v58 = StrictEq v56, v57 @4899
+    Branch v58 -> taken b34(| 0), notTaken b36(| 0) @4899
+  b34(v59):
+    Jump -> next b35() @4899
+  b35():
+    v60 = Integer integer=9 @4916
+    v61 = Convert v60 declared={type=number site=w12} @4916
+    Return v61 @4916
+  b36(v62):
+    Jump -> next b37() @4899
+  b37():
+    v63 = Integer integer=12 @4929
+    v64 = StrictEq v62, v63 @4923
+    Branch v64 -> taken b38(| 0), notTaken b40(| 0) @4923
+  b38(v65):
+    Jump -> next b39() @4923
+  b39():
+    v66 = Integer integer=10 @4940
+    v67 = Convert v66 declared={type=number site=w12} @4940
+    Return v67 @4940
+  b40(v68):
+    Jump -> next b41() @4923
+  b41():
+    v69 = Integer integer=32 @4962
+    v70 = StrictEq v44, v69 @4955
+    Branch v70 -> taken b42(| 0), notTaken b43(| 0) @4955
+  b42(v71):
+    Jump -> next b46() @4955
+  b43(v72):
+    Jump -> next b44() @4955
+  b44():
+    v73 = Integer integer=10 @4975
+    v74 = StrictEq v8, v73 @4955
+    Branch v74 -> taken b45(| 0), notTaken b47(| 0) @4955
+  b45(v75):
+    Jump -> next b46() @4955
+  b46():
+    v76 = Integer integer=11 @4980
+    Jump -> next b49(v76) @4980
+  b47(v77):
+    Jump -> next b48() @4955
+  b48():
+    v78 = Integer @4985
+    Jump -> next b49(v78) @4985
+  b49(v79):
+    v80 = Convert v79 declared={type=number site=w12} @4985
+    Return v80 @4985
+}
+function f5 name="isWhiteSpaceSingleLine" module=m0 position=1020 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w13}] results=[{type=boolean site=w14}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1020
+  b1():
+    v1 = Integer integer=32 @1089
+    v2 = StrictEq v0, v1 @1082
+    v3 = ToBoolean v2 @1082
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @1082
+  b2(v4):
+    Jump -> next b5(v4) @1082
+  b3(v5):
+    Jump -> next b4() @1082
+  b4():
+    v6 = Integer integer=9 @1102
+    v7 = StrictEq v0, v6 @1082
+    Jump -> next b5(v7) @1082
+  b5(v8):
+    v9 = ToBoolean v8 @1082
+    Branch v9 -> taken b6(| 0), notTaken b7(| 0) @1082
+  b6(v10):
+    Jump -> next b9(v10) @1082
+  b7(v11):
+    Jump -> next b8() @1082
+  b8():
+    v12 = Integer integer=11 @1114
+    v13 = StrictEq v0, v12 @1082
+    Jump -> next b9(v13) @1082
+  b9(v14):
+    v15 = ToBoolean v14 @1082
+    Branch v15 -> taken b10(| 0), notTaken b11(| 0) @1082
+  b10(v16):
+    Jump -> next b13(v16) @1082
+  b11(v17):
+    Jump -> next b12() @1082
+  b12():
+    v18 = Integer integer=12 @1127
+    v19 = StrictEq v0, v18 @1082
+    Jump -> next b13(v19) @1082
+  b13(v20):
+    v21 = ToBoolean v20 @1082
+    Branch v21 -> taken b14(| 0), notTaken b15(| 0) @1082
+  b14(v22):
+    Jump -> next b17(v22) @1082
+  b15(v23):
+    Jump -> next b16() @1082
+  b16():
+    v24 = Integer integer=160 @1140
+    v25 = StrictEq v0, v24 @1082
+    Jump -> next b17(v25) @1082
+  b17(v26):
+    v27 = ToBoolean v26 @1082
+    Branch v27 -> taken b18(| 0), notTaken b19(| 0) @1082
+  b18(v28):
+    Jump -> next b21(v28) @1082
+  b19(v29):
+    Jump -> next b20() @1082
+  b20():
+    v30 = Integer integer=133 @1154
+    v31 = StrictEq v0, v30 @1082
+    Jump -> next b21(v31) @1082
+  b21(v32):
+    v33 = ToBoolean v32 @1082
+    Branch v33 -> taken b22(| 0), notTaken b23(| 0) @1082
+  b22(v34):
+    Jump -> next b25(v34) @1082
+  b23(v35):
+    Jump -> next b24() @1082
+  b24():
+    v36 = Integer integer=5760 @1168
+    v37 = StrictEq v0, v36 @1082
+    Jump -> next b25(v37) @1082
+  b25(v38):
+    v39 = ToBoolean v38 @1082
+    Branch v39 -> taken b26(| 0), notTaken b27(| 0) @1082
+  b26(v40):
+    Jump -> next b33(v40) @1082
+  b27(v41):
+    Jump -> next b28() @1082
+  b28():
+    v42 = Integer integer=8192 @1182
+    v43 = GreaterEq v0, v42 @1082
+    v44 = ToBoolean v43 @1176
+    Branch v44 -> taken b29(| 0), notTaken b31(| 0) @1176
+  b29(v45):
+    Jump -> next b30() @1176
+  b30():
+    v46 = Integer integer=8203 @1196
+    v47 = LessEq v0, v46 @1082
+    Jump -> next b32(v47) @1082
+  b31(v48):
+    Jump -> next b32(v48) @1176
+  b32(v49):
+    Jump -> next b33(v49) @1082
+  b33(v50):
+    v51 = ToBoolean v50 @1082
+    Branch v51 -> taken b34(| 0), notTaken b35(| 0) @1082
+  b34(v52):
+    Jump -> next b37(v52) @1082
+  b35(v53):
+    Jump -> next b36() @1082
+  b36():
+    v54 = Integer integer=8239 @1211
+    v55 = StrictEq v0, v54 @1082
+    Jump -> next b37(v55) @1082
+  b37(v56):
+    v57 = ToBoolean v56 @1082
+    Branch v57 -> taken b38(| 0), notTaken b39(| 0) @1082
+  b38(v58):
+    Jump -> next b41(v58) @1082
+  b39(v59):
+    Jump -> next b40() @1082
+  b40():
+    v60 = Integer integer=8287 @1226
+    v61 = StrictEq v0, v60 @1082
+    Jump -> next b41(v61) @1082
+  b41(v62):
+    v63 = ToBoolean v62 @1082
+    Branch v63 -> taken b42(| 0), notTaken b43(| 0) @1082
+  b42(v64):
+    Jump -> next b45(v64) @1082
+  b43(v65):
+    Jump -> next b44() @1082
+  b44():
+    v66 = Integer integer=12288 @1241
+    v67 = StrictEq v0, v66 @1082
+    Jump -> next b45(v67) @1082
+  b45(v68):
+    v69 = ToBoolean v68 @1082
+    Branch v69 -> taken b46(| 0), notTaken b47(| 0) @1082
+  b46(v70):
+    Jump -> next b49(v70) @1082
+  b47(v71):
+    Jump -> next b48() @1082
+  b48():
+    v72 = Integer integer=65279 @1257
+    v73 = StrictEq v0, v72 @1082
+    Jump -> next b49(v73) @1082
+  b49(v74):
+    v75 = Convert v74 declared={type=boolean site=w14} @1082
+    Return v75 @1082
+}
+function f6 name="isLineBreak" module=m0 position=1266 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w15}] results=[{type=boolean site=w16}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1266
+  b1():
+    v1 = Integer integer=10 @1324
+    v2 = StrictEq v0, v1 @1317
+    v3 = ToBoolean v2 @1317
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @1317
+  b2(v4):
+    Jump -> next b5(v4) @1317
+  b3(v5):
+    Jump -> next b4() @1317
+  b4():
+    v6 = Integer integer=13 @1337
+    v7 = StrictEq v0, v6 @1317
+    Jump -> next b5(v7) @1317
+  b5(v8):
+    v9 = ToBoolean v8 @1317
+    Branch v9 -> taken b6(| 0), notTaken b7(| 0) @1317
+  b6(v10):
+    Jump -> next b9(v10) @1317
+  b7(v11):
+    Jump -> next b8() @1317
+  b8():
+    v12 = Integer integer=8232 @1350
+    v13 = StrictEq v0, v12 @1317
+    Jump -> next b9(v13) @1317
+  b9(v14):
+    v15 = ToBoolean v14 @1317
+    Branch v15 -> taken b10(| 0), notTaken b11(| 0) @1317
+  b10(v16):
+    Jump -> next b13(v16) @1317
+  b11(v17):
+    Jump -> next b12() @1317
+  b12():
+    v18 = Integer integer=8233 @1365
+    v19 = StrictEq v0, v18 @1317
+    Jump -> next b13(v19) @1317
+  b13(v20):
+    v21 = Convert v20 declared={type=boolean site=w16} @1317
+    Return v21 @1317
+}
+function f7 name="attempt" module=m0 position=566 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @566
+  b1():
+    v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="attempt" @566
+    Throw v1 @566
+}
+function f8 name="cat" module=m0 position=719 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @719
+  b1():
+    v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="cat" @719
+    Throw v2 @719
+}
+function f9 name="cat3" module=m0 position=780 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @780
+  b1():
+    v3 = NewRuntimeError runtimeError=LeftOutOfExecutable name="cat3" @780
+    Throw v3 @780
+}
+function f10 name="part" module=m0 position=862 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @862
+  b1():
+    v3 = NewRuntimeError runtimeError=LeftOutOfExecutable name="part" @862
+    Throw v3 @862
+}
+function f11 name="flattened" module=m0 position=951 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @951
+  b1():
+    v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="flattened" @951
+    Throw v1 @951
+}
+function f12 name="print" module=m0 position=203 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w20 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @203
+  b1():
+    v1 = Builtin builtin=GlobalThis @218
+    v2 = PropGet v1 key="console" [isFreeName] @218
+    v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]} @218
+    v4 = PropGet v3 key="log" @218
+    v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @218
+    v6 = Call v5, v3, v0 calleeKey="log" calleeName="console.log" @226
+    ReturnCall v6 @226
+}
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f17 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f17 visibility=Private
 # -- generated: kind kindOfUnit
 # CHECK-LABEL: function {{*}}name="kind"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 165, patchpoints: 12
+# CHECK-NEXT: instructions: 190, patchpoints: 13
 # CHECK-NEXT: end of function f1
+# CHECK-LABEL: function {{*}}name="kind"
+# CHECK: role=GenericEntrypoint
+# CHECK-NEXT: instructions: 11, patchpoints: 1
+# CHECK-NEXT: end of function f20
 # CHECK-LABEL: function {{*}}name="kindOfUnit"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 102, patchpoints: 14, rare instructions: 1
+# CHECK-NEXT: instructions: 118, patchpoints: 13, rare instructions: 1
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="kindOfUnit"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 11, patchpoints: 1
-# CHECK-NEXT: end of function f12
+# CHECK-NEXT: end of function f21

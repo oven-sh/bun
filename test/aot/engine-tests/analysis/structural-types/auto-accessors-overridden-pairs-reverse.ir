@@ -1,4 +1,5 @@
 # Auto accessors are overridden by pairs and the reverse.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f8
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -795,4 +796,4 @@ function f61 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="raise"
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: instructions: 2, patchpoints: 2
-# CHECK-NEXT: end of function f86
+# CHECK-NEXT: end of function f78

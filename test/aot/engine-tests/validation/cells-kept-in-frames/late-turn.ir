@@ -1,0 +1,7 @@
+# sabotage=CellsThatAreKeptLieInFrames: the object of the turn before is read only past turn 100, where one birth in 64 is checked. The birth behind a checked one ends its cell, so the read of turn 129 stops.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# REQUIRES: not-windows
+# OPTIONS: disable=pass:InlineCalls,pass:InlineHeads testing=CheckProofsAtRunTime sabotage=CellsThatAreKeptLieInFrames
+# CHECK: AOT validation: EscapedFrameCell f
+# PROGRAM-OF: late-turn-left-alone.ir

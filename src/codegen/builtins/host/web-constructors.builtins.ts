@@ -1,7 +1,7 @@
 // Constructors and objects of the global object and of native modules of which the table says no more than what they are: whoever reads one gets that object.
 import * as b from "bun-builtins-table";
-import { builtinModulesCell, cryptoObjectCell, targetsOfEventsCell } from "./native-cells.ts";
-import { handedOver } from "./native-code.ts";
+import { builtinModulesCell, targetsOfEventsCell } from "./native-cells.ts";
+import { answering, constructing, handedOver, promiseOf } from "./native-code.ts";
 
 const constructorOnly = (path: b.BuiltinPath, options: b.ClassOptions = {}) =>
   b.class(path, { hasPrototype: false, ...options });
@@ -31,7 +31,13 @@ const constructorsBelow = {
   PerformanceEntry: ["PerformanceMark", "PerformanceMeasure", "PerformanceResourceTiming"],
 };
 
-const undeclaredFunction = b.otherwiseBy(b.generic);
+const allocatedSlowly = {
+  args: { size: b.f64 },
+  returns: b.instance("Buffer"),
+  capability: "heap",
+  throws: true,
+  implementation: b.generic,
+} satisfies b.FunctionField;
 
 const numbersFrom = (first: number, ...names: readonly string[]) =>
   Object.fromEntries(names.map((name, index) => [name, b.constant(first + index)]));
@@ -320,28 +326,28 @@ export default b.declarations(
   }),
   streamClass("WritableStream", ["underlyingSink", "strategy"], {
     locked: readsStream(b.bool),
-    abort: undeclaredFunction,
-    close: undeclaredFunction,
-    getWriter: undeclaredFunction,
+    abort: answering(promiseOf(b.undefined)),
+    close: answering(promiseOf(b.undefined)),
+    getWriter: answering(b.instance("WritableStreamDefaultWriter")),
   }),
   // The three classes of a byte stream. A byte stream takes the bytes of the view that it is handed: the buffer behind the view is empty afterwards.
   partOfByteStream("ReadableByteStreamController", {
     byobRequest: readsStream(b.any),
     desiredSize: readsStream(b.union(b.f64, b.null)),
-    close: undeclaredFunction,
+    close: answering(b.undefined),
     enqueue: takesBytesOf("chunk", b.undefined),
-    error: undeclaredFunction,
+    error: answering(b.undefined),
   }),
   // For a receiver that is no reader both answer a new rejected promise.
   partOfByteStream("ReadableStreamBYOBReader", {
     closed: { ...readsStream(b.any), this: b.any, mutability: "ChangesOnItsOwn" },
-    cancel: undeclaredFunction,
+    cancel: answering(promiseOf(b.undefined)),
     read: { ...takesBytesOf("view", b.any), this: b.any },
-    releaseLock: undeclaredFunction,
+    releaseLock: answering(b.undefined),
   }),
   partOfByteStream("ReadableStreamBYOBRequest", {
     view: readsStream(b.any),
-    respond: undeclaredFunction,
+    respond: answering(b.undefined),
     respondWithNewView: takesBytesOf("view", b.undefined),
   }),
   streamClass(
@@ -407,20 +413,8 @@ export default b.declarations(
   b.same("ResolveError", "ResolveMessage"),
 
   // The realm makes the one instance of Crypto with the global object.
-  b.static(
-    "crypto",
-    b.property(b.instance("Crypto"), {
-      createdOnFirstRead: {
-        capability: "heap",
-        uses: {
-          this: [
-            b.createdIn(b.instance("Crypto").fresh, b.nativeCell(cryptoObjectCell)),
-            b.returnedFrom(cryptoObjectCell),
-          ],
-        },
-      },
-    }),
-  ),
+  b.namespace("crypto", {}, { listsAllMembers: true }),
+  b.inherits("crypto", "Crypto.prototype"),
   b.namespace("navigator", {
     userAgent: describesMachine(b.string),
     platform: describesMachine(b.string),
@@ -429,6 +423,26 @@ export default b.declarations(
   }),
   b.inherits("navigator", "Object.prototype"),
 
+  Object.entries({
+    ByteLengthQueuingStrategy: "ByteLengthQueuingStrategy",
+    CountQueuingStrategy: "CountQueuingStrategy",
+    CustomEvent: "CustomEvent",
+    DOMException: "DOMException",
+    ErrorEvent: "ErrorEvent",
+    File: "Blob",
+    MessageEvent: "MessageEvent",
+  }).flatMap(([name, made]) => [
+    ...b.construction(name, constructing(b.instance(made), b.hostCall)),
+    ...b.callOfConstructor(name, answering(b.never, b.hostCall)),
+  ]),
+  b.method("AbortSignal.prototype.reason", {
+    getter: b.any,
+    capability: "heap",
+    throws: true,
+    uses: { this: b.inspected },
+    reads: ["ExternalState"],
+    implementation: b.generic,
+  }),
   b.method("AbortSignal.prototype.aborted", {
     getter: b.bool,
     capability: "heap",
@@ -506,9 +520,14 @@ export default b.declarations(
   ),
   b.namespace("node:buffer.constants", { MAX_LENGTH: b.property(b.f64), MAX_STRING_LENGTH: b.property(b.f64) }),
   b.inherits("node:buffer.constants", "Object.prototype"),
-  ["SlowBuffer", "isAscii", "isUtf8", "resolveObjectURL", "transcode"].flatMap(name =>
-    b.static(`node:buffer.${name}`, undeclaredFunction),
-  ),
-  // Its `prototype` is Buffer.prototype.
+  Object.entries({
+    isAscii: b.bool,
+    isUtf8: b.bool,
+    resolveObjectURL: b.union(b.instance("Blob"), b.undefined),
+    transcode: b.instance("Buffer"),
+  }).flatMap(([name, answer]) => b.static(`node:buffer.${name}`, answering(answer))),
+  b.static("node:buffer.SlowBuffer", allocatedSlowly),
   b.extend("node:buffer.SlowBuffer", { hasUndeclaredMembers: true }),
+  b.same("node:buffer.SlowBuffer.prototype", "Buffer.prototype"),
+  b.constructionOfFunction("node:buffer.SlowBuffer", allocatedSlowly),
 );

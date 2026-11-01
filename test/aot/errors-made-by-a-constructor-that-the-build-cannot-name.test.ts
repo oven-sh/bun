@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // `new Error()` where the build does not know that `Error` is the built-in one calls the engine's own constructor, like any host function. Over layers that is every
 // `new Error()` of the application and of the test files. The constructor leaves its own frame out of the trace, and for that alone the error listed every frame at
@@ -97,18 +98,28 @@ async function seenIn(directory: string, words: string | undefined, flag?: strin
   return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
 }
 
-test("an error made by the engine's own constructor says what plain Bun says", async () => {
-  using dir = tempDir("aot-errors-by-a-constructor-nobody-names", files);
-  const plain = await seenIn(String(dir), undefined);
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof seenIn>>;
+beforeAll(async () => {
+  dir = tempDir("aot-errors-by-a-constructor-nobody-names", files);
+  plain = await seenIn(String(dir), undefined);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("plain Bun says where the engine's own constructor made an error", () => {
   expect(plain.exitCode).toBe(0);
   expect(plain.seen.length).toBe(45);
   expect(plain.seen[1]).toContain("at madeInTheApplication (src/makes.js:3:");
-  expect(await seenIn(String(dir), "TestRunLayers:0", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:1,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  // The run time holds every trace that it keeps as return addresses against the frames listed one by one.
-  expect(await seenIn(String(dir), "TestRunLayers:0", "--aot", { BUN_JSC_validateAOTRuntime: "1" })).toEqual(plain);
-  expect(
-    await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot", { BUN_JSC_validateAOTRuntime: "1" }),
-  ).toEqual(plain);
-}, 360_000);
+});
+
+// The run time holds every trace that it keeps as return addresses against the frames listed one by one.
+const validating = { BUN_JSC_validateAOTRuntime: "1" };
+test.each([
+  ["one program", "TestRunLayers:0", {}],
+  ["one layer", "TestRunLayers:1,TestRunPartFiles:1", {}],
+  ["two layers", "TestRunLayers:2,TestRunPartFiles:1", {}],
+  ["one program that validates", "TestRunLayers:0", validating],
+  ["two layers that validate", "TestRunLayers:2,TestRunPartFiles:1", validating],
+])("an error made by the engine's own constructor says what plain Bun says: %s", async (_, words, more) => {
+  expect(await seenIn(String(dir), words, "--aot", more)).toEqual(plain);
+});

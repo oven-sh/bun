@@ -1,9 +1,9 @@
 # OPTIONS: exclude=EvaluatedText
 # RUN: valueflow-results
-# CHECK: unseen-code EvaluatesText f0:v9 NodeModulePrototype_compile
 # CHECK: unseen-code RunsUnseenCode f0:v7 NodeVMBindingModule
 # CHECK: unseen-code RunsUnseenCode f0:v3 NodeVMBindingScript
 # CHECK: unseen-code RunsUnseenCode f0:v5 NodeVMBindingCompileFunction
+# CHECK: unseen-code LoadsCodeByName f0:v9 NodeModulePrototype_compile
 # RUN(EVAL): valueflow-results
 # EVAL-NOT: unseen-code {{*}} f0:v11
 

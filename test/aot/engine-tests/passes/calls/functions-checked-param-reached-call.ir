@@ -88,7 +88,7 @@ typesite w43 module=m4 position=1072 kind=Field
 typesite w44 module=m4 position=1088 kind=Field
 layout L0 module=m0 position=810 fields=[{key="factor" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
 layout L1 module=m0 position=330 fields=[{key="first" declared={type=undefined|null|function|f4|f5 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="second" declared={type=undefined|null|function|f5 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] ownFieldCount=2
-layout L2 module=m1 position=15415 fields=[{key="args" declared={type=undefined|null|Array flags=[OmitsNull]} flags=[IsRequired]}, {key="callback" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="frame" declared={type=undefined|null|L4 flags=[OmitsNull]} flags=[IsRequired]}] declaredOrder=[1, 0, 2] ownFieldCount=3
+layout L2 module=m1 position=15852 fields=[{key="args" declared={type=undefined|null|Array flags=[OmitsNull]} flags=[IsRequired]}, {key="callback" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="frame" declared={type=undefined|null|L4 flags=[OmitsNull]} flags=[IsRequired]}] declaredOrder=[1, 0, 2] ownFieldCount=3
 layout L3 kind=Instance name="Tick" module=m4 position=920 constructor=f13 fields=[{key="callback" declared={type=undefined|null|function site=w40 flags=[OmitsNull]} flags=[IsRequired]}, {key="count" declared={type=number site=w41} flags=[IsRequired]}, {key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}, {key="third" declared={type=anything} flags=[IsRequired]}, {key="shown" declared={type=undefined|null|L2 site=w42 flags=[OmitsNull]} flags=[IsRequired]}, {key="frame" declared={type=undefined|null|L4 site=w43 flags=[OmitsNull]} flags=[IsRequired]}, {key="next" declared={type=undefined|null|L3 site=w44 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=8
 layout L4 kind=Instance
 data d0 root=Array{contents=undefined|null|"first"|"second" elements=[String{value="first"}, String{value="second"}]} module=m0
@@ -514,7 +514,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v16: "a" = String string="a"
 # CHECK-NEXT: v17: 1 = Integer integer=1
-# CHECK-NEXT: v18: Array<undefined|number|"a"> = NewArray v16, v17 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v18: Array<undefined|number|"a"> = NewArray v16, v17 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v19: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v20: 10 = Integer integer=10
 # CHECK-NEXT: v21: string = CallDirect v20, v19 function=f19 @334:3 tail
@@ -525,7 +525,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v24: "a" = String string="a"
 # CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: Array<undefined|number|"a"> = NewArray v24, v25 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v26: Array<undefined|number|"a"> = NewArray v24, v25 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v27: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v28: 10 = Integer integer=10
 # CHECK-NEXT: v29: string = CallDirect v28, v27 function=f5 accessSite=6
@@ -736,7 +736,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v79: boolean = TypeTest v76 testedType=f4
 # CHECK-NEXT: Branch v79 -> taken b25(v78), notTaken b26(| 0)
 # CHECK-NEXT: b25(v80: number):
-# CHECK-NEXT: v81: Array<undefined|number|"a"> = NewArray v58, v59 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v81: Array<undefined|number|"a"> = NewArray v58, v59 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v82: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v81 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v83: string = CallDirect v80, v82 function=f4 accessSite=31 [isNeverInlined]
 # CHECK-NEXT: Jump -> next b28(v83)
@@ -744,7 +744,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v85: boolean = TypeTest v84 testedType=f5
 # CHECK-NEXT: Branch v85 -> taken b27(v78), notTaken b29()
 # CHECK-NEXT: b27(v86: number):
-# CHECK-NEXT: v87: Array<undefined|number|"a"> = NewArray v58, v59 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v87: Array<undefined|number|"a"> = NewArray v58, v59 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v88: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v87 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v89: string = CallDirect v86, v88 function=f5 accessSite=31 [isNeverInlined]
 # CHECK-NEXT: Jump -> next b28(v89)
@@ -842,7 +842,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v17: boolean = TypeTest v10 testedType=f4
 # CHECK-NEXT: TestAndBranch v17 -> taken b3(), notTaken b4(| 0)
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v18: Array<undefined|number|"a"> = NewArray v14, v16 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v18: Array<undefined|number|"a"> = NewArray v14, v16 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v19: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v20: string = CallDirect v12, v19 function=f4 accessSite=31
 # CHECK-NEXT: Jump -> next b6(v20)
@@ -850,7 +850,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v22: boolean = TypeTest v21 testedType=f5
 # CHECK-NEXT: TestAndBranch v22 -> taken b5(), notTaken b8()
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v23: Array<undefined|number|"a"> = NewArray v14, v16 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v23: Array<undefined|number|"a"> = NewArray v14, v16 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v24: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v25: string = CallDirect v12, v24 function=f5 accessSite=31
 # CHECK-NEXT: Jump -> next b6(v25)
@@ -907,14 +907,14 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v27: "end" = String string="end"
 # CHECK-NEXT: Jump -> next b8(v27) @334:1 tail
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v28: Array<undefined|number|"a"> = NewArray v18, v23 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v28: Array<undefined|number|"a"> = NewArray v18, v23 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v29: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v28 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> @334:2 tail
 # CHECK-NEXT: v30: string = CallDirect v11, v29 function=f19 [isNeverInlined] @334:2 tail
 # CHECK-NEXT: Jump -> next b8(v30) @334:1 tail
 # CHECK-NEXT: b8(v31: string):
 # CHECK-NEXT: Jump -> next b10(v31)
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v32: Array<undefined|number|"a"> = NewArray v18, v23 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v32: Array<undefined|number|"a"> = NewArray v18, v23 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v33: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v32 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v34: string = CallDirect v11, v33 function=f5 accessSite=31
 # CHECK-NEXT: Jump -> next b10(v34)
@@ -946,7 +946,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v57: boolean = TypeTest v52 testedType=f4
 # CHECK-NEXT: Branch v57 -> taken b16(), notTaken b17(| 0)
 # CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v58: Array<undefined|number|"a"> = NewArray v53, v56 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v58: Array<undefined|number|"a"> = NewArray v53, v56 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v59: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v58 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v60: string = CallDirect v54, v59 function=f4 accessSite=31
 # CHECK-NEXT: Jump -> next b19(v60)
@@ -954,7 +954,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v62: boolean ~ true = TypeTest v61 testedType=f5
 # CHECK-NEXT: Branch v62 -> taken b18(), notTaken b22()
 # CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v63: Array<undefined|number|"a"> = NewArray v53, v56 contents=undefined|number|"a" storage=Frame
+# CHECK-NEXT: v63: Array<undefined|number|"a"> = NewArray v53, v56 contents=undefined|number|"a" storage=Frame [isMadeForOneUse]
 # CHECK-NEXT: v64: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v63 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v65: string = CallDirect v54, v64 function=f5 accessSite=31
 # CHECK-NEXT: Jump -> next b19(v65)

@@ -465,6 +465,17 @@ extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t ad
     JSC::AOT::relocateImage({ image, size }, address);
 }
 
+extern "C" bool Bun__AOT__placeOfStringHeadersBehind(const uint8_t* firstImage, size_t sizeOfFirstImage, const uint8_t* image, size_t size, size_t* place)
+{
+    auto found = JSC::AOT::placeOfStringHeadersBehind({ firstImage, sizeOfFirstImage }, { image, size });
+    if (!found)
+        return false;
+    place[0] = found->offsetInFirstImage;
+    place[1] = found->offsetInImage;
+    place[2] = found->size;
+    return true;
+}
+
 extern "C" size_t Bun__AOT__operationCount()
 {
     return Typed::numberOfOpcodes;
@@ -521,6 +532,7 @@ extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t* pattern, si
 // What src/aot/engine/shared.rs asks. Nothing else of this file has a caller in a Bun without the compiler.
 extern "C" size_t Bun__AOT__imageAlignment() { return 1; }
 extern "C" void Bun__AOT__relocateImage(uint8_t*, size_t, uint64_t) {}
+extern "C" bool Bun__AOT__placeOfStringHeadersBehind(const uint8_t*, size_t, const uint8_t*, size_t, size_t*) { return false; }
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
 extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t*, size_t, const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
 // What src/runtime/cli/run_compiled.rs names.

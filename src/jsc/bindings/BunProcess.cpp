@@ -354,7 +354,8 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
-    lockFoldedMembers(vm, globalObject, release, "process.release"_s, { "name"_s });
+    if (!Bun::compiledModulesRunInPlaceOfFiles())
+        lockFoldedMembers(vm, globalObject, release, "process.release"_s, { "name"_s });
     return release;
 }
 
@@ -3551,6 +3552,7 @@ static constexpr BareStreamMethod methodsOfOutputAfterWrite[] = {
 static constexpr BareStreamMethod methodsOfInputBeforeRef[] = {
     { "on"_s, ""_s, 2 },
     { "addListener"_s, ""_s, 2, true, BareStreamMethod::Kind::SameAsPrevious },
+    { "_destroy"_s, ""_s, 2 },
 };
 // A file that is no terminal has none of them.
 static constexpr BareStreamMethod methodsOfInputThatWaits[] = {
@@ -3794,8 +3796,11 @@ static EncodedJSValue writeWithoutSink(JSC::JSGlobalObject* globalObject, CallFr
     }
     JSValue write = isOver ? JSValue() : thisValue.get(globalObject, Identifier::fromString(vm, "_write"_s));
     RETURN_IF_EXCEPTION(scope, {});
-    if (write && !write.isCallable())
-        return throwVMTypeError(globalObject, scope, makeString("this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is "_s, write.isObject() ? "an instance of "_s : ""_s, JSC::errorDescriptionForValue(globalObject, write), ')'));
+    if (write && !write.isCallable()) {
+        String description = JSC::errorDescriptionForValue(globalObject, write);
+        RETURN_IF_EXCEPTION(scope, {});
+        return throwVMTypeError(globalObject, scope, makeString("this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is "_s, write.isObject() ? "an instance of "_s : ""_s, description, ')'));
+    }
     // From here plain Bun needs Writable.prototype.write.
     RELEASE_AND_RETURN(scope, Process_functionNeedsWholeOutputStream(globalObject, callFrame));
 }
@@ -4015,7 +4020,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
-    if (JSC::AOT::isNeededByNothingThatRuns(getStdioWriteStream)) {
+    if (vm.hasCompiledCode() && JSC::AOT::isNeededByNothingThatRuns(getStdioWriteStream)) {
         JSValue stream = constructLightStdioWriteStream(globalObject, processObject, fd);
         return scope.exception() ? JSValue() : stream;
     }
@@ -4164,7 +4169,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
-    if (JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
+    if (vm.hasCompiledCode() && JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
         getStdinStream = JSC::JSFunction::create(vm, globalObject, stdioGetLightStdinStreamCodeGenerator(vm), globalObject);
         if (JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
             JSValue stream = constructBareStream(globalObject, processObject, STDIN_FILENO, {});
@@ -5648,6 +5653,8 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalG
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (Bun::hasCompiledModules())
+        RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mainModuleOfExecutable(globalObject)));
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
@@ -6272,8 +6279,7 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
-    // Compiled code reads the property as the table of built-ins describes it.
-    if (isBunTest && !Bun::hasCompiledModules())
+    if (isBunTest)
         putDirectCustomAccessor(vm, Identifier::fromString(vm, "mainModule"_s), CustomGetterSetter::create(vm, processMainModuleOfTestFile, setProcessMainModuleOfTestFile), PropertyAttribute::CustomAccessor | 0);
 
     // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.

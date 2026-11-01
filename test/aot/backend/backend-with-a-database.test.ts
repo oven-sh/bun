@@ -1,5 +1,5 @@
-import { test } from "bun:test";
 import { unsupported } from "../harness/compiler";
+import { test } from "../listed";
 import { testOptIn } from "../opt-in";
 
 if (unsupported) test.skip(unsupported, () => {});

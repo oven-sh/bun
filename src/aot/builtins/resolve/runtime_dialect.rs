@@ -1,9 +1,20 @@
 use super::resolver::{ExprState, Resolver};
 use crate::builtins::intrinsics::{find_intrinsic, find_native_call_kind, find_symbol_key};
-use crate::builtins::table::{self, Intrinsic, IntrinsicPosition};
+use crate::builtins::table::{self, BuiltinId, Intrinsic, IntrinsicPosition, Mutability};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Parent};
 use bun_sema::hir::{ExprId, ExprKind};
+use std::sync::OnceLock;
+
+static NATIVES: OnceLock<Vec<(BuiltinId, bool)>> = OnceLock::new();
+
+/// `names`: `nativeFunctions` and `nativeGlobals` in src/codegen/replacements.ts, as the manifest of Bun's own code lists them, each with whether
+/// `globalThis.name` means it too. They are part of Bun, so every build of a process has the same.
+pub fn set_natives<'a>(names: impl Iterator<Item = (&'a [u8], bool)>) {
+    let find =
+        |(name, is_also_member)| Some((table::global(table::find_name(name)?)?, is_also_member));
+    NATIVES.get_or_init(|| names.filter_map(find).collect());
+}
 
 impl Resolver<'_, '_> {
     fn is_callee_of(&self, expr: ExprId, parent: ExprId) -> bool {
@@ -20,6 +31,18 @@ impl Resolver<'_, '_> {
         };
         find_intrinsic(input.names, name, position)
             .or_else(|| input.names.get(name).and_then(table::prefixed_global))
+            .or_else(|| self.find_native(name, false))
+    }
+
+    /// `setTimeout` and `Blob` in Bun's own code are what Bun began with, whatever the program has put on the global object and by whatever road:
+    /// plain Bun reads `@natives.setTimeout` there. Nobody asks whether the name is replaced.
+    pub(super) fn find_native(&self, name: Atom, is_member: bool) -> Option<Intrinsic> {
+        let global = table::global(self.input.names.get(name)?)?;
+        let &(_, is_also_member) = NATIVES.get()?.iter().find(|native| native.0 == global)?;
+        // Of what is made when it is first read the table may have a property and no object: that is read off the global object, as a program reads it.
+        let is_one_object = table::entry(global).mutability != Mutability::ChangesOnItsOwn;
+        (is_one_object && (is_also_member || !is_member))
+            .then(|| Intrinsic::Builtin(table::canonical_id(global)))
     }
 
     pub(super) fn find_runtime_member(&self, name: Atom) -> Option<Intrinsic> {

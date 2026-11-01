@@ -100,7 +100,7 @@ impl Resolver<'_, '_> {
     }
 
     // Whoever reads the result learns whether there is an object, and does not get the object.
-    fn is_only_tested(&self, e: ExprId) -> bool {
+    pub(super) fn is_only_tested(&self, e: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut node = e;
         loop {
@@ -294,7 +294,8 @@ impl Resolver<'_, '_> {
     // In a test run `require.cache[path]` is the module object of a compiled file. A test of an entry takes nothing, and neither does a read of a member that leads
     // to no other module object: `require.cache[path].exports`.
     fn takes_module_object_out_of_cache(&self, cache: ExprId) -> bool {
-        if self.input.replaced_members_sought == ReplacedMembersSought::None {
+        use ReplacedMembersSought::{NamesAdded, None as Nothing};
+        if matches!(self.input.replaced_members_sought, Nothing | NamesAdded) {
             return false;
         }
         let Some(entry) = self.find_member_of(cache) else {

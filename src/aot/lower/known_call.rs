@@ -1,11 +1,11 @@
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     Binding, BindingInitializer, Decl, InitialState, Parent, ScopeId, StoreKind, SymbolId,
 };
-use bun_sema::check::aot::FunctionRef;
+use bun_sema::check::aot::{FunctionRef, ObjectMemberKind};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, MemberKey, PatKind, PropKey, PropKind,
-    StmtId, StmtKind, UnOp,
+    self, BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, MemberKey, NodeData, PatKind,
+    PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::program::FileId;
 use smallvec::SmallVec;
@@ -20,10 +20,11 @@ use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, PropertyKeyId, TypeTable, ValueId};
 use crate::known_helpers::{
-    HeldFunction, Helper, KnownCallee, PrivateFieldAccess, PrivateMemberKind, PrivateStateKind,
-    PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, Shape, resolve_callee,
-    resolve_private_field_call, resolve_reference,
+    HeldFunction, Helper, KnownCallee, KnownReference, PrivateFieldAccess, PrivateMemberKind,
+    PrivateStateKind, PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, Shape,
+    resolve_callee, resolve_loaded_reference, resolve_private_field_call, resolve_reference,
 };
+use crate::load::sources::parsed_source;
 use crate::statistics::StatisticId;
 
 #[derive(Copy, Clone)]
@@ -58,6 +59,7 @@ struct CreateClassPlan {
     define_property: ExprId,
     lock_prototype: Option<(ExprId, ExprId)>,
     lock_prototype_callee: Option<ExprId>,
+    converts_keys: bool,
     builtins_are_locked: bool,
     prototype_name: PropertyKeyId,
     enumerable_name: PropertyKeyId,
@@ -100,6 +102,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match callee.helper(helpers)? {
             Helper::ExportStar => self.lower_export_star(call, site, &callee),
             Helper::CreateClass => self.lower_create_class(call, site, &callee),
+            Helper::Typeof => {
+                let operand = self.file.find_operand_of_typeof_helper(call)?;
+                let value = self.lower_expression(operand);
+                self.set_position(hir[call].pos);
+                Some(self.builder.type_of(value))
+            }
+            Helper::ImportDefault => self.lower_import_default(call, site, &callee),
             Helper::ClassPrivateFieldGet | Helper::ClassPrivateFieldIn => {
                 self.lower_static_member_access(call, site)
             }
@@ -298,12 +307,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         site: Call,
         callee: &KnownCallee,
     ) -> Option<ValueId> {
-        if callee.file != self.file.file || !(2..=3).contains(&site.args.len()) {
+        if !(1..=3).contains(&site.args.len()) {
             return None;
         }
+        let home = callee.file;
+        let is_in_this_file = home == self.file.file;
         let hir = self.file.hir;
         let constructor = self.file.skip_type_syntax(hir.id_at(site.args, 0));
-        if !matches!(hir[constructor].kind, ExprKind::Ident(_)) {
+        // `_createClass(function A() { .. })`, as Babel writes a class without methods: the function is made once, ahead of every test.
+        let is_made_here = matches!(hir[constructor].kind, ExprKind::Fn(_));
+        if !is_made_here && !matches!(hir[constructor].kind, ExprKind::Ident(_)) {
             return None;
         }
         let mut sides: [SmallVec<[ExprId; 4]>; 2] = Default::default();
@@ -316,8 +329,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let mut candidates = callee.functions.iter();
         let (held, plan) = candidates
-            .find_map(|&held| Some((held, self.file.plan_create_class(held.definition)?)))?;
+            .find_map(|&held| Some((held, self.file.plan_create_class(home, held.definition)?)))?;
+        // No variable and no text of another file is read here: what the helper names there has to be certain.
+        if !is_in_this_file && (plan.define_properties.needs_guard || !plan.builtins_are_locked) {
+            return None;
+        }
         if plan.define_properties.needs_guard && !self.is_readable(plan.define_properties.symbol) {
+            return None;
+        }
+        let mut literals = sides.iter().flatten();
+        if plan.converts_keys && literals.any(|&literal| self.file.is_keyed_by_function(literal)) {
             return None;
         }
         // Where nothing can stand in the helpers' places there is no other way. A call of the helpers in the program would tell flow that every class has what any of them defines.
@@ -327,42 +348,57 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             && !plan.define_properties.needs_guard
             && plan.builtins_are_locked;
         let mut other_way = None;
-        let define = if is_certain {
+        let mut made = None;
+        let define = if is_certain && is_in_this_file {
             self.lower_expression(plan.define_property)
+        } else if is_certain {
+            self.emit_builtin_itself(BuiltinId::ObjectDefineProperty)
         } else {
             let lowered_callee = self.lower_callee(site.callee, None, None);
+            made = is_made_here.then(|| self.lower_expression(constructor));
             self.set_position(hir[call].pos);
             let slow_path = self.create_unlikely_block();
-            if callee.needs_guard() {
-                self.guard_closure(
-                    lowered_callee.function,
-                    callee.file,
-                    held.closure,
+            if is_in_this_file {
+                if callee.needs_guard() {
+                    self.guard_closure(lowered_callee.function, home, held.closure, slow_path);
+                }
+                if plan.define_properties.needs_guard {
+                    let stored = self.get_stored(BindingRef::Symbol(plan.define_properties.symbol));
+                    self.guard_closure(
+                        stored,
+                        home,
+                        plan.define_properties.function.closure,
+                        slow_path,
+                    );
+                }
+                other_way = Some((lowered_callee, slow_path));
+                let define = self.guard_builtin_path(
+                    (plan.define_property, BuiltinId::ObjectDefineProperty),
                     slow_path,
                 );
+                if let Some(path) = plan.lock_prototype_callee {
+                    self.guard_builtin_path((path, BuiltinId::ObjectDefineProperty), slow_path);
+                }
+                define
+            } else {
+                // One test alone leads to the other way, so what is called there is anything but the helper: where flow sees the helper alone arrive, nothing is called.
+                let other_callee = Callee {
+                    function: self.builder.add_edge_result(slow_path),
+                    key: None,
+                    ..lowered_callee
+                };
+                let helper = reference_function(self.file, home, held.closure);
+                let is_helper = self.builder.is_closure_of(helper, lowered_callee.function);
+                let passed = self.create_block();
+                let differs = Edge::with_proofs(slow_path, &[0]);
+                self.builder.branch(is_helper, Edge::to(passed), differs);
+                self.continue_in(passed);
+                other_way = Some((other_callee, slow_path));
+                self.emit_builtin_itself(BuiltinId::ObjectDefineProperty)
             }
-            if plan.define_properties.needs_guard {
-                let file = self.file.file;
-                let stored = self.get_stored(BindingRef::Symbol(plan.define_properties.symbol));
-                self.guard_closure(
-                    stored,
-                    file,
-                    plan.define_properties.function.closure,
-                    slow_path,
-                );
-            }
-            let define = self.guard_builtin_path(
-                (plan.define_property, BuiltinId::ObjectDefineProperty),
-                slow_path,
-            );
-            if let Some(path) = plan.lock_prototype_callee {
-                self.guard_builtin_path((path, BuiltinId::ObjectDefineProperty), slow_path);
-            }
-            other_way = Some((lowered_callee, slow_path));
-            define
         };
 
-        let object = self.lower_expression(constructor);
+        let object = made.unwrap_or_else(|| self.lower_expression(constructor));
         for (index, side) in sides.iter().enumerate() {
             // The helper asks whether it was given a list, and an empty one is a list: `Constructor.prototype` is read for it.
             let is_empty_list_of_prototype = index == 0
@@ -384,8 +420,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         }
         if let Some(lock) = plan.lock_prototype {
-            let name = self.lower_expression(lock.0);
-            let descriptor = self.lower_expression(lock.1);
+            let (name, descriptor) = match is_in_this_file {
+                true => (self.lower_expression(lock.0), self.lower_expression(lock.1)),
+                false => self.emit_lock_of_prototype(&plan),
+            };
             let holder = self.emit_builtin_itself(BuiltinId::Object);
             super::call::emit_call(self, define, Some(holder), &[object, name, descriptor]);
         }
@@ -399,15 +437,117 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.write_variable(result, object);
         self.jump(done);
         self.continue_in(slow_path);
-        let Arguments::Values(arguments) = self.lower_arguments(site.args) else {
+        let written: SmallVec<[ExprId; 4]> =
+            hir.ids(site.args).skip(made.is_some() as usize).collect();
+        let Arguments::Values(mut arguments) = self.lower_argument_slice(&written) else {
             unreachable!("a call with a spread argument is not a known call");
         };
+        if let Some(made) = made {
+            arguments.insert(0, made);
+        }
         let returned =
             self.emit_call_expression(call, lowered_callee, Arguments::Values(arguments), Tail::No);
         self.builder.write_variable(result, returned);
         self.jump(done);
         self.continue_in(done);
         Some(self.builder.read_variable(result))
+    }
+
+    // `value && value.__esModule ? value : { default: value }`, written out. One function called for every module would hand flow one object that shows what any of them exports.
+    fn lower_import_default(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        callee: &KnownCallee,
+    ) -> Option<ValueId> {
+        let hir = self.file.hir;
+        let &[held] = &callee.functions[..] else {
+            return None;
+        };
+        if site.args.len() != 1 {
+            return None;
+        }
+        // The operand loads a module, so it is evaluated once, in front of the test of the callee.
+        let is_certain = !callee.needs_guard() && callee.holds_from_the_start;
+        let lowered_callee = (!is_certain).then(|| self.lower_callee(site.callee, None, None));
+        let Arguments::Values(arguments) = self.lower_arguments(site.args) else {
+            unreachable!("a call with a spread argument is not a known call");
+        };
+        let value = arguments[0];
+        self.set_position(hir[call].pos);
+        let other_way = lowered_callee.map(|lowered_callee| {
+            let slow_path = self.create_unlikely_block();
+            let other_callee = Callee {
+                function: self.builder.add_edge_result(slow_path),
+                key: None,
+                ..lowered_callee
+            };
+            let helper = reference_function(self.file, callee.file, held.closure);
+            let is_helper = self.builder.is_closure_of(helper, lowered_callee.function);
+            let passed = self.create_block();
+            let differs = Edge::with_proofs(slow_path, &[0]);
+            self.builder.branch(is_helper, Edge::to(passed), differs);
+            self.continue_in(passed);
+            (other_callee, slow_path)
+        });
+        let result = self.builder.create_variable(None);
+        let (asked, marked, wrapped, done) = (
+            self.create_block(),
+            self.create_block(),
+            self.create_block(),
+            self.create_block(),
+        );
+        let is_something = self.builder.to_boolean(value);
+        self.builder
+            .branch(is_something, Edge::to(asked), Edge::to(wrapped));
+        self.continue_in(asked);
+        let text = self.file.intern_bytes(b"__esModule");
+        let marker = self.file.text_key(text);
+        let marker = self.emit_get(value, PropertyName::Constant(marker));
+        let is_marked = self.builder.to_boolean(marker);
+        self.builder
+            .branch(is_marked, Edge::to(marked), Edge::to(wrapped));
+        self.continue_in(marked);
+        self.builder.write_variable(result, value);
+        self.jump(done);
+        self.continue_in(wrapped);
+        let default_name = self.file.name_key(known::default);
+        // A layout of its own: the type of a field is one for all objects of a layout.
+        let members = [(default_name, ObjectMemberKind::Field)];
+        let layout = self.file.layout_of_names(call, &members);
+        let mut wrapper = self.begin_object(layout);
+        self.add_property(
+            &mut wrapper,
+            PropertyName::Constant(default_name),
+            value,
+            None,
+        );
+        let wrapper = super::object::finish_object(self, wrapper);
+        self.builder.write_variable(result, wrapper);
+        self.jump(done);
+        self.file.count(StatisticId::KnownHelperCalls, 1);
+        if let Some((other_callee, slow_path)) = other_way {
+            self.continue_in(slow_path);
+            let arguments = Arguments::Values(arguments);
+            let returned = self.emit_call_expression(call, other_callee, arguments, Tail::No);
+            self.builder.write_variable(result, returned);
+            self.jump(done);
+        }
+        self.continue_in(done);
+        Some(self.builder.read_variable(result))
+    }
+
+    // `"prototype", { writable: false }`, as every published text has it.
+    fn emit_lock_of_prototype(&mut self, plan: &CreateClassPlan) -> (ValueId, ValueId) {
+        let text = self.file.intern_bytes(b"prototype");
+        let name = self.builder.string(text);
+        let members = [(plan.writable_name, ObjectMemberKind::Field)];
+        let layout = self.file.untyped_layout(&members);
+        let mut descriptor = self.begin_object(layout);
+        let no = self.builder.boolean(false);
+        let writable = PropertyName::Constant(plan.writable_name);
+        self.add_property(&mut descriptor, writable, no, None);
+        (name, super::object::finish_object(self, descriptor))
     }
 
     fn emit_written_descriptor(
@@ -620,7 +760,7 @@ impl FileLowering<'_, '_, '_, '_> {
     // for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(o, p)) __createBinding(o, m, p);
     fn find_has_own_property(&self, export_star: FnId) -> Option<(BuiltinPathExpr, Atom)> {
         let hir = self.hir;
-        let [for_in] = find_statements(self, export_star)[..] else {
+        let [for_in] = find_statements(self.hir, export_star)[..] else {
             return None;
         };
         let StmtKind::ForIn { body, .. } = hir[for_in].kind else {
@@ -644,7 +784,7 @@ impl FileLowering<'_, '_, '_, '_> {
         else {
             return None;
         };
-        let callee = find_callee(self, operand)?;
+        let callee = find_callee(self.hir, operand)?;
         let (function, MemberKey::Name(call_name)) = hir.member_key(callee)? else {
             return None;
         };
@@ -663,10 +803,10 @@ impl FileLowering<'_, '_, '_, '_> {
         shape: Shape,
     ) -> Option<(SmallVec<[BuiltinPathExpr; 2]>, ExprId)> {
         let mut builtins = SmallVec::new();
-        let define = match (shape, &find_statements(self, create_binding)[..]) {
+        let define = match (shape, &find_statements(self.hir, create_binding)[..]) {
             (Shape::CreateBindingReusesDescriptor, &[_, describe, _, define]) => {
                 let describe = find_first_initializer(self, describe)?;
-                let describe = find_callee(self, describe)?;
+                let describe = find_callee(self.hir, describe)?;
                 builtins.push((describe, BuiltinId::ObjectGetOwnPropertyDescriptor));
                 define
             }
@@ -676,7 +816,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let StmtKind::Expr(define) = self.hir[define].kind else {
             return None;
         };
-        let path = find_callee(self, define)?;
+        let path = find_callee(self.hir, define)?;
         builtins.push((path, BuiltinId::ObjectDefineProperty));
         let mut paths = builtins.iter();
         let is_resolved = paths.all(|&expected| self.resolves_to_builtin(expected));
@@ -718,9 +858,48 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(descriptors)
     }
 
-    fn plan_create_class(&mut self, create_class: FnId) -> Option<CreateClassPlan> {
+    // `_toPrimitive` hands a primitive back before it names a global that a program may replace.
+    fn calls_only_published_helpers(&self, home: FileId, function: FnId) -> bool {
+        let Some(known) = self.inputs.known_helpers.function(home, function) else {
+            return false;
+        };
+        let relies_on_facts =
+            known.shape != Shape::TypeofAnswersSymbolForSymbols || known.relies_on_facts;
+        let input = resolve_input(self);
+        relies_on_facts
+            && known.references.iter().all(|&reference| match reference {
+                KnownReference::Loaded { .. } => resolve_loaded_reference(&input, home, reference)
+                    .is_some_and(|(file, called)| {
+                        self.calls_only_published_helpers(file, called.definition)
+                    }),
+                _ => resolve_reference(&input, home, reference, &|_| true).is_some_and(|called| {
+                    !called.needs_guard
+                        && self.calls_only_published_helpers(home, called.function.definition)
+                }),
+            })
+    }
+
+    fn is_keyed_by_function(&self, descriptor: ExprId) -> bool {
+        let hir = self.hir;
+        let ExprKind::Object(properties) = hir[descriptor].kind else {
+            return true;
+        };
+        let atoms = &self.queries.files().atoms;
+        (0..properties.len()).any(|index| {
+            let property = hir[properties.at(index)];
+            matches!(property.key, PropKey::Name(name) if atoms.bytes(name) == b"key")
+                && matches!(
+                    hir[self.skip_type_syntax(property.value)].kind,
+                    ExprKind::Fn(_)
+                )
+        })
+    }
+
+    fn plan_create_class(&mut self, home: FileId, create_class: FnId) -> Option<CreateClassPlan> {
         let helpers = self.inputs.known_helpers;
-        let known = helpers.function(self.file, create_class)?;
+        let files = self.queries.files();
+        let hir = files.hir(home);
+        let known = helpers.function(home, create_class)?;
         let locks_prototype = known.shape == Shape::CreateClassDefinesBothSidesAndLocksPrototype;
         if !locks_prototype && known.shape != Shape::CreateClassDefinesBothSides {
             return None;
@@ -729,42 +908,68 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         };
         let define_properties =
-            resolve_reference(&resolve_input(self), self.file, reference, &|shape| {
-                shape == Shape::DefinePropertiesOfDescriptors
+            resolve_reference(&resolve_input(self), home, reference, &|shape| {
+                matches!(
+                    shape,
+                    Shape::DefinePropertiesOfDescriptors
+                        | Shape::DefinePropertiesOfDescriptorsUnderConvertedKeys
+                )
             })?;
-        let statements = find_statements(self, define_properties.function.definition);
+        let definition = define_properties.function.definition;
+        // A text or a number is the key that the conversion makes of it, so the conversion is left out. It must be the published one whenever the call runs.
+        let defines = helpers.function(home, definition)?;
+        let converts_keys = defines.shape == Shape::DefinePropertiesOfDescriptorsUnderConvertedKeys;
+        if converts_keys && !self.calls_only_published_helpers(home, definition) {
+            return None;
+        }
+        let builtins = match home == self.file {
+            true => self.builtins,
+            false => &parsed_source(files, home)?.builtins,
+        };
+        let find_define_property = |path: ExprId| match builtins.of_pure_expr(path) {
+            Some(Resolved::Builtin(path)) if path.id == BuiltinId::ObjectDefineProperty => {
+                Some(path.locked_builtin().is_some())
+            }
+            _ => None,
+        };
+        let statements = find_statements(hir, definition);
         let &[loop_statement] = &statements[..] else {
             return None;
         };
-        let StmtKind::For { body, .. } = self.hir[loop_statement].kind else {
+        let StmtKind::For { body, .. } = hir[loop_statement].kind else {
             return None;
         };
-        let StmtKind::Block(body) = self.hir[body].kind else {
+        let StmtKind::Block(body) = hir[body].kind else {
             return None;
         };
-        let last = self.hir.ids(body).last()?;
-        let StmtKind::Expr(define) = self.hir[last].kind else {
+        let last = hir.ids(body).last()?;
+        let StmtKind::Expr(define) = hir[last].kind else {
             return None;
         };
-        let define_property = find_callee(self, define)?;
-        if !self.resolves_to_builtin((define_property, BuiltinId::ObjectDefineProperty)) {
-            return None;
-        }
+        let define_property = find_callee(hir, find_last_of_sequence(hir, define, 0)?)?;
+        let mut builtins_are_locked = find_define_property(define_property)?;
         let (mut lock_prototype, mut lock_prototype_callee) = (None, None);
         if locks_prototype {
-            let statements = find_statements(self, create_class);
-            let StmtKind::Expr(lock) = self.hir[*statements.get(2)?].kind else {
+            let statements = find_statements(hir, create_class);
+            let lock = match statements[..] {
+                [only] => match hir[only].kind {
+                    StmtKind::Return(value) if value.is_some() => {
+                        find_last_of_sequence(hir, value, 1)?
+                    }
+                    _ => return None,
+                },
+                _ => match hir[*statements.get(2)?].kind {
+                    StmtKind::Expr(lock) => lock,
+                    _ => return None,
+                },
+            };
+            let path = find_callee(hir, lock)?;
+            builtins_are_locked &= find_define_property(path)?;
+            let ExprKind::Call(site) = hir[hir.skip_type_assertions(lock)].kind else {
                 return None;
             };
-            let path = find_callee(self, lock)?;
-            if !self.resolves_to_builtin((path, BuiltinId::ObjectDefineProperty)) {
-                return None;
-            }
-            let ExprKind::Call(site) = self.hir[self.skip_type_syntax(lock)].kind else {
-                return None;
-            };
-            let site = self.hir[site];
-            lock_prototype = Some((self.hir.id_at(site.args, 1), self.hir.id_at(site.args, 2)));
+            let site = hir[site];
+            lock_prototype = Some((hir.id_at(site.args, 1), hir.id_at(site.args, 2)));
             lock_prototype_callee = Some(path);
         }
         Some(CreateClassPlan {
@@ -772,8 +977,8 @@ impl FileLowering<'_, '_, '_, '_> {
             define_property,
             lock_prototype,
             lock_prototype_callee,
-            builtins_are_locked: matches!(self.builtins.of_pure_expr(define_property), Some(Resolved::Builtin(path)) if path.locked_builtin().is_some())
-                && lock_prototype_callee.is_none_or(|path| matches!(self.builtins.of_pure_expr(path), Some(Resolved::Builtin(path)) if path.locked_builtin().is_some())),
+            converts_keys,
+            builtins_are_locked,
             prototype_name: {
                 let text = self.intern_bytes(b"prototype");
                 self.text_key(text)
@@ -865,6 +1070,46 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
+impl FileLowering<'_, '_, '_, '_> {
+    /// `_typeof(value)`, where the name holds Babel's helper: `value`. With symbols built in, the helper and the function that it puts in its own place at
+    /// its first call both answer `typeof value`.
+    pub(in crate::lower) fn find_operand_of_typeof_helper(&self, call: ExprId) -> Option<ExprId> {
+        let (hir, helpers) = (self.hir, self.inputs.known_helpers);
+        if !helpers.has_bindings() {
+            return None;
+        }
+        let ExprKind::Call(id) = hir[call].kind else {
+            return None;
+        };
+        let site = hir[id];
+        if !is_plain_call(self, site) || site.args.len() != 1 {
+            return None;
+        }
+        let callee = resolve_callee(&resolve_input(self), self.file, site.callee)?;
+        let [held] = callee.functions[..] else {
+            return None;
+        };
+        let known = helpers.function(callee.file, held.definition)?;
+        let is_helper = callee.file == self.file
+            && !callee.needs_guard()
+            && known.shape == Shape::TypeofAnswersSymbolForSymbols
+            && known.relies_on_facts
+            && known.is_named_only_to_be_called;
+        let operand = hir.ids(site.args).next()?;
+        // `typeof` of a name that nothing declares answers. A call with it throws.
+        let target = self.skip_type_syntax(operand);
+        let is_declared = !matches!(self.bound.binding(target), Binding::Free)
+            && self
+                .bound
+                .dynamic_lookup_scope(NodeData::Expr(target))
+                .is_none();
+        let is_read_alike = !matches!(hir[target].kind, ExprKind::Ident(_))
+            || is_declared
+            || self.is_always_resolvable(target);
+        (is_helper && is_read_alike).then_some(operand)
+    }
+}
+
 fn is_lowered(file: &FileLowering<'_, '_, '_, '_>, home: FileId) -> bool {
     file.inputs.files[home.idx()].is_some()
 }
@@ -887,9 +1132,9 @@ fn reference_function(
     }))
 }
 
-fn find_statements(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> SmallVec<[StmtId; 8]> {
-    match file.hir[function].body {
-        FnBody::Block(statements) => file.hir.ids(statements).collect(),
+fn find_statements(hir: &hir::File<'_>, function: FnId) -> SmallVec<[StmtId; 8]> {
+    match hir[function].body {
+        FnBody::Block(statements) => hir.ids(statements).collect(),
         FnBody::Expr(_) | FnBody::None => SmallVec::new(),
     }
 }
@@ -905,11 +1150,35 @@ fn find_first_initializer(
     file.hir[declaration].init.some()
 }
 
-fn find_callee(file: &FileLowering<'_, '_, '_, '_>, call: ExprId) -> Option<ExprId> {
-    let ExprKind::Call(site) = file.hir[file.skip_type_syntax(call)].kind else {
+/// `a, b, c`: c with none skipped, b with one. An expression without a comma is its own last.
+fn find_last_of_sequence(hir: &hir::File<'_>, sequence: ExprId, skipped: usize) -> Option<ExprId> {
+    let mut sequence = hir.skip_type_assertions(sequence);
+    for _ in 0..skipped {
+        let ExprKind::Binary {
+            op: BinOp::Comma,
+            left,
+            ..
+        } = hir[sequence].kind
+        else {
+            return None;
+        };
+        sequence = hir.skip_type_assertions(left);
+    }
+    match hir[sequence].kind {
+        ExprKind::Binary {
+            op: BinOp::Comma,
+            right,
+            ..
+        } => Some(hir.skip_type_assertions(right)),
+        _ => Some(sequence),
+    }
+}
+
+fn find_callee(hir: &hir::File<'_>, call: ExprId) -> Option<ExprId> {
+    let ExprKind::Call(site) = hir[hir.skip_type_assertions(call)].kind else {
         return None;
     };
-    Some(file.skip_type_syntax(file.hir[site].callee))
+    Some(hir.skip_type_assertions(hir[site].callee))
 }
 
 fn is_key_first_capture(
@@ -965,6 +1234,8 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
             minifies_identifiers: false,
             obfuscates: false,
             counts_executions: false,
+            imports_are_untyped: false,
+            runs_tests: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

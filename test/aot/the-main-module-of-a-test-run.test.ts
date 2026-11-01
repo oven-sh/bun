@@ -1,7 +1,10 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { runsWholeGrids } from "./harness/ways";
+// One by one: a case takes two minutes where Bun has a sanitizer, and beside others it would come near its limit.
+import { beforeAll, testOneByOne as test } from "./supported";
 
 const nameOf = `const nameOf = m => (m && m.filename ? require("node:path").basename(m.filename) : String(m));`;
 const commonJSTestFile = `${nameOf}
@@ -56,9 +59,15 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   return { stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), results, exitCode };
 }
 
-test("require.main is the test file that runs", async () => {
-  using dir = tempDir("aot-main-module-of-a-test-run", files);
-  const plain = await runTests(String(dir), {});
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof runTests>>;
+beforeAll(async () => {
+  dir = tempDir("aot-main-module-of-a-test-run", files);
+  plain = await runTests(String(dir), {});
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("require.main is the test file that runs: plain Bun", () => {
   expect(plain.results).toEqual([
     "pass a CommonJS test file",
     "pass a CommonJS test file",
@@ -67,33 +76,39 @@ test("require.main is the test file that runs", async () => {
   ]);
   expect(plain.stdout).toContain("preload.cjs at load undefined false");
   expect(plain.stdout).toContain(
-    "b.test.cjs in a test true,b.test.cjs,true,b.test.cjs,false,a.test.cjs,b.test.cjs,false b.test.cjs",
+    "b.test.cjs in a test true,b.test.cjs,true,b.test.cjs,false,b.test.cjs,b.test.cjs,false b.test.cjs",
   );
   expect(plain.stdout).toContain(
     "b.test.cjs what the main module exports exported by b.test.cjs exported by b.test.cjs",
   );
-  expect(plain.stdout).toContain("c.test.mjs in a test true undefined undefined false a.test.cjs undefined false");
+  expect(plain.stdout).toContain("c.test.mjs in a test true undefined undefined false undefined undefined false");
   expect(plain.stdout).toContain("evicted.test.cjs before object evicted.test.cjs");
   expect(plain.stdout).toContain("evicted.test.cjs after undefined undefined");
+});
 
-  expect(await runTests(String(dir), {}, "--aot")).toEqual(plain);
-  const fromDisk = { BUN_AOT_TEST_FILES_FROM_DISK: "1" };
-  expect(await runTests(String(dir), fromDisk, "--aot")).toEqual(plain);
-  expect(await runTests(String(dir), { ...fromDisk, BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" }, "--aot")).toEqual(plain);
-}, 240_000);
+const forms: [string, Record<string, string>][] = [
+  ["compiled", {}],
+  ["test files from disk", { BUN_AOT_TEST_FILES_FROM_DISK: "1" }],
+  [
+    "test files from disk that name what they use",
+    { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" },
+  ],
+];
+// From disk a run costs twice what it costs compiled, so in front of a merge there is one such run.
+test.each(forms.slice(0, runsWholeGrids ? 3 : 2))("require.main is the test file that runs: %s", async (_, env) => {
+  expect(await runTests(String(dir), env, "--aot")).toEqual(plain);
+});
 
 // `require.main` is what the cache holds under the path in `Bun.main`, and `import.meta.main` compares with it, at every read.
 test.each([
   { way: "as one program", words: "TestRunLayers:0" },
   { way: "over two layers", words: "TestRunLayers:2,TestRunPartFiles:1" },
-])(
-  "a test that stores into Bun.main is followed: $way",
-  async ({ words }) => {
-    using dir = tempDir("aot-main-module-of-a-test-run", {
-      "package.json": `{ "type": "module" }`,
-      "preload.cjs": ``,
-      "helper.cjs": `exports.me = module;\nexports.isMain = () => require.main === module;\nexports.main = () => require.main;`,
-      "a.test.js": `import { expect, test } from "bun:test";
+])("a test that stores into Bun.main is followed: $way", async ({ words }) => {
+  using dir = tempDir("aot-main-module-of-a-test-run", {
+    "package.json": `{ "type": "module" }`,
+    "preload.cjs": ``,
+    "helper.cjs": `exports.me = module;\nexports.isMain = () => require.main === module;\nexports.main = () => require.main;`,
+    "a.test.js": `import { expect, test } from "bun:test";
       import helper from "./helper.cjs";
       const name = m => (m && m.filename ? m.filename.split(/[\\\\/]/).at(-1) : String(m));
       test("stores", () => {
@@ -107,19 +122,17 @@ test.each([
         console.log("back", name(helper.main()), helper.isMain(), import.meta.main);
         expect(Bun.main).toBe(before);
       });`,
-    });
-    const plain = await runTests(String(dir), {});
-    expect(plain).toEqual({
-      stdout: [
-        "at first undefined false true",
-        "nowhere /nowhere/entry.js undefined false false",
-        "helper helper.cjs true true false",
-        "back undefined false true",
-      ],
-      results: ["pass stores"],
-      exitCode: 0,
-    });
-    expect(await runTests(String(dir), { BUN_DEBUG_TEST_AOT_WORDS: words }, "--aot")).toEqual(plain);
-  },
-  240_000,
-);
+  });
+  const plain = await runTests(String(dir), {});
+  expect(plain).toEqual({
+    stdout: [
+      "at first undefined false true",
+      "nowhere /nowhere/entry.js undefined false false",
+      "helper helper.cjs true true false",
+      "back undefined false true",
+    ],
+    results: ["pass stores"],
+    exitCode: 0,
+  });
+  expect(await runTests(String(dir), { BUN_DEBUG_TEST_AOT_WORDS: words }, "--aot")).toEqual(plain);
+});

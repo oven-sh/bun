@@ -74,6 +74,9 @@ fn source_text_file(file: FileId) -> FileRow {
         is_left_to_loader: false,
         required_names: Vec::new(),
         names_searched_behind_stars: Vec::new(),
+        handed_on: Vec::new(),
+        named_by_stars: Vec::new(),
+        reaches_mock: false,
     }
 }
 
@@ -91,6 +94,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         record_files: Vec::new(),
         left_out_files: Vec::new(),
         files_brought_by_calls: Vec::new(),
+        requests_that_bind_nothing: Vec::new(),
         placeholder_files: Vec::new(),
         left_out_inner_modules: Vec::new(),
         other_modules: Vec::new(),
@@ -104,6 +108,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         wrapped: WrappedModules::default(),
         commonjs_exports: CommonJsExports::default(),
         plan: Plan::new(OrderParts::without_sites(file_count), Vec::new()),
+        member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
     }
 }
 
@@ -297,6 +302,31 @@ fn first_kept_importer_stands_for_all_that_spell_one_path() {
     assert_eq!(graph.importer_of_external(FileId(2), path), FileId(1));
     assert_eq!(graph.importer_of_external(FileId(2), package), FileId(2));
     assert_eq!(graph.importer_of_external(FileId(2), value), FileId(2));
+}
+
+#[test]
+fn external_that_a_mock_names_keeps_a_module_for_each_importer() {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let [mocked, other] = [&b"/app/mocked.js"[..], b"/app/other.js"].map(|text| atoms.intern(text));
+    let mut graph = ModuleGraph {
+        external_kinds: vec![
+            ((FileId(0), mocked), ExternalKind::UncompiledCode),
+            ((FileId(1), mocked), ExternalKind::UncompiledCode),
+            ((FileId(0), other), ExternalKind::UncompiledCode),
+            ((FileId(1), other), ExternalKind::UncompiledCode),
+        ],
+        ..unfinished_graph(2, Vec::new())
+    }
+    .finish(&run_serially);
+    graph.plan.set_is_named_by_mock(ModuleRef::External {
+        importer: FileId(0),
+        specifier: mocked,
+        type_attribute: None,
+    });
+    graph.join_externals_that_spell_paths(&atoms);
+    assert_eq!(graph.importer_of_external(FileId(1), mocked), FileId(1));
+    assert_eq!(graph.importer_of_external(FileId(1), other), FileId(0));
 }
 
 #[test]

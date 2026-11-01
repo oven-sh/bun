@@ -148,7 +148,7 @@ runtimefunction id=ArrayPrototypeForEach function=f25
 # CHECK-NEXT: v12: f6 @Cell = NewClosure function=f6 allocationSite=4 closureForm=Slim
 # CHECK-NEXT: v13: undefined @JSValue = CallBuiltin v11, v12 overload=ArrayPrototypeForEach/0 accessSite=4
 # CHECK-NEXT: v14: anything @JSValue = Construct v0 calleeName="Emitter" accessSite=5 callees=[f1]
-# CHECK-NEXT: v15: object @JSValue = AssumeType v14 provenType=object
+# CHECK-NEXT: v15: Object @JSValue = AssumeType v14 provenType=Object
 # CHECK-NEXT: v16: "v" @JSValue = String string="v"
 # CHECK-NEXT: PropSet v15, v16 key="q" mode=Sloppy accessSite=6
 # CHECK-NEXT: v18: undefined @JSValue = Undefined

@@ -469,6 +469,37 @@ fn command_line_files_are_entry_points_in_order() {
 }
 
 #[test]
+fn test_runner_loads_what_a_computed_name_may_reach() {
+    let kinds_with = |name: &str| {
+        let test = format!(
+            "import {{ vi }} from 'bun:test'; import './src/user.ts'; import './other.ts'; await vi.importMock({name});"
+        );
+        let files = [
+            ("a.test.ts", &test[..]),
+            ("src/user.ts", "import './counter.ts';"),
+            ("src/counter.ts", "export {};"),
+            ("other.ts", "export {};"),
+        ];
+        let setup = LoadSetup {
+            entry_points: &["a.test.ts"],
+            ..LoadSetup::default()
+        };
+        with_freeze_input(&files, &setup, |input| {
+            let sources = freeze_sources(input, &run_serially).unwrap().sources;
+            ["src/user.ts", "src/counter.ts", "other.ts"]
+                .map(|name| entry_point_kind(&sources, file_at(input.files, name)))
+        })
+    };
+    let loaded = Some(EntryPointKind::LoadedByTestRunner);
+    assert_eq!(kinds_with("'./src/counter.ts'"), [None, loaded, None]);
+    assert_eq!(
+        kinds_with("import.meta.dir + '/src/' + globalThis.name + '.ts'"),
+        [loaded, loaded, None]
+    );
+    assert_eq!(kinds_with("globalThis.name"), [loaded, loaded, loaded]);
+}
+
+#[test]
 fn equal_public_paths_are_internal_error() {
     let files = [("a.ts", "export {};"), ("b.ts", "export {};")];
     let setup = LoadSetup {

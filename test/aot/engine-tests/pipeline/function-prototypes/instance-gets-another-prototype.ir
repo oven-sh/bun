@@ -300,7 +300,7 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v16: undefined|unspecified|L0 = Unspecified valueType=undefined|L0
 # CHECK-NEXT: Jump -> next b1(v14, v15, v16)
 # CHECK-NEXT: b1(v17: int[0, 40] ~ 0, v18: int[1, 2] ~ 2, v19: undefined|unspecified|L0):
-# CHECK-NEXT: v20: boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="url"}]
+# CHECK-NEXT: v20: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=MemberPassedByStores layout=L0 key="url"}]
 # CHECK-NEXT: Branch v20 -> taken b2(), notTaken b5()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v21: 1 = Integer integer=1

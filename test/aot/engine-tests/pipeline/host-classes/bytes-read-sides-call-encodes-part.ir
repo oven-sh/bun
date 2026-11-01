@@ -1,4 +1,5 @@
 # An element is read on both sides of the call that writes it, in one function.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # OPTIONS: validate
 # DIAGNOSTIC: OpcodeWithoutCode
@@ -153,5 +154,5 @@ function f3 name="inLoop" module=m0 position=591 flags=[IsChecked, HasExplicitNa
 # -- generated: aroundKept
 # CHECK-LABEL: function {{*}}name="aroundKept"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 218, patchpoints: 78, rare instructions: 452
+# CHECK-NEXT: instructions: 216, patchpoints: 75, rare instructions: 461
 # CHECK-NEXT: end of function f8

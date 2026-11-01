@@ -32,7 +32,7 @@ impl Checker<'_, '_> {
             if matches!(hir.text(name), known::eval | known::arguments)
                 && (is_class_or_import_name(hir, name)
                     || is_indirect_store_target(hir, bound, name))
-                && self.is_read_as_strict_mode_code(file, name)
+                && self.is_strict_mode_code(file, name)
             {
                 let code = self.strict_mode_message(file, hir.parent(name), [1210, 1215, 1100]);
                 self.early_error_on_node(file, name, code, &[Arg::Atom(hir.text(name))]);

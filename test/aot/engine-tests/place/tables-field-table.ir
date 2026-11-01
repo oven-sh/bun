@@ -1,5 +1,6 @@
 # What a lookup by shape and name finds: a value in the cell, a narrow reference, a value in the Extension, any other field, and nothing under a name that the layout lacks. Layouts that say the same share a row
-# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# Flow is kept from saying where the objects go: a number of an object that is known to be in hands that nobody knows, and that no code that knows the object names, is kept as a value.
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom disable=flow:HolderMutations
 # RUN: tables field-table
 
 module m0 path="main.js" displayPath="main.js" body=f0

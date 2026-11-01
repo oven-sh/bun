@@ -7,9 +7,10 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { BuildError } from "../error.ts";
 import { isElfObject } from "./binary-reader.ts";
 import { openElf } from "./elf-file.ts";
@@ -65,7 +66,23 @@ export function elf(linker: Linker): LinkerFormat {
   const orderAt = command.findIndex(argument => argument.startsWith(orderFlag));
   const commandOrder = orderAt >= 0 ? readFileSync(command[orderAt]!.slice(orderFlag.length), "latin1") : "";
   const orderFile = join(work, "order.txt");
-  const inputDirectories = new Set([work, ...linker.inputs.map(path => dirname(path))]);
+  const buildFolder = resolve(dirname(output)) + sep;
+  const isInBuildFolder = (path: string) => (resolve(path) + sep).startsWith(buildFolder);
+  const inputDirectories = new Set([work, ...linker.inputs.map(path => dirname(path))].filter(isInBuildFolder));
+  const ownNames = new Map<string, string>();
+  const underOwnName = (path: string) => {
+    if (isInBuildFolder(path)) return path;
+    let name = ownNames.get(path);
+    if (name === undefined) {
+      const folder = join(work, "elsewhere", String(ownNames.size));
+      mkdirSync(folder, { recursive: true });
+      name = join(folder, basename(path));
+      symlinkSync(resolve(path), name);
+      ownNames.set(path, name);
+      inputDirectories.add(folder);
+    }
+    return name;
+  };
   const executableNames = { first: linker.firstLinkName, second: basename(output) };
   const listCompiledObjects = (link: "first" | "second") =>
     findCompiledObjects(inputDirectories, executableNames[link]);
@@ -84,7 +101,7 @@ export function elf(linker: Linker): LinkerFormat {
     isCode,
     supportObjects: room => [linker.assemble("room.s", roomSource(room))],
     prepareInput(path) {
-      if (!isElfObject(path)) return path;
+      if (!isElfObject(path)) return underOwnName(path);
       let copy = splitCopies.get(path);
       if (copy === undefined) {
         copy = copyPath(join(work, "split"), path);

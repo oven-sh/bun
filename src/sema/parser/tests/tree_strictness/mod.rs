@@ -1,7 +1,5 @@
 use crate::tree_support::*;
-use crate::{
-    DEFAULT_PATH, TYPEDEF_BEFORE_DIRECTIVE, TextKind, atom_of, only_stmt, parsed, parsed_source,
-};
+use crate::{DEFAULT_PATH, TYPEDEF_BEFORE_DIRECTIVE, TextKind, atom_of, only_stmt, parsed};
 
 use FunctionName::{Anonymous, Named};
 
@@ -76,31 +74,21 @@ const STRICTNESS: &[(&str, &str, bool, &[FunctionName<'static>])] = &[
     ("a.ts", "declare function d(): void;", false, &[]),
 ];
 
-const FUNCTION_DIRECTIVES: &[(&str, &[FunctionName<'static>], &[FunctionName<'static>])] = &[
-    (FUNCTION_WITH_DIRECTIVE, &[Named("f")], &[]),
+const FUNCTION_DIRECTIVES: &[(&str, &[FunctionName<'static>])] = &[
+    (FUNCTION_WITH_DIRECTIVE, &[Named("f")]),
     (
         r#"function s() { "use strict"; const a = () => 1; function n() {} } function after() {}"#,
         &[Anonymous(FnKind::Arrow), Named("n"), Named("s")],
-        &[],
     ),
     (
         r#"function s() { "use strict"; class A { m() {} } function n() {} }"#,
         &[Named("m"), Named("n"), Named("s")],
-        &[Named("m")],
     ),
     (
         r#"function outer() { const s = () => { "use strict"; }; }"#,
         &[Anonymous(FnKind::Arrow)],
-        &[],
     ),
 ];
-
-fn with_option<'a>(path: &'a str, text: &'a str, keeps_function_directives: bool) -> Source<'a> {
-    Source {
-        keeps_function_directives,
-        ..Source::new(path, text)
-    }
-}
 
 fn directives(w: &Workspace<'_>, hir: &File<'_>) -> Vec<String> {
     let raw_text = |stmt: &Stmt| {
@@ -132,13 +120,10 @@ fn strict_functions<'a>(w: &'a Workspace<'_>, hir: &File<'_>) -> Vec<FunctionNam
 #[test]
 fn directive_prologues() {
     for &(text, raws, is_strict) in DIRECTIVE_PROLOGUES {
-        for keeps_function_directives in [true, false] {
-            let source = with_option(DEFAULT_PATH, text, keeps_function_directives);
-            parsed_source(&source, |w, hir| {
-                assert_eq!(directives(w, hir), raws, "{text}");
-                assert_eq!(hir.is_strict_by_syntax, is_strict, "{text}");
-            });
-        }
+        parsed(DEFAULT_PATH, text, |w, hir| {
+            assert_eq!(directives(w, hir), raws, "{text}");
+            assert_eq!(hir.is_strict_by_syntax, is_strict, "{text}");
+        });
     }
     parsed(DEFAULT_PATH, ESCAPED_DIRECTIVE, |_, hir| {
         let directive = only_stmt(hir, |kind| matches!(kind, StmtKind::Directive { .. }));
@@ -159,16 +144,11 @@ fn directive_prologues() {
 #[test]
 fn strings_outside_prologues() {
     for &(path, text) in STRINGS_OUTSIDE_PROLOGUES {
-        for keeps_function_directives in [true, false] {
-            parsed_source(
-                &with_option(path, text, keeps_function_directives),
-                |w, hir| {
-                    assert!(directives(w, hir).is_empty(), "{text}");
-                    assert!(!hir.is_strict_by_syntax, "{text}");
-                    assert!(strict_functions(w, hir).is_empty(), "{text}");
-                },
-            );
-        }
+        parsed(path, text, |w, hir| {
+            assert!(directives(w, hir).is_empty(), "{text}");
+            assert!(!hir.is_strict_by_syntax, "{text}");
+            assert!(strict_functions(w, hir).is_empty(), "{text}");
+        });
     }
     parsed(DEFAULT_PATH, STATIC_BLOCK, |w, hir| {
         assert!(directives(w, hir).is_empty());
@@ -180,32 +160,21 @@ fn strings_outside_prologues() {
 #[test]
 fn strictness_by_syntax() {
     for &(path, text, is_file_strict, functions) in STRICTNESS {
-        for keeps_function_directives in [true, false] {
-            parsed_source(
-                &with_option(path, text, keeps_function_directives),
-                |w, hir| {
-                    assert_eq!(hir.is_strict_by_syntax, is_file_strict, "{text}");
-                    assert_eq!(strict_functions(w, hir), functions, "{text}");
-                },
-            );
-        }
+        parsed(path, text, |w, hir| {
+            assert_eq!(hir.is_strict_by_syntax, is_file_strict, "{text}");
+            assert_eq!(strict_functions(w, hir), functions, "{text}");
+        });
     }
 }
 
 #[test]
-fn function_directive_counts_only_where_kept() {
-    for &(text, kept, dropped) in FUNCTION_DIRECTIVES {
-        for (keeps_function_directives, functions) in [(true, kept), (false, dropped)] {
-            let source = with_option(DEFAULT_PATH, text, keeps_function_directives);
-            parsed_source(&source, |w, hir| {
-                assert!(!hir.is_strict_by_syntax, "{text}");
-                assert_eq!(strict_functions(w, hir), functions, "{text}");
-                assert_eq!(directives(w, hir), ["use strict"], "{text}");
-                let is_kept = hir.rare_syntax & rare::DIRECTIVE_IN_FUNCTION != 0;
-                assert_eq!(is_kept, keeps_function_directives, "{text}");
-                let is_dropped = hir.rare_syntax & rare::DROPPED_STRICT_DIRECTIVE != 0;
-                assert_eq!(is_dropped, !keeps_function_directives, "{text}");
-            });
-        }
+fn function_directive_counts() {
+    for &(text, functions) in FUNCTION_DIRECTIVES {
+        parsed(DEFAULT_PATH, text, |w, hir| {
+            assert!(!hir.is_strict_by_syntax, "{text}");
+            assert_eq!(strict_functions(w, hir), functions, "{text}");
+            assert_eq!(directives(w, hir), ["use strict"], "{text}");
+            assert_ne!(hir.rare_syntax & rare::DIRECTIVE_IN_FUNCTION, 0, "{text}");
+        });
     }
 }

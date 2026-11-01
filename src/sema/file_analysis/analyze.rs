@@ -25,7 +25,7 @@ pub(super) fn run<'s>(
         return (bound, FileAnalysis::default());
     }
     let (mut folded, mut scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
-    let decision = decide_format(hir, &bound, &folded, &scan);
+    let decision = decide_format(hir, &bound, &folded, &scan, file);
     let is_module = decision.formats.get(file.declared_module_type) == ModuleFormat::Esm;
     if is_module && !hir.is_strict_by_syntax {
         hir.set_strict();
@@ -74,7 +74,7 @@ pub(super) fn run_again<'s>(
         });
     }
     let scan = scan_folded_file(hir, bound, inputs, file, &folded, atoms, arena);
-    let decision = decide_format(hir, bound, &folded, &scan);
+    let decision = decide_format(hir, bound, &folded, &scan, file);
     let is_same_tree = decision.formats.get(file.declared_module_type) == previous.module_format
         && scan.pending_macro_calls.is_empty();
     is_same_tree.then(|| FoldedAgain {
@@ -88,12 +88,14 @@ fn decide_format<'s>(
     bound: &Bound<'s>,
     folded: &FoldResult<'s>,
     scan: &ImportScan<'s>,
+    file: &FileInputs<'s>,
 ) -> FormatDecision {
+    let type_by_name = file.type_by_name();
     let decisions_of_bun_run = folded.decisions.as_folded_by_bun_run();
-    let decision = decide_module_format(hir, bound, &decisions_of_bun_run, scan);
+    let decision = decide_module_format(hir, bound, &decisions_of_bun_run, scan, type_by_name);
     match decision.error {
         // `bun run` refuses the file. A build that removes what is wrong with it compiles it.
-        Some(_) => decide_module_format(hir, bound, &folded.decisions, scan),
+        Some(_) => decide_module_format(hir, bound, &folded.decisions, scan, type_by_name),
         None => decision,
     }
 }
@@ -117,6 +119,10 @@ fn create_analysis<'s>(
         answers_of_resolvers: scan.answers_of_resolvers,
         names_of_workers: scan.names_of_workers,
         paths_of_changed_files: scan.paths_of_changed_files,
+        exported_file_changers: scan.exported_file_changers,
+        asked_of_other_files: scan.asked_of_other_files,
+        asked_of_data_files: scan.asked_of_data_files,
+        names_out_of_data_files: scan.names_out_of_data_files,
         keys_stored_in_caches: scan.keys_stored_in_caches,
         jsx_imports: scan.jsx_imports,
         unused_import_symbols: scan.unused_import_symbols,

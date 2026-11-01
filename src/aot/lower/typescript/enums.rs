@@ -1,7 +1,7 @@
 use bun_sema::atom::known;
 use bun_sema::bind::Decl;
 use bun_sema::fold::Constant;
-use bun_sema::hir::{self, EnumId, EnumMemberId, Flags};
+use bun_sema::hir::{EnumId, EnumMemberId, Flags};
 use smallvec::SmallVec;
 
 use super::enum_values::EnumMemberValue;
@@ -9,13 +9,12 @@ use crate::ir::ValueId;
 use crate::lower::member::PropertyName;
 use crate::lower::{FunctionLowering, object};
 
-fn can_define_members(hir: &hir::File<'_>, members: &[(EnumMemberId, EnumMemberValue)]) -> bool {
-    members.iter().all(|&(id, value)| match value {
-        EnumMemberValue::Number(_) | EnumMemberValue::String(_) | EnumMemberValue::Missing => {
-            // `Object.prototype` has a setter of this name.
-            hir[id].name != known::__proto__
-        }
-        _ => false,
+fn has_only_constant_members(members: &[(EnumMemberId, EnumMemberValue)]) -> bool {
+    members.iter().all(|&(_, value)| {
+        matches!(
+            value,
+            EnumMemberValue::Number(_) | EnumMemberValue::String(_) | EnumMemberValue::Missing
+        )
     })
 }
 
@@ -39,7 +38,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let container = self.find_container(Decl::Enum(declaration), data.name);
         let members = self.file.compute_enum_member_values(declaration);
-        if self.has_single_declaration(container) && can_define_members(hir, &members) {
+        // `bun run` assigns the members.
+        let can_define_members = has_only_constant_members(&members)
+            && !(members.iter())
+                .any(|&(id, _)| self.file.is_name_on_object_prototype(hir[id].name));
+        if self.has_single_declaration(container) && can_define_members {
             let layout = self.file.container_layout(container.merged);
             let mut builder = self.begin_object(layout);
             let mut reverse_keys: SmallVec<[(PropertyName, ValueId); 16]> = SmallVec::new();

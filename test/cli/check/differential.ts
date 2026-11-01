@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { test } from "../../aot/listed";
 import { longLimit, spawn } from "../children";
 
 // `bun check` follows TypeScript 7, a native executable that ships next to its `lib.*.d.ts` files. It's `typescript7`

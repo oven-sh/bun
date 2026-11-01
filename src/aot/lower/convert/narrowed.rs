@@ -1,6 +1,6 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Parent, PatParent, PrivateMembers, SymbolId};
-use bun_sema::check::aot::{ClassRef, MemberLookup, ObjectMemberKind, ShapeKind};
+use bun_sema::check::aot::{ClassRef, GaveUp, MemberLookup, ObjectMemberKind, ShapeKind};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey, PatId, UnOp};
 use bun_sema::program::FileRole;
@@ -160,6 +160,22 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             child = parent;
         }
+    }
+
+    // The import may be declared `int32`, so a guard takes the place of the proof.
+    pub(in crate::lower) fn expects_int32_from_untyped_import(
+        &mut self,
+        expression: ExprId,
+    ) -> bool {
+        if !self.inputs.options.imports_are_untyped || !self.is_checked() {
+            return false;
+        }
+        let is_untyped = match self.queries.expression_type(expression) {
+            Ok(ty) => ty.is_any(),
+            Err(GaveUp::ErrorType) => true,
+            Err(GaveUp::Unresolved | GaveUp::FlowAnalysisDisabled | GaveUp::UnreachedNode) => false,
+        };
+        is_untyped && self.is_used_as_int32(expression, false)
     }
 
     // The types of the fields of a class are only expected where nobody checked the file of the class.
@@ -500,6 +516,8 @@ mod tests {
             minifies_identifiers: false,
             obfuscates: false,
             counts_executions: false,
+            imports_are_untyped: false,
+            runs_tests: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

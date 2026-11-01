@@ -1,4 +1,5 @@
 # Every case of a switch only chooses a number.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f0 f2
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
@@ -307,7 +308,7 @@ function f7 name="fractions" module=m0 position=1846 flags=[IsChecked, HasExplic
 # -- generated: f0 wide
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 162, patchpoints: 19, rare instructions: 239, polls: 1
+# CHECK-NEXT: instructions: 162, patchpoints: 19, rare instructions: 246, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="wide"
 # CHECK: role=GenericVersion

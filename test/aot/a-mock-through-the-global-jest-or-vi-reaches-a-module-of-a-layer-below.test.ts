@@ -1,6 +1,6 @@
 // `bun test` hands every file the names of the test runner, so a suite written for jest or vitest says `jest.mock("validator", ..)` and `vi.mock("../src/report.ts", ..)`
 // without an import. A build gives such a file the import. The look through the test files did not, took the call for nobody's, and no layer below was told of the mock:
-// "TypeError: mock(module, fn) cannot replace a module that was compiled ahead of time". Found on the suites of xstate and clean-ts-api.
+// "TypeError: mock(module, fn) cannot replace .. because the build didn't see a test mock it". Found on the suites of xstate and clean-ts-api.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";

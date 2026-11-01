@@ -1,12 +1,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { reads } from "./harness/reads";
 import { run } from "./harness/run";
-import { test } from "./supported";
-
-raiseDefaultTimeout(240_000);
+import { beforeAll, test } from "./supported";
 
 // A test writes a module and loads it. Where the build knows the specifier, `import("./made.mjs")` or a path that it folds to one, the file is not there when the run is
 // built: the loader is asked when the call runs. It has read the folder of the test file before, so it has to read it again.
@@ -59,37 +56,49 @@ test("${tag}", async () => {
 });
 `;
 
-test("it says what plain Bun says, alone, as one program and in two layers", async () => {
-  const said = async (flags: string[], words: string, files: string[]) => {
-    // A run leaves what it has written, so each gets a folder of its own.
-    using dir = tempDir("aot-test-imports-what-it-wrote", {
-      "tsconfig.json": "{}",
-      "a.test.ts": testFile("a"),
-      "b.test.ts": testFile("b"),
-    });
-    const directory = String(dir);
-    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_TMPDIR: directory };
-    const ran = await run([bunExe(), "test", ...flags, ...files], directory, env);
-    return {
-      lines: (ran.stdout + "\n" + ran.stderr)
-        .split("\n")
-        .filter(line => line.startsWith("SAID"))
-        .sort(),
-      summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
-    };
+async function said(flags: string[], words: string, files: string[]) {
+  // A run leaves what it has written, so each gets a folder of its own.
+  using dir = tempDir("aot-test-imports-what-it-wrote", {
+    "tsconfig.json": "{}",
+    "a.test.ts": testFile("a"),
+    "b.test.ts": testFile("b"),
+  });
+  const directory = String(dir);
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_TMPDIR: directory };
+  const ran = await run([bunExe(), "test", ...flags, ...files], directory, env);
+  return {
+    lines: (ran.stdout + "\n" + ran.stderr)
+      .split("\n")
+      .filter(line => line.startsWith("SAID"))
+      .sort(),
+    summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
   };
-  const workers = ["--isolate", "--parallel=2"];
-  const alone = await said([], "", ["./a.test.ts"]);
+}
+const workers = ["--isolate", "--parallel=2"];
+let alone: Awaited<ReturnType<typeof said>>;
+let both: Awaited<ReturnType<typeof said>>;
+beforeAll(async () => {
+  [alone, both] = await Promise.all([said([], "", ["./a.test.ts"]), said(workers, "", ["."])]);
+});
+
+test("what plain Bun says", () => {
   expect(alone.summary).toEqual([" 1 pass", " 0 fail"]);
   expect(alone.lines.length).toBe(18);
   expect(alone.lines).toContain("SAID a a literal, import() 1");
   expect(alone.lines).toContain("SAID a a path that the build folds 3");
-  expect(await said(["--aot"], "", ["./a.test.ts"])).toEqual(alone);
-  const both = await said(workers, "", ["."]);
   expect(both.lines.length).toBe(36);
-  expect(await said(["--aot"], "", ["."])).toEqual(both);
-  expect(await said(["--aot", ...workers], "TestRunLayers:0", ["."])).toEqual(both);
-  expect(await said(["--aot", ...workers], "TestRunLayers:2,TestRunPartFiles:1", ["."])).toEqual(both);
+});
+
+test("it says what plain Bun says: alone", async () => {
+  expect(await said(["--aot"], "", ["./a.test.ts"])).toEqual(alone);
+});
+
+test.each([
+  ["both files", [], ""],
+  ["as one program", workers, "TestRunLayers:0"],
+  ["in two layers", workers, "TestRunLayers:2,TestRunPartFiles:1"],
+])("it says what plain Bun says: %s", async (_, flags, words) => {
+  expect(await said(["--aot", ...flags], words, ["."])).toEqual(both);
 });
 
 // The loader reads a folder again where it has found nothing, and looks once more. It does that once.

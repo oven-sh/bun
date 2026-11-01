@@ -91,9 +91,11 @@ impl Checker<'_, '_> {
         (start, self.end_of_node(file, hir.node(function)))
     }
 
-    pub(in crate::check) fn find_left_out_ranges(&mut self, file: FileId) {
-        let mut ranges = std::mem::take(&mut self.left_out.ranges);
-        ranges.clear();
+    pub(in crate::check) fn push_left_out_functions_of(
+        &self,
+        file: FileId,
+        ranges: &mut Vec<(u32, u32)>,
+    ) {
         let functions = self
             .left_out
             .bodies
@@ -102,6 +104,12 @@ impl Checker<'_, '_> {
         let functions =
             functions.filter(|&it| !self.may_have_parameters_evaluated_with_class(file, it));
         ranges.extend(functions.map(|it| self.left_out_range(file, it)));
+    }
+
+    pub(in crate::check) fn find_left_out_ranges(&mut self, file: FileId) {
+        let mut ranges = std::mem::take(&mut self.left_out.ranges);
+        ranges.clear();
+        self.push_left_out_functions_of(file, &mut ranges);
         ranges.shared_sort_unstable();
         let mut end_of_outermost = 0;
         ranges.retain(|&(_, end)| {

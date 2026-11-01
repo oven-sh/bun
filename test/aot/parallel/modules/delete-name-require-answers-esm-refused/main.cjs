@@ -21,3 +21,15 @@ console.log(delete neverRead.only);
 const chained = require("./read-through-a-chain.mjs");
 console.log(delete chained?.only, chained.only);
 require("./in-a-strict-file.cjs");
+/* Output:
+false false true false
+1 2
+TypeError Unable to delete property.
+TypeError Unable to delete property.
+true
+1 2
+false
+false 1
+TypeError 1
+TypeError 1
+*/

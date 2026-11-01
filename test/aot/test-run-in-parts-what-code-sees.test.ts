@@ -2,7 +2,8 @@
 import { expect } from "bun:test";
 import { tempDir } from "harness";
 import { files, passing, runTests, twoFiles } from "./harness/test-run-in-parts";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 test("a CommonJS file that a test file requires has the test file for its parent, in a realm of its own too", async () => {
   using dir = tempDir("aot-test-run-in-parts-parent", {

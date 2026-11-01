@@ -51,9 +51,15 @@ pub struct PartSeenByEveryFile {
     pub asked: Box<[(u32, u32)]>,
 }
 
+pub struct Native {
+    pub name: Box<[u8]>,
+    pub is_also_member_of_global_this: bool,
+}
+
 #[derive(Default)]
 pub struct Manifest {
     defines: Vec<(Box<[u8]>, Box<[u8]>)>,
+    natives: Vec<Native>,
     modules: Vec<Module>,
     function_files: Vec<Box<[u8]>>,
     module_declarations: Vec<Box<[u8]>>,
@@ -96,6 +102,14 @@ impl Manifest {
             };
             match kind {
                 b"define" => manifest.defines.push((field()?.into(), field()?.into())),
+                b"native" => manifest.natives.push(Native {
+                    name: field()?.into(),
+                    is_also_member_of_global_this: match field()? {
+                        b"name" => false,
+                        b"name-or-member" => true,
+                        _ => return Err(error()),
+                    },
+                }),
                 b"module" => manifest.modules.push(Module {
                     id: number(field()?).ok_or_else(error)?,
                     path: optional(field()?),
@@ -181,6 +195,10 @@ impl Manifest {
 
     pub fn defines(&self) -> &[(Box<[u8]>, Box<[u8]>)] {
         &self.defines
+    }
+
+    pub fn natives(&self) -> &[Native] {
+        &self.natives
     }
 
     pub fn resolve(&self, specifier: &[u8], importer: &[u8]) -> Option<u32> {

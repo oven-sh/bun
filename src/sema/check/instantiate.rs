@@ -5,6 +5,45 @@ use super::links::FixedMapper;
 use super::*;
 use smallvec::SmallVec;
 
+#[derive(Default)]
+pub(super) struct TypeParametersIn {
+    ranges: crate::util::FxHashMap<TypeId, (u32, u32, u32)>,
+    pool: Vec<TypeId>,
+}
+
+impl TypeParametersIn {
+    fn keep(&mut self, found: &TypeParametersUnder) -> (u32, u32, u32) {
+        let from = self.pool.len() as u32;
+        self.pool.extend_from_slice(&found.mentioned);
+        let middle = self.pool.len() as u32;
+        self.pool.extend_from_slice(&found.own);
+        let range = (from, middle, self.pool.len() as u32);
+        self.ranges.insert(found.ty, range);
+        range
+    }
+}
+
+struct TypeParametersUnder {
+    ty: TypeId,
+    parts: SmallVec<[TypeId; 16]>,
+    mentioned: SmallVec<[TypeId; 8]>,
+    own: SmallVec<[TypeId; 4]>,
+}
+
+impl TypeParametersUnder {
+    fn note_mentioned(&mut self, parameter: TypeId) {
+        if !self.mentioned.contains(&parameter) {
+            self.mentioned.push(parameter);
+        }
+    }
+
+    fn note_own(&mut self, parameter: TypeId) {
+        if !self.own.contains(&parameter) {
+            self.own.push(parameter);
+        }
+    }
+}
+
 /// A direct-mapped cache of results keyed by two numbers, not both 0. It belongs to one checker and
 /// sits in front of a slower lookup. A new entry overwrites whatever occupied its slot.
 #[derive(Default)]
@@ -94,7 +133,36 @@ struct Activation {
     /// Unique, and never 0. Entries of `recent_instantiations` made under it are tagged with it.
     serial: u32,
     /// The type parameters instantiated under it.
-    params: SmallVec<[TypeId; 4]>,
+    params: SeenParams,
+}
+
+#[derive(Default)]
+struct SeenParams {
+    few: SmallVec<[TypeId; 4]>,
+    many: Option<Box<crate::util::FxHashSet<TypeId>>>,
+}
+
+impl SeenParams {
+    const MOST_IN_LIST: usize = 16;
+
+    #[inline]
+    fn insert(&mut self, param: TypeId) -> bool {
+        if let Some(many) = &mut self.many {
+            return many.insert(param);
+        }
+        if self.few.contains(&param) {
+            return false;
+        }
+        if self.few.len() == Self::MOST_IN_LIST {
+            cold_path();
+            let mut many: crate::util::FxHashSet<TypeId> = self.few.drain(..).collect();
+            many.insert(param);
+            self.many = Some(Box::new(many));
+        } else {
+            self.few.push(param);
+        }
+        true
+    }
 }
 
 impl ActiveMappers {
@@ -122,7 +190,7 @@ impl ActiveMappers {
         self.mappers.push(mapper);
         self.activations.push(Activation {
             serial: self.pushed,
-            params: SmallVec::new(),
+            params: SeenParams::default(),
         });
     }
 
@@ -527,22 +595,111 @@ impl<'p, 's> Checker<'p, 's> {
         t: TypeId,
         map: fn(&Self, TypeId) -> TypeId,
     ) -> (TypeId, MapperId) {
-        let (mut pairs, mut own) = (Vec::new(), Vec::new());
+        let (from, middle, to) = self.type_parameters_in(t);
+        let found: SmallVec<[TypeId; 16]> =
+            SmallVec::from_slice(&self.type_parameters_in.pool[from as usize..to as usize]);
+        let (mentioned, own) = found.split_at((middle - from) as usize);
+        let mapped = mentioned.iter().map(|&part| (part, map(self, part)));
+        let mut pairs: Vec<(TypeId, TypeId)> = mapped.collect();
+        pairs.retain(|pair| pair.0 != pair.1 && !own.contains(&pair.0));
+        let mapper = self.types().mapper(pairs);
+        (self.instantiate(t, mapper), mapper)
+    }
+
+    fn type_parameters_in(&mut self, t: TypeId) -> (u32, u32, u32) {
+        if let Some(&known) = self.type_parameters_in.ranges.get(&t) {
+            return known;
+        }
+        let mut signatures: SmallVec<[SigId; 4]> = SmallVec::new();
+        let mut walk = vec![self.begin_listing_type_parameters(t, &mut signatures)];
+        loop {
+            let innermost = walk.last_mut().unwrap();
+            let range = if let Some(part) = innermost.parts.pop() {
+                if let Some(&known) = self.type_parameters_in.ranges.get(&part) {
+                    known
+                } else if self.flags(part) & tf::TYPE_PARAMETER != 0 {
+                    innermost.note_mentioned(part);
+                    continue;
+                } else if self.may_mention_type_parameter(part)
+                    || matches!(self.data(part), TypeData::Synth(_))
+                {
+                    walk.push(self.begin_listing_type_parameters(part, &mut signatures));
+                    continue;
+                } else {
+                    continue;
+                }
+            } else {
+                let done = walk.pop().unwrap();
+                let range = self.type_parameters_in.keep(&done);
+                if walk.is_empty() {
+                    #[cfg(debug_assertions)]
+                    self.assert_lists_what_the_walk_meets(t, range);
+                    return range;
+                }
+                range
+            };
+            let (from, middle, to) = (range.0 as usize, range.1 as usize, range.2 as usize);
+            let (outer, pool) = (walk.last_mut().unwrap(), &self.type_parameters_in.pool);
+            pool[from..middle]
+                .iter()
+                .for_each(|&it| outer.note_mentioned(it));
+            pool[middle..to].iter().for_each(|&it| outer.note_own(it));
+        }
+    }
+
+    fn begin_listing_type_parameters(
+        &self,
+        ty: TypeId,
+        signatures: &mut SmallVec<[SigId; 4]>,
+    ) -> TypeParametersUnder {
+        let mut under = TypeParametersUnder {
+            ty,
+            parts: SmallVec::new(),
+            mentioned: SmallVec::new(),
+            own: SmallVec::new(),
+        };
+        if self.flags(ty) & tf::TYPE_PARAMETER != 0 {
+            under.mentioned.push(ty);
+        } else if let TypeData::Synth(shape) = self.data(ty) {
+            for &sig in shape.call.iter().chain(&shape.construct) {
+                if let SigData::Synth { type_params, .. } = self.types().sig(sig) {
+                    type_params.iter().for_each(|&it| under.note_own(it));
+                }
+            }
+        }
+        if self.may_mention_type_parameter(ty) {
+            self.list_parts(ty, true, &mut under.parts, signatures);
+        }
+        under
+    }
+
+    #[cfg(debug_assertions)]
+    fn assert_lists_what_the_walk_meets(&self, t: TypeId, range: (u32, u32, u32)) {
+        let (mut mentioned, mut own): (Vec<TypeId>, Vec<TypeId>) = Default::default();
         self.any_type_in(t, true, |part| {
             if self.flags(part) & tf::TYPE_PARAMETER != 0 {
-                pairs.push((part, map(self, part)));
+                if !mentioned.contains(&part) {
+                    mentioned.push(part);
+                }
             } else if let TypeData::Synth(shape) = self.data(part) {
                 for &sig in shape.call.iter().chain(&shape.construct) {
                     if let SigData::Synth { type_params, .. } = self.types().sig(sig) {
-                        own.extend_from_slice(type_params);
+                        for &it in type_params.iter() {
+                            if !own.contains(&it) {
+                                own.push(it);
+                            }
+                        }
                     }
                 }
             }
             false
         });
-        pairs.retain(|pair| pair.0 != pair.1 && !own.contains(&pair.0));
-        let mapper = self.types().mapper(pairs);
-        (self.instantiate(t, mapper), mapper)
+        let pool = &self.type_parameters_in.pool;
+        assert_eq!(mentioned, pool[range.0 as usize..range.1 as usize]);
+        let mut kept = pool[range.1 as usize..range.2 as usize].to_vec();
+        own.sort_unstable_by_key(|it| it.0);
+        kept.sort_unstable_by_key(|it| it.0);
+        assert_eq!(own, kept);
     }
 
     /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. Restrictive type
@@ -654,13 +811,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let active = self.active_mappers.find(mapper);
         if class == InstantiationClass::TypeParameter {
-            match active.map(|at| &mut self.active_mappers.activations[at].params) {
-                Some(seen) if seen.contains(&ty) => {}
-                Some(seen) => {
-                    seen.push(ty);
-                    self.instantiation_count += 1;
-                }
-                None => self.instantiation_count += 1,
+            let seen = active.map(|at| &mut self.active_mappers.activations[at].params);
+            if seen.is_none_or(|seen| seen.insert(ty)) {
+                self.instantiation_count += 1;
             }
             return self.types().map(mapper, ty).unwrap_or(ty);
         }
@@ -1763,5 +1916,20 @@ impl<'p, 's> Checker<'p, 's> {
             self.types().mapper_of(&first),
             self.types().mapper_of(&second),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_type_parameter_is_new_once_however_many_were_seen() {
+        let mut seen = SeenParams::default();
+        for round in 0..2 {
+            for number in 1..=10 * SeenParams::MOST_IN_LIST as u32 {
+                assert_eq!(seen.insert(TypeId(number)), round == 0);
+            }
+        }
     }
 }

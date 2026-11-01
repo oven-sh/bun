@@ -1,346 +1,475 @@
 # A helper object defines getters, setters and methods on a target under the names that a chain of calls writes out.
+# -- source: a-helper-object-defines-members-under-written-names.cjs
+# // A helper object defines getters, setters and methods on a target under the names that a chain of calls writes out.
+# function Forwarder(target, source) {
+#   if (!(this instanceof Forwarder)) return new Forwarder(target, source);
+#   this.target = target;
+#   this.source = source;
+#   this.names = [];
+# }
+# Forwarder.prototype.method = function (name) {
+#   var target = this.target;
+#   var source = this.source;
+#   this.names.push(name);
+#   target[name] = function () {
+#     return this[source][name].apply(this[source], arguments);
+#   };
+#   return this;
+# };
+# Forwarder.prototype.access = function (name) {
+#   return this.getter(name).setter(name);
+# };
+# Forwarder.prototype.getter = function (name) {
+#   var target = this.target;
+#   var source = this.source;
+#   this.names.push(name);
+#   target.__defineGetter__(name, function () {
+#     return this[source][name];
+#   });
+#   return this;
+# };
+# Forwarder.prototype.setter = function (name) {
+#   var target = this.target;
+#   var source = this.source;
+#   this.names.push(name);
+#   target.__defineSetter__(name, function (value) {
+#     return (this[source][name] = value);
+#   });
+#   return this;
+# };
+# const base = {
+#   describe() {
+#     return this.width + "x" + this.height;
+#   },
+# };
+# Forwarder(base, "box").access("width").getter("height").method("area");
+# const second = new Forwarder(base, "label");
+# second.getter("text");
+# second.method("shout");
+# function make(width, height, text) {
+#   const made = Object.create(base);
+#   made.box = { width, height, area() { return this.width * this.height; } };
+#   made.label = { text, shout(mark) { return this.text.toUpperCase() + mark; } };
+#   return made;
+# }
+# let sum = 0;
+# let last = "";
+# for (let i = 0; i < 1000; i++) {
+#   const made = make(i, 2, "t" + (i & 3));
+#   made.width = made.width + 1;
+#   sum += made.area() + made.height + made.text.length;
+#   last = made.shout("!") + made.describe();
+# }
+# console.log(sum, last, second.names.join(), Object.keys(base).join());
+# -- end of source
 # FORM: AsRead
 # RUN: lower-to-air size f0
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
-module m0 path="helper-object-defines-members-written.cjs" displayPath="helper-object-defines-members-written.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m0 path="a-helper-object-defines-members-under-written-names.cjs" displayPath="a-helper-object-defines-members-under-written-names.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 entry module=m0
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=undefined|null|absent|L2 flags=[IsExpected]} flags=[IsImmutable]}] ownFieldCount=2
-layout L1 kind=Instance name="Forwarder" module=m0 position=118 constructor=f1 fields=[{key="target" declared={type=anything} flags=[IsRequired]}, {key="source" declared={type=anything} flags=[IsRequired]}, {key="names" declared={type=undefined|null|Array<never> flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=3
-layout L2 module=m0 position=1119 fields=[{key="describe" declared={type=undefined|null|function|f7 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
-layout L3 module=m0 position=1437 fields=[{key="area" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="height" declared={type=anything} flags=[IsRequired]}, {key="width" declared={type=anything} flags=[IsRequired]}] declaredOrder=[2, 1, 0] ownFieldCount=3
-layout L4 module=m0 position=1516 fields=[{key="shout" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="text" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L0 module=m0
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="Forwarder"}, {key=@"binding.1" declared={type=undefined|null|absent|L3 flags=[IsExpected]} flags=[IsImmutable] variableName="base"}] ownFieldCount=2
+layout L2 kind=Instance name="Forwarder" module=m0 position=118 constructor=f1 fields=[{key="target" declared={type=anything} flags=[IsRequired]}, {key="source" declared={type=anything} flags=[IsRequired]}, {key="names" declared={type=undefined|null|Array<never> flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=3
+layout L3 module=m0 position=1119 fields=[{key="describe" declared={type=undefined|null|function|f7 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L4 module=m0 position=1437 fields=[{key="area" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="height" declared={type=anything} flags=[IsRequired]}, {key="width" declared={type=anything} flags=[IsRequired]}] declaredOrder=[2, 1, 0] ownFieldCount=3
+layout L5 module=m0 position=1516 fields=[{key="shout" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="text" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
 data d0 root=Array{contents=anything} module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = NewObject layout=L0
-    v1 = NewClosure v0 function=f1
-    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    PutEnvironmentField v0, v2 layout=L0
-    v4 = NewClosure v0 function=f2
-    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = PropGet v2 key="prototype"
-    v7 = Convert v6 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v8 = NewClosure function=f3
-    PropSet v7, v8 key="method" mode=Sloppy
-    v10 = PropGet v2 key="prototype"
-    v11 = Convert v10 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v12 = NewClosure function=f4
-    PropSet v11, v12 key="access" mode=Sloppy
-    v14 = PropGet v2 key="prototype"
-    v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v16 = NewClosure function=f5
-    PropSet v15, v16 key="getter" mode=Sloppy
-    v18 = PropGet v2 key="prototype"
-    v19 = Convert v18 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v20 = NewClosure function=f6
-    PropSet v19, v20 key="setter" mode=Sloppy
-    v22 = NewClosure function=f7
-    v23 = Convert v22 declared={type=undefined|null|function|f7 flags=[IsExpected]}
-    v24 = NewObject layout=L2
-    PropDefine v24, v23 key="describe"
-    v26 = FinishObject v24
-    v27 = Convert v26 declared={type=undefined|null|L2 flags=[IsExpected]}
-    PutEnvironmentField v0, v27 layout=L0 field=1
-    v29 = String string="box"
-    v30 = Call v2, -, v27, v29 calleeName="Forwarder"
-    v31 = Convert v30 declared={type=undefined|null|object flags=[IsExpected]}
-    v32 = PropGet v31 key="access"
-    v33 = Convert v32 declared={type=undefined|null|function flags=[IsExpected]}
-    v34 = String string="width"
-    v35 = Call v33, v31, v34 calleeKey="access" calleeName="access"
-    v36 = Convert v35 declared={type=undefined|null|object flags=[IsExpected]}
-    v37 = PropGet v36 key="getter"
-    v38 = Convert v37 declared={type=undefined|null|function flags=[IsExpected]}
-    v39 = String string="height"
-    v40 = Call v38, v36, v39 calleeKey="getter" calleeName="getter"
-    v41 = Convert v40 declared={type=undefined|null|object flags=[IsExpected]}
-    v42 = PropGet v41 key="method"
-    v43 = Convert v42 declared={type=undefined|null|function flags=[IsExpected]}
-    v44 = String string="area"
-    v45 = Call v43, v41, v44 calleeKey="method" calleeName="method"
-    v46 = String string="label"
-    v47 = Construct v2, -, v27, v46 calleeName="Forwarder"
-    v48 = Convert v47 declared={type=undefined|null|L1 flags=[IsExpected]}
-    v49 = PropGet v48 key="getter"
-    v50 = Convert v49 declared={type=undefined|null|function flags=[IsExpected]}
-    v51 = String string="text"
-    v52 = Call v50, v48, v51 calleeKey="getter" calleeName="second.getter"
-    v53 = PropGet v48 key="method"
-    v54 = Convert v53 declared={type=undefined|null|function flags=[IsExpected]}
-    v55 = String string="shout"
-    v56 = Call v54, v48, v55 calleeKey="method" calleeName="second.method"
-    v57 = Integer
-    v58 = Convert v57 declared={type=number flags=[IsExpected]}
-    v59 = String string=""
-    v60 = Convert v59 declared={type=undefined|null|string flags=[IsExpected]}
-    v61 = Integer
-    v62 = Convert v61 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b1(v58, v60, v62)
-  b1(v63, v64, v65):
-    LoopHint
-    v67 = Integer integer=1000
-    v68 = Less v65, v67
-    Branch v68 -> taken b2(| 0), notTaken b3(| 0)
-  b2(v69):
-    v70 = Integer integer=2
-    v71 = String string="t"
-    v72 = Integer integer=3
-    v73 = BitAnd v69, v72
-    v74 = Add v71, v73
-    v75 = Call v5, -, v69, v70, v74 calleeName="make"
-    v76 = Convert v75 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v77 = Convert v76 declared={type=undefined|null|object flags=[IsExpected]}
-    v78 = PropGet v77 key="width"
-    v79 = Convert v78 declared={type=number flags=[IsExpected]}
-    v80 = Integer integer=1
-    v81 = Add v79, v80
-    PropSet v77, v81 key="width" mode=Sloppy
-    v83 = PropGet v77 key="area"
-    v84 = Convert v83 declared={type=undefined|null|function flags=[IsExpected]}
-    v85 = Call v84, v77 calleeKey="area" calleeName="made.area"
-    v86 = PropGet v77 key="height"
-    v87 = Add v85, v86
-    v88 = PropGet v77 key="text"
-    v89 = PropGet v88 key="length"
-    v90 = Add v87, v89
-    v91 = Add v63, v90
-    v92 = Convert v91 declared={type=number flags=[IsExpected]}
-    v93 = PropGet v77 key="shout"
-    v94 = Convert v93 declared={type=undefined|null|function flags=[IsExpected]}
-    v95 = String string="!"
-    v96 = Call v94, v77, v95 calleeKey="shout" calleeName="made.shout"
-    v97 = PropGet v77 key="describe"
-    v98 = Convert v97 declared={type=undefined|null|function flags=[IsExpected]}
-    v99 = Call v98, v77 calleeKey="describe" calleeName="made.describe"
-    v100 = Add v96, v99
-    v101 = Convert v100 declared={type=undefined|null|string flags=[IsExpected]}
-    v102 = Increment v69
-    v103 = Convert v102 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b1(v92, v101, v103)
-  b3(v104):
-    v105 = Builtin builtin=GlobalThis
-    v106 = PropGet v105 key="console" [isFreeName]
-    v107 = Convert v106 declared={type=builtin(Console) flags=[IsExpected]}
-    v108 = PropGet v107 key="log"
-    v109 = Convert v108 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v110 = PropGet v48 key="names"
-    v111 = PropGet v110 key="join"
-    v112 = Convert v111 declared={type=undefined|null|function flags=[IsExpected]}
-    v113 = Call v112, v110 calleeKey="join" calleeName="second.names.join"
-    v114 = Builtin builtin=Object
-    v115 = Builtin builtin=ObjectKeys
-    v116 = Call v115, v114, v27 calleeName="Object.keys"
-    v117 = Convert v116 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    v118 = PropGet v117 key="join"
-    v119 = Convert v118 declared={type=undefined|null|function flags=[IsExpected]}
-    v120 = Call v119, v117 calleeKey="join" calleeName="join"
-    v121 = Convert v120 declared={type=undefined|null|string flags=[IsExpected]}
-    v122 = Call v109, v107, v63, v64, v113, v121 calleeKey="log" calleeName="console.log"
-    v123 = Undefined
-    Return v123
+    Jump -> next b1() @0
+  b1():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewObject layout=L1 @0
+    v4 = NewClosure v3 function=f1 @0
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    PutEnvironmentField v3, v5 layout=L1 @0
+    v7 = NewClosure v3 function=f2 @0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v9 = PropGet v5 key="prototype" @298
+    v10 = Convert v9 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @298
+    v11 = NewClosure function=f3 @327
+    PropSet v10, v11 key="method" mode=Sloppy @308
+    v13 = PropGet v5 key="prototype" @542
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @542
+    v15 = NewClosure function=f4 @571
+    PropSet v14, v15 key="access" mode=Sloppy @552
+    v17 = PropGet v5 key="prototype" @633
+    v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @633
+    v19 = NewClosure function=f5 @662
+    PropSet v18, v19 key="getter" mode=Sloppy @643
+    v21 = PropGet v5 key="prototype" @862
+    v22 = Convert v21 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @862
+    v23 = NewClosure function=f6 @891
+    PropSet v22, v23 key="setter" mode=Sloppy @872
+    v25 = NewClosure function=f7 @1123
+    v26 = Convert v25 declared={type=undefined|null|function|f7 flags=[IsExpected]} @1131
+    v27 = NewObject layout=L3 @1123
+    PropDefine v27, v26 key="describe" @1123
+    v29 = FinishObject v27 @1119
+    v30 = Convert v29 declared={type=undefined|null|L3 flags=[IsExpected]} @1119
+    PutEnvironmentField v3, v30 layout=L1 field=1 @1112
+    v32 = String string="box" @1203
+    v33 = Call v5, -, v30, v32 calleeName="Forwarder" @1187
+    v34 = Convert v33 declared={type=undefined|null|object flags=[IsExpected]} @1187
+    v35 = PropGet v34 key="access" @1208
+    v36 = Convert v35 declared={type=undefined|null|function flags=[IsExpected]} @1187
+    v37 = String string="width" @1217
+    v38 = Call v36, v34, v37 calleeKey="access" calleeName="access" @1210
+    v39 = Convert v38 declared={type=undefined|null|object flags=[IsExpected]} @1187
+    v40 = PropGet v39 key="getter" @1224
+    v41 = Convert v40 declared={type=undefined|null|function flags=[IsExpected]} @1187
+    v42 = String string="height" @1233
+    v43 = Call v41, v39, v42 calleeKey="getter" calleeName="getter" @1226
+    v44 = Convert v43 declared={type=undefined|null|object flags=[IsExpected]} @1187
+    v45 = PropGet v44 key="method" @1241
+    v46 = Convert v45 declared={type=undefined|null|function flags=[IsExpected]} @1187
+    v47 = String string="area" @1250
+    v48 = Call v46, v44, v47 calleeKey="method" calleeName="method" @1243
+    v49 = String string="label" @1294
+    v50 = Construct v5, -, v30, v49 calleeName="Forwarder" @1278 constructs
+    v51 = Convert v50 declared={type=undefined|null|L2 flags=[IsExpected]} @1274
+    v52 = PropGet v51 key="getter" @1304
+    v53 = Convert v52 declared={type=undefined|null|function flags=[IsExpected]} @1304
+    v54 = String string="text" @1318
+    v55 = Call v53, v51, v54 calleeKey="getter" calleeName="second.getter" @1311
+    v56 = PropGet v51 key="method" @1327
+    v57 = Convert v56 declared={type=undefined|null|function flags=[IsExpected]} @1327
+    v58 = String string="shout" @1341
+    v59 = Call v57, v51, v58 calleeKey="method" calleeName="second.method" @1334
+    v60 = Integer @1609
+    v61 = Convert v60 declared={type=number flags=[IsExpected]} @1609
+    v62 = String string="" @1623
+    v63 = Convert v62 declared={type=undefined|null|string flags=[IsExpected]} @1623
+    v64 = Integer @1640
+    v65 = Convert v64 declared={type=i32 flags=[IsExpected]} @1640
+    Jump -> next b2(v61, v63, v65) @1636
+  b2(v66, v67, v68):
+    LoopHint @1636
+    v70 = Integer integer=1000 @1647
+    v71 = Less v68, v70 @1643
+    Branch v71 -> taken b3(| 0), notTaken b6(| 0) @1643
+  b3(v72):
+    Jump -> next b4() @1643
+  b4():
+    v73 = Integer integer=2 @1683
+    v74 = String string="t" @1686
+    v75 = Integer integer=3 @1697
+    v76 = BitAnd v72, v75 @1693
+    v77 = Add v74, v76 @1686
+    v78 = Call v8, -, v72, v73, v77 calleeName="make" @1675
+    v79 = Convert v78 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1675
+    v80 = Convert v79 declared={type=undefined|null|object flags=[IsExpected]} @1675
+    v81 = PropGet v80 key="width" @1717
+    v82 = Convert v81 declared={type=number flags=[IsExpected]} @1717
+    v83 = Integer integer=1 @1730
+    v84 = Add v82, v83 @1717
+    PropSet v80, v84 key="width" mode=Sloppy @1704
+    v86 = PropGet v80 key="area" @1742
+    v87 = Convert v86 declared={type=undefined|null|function flags=[IsExpected]} @1742
+    v88 = Call v87, v80 calleeKey="area" calleeName="made.area" @1747
+    v89 = PropGet v80 key="height" @1756
+    v90 = Add v88, v89 @1742
+    v91 = PropGet v80 key="text" @1770
+    v92 = PropGet v91 key="length" @1775
+    v93 = Add v90, v92 @1742
+    v94 = Add v66, v93 @1742
+    v95 = Convert v94 declared={type=number flags=[IsExpected]} @1735
+    v96 = PropGet v80 key="shout" @1797
+    v97 = Convert v96 declared={type=undefined|null|function flags=[IsExpected]} @1797
+    v98 = String string="!" @1808
+    v99 = Call v97, v80, v98 calleeKey="shout" calleeName="made.shout" @1802
+    v100 = PropGet v80 key="describe" @1815
+    v101 = Convert v100 declared={type=undefined|null|function flags=[IsExpected]} @1815
+    v102 = Call v101, v80 calleeKey="describe" calleeName="made.describe" @1820
+    v103 = Add v99, v102 @1797
+    v104 = Convert v103 declared={type=undefined|null|string flags=[IsExpected]} @1790
+    Jump -> next b5() @1790
+  b5():
+    v105 = Increment v72 @1797
+    v106 = Convert v105 declared={type=i32 flags=[IsExpected]} @1653
+    Jump -> next b2(v95, v104, v106) @1653
+  b6(v107):
+    Jump -> next b7() @1643
+  b7():
+    v108 = Builtin builtin=GlobalThis @1834
+    v109 = PropGet v108 key="console" [isFreeName] @1834
+    v110 = Convert v109 declared={type=builtin(Console) flags=[IsExpected]} @1834
+    v111 = PropGet v110 key="log" @1834
+    v112 = Convert v111 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1834
+    v113 = PropGet v51 key="names" @1857
+    v114 = PropGet v113 key="join" @1864
+    v115 = Convert v114 declared={type=undefined|null|function flags=[IsExpected]} @1857
+    v116 = Call v115, v113 calleeKey="join" calleeName="second.names.join" @1870
+    v117 = Builtin builtin=Object @1878
+    v118 = Builtin builtin=ObjectKeys @1878
+    v119 = Call v118, v117, v30 calleeName="Object.keys" @1885
+    v120 = Convert v119 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1878
+    v121 = PropGet v120 key="join" @1894
+    v122 = Convert v121 declared={type=undefined|null|function flags=[IsExpected]} @1878
+    v123 = Call v122, v120 calleeKey="join" calleeName="join" @1896
+    v124 = Convert v123 declared={type=undefined|null|string flags=[IsExpected]} @1878
+    v125 = Call v112, v110, v66, v67, v116, v124 calleeKey="log" calleeName="console.log" @1842
+    v126 = Undefined @1834
+    Return v126 @1834
 }
-function f1 name="Forwarder" module=m0 position=118 flags=[IsSloppy, HasThis, HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
-  b0(v0: env L0, v1: anything, v2: anything, v3: anything):
-    v4 = ToThis v1
-    v5 = Convert v4 declared={type=L1 flags=[IsExpected]}
-    v6 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v7 = GetEnvironmentField v0 layout=L0
-    v8 = InstanceOf v6, v7 writtenExpression="this instanceof Forwarder"
-    v9 = ToBoolean v8
-    Branch v9 -> taken b1(| 0), notTaken b2(| 0)
-  b1(v10):
-    v11 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    PropSet v11, v2 key="target" mode=Sloppy
-    v13 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    PropSet v13, v3 key="source" mode=Sloppy
-    v15 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v16 = Data data=d0
-    v17 = Convert v16 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-    PropSet v15, v17 key="names" mode=Sloppy
-    v19 = Undefined
-    Return v19
-  b2(v20):
-    v21 = GetEnvironmentField v0 layout=L0
-    v22 = Construct v21, -, v2, v3 calleeName="Forwarder"
-    Return v22
+function f1 name="Forwarder" module=m0 position=118 flags=[IsSloppy, HasThis, HasExplicitName] length=2 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: env L1, v1: anything, v2: anything, v3: anything):
+    Jump -> next b1() @118
+  b1():
+    v4 = ToThis v1 @145
+    v5 = Convert v4 declared={type=L2 flags=[IsExpected]} @145
+    v6 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @163
+    v7 = GetEnvironmentField v0 layout=L1 @179
+    v8 = InstanceOf v6, v7 writtenExpression="this instanceof Forwarder" @179
+    v9 = ToBoolean v8 @163
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @163
+  b2(v10):
+    Jump -> next b3() @163
+  b3():
+    v11 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @231
+    PropSet v11, v2 key="target" mode=Sloppy @231
+    v13 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @255
+    PropSet v13, v3 key="source" mode=Sloppy @255
+    v15 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @279
+    v16 = Data data=d0 @292
+    v17 = Convert v16 declared={type=undefined|null|Array<never> flags=[IsExpected]} @292
+    PropSet v15, v17 key="names" mode=Sloppy @279
+    v19 = Undefined @279
+    Return v19 @279
+  b4(v20):
+    Jump -> next b5() @163
+  b5():
+    v21 = GetEnvironmentField v0 layout=L1 @202
+    v22 = Construct v21, -, v2, v3 calleeName="Forwarder" @202 constructs
+    Return v22 @198
 }
-function f2 name="make" module=m0 position=1351 flags=[IsSloppy, HasExplicitName] length=3 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}, {type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: env L0, v1: i32, v2: anything, v3: undefined|null|string):
-    v4 = Builtin builtin=Object
-    v5 = Builtin builtin=ObjectCreate
-    v6 = GetEnvironmentField v0 layout=L0 field=1
-    v7 = CheckInitialized v6 name="base"
-    v8 = Call v5, v4, v7 calleeName="Object.create"
-    v9 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v10 = Convert v2 declared={type=number flags=[IsExpected]}
-    v11 = NewClosure function=f8
-    v12 = Convert v11 declared={type=undefined|null|function|f8 flags=[IsExpected]}
-    v13 = NewObject -, v1, v10 layout=L3 fields=[2, 1]
-    PropDefine v13, v12 key="area"
-    v15 = FinishObject v13
-    PropSet v9, v15 key="box" mode=Sloppy
-    v17 = NewClosure function=f9
-    v18 = Convert v17 declared={type=undefined|null|function|f9 flags=[IsExpected]}
-    v19 = NewObject -, v3 layout=L4 fields=[1]
-    PropDefine v19, v18 key="shout"
-    v21 = FinishObject v19
-    PropSet v9, v21 key="label" mode=Sloppy
-    Return v9
+function f2 name="make" module=m0 position=1351 flags=[IsSloppy, HasExplicitName] length=3 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}, {type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: i32, v2: anything, v3: undefined|null|string):
+    Jump -> next b1() @1351
+  b1():
+    v4 = Builtin builtin=Object @1403
+    v5 = Builtin builtin=ObjectCreate @1403
+    v6 = GetEnvironmentField v0 layout=L1 field=1 @1421 @1417
+    v7 = CheckInitialized v6 name="base" @1421 @1417
+    v8 = Call v5, v4, v7 calleeName="Object.create" @1410
+    v9 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1403
+    v10 = Convert v2 declared={type=number flags=[IsExpected]} @1446
+    v11 = NewClosure function=f8 @1454
+    v12 = Convert v11 declared={type=undefined|null|function|f8 flags=[IsExpected]} @1458
+    v13 = NewObject -, v1, v10 layout=L4 fields=[2, 1] @1454
+    PropDefine v13, v12 key="area" @1454
+    v15 = FinishObject v13 @1437
+    PropSet v9, v15 key="box" mode=Sloppy @1426
+    v17 = NewClosure function=f9 @1524
+    v18 = Convert v17 declared={type=undefined|null|function|f9 flags=[IsExpected]} @1529
+    v19 = NewObject -, v3 layout=L5 fields=[1] @1524
+    PropDefine v19, v18 key="shout" @1524
+    v21 = FinishObject v19 @1516
+    PropSet v9, v21 key="label" mode=Sloppy @1503
+    Return v9 @1591
 }
 function f3 module=m0 position=327 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
-    v2 = ToThis v0
-    v3 = Convert v2 declared={type=object flags=[IsExpected]}
-    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v5 = PropGet v4 key="target"
-    v6 = Convert v5 declared={type=undefined|null|object flags=[IsExpected]}
-    v7 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v8 = PropGet v7 key="source"
-    v9 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v10 = PropGet v9 key="names"
-    v11 = PropGet v10 key="push"
-    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]}
-    v13 = Call v12, v10, v1 calleeKey="push" calleeName="this.names.push"
-    v14 = NewClosure v1, v8 function=f10
-    ElemSet v6, v1, v14 mode=Sloppy
-    v16 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    Return v16
+    Jump -> next b1() @327
+  b1():
+    v2 = Undefined @337
+    v3 = ToThis v0 @337
+    v4 = Convert v3 declared={type=object flags=[IsExpected]} @337
+    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @360
+    v6 = PropGet v5 key="target" @360
+    v7 = Convert v6 declared={type=undefined|null|object flags=[IsExpected]} @360
+    v8 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @388
+    v9 = PropGet v8 key="source" @388
+    v10 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @403
+    v11 = PropGet v10 key="names" @403
+    v12 = PropGet v11 key="push" @408
+    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]} @403
+    v14 = Call v13, v11, v1 calleeKey="push" calleeName="this.names.push" @414
+    v15 = NewClosure v1, v9 function=f10 @443
+    ElemSet v7, v1, v15 mode=Sloppy @428
+    v17 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @533
+    Return v17 @533
 }
 function f4 module=m0 position=571 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
-    v2 = ToThis v0
-    v3 = Convert v2 declared={type=object flags=[IsExpected]}
-    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v5 = PropGet v4 key="getter"
-    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]}
-    v7 = Call v6, v4, v1 calleeKey="getter" calleeName="this.getter"
-    v8 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]}
-    v9 = PropGet v8 key="setter"
-    v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]}
-    v11 = Call v10, v8, v1 calleeKey="setter" calleeName="setter"
-    Return v11
+    Jump -> next b1() @571
+  b1():
+    v2 = ToThis v0 @581
+    v3 = Convert v2 declared={type=object flags=[IsExpected]} @581
+    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]} @598
+    v5 = PropGet v4 key="getter" @598
+    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]} @598
+    v7 = Call v6, v4, v1 calleeKey="getter" calleeName="this.getter" @603
+    v8 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]} @598
+    v9 = PropGet v8 key="setter" @614
+    v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]} @598
+    v11 = Call v10, v8, v1 calleeKey="setter" calleeName="setter" @616
+    Return v11 @598
 }
 function f5 module=m0 position=662 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
-    v2 = ToThis v0
-    v3 = Convert v2 declared={type=object flags=[IsExpected]}
-    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v5 = PropGet v4 key="target"
-    v6 = Convert v5 declared={type=undefined|null|object flags=[IsExpected]}
-    v7 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v8 = PropGet v7 key="source"
-    v9 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v10 = PropGet v9 key="names"
-    v11 = PropGet v10 key="push"
-    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]}
-    v13 = Call v12, v10, v1 calleeKey="push" calleeName="this.names.push"
-    v14 = PropGet v6 key="__defineGetter__"
-    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
-    v16 = NewClosure v1, v8 function=f11
-    v17 = Call v15, v6, v1, v16 calleeKey="__defineGetter__" calleeName="target.__defineGetter__"
-    v18 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    Return v18
+    Jump -> next b1() @662
+  b1():
+    v2 = Undefined @672
+    v3 = ToThis v0 @672
+    v4 = Convert v3 declared={type=object flags=[IsExpected]} @672
+    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @695
+    v6 = PropGet v5 key="target" @695
+    v7 = Convert v6 declared={type=undefined|null|object flags=[IsExpected]} @695
+    v8 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @723
+    v9 = PropGet v8 key="source" @723
+    v10 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @738
+    v11 = PropGet v10 key="names" @738
+    v12 = PropGet v11 key="push" @743
+    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]} @738
+    v14 = Call v13, v11, v1 calleeKey="push" calleeName="this.names.push" @749
+    v15 = PropGet v7 key="__defineGetter__" @763
+    v16 = Convert v15 declared={type=undefined|null|function flags=[IsExpected]} @763
+    v17 = NewClosure v1, v9 function=f11 @793
+    v18 = Call v16, v7, v1, v17 calleeKey="__defineGetter__" calleeName="target.__defineGetter__" @770
+    v19 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @853
+    Return v19 @853
 }
 function f6 module=m0 position=891 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
-    v2 = ToThis v0
-    v3 = Convert v2 declared={type=object flags=[IsExpected]}
-    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v5 = PropGet v4 key="target"
-    v6 = Convert v5 declared={type=undefined|null|object flags=[IsExpected]}
-    v7 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v8 = PropGet v7 key="source"
-    v9 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v10 = PropGet v9 key="names"
-    v11 = PropGet v10 key="push"
-    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]}
-    v13 = Call v12, v10, v1 calleeKey="push" calleeName="this.names.push"
-    v14 = PropGet v6 key="__defineSetter__"
-    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
-    v16 = NewClosure v1, v8 function=f12
-    v17 = Call v15, v6, v1, v16 calleeKey="__defineSetter__" calleeName="target.__defineSetter__"
-    v18 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    Return v18
+    Jump -> next b1() @891
+  b1():
+    v2 = Undefined @901
+    v3 = ToThis v0 @901
+    v4 = Convert v3 declared={type=object flags=[IsExpected]} @901
+    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @924
+    v6 = PropGet v5 key="target" @924
+    v7 = Convert v6 declared={type=undefined|null|object flags=[IsExpected]} @924
+    v8 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @952
+    v9 = PropGet v8 key="source" @952
+    v10 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @967
+    v11 = PropGet v10 key="names" @967
+    v12 = PropGet v11 key="push" @972
+    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]} @967
+    v14 = Call v13, v11, v1 calleeKey="push" calleeName="this.names.push" @978
+    v15 = PropGet v7 key="__defineSetter__" @992
+    v16 = Convert v15 declared={type=undefined|null|function flags=[IsExpected]} @992
+    v17 = NewClosure v1, v9 function=f12 @1022
+    v18 = Call v16, v7, v1, v17 calleeKey="__defineSetter__" calleeName="target.__defineSetter__" @999
+    v19 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @1097
+    Return v19 @1097
 }
 function f7 name="describe" module=m0 position=1123 kind=Method flags=[IsSloppy, HasThis, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    v1 = ToThis v0
-    v2 = Convert v1 declared={type=undefined|null|L2 flags=[IsExpected]}
-    v3 = PropGet v2 key="width"
-    v4 = String string="x"
-    v5 = Add v3, v4
-    v6 = Convert v1 declared={type=undefined|null|L2 flags=[IsExpected]}
-    v7 = PropGet v6 key="height"
-    v8 = Add v5, v7
-    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
-    Return v9
+    Jump -> next b1() @1123
+  b1():
+    v1 = ToThis v0 @1123
+    v2 = Convert v1 declared={type=undefined|null|L3 flags=[IsExpected]} @1147
+    v3 = PropGet v2 key="width" @1147
+    v4 = String string="x" @1160
+    v5 = Add v3, v4 @1147
+    v6 = Convert v1 declared={type=undefined|null|L3 flags=[IsExpected]} @1166
+    v7 = PropGet v6 key="height" @1166
+    v8 = Add v5, v7 @1166
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]} @1166
+    Return v9 @1166
 }
 function f8 name="area" module=m0 position=1454 kind=Method flags=[IsSloppy, HasThis, HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    v1 = ToThis v0
-    v2 = Convert v1 declared={type=object flags=[IsExpected]}
-    v3 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v4 = PropGet v3 key="width"
-    v5 = Convert v4 declared={type=number flags=[IsExpected]}
-    v6 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v7 = PropGet v6 key="height"
-    v8 = Convert v7 declared={type=number flags=[IsExpected]}
-    v9 = Mul v5, v8
-    v10 = Convert v9 declared={type=number flags=[IsExpected]}
-    Return v10
+    Jump -> next b1() @1454
+  b1():
+    v1 = ToThis v0 @1454
+    v2 = Convert v1 declared={type=object flags=[IsExpected]} @1454
+    v3 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1470
+    v4 = PropGet v3 key="width" @1470
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @1470
+    v6 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @1483
+    v7 = PropGet v6 key="height" @1483
+    v8 = Convert v7 declared={type=number flags=[IsExpected]} @1483
+    v9 = Mul v5, v8 @1470
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @1470
+    Return v10 @1470
 }
 function f9 name="shout" module=m0 position=1524 kind=Method flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
-    v2 = ToThis v0
-    v3 = Convert v2 declared={type=L4 flags=[IsExpected]}
-    v4 = Convert v3 declared={type=undefined|null|L4 flags=[IsExpected]}
-    v5 = PropGet v4 key="text"
-    v6 = PropGet v5 key="toUpperCase"
-    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
-    v8 = Call v7, v5 calleeKey="toUpperCase" calleeName="this.text.toUpperCase"
-    v9 = Add v8, v1
-    Return v9
+    Jump -> next b1() @1524
+  b1():
+    v2 = ToThis v0 @1530
+    v3 = Convert v2 declared={type=L5 flags=[IsExpected]} @1530
+    v4 = Convert v3 declared={type=undefined|null|L5 flags=[IsExpected]} @1545
+    v5 = PropGet v4 key="text" @1545
+    v6 = PropGet v5 key="toUpperCase" @1550
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]} @1545
+    v8 = Call v7, v5 calleeKey="toUpperCase" calleeName="this.text.toUpperCase" @1555
+    v9 = Add v8, v1 @1545
+    Return v9 @1545
 }
-function f10 module=m0 position=443 flags=[IsSloppy, HasThis, TakesCallee, HasArgumentCount, HasHiddenRest] captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f10 module=m0 position=443 flags=[IsSloppy, HasThis, TakesCallee, HasArgumentCount, HasHiddenRest] captures=[{type=anything variableName="name"}, {type=anything variableName="source"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything, v2: anything, v3: function, v4: int[0, 4294967295], v5: Array):
-    v6 = CreateMappedArguments v3, v4, v5
-    v7 = ToThis v2
-    v8 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]}
-    v9 = ElemGet v8, v1
-    v10 = Convert v9 declared={type=undefined|null|object flags=[IsExpected]}
-    v11 = ElemGet v10, v0
-    v12 = PropGet v11 key="apply"
-    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]}
-    v14 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]}
-    v15 = ElemGet v14, v1
-    v16 = Call v13, v11, v15, v6 calleeKey="apply" calleeName="this[source][name].apply"
-    Return v16
+    Jump -> next b1() @443
+  b1():
+    v6 = CreateMappedArguments v3, v4, v5 @443
+    v7 = ToThis v2 @443
+    v8 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]} @468
+    v9 = ElemGet v8, v1 @468
+    v10 = Convert v9 declared={type=undefined|null|object flags=[IsExpected]} @468
+    v11 = ElemGet v10, v0 @473
+    v12 = PropGet v11 key="apply" @481
+    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]} @468
+    v14 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]} @493
+    v15 = ElemGet v14, v1 @493
+    v16 = Call v13, v11, v15, v6 calleeKey="apply" calleeName="this[source][name].apply" @487
+    Return v16 @468
 }
-function f11 module=m0 position=793 flags=[IsSloppy, HasThis] captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f11 module=m0 position=793 flags=[IsSloppy, HasThis] captures=[{type=anything variableName="name"}, {type=anything variableName="source"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = ToThis v2
-    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-    v5 = ElemGet v4, v1
-    v6 = Convert v5 declared={type=undefined|null|object flags=[IsExpected]}
-    v7 = ElemGet v6, v0
-    Return v7
+    Jump -> next b1() @793
+  b1():
+    v3 = ToThis v2 @793
+    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]} @818
+    v5 = ElemGet v4, v1 @818
+    v6 = Convert v5 declared={type=undefined|null|object flags=[IsExpected]} @818
+    v7 = ElemGet v6, v0 @823
+    Return v7 @818
 }
-function f12 module=m0 position=1022 flags=[IsSloppy, HasThis] length=1 captures=[{type=anything}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f12 module=m0 position=1022 flags=[IsSloppy, HasThis] length=1 captures=[{type=anything variableName="name"}, {type=anything variableName="source"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything):
-    v4 = ToThis v2
-    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
-    v6 = ElemGet v5, v1
-    v7 = Convert v6 declared={type=undefined|null|object flags=[IsExpected]}
-    ElemSet v7, v0, v3 mode=Sloppy
-    Return v3
+    Jump -> next b1() @1022
+  b1():
+    v4 = ToThis v2 @1032
+    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]} @1053
+    v6 = ElemGet v5, v1 @1053
+    v7 = Convert v6 declared={type=undefined|null|object flags=[IsExpected]} @1053
+    ElemSet v7, v0, v3 mode=Sloppy @1058
+    Return v3 @1058
 }
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|function, v1: anything, v2: anything):
+    Jump -> next b1() @1161
+  b1():
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1239
+    Branch v4 -> taken b3(), notTaken b2() @1239
+  b2():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1239
+    Branch v6 -> taken b3(), notTaken b4() @1239
+  b3():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    Return v8 @1388
+  b4():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+runtimefunction id=FunctionPrototypeApply function=f17
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 474, patchpoints: 87, rare instructions: 952, polls: 1
+# CHECK-NEXT: instructions: 472, patchpoints: 96, rare instructions: 956, polls: 1
 # CHECK-NEXT: end of function f0

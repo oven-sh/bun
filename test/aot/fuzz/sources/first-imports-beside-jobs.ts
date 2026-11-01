@@ -2,10 +2,13 @@
 import { startedAs } from "../dynamic-import-settle-order";
 import { eventsBesideLoad, make, makeEventBesideLoad, programs } from "../generators/first-imports-beside-jobs";
 import { family } from "../family";
+import { runEnvFlag } from "../runners";
 
-// Plain Bun transpiles on one thread here, so files are read in request order. An executable reads no files.
+// Plain Bun transpiles on one thread here, so files are read in request order, and the executable runs under the same
+// variable, so its `import()` waits for no later turn. Without it each of a program's twenty lines is a race of its own
+// in plain Bun: sixteen runs print sixteen texts, and no number of further runs prints the executable's.
 const plainEnv = { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" };
-const always = { plainEnv };
+const always = { plainEnv, flags: [runEnvFlag + "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=1"] };
 
 // In the ticks in which the loader has fetched the required module but not yet evaluated it, require() evaluates and
 // returns it, where plain Bun throws. The lines of those ticks. Every other tick is compared with plain Bun.

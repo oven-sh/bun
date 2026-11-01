@@ -1119,3 +1119,7 @@ TIMES-OUT test/regression/issue/22353.test.ts > issue #22353 - server should han
 TIMES-OUT test/regression/issue/27428.test.ts > stream.finished callback preserves AsyncLocalStorage context: the clock
 TIMES-OUT test/regression/issue/29181.test.ts > Bun.serve static file route: the clock
 TIMES-OUT test/regression/issue/32489.test.ts > epoll_pwait2 disable gate > BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2 gates the main loop: the clock
+DIFFERS test/js/bun/jsc/webkit-upgrade-982277c9dd.test.ts > WebKit 982277c9dd upgrade > what a ShadowRealm function throws reaches a native caller as a TypeError of the caller's realm: a compiled program has no ShadowRealm, and the build says so (TS100076)
+DIFFERS test/js/bun/jsc/webkit-upgrade-e8f704815e.test.ts > WebKit e8f704815e upgrade > an async function that awaits itself through Promise.all has one frame in a stack trace: open: the frame stands ten times
+DIFFERS test/js/bun/jsc/webkit-upgrade-e8f704815e.test.ts > WebKit e8f704815e upgrade > the revoke function of Proxy.revocable is an ordinary function (fad04e2527): `length` deleted and defined again comes last among the own keys of a compiled arrow function, as the specification has it, and first in JavaScriptCore's own functions
+DIFFERS test/js/bun/test/vitest-apis.test.ts > expect.addEqualityTesters > testers still run when the two values are identical: open

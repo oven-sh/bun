@@ -6,6 +6,7 @@ mod library;
 mod library_functions;
 mod loads;
 mod runtime_value;
+mod starts_of_statements;
 mod text_of_body;
 
 use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind};

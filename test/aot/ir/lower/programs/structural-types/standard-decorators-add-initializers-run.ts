@@ -102,7 +102,7 @@ console.log("members: " + made.amount + " " + made.read() + " " + made.twice + "
 // CHECK-NEXT: Return v26
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_8]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName, IsNamedByComputedKey] thisType={type=anything} results=[{type=undefined|null|[[L_8]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -114,7 +114,7 @@ console.log("members: " + made.amount + " " + made.read() + " " + made.twice + "
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_8]] site=[[w_18]]} results=[{type=number site=[[w_19]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName, IsNamedByComputedKey] thisType={type=[[L_8]] site=[[w_18]]} results=[{type=number site=[[w_19]]}] {
 // CHECK-NEXT: b0(v0: [[L_8]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

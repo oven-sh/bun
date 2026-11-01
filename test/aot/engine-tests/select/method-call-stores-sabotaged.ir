@@ -1,0 +1,7 @@
+# sabotage=FusedCallsEnterOnlyUnknownCode: the fused operation names none of the call's callees: Select's look at what it has rewritten stops the build
+# FORM: AsRead
+# RUN: compile
+# OPTIONS: sabotage=FusedCallsEnterOnlyUnknownCode
+# DIAGNOSTIC: EffectsOfPreparedTooNarrow 1
+# CHECK: image empty
+# PROGRAM-OF: method-call-stores.ir

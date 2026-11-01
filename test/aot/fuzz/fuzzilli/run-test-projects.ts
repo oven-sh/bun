@@ -7,6 +7,7 @@
 //   --bare                             every project is bare: its test files import bun:test alone and name no built-in module (12 of 100 projects are, without the option)
 //   --sparse                           every project is sparse: two or three kinds in all its files (25 of 100 projects are, without the option)
 //   --ends-within 120                  seconds for one run of a project. A lane that is given few processors on a busy machine needs more: a build that takes 40 s took more than 120 there
+//   --test-ends-within 30000           milliseconds for one test, a long limit that no test is meant to meet. A project in which a test of plain `bun test` meets it is dropped: it says nothing about the compiler
 //   --reduce <folder of a find> [--must "EvalError"]   makes the project of a find smaller, into <folder>/reduced: whole files go first, then lines by halves, as long as the two runs differ
 //                                      in the same way in a test of the same kind or, with --must, as long as the compiled run alone says those words
 //   --words TestRunLayers:2,TestRunPartFiles:2   BUN_DEBUG_TEST_AOT_WORDS for the compiled runs: how the run is built (layers and pieces); a project has few test files, so say how many a piece holds
@@ -41,6 +42,7 @@ const { values: options } = parseArgs({
     bare: { type: "boolean", default: false },
     sparse: { type: "boolean", default: false },
     "ends-within": { type: "string", default: "120" },
+    "test-ends-within": { type: "string", default: "30000" },
     reduce: { type: "string", default: "" },
     must: { type: "string", default: "" },
     project: { type: "string", default: "" },
@@ -1200,7 +1202,7 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
         needs: [],
         lines: drawn.map(
           ([label, text]) =>
-            `try { note(${JSON.stringify(label)}, asText(await (async () => (${text}))())); } catch (error${any}) { note(${JSON.stringify(label)}, "threw", error?.name, String(error?.message).slice(0, 60)); }`,
+            `try { note(${JSON.stringify(label)}, asText(await (async () => (${text}))())); } catch (error${any}) { note(${JSON.stringify(label)}, "threw", error?.name, String(error?.message).replace(/ \\(evaluating .*/s, "").slice(0, 60)); }`,
         ),
       };
     },
@@ -2088,7 +2090,14 @@ function runTests(
   const report = join(seenIn, "report.xml");
   const ended = Bun.spawnSync({
     // A long limit for each test: on a busy machine a child process took more than the usual five seconds now and then, in either mode. A test about limits has one of its own.
-    cmd: [bun, "test", ...flags, "--timeout=30000", "--reporter=junit", "--reporter-outfile=" + report],
+    cmd: [
+      bun,
+      "test",
+      ...flags,
+      "--timeout=" + options["test-ends-within"],
+      "--reporter=junit",
+      "--reporter-outfile=" + report,
+    ],
     cwd: folder,
     env: { ...process.env, SEEN_IN: seenIn, BUN_ENABLE_CRASH_REPORTING: "0", NO_COLOR: "1", LEFT_BEHIND: "", ...more },
     stdout: "pipe",
@@ -2337,6 +2346,11 @@ for (let number = 0; Date.now() < until && (options.projects === "0" || number <
   add("projects");
   if (difference(plain, again) || plain.timedOut) {
     add("plain bun test answers itself otherwise");
+    continue;
+  }
+  // Both plain runs can meet the long limit in the same test and so agree: a server and a fetch from it stood still for 58 s on a busy machine, in plain Bun, and the compiled run, which passed, was kept as a find.
+  if (plain.stderr.includes(`this test timed out after ${options["test-ends-within"]}ms`)) {
+    add("a test of plain bun test met the long limit");
     continue;
   }
   // A compiled run answers as plain does whatever the order in which flow's rules run: a layer once lost a function's body by that order alone. A word that does not begin with TestRun goes to the engine; the number of a schedule is a byte.

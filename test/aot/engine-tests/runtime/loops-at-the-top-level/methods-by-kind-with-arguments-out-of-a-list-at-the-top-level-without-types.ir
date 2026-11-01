@@ -129,10 +129,10 @@ function f1 name="Shape" module=m0 position=139 kind=BaseConstructor flags=[HasN
   b0(v0: anything):
     Jump -> next b1() @139
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @124
-    v2 = NewObject v1 layout=L0 @124
-    v3 = Convert v2 declared={type=L0|L1|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @124
-    Return v3 @124
+    v1 = GetConstructPrototype v0 layout=L0 @139
+    v2 = NewObject v1 layout=L0 @139
+    v3 = Convert v2 declared={type=L0|L1|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @139
+    Return v3 @139
 }
 function f2 name="Square" module=m0 position=226 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
   b0(v0: function, v1: anything, v2: number):

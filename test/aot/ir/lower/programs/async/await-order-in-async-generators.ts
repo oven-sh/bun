@@ -152,7 +152,7 @@ export {};
 
 // GENERATED: roundsOf Derived then rejected thenable
 // CHECK-LABEL: function {{*}}name="roundsOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|AsyncGenerator flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|Map<undefined|null|string, number>> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|AsyncGenerator flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|Map<undefined|null|string, number>> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|AsyncGenerator):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

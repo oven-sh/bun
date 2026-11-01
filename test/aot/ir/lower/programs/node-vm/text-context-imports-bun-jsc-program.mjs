@@ -32,7 +32,7 @@ for (const [loader, importModuleDynamically] of [
 
 // GENERATED: show
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|string, v2: undefined|null|function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

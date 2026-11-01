@@ -37,8 +37,8 @@ attempt(
 );
 
 /* Output:
-URL.canParse: TypeError: Cannot assign to URL.canParse | true
+URL.canParse: stored | mine
 Temporal.Instant.compare: TypeError: Cannot assign to Temporal.Instant.compare | 0
-AbortSignal.abort: TypeError: Cannot assign to AbortSignal.abort | [object AbortSignal]
-WebAssembly.Module.exports: TypeError: Cannot assign to WebAssembly.Module.exports | 0
+AbortSignal.abort: stored | mine
+WebAssembly.Module.exports: stored | 4
 */

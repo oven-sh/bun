@@ -133,9 +133,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v49 = Undefined @707
     Return v49 @707
 }
-function f1 name="Machine" module=m0 position=238 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+function f1 name="Machine" module=m0 position=216 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything):
-    Jump -> next b1() @238
+    Jump -> next b1() @216
   b1():
     v1 = GetConstructPrototype v0 layout=L0 @238
     v2 = NewObject v1 layout=L0 @238
@@ -242,7 +242,7 @@ function f3 module=m0 position=12 length=1 thisType={type=anything} parameters=[
     v9 = Undefined @89
     Return v9 @89
 }
-function f4 module=m0 position=104 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 module=m0 position=104 length=1 captures=[{type=anything variableName="State"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
     Jump -> next b1() @104
   b1():

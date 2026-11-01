@@ -1,10 +1,11 @@
 // EliminateDeadCode can leave the two arms of a test the same code. SimplifyControlFlow has to run again, and a build that verifies each pass says so if it does not.
 // `next` of an array iterator has such arms once a caller keeps the iterator and another reads only `done`.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { spawned } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
 import { describe, test } from "./supported";
 

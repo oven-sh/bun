@@ -168,12 +168,32 @@ interface::define_linked_functions! {
         Box::new(UnlinkedFiles::new(files, atoms))
     }
 
-    fn bun_aot_find_what_tests_replace(files: &[Vec<u8>], threads: usize, resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests {
-        crate::load::replaced_by_tests::find_what_tests_replace(files, threads, resolve)
+    fn bun_aot_find_what_tests_replace(test_files: &[Vec<u8>], preloads: &[Vec<u8>], reached_by_preloads_alone: &[Vec<u8>], threads: usize, product_replaces_nothing: bool, resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests {
+        let product = match product_replaces_nothing {
+            true => crate::load::replaced_builtins::ProductFiles::ReplaceNothing,
+            false => crate::load::replaced_builtins::ProductFiles::AreReadAsTestsAre,
+        };
+        crate::load::replaced_by_tests::find_what_tests_replace(test_files, preloads, reached_by_preloads_alone, threads, product, resolve)
     }
 
     fn bun_aot_everything_that_tests_replace() -> ReplacedByTests {
         crate::load::replaced_by_tests::everything_that_tests_replace()
+    }
+
+    fn bun_aot_globals_that_a_window_replaces() -> Vec<u32> {
+        crate::load::globals_of_a_window::globals_that_a_window_replaces()
+    }
+
+    fn bun_aot_lists_laid_anew_between_test_files() -> Vec<u32> {
+        crate::load::replaced_by_tests::lists_laid_anew_between_test_files()
+    }
+
+    fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool {
+        crate::load::replaced_builtins::imports_vitest(path, text)
+    }
+
+    fn bun_aot_find_importer_outside_tests(root: &[u8], file: &[u8]) -> Option<Vec<u8>> {
+        crate::load::importers_on_disk::find_importer_outside_tests(root, file)
     }
 
     fn bun_aot_library_modules_that_programs_load() -> Vec<&'static [u8]> {

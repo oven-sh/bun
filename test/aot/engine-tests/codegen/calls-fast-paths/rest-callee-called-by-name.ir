@@ -1,5 +1,6 @@
 # A large method with a rest parameter that only reads its rest arguments: no array is allocated for the call.
 # IR+ CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # RUN: lower-to-air size f1
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls

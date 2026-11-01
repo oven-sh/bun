@@ -2,8 +2,9 @@ use super::find::{BindingValues, Certainty, HeldFunction, KnownReference};
 use super::{Helper, KnownHelpers, Shape};
 use crate::modules::{
     ExportBinding, ExportLookup, ImportBinding, ModuleGraph, ModuleRef, SiteAnswer,
+    find_name_stored_as_module_exports,
 };
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData};
@@ -190,7 +191,11 @@ pub fn resolve_callee(
                 None if bound.binding_kind(symbol) == BindingKind::Import => {
                     resolve_import(input, input.modules.import_binding(file, symbol))
                 }
-                None => None,
+                // `var helper = require(K)`
+                None => {
+                    let required = find_required_file(input, file, callee)?;
+                    predict_exports(input, ModuleRef::File(required))
+                }
             },
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
         };
@@ -200,6 +205,10 @@ pub fn resolve_callee(
     };
     if let Some(binding) = input.modules.member_binding(file, callee) {
         return resolve_import(input, binding);
+    }
+    if name == known::default {
+        let required = find_file_required_behind_wrapper(input, file, object)?;
+        return predict_exports(input, ModuleRef::File(required));
     }
     if !input.helpers.is_binding_name(name) {
         return None;
@@ -241,6 +250,33 @@ pub fn resolve_reference(
         function,
         needs_guard: !is_always_bound,
     })
+}
+
+/// The function of another file that a helper names, where it is of the family that the published text names there.
+pub fn resolve_loaded_reference(
+    input: &ResolveInput<'_, '_>,
+    file: FileId,
+    reference: KnownReference,
+) -> Option<(FileId, HeldFunction)> {
+    let KnownReference::Loaded { symbol, helper } = reference else {
+        return None;
+    };
+    let (hir, bound) = (input.files.hir(file), input.files.bound(file));
+    let loaded = match bound.binding_initializer(hir, symbol) {
+        BindingInitializer::Expression(value) => {
+            let mut value = hir.skip_type_assertions(value);
+            if let Some((object, MemberKey::Name(known::default))) = hir.member_key(value) {
+                value = hir.skip_type_assertions(object);
+            }
+            let required = find_required_file(input, file, value)?;
+            predict_exports(input, ModuleRef::File(required))?
+        }
+        _ => resolve_import(input, input.modules.import_binding(file, symbol))?,
+    };
+    let [held] = loaded.functions[..] else {
+        return None;
+    };
+    (loaded.helper(input.helpers)? == helper).then_some((loaded.file, held))
 }
 
 pub fn resolve_private_field_call(
@@ -331,6 +367,7 @@ fn resolve_import(input: &ResolveInput<'_, '_>, binding: ImportBinding) -> Optio
             predict_member(input, export.module, export.name)
         }
         ImportBinding::NamespaceRead { module, name } => predict_member(input, module, name),
+        ImportBinding::Exports { module } => predict_exports(input, module),
         _ => None,
     }
 }
@@ -365,6 +402,9 @@ fn predict_member(
     module: ModuleRef,
     name: Atom,
 ) -> Option<KnownCallee> {
+    if name == known::default {
+        return predict_exports(input, module);
+    }
     let file = match module {
         ModuleRef::File(file) => file,
         _ => return None,
@@ -376,6 +416,43 @@ fn predict_member(
     let mut bindings = input.helpers.file(file)?.bindings();
     let (_, values) = bindings.find(|&(symbol, _)| bound.symbol(symbol).name == name)?;
     Some(KnownCallee::new(file, values).predicted())
+}
+
+// The helper that a CommonJS file stores as its value: a file that Babel wrote shows it as `default` too. Only a prediction: callers guard the value with IsClosureOf.
+fn predict_exports(input: &ResolveInput<'_, '_>, module: ModuleRef) -> Option<KnownCallee> {
+    let ModuleRef::File(file) = module else {
+        return None;
+    };
+    input.helpers.file(file)?;
+    let stored = find_name_stored_as_module_exports(input.files, file)?;
+    Some(KnownCallee::new(file, input.helpers.binding(file, stored)?).predicted())
+}
+
+// `var holder = wrap(require(K))`, `var holder = require(K)`
+fn find_file_required_behind_wrapper(
+    input: &ResolveInput<'_, '_>,
+    file: FileId,
+    holder: ExprId,
+) -> Option<FileId> {
+    if let Some(required) = find_required_file(input, file, holder) {
+        return Some(required);
+    }
+    let (hir, bound) = (input.files.hir(file), input.files.bound(file));
+    let Binding::Symbol(symbol) = bound.binding(hir.skip_type_assertions(holder)) else {
+        return None;
+    };
+    let BindingInitializer::Expression(value) = bound.binding_initializer(hir, symbol) else {
+        return None;
+    };
+    let ExprKind::Call(site) = hir[hir.skip_type_assertions(value)].kind else {
+        return None;
+    };
+    let site = hir[site];
+    let only = (site.args.len() == 1).then(|| hir.id_at::<ExprId>(site.args, 0))?;
+    match hir[hir.skip_type_assertions(only)].kind {
+        ExprKind::Call(_) => find_required_file(input, file, only),
+        _ => None,
+    }
 }
 
 fn find_required_file(
@@ -569,6 +646,170 @@ helpers.__classPrivateFieldGet({}, new WeakMap(), "f");"#;
             let call = format!("{import}__classPrivateFieldGet({{}}, state, {other});");
             assert_eq!(describe_field_access(&call, &declared), None, "{other}");
         }
+    }
+
+    const RUNTIME_CREATE_CLASS: &str = r#"var toPropertyKey = require("./toPropertyKey.js");
+function _defineProperties(e, r) {
+  for (var t = 0; t < r.length; t++) {
+    var o = r[t];
+    o.enumerable = o.enumerable || !1, o.configurable = !0, "value" in o && (o.writable = !0), Object.defineProperty(e, toPropertyKey(o.key), o);
+  }
+}
+function _createClass(e, r, t) {
+  return r && _defineProperties(e.prototype, r), t && _defineProperties(e, t), Object.defineProperty(e, "prototype", {
+    writable: !1
+  }), e;
+}
+module.exports = _createClass, module.exports.__esModule = true, module.exports["default"] = module.exports;"#;
+    const RUNTIME_TO_PROPERTY_KEY: &str = r#"var _typeof = require("./typeof.js")["default"];
+var toPrimitive = require("./toPrimitive.js");
+function toPropertyKey(t) {
+  var i = toPrimitive(t, "string");
+  return "symbol" == _typeof(i) ? i : i + "";
+}
+module.exports = toPropertyKey, module.exports.__esModule = true, module.exports["default"] = module.exports;"#;
+    const RUNTIME_TO_PRIMITIVE: &str = r#"var _typeof = require("./typeof.js")["default"];
+function toPrimitive(t, r) {
+  if ("object" != _typeof(t) || !t) return t;
+  var e = t[Symbol.toPrimitive];
+  if (void 0 !== e) {
+    var i = e.call(t, r || "default");
+    if ("object" != _typeof(i)) return i;
+    throw new TypeError("@@toPrimitive must return a primitive value.");
+  }
+  return ("string" === r ? String : Number)(t);
+}
+module.exports = toPrimitive, module.exports.__esModule = true, module.exports["default"] = module.exports;"#;
+    const RUNTIME_TYPEOF: &str = r#"function _typeof(o) {
+  "@babel/helpers - typeof";
+
+  return module.exports = _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) {
+    return typeof o;
+  } : function (o) {
+    return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o;
+  }, module.exports.__esModule = true, module.exports["default"] = module.exports, _typeof(o);
+}
+module.exports = _typeof, module.exports.__esModule = true, module.exports["default"] = module.exports;"#;
+    const RUNTIME_INTEROP: &str = r#"function _interopRequireDefault(e) {
+  return e && e.__esModule ? e : {
+    "default": e
+  };
+}
+module.exports = _interopRequireDefault, module.exports.__esModule = true, module.exports["default"] = module.exports;"#;
+    const RUNTIME_ESM_CREATE_CLASS: &str = r#"import toPropertyKey from "./toPropertyKey.js";
+function _defineProperties(e, r) {
+  for (var t = 0; t < r.length; t++) {
+    var o = r[t];
+    o.enumerable = o.enumerable || !1, o.configurable = !0, "value" in o && (o.writable = !0), Object.defineProperty(e, toPropertyKey(o.key), o);
+  }
+}
+function _createClass(e, r, t) {
+  return r && _defineProperties(e.prototype, r), t && _defineProperties(e, t), Object.defineProperty(e, "prototype", {
+    writable: !1
+  }), e;
+}
+export { _createClass as default };"#;
+    const RUNTIME_ESM_TO_PROPERTY_KEY: &str = r#"import _typeof from "./typeof.js";
+import toPrimitive from "./toPrimitive.js";
+function toPropertyKey(t) {
+  var i = toPrimitive(t, "string");
+  return "symbol" == _typeof(i) ? i : i + "";
+}
+export { toPropertyKey as default };"#;
+    const RUNTIME_ESM_TO_PRIMITIVE: &str = r#"import _typeof from "./typeof.js";
+function toPrimitive(t, r) {
+  if ("object" != _typeof(t) || !t) return t;
+  var e = t[Symbol.toPrimitive];
+  if (void 0 !== e) {
+    var i = e.call(t, r || "default");
+    if ("object" != _typeof(i)) return i;
+    throw new TypeError("@@toPrimitive must return a primitive value.");
+  }
+  return ("string" === r ? String : Number)(t);
+}
+export { toPrimitive as default };"#;
+    const RUNTIME_ESM_TYPEOF: &str = r#"function _typeof(o) {
+  "@babel/helpers - typeof";
+
+  return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) {
+    return typeof o;
+  } : function (o) {
+    return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o;
+  }, _typeof(o);
+}
+export { _typeof as default };"#;
+
+    fn files_of_runtime<'a>(main: (&'a str, &'a str)) -> [(&'a str, &'a str); 6] {
+        [
+            main,
+            ("createClass.js", RUNTIME_CREATE_CLASS),
+            ("toPropertyKey.js", RUNTIME_TO_PROPERTY_KEY),
+            ("toPrimitive.js", RUNTIME_TO_PRIMITIVE),
+            ("typeof.js", RUNTIME_TYPEOF),
+            ("interopRequireDefault.js", RUNTIME_INTEROP),
+        ]
+    }
+
+    #[test]
+    fn a_helper_that_a_file_exports_whole_is_predicted_behind_a_wrapped_require() {
+        let main = r#"var _interopRequireDefault = require("./interopRequireDefault.js");
+var _createClass2 = _interopRequireDefault(require("./createClass.js"));
+function B() {}
+(0, _createClass2["default"])(B, []);"#;
+        let files = files_of_runtime(("main.cjs", main));
+        let (helper, certainty, path) = describe_last_call(&files, "main.cjs").expect("resolved");
+        assert_eq!(helper, Helper::CreateClass);
+        assert_eq!(certainty, Certainty::MayHoldOtherValues);
+        assert!(path.ends_with("createClass.js"), "{path}");
+    }
+
+    #[test]
+    fn a_helper_that_a_file_exports_whole_is_predicted_behind_a_default_import() {
+        let main =
+            "import _createClass from \"./createClass.js\";\nfunction B() {}\n_createClass(B, []);";
+        let files = files_of_runtime(("main.mjs", main));
+        let (helper, certainty, path) = describe_last_call(&files, "main.mjs").expect("resolved");
+        assert_eq!(helper, Helper::CreateClass);
+        assert_eq!(certainty, Certainty::MayHoldOtherValues);
+        assert!(path.ends_with("createClass.js"), "{path}");
+    }
+
+    #[test]
+    fn a_helper_names_helpers_of_other_files() {
+        let commonjs = files_of_runtime(("main.cjs", "require(\"./createClass.js\");"));
+        let modules = [
+            ("main.mjs", "import \"./createClass.mjs\";"),
+            ("createClass.mjs", RUNTIME_ESM_CREATE_CLASS),
+            ("toPropertyKey.js", RUNTIME_ESM_TO_PROPERTY_KEY),
+            ("toPrimitive.js", RUNTIME_ESM_TO_PRIMITIVE),
+            ("typeof.js", RUNTIME_ESM_TYPEOF),
+        ];
+        let _ = modules;
+        with_graph(&commonjs, |graph, bind_input| {
+            let files = bind_input.files;
+            let helpers = KnownHelpers::compute(files, &run_serially);
+            let input = ResolveInput {
+                files,
+                modules: graph,
+                helpers: &helpers,
+            };
+            let mut file = file_named(bind_input, "createClass.js");
+            let mut family = Helper::DefineProperties;
+            for next in [Helper::ToPropertyKey, Helper::ToPrimitive, Helper::Typeof] {
+                let found = helpers.file(file).expect("the file has helpers");
+                let (_, known) = found
+                    .functions()
+                    .find(|(_, known)| known.shape.helper() == family)
+                    .unwrap_or_else(|| panic!("{family:?} is not known"));
+                let loaded = known.references.iter().find_map(|&reference| {
+                    let (file, held) = resolve_loaded_reference(&input, file, reference)?;
+                    let shape = helpers.function(file, held.definition)?.shape;
+                    (shape.helper() == next).then_some(file)
+                });
+                file = loaded.unwrap_or_else(|| panic!("{family:?} does not lead to {next:?}"));
+                family = next;
+            }
+        });
     }
 
     #[test]

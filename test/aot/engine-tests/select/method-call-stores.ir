@@ -1,0 +1,113 @@
+# `u[name](v => { state = v; }).set()`: only calls by value reach `set`, so that unknown code does not enter it, and it stores to a variable. CallMethod has the effects of unknown code and of the callees that the call names.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: FusedCallsBeyondUnknownCode = 1
+# STATISTIC: MethodCallGroups = 1
+# CHECK: image not empty
+
+layout L0 module=m0 position=10 fields=[{key="box" declared={type=undefined|null|function|f1 flags=[IsExpected]} flags=[IsRequired]}, {key="unread" declared={type=undefined|null|function|f2 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 position=27 fields=[{key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L2 module=m0 position=125
+layout L3 module=m0 position=43 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="state" module=m0 declared={type=anything|absent}
+module m0 path="/$bunfs/root/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 79, 113, 129, 165, 201] textPrintedInPlace="\x89\x01\x13\x22\x03\x04(v) \x05\x02\x04\x06\x01\x05\x01\x0a\x06\x00}" textOfBody="\x00\x11)\x0a\x07\x03\x01!\x11\x08\x13\x08\x01#"} functionText="const u = { box: write => ({ set() { write({ a: 1 }); } }), unread: () => 2 };\x0aconst name = JSON.parse('\x22box\x22');\x0alet state = {};\x0au[name](v => { state = v; }).set();\x0aconsole.log(JSON.stringify(state));\x0a" namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/models/Objects.ts" displayPath="/$bun/js/engine/models/Objects.ts" flags=[IsLibrary] positions={lineStarts=[0, 34, 52, 53, 111, 134, 171, 226, 245, 247, 248, 288, 306, 307, 376, 428, 462, 515, 534, 536, 537, 589, 607, 608, 677, 734, 784, 838, 943, 967, 969, 970, 1013, 1031, 1032, 1072, 1091, 1123, 1149, 1230, 1263, 1269, 1288, 1290, 1291, 1326, 1344, 1345, 1373, 1375, 1376, 1422, 1440, 1441, 1525, 1604, 1712, 1781, 1887, 1947, 1949] whereThisIsMade=[1291, 1321]} functionText="export function entries(object) {\x0a    \x22use strict\x22;\x0a\x0a    const ownProperties = { __proto__: null, ...object };\x0a    const result = [];\x0a    for (const key in ownProperties)\x0a        $arrayPush(result, [key, ownProperties[key]]);\x0a    return result;\x0a}\x0a\x0aexport function fromEntries(iterable) {\x0a    \x22use strict\x22;\x0a\x0a    // No literal: what the call answers has no layout of this file.\x0a    const object = Object.create(Object.prototype);\x0a    for (const entry of iterable)\x0a        $putByValDirect(object, entry[0], entry[1]);\x0a    return object;\x0a}\x0a\x0aexport function getOwnPropertyDescriptors(object) {\x0a    \x22use strict\x22;\x0a\x0a    // No literal: what the call answers has no layout of this file.\x0a    const descriptors = Object.create(Object.prototype);\x0a    const keys = Reflect.ownKeys(Object(object));\x0a    for (let index = 0; index < keys.length; index++)\x0a        $putByValDirect(descriptors, keys[index], Object.getOwnPropertyDescriptor(object, keys[index]));\x0a    return descriptors;\x0a}\x0a\x0aexport function groupBy(items, callback) {\x0a    \x22use strict\x22;\x0a\x0a    const groups = Object.create(null);\x0a    let index = 0;\x0a    for (const item of items) {\x0a        const group = [];\x0a        $putByValDirect(groups, $toPropertyKey(callback(item, index++)), group);\x0a        $arrayPush(group, item);\x0a    }\x0a    return groups;\x0a}\x0a\x0aexport function toLocaleString() {\x0a    \x22use strict\x22;\x0a\x0a    return this.toString();\x0a}\x0a\x0aexport function toClass(target, name, base) {\x0a    \x22use strict\x22;\x0a\x0a    // The native code defines each property: it asks no object above for a setter.\x0a    const prototype = Object.create(base ? base.prototype : Object.prototype);\x0a    Object.defineProperty(prototype, \x22constructor\x22, { value: target, writable: true, configurable: true });\x0a    Object.setPrototypeOf(target, base ? base : Function.prototype);\x0a    Object.defineProperty(target, \x22prototype\x22, { value: prototype, writable: true, configurable: true });\x0a    Object.defineProperty(target, \x22name\x22, { value: name });\x0a}\x0a" namespaceLayout=L(m1)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @17
+    v1 = Convert v0 declared={type=undefined|null|function|f1 flags=[IsExpected]} @17
+    v2 = NewObject layout=L0 @12
+    PropDefine v2, v1 key="box" @12
+    v4 = NewClosure function=f2 @68
+    v5 = Convert v4 declared={type=undefined|null|function|f2 flags=[IsExpected]} @68
+    PropDefine v2, v5 key="unread" @60
+    v7 = FinishObject v2 @10
+    v8 = Convert v7 declared={type=undefined|null|L0 flags=[IsExpected]} @10
+    v9 = Builtin builtin=JSON @92
+    v10 = PropGet v9 key="parse" @92
+    v11 = Convert v10 declared={type=builtin(JSONParse) flags=[IsExpected]} @92
+    v12 = String string="\"box\"" @103
+    v13 = Call v11, v9, v12 calleeKey="parse" calleeName="JSON.parse" @97
+    v14 = Data data=d0 @125
+    PutModuleVariable v14 variable=g0 @117
+    v16 = ElemGet v8, v13 @129
+    v17 = Convert v16 declared={type=undefined|null|function flags=[IsExpected]} @129
+    v18 = NewClosure function=f3 @137
+    v19 = Call v17, v8, v18 calleeName="u[name]" @131
+    v20 = Convert v19 declared={type=undefined|null|L1 flags=[IsExpected]} @129
+    v21 = PropGet v20 key="set" @156
+    v22 = Convert v21 declared={type=undefined|null|function flags=[IsExpected]} @129
+    v23 = Call v22, v20 calleeKey="set" calleeName="set" @158
+    v24 = Builtin builtin=GlobalThis @165
+    v25 = PropGet v24 key="console" [isFreeName] @165
+    v26 = Convert v25 declared={type=builtin(Console) flags=[IsExpected]} @165
+    v27 = PropGet v26 key="log" @165
+    v28 = Convert v27 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @165
+    v29 = Builtin builtin=JSON @177
+    v30 = PropGet v29 key="stringify" @177
+    v31 = Convert v30 declared={type=builtin(JSONStringify) flags=[IsExpected]} @177
+    v32 = GetModuleVariable variable=g0 @197 @192
+    v33 = CheckInitialized v32 name="state" @197 @192
+    v34 = Call v31, v29, v33 calleeKey="stringify" calleeName="JSON.stringify" @182
+    v35 = Convert v34 declared={type=undefined|null|string flags=[IsExpected]} @177
+    v36 = Call v28, v26, v35 calleeKey="log" calleeName="console.log" @173
+    v37 = Undefined @165
+    Return v37 @165
+}
+function f1 name="box" module=m0 position=17 text={start=17 end=58} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|L1 flags=[IsExpected]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @17
+  b1():
+    v1 = NewClosure v0 function=f4 @29
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]} @32
+    v3 = NewObject layout=L1 @29
+    PropDefine v3, v2 key="set" @29
+    v5 = FinishObject v3 @27
+    v6 = Convert v5 declared={type=undefined|null|L1 flags=[IsExpected]} @27
+    Return v6 @27
+}
+function f2 name="unread" module=m0 position=68 text={start=68 end=75} kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @68
+  b1():
+    v0 = Integer integer=2 @74
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @74
+    Return v1 @74
+}
+function f3 module=m0 position=137 text={start=137 end=156} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @137
+  b1():
+    v1 = GetModuleVariable variable=g0 @144
+    v2 = CheckInitialized v1 name="state" @144
+    PutModuleVariable v0 variable=g0 @144
+    v4 = Undefined @144
+    Return v4 @144
+}
+function f4 name="set" module=m0 position=29 text={start=29 end=55} kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|function flags=[IsExpected] variableName="write"}] thisType={type=anything} results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @29
+  b1():
+    v1 = Data data=d1 @43
+    v2 = Call v0, -, v1 calleeName="write" @37
+    v3 = Undefined @37
+    Return v3 @37
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 name="toLocaleString" module=m1 position=1291 text={start=1298 end=1374} kind=Method role=Model flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ObjectsToLocaleString thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @1291
+  b1():
+    v1 = PropGet v0 key="toString" @1356
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]} @1356
+    v3 = Call v2, v0 calleeKey="toString" calleeName="this.toString" @1361
+    ReturnCall v3 @1361
+}
+data d0 root=Object{layout=L2} module=m0
+data d1 root=Object{layout=L3 members=[{key="a" value=Number{value=1}}]} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]
+runtimefunction id=ObjectsToLocaleString function=f8

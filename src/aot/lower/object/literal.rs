@@ -1,13 +1,14 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{CodeUnit, Parent};
+use bun_sema::bind::{Binding, CodeUnit, Parent};
 use bun_sema::check::aot::{
     IndexKey, IndexSignature, MemberLookup, MemberName, PositionTypes, ShapeKind,
 };
 use bun_sema::check::spans::skip_trivia_back;
 use bun_sema::hir::{
-    BinOp, Branches, ExprId, ExprKind, File, FnId, MemberKey, Prop, PropId, PropKey, PropKind,
-    is_proto_setter, start_of,
+    BinOp, Branches, ExprId, ExprKind, File, FnId, MemberKey, PatKind, Prop, PropId, PropKey,
+    PropKind, VarKind, is_proto_setter, start_of,
 };
+use rustc_hash::FxHashSet;
 use smallvec::{SmallVec, smallvec};
 
 use super::{ObjectBuilder, builder};
@@ -150,6 +151,12 @@ impl FileLowering<'_, '_, '_, '_> {
         if !matches!(hir[literal].kind, ExprKind::Object(_)) {
             return false;
         }
+        let named = &self.literals_named_as_prototype_objects;
+        if (named.get_or_init(|| self.find_literals_named_as_prototype_objects()))
+            .contains(&literal)
+        {
+            return true;
+        }
         let mut child = literal;
         while let Parent::Expr(parent) = self.bound.parent_of_expr(child) {
             if hir.type_assertion_operand(parent) == Some(child) {
@@ -170,6 +177,38 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
+    // `const point = { .. }; Point.prototype = point;`: the same object, under a name that holds nothing else.
+    fn find_literals_named_as_prototype_objects(&self) -> FxHashSet<ExprId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut names: FxHashSet<Binding> = FxHashSet::default();
+        for expression in hir.exprs.iter() {
+            let ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } = expression.kind
+            else {
+                continue;
+            };
+            let value = hir.skip_type_assertions(value);
+            if matches!(hir.member_key(target), Some((_, MemberKey::Name(name))) if name == known::prototype)
+                && matches!(hir[value].kind, ExprKind::Ident(_))
+                && let binding @ Binding::Symbol(_) = bound.binding(value)
+            {
+                names.insert(binding);
+            }
+        }
+        let constants = hir.var_decls.iter().filter(|declaration| {
+            declaration.kind == VarKind::Const
+                && declaration.init != ExprId::NONE
+                && matches!(hir[declaration.pat].kind, PatKind::Ident(_))
+                && names.contains(&bound.initialized_binding(declaration.pat))
+        });
+        constants
+            .map(|declaration| hir.skip_type_assertions(declaration.init))
+            .filter(|&value| matches!(hir[value].kind, ExprKind::Object(_)))
+            .collect()
+    }
     /// Whether code builds a literal of constants, and no data record: it holds a dictionary, or literals lie in one another more
     /// deeply than data may. Of those, code builds the outer ones, and the rest is a record.
     pub(crate) fn is_built_by_code(&mut self, root: ExprId) -> bool {

@@ -57,13 +57,27 @@ const files = {
     });`,
 };
 
-// A store that finds a value above would give the built-in object a property of its own.
+// A store that finds a value above gives the built-in object a property of its own, under a name that it only inherits. Whoever reads the name finds it there.
+const value = {
+  "reads.js": `
+    export const byName = object => object.__proto__;
+    export const byKey = (object, key) => object[key];
+    export const ofMath = () => Math.__proto__;
+    export const walks = () => [Math.abs(-1), Math.hasOwnProperty("abs"), String(Math), Object.getPrototypeOf(Math) === Object.prototype].join();`,
+  "value.test.js": `${prelude}
+    import { byKey, byName, ofMath, walks } from "./reads.js";
+    const look = () => console.log(typeof Math.__proto__, typeof ofMath(), typeof byName(Math), typeof byKey(Math, ["__pro", "to__"].join("")), Object.hasOwn(Math, "__proto__"), Object.keys(Math).join(), walks());
+    test("a value in place of the accessor", () => {
+      look();
+      withDescriptor("a value", { value: 1, writable: true }, () => { look(); Math.__proto__ = 2; look(); });
+      look();
+      console.log(delete Math.__proto__);
+      look();
+    });`,
+};
+
 const refused = {
   "refused.test.js": `${prelude}
-    test("a value in place of the accessor", () => {
-      withDescriptor("a value", { value: 1, writable: true }, () => { Math.__proto__ = 2; });
-      console.log(Object.hasOwn(Math, "__proto__"));
-    });
     test("the accessor of the engine", () => {
       try {
         Array.prototype.__proto__ = null;
@@ -98,6 +112,14 @@ test.each(ways)("the accessor of the test answers, %s", async (_, words) => {
 test.each(ways)("what would change the built-in object is still refused, %s", async (_, words) => {
   using directory = tempDir("accessor-in-place-of-proto-refused", refused);
   const { printed } = await printedBy(String(directory), words, "--aot");
-  expect(printed).toContain("a value: TypeError: Cannot assign to Math.__proto__");
-  expect(printed).toContain("false\nTypeError\ntrue");
+  expect(printed).toContain("TypeError\ntrue");
+});
+
+test.each(ways)("a value in place of the accessor is stored over and read as in a plain run, %s", async (_, words) => {
+  using directory = tempDir("value-in-place-of-proto", value);
+  const plain = await printedBy(String(directory), words);
+  expect(plain.printed).toContain(
+    "a value: no error\nnumber number number number true __proto__ 1,true,[object Math],true",
+  );
+  expect(await printedBy(String(directory), words, "--aot")).toEqual(plain);
 });

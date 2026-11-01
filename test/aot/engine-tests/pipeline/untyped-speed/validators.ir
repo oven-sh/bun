@@ -1,4 +1,5 @@
 # A schema compiled into nested closures that check five sample objects: `typeof`, `in`, regular expressions made from strings, and messages put together from strings.
+# A frozen text: it was cut down when it was written, and no front end makes it of any program. Its counts guard the passes on this input: they are not what a program costs.
 # FORM: AsRead
 # DIAGNOSTIC: RegExpWithoutCode
 # RUN: lower-to-air size f19
@@ -505,7 +506,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f30 visibility=Private
 # -- generated: map
 # CHECK-LABEL: function {{*}}name="map"
 # CHECK: role=Library
-# CHECK-NEXT: instructions: 97, patchpoints: 9, rare instructions: 78, polls: 2
+# CHECK-NEXT: instructions: 94, patchpoints: 9, rare instructions: 78, polls: 2
 # CHECK-NEXT: end of function f19
 # CHECK-LABEL: function {{*}}name="map"
 # CHECK: role=GenericEntrypoint

@@ -147,9 +147,9 @@ function f2 name="Point" module=m0 position=27 kind=BaseConstructor flags=[HasNe
   b0(v0: anything, v1: anything):
     Jump -> next b1() @27
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @0
-    v3 = NewObject v2 layout=L0 @0
-    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = GetConstructPrototype v0 layout=L0 @46
+    v3 = NewObject v2 layout=L0 @46
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @46
     v5 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]} @37
     PropSet v5, v1 key="x" @37
     v7 = Undefined @37
@@ -166,9 +166,9 @@ function f3 name="Other" module=m0 position=260 kind=BaseConstructor flags=[HasN
   b0(v0: anything, v1: anything):
     Jump -> next b1() @260
   b1():
-    v2 = GetConstructPrototype v0 layout=L1 @233
-    v3 = NewObject v2 layout=L1 @233
-    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @233
+    v2 = GetConstructPrototype v0 layout=L1 @279
+    v3 = NewObject v2 layout=L1 @279
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @279
     v5 = Convert v4 declared={type=undefined|null|L1 flags=[IsExpected]} @270
     PropSet v5, v1 key="x" @270
     v7 = Undefined @270

@@ -12,14 +12,14 @@
 # CHECK-LABEL: f4: size=
 # CHECK-LABEL: f5: size=
 # A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
-# RUN(X64): generate-code units
-# REQUIRES(X64): x86_64 faulting-loop-polls
-# X64-LABEL: f2: size=
-# X64-NEXT: units plain={{*}} call=[[throwAlone]] pinned=
-# X64-LABEL: f4: size=
-# X64-NEXT: units plain={{*}} call=[[throwAlone]] pinned=
+# RUN(FAULTS): generate-code units
+# REQUIRES(FAULTS): faulting-loop-polls
+# FAULTS-LABEL: f2: size=
+# FAULTS-NEXT: units plain={{*}} call=[[throwAlone]] pinned=
+# FAULTS-LABEL: f4: size=
+# FAULTS-NEXT: units plain={{*}} call=[[throwAlone]] pinned=
 # RUN(ARM64): generate-code units
-# REQUIRES(ARM64): arm64
+# REQUIRES(ARM64): arm64 calling-loop-polls
 # ARM64-LABEL: f2: size=
 # ARM64-NEXT: units plain={{*}} call=4 pinned=
 # ARM64-LABEL: f4: size=

@@ -1037,12 +1037,12 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f13 module=
-# CHECK: m0 position=1411 kind=Arrow thisType={type=anything} results=[{type=Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=1411 kind=Arrow thisType={type=anything} results=[{type=Map<int, int, proven, pristine[Storage]>}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: v1: 2 = Integer integer=2
 # CHECK-NEXT: v2: Map<1, 2> = NewMapFromData data=d14
-# CHECK-NEXT: v3: Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]> = AssumeType v2 provenType=Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>
+# CHECK-NEXT: v3: Map<int, int, proven, pristine[Storage]> = AssumeType v2 provenType=Map<int, int, proven, pristine[Storage]>
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
@@ -1051,7 +1051,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: v0: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: Generator = NewGenerator v0 function=f1
-# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f121 numberOfWords=2
+# CHECK-NEXT: v5: anything = NewHeapFrame v2, v0 function=f121 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord v5, v2
 # CHECK-NEXT: PutHeapFrameWord v5, v0 index=1
 # CHECK-NEXT: SuspendInHeapFrame v2, v5 [isFirstRun]
@@ -1072,7 +1072,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-LABEL: function f16 module=
 # CHECK: m0 position=1475 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=MapIterator<pristine[Storage]>}] functionTypes=[f46] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f76} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: Map<undefined|int|"k"|Array<1|"k", proven, pristine[Storage, Names, Dense]>, undefined|int|"k"|Array<1|"k", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = CallDirect function=f76
+# CHECK-NEXT: v0: Map<"k", int, proven, pristine[Storage, Names]> = CallDirect function=f76
 # CHECK-NEXT: v1: MapIterator = CallBuiltin v0 overload=MapPrototypeKeys/0 accessSite=98 @1475 tail
 # CHECK-NEXT: v2: MapIterator<pristine[Storage]> = AssumeType v1 provenType=MapIterator<pristine[Storage]>
 # CHECK-NEXT: Return v2
@@ -1094,9 +1094,9 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: Throw v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 name=
-# CHECK: "[Symbol.iterator]" module=m0 position=1932 kind=Method flags=[HasThis, IsNamedByComputedKey] thisType={type=undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>} results=[{type=undefined|null|L2|L3|L17 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>):
-# CHECK-NEXT: v1: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]> ~ undefined|null|L2|L3 = Upcast v0 castType=anything
+# CHECK: "[Symbol.iterator]" module=m0 position=1932 kind=Method flags=[HasThis, IsNamedByComputedKey] thisType={type=undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<int, int, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>} results=[{type=undefined|null|L2|L3|L17 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<int, int, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>):
+# CHECK-NEXT: v1: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<int, int, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]> ~ undefined|null|L2|L3 = Upcast v0 castType=anything
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
@@ -1107,9 +1107,9 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: Throw v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 name=
-# CHECK: "[Symbol.iterator]" module=m0 position=2316 kind=Method flags=[HasThis, IsNamedByComputedKey] thisType={type=undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>} results=[{type=undefined|null|L3 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>):
-# CHECK-NEXT: v1: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]> ~ undefined|null|L3 = Upcast v0 castType=anything
+# CHECK: "[Symbol.iterator]" module=m0 position=2316 kind=Method flags=[HasThis, IsNamedByComputedKey] thisType={type=undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<int, int, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>} results=[{type=undefined|null|L3 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<int, int, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>):
+# CHECK-NEXT: v1: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<int, int, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]> ~ undefined|null|L3 = Upcast v0 castType=anything
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 name=
@@ -1134,9 +1134,9 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f33 name=
-# CHECK: "[Symbol.iterator]" module=m0 position=3146 kind=Method flags=[HasThis, IsNamedByComputedKey] thisType={type=undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>} results=[{type=undefined|null|L4 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>):
-# CHECK-NEXT: v1: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]> ~ undefined|null|L4 = Upcast v0 castType=anything
+# CHECK: "[Symbol.iterator]" module=m0 position=3146 kind=Method flags=[HasThis, IsNamedByComputedKey] thisType={type=undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<int, int, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>} results=[{type=undefined|null|L4 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<int, int, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]>):
+# CHECK-NEXT: v1: undefined|null|int|"a\u{1f600}b"|L0|L2|L3|L4|L6|L7|L8|L9|Array<int[1, 3], proven, pristine[Storage, Dense]>|ArrayIterator<pristine[Storage]>|Generator<anything, pristine[Storage]>|Map<int, int, proven, pristine[Storage]>|MapIterator<pristine[Storage]>|Object|Set<int, proven, pristine[Storage]> ~ undefined|null|L4 = Upcast v0 castType=anything
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f36 module=

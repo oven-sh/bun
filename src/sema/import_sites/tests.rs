@@ -229,6 +229,7 @@ fn add_import(file: &mut FileBuilder, default: Atom, attributes: ExprId) -> Stmt
         mode: ResolutionMode::default(),
         stmt: StmtId::NONE,
         attributes,
+        loaded_as: Atom::NONE,
     });
     file.stmt(StmtKind::Import(import), 0)
 }
@@ -368,6 +369,7 @@ fn scan_file(
         is_library: false,
         host_values: &[],
         jsx,
+        own_name: b"",
     };
     let bound = bind(&hir, options, &atoms, arena);
     let decisions = fold_file(&hir, &bound, &fold, &file_inputs, &atoms, arena).decisions;
@@ -381,7 +383,7 @@ fn scan_file(
     };
     let scan = collect_import_sites(&inputs, arena);
     let declared = file_inputs.declared_module_type;
-    let format = decide_module_format(&hir, &bound, &decisions, &scan)
+    let format = decide_module_format(&hir, &bound, &decisions, &scan, DeclaredModuleType::Unknown)
         .formats
         .get(declared);
     check(&scan, format);

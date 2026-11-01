@@ -106,6 +106,7 @@ pub(super) mod task_fact {
     /// See `union_property`. Set on an intersection that is stored as a `MemberFacts::apparent_type` or a
     /// `MemberFacts::reduced_apparent_type`.
     pub(in super::super) const IS_IN_MEMBER_FACTS: u32 = 1 << 6;
+    pub(in super::super) const HAS_REGULAR_TYPE: u32 = 1 << 7;
 }
 
 /// A set of `task_fact` bits for each type.

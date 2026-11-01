@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls behind a pass over the whole program that answers for calls of known functions: such a call goes from the first body, and the check has no word for it. That does not use the sabotage up: the next body loses a call of an unknown function, for which nobody answers: the build stops
+# FORM: Prepared
+# RUN: pass SplitFreshResults
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-of-known-functions-left-alone.ir

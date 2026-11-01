@@ -45,9 +45,8 @@
 
 module m0 path="closure-handed-over-stores-two-reads.js" displayPath="closure-handed-over-stores-two-reads.js" body=f0 namespaceLayout=L(m0)
 entry module=m0
-layout L0 module=m0 position=366 fields=[{key="a" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=anything} flags=[IsRequired]}] supertypes=[L1] declaredOrder=[3, 2, 1, 0] ownFieldCount=4
-layout L1 fields=[{key="n" declared={type=undefined|number flags=[IsExpected]}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
-layout L2 module=m0 position=614 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0, L1] declaredOrder=[3, 2, 0, 1] ownFieldCount=4
+layout L0 module=m0 position=366 fields=[{key="a" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=anything} flags=[IsRequired]}] declaredOrder=[3, 2, 1, 0] ownFieldCount=4
+layout L1 module=m0 position=842 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] declaredOrder=[3, 2, 0, 1] ownFieldCount=4
 variable g0 name="bag" module=m0 declared={type=undefined|null|absent|Map flags=[IsExpected]} flags=[IsImmutable]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -83,13 +82,13 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v22 = String string="spy." @764
     v23 = Add v22, v17 @764
     v24 = Call v1, -, v23, v17 calleeName="spy" @760
-    v25 = Convert v24 declared={type=undefined|null|L0|L2 flags=[IsExpected]} @760
+    v25 = Convert v24 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @760
     Jump -> next b7(v25) @760
   b6():
     v26 = String string="o1." @788
     v27 = Add v26, v17 @788
     v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]} @788
-    v29 = NewObject layout=L2 @783
+    v29 = NewObject layout=L1 @783
     PropDefine v29, v28 key="tag" @783
     v31 = Integer integer=2 @806
     v32 = Mul v17, v31 @802
@@ -101,11 +100,11 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v38 = FinishObject v29 @781
     Jump -> next b7(v38) @781
   b7(v39):
-    v40 = Convert v39 declared={type=undefined|null|L0|L2 flags=[IsExpected]} @745
+    v40 = Convert v39 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @745
     v41 = String string="o2." @849
     v42 = Add v41, v17 @849
     v43 = Convert v42 declared={type=undefined|null|string flags=[IsExpected]} @849
-    v44 = NewObject layout=L2 @844
+    v44 = NewObject layout=L1 @844
     PropDefine v44, v43 key="tag" @844
     v46 = Integer integer=5 @867
     v47 = Add v17, v46 @863
@@ -115,12 +114,12 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v51 = Null @882
     PropDefine v44, v51 key="b" @879
     v53 = FinishObject v44 @842
-    v54 = Convert v53 declared={type=undefined|null|L0|L2 flags=[IsExpected]} @842
+    v54 = Convert v53 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @842
     Jump -> next b8() @892
   b8() handler=b11(v12):
     v55 = NewClosure v40, v54 function=f3 @927
     v56 = Call v3, -, v40, v54, v55 calleeName="helper" @912
-    v57 = Convert v56 declared={type=undefined|null|L0|L2 flags=[IsExpected]} @912
+    v57 = Convert v56 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @912
     v58 = PropGet v57 key="n" @988
     v59 = Add v12, v58 @988
     v60 = Convert v59 declared={type=number flags=[IsExpected]} @981
@@ -155,7 +154,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v78 = Undefined @1038
     Return v78 @1038
 }
-function f1 name="spy" module=m0 position=334 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|L0|L2 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="spy" module=m0 position=334 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|L0|L1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: anything):
     Jump -> next b1() @334
   b1():
@@ -167,11 +166,11 @@ function f1 name="spy" module=m0 position=334 flags=[HasExplicitName] length=2 t
     v7 = NewClosure function=f4 @405
     DefineGetter v5, v7 key="a" @405
     v9 = FinishObject v5 @366
-    v10 = Convert v9 declared={type=undefined|null|L0|L2 flags=[IsExpected]} @366
+    v10 = Convert v9 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @366
     Return v10 @366
 }
-function f2 name="helper" module=m0 position=444 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0|L2 flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|L0|L2 flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|L0|L2 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|number|string|symbol|bigint|L0|L2, v1: undefined|null|number|string|symbol|bigint|L0|L2, v2: undefined|null|function):
+function f2 name="helper" module=m0 position=444 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}, {type=undefined|null|L0|L1 flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|L0|L1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1, v1: undefined|null|L0|L1, v2: undefined|null|function):
     Jump -> next b1() @444
   b1():
     v3 = GetModuleVariable variable=g0 @490
@@ -222,45 +221,44 @@ function f2 name="helper" module=m0 position=444 flags=[HasExplicitName] length=
   b13():
     v30 = String string="s" @621
     v31 = PropGet v0 key="n" @627
-    v32 = Convert v31 declared={type=number flags=[IsExpected]} @627
-    v33 = Add v30, v32 @621
-    v34 = Convert v33 declared={type=undefined|null|string flags=[IsExpected]} @621
-    v35 = NewObject layout=L2 @616
-    PropDefine v35, v34 key="tag" @616
-    v37 = PropGet v0 key="n" @636
-    v38 = Convert v37 declared={type=number flags=[IsExpected]} @636
-    v39 = Integer integer=5 @643
-    v40 = Add v38, v39 @636
-    PropDefine v35, v40 key="n" @633
-    PropDefine v35, v1 key="a" @646
-    v43 = TypeTest v16 testedType=undefined|null @656
-    Branch v43 -> taken b14(| 0), notTaken b16(| 0) @656
-  b14(v44):
+    v32 = Add v30, v31 @621
+    v33 = Convert v32 declared={type=undefined|null|string flags=[IsExpected]} @621
+    v34 = NewObject layout=L1 @616
+    PropDefine v34, v33 key="tag" @616
+    v36 = PropGet v0 key="n" @636
+    v37 = Convert v36 declared={type=number flags=[IsExpected]} @636
+    v38 = Integer integer=5 @643
+    v39 = Add v37, v38 @636
+    PropDefine v34, v39 key="n" @633
+    PropDefine v34, v1 key="a" @646
+    v42 = TypeTest v16 testedType=undefined|null @656
+    Branch v42 -> taken b14(| 0), notTaken b16(| 0) @656
+  b14(v43):
     Jump -> next b15() @656
   b15():
     Jump -> next b17(v17) @665
-  b16(v45):
-    Jump -> next b17(v45) @656
-  b17(v46):
-    v47 = TypeTest v46 testedType=undefined|null @656
-    Branch v47 -> taken b18(| 0), notTaken b20(| 0) @656
-  b18(v48):
+  b16(v44):
+    Jump -> next b17(v44) @656
+  b17(v45):
+    v46 = TypeTest v45 testedType=undefined|null @656
+    Branch v46 -> taken b18(| 0), notTaken b20(| 0) @656
+  b18(v47):
     Jump -> next b19() @656
   b19():
-    v49 = Null @677
-    Jump -> next b21(v49) @677
-  b20(v50):
-    Jump -> next b21(v50) @656
-  b21(v51):
-    PropDefine v35, v51 key="b" @653
-    v53 = FinishObject v35 @614
-    v54 = Convert v53 declared={type=undefined|null|L0|L2 flags=[IsExpected]} @614
-    Return v54 @614
+    v48 = Null @677
+    Jump -> next b21(v48) @677
+  b20(v49):
+    Jump -> next b21(v49) @656
+  b21(v50):
+    PropDefine v34, v50 key="b" @653
+    v52 = FinishObject v34 @614
+    v53 = Convert v52 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @614
+    Return v53 @614
   b22():
     Throw v29 @591
 }
-function f3 module=m0 position=927 kind=Arrow length=1 captures=[{type=undefined|null|L0|L2 flags=[IsExpected]}, {type=undefined|null|L0|L2 flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|L0|L2, v1: undefined|null|L0|L2, v2: anything):
+function f3 module=m0 position=927 kind=Arrow length=1 captures=[{type=undefined|null|L0|L1 flags=[IsExpected] variableName="o1"}, {type=undefined|null|L0|L1 flags=[IsExpected] variableName="o2"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1, v1: undefined|null|L0|L1, v2: anything):
     Jump -> next b1() @927
   b1():
     v3 = Convert v2 declared={type=null flags=[IsExpected]} @940
@@ -292,7 +290,7 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v5: 300 = Integer integer=300
 # CHECK-NEXT: v6: boolean = Less v3, v5
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b22()
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b21()
 # CHECK-NEXT: b2(v7: int[0, 299]):
 # CHECK-NEXT: v8: 59 = Integer integer=59
 # CHECK-NEXT: v9: int[0, 58] = Mod v7, v8
@@ -308,30 +306,30 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v15: 2 = Integer integer=2
 # CHECK-NEXT: v16: int[0, 598] = Mul v7, v15
 # CHECK-NEXT: v17: null = Null
-# CHECK-NEXT: v18: L2 = NewObject -, v16, v17 layout=L2 fields=[2, 1] allocationSite=2 allocationClass=1
-# CHECK-NEXT: v19: L2 = FinishObject v18
+# CHECK-NEXT: v18: L1 = NewObject -, v16, v17 layout=L1 fields=[2, 1] allocationSite=2 allocationClass=1
+# CHECK-NEXT: v19: L1 = FinishObject v18
 # CHECK-NEXT: Jump -> next b5(v19)
-# CHECK-NEXT: b5(v20: L0|L2):
+# CHECK-NEXT: b5(v20: L0|L1):
 # CHECK-NEXT: v21: 5 = Integer integer=5
 # CHECK-NEXT: v22: int[5, 304] = Add v7, v21
 # CHECK-NEXT: v23: null = Null
-# CHECK-NEXT: v24: L2 = NewObject -, v22, v23 layout=L2 fields=[2, 1] allocationSite=3 allocationClass=1
-# CHECK-NEXT: v25: L2 = FinishObject v24
-# CHECK-NEXT: v26: boolean = IsSlotFilled v25 key="n" receivers=[L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: v24: L1 = NewObject -, v22, v23 layout=L1 fields=[2, 1] allocationSite=3 allocationClass=1
+# CHECK-NEXT: v25: L1 = FinishObject v24
+# CHECK-NEXT: v26: boolean = IsSlotFilled v25 key="n" receivers=[L1] level=Expected [holdsDeclaredType]
 # CHECK-NEXT: Branch v26 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: PutSlot v20, -, v25 key="b" receivers=[L0, L2] level=Proven accessSite=29
+# CHECK-NEXT: PutSlot v20, -, v25 key="b" receivers=[L0, L1] level=Proven accessSite=29
 # CHECK-NEXT: v28: null = Null
-# CHECK-NEXT: PutSlot v25, -, v28 key="b" receivers=[L2] level=Proven accessSite=30
+# CHECK-NEXT: PutSlot v25, -, v28 key="b" receivers=[L1] level=Proven accessSite=30
 # CHECK-NEXT: v30: 37 = Integer integer=37
 # CHECK-NEXT: v31: int[0, 36] = Mod v22, v30
 # CHECK-NEXT: Jump -> next b8(v31)
-# CHECK-NEXT: b7() frequency=Unlikely handler=b16():
-# CHECK-NEXT: v32: anything ~ int[-2147483643, 2147483647] = PropGet v25 key="n" accessSite=19 receivers=[L2]
-# CHECK-NEXT: PutSlot v20, -, v25 key="b" receivers=[L0, L2] level=Proven accessSite=29
+# CHECK-NEXT: b7() frequency=Unlikely handler=b15():
+# CHECK-NEXT: v32: anything ~ int[-2147483643, 2147483647] = PropGet v25 key="n" accessSite=19 receivers=[L1]
+# CHECK-NEXT: PutSlot v20, -, v25 key="b" receivers=[L0, L1] level=Proven accessSite=29
 # CHECK-NEXT: v34: null = Null
-# CHECK-NEXT: PutSlot v25, -, v34 key="b" receivers=[L2] level=Proven accessSite=30
-# CHECK-NEXT: v36: anything ~ int[-2147483643, 2147483647] = PropGet v25 key="n" accessSite=22 receivers=[L2]
+# CHECK-NEXT: PutSlot v25, -, v34 key="b" receivers=[L1] level=Proven accessSite=30
+# CHECK-NEXT: v36: anything ~ int[-2147483643, 2147483647] = PropGet v25 key="n" accessSite=22 receivers=[L1]
 # CHECK-NEXT: v37: int ~ int[-2147483643, 2147483647] = AssumeType v36 provenType=int
 # CHECK-NEXT: v38: 37 = Integer integer=37
 # CHECK-NEXT: v39: int[-36, 36]|whole = Mod v37, v38
@@ -346,56 +344,52 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v46: 0 = Integer
 # CHECK-NEXT: v47: boolean = StrictEq v45, v46
 # CHECK-NEXT: Branch v47 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10() frequency=Rare handler=b16():
+# CHECK-NEXT: b10() frequency=Rare handler=b15():
 # CHECK-NEXT: Throw v20
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v48: boolean = IsSlotFilled v20 key="n" receivers=[L0, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v48 -> taken b12(| 0), notTaken b14()
+# CHECK-NEXT: v48: boolean = IsSlotFilled v20 key="n" receivers=[L0, L1] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v48 -> taken b12(| 0), notTaken b13()
 # CHECK-NEXT: b12(v49: guard):
-# CHECK-NEXT: v50: int[-2147483643, 2147483647] = GetSlot v20, v49 key="n" receivers=[L0, L2] level=Expected accessSite=23 [holdsDeclaredType]
+# CHECK-NEXT: v50: int[-2147483643, 2147483647] = GetSlot v20, v49 key="n" receivers=[L0, L1] level=Expected accessSite=25 [holdsDeclaredType]
 # CHECK-NEXT: v51: 5 = Integer integer=5
 # CHECK-NEXT: v52: int[-2147483638, 2147483652] = Add v50, v51
-# CHECK-NEXT: v53: boolean = TypeTest v52 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v53 -> taken b13(| 0), notTaken b15(v52)
-# CHECK-NEXT: b13(v54: int[-2147483638, 2147483647]):
-# CHECK-NEXT: v55: number ~ int|whole = Add v2, v54
-# CHECK-NEXT: Jump -> next b21(v55)
-# CHECK-NEXT: b14() frequency=Unlikely handler=b16():
-# CHECK-NEXT: v56: anything ~ int[-2147483643, 2147483647] = PropGet v20 key="n" accessSite=23 receivers=[L0, L2]
-# CHECK-NEXT: v57: anything ~ int[-2147483643, 2147483647] = PropGet v20 key="n" accessSite=25 receivers=[L0, L2]
-# CHECK-NEXT: v58: int ~ int[-2147483643, 2147483647] = AssumeType v57 provenType=int
-# CHECK-NEXT: v59: 5 = Integer integer=5
-# CHECK-NEXT: v60: int|whole ~ int[-2147483638, 2147483652] = Add v58, v59
-# CHECK-NEXT: Jump -> next b15(v60)
-# CHECK-NEXT: b15(v61: int|whole ~ int[-2147483638, 2147483652]) frequency=Unlikely:
-# CHECK-NEXT: v62: int|whole ~ int[-2147483638, 2147483647] = Upcast v61 castType=anything
-# CHECK-NEXT: v63: number ~ int|whole = Add v2, v62
-# CHECK-NEXT: Jump -> next b21(v63)
-# CHECK-NEXT: b16() role=CatchHandler:
-# CHECK-NEXT: v64: anything = CatchValue
-# CHECK-NEXT: v65: boolean = TypeTest v64 testedType=L0|L2
-# CHECK-NEXT: Branch v65 -> taken b17(| 0), notTaken b19()
-# CHECK-NEXT: b17(v66: L0|L2):
-# CHECK-NEXT: v67: boolean = IsSlotFilled v66 key="n" receivers=[L0, L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v67 -> taken b18(| 0), notTaken b19()
-# CHECK-NEXT: b18(v68: guard):
-# CHECK-NEXT: v69: int[-2147483643, 2147483647] = GetSlot v66, v68 key="n" receivers=[L0, L2] level=Expected accessSite=12 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b20(v69)
-# CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: v70: anything = PropGet v64 key="n" accessSite=12 receivers=[L0, L2, ..]
-# CHECK-NEXT: Jump -> next b20(v70)
-# CHECK-NEXT: b20(v71: anything ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v72: 1000 = Integer integer=1000
-# CHECK-NEXT: v73: number ~ int[-2147483643000, 2147483647000] = Mul v71, v72
-# CHECK-NEXT: v74: number ~ int|whole = Add v2, v73
-# CHECK-NEXT: Jump -> next b21(v74)
-# CHECK-NEXT: b21(v75: number ~ int|whole):
-# CHECK-NEXT: v76: int[1, 300] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v75, v76)
-# CHECK-NEXT: b22():
-# CHECK-NEXT: v77: undefined = CallBuiltin -, v2 overload=ConsoleLog/0 accessSite=15
-# CHECK-NEXT: v78: undefined = Undefined
-# CHECK-NEXT: Return v78
+# CHECK-NEXT: Jump -> next b14(v52)
+# CHECK-NEXT: b13() frequency=Unlikely handler=b15():
+# CHECK-NEXT: v53: anything ~ int[-2147483643, 2147483647] = PropGet v20 key="n" accessSite=23 receivers=[L0, L1]
+# CHECK-NEXT: v54: anything ~ int[-2147483643, 2147483647] = PropGet v20 key="n" accessSite=25 receivers=[L0, L1]
+# CHECK-NEXT: v55: int ~ int[-2147483643, 2147483647] = AssumeType v54 provenType=int
+# CHECK-NEXT: v56: 5 = Integer integer=5
+# CHECK-NEXT: v57: int|whole ~ int[-2147483638, 2147483652] = Add v55, v56
+# CHECK-NEXT: Jump -> next b14(v57)
+# CHECK-NEXT: b14(v58: int|whole ~ int[-2147483638, 2147483652]):
+# CHECK-NEXT: v59: int|whole ~ int[-2147483638, 2147483647] = Upcast v58 castType=anything
+# CHECK-NEXT: v60: number ~ int|whole = Add v2, v59
+# CHECK-NEXT: Jump -> next b20(v60)
+# CHECK-NEXT: b15() role=CatchHandler:
+# CHECK-NEXT: v61: anything = CatchValue
+# CHECK-NEXT: v62: boolean = TypeTest v61 testedType=L0|L1
+# CHECK-NEXT: Branch v62 -> taken b16(| 0), notTaken b18()
+# CHECK-NEXT: b16(v63: L0|L1):
+# CHECK-NEXT: v64: boolean = IsSlotFilled v63 key="n" receivers=[L0, L1] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v64 -> taken b17(| 0), notTaken b18()
+# CHECK-NEXT: b17(v65: guard):
+# CHECK-NEXT: v66: int[-2147483643, 2147483647] = GetSlot v63, v65 key="n" receivers=[L0, L1] level=Expected accessSite=12 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b19(v66)
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v67: anything = PropGet v61 key="n" accessSite=12 receivers=[L0, L1, ..]
+# CHECK-NEXT: Jump -> next b19(v67)
+# CHECK-NEXT: b19(v68: anything ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v69: 1000 = Integer integer=1000
+# CHECK-NEXT: v70: number ~ int[-2147483643000, 2147483647000] = Mul v68, v69
+# CHECK-NEXT: v71: number ~ int|whole = Add v2, v70
+# CHECK-NEXT: Jump -> next b20(v71)
+# CHECK-NEXT: b20(v72: number ~ int|whole):
+# CHECK-NEXT: v73: int[1, 300] = Increment v7
+# CHECK-NEXT: Jump -> next b1(v72, v73)
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v74: undefined = CallBuiltin -, v2 overload=ConsoleLog/0 accessSite=15
+# CHECK-NEXT: v75: undefined = Undefined
+# CHECK-NEXT: Return v75
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spy"
 # CHECK: module=m0 position=334 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=int[0, 299]}] results=[{type=L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

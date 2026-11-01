@@ -6,8 +6,8 @@ import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
-// In plain Bun an ES module that was required has a module object in require.cache, and a mock stores there what its factory gave: the next require() answers that very object,
-// with the names that the factory added, and a spy on the namespace object does not reach it. An ES module that was only imported has no such object: require() answers the namespace object.
+// Behind a mock, require() answers the very object that the factory gave, with the names that the factory added, and a spy on the namespace object does not reach it:
+// whether the ES module was required before the mock, only imported, or never loaded. import() answers the namespace object.
 const library = `export function f(x) { return x + 9; }\nexport const g = 1;\n`;
 const say = `const say = (label, ...values) => console.log(label + " | " + values.map(String).join(" "));`;
 

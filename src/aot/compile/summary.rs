@@ -15,7 +15,14 @@ pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<
     let (files, sources) = (project.loaded.files(), &project.sources);
     let entry_points = sources.entry_points().iter();
     entry_points
-        .filter(|it| matches!(it.kind, EntryPointKind::Main | EntryPointKind::Additional))
+        .filter(|it| {
+            matches!(
+                it.kind,
+                EntryPointKind::Main
+                    | EntryPointKind::Additional
+                    | EntryPointKind::LoadedByTestRunner
+            )
+        })
         .map(|it| {
             let public_path = sources.module_paths(it.file).public_path.to_vec();
             let file_name = files.module(it.file).file_name();

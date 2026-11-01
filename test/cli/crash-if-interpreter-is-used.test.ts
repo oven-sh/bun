@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported, withoutCoreDump, withoutCrashReport } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
+import { describe, test } from "../aot/listed";
 
 test.skipIf(!!unsupported)("BUN_JSC_crashIfInterpreterIsUsed names the code and crashes", async () => {
   const { stderr, exitCode } = await run(withoutCoreDump([bunExe(), "-e", "console.log(1)"]), undefined, {

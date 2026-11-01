@@ -17,14 +17,15 @@ pub use ids::{
     RuntimeModule,
 };
 pub use lookup::{
-    ACCESSOR_FUNCTIONS, ExportLookup, FUNCTIONS_FOR_ANY_HOST_OBJECT, MODULE_LOADER_FUNCTIONS,
-    MemberLookup, NAMES_OF_METHODS_CALLING_STARTUP_LOADS, STARTUP_FUNCTIONS, STARTUP_LOADS,
-    STARTUP_MODULES, answers_query, canonical_id, class_data, contents_index, entry, exists_on,
-    find_export, find_name, global, has_flag, host_reads, is_callable, is_es_module,
-    is_legal_builtin_constant, is_locked, is_parser, is_stored_by_native_code, is_symbol_name,
-    member, members, module_by_specifier, module_data, name_of_symbol, namespace_of,
-    object_replacing_namespace, own_member, removable_calls, root_of, runtime_function,
-    runtime_functions, specifier_of, symbol_constant, text_of, text_of_name, well_known_symbol,
+    ACCESSOR_FUNCTIONS, ExportLookup, FUNCTIONS_FOR_ANY_HOST_OBJECT, HOLDERS_OF_MATCHERS,
+    MODULE_LOADER_FUNCTIONS, MemberLookup, NAMES_OF_METHODS_CALLING_STARTUP_LOADS,
+    STARTUP_FUNCTIONS, STARTUP_LOADS, STARTUP_MODULES, answers_query, canonical_id, class_data,
+    contents_index, entry, exists_on, fakes_timers, find_export, find_name, global, has_flag,
+    host_reads, is_callable, is_es_module, is_legal_builtin_constant, is_locked, is_parser,
+    is_stored_by_native_code, is_symbol_name, member, members, module_by_specifier, module_data,
+    name_of_symbol, namespace_of, object_replacing_namespace, own_member, removable_calls,
+    resets_modules, root_of, runtime_function, runtime_functions, specifier_of, stubs_global,
+    symbol_constant, text_of, text_of_name, well_known_symbol,
 };
 pub use syntax::{
     Conversion, DirectiveKind, ErrorKind, Intrinsic, IntrinsicPosition, NativeCallKind,

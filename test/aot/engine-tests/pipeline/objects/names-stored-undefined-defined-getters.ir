@@ -1135,70 +1135,68 @@ function f51 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v199: anything ~ undefined|string = PropGet v15 key="before" accessSite=29 receivers=[L2]
 # CHECK-NEXT: v200: undefined|string = AssumeType v199 provenType=undefined|string
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectKeys
-# CHECK-NEXT: v202: Array<string> = CallBuiltin -, v16 overload=ObjectKeys/0 accessSite=30
-# CHECK-NEXT: v203: Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]> = AssumeType v202 provenType=Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v204: string = CallBuiltin v203 overload=ArrayPrototypeJoin/0 accessSite=32
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectGetOwnPropertyDescriptor
-# CHECK-NEXT: v206: "name7" = String string="name7"
-# CHECK-NEXT: v207: undefined = CallBuiltin -, v16, v206 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=33
-# CHECK-NEXT: v208: boolean = ResultAt v207
-# CHECK-NEXT: v209: 1 = Integer integer=1
-# CHECK-NEXT: v210: int[0, 1] = ToNumber v208
-# CHECK-NEXT: v211: int[1, 2] = LShift v209, v210
-# CHECK-NEXT: v212: anything = ResultAt v207 index=3
-# CHECK-NEXT: v213: 1 = Integer integer=1
-# CHECK-NEXT: v214: int[0, 1] = BitAnd v211, v213
-# CHECK-NEXT: v215: boolean = ToBoolean v214
-# CHECK-NEXT: Branch v215 -> taken b11(), notTaken b12()
+# CHECK-NEXT: v201: Array<string> = CallBuiltin -, v16 overload=ObjectKeys/0 accessSite=30
+# CHECK-NEXT: v202: Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]> = AssumeType v201 provenType=Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v203: string = CallBuiltin v202 overload=ArrayPrototypeJoin/0 accessSite=32
+# CHECK-NEXT: v204: "name7" = String string="name7"
+# CHECK-NEXT: v205: undefined = CallBuiltin -, v16, v204 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=33
+# CHECK-NEXT: v206: boolean = ResultAt v205
+# CHECK-NEXT: v207: 1 = Integer integer=1
+# CHECK-NEXT: v208: int[0, 1] = ToNumber v206
+# CHECK-NEXT: v209: int[1, 2] = LShift v207, v208
+# CHECK-NEXT: v210: anything = ResultAt v205 index=3
+# CHECK-NEXT: v211: 1 = Integer integer=1
+# CHECK-NEXT: v212: int[0, 1] = BitAnd v209, v211
+# CHECK-NEXT: v213: boolean = ToBoolean v212
+# CHECK-NEXT: Branch v213 -> taken b11(), notTaken b12()
 # CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v216: undefined = Undefined
-# CHECK-NEXT: v217: never = RequireObjectCoercible v216 name="get"
+# CHECK-NEXT: v214: undefined = Undefined
+# CHECK-NEXT: v215: never = RequireObjectCoercible v214 name="get"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v218: anything ~ undefined|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25 = Upcast v212 castType=anything
-# CHECK-NEXT: v219: string = TypeOf v218
-# CHECK-NEXT: v220: "name7" = String string="name7"
-# CHECK-NEXT: v221: undefined = CallBuiltin -, v16, v220 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=35
-# CHECK-NEXT: v222: boolean = ResultAt v221
-# CHECK-NEXT: v223: 1 = Integer integer=1
-# CHECK-NEXT: v224: int[0, 1] = ToNumber v222
-# CHECK-NEXT: v225: int[1, 2] = LShift v223, v224
-# CHECK-NEXT: v226: boolean = ResultAt v221 index=6
-# CHECK-NEXT: v227: 1 = Integer integer=1
-# CHECK-NEXT: v228: int[0, 1] = BitAnd v225, v227
-# CHECK-NEXT: v229: boolean = ToBoolean v228
-# CHECK-NEXT: Branch v229 -> taken b13(), notTaken b14()
+# CHECK-NEXT: v216: anything ~ undefined|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25 = Upcast v210 castType=anything
+# CHECK-NEXT: v217: string = TypeOf v216
+# CHECK-NEXT: v218: "name7" = String string="name7"
+# CHECK-NEXT: v219: undefined = CallBuiltin -, v16, v218 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=35
+# CHECK-NEXT: v220: boolean = ResultAt v219
+# CHECK-NEXT: v221: 1 = Integer integer=1
+# CHECK-NEXT: v222: int[0, 1] = ToNumber v220
+# CHECK-NEXT: v223: int[1, 2] = LShift v221, v222
+# CHECK-NEXT: v224: boolean = ResultAt v219 index=6
+# CHECK-NEXT: v225: 1 = Integer integer=1
+# CHECK-NEXT: v226: int[0, 1] = BitAnd v223, v225
+# CHECK-NEXT: v227: boolean = ToBoolean v226
+# CHECK-NEXT: Branch v227 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v230: undefined = Undefined
-# CHECK-NEXT: v231: never = RequireObjectCoercible v230 name="configurable"
+# CHECK-NEXT: v228: undefined = Undefined
+# CHECK-NEXT: v229: never = RequireObjectCoercible v228 name="configurable"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v232: boolean = Upcast v226 castType=anything
-# CHECK-NEXT: v233: fact = Specified
-# CHECK-NEXT: v234: boolean = AssumeType v232, v233 provenType=undefined|boolean
-# CHECK-NEXT: v235: undefined = CallBuiltin -, v19, v200, v204, v219, v234 overload=ConsoleLog/0 accessSite=37
+# CHECK-NEXT: v230: boolean = Upcast v224 castType=anything
+# CHECK-NEXT: v231: fact = Specified
+# CHECK-NEXT: v232: boolean = AssumeType v230, v231 provenType=undefined|boolean
+# CHECK-NEXT: v233: undefined = CallBuiltin -, v19, v200, v203, v217, v232 overload=ConsoleLog/0 accessSite=37
 # CHECK-NEXT: Jump -> next b15()
 # CHECK-NEXT: b15() handler=b16():
-# CHECK-NEXT: v236: 5 = Integer integer=5
-# CHECK-NEXT: PropSet v16, v236 key="name2" accessSite=38 receivers=[L2]
-# CHECK-NEXT: v238: "stored" = String string="stored"
-# CHECK-NEXT: v239: anything = PropGet v16 key="name2" accessSite=41 receivers=[L2]
-# CHECK-NEXT: v240: undefined|int = AssumeType v239 provenType=undefined|int
-# CHECK-NEXT: v241: undefined|int ~ int = Upcast v240 castType=anything
-# CHECK-NEXT: v242: undefined = CallBuiltin -, v238, v241 overload=ConsoleLog/0 accessSite=42
+# CHECK-NEXT: v234: 5 = Integer integer=5
+# CHECK-NEXT: PropSet v16, v234 key="name2" accessSite=38 receivers=[L2]
+# CHECK-NEXT: v236: "stored" = String string="stored"
+# CHECK-NEXT: v237: anything = PropGet v16 key="name2" accessSite=41 receivers=[L2]
+# CHECK-NEXT: v238: undefined|int = AssumeType v237 provenType=undefined|int
+# CHECK-NEXT: v239: undefined|int ~ int = Upcast v238 castType=anything
+# CHECK-NEXT: v240: undefined = CallBuiltin -, v236, v239 overload=ConsoleLog/0 accessSite=42
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b16() role=CatchHandler:
-# CHECK-NEXT: v243: anything = CatchValue
-# CHECK-NEXT: v244: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v245: anything ~ undefined|null|Error = Upcast v243 castType=anything
-# CHECK-NEXT: v246: anything = PropGet v245 key="name" accessSite=45
-# CHECK-NEXT: v247: anything ~ undefined|null|string = Expect v246 expectedType=undefined|null|string
-# CHECK-NEXT: v248: undefined = CallBuiltin v244, v247 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=46
+# CHECK-NEXT: v241: anything = CatchValue
+# CHECK-NEXT: v242: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v243: anything ~ undefined|null|Error = Upcast v241 castType=anything
+# CHECK-NEXT: v244: anything = PropGet v243 key="name" accessSite=45
+# CHECK-NEXT: v245: anything ~ undefined|null|string = Expect v244 expectedType=undefined|null|string
+# CHECK-NEXT: v246: undefined = CallBuiltin v242, v245 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=46
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v249: undefined = Undefined
-# CHECK-NEXT: Return v249
+# CHECK-NEXT: v247: undefined = Undefined
+# CHECK-NEXT: Return v247
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=235 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1229,215 +1227,211 @@ function f51 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: PropSet v0, v1 key="name2" accessSite=68 receivers=[L2]
 # CHECK-NEXT: PropSet v0, v1 key="name1" accessSite=69 receivers=[L2]
 # CHECK-NEXT: PropSet v0, v1 key="name0" accessSite=70 receivers=[L2]
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectKeys
-# CHECK-NEXT: v27: boolean = HasKeyOrder v0 layout=L2
-# CHECK-NEXT: Branch v27 -> taken b1(), notTaken b3()
+# CHECK-NEXT: v26: boolean = HasKeyOrder v0 layout=L2
+# CHECK-NEXT: Branch v26 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v28: boolean = HasNoExtraProperties v0
-# CHECK-NEXT: Branch v28 -> taken b2(), notTaken b3()
+# CHECK-NEXT: v27: boolean = HasNoExtraProperties v0
+# CHECK-NEXT: Branch v27 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v29: Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9"> = NewArray contents="before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9" storage=Frame
-# CHECK-NEXT: Jump -> next b4(v29)
+# CHECK-NEXT: v28: Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9"> = NewArray contents="before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9" storage=Frame
+# CHECK-NEXT: Jump -> next b4(v28)
 # CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v30: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0 accessSite=71
-# CHECK-NEXT: Jump -> next b4(v30)
-# CHECK-NEXT: b4(v31: Array<string> ~ Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9">):
-# CHECK-NEXT: v32: Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]> = AssumeType v31 provenType=Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v32 overload=ArrayPrototypeLength/0 accessSite=72
-# CHECK-NEXT: v34: ":" = String string=":"
-# CHECK-NEXT: v35: string = Add v33, v34
-# CHECK-NEXT: v36: boolean = HasNoExtraProperties v0
-# CHECK-NEXT: Branch v36 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v29: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0 accessSite=71
+# CHECK-NEXT: Jump -> next b4(v29)
+# CHECK-NEXT: b4(v30: Array<string> ~ Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9">):
+# CHECK-NEXT: v31: Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v32: int[0, 4294967295] = CallBuiltin v31 overload=ArrayPrototypeLength/0 accessSite=72
+# CHECK-NEXT: v33: ":" = String string=":"
+# CHECK-NEXT: v34: string = Add v32, v33
+# CHECK-NEXT: v35: boolean = HasNoExtraProperties v0
+# CHECK-NEXT: Branch v35 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v37: undefined = Undefined
-# CHECK-NEXT: Jump -> next b7(v37)
+# CHECK-NEXT: v36: undefined = Undefined
+# CHECK-NEXT: Jump -> next b7(v36)
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v38: anything = PropGet v0 key="name3" accessSite=73 receivers=[L2]
-# CHECK-NEXT: v39: undefined|int = AssumeType v38 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b7(v39)
-# CHECK-NEXT: b7(v40: undefined|int ~ undefined):
-# CHECK-NEXT: v41: string = CallBuiltin -, v40 overload=String/0 accessSite=74
-# CHECK-NEXT: v42: ":" = String string=":"
-# CHECK-NEXT: v43: string = Strcat v35, v41, v42
-# CHECK-NEXT: InitializeBuiltin builtin=JSONStringify
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectGetOwnPropertyDescriptor
-# CHECK-NEXT: v46: "name5" = String string="name5"
-# CHECK-NEXT: v47: undefined|object = CallBuiltin -, v0, v46 overload=ObjectGetOwnPropertyDescriptor/0 accessSite=76
-# CHECK-NEXT: v48: undefined|object ~ undefined|L1 = Upcast v47 castType=anything
-# CHECK-NEXT: v49: boolean = TypeTest v48 testedType=undefined
-# CHECK-NEXT: Branch v49 -> taken b8(), notTaken b9(| 0)
+# CHECK-NEXT: v37: anything = PropGet v0 key="name3" accessSite=73 receivers=[L2]
+# CHECK-NEXT: v38: undefined|int = AssumeType v37 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b7(v38)
+# CHECK-NEXT: b7(v39: undefined|int ~ undefined):
+# CHECK-NEXT: v40: string = CallBuiltin -, v39 overload=String/0 accessSite=74
+# CHECK-NEXT: v41: ":" = String string=":"
+# CHECK-NEXT: v42: string = Strcat v34, v40, v41
+# CHECK-NEXT: v43: "name5" = String string="name5"
+# CHECK-NEXT: v44: undefined|object = CallBuiltin -, v0, v43 overload=ObjectGetOwnPropertyDescriptor/0 accessSite=76
+# CHECK-NEXT: v45: undefined|object ~ undefined|L1 = Upcast v44 castType=anything
+# CHECK-NEXT: v46: boolean = TypeTest v45 testedType=undefined
+# CHECK-NEXT: Branch v46 -> taken b8(), notTaken b9(| 0)
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v50: undefined = Undefined
-# CHECK-NEXT: Jump -> next b13(v50)
-# CHECK-NEXT: b9(v51: object ~ L1):
-# CHECK-NEXT: v52: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v53: boolean = ShapeTest v51 layouts=[L1]
-# CHECK-NEXT: Branch v53 -> taken b10(), notTaken b12()
+# CHECK-NEXT: v47: undefined = Undefined
+# CHECK-NEXT: Jump -> next b13(v47)
+# CHECK-NEXT: b9(v48: object ~ L1):
+# CHECK-NEXT: v49: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v50: boolean = ShapeTest v48 layouts=[L1]
+# CHECK-NEXT: Branch v50 -> taken b10(), notTaken b12()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v54: 0 = Integer
-# CHECK-NEXT: v55: int[0, 2] = CallDirect v51, v52, v54 function=f54 calledBuiltin=JSONStringify
-# CHECK-NEXT: Switch v55 cases=[1] -> case b11(), otherwise b12()
+# CHECK-NEXT: v51: 0 = Integer
+# CHECK-NEXT: v52: int[0, 2] = CallDirect v48, v49, v51 function=f54 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v52 cases=[1] -> case b11(), otherwise b12()
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v56: string = StringBuilderFinish v52
-# CHECK-NEXT: Jump -> next b13(v56)
+# CHECK-NEXT: v53: string = StringBuilderFinish v49
+# CHECK-NEXT: Jump -> next b13(v53)
 # CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v52
-# CHECK-NEXT: v58: undefined = Undefined
-# CHECK-NEXT: v59: undefined|string = CallBuiltin -, v48, v58 overload=JSONStringify/0 accessSite=77
-# CHECK-NEXT: Jump -> next b13(v59)
-# CHECK-NEXT: b13(v60: undefined|string ~ string):
-# CHECK-NEXT: v61: string = Add v43, v60
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectDefineProperty
-# CHECK-NEXT: v63: "name0" = String string="name0"
-# CHECK-NEXT: v64: true = Boolean boolean=true
-# CHECK-NEXT: v65: f2 = NewClosure function=f2 allocationSite=3
-# CHECK-NEXT: v66: L1 = NewObject -, v64, v65 layout=L1 fields=[1, 2] allocationSite=4 allocationClass=1
-# CHECK-NEXT: v67: L1 = FinishObject v66
-# CHECK-NEXT: v68: L2 = CallBuiltin -, v0, v63, v67 overload=ObjectDefineProperty/0 accessSite=79
-# CHECK-NEXT: v69: "name1" = String string="name1"
-# CHECK-NEXT: v70: true = Boolean boolean=true
-# CHECK-NEXT: v71: f3 = NewClosure function=f3 allocationSite=5
-# CHECK-NEXT: v72: L1 = NewObject -, v70, v71 layout=L1 fields=[1, 2] allocationSite=6 allocationClass=1
-# CHECK-NEXT: v73: L1 = FinishObject v72
-# CHECK-NEXT: v74: L2 = CallBuiltin -, v0, v69, v73 overload=ObjectDefineProperty/0 accessSite=81
-# CHECK-NEXT: v75: "name2" = String string="name2"
-# CHECK-NEXT: v76: true = Boolean boolean=true
-# CHECK-NEXT: v77: f4 = NewClosure function=f4 allocationSite=7
-# CHECK-NEXT: v78: L1 = NewObject -, v76, v77 layout=L1 fields=[1, 2] allocationSite=8 allocationClass=1
-# CHECK-NEXT: v79: L1 = FinishObject v78
-# CHECK-NEXT: v80: L2 = CallBuiltin -, v0, v75, v79 overload=ObjectDefineProperty/0 accessSite=83
-# CHECK-NEXT: v81: "name3" = String string="name3"
-# CHECK-NEXT: v82: true = Boolean boolean=true
-# CHECK-NEXT: v83: f5 = NewClosure function=f5 allocationSite=9
-# CHECK-NEXT: v84: L1 = NewObject -, v82, v83 layout=L1 fields=[1, 2] allocationSite=10 allocationClass=1
-# CHECK-NEXT: v85: L1 = FinishObject v84
-# CHECK-NEXT: v86: L2 = CallBuiltin -, v0, v81, v85 overload=ObjectDefineProperty/0 accessSite=85
-# CHECK-NEXT: v87: "name4" = String string="name4"
-# CHECK-NEXT: v88: true = Boolean boolean=true
-# CHECK-NEXT: v89: f6 = NewClosure function=f6 allocationSite=11
-# CHECK-NEXT: v90: L1 = NewObject -, v88, v89 layout=L1 fields=[1, 2] allocationSite=12 allocationClass=1
-# CHECK-NEXT: v91: L1 = FinishObject v90
-# CHECK-NEXT: v92: L2 = CallBuiltin -, v0, v87, v91 overload=ObjectDefineProperty/0 accessSite=87
-# CHECK-NEXT: v93: "name5" = String string="name5"
-# CHECK-NEXT: v94: true = Boolean boolean=true
-# CHECK-NEXT: v95: f7 = NewClosure function=f7 allocationSite=13
-# CHECK-NEXT: v96: L1 = NewObject -, v94, v95 layout=L1 fields=[1, 2] allocationSite=14 allocationClass=1
-# CHECK-NEXT: v97: L1 = FinishObject v96
-# CHECK-NEXT: v98: L2 = CallBuiltin -, v0, v93, v97 overload=ObjectDefineProperty/0 accessSite=89
-# CHECK-NEXT: v99: "name6" = String string="name6"
-# CHECK-NEXT: v100: true = Boolean boolean=true
-# CHECK-NEXT: v101: f8 = NewClosure function=f8 allocationSite=15
-# CHECK-NEXT: v102: L1 = NewObject -, v100, v101 layout=L1 fields=[1, 2] allocationSite=16 allocationClass=1
-# CHECK-NEXT: v103: L1 = FinishObject v102
-# CHECK-NEXT: v104: L2 = CallBuiltin -, v0, v99, v103 overload=ObjectDefineProperty/0 accessSite=91
-# CHECK-NEXT: v105: "name7" = String string="name7"
-# CHECK-NEXT: v106: true = Boolean boolean=true
-# CHECK-NEXT: v107: f9 = NewClosure function=f9 allocationSite=17
-# CHECK-NEXT: v108: L1 = NewObject -, v106, v107 layout=L1 fields=[1, 2] allocationSite=18 allocationClass=1
-# CHECK-NEXT: v109: L1 = FinishObject v108
-# CHECK-NEXT: v110: L2 = CallBuiltin -, v0, v105, v109 overload=ObjectDefineProperty/0 accessSite=93
-# CHECK-NEXT: v111: "name8" = String string="name8"
-# CHECK-NEXT: v112: true = Boolean boolean=true
-# CHECK-NEXT: v113: f10 = NewClosure function=f10 allocationSite=19
-# CHECK-NEXT: v114: L1 = NewObject -, v112, v113 layout=L1 fields=[1, 2] allocationSite=20 allocationClass=1
-# CHECK-NEXT: v115: L1 = FinishObject v114
-# CHECK-NEXT: v116: L2 = CallBuiltin -, v0, v111, v115 overload=ObjectDefineProperty/0 accessSite=95
-# CHECK-NEXT: v117: "name9" = String string="name9"
-# CHECK-NEXT: v118: true = Boolean boolean=true
-# CHECK-NEXT: v119: f11 = NewClosure function=f11 allocationSite=21
-# CHECK-NEXT: v120: L1 = NewObject -, v118, v119 layout=L1 fields=[1, 2] allocationSite=22 allocationClass=1
-# CHECK-NEXT: v121: L1 = FinishObject v120
-# CHECK-NEXT: v122: L2 = CallBuiltin -, v0, v117, v121 overload=ObjectDefineProperty/0 accessSite=97
-# CHECK-NEXT: v123: "name10" = String string="name10"
-# CHECK-NEXT: v124: true = Boolean boolean=true
-# CHECK-NEXT: v125: f12 = NewClosure function=f12 allocationSite=23
-# CHECK-NEXT: v126: L1 = NewObject -, v124, v125 layout=L1 fields=[1, 2] allocationSite=24 allocationClass=1
-# CHECK-NEXT: v127: L1 = FinishObject v126
-# CHECK-NEXT: v128: L2 = CallBuiltin -, v0, v123, v127 overload=ObjectDefineProperty/0 accessSite=99
-# CHECK-NEXT: v129: "name11" = String string="name11"
-# CHECK-NEXT: v130: true = Boolean boolean=true
-# CHECK-NEXT: v131: f13 = NewClosure function=f13 allocationSite=25
-# CHECK-NEXT: v132: L1 = NewObject -, v130, v131 layout=L1 fields=[1, 2] allocationSite=26 allocationClass=1
-# CHECK-NEXT: v133: L1 = FinishObject v132
-# CHECK-NEXT: v134: L2 = CallBuiltin -, v0, v129, v133 overload=ObjectDefineProperty/0 accessSite=101
-# CHECK-NEXT: v135: "name12" = String string="name12"
-# CHECK-NEXT: v136: true = Boolean boolean=true
-# CHECK-NEXT: v137: f14 = NewClosure function=f14 allocationSite=27
-# CHECK-NEXT: v138: L1 = NewObject -, v136, v137 layout=L1 fields=[1, 2] allocationSite=28 allocationClass=1
-# CHECK-NEXT: v139: L1 = FinishObject v138
-# CHECK-NEXT: v140: L2 = CallBuiltin -, v0, v135, v139 overload=ObjectDefineProperty/0 accessSite=103
-# CHECK-NEXT: v141: "name13" = String string="name13"
-# CHECK-NEXT: v142: true = Boolean boolean=true
-# CHECK-NEXT: v143: f15 = NewClosure function=f15 allocationSite=29
-# CHECK-NEXT: v144: L1 = NewObject -, v142, v143 layout=L1 fields=[1, 2] allocationSite=30 allocationClass=1
-# CHECK-NEXT: v145: L1 = FinishObject v144
-# CHECK-NEXT: v146: L2 = CallBuiltin -, v0, v141, v145 overload=ObjectDefineProperty/0 accessSite=105
-# CHECK-NEXT: v147: "name14" = String string="name14"
-# CHECK-NEXT: v148: true = Boolean boolean=true
-# CHECK-NEXT: v149: f16 = NewClosure function=f16 allocationSite=31
-# CHECK-NEXT: v150: L1 = NewObject -, v148, v149 layout=L1 fields=[1, 2] allocationSite=32 allocationClass=1
-# CHECK-NEXT: v151: L1 = FinishObject v150
-# CHECK-NEXT: v152: L2 = CallBuiltin -, v0, v147, v151 overload=ObjectDefineProperty/0 accessSite=107
-# CHECK-NEXT: v153: "name15" = String string="name15"
-# CHECK-NEXT: v154: true = Boolean boolean=true
-# CHECK-NEXT: v155: f17 = NewClosure function=f17 allocationSite=33
-# CHECK-NEXT: v156: L1 = NewObject -, v154, v155 layout=L1 fields=[1, 2] allocationSite=34 allocationClass=1
-# CHECK-NEXT: v157: L1 = FinishObject v156
-# CHECK-NEXT: v158: L2 = CallBuiltin -, v0, v153, v157 overload=ObjectDefineProperty/0 accessSite=109
-# CHECK-NEXT: v159: "name16" = String string="name16"
-# CHECK-NEXT: v160: true = Boolean boolean=true
-# CHECK-NEXT: v161: f18 = NewClosure function=f18 allocationSite=35
-# CHECK-NEXT: v162: L1 = NewObject -, v160, v161 layout=L1 fields=[1, 2] allocationSite=36 allocationClass=1
-# CHECK-NEXT: v163: L1 = FinishObject v162
-# CHECK-NEXT: v164: L2 = CallBuiltin -, v0, v159, v163 overload=ObjectDefineProperty/0 accessSite=111
-# CHECK-NEXT: v165: "name17" = String string="name17"
-# CHECK-NEXT: v166: true = Boolean boolean=true
-# CHECK-NEXT: v167: f19 = NewClosure function=f19 allocationSite=37
-# CHECK-NEXT: v168: L1 = NewObject -, v166, v167 layout=L1 fields=[1, 2] allocationSite=38 allocationClass=1
-# CHECK-NEXT: v169: L1 = FinishObject v168
-# CHECK-NEXT: v170: L2 = CallBuiltin -, v0, v165, v169 overload=ObjectDefineProperty/0 accessSite=113
-# CHECK-NEXT: v171: "name18" = String string="name18"
-# CHECK-NEXT: v172: true = Boolean boolean=true
-# CHECK-NEXT: v173: f20 = NewClosure function=f20 allocationSite=39
-# CHECK-NEXT: v174: L1 = NewObject -, v172, v173 layout=L1 fields=[1, 2] allocationSite=40 allocationClass=1
-# CHECK-NEXT: v175: L1 = FinishObject v174
-# CHECK-NEXT: v176: L2 = CallBuiltin -, v0, v171, v175 overload=ObjectDefineProperty/0 accessSite=115
-# CHECK-NEXT: v177: "name19" = String string="name19"
-# CHECK-NEXT: v178: true = Boolean boolean=true
-# CHECK-NEXT: v179: f21 = NewClosure function=f21 allocationSite=41
-# CHECK-NEXT: v180: L1 = NewObject -, v178, v179 layout=L1 fields=[1, 2] allocationSite=42 allocationClass=1
-# CHECK-NEXT: v181: L1 = FinishObject v180
-# CHECK-NEXT: v182: L2 = CallBuiltin -, v0, v177, v181 overload=ObjectDefineProperty/0 accessSite=117
-# CHECK-NEXT: v183: "name20" = String string="name20"
-# CHECK-NEXT: v184: true = Boolean boolean=true
-# CHECK-NEXT: v185: f22 = NewClosure function=f22 allocationSite=43
-# CHECK-NEXT: v186: L1 = NewObject -, v184, v185 layout=L1 fields=[1, 2] allocationSite=44 allocationClass=1
-# CHECK-NEXT: v187: L1 = FinishObject v186
-# CHECK-NEXT: v188: L2 = CallBuiltin -, v0, v183, v187 overload=ObjectDefineProperty/0 accessSite=119
-# CHECK-NEXT: v189: "name21" = String string="name21"
-# CHECK-NEXT: v190: true = Boolean boolean=true
-# CHECK-NEXT: v191: f23 = NewClosure function=f23 allocationSite=45
-# CHECK-NEXT: v192: L1 = NewObject -, v190, v191 layout=L1 fields=[1, 2] allocationSite=46 allocationClass=1
-# CHECK-NEXT: v193: L1 = FinishObject v192
-# CHECK-NEXT: v194: L2 = CallBuiltin -, v0, v189, v193 overload=ObjectDefineProperty/0 accessSite=121
-# CHECK-NEXT: v195: "name22" = String string="name22"
-# CHECK-NEXT: v196: true = Boolean boolean=true
-# CHECK-NEXT: v197: f24 = NewClosure function=f24 allocationSite=47
-# CHECK-NEXT: v198: L1 = NewObject -, v196, v197 layout=L1 fields=[1, 2] allocationSite=48 allocationClass=1
-# CHECK-NEXT: v199: L1 = FinishObject v198
-# CHECK-NEXT: v200: L2 = CallBuiltin -, v0, v195, v199 overload=ObjectDefineProperty/0 accessSite=123
-# CHECK-NEXT: v201: "name23" = String string="name23"
-# CHECK-NEXT: v202: true = Boolean boolean=true
-# CHECK-NEXT: v203: f25 = NewClosure function=f25 allocationSite=49
-# CHECK-NEXT: v204: L1 = NewObject -, v202, v203 layout=L1 fields=[1, 2] allocationSite=50 allocationClass=1
-# CHECK-NEXT: v205: L1 = FinishObject v204
-# CHECK-NEXT: v206: L2 = CallBuiltin -, v0, v201, v205 overload=ObjectDefineProperty/0 accessSite=125
-# CHECK-NEXT: v207: boolean = HasNoFieldOutsideSlot v0
-# CHECK-NEXT: Branch v207 -> taken b14(| 0), notTaken b15()
-# CHECK-NEXT: b14(v208: guard):
-# CHECK-NEXT: PutSlotOrAdd v0, v208, v61 key="before" receivers=[L2] level=Expected accessSite=126
+# CHECK-NEXT: StringBuilderDiscard v49
+# CHECK-NEXT: v55: undefined = Undefined
+# CHECK-NEXT: v56: undefined|string = CallBuiltin -, v45, v55 overload=JSONStringify/0 accessSite=77
+# CHECK-NEXT: Jump -> next b13(v56)
+# CHECK-NEXT: b13(v57: undefined|string ~ string):
+# CHECK-NEXT: v58: string = Add v42, v57
+# CHECK-NEXT: v59: "name0" = String string="name0"
+# CHECK-NEXT: v60: true = Boolean boolean=true
+# CHECK-NEXT: v61: f2 = NewClosure function=f2 allocationSite=3
+# CHECK-NEXT: v62: L1 = NewObject -, v60, v61 layout=L1 fields=[1, 2] allocationSite=4 allocationClass=1
+# CHECK-NEXT: v63: L1 = FinishObject v62
+# CHECK-NEXT: v64: L2 = CallBuiltin -, v0, v59, v63 overload=ObjectDefineProperty/0 accessSite=79
+# CHECK-NEXT: v65: "name1" = String string="name1"
+# CHECK-NEXT: v66: true = Boolean boolean=true
+# CHECK-NEXT: v67: f3 = NewClosure function=f3 allocationSite=5
+# CHECK-NEXT: v68: L1 = NewObject -, v66, v67 layout=L1 fields=[1, 2] allocationSite=6 allocationClass=1
+# CHECK-NEXT: v69: L1 = FinishObject v68
+# CHECK-NEXT: v70: L2 = CallBuiltin -, v0, v65, v69 overload=ObjectDefineProperty/0 accessSite=81
+# CHECK-NEXT: v71: "name2" = String string="name2"
+# CHECK-NEXT: v72: true = Boolean boolean=true
+# CHECK-NEXT: v73: f4 = NewClosure function=f4 allocationSite=7
+# CHECK-NEXT: v74: L1 = NewObject -, v72, v73 layout=L1 fields=[1, 2] allocationSite=8 allocationClass=1
+# CHECK-NEXT: v75: L1 = FinishObject v74
+# CHECK-NEXT: v76: L2 = CallBuiltin -, v0, v71, v75 overload=ObjectDefineProperty/0 accessSite=83
+# CHECK-NEXT: v77: "name3" = String string="name3"
+# CHECK-NEXT: v78: true = Boolean boolean=true
+# CHECK-NEXT: v79: f5 = NewClosure function=f5 allocationSite=9
+# CHECK-NEXT: v80: L1 = NewObject -, v78, v79 layout=L1 fields=[1, 2] allocationSite=10 allocationClass=1
+# CHECK-NEXT: v81: L1 = FinishObject v80
+# CHECK-NEXT: v82: L2 = CallBuiltin -, v0, v77, v81 overload=ObjectDefineProperty/0 accessSite=85
+# CHECK-NEXT: v83: "name4" = String string="name4"
+# CHECK-NEXT: v84: true = Boolean boolean=true
+# CHECK-NEXT: v85: f6 = NewClosure function=f6 allocationSite=11
+# CHECK-NEXT: v86: L1 = NewObject -, v84, v85 layout=L1 fields=[1, 2] allocationSite=12 allocationClass=1
+# CHECK-NEXT: v87: L1 = FinishObject v86
+# CHECK-NEXT: v88: L2 = CallBuiltin -, v0, v83, v87 overload=ObjectDefineProperty/0 accessSite=87
+# CHECK-NEXT: v89: "name5" = String string="name5"
+# CHECK-NEXT: v90: true = Boolean boolean=true
+# CHECK-NEXT: v91: f7 = NewClosure function=f7 allocationSite=13
+# CHECK-NEXT: v92: L1 = NewObject -, v90, v91 layout=L1 fields=[1, 2] allocationSite=14 allocationClass=1
+# CHECK-NEXT: v93: L1 = FinishObject v92
+# CHECK-NEXT: v94: L2 = CallBuiltin -, v0, v89, v93 overload=ObjectDefineProperty/0 accessSite=89
+# CHECK-NEXT: v95: "name6" = String string="name6"
+# CHECK-NEXT: v96: true = Boolean boolean=true
+# CHECK-NEXT: v97: f8 = NewClosure function=f8 allocationSite=15
+# CHECK-NEXT: v98: L1 = NewObject -, v96, v97 layout=L1 fields=[1, 2] allocationSite=16 allocationClass=1
+# CHECK-NEXT: v99: L1 = FinishObject v98
+# CHECK-NEXT: v100: L2 = CallBuiltin -, v0, v95, v99 overload=ObjectDefineProperty/0 accessSite=91
+# CHECK-NEXT: v101: "name7" = String string="name7"
+# CHECK-NEXT: v102: true = Boolean boolean=true
+# CHECK-NEXT: v103: f9 = NewClosure function=f9 allocationSite=17
+# CHECK-NEXT: v104: L1 = NewObject -, v102, v103 layout=L1 fields=[1, 2] allocationSite=18 allocationClass=1
+# CHECK-NEXT: v105: L1 = FinishObject v104
+# CHECK-NEXT: v106: L2 = CallBuiltin -, v0, v101, v105 overload=ObjectDefineProperty/0 accessSite=93
+# CHECK-NEXT: v107: "name8" = String string="name8"
+# CHECK-NEXT: v108: true = Boolean boolean=true
+# CHECK-NEXT: v109: f10 = NewClosure function=f10 allocationSite=19
+# CHECK-NEXT: v110: L1 = NewObject -, v108, v109 layout=L1 fields=[1, 2] allocationSite=20 allocationClass=1
+# CHECK-NEXT: v111: L1 = FinishObject v110
+# CHECK-NEXT: v112: L2 = CallBuiltin -, v0, v107, v111 overload=ObjectDefineProperty/0 accessSite=95
+# CHECK-NEXT: v113: "name9" = String string="name9"
+# CHECK-NEXT: v114: true = Boolean boolean=true
+# CHECK-NEXT: v115: f11 = NewClosure function=f11 allocationSite=21
+# CHECK-NEXT: v116: L1 = NewObject -, v114, v115 layout=L1 fields=[1, 2] allocationSite=22 allocationClass=1
+# CHECK-NEXT: v117: L1 = FinishObject v116
+# CHECK-NEXT: v118: L2 = CallBuiltin -, v0, v113, v117 overload=ObjectDefineProperty/0 accessSite=97
+# CHECK-NEXT: v119: "name10" = String string="name10"
+# CHECK-NEXT: v120: true = Boolean boolean=true
+# CHECK-NEXT: v121: f12 = NewClosure function=f12 allocationSite=23
+# CHECK-NEXT: v122: L1 = NewObject -, v120, v121 layout=L1 fields=[1, 2] allocationSite=24 allocationClass=1
+# CHECK-NEXT: v123: L1 = FinishObject v122
+# CHECK-NEXT: v124: L2 = CallBuiltin -, v0, v119, v123 overload=ObjectDefineProperty/0 accessSite=99
+# CHECK-NEXT: v125: "name11" = String string="name11"
+# CHECK-NEXT: v126: true = Boolean boolean=true
+# CHECK-NEXT: v127: f13 = NewClosure function=f13 allocationSite=25
+# CHECK-NEXT: v128: L1 = NewObject -, v126, v127 layout=L1 fields=[1, 2] allocationSite=26 allocationClass=1
+# CHECK-NEXT: v129: L1 = FinishObject v128
+# CHECK-NEXT: v130: L2 = CallBuiltin -, v0, v125, v129 overload=ObjectDefineProperty/0 accessSite=101
+# CHECK-NEXT: v131: "name12" = String string="name12"
+# CHECK-NEXT: v132: true = Boolean boolean=true
+# CHECK-NEXT: v133: f14 = NewClosure function=f14 allocationSite=27
+# CHECK-NEXT: v134: L1 = NewObject -, v132, v133 layout=L1 fields=[1, 2] allocationSite=28 allocationClass=1
+# CHECK-NEXT: v135: L1 = FinishObject v134
+# CHECK-NEXT: v136: L2 = CallBuiltin -, v0, v131, v135 overload=ObjectDefineProperty/0 accessSite=103
+# CHECK-NEXT: v137: "name13" = String string="name13"
+# CHECK-NEXT: v138: true = Boolean boolean=true
+# CHECK-NEXT: v139: f15 = NewClosure function=f15 allocationSite=29
+# CHECK-NEXT: v140: L1 = NewObject -, v138, v139 layout=L1 fields=[1, 2] allocationSite=30 allocationClass=1
+# CHECK-NEXT: v141: L1 = FinishObject v140
+# CHECK-NEXT: v142: L2 = CallBuiltin -, v0, v137, v141 overload=ObjectDefineProperty/0 accessSite=105
+# CHECK-NEXT: v143: "name14" = String string="name14"
+# CHECK-NEXT: v144: true = Boolean boolean=true
+# CHECK-NEXT: v145: f16 = NewClosure function=f16 allocationSite=31
+# CHECK-NEXT: v146: L1 = NewObject -, v144, v145 layout=L1 fields=[1, 2] allocationSite=32 allocationClass=1
+# CHECK-NEXT: v147: L1 = FinishObject v146
+# CHECK-NEXT: v148: L2 = CallBuiltin -, v0, v143, v147 overload=ObjectDefineProperty/0 accessSite=107
+# CHECK-NEXT: v149: "name15" = String string="name15"
+# CHECK-NEXT: v150: true = Boolean boolean=true
+# CHECK-NEXT: v151: f17 = NewClosure function=f17 allocationSite=33
+# CHECK-NEXT: v152: L1 = NewObject -, v150, v151 layout=L1 fields=[1, 2] allocationSite=34 allocationClass=1
+# CHECK-NEXT: v153: L1 = FinishObject v152
+# CHECK-NEXT: v154: L2 = CallBuiltin -, v0, v149, v153 overload=ObjectDefineProperty/0 accessSite=109
+# CHECK-NEXT: v155: "name16" = String string="name16"
+# CHECK-NEXT: v156: true = Boolean boolean=true
+# CHECK-NEXT: v157: f18 = NewClosure function=f18 allocationSite=35
+# CHECK-NEXT: v158: L1 = NewObject -, v156, v157 layout=L1 fields=[1, 2] allocationSite=36 allocationClass=1
+# CHECK-NEXT: v159: L1 = FinishObject v158
+# CHECK-NEXT: v160: L2 = CallBuiltin -, v0, v155, v159 overload=ObjectDefineProperty/0 accessSite=111
+# CHECK-NEXT: v161: "name17" = String string="name17"
+# CHECK-NEXT: v162: true = Boolean boolean=true
+# CHECK-NEXT: v163: f19 = NewClosure function=f19 allocationSite=37
+# CHECK-NEXT: v164: L1 = NewObject -, v162, v163 layout=L1 fields=[1, 2] allocationSite=38 allocationClass=1
+# CHECK-NEXT: v165: L1 = FinishObject v164
+# CHECK-NEXT: v166: L2 = CallBuiltin -, v0, v161, v165 overload=ObjectDefineProperty/0 accessSite=113
+# CHECK-NEXT: v167: "name18" = String string="name18"
+# CHECK-NEXT: v168: true = Boolean boolean=true
+# CHECK-NEXT: v169: f20 = NewClosure function=f20 allocationSite=39
+# CHECK-NEXT: v170: L1 = NewObject -, v168, v169 layout=L1 fields=[1, 2] allocationSite=40 allocationClass=1
+# CHECK-NEXT: v171: L1 = FinishObject v170
+# CHECK-NEXT: v172: L2 = CallBuiltin -, v0, v167, v171 overload=ObjectDefineProperty/0 accessSite=115
+# CHECK-NEXT: v173: "name19" = String string="name19"
+# CHECK-NEXT: v174: true = Boolean boolean=true
+# CHECK-NEXT: v175: f21 = NewClosure function=f21 allocationSite=41
+# CHECK-NEXT: v176: L1 = NewObject -, v174, v175 layout=L1 fields=[1, 2] allocationSite=42 allocationClass=1
+# CHECK-NEXT: v177: L1 = FinishObject v176
+# CHECK-NEXT: v178: L2 = CallBuiltin -, v0, v173, v177 overload=ObjectDefineProperty/0 accessSite=117
+# CHECK-NEXT: v179: "name20" = String string="name20"
+# CHECK-NEXT: v180: true = Boolean boolean=true
+# CHECK-NEXT: v181: f22 = NewClosure function=f22 allocationSite=43
+# CHECK-NEXT: v182: L1 = NewObject -, v180, v181 layout=L1 fields=[1, 2] allocationSite=44 allocationClass=1
+# CHECK-NEXT: v183: L1 = FinishObject v182
+# CHECK-NEXT: v184: L2 = CallBuiltin -, v0, v179, v183 overload=ObjectDefineProperty/0 accessSite=119
+# CHECK-NEXT: v185: "name21" = String string="name21"
+# CHECK-NEXT: v186: true = Boolean boolean=true
+# CHECK-NEXT: v187: f23 = NewClosure function=f23 allocationSite=45
+# CHECK-NEXT: v188: L1 = NewObject -, v186, v187 layout=L1 fields=[1, 2] allocationSite=46 allocationClass=1
+# CHECK-NEXT: v189: L1 = FinishObject v188
+# CHECK-NEXT: v190: L2 = CallBuiltin -, v0, v185, v189 overload=ObjectDefineProperty/0 accessSite=121
+# CHECK-NEXT: v191: "name22" = String string="name22"
+# CHECK-NEXT: v192: true = Boolean boolean=true
+# CHECK-NEXT: v193: f24 = NewClosure function=f24 allocationSite=47
+# CHECK-NEXT: v194: L1 = NewObject -, v192, v193 layout=L1 fields=[1, 2] allocationSite=48 allocationClass=1
+# CHECK-NEXT: v195: L1 = FinishObject v194
+# CHECK-NEXT: v196: L2 = CallBuiltin -, v0, v191, v195 overload=ObjectDefineProperty/0 accessSite=123
+# CHECK-NEXT: v197: "name23" = String string="name23"
+# CHECK-NEXT: v198: true = Boolean boolean=true
+# CHECK-NEXT: v199: f25 = NewClosure function=f25 allocationSite=49
+# CHECK-NEXT: v200: L1 = NewObject -, v198, v199 layout=L1 fields=[1, 2] allocationSite=50 allocationClass=1
+# CHECK-NEXT: v201: L1 = FinishObject v200
+# CHECK-NEXT: v202: L2 = CallBuiltin -, v0, v197, v201 overload=ObjectDefineProperty/0 accessSite=125
+# CHECK-NEXT: v203: boolean = HasNoFieldOutsideSlot v0
+# CHECK-NEXT: Branch v203 -> taken b14(| 0), notTaken b15()
+# CHECK-NEXT: b14(v204: guard):
+# CHECK-NEXT: PutSlotOrAdd v0, v204, v58 key="before" receivers=[L2] level=Expected accessSite=126
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: PropSet v0, v61 key="before" accessSite=126 receivers=[L2]
+# CHECK-NEXT: PropSet v0, v58 key="before" accessSite=126 receivers=[L2]
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }

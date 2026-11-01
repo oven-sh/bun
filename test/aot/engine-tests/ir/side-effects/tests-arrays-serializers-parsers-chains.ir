@@ -186,7 +186,7 @@ function f4 module=m0 position=504 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: v41: Array<L0, Contiguous> = NewArray v35, v39 contents=L0 allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v42: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v41 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutSlotOrAdd v31, -, v42 key="children" receivers=[L0] level=Proven accessSite=22
-# CHECK-NEXT: v44: Array<L0, Contiguous> = NewArray v7, v20, v31 contents=L0 allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v44: Array<L0, Contiguous> = NewArray v7, v20, v31 contents=L0 allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven, isMadeForOneUse]
 # CHECK-NEXT: v45: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v44 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v46: number = CallDirect v45 function=f1 accessSite=3
 # CHECK-NEXT: v47: number = CallDirect v4 function=f2 accessSite=4

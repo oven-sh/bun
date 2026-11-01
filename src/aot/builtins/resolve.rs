@@ -1,4 +1,5 @@
 mod aliases;
+mod builtins_of_files;
 mod evaluated_text;
 mod imports;
 mod mention_use;
@@ -17,10 +18,11 @@ mod unnamed_holders;
 mod walked_texts;
 
 pub use self::imports::find_module_export;
-pub use self::module_cache::KeyOfModuleCache;
+pub use self::module_cache::{KeyOfModuleCache, is_module_cache, is_table_of_loaders};
 pub use self::module_values::commonjs_variable_builtin;
-pub use self::replaced_members::find_member_written_behind;
+pub use self::replaced_members::{find_member_written_behind, members_written_under_any_name};
 pub use self::resolver::FileFacts;
+pub use self::runtime_dialect::set_natives;
 use super::names::BuiltinNames;
 use super::runtime_uses::RuntimeUses;
 use super::table::{
@@ -32,6 +34,7 @@ use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, Chain, ExprId, ExprKind, MemberKey, NodeData};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::ModuleFormat;
+use bun_sema::util::SharedSort;
 use core::ops::Range;
 use smallvec::SmallVec;
 
@@ -145,14 +148,33 @@ pub struct ObjectSpelled {
 /// `import { make } from "./helper"; make().prototype.get = f`
 #[derive(Clone, Debug)]
 pub struct WriteOnImport {
-    pub import: hir::ImportId,
+    /// As the file writes it.
+    pub module: Atom,
     /// The names between what is imported and the write, from the write on: `prototype`.
     pub path: Vec<Atom>,
     pub key: Atom,
 }
 
+/// A built-in that a file exports, and the names that lead to it from what `import * as` of the file gives:
+/// `export const { getPrototypeOf } = Object` has one under `getPrototypeOf`, `export default console` under `default`,
+/// `module.exports = { holder: Object }` and `export default { holder: Object }` under `default` and then `holder`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BuiltinExported {
+    pub path: SmallVec<[Atom; 2]>,
+    pub builtin: BuiltinId,
+}
+
+/// What a load of another file gives, as far as that file binds it to built-ins. Also of a module of Bun that is written in JavaScript.
+pub struct BuiltinsOfLoadedFile {
+    pub site: ImportSiteKind,
+    /// `require()` gives what stands under `default`, and a name that the file does not export is a property of that: a CommonJS file, a module of Bun.
+    pub object_is_default: bool,
+    pub exported: Vec<BuiltinExported>,
+}
+
 pub struct ImportTargets {
     targets: Vec<(ImportSiteKind, Option<RuntimeModule>)>,
+    loaded_files: Vec<BuiltinsOfLoadedFile>,
 }
 
 impl ImportTargets {
@@ -160,7 +182,20 @@ impl ImportTargets {
         debug_assert!(targets.is_sorted_by(|left, right| left.0 < right.0));
         ImportTargets {
             targets: targets.to_vec(),
+            loaded_files: Vec::new(),
         }
+    }
+
+    /// Only whoever reads the files of a test run ahead of its builds knows this much about another file. A build leaves it to the engine, which follows the values.
+    pub fn with_loaded_files(mut self, mut files: Vec<BuiltinsOfLoadedFile>) -> ImportTargets {
+        files.shared_sort_unstable_by_key(|file| file.site);
+        self.loaded_files = files;
+        self
+    }
+
+    fn loaded_file_at(&self, site: ImportSiteKind) -> Option<&BuiltinsOfLoadedFile> {
+        let at = (self.loaded_files).binary_search_by_key(&site, |file| file.site);
+        at.ok().map(|at| &self.loaded_files[at])
     }
 
     fn module_at(&self, site: ImportSiteKind) -> Option<RuntimeModule> {
@@ -194,16 +229,22 @@ pub struct ResolveInput<'a, 's> {
     pub replaced_members_sought: ReplacedMembersSought,
 }
 
-/// What a file of a test run is searched for. See `replaced_members`.
+/// What a file is searched for. See `replaced_members`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ReplacedMembersSought {
-    /// No test run.
     None,
+    /// No test run: the names that the file adds to built-in objects where it writes them. What it replaces stays locked, and so does Object.prototype.
+    NamesAdded,
+    /// A file of a test run that an executable holds too. It is read as there, `NamesAdded`: what it replaces throws in the executable, and a suite that is green has to say so.
+    NamesAddedByProduct,
     /// Where the file writes a member of a built-in object. In a package a helper that is handed an object and a name mostly reads: `getNative(Object, "create")`.
     /// So there the object beside the name counts only for a member that is tested where it is used anyway, `fetch` and the timers: to open one costs nothing.
     Written,
     /// And where it may: the object beside the name.
     WrittenOrNamed,
+    /// A file of the project outside the folders of the tests. Whether an executable holds it shows behind the load, so it is read both ways: as `WrittenOrNamed`,
+    /// and what `NamesAdded` finds is kept beside it.
+    WrittenOrNamedUnlessOfProduct,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -249,9 +290,13 @@ pub struct ResolvedBuiltins {
     stores_with_module_exports: Box<[ExprId]>,
     replaced_members: Box<[BuiltinId]>,
     names_added: Box<[(BuiltinId, Atom)]>,
+    names_added_in_executable: Box<[(BuiltinId, Atom)]>,
     holders_named_from_outside: Box<[BuiltinId]>,
+    writes_on_parameters_under_any_name: bool,
     builtins_handed_out: Box<[BuiltinId]>,
+    builtins_exported: Box<[BuiltinExported]>,
     writes_on_imports: Box<[WriteOnImport]>,
+    modules_written_on: Box<[Atom]>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
     exposed: Box<[BuiltinId]>,
@@ -261,11 +306,14 @@ pub struct ResolvedBuiltins {
     keys_spelled_on_other_objects: Box<[(ExprId, Atom)]>,
     objects_spelled_for_calls: Box<[ObjectSpelled]>,
     keys_partly_read: Box<[ExprId]>,
+    calls_that_may_stub_global: Box<[(ExprId, BuiltinId)]>,
     keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
     keys_stored_in_module_cache: Box<[KeyOfModuleCache]>,
     hands_module_cache_on: bool,
     loses_sight_of_module_cache: bool,
+    names_plugin: bool,
     reaches_module_cache: bool,
+    reads_entries_of_module_cache: bool,
 }
 
 impl ResolvedBuiltins {
@@ -377,9 +425,19 @@ impl ResolvedBuiltins {
         &self.names_added
     }
 
+    /// Of a file of a package in a test run, `ReplacedMembersSought::Written`: what `names_added` holds where the build of an executable reads the file.
+    pub fn names_added_in_executable(&self) -> &[(BuiltinId, Atom)] {
+        &self.names_added_in_executable
+    }
+
     /// The objects that take no new names and that the file writes under a key which nothing in it spells: `export function plant(name) { Object.prototype[name] = 1; }`.
     pub fn holders_named_from_outside(&self) -> &[BuiltinId] {
         &self.holders_named_from_outside
+    }
+
+    /// The file writes on what a parameter holds, under a key which nothing in it spells: `export function silence(target, names) { for (const name of names) target[name] = noop; }`.
+    pub fn writes_on_parameters_under_any_name(&self) -> bool {
+        self.writes_on_parameters_under_any_name
     }
 
     /// The built-in objects that what the file exports stands for, holds or answers: `export const ofMath = () => new Proxy(Math, {})`.
@@ -387,9 +445,19 @@ impl ResolvedBuiltins {
         &self.builtins_handed_out
     }
 
+    /// Of a file of a test run: the built-ins that it exports, each under a binding that nothing stores to.
+    pub fn builtins_exported(&self) -> &[BuiltinExported] {
+        &self.builtins_exported
+    }
+
     /// Where the file writes, under the name of a member of some built-in object, on what comes out of an import.
     pub fn writes_on_imports(&self) -> &[WriteOnImport] {
         &self.writes_on_imports
+    }
+
+    /// The modules, as the file writes them, on whose exports it writes under a name that it spells: `import { File } from "parts"; File.prototype.own = 1`.
+    pub fn modules_written_on(&self) -> &[Atom] {
+        &self.modules_written_on
     }
 
     pub fn mentioned(&self) -> &[BuiltinId] {
@@ -432,6 +500,13 @@ impl ResolvedBuiltins {
         self.keys_partly_read.binary_search(&key).is_ok()
     }
 
+    pub fn stubs_that_call_may_be(&self, call: ExprId) -> impl Iterator<Item = BuiltinId> + '_ {
+        let calls = &self.calls_that_may_stub_global;
+        let start = calls.partition_point(|entry| entry.0 < call);
+        let end = calls.partition_point(|entry| entry.0 <= call);
+        calls[start..end].iter().map(|entry| entry.1)
+    }
+
     pub fn keys_spelled_for(&self, key: ExprId) -> impl Iterator<Item = Atom> + '_ {
         let keys = &self.keys_spelled_on_other_objects;
         let start = keys.partition_point(|entry| entry.0 < key);
@@ -454,15 +529,27 @@ impl ResolvedBuiltins {
         self.hands_module_cache_on
     }
 
-    /// The file names the table, or lets go of something that leads there: it may read what the table lists.
+    /// The file gets at an entry of the table: it may read what the entry exports, and store in it.
+    /// Whoever lists the keys, or compares what an entry exports with a value that he has, gets at none. Neither does whoever lets go of something that leads to the table, a `module` or
+    /// a `process`: who gets it names the table himself; and a `require` that goes out of sight is a loader that is given names which the build does not know, which has rules of its own.
     pub fn reaches_module_cache(&self) -> bool {
         self.reaches_module_cache
+    }
+
+    /// The file may read what an entry of the table exports. Whoever takes an entry out, or stores one, reads none.
+    /// Neither does whoever lets go of something that leads to the table, a `module` or a `process`: that is said of nearly every program, and who gets it names the table himself.
+    pub fn reads_entries_of_module_cache(&self) -> bool {
+        self.reads_entries_of_module_cache
     }
 
     /// The table goes where this file does not follow it: whoever gets it may take any entry out.
     /// Also where the file names `Bun.plugin`: what a plugin loads takes the place of a file as if that had been taken out.
     pub fn loses_sight_of_module_cache(&self) -> bool {
         self.loses_sight_of_module_cache
+    }
+
+    pub fn names_plugin(&self) -> bool {
+        self.names_plugin
     }
 
     pub fn loaded_modules(&self) -> impl Iterator<Item = RuntimeModule> + '_ {

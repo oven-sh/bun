@@ -85,8 +85,8 @@ typesite w22 module=m0 position=1632 kind=Variable
 typesite w23 module=m0 position=1654 kind=Variable
 typesite w24 module=m0 position=1780 kind=Variable
 typesite w25 module=m0 position=1811 kind=CallResult
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w10}}, {key=@"binding.1" declared={type=number|absent site=w11}}] ownFieldCount=2
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=number|absent site=w15}}] ownFieldCount=2
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w10} variableName="hits"}, {key=@"binding.1" declared={type=number|absent site=w11} variableName="last"}] ownFieldCount=2
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="read"}, {key=@"binding.1" declared={type=number|absent site=w15} variableName="hits"}] ownFieldCount=2
 variable g0 name="factor" module=m0 declared={type=number|absent site=w0}
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -240,7 +240,7 @@ function f2 name="outer" module=m0 position=1534 flags=[IsChecked, HasExplicitNa
     v22 = Convert v21 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} @1947
     Return v22 @1947
 }
-function f3 name="read" module=m0 position=1119 flags=[IsChecked, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}, {type=number site=w1}] thisType={type=anything} results=[{type=number site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="read" module=m0 position=1119 flags=[IsChecked, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}, {type=number site=w1 variableName="round"}] thisType={type=anything} results=[{type=number site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L0, v1: number):
     Jump -> next b1() @1119
   b1():

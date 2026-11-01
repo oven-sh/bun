@@ -1,9 +1,10 @@
 import { readTrimTable } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isGlibc, isLinux, isWindows } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/harness/commands";
+import { describe, test } from "../aot/listed";
 import { canTrim, featureNamed, getMappedSegments, model, tempDirForAotBuilds } from "./compile-trim-features";
 
 // An AOT-compiled program never runs the CLI or the JIT, so --aot removes the code that only those two need.
@@ -50,6 +51,11 @@ const findToolStrings = (file: Buffer) =>
 // Keys that ICU's date, number and currency formatters look up in its data.
 const formatterStrings = ["/DateTimePatterns%atTime", "CurrencyPlurals", "currencySpacing", "surroundingMatch"];
 
+// What the engine calls the doors through which the host lays, runs and ends a mock, where it counts what they do: MockDoor in AOTModules.cpp.
+// Only `bun:test` lays a mock. A door that a program without it keeps is reached by a way that the feature Test does not own, and all that stands behind the door with it:
+// `bun scripts/build/trim/why.ts <retained.txt> '[Mm]ock'` names the way.
+const mockStrings = ["the mock call", "deferMock, asks again", "setMock, none", "the loader fetches it"];
+
 const madeByIntl: Record<string, string> = {
   "Intl.Collator": `new Intl.Collator("en-US").compare("a", "b")`,
   "Intl.DateTimeFormat": `new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).formatRange(0, 86400000 * 40)`,
@@ -75,10 +81,13 @@ const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, 
 
 // What an executable maps whatever its program is, on Linux x64 with glibc. These bounds only go down.
 // One exception: the engine of WebKit e8f704815e94 has 167,808 bytes more that a trimmed executable keeps, and the second bound went up with it.
+// Restated once with oven-sh/bun#47605, to 68,980,000 and 26,400,000, and back where they stood before it: an executable no longer keeps the run-time operations that its image
+// does not list, and measures 67,894,605 and 25,427,277.
 const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_880_000 };
 // The bytes of the feature ImageCompiler in the trim table: about 22.50 MB when this was set, with about the 250 KB of room it had before.
 // Restated once, where the compiler was merged: it measured 23,647,988.
-const mostBytesOfCompiler = 23_750_000;
+// And once with oven-sh/bun#47605, from what CI measured there and 1%: 23,755,040.
+const mostBytesOfCompiler = 23_990_000;
 
 const importsItsArguments = `
   import { join } from "node:path";
@@ -127,6 +136,22 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
     expect(sharedBytes).toBeLessThan(16_384);
   });
 
+  // `--aot` keeps `bun:test`. One call from there into a reader of the compiler's tables keeps the tables in every executable.
+  test("the test runner keeps nothing of the compiler", () => {
+    const compiler = model.features.find(each => each.name === featureNamed("ImageCompiler"))!.index;
+    const runner = model.features.find(each => each.name === featureNamed("Test"))!.index;
+    const table = readTrimTable(bunExe());
+    let sharedBytes = 0;
+    for (const { start, end, set } of table.ranges) {
+      const users = table.sets[set]!;
+      const usersAtRunTime = users.filter(user => !removedByAot.has(user));
+      if (users.includes(compiler) && usersAtRunTime.length > 0 && usersAtRunTime.every(user => user === runner))
+        sharedBytes += end - start;
+    }
+    console.log("the compiler and the test runner share", sharedBytes, "bytes");
+    expect(sharedBytes).toBeLessThan(16_384);
+  });
+
   test.skipIf(!isGlibc || process.arch !== "x64")("every range of code of a page or more can be cut", () => {
     const onlyFilled = readTrimTable(bunExe()).ranges.filter(each => each.isCode && !each.canBeCut);
     expect(onlyFilled.filter(each => each.end - each.start >= 4096)).toEqual([]);
@@ -160,6 +185,18 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
         const bun = readFileSync(bunExe());
         expect(formatterStrings.filter(each => bun.includes(each))).toEqual(formatterStrings);
         expect(formatterStrings.filter(each => executable.includes(each))).toEqual([]);
+      },
+      600_000,
+    );
+
+    test.skipIf(!isGlibc || process.arch !== "x64" || flags.length === 0)(
+      "hello world contains no strings from the mocks",
+      async () => {
+        using dir = tempDirForAotBuilds("compile-aot-size", { "hello.ts": `console.log("hello world");` });
+        const executable = readFileSync(await build(String(dir), "hello"));
+        const bun = readFileSync(bunExe());
+        expect(mockStrings.filter(each => bun.includes(each))).toEqual(mockStrings);
+        expect(mockStrings.filter(each => executable.includes(each))).toEqual([]);
       },
       600_000,
     );

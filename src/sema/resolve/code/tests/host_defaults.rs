@@ -184,6 +184,7 @@ fn default_host_leaves_tree_and_payload_unchanged() {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
+            own_name: b"",
         },
         &atoms,
         arena,

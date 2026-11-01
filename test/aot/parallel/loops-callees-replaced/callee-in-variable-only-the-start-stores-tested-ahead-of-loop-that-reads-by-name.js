@@ -3,7 +3,7 @@
 const text = '{"id":7,"name":"row"}';
 
 let parse = JSON.parse;
-if (text.length > 1000) parse = String;
+if (process.argv.length > 99) parse = String;
 function storedOnlyAtStart(turns) {
   let sum = 0;
   for (let t = 0; t < turns; t++) {
@@ -14,7 +14,7 @@ function storedOnlyAtStart(turns) {
 }
 
 let byGetter = JSON.parse;
-if (text.length > 1000) byGetter = String;
+if (process.argv.length > 99) byGetter = String;
 const storesWhenRead = {
   get name() {
     byGetter = String;
@@ -28,7 +28,7 @@ function storedByGetter(rows) {
 }
 
 let byConversion = JSON.parse;
-if (text.length > 1000) byConversion = String;
+if (process.argv.length > 99) byConversion = String;
 const storesWhenAdded = {
   valueOf() {
     byConversion = String;
@@ -42,7 +42,7 @@ function storedByConversion(values) {
 }
 
 let byCallback = JSON.parse;
-if (text.length > 1000) byCallback = String;
+if (process.argv.length > 99) byCallback = String;
 function storedByCallback(lists) {
   let out = "";
   for (let t = 0; t < lists.length; t++) {
@@ -55,7 +55,7 @@ function storedByCallback(lists) {
 }
 
 let acrossAwaits = JSON.parse;
-if (text.length > 1000) acrossAwaits = String;
+if (process.argv.length > 99) acrossAwaits = String;
 async function storedWhileWaiting(rows) {
   let out = "";
   for (let t = 0; t < rows.length; t++) {
@@ -66,7 +66,7 @@ async function storedWhileWaiting(rows) {
 }
 
 let behindTheCall = JSON.parse;
-if (text.length > 1000) behindTheCall = String;
+if (process.argv.length > 99) behindTheCall = String;
 function storedBehindTheCall(rows) {
   let out = "";
   for (let t = 0; t < rows.length; t++) out += typeof behindTheCall(text) + rows[t].name.length + " ";

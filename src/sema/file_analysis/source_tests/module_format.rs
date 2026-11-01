@@ -3,6 +3,13 @@ use support::*;
 
 use ModuleFormat::{CommonJs, Esm};
 
+/// Programs whose names of CommonJS stand where `bun run` may fold them away. `what-a-file-is-taken-for.test.ts` beside the table runs each under `bun run` and in a build.
+const FORMATS_UNDER_BUN_RUN: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../test/aot/fold/what-a-file-is-taken-for.txt"
+));
+const MIN_FORMATS_UNDER_BUN_RUN: usize = 200;
+
 const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"export {};"#, Esm),
     ("a.js", r#"export const a = 1; module.exports = 2;"#, Esm),
@@ -432,6 +439,33 @@ const BUILD_FACTS: Fold<'static> = Fold {
     ..Fold::NONE
 };
 
+/// The three names that `bun run` replaces where nothing declares them, and `BUILD_FACTS`.
+const KNOWN_TO_EVERY_BUILD: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::Global(&["undefined"]),
+            Defined::Value(Data::Undefined),
+        ),
+        (
+            Path::Global(&["NaN"]),
+            Defined::Value(Data::Number(f64::NAN)),
+        ),
+        (
+            Path::Global(&["Infinity"]),
+            Defined::Value(Data::Number(f64::INFINITY)),
+        ),
+        (
+            Path::Global(&["Bun"]),
+            Defined::RuntimeValue(RuntimeValueKind::Object),
+        ),
+        (
+            Path::Global(&["process", "platform"]),
+            Defined::Value(Data::String("linux")),
+        ),
+    ],
+    ..Fold::NONE
+};
+
 const USER_DEFINES: Fold<'static> = Fold {
     defines: &[
         (
@@ -586,6 +620,12 @@ const FORMATS_WITH_USER_DEFINES: &[(&str, &str, ModuleFormat)] = &[
         "a.js",
         r#"if (process.platform === "linux" && OFF) require("a");"#,
         Esm,
+    ),
+    // Not yet: `bun run` reads the length out of the text that the define gives, and takes this file for an ES module.
+    (
+        "a.js",
+        r#"if (process.env.NODE_ENV.length === 3) require("a");"#,
+        CommonJs,
     ),
 ];
 
@@ -969,6 +1009,8 @@ const CONSTANT_SPECIFIERS: &[&str] = &[
     r#"switch (x) { case 0: const p = "ab"; break; default: require(p); }"#,
     r#"require((f(), "ab"));"#,
     r#"require(void f() || "ab");"#,
+    r#"require(([0][0], "ab"));"#,
+    r#"require(void [0][0] || "ab");"#,
 ];
 
 const UNRECORDED_SPECIFIERS: &[&str] = &[
@@ -1272,6 +1314,82 @@ fn format_follows_what_the_user_defines() {
             assert_eq!(analyzed.analysis.errors, [], "{path}: {text}");
         });
     }
+}
+
+#[test]
+fn format_is_what_the_table_says_that_a_build_takes_a_file_for() {
+    let format_of = |column: &str, line: usize| match column {
+        "cjs" => CommonJs,
+        "esm" => Esm,
+        _ => panic!("line {line}: {column:?} is no format"),
+    };
+    let lines = bun_core::strings::split(FORMATS_UNDER_BUN_RUN.as_bytes(), b"\n");
+    let mut row_count = 0;
+    for (index, row) in lines.enumerate() {
+        if row.is_empty() || row.starts_with(b"#") {
+            continue;
+        }
+        let line = index + 1;
+        let columns = bun_core::strings::split(row, b"\t");
+        let columns: Vec<&str> = columns
+            .map(|column| std::str::from_utf8(column).unwrap())
+            .collect();
+        let &[bun_run, build, extension, text] = &columns[..] else {
+            panic!("line {line} has {} columns", columns.len());
+        };
+        let bun_run = format_of(bun_run, line);
+        let format = match build {
+            "=" => bun_run,
+            _ => format_of(build, line),
+        };
+        assert!(
+            build == "=" || format != bun_run,
+            "line {line} names one format twice"
+        );
+        let path = format!("a.{extension}");
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&KNOWN_TO_EVERY_BUILD);
+            let analyzed = workspace.analyze(&Source::new(&path, text), &fold);
+            assert_eq!(
+                analyzed.analysis.module_format, format,
+                "line {line}: {text}"
+            );
+        });
+        row_count += 1;
+    }
+    assert!(row_count > MIN_FORMATS_UNDER_BUN_RUN, "{row_count} rows");
+}
+
+#[test]
+fn member_read_of_a_literal_names_a_file_at_run_time() {
+    for (path, text) in [
+        ("a.cjs", r#"require(["ab"][0]);"#),
+        ("a.cjs", r#"const p = ["ab"][0]; require(p);"#),
+        ("a.cjs", r#"require({ a: "ab" }.a);"#),
+        ("a.cjs", r#"require("a" + ["b"][0]);"#),
+        ("a.cjs", r#"require(["ab"][0] || x);"#),
+        ("a.cjs", r#"require(1 ? ["ab"][0] : x);"#),
+        ("a.cts", r#"require(["ab"][0] as string);"#),
+    ] {
+        analyzed(path, text, |s| {
+            let specifier = only_site(s, text).specifier;
+            let expected = [ImportSpecifier::Constant(s.workspace.atom("ab"))];
+            assert!(matches!(specifier, ImportSpecifier::OneOf(_)), "{text}");
+            assert_eq!(s.analysis.alternatives_of(&specifier), expected, "{text}");
+        });
+    }
+    let joined = r#"require(require(["node:path"][0]).join(__dirname, "a.js"));"#;
+    analyzed("a.cjs", joined, |s| {
+        let [_, file] = s.analysis.import_sites else {
+            panic!("{joined}: {:?}", s.analysis.import_sites);
+        };
+        assert_eq!(file.specifier, ImportSpecifier::Unknown, "{joined}");
+    });
+    let selected = r#"require((0, [[]][0]) ? "ab" : "cd");"#;
+    analyzed("a.cjs", selected, |s| {
+        let expected = ImportSpecifier::Constant(s.workspace.atom("ab"));
+        assert_eq!(only_site(s, selected).specifier, expected, "{selected}");
+    });
 }
 
 #[test]

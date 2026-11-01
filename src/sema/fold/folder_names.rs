@@ -69,8 +69,11 @@ impl<'s> Folder<'_, 's> {
 
     pub(super) fn fold_member(&mut self, e: ExprId, chain: Chain) -> Folded {
         let hir = self.hir;
-        let Some((obj, MemberKey::Name(name))) = hir.member_key(e) else {
+        let Some((obj, key)) = hir.member_key(e) else {
             return Folded::UNKNOWN;
+        };
+        let MemberKey::Name(name) = key else {
+            return self.fold_read_of_literal(e, obj, key);
         };
         let is_in_chain = chain != Chain::No;
         let form = LinkForm {
@@ -98,7 +101,7 @@ impl<'s> Folder<'_, 's> {
                 self.mark_folded_by_build_alone(e);
                 self.decide(e, Decision::Constant(Constant::Boolean(is_main)))
             }
-            Some(_) | None => Folded::UNKNOWN,
+            Some(_) | None => self.fold_read_of_literal(e, obj, key),
         }
     }
 
@@ -237,6 +240,9 @@ impl<'s> Folder<'_, 's> {
             }
             _ => {
                 self.copy_condition(ident, init);
+                if self.is_folded_by_bun_run_alone(init) {
+                    self.folded_by_bun_run_alone.insert(ident);
+                }
                 let effects = match is_const {
                     true => Effects::DeadZoneCheck,
                     false => Effects::Unknown,
@@ -344,6 +350,12 @@ impl<'s> Folder<'_, 's> {
                 ..
             })
         )
+    }
+
+    pub(super) fn is_callee(&self, e: ExprId) -> bool {
+        let callee = self.find_outermost_cast(e);
+        let parent_kind = self.parent_expr(callee).map(|parent| self.hir[parent].kind);
+        matches!(parent_kind, Some(ExprKind::Call(call)) if self.hir[call].callee == callee)
     }
 
     fn is_define_root(&self, ident: ExprId) -> bool {

@@ -2030,9 +2030,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     }
     case StringObjectType: {
         if (c2Type != StringObjectType) {
-            // A String subclass instance is DerivedStringObjectType. Only skipPrototype
-            // mode, where the constructor is ignored, treats it as an equivalent boxed
-            // string; every other mode keeps the existing "different type" answer.
+            // Only String.prototype is DerivedStringObjectType; a String subclass instance is
+            // StringObjectType. The strict skipPrototype modes compare it as the empty boxed
+            // string it is; every other mode keeps the "different type" answer.
             if (!(mode.isStrict && mode.skipPrototypeIdentity)) {
                 return false;
             } else if (c2Type != DerivedStringObjectType) {

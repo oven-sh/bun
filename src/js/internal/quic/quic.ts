@@ -77,7 +77,7 @@ const TypedArrayPrototypeGetByteLength = uncurryThis(
   Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "byteLength")!.get,
 );
 
-let debug = debuglog("quic", fn => {
+let debug: (...args: unknown[]) => void = debuglog("quic", fn => {
   debug = fn;
 });
 

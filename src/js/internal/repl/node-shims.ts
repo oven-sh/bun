@@ -68,11 +68,7 @@ const { shouldColorize } = require("internal/util/colors");
 
 // ---- internal/util/debuglog ----------------------------------------------
 
-function debuglog(set: string, cb?: (fn: (...args: unknown[]) => void) => void) {
-  const fn = util.debuglog(set);
-  if (typeof cb === "function") cb(fn);
-  return fn;
-}
+const { debuglog } = require("internal/util/debuglog");
 
 // ---- internal/util/inspector ----------------------------------------------
 

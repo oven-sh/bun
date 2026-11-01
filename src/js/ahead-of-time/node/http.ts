@@ -13,7 +13,12 @@ const { Server, ServerResponse } = require("node:_http_server");
 
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
-if (process.env.NODE_DEBUG) require("node:util").debuglog("http");
+if (process.env.NODE_DEBUG) {
+  // Node emits the NODE_DEBUG=http warning from its first http debug line. Bun's
+  // http does not log through debuglog, so resolve the logger when the module loads.
+  const { debuglog, debuglogImpl } = require("internal/util/debuglog");
+  if (debuglog("http").enabled) debuglogImpl(true, "HTTP");
+}
 
 type ServerParameters = Parameters<typeof Server>;
 type ClientRequestParameters = Parameters<typeof ClientRequest>;

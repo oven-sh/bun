@@ -802,3 +802,82 @@ describe("util.parseEnv", () => {
     expect(JSON.parse(JSON.stringify(parsed))).toEqual({ 0: "set", 2023: "y", A: "1", 4294967295: "notidx" });
   });
 });
+
+describe("util.debuglog", () => {
+  // Adapted from https://github.com/nodejs/node/blob/main/lib/internal/util/debuglog.js semantics:
+  // the logger has an `enabled` getter and calls the callback with the real logger on first use.
+  const fixture = `
+    const util = require("node:util");
+    const calls = [];
+    let debug = util.debuglog("foo", fn => {
+      calls.push(fn);
+      debug = fn;
+    });
+    const before = debug;
+    console.log("enabled:", debug.enabled);
+    console.log("descriptor:", JSON.stringify(Object.getOwnPropertyDescriptor(debug, "enabled"), (k, v) => typeof v === "function" ? "fn" : v));
+    console.log("bar enabled:", util.debuglog("bar").enabled);
+    console.log("callback before call:", calls.length);
+    debug("hello %s", "world");
+    console.log("callback after call:", calls.length, calls[0] === debug, before !== debug);
+    debug("second");
+    console.log("callback after second call:", calls.length);
+    console.log("debug alias:", util.debug === util.debuglog);
+  `;
+
+  async function run(NODE_DEBUG) {
+    const env = { ...bunEnv };
+    if (NODE_DEBUG === undefined) delete env.NODE_DEBUG;
+    else env.NODE_DEBUG = NODE_DEBUG;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: stderr.replaceAll(String(proc.pid), "<pid>"), exitCode };
+  }
+
+  it("enabled is true when NODE_DEBUG matches the section", async () => {
+    const { stdout, stderr, exitCode } = await run("foo");
+    expect(stdout).toBe(
+      [
+        "enabled: true",
+        'descriptor: {"get":"fn","enumerable":true,"configurable":true}',
+        "bar enabled: false",
+        "callback before call: 0",
+        "callback after call: 1 true true",
+        "callback after second call: 1",
+        "debug alias: true",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("FOO <pid>: hello world\nFOO <pid>: second\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("enabled is false when NODE_DEBUG is unset", async () => {
+    const { stdout, stderr, exitCode } = await run(undefined);
+    expect(stdout).toBe(
+      [
+        "enabled: false",
+        'descriptor: {"get":"fn","enumerable":true,"configurable":true}',
+        "bar enabled: false",
+        "callback before call: 0",
+        "callback after call: 1 true true",
+        "callback after second call: 1",
+        "debug alias: true",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("matches wildcards and comma lists case-insensitively", async () => {
+    const { stdout, exitCode } = await run("x,F*");
+    expect(stdout).toStartWith("enabled: true\n");
+    expect(exitCode).toBe(0);
+  });
+});

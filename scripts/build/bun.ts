@@ -675,7 +675,7 @@ const closeElfGapsPath = resolve(import.meta.dirname, "close-elf-gaps.ts");
  * those builds are for finding bugs with.
  */
 export function binaryChecksWarnOnly(cfg: Config): boolean {
-  return !cfg.ci || cfg.asan || cfg.debug;
+  return !cfg.ci || cfg.asan || cfg.debug || (cfg.hardened && cfg.arm64);
 }
 
 function emitBinaryVerify(

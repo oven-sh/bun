@@ -1266,8 +1266,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(jit || (linux && x64), "jit=false requires os=linux and arch=x64");
   assert(jit || !(partial.trimmable ?? false), "jit=false can't be combined with trimmable=true");
   assert(
-    !hardened || webkit === "local" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
-    "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli, or webkit=local",
+    !hardened || webkit === "local" || (abi === "gnu" && release && !asan && !assertions && !fuzzilli),
+    "hardened=true requires a Linux glibc release build without asan, assertions or fuzzilli, or webkit=local",
     { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
   );
   assert(

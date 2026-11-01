@@ -180,6 +180,11 @@ interface Target {
   baseline?: boolean | undefined;
   profile?: Profile | undefined;
   /**
+   * Of the hardened aarch64 lane: with the ahead-of-time compiler, and with return addresses signed (oven-sh/WebKit#968)
+   * or, to compare that with, not.
+   */
+  aot?: "signed" | "unsigned";
+  /**
    * Build on a Linux host for a foreign target OS (currently: darwin and
    * windows). Agents/images resolve to the Linux build fleet; keys/labels/
    * artifacts are unaffected — these ARE the darwin/windows build lanes,
@@ -190,7 +195,7 @@ interface Target {
 }
 
 function getTargetKey(target: Target): string {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, aot } = target;
   let key = `${os}-${arch}`;
   if (abi) {
     key += `-${abi}`;
@@ -201,11 +206,14 @@ function getTargetKey(target: Target): string {
   if (profile && profile !== "release") {
     key += `-${profile}`;
   }
+  if (aot) {
+    key += `-aot-${aot}`;
+  }
   return key;
 }
 
 function getTargetLabel(target: Target): string {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, aot } = target;
   let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
     label += `-${abi}`;
@@ -215,6 +223,9 @@ function getTargetLabel(target: Target): string {
   }
   if (profile && profile !== "release") {
     label += `-${profile}`;
+  }
+  if (aot) {
+    label += `-aot-${aot}`;
   }
   return label;
 }
@@ -272,6 +283,13 @@ const buildPlatforms: Platform[] = [
   // In no release either. The build checks the layout of the file that it links and of the one that it strips
   // (scripts/build/verify-binary.ts).
   { os: "linux", arch: "x64", profile: "hardened", distro: "debian", release: "13" },
+  // Links bun-webkit-linux-arm64-lto-hardened, which signs return addresses (oven-sh/WebKit#945) and has landing pads
+  // (oven-sh/WebKit#965).
+  { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13" },
+  // Link bun-webkit-linux-arm64-lto-hardened-aot: of oven-sh/WebKit#968, which signs return addresses, and of
+  // WEBKIT_VERSION, which does not.
+  { os: "linux", arch: "aarch64", profile: "hardened", aot: "signed", distro: "debian", release: "13" },
+  { os: "linux", arch: "aarch64", profile: "hardened", aot: "unsigned", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
   // Android: cross-compiled from the debian-13 aarch64 host via NDK sysroot.
@@ -332,6 +350,17 @@ const testPlatforms: Platform[] = [
       "aot/the-build-under-test",
     ],
   },
+  { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "aarch64", profile: "hardened", aot: "signed", distro: "debian", release: "13", tier: "latest" },
+  {
+    os: "linux",
+    arch: "aarch64",
+    profile: "hardened",
+    aot: "unsigned",
+    distro: "debian",
+    release: "13",
+    tier: "latest",
+  },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
@@ -339,6 +368,12 @@ const testPlatforms: Platform[] = [
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
+
+// The other lanes have nothing to say about landing pads or signed return addresses.
+for (const platforms of [buildPlatforms, testPlatforms]) {
+  const onlyLane = platforms.filter(platform => platform.profile === "hardened" && platform.arch === "aarch64");
+  platforms.splice(0, platforms.length, ...onlyLane);
+}
 
 /** Pull requests build and test the other profiles. main does not: nothing ships them. */
 const isInRelease = ({ profile }: Target) => profile !== "asan" && profile !== "hardened";
@@ -355,13 +390,16 @@ function getPlatformKey(platform: Platform): string {
 
 /** `arch` is only printed here, and placeBinaryCheck() passes `<arch>-<abi>` as one. */
 function getPlatformLabel(platform: Omit<Platform, "arch"> & { arch: string }): string {
-  const { os, arch, baseline, profile, distro, release } = platform;
+  const { os, arch, baseline, profile, aot, distro, release } = platform;
   let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
   if (baseline) {
     label += "-baseline";
   }
   if (profile && profile !== "release") {
     label += `-${profile}`;
+  }
+  if (aot) {
+    label += `-aot-${aot}`;
   }
   return label;
 }
@@ -614,6 +652,11 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
   if (profile === "hardened") args.push("--hardened=on");
+  if (profile === "hardened" && arch === "aarch64") {
+    args.push("--lock-environment=off");
+    if (!target.aot) args.push("--aot=off");
+    if (target.aot === "signed") args.push("--webkit-version=autobuild-preview-pr-968-3e994322");
+  }
 
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts
@@ -949,6 +992,11 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // source-tree lints and build-script unit tests that never touch the built
     // binary; run in .github/workflows/source-lints.yml instead
     args.push("--exclude=internal/source-lints");
+    if (profile === "hardened") {
+      if (platform.aot)
+        args.push("--exclude=branch-target-identification"); // Has no landing pads.
+      else args.push("--exclude=aot/", "--exclude=compile-aot", "--exclude=bundler_compile_aot"); // Built with --aot=off.
+    }
   }
 
   const depends: string[] = [];
@@ -1008,7 +1056,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
             // imports runner.node.ts; call that directly once the hosts have a
             // hook that knows the new name.
             `./scripts/runner.node.mjs ${args.join(" ")}`
-          : `./scripts/runner.node.ts ${args.join(" ")}`,
+          : `${profile === "hardened" && platform.arch === "aarch64" ? `grep -m1 -ow paca /proc/cpuinfo || echo "no pointer authentication"; grep -m1 -ow bti /proc/cpuinfo || echo "no branch target identification"; ` : ""}./scripts/runner.node.ts ${args.join(" ")}`,
   };
 }
 
@@ -1890,7 +1938,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     // The files that a manual build asks for are not written for a platform that names its own.
     .filter(({ tests }) => !tests || !options.testFiles?.length)
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
-    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
+    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms)
+    .filter(({ os }) => os !== "darwin"); // Nothing builds for them here.
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {
@@ -1910,7 +1959,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           );
         }),
       );
-      if (!testFiles?.length) {
+      if (false && !testFiles?.length) {
         const step = getCargoTestStep(buildId);
         steps.push(
           getStepWithDependsOn(

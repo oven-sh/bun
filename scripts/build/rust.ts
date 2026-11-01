@@ -38,7 +38,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
-import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
+import { computeCpuTargetFlags, rustLtoInLink, signsReturnAddresses } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { envify } from "./rust/cargo-env.ts";
 import { emitGeneratedInputsCheck, emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
@@ -379,6 +379,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
   if (cfg.hardened) rustflags.push("-Coverflow-checks=on");
   if (cfg.hardened) rustflags.push("-Zub-checks=yes");
+  if (signsReturnAddresses(cfg)) rustflags.push(`-Zbranch-protection=${cfg.aot ? "" : "bti,"}pac-ret`);
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
   // sits on one core while the rest idle. With this, independent compiler

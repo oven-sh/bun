@@ -973,6 +973,20 @@ describe.concurrent("GitHub template", () => {
     },
   );
 
+  it("GITHUB_API_DOMAIN with a trailing slash still requests /repos/..., not //repos/...", async () => {
+    using github = await serveGithub(createTest);
+    using dir = tempDir("create-github-domain-slash", {});
+    const { out, err, exitCode } = await create(String(dir), ["github.com/dylan-conway/create-test", "--no-install"], {
+      ...github.env,
+      GITHUB_API_DOMAIN: `${github.env.GITHUB_API_DOMAIN}/`,
+    });
+
+    expect(err).not.toContain("error:");
+    expect(github.requests).toEqual(["/repos/dylan-conway/create-test/tarball"]);
+    expect(out).toContain("Success! dylan-conway/create-test loaded into create-test");
+    expect(exitCode).toBe(0);
+  });
+
   // The destination lost its .npmignore, and `git add` + `git commit` ran in the user's repository.
   it("leaves the .npmignore and the git repository of an existing destination alone", async () => {
     using github = await serveGithub({ "tpl.txt": "template" });

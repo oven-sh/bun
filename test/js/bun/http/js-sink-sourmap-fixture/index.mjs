@@ -5596,7 +5596,7 @@ try {
   });
   console.log(`Listening on http://localhost:${server.port}...`);
 
-  const result = await fetch(`${server.url}/stream`).then(res => res.text());
+  const result = await fetch(new URL("/stream", server.url)).then(res => res.text());
   process.exit(result == "nitroisawesome" ? 0 : 2);
 } catch {
   process.exit(1);

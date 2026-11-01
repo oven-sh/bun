@@ -417,8 +417,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             return false;
         };
         let api = match dot.name.slice() {
-            // Any receiver matches, so the name doesn't take the file off the cache key it shares with `bun run`.
-            // `uses_test_api()` only turns true during the visit, so a file that passes here gets a key of its own.
+            // A file without its own cache key has to transpile as under `bun run`. `uses_test_api()` never turns false again.
             b"toMatchInlineSnapshot" | b"toThrowErrorMatchingInlineSnapshot" => {
                 return self.options.features.is_test_entry_point || self.uses_test_api();
             }

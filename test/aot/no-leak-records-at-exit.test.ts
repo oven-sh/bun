@@ -110,7 +110,10 @@ const envWithSystemMalloc = { ...env, Malloc: "1", LSAN_OPTIONS: "malloc_context
 /** Without the line that names the port of a default export that is served. */
 const getLines = (stdout: string) => stdout.replace(/^Started (development )?server: .*\n/gm, "");
 
-/** The name of a function, without its return type, its arguments and what follows them. */
+/**
+ * The name of a function, without its return type, its arguments and what follows them. A function that is written in another
+ * has that one's name in front: the name of `Text::measure() const::$_0::operator()() const` is `Text::measure::$_0::operator`.
+ */
 function getFunctionName(frame: string): string {
   if (frame.startsWith("<")) return frame;
   let depth = 0;
@@ -122,7 +125,7 @@ function getFunctionName(frame: string): string {
   }
   const words = name
     .replace(/ requires .*$/, "")
-    .replace(/(?: (?:const|volatile|&&?))+$/, "")
+    .replace(/(?: (?:const|volatile|&&?))+(?=::|$)/g, "")
     .trim()
     .split(" ");
   // `operator new`, and a conversion to a type of several words: `operator unsigned long`.
@@ -130,10 +133,18 @@ function getFunctionName(frame: string): string {
   return words.slice(operator < 0 ? -1 : operator).join(" ");
 }
 
-const isAllocator = (frame: string) =>
-  /^(malloc|calloc|realloc|posix_memalign|aligned_alloc|operator new|pas_|bmalloc_|__rust_|__rdl_|__rustc::|<(alloc|core|std)::)/.test(
-    frame,
-  ) || /^(WTF|bmalloc|std|alloc|core|hashbrown)::|\boperator new(\[\])?$/.test(getFunctionName(frame));
+/**
+ * Whether the function of a frame is an allocator or a container. The crate or the namespace that its name starts with says
+ * whose a function is. A method of Rust has its type first: `<hashbrown::raw::RawTable<T>>::reserve_rehash`. The method of a
+ * type that is in no crate, as a slice and a reference are, is taken for the language's own: `<[u8]>::to_vec`.
+ */
+function isAllocator(frame: string): boolean {
+  const name = getFunctionName(frame);
+  if (/^(malloc|calloc|realloc|posix_memalign|aligned_alloc|pas_|bmalloc_|__rust_|__rdl_)/.test(name)) return true;
+  if (/\boperator new(\[\])?$/.test(name)) return true;
+  const library = /^<*(\w+)::/.exec(name)?.[1];
+  return library ? /^(WTF|bmalloc|std|alloc|core|hashbrown|smallvec|__rustc)$/.test(library) : name.startsWith("<");
+}
 
 // Where a frame is, behind its function: an executable and an offset, or a file and a line. The path of the executable may have
 // a space in it, and so may the path of a file that starts at the root. Any other path of a file is taken to have none.
@@ -325,6 +336,15 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
 `,
   ],
   [
+    "the function is written in a member for what is const",
+    "app::Text::measure::$_0::operator",
+    `Direct leak of 48 byte(s) in 1 object(s) allocated from:
+    #0 0x55af84abd4f8 in malloc (/tmp/local/text+0xde4f8) (BuildId: 5e5e7a9e662d967fc3f52f2336c5ba7e5708fbac)
+    #1 0x55af84b01cd8 in app::Text::measure() const::$_0::operator()(unsigned long) const /tmp/local/text.cpp:10:92
+    #2 0x55af84b01c62 in app::Text::measure() const /tmp/local/text.cpp:11:10
+`,
+  ],
+  [
     "inlined functions of Rust have their last word for a name",
     "<bun_runtime::server::NewServer<false, true>>::init",
     `Direct leak of 3080704 byte(s) in 2 object(s) allocated from:
@@ -347,6 +367,33 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
     #10 0x000019af2e77 in alloc::boxed::box_new_uninit /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:251:18
     #12 0x0000191a2836 in <bun_collections::hive_array::Fallback<bun_runtime::server::request_context::RequestContext<bun_runtime::server::NewServer<false, true>, false, true, false>, 2048>>::new_boxed /workspace/bun/src/collections/hive_array.rs:594:25
     #13 0x000019d0318c in <bun_runtime::server::NewServer<false, true> as bun_runtime::server::ServerPools<false, true>>::request_pool::{closure#0} /workspace/bun/src/runtime/server/mod.rs:3522:29
+`,
+  ],
+  [
+    "a hash table of Rust grew",
+    "<app::Names>::remember",
+    `Direct leak of 1072 byte(s) in 1 object(s) allocated from:
+    #0 0x0000002e7664 in malloc (/tmp/rust-app/target/x86_64-unknown-linux-gnu/release/app+0x2e7664) (BuildId: 34af1d1e14c722d4d62bc837dd2ac23a882020f1)
+    #2 0x00000033828a in __rustc::__rdl_alloc /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/alloc.rs:472:13
+    #12 0x000000315b4f in reserve_rehash_inner<alloc::alloc::Global> /opt/rust/registry/src/index.crates.io-1949cf8c6b5b557f/hashbrown-0.17.1/src/raw.rs:2784:22
+    #13 0x000000315b4f in <hashbrown::raw::RawTable<(alloc::string::String, usize)>>::reserve_rehash::<hashbrown::map::make_hasher<alloc::string::String, usize, std::hash::random::RandomState>::{closure#0}> /opt/rust/registry/src/index.crates.io-1949cf8c6b5b557f/hashbrown-0.17.1/src/raw.rs:962:24
+    #17 0x0000003178a2 in insert<alloc::string::String, usize, std::hash::random::RandomState, alloc::alloc::Global> /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1333:19
+    #18 0x0000003178a2 in <app::Names>::remember /tmp/rust-app/src/main.rs:14:18
+    #19 0x000000316fd7 in app::leak /tmp/rust-app/src/main.rs:33:15
+`,
+  ],
+  [
+    "a small vector of Rust copied a slice, as in a debug build",
+    "<app::Lines>::copy",
+    `Direct leak of 32 byte(s) in 1 object(s) allocated from:
+    #0 0x0000003a0644 in malloc (/tmp/rust-app/target/x86_64-unknown-linux-gnu/debug/app+0x3a0644) (BuildId: 6253325cdff4c53eff796a61540cc055eb0492fd)
+    #2 0x0000004f2471 in __rustc::__rdl_alloc /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/alloc.rs:472:13
+    #10 0x0000003d2503 in <alloc::vec::Vec<u32>>::with_capacity_in /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:973:20
+    #11 0x0000003d1a4f in <u32 as <[_]>::to_vec_in::ConvertVec>::to_vec::<alloc::alloc::Global> /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/slice.rs:448:29
+    #13 0x0000003d1b8b in <[u32]>::to_vec /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/slice.rs:376:14
+    #14 0x0000003da83e in <smallvec::SmallVec<[u32; 4]>>::from_slice /opt/rust/registry/src/index.crates.io-1949cf8c6b5b557f/smallvec-1.15.1/src/lib.rs:1759:31
+    #15 0x0000003de114 in <app::Lines>::copy /tmp/rust-app/src/main.rs:25:25
+    #16 0x0000003ddc89 in app::leak /tmp/rust-app/src/main.rs:35:17
 `,
   ],
 ];

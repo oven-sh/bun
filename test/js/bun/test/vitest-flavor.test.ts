@@ -2647,6 +2647,31 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test("toHaveProperty() with a Symbol in an array path", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            const s = Symbol("k");
+            console.log(name, [
+              outcome(() => expect({ [s]: 1 }).toHaveProperty([s])),
+              outcome(() => expect({ [s]: 1 }).toHaveProperty([s], 1)),
+              outcome(() => expect({ a: { [s]: { b: 2 } } }).toHaveProperty(["a", s, "b"], 2)),
+              outcome(() => expect({ [s]: 1 }).not.toHaveProperty([s])),
+            ].join(" "));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["bun passes passes passes fails", "vitest fails fails fails passes"],
+      exitCode: 0,
+    });
+  });
+
   test("toHaveProperty() on undefined and null", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

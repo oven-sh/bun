@@ -2631,7 +2631,8 @@ describe("expect()", () => {
     expect(new Date()).toHaveProperty("getTime");
   });
 
-  test("toHaveProperty() - symbol keys in an array path", () => {
+  // Vitest turns each element of an array path into a string.
+  test_skipIf(isVitest)("toHaveProperty() - symbol keys in an array path", () => {
     const s = Symbol("k");
     const other = Symbol("k");
     expect({ [s]: 1 }).toHaveProperty([s]);
@@ -2645,6 +2646,8 @@ describe("expect()", () => {
     expect({ [Symbol.iterator]: 1 }).toHaveProperty([Symbol.iterator], 1);
     expect([]).toHaveProperty([Symbol.iterator]);
     expect({}).not.toHaveProperty([s]);
+    expect(() => expect({}).toHaveProperty([s])).toThrow("Unable to find property");
+    expect(() => expect({ [s]: 1 }).not.toHaveProperty([s])).toThrow("Expected path: not");
   });
 
   test("toHaveProperty() - all", () => {

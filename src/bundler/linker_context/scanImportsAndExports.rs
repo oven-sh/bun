@@ -1278,7 +1278,17 @@ pub(crate) fn scan_imports_and_exports(
                             // code should see "__esModule". This is an extremely complex
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
-                            if kind == ImportKind::Require {
+                            // Not for a lifted CommonJS file, which only ESM output has.
+                            if kind == ImportKind::Require
+                                && !(output_format == Format::Esm
+                                    && LinkerContext::require_returns_namespace(
+                                        col_ref!(ast_flags_list),
+                                        col_ref!(exports_kind),
+                                        col_ref!(export_star_import_records),
+                                        col_ref!(import_records_list),
+                                        other_source_index,
+                                    ))
+                            {
                                 col!(import_records_list)[id].as_mut_slice()
                                     [import_record_index as usize]
                                     .flags

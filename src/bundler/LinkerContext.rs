@@ -4449,6 +4449,40 @@ impl<'a> LinkerContext<'a> {
             && ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
     }
 
+    /// Is `target` a lifted CommonJS file, whose namespace object `require()` returns with no copy?
+    pub(crate) fn require_returns_namespace(
+        ast_flags: &[AstFlags],
+        exports_kinds: &[ExportsKind],
+        export_star_import_records: &[bun_alloc::AstVec<u32>],
+        import_records: &[bun_ast::import_record::List<'_>],
+        target: u32,
+    ) -> bool {
+        let mut file = target as usize;
+        for _ in 0..ast_flags.len() {
+            // The flag is also on CommonJS, JSON, text and empty files of a listed package.
+            if !ast_flags[file].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                || !matches!(
+                    exports_kinds[file],
+                    ExportsKind::Esm | ExportsKind::EsmWithDynamicFallbackFromCjs
+                )
+            {
+                return false;
+            }
+            // A lifted `module.exports = require("./impl")` is an `export *`: `./impl` decides.
+            let Some(&star) = export_star_import_records[file].first() else {
+                return true;
+            };
+            let source = import_records[file].as_slice()[star as usize].source_index;
+            // An external module can be an ES module.
+            if !source.is_valid() {
+                return false;
+            }
+            file = source.get() as usize;
+        }
+        // The walk is a cycle of lifted files.
+        true
+    }
+
     /// Resolves every named import in one file to its matching export,
     /// recording the bindings in `imports_to_bind`.
     pub(crate) fn match_imports_with_exports_for_file(

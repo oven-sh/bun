@@ -524,6 +524,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                 }
                 CalleeKnowledge::Bound => {
+                    if self.file.builtins.of_pure_expr(written).is_none() {
+                        self.lower_expression_for_effect(callee);
+                    }
                     return Some(self.lower_untested_call(call, arguments, operation, &site));
                 }
                 CalleeKnowledge::Expected(expected) => CalleeTest::Expected(expected),

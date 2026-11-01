@@ -228,7 +228,7 @@ test("bun build --env folds values that are not UTF-8 as process.env reads them"
   });
   // A value that the test process inherits would win over the one in `.env`.
   const env: Record<string, string | undefined> = { ...bunEnv };
-  for (const name of ["PUB_A", "PUB_B", "PUB_X", "PUB_Y", "PUB_C", "PUB_N"]) delete env[name];
+  for (const name of Object.keys(env)) if (/^PUB_/i.test(name)) delete env[name];
   await using build = Bun.spawn({
     cmd: [bunExe(), "build", "--env", "PUB_*", "--minify-syntax", "entry.mjs", "--outfile", "out/out.mjs"],
     env,

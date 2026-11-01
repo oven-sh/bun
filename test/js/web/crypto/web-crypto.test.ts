@@ -1654,6 +1654,11 @@ describe("JWK import validation", () => {
       () => "resolved",
       e => e.name,
     );
+  const rsaPublic = {
+    kty: "RSA",
+    n: "ylJkPUUI1WdwPhfxioPyUeFOVdmpIAMNID4uCvhtnqdH3P-yDl4V9Qvcjvb4SnB1eHOWKpXhpkA1uD3gmmebqvmRJB242EbTaf89mLr6BxFvSDUBwHxMzYgewnXFUJiA85rOUrVL9mDZcwwVvpCT3836iq4_RfDIuQEKOi5OntU",
+    e: "AQAB",
+  };
 
   it.each([
     ["Ed25519", "sign", "K1wIouqnuiA04b3WrMa-xKIKIpfHetNZRv3h9fBf768", "wVK6M3SMhQh3NK-7GRrSV-BVWQx1FO5pW8hhQeu_NdA"],
@@ -1751,21 +1756,14 @@ describe("JWK import validation", () => {
 
   // JsonWebKey.key_ops is sequence<DOMString>, and RFC 7517 section 4.3 lets a JWK name operations that are not a
   // KeyUsage. One row for each place that checks key_ops: CryptoKey{AES,RSA,EC}::importJwk, the two branches of
-  // CryptoKeyOKP::importJwk, and the HMAC, ChaCha20-Poly1305 and ML-DSA importers.
+  // CryptoKeyOKP::importJwk, and the HMAC, ChaCha20-Poly1305 and ML-DSA importers. Each row also exports its key,
+  // because every key type builds the key_ops that it exports from the usages.
   it("takes a key_ops entry that is not a KeyUsage, and rejects a repeated one, for every key type", async () => {
     const oct = { kty: "oct", k: Buffer.alloc(32, 1).toString("base64url") };
     const mlDsa = (await crypto.subtle.generateKey("ML-DSA-44", true, ["sign", "verify"])) as CryptoKeyPair;
     const cases: [any, JsonWebKey, KeyUsage[]][] = [
       ["AES-GCM", oct, ["encrypt"]],
-      [
-        { name: "RSA-OAEP", hash: "SHA-256" },
-        {
-          kty: "RSA",
-          n: "ylJkPUUI1WdwPhfxioPyUeFOVdmpIAMNID4uCvhtnqdH3P-yDl4V9Qvcjvb4SnB1eHOWKpXhpkA1uD3gmmebqvmRJB242EbTaf89mLr6BxFvSDUBwHxMzYgewnXFUJiA85rOUrVL9mDZcwwVvpCT3836iq4_RfDIuQEKOi5OntU",
-          e: "AQAB",
-        },
-        ["encrypt"],
-      ],
+      [{ name: "RSA-OAEP", hash: "SHA-256" }, rsaPublic, ["encrypt"]],
       [
         { name: "ECDSA", namedCurve: "P-256" },
         {
@@ -1779,27 +1777,34 @@ describe("JWK import validation", () => {
       ["Ed25519", { kty: "OKP", crv: "Ed25519", x: "S89QWE7a6JwjIPX04rf9qxlJ9vQxs5bSW1NxjR03mls" }, ["verify"]],
       ["X25519", { kty: "OKP", crv: "X25519", x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr06uFD1q1y5Go" }, []],
       [{ name: "HMAC", hash: "SHA-256" }, oct, ["sign"]],
-      ["ChaCha20-Poly1305", oct, ["encrypt"]],
+      ["ChaCha20-Poly1305", oct, ["encrypt", "decrypt", "wrapKey", "unwrapKey"]],
       ["ML-DSA-44", await crypto.subtle.exportKey("jwk", mlDsa.publicKey), ["verify"]],
     ];
     const results: unknown[] = [];
     for (const [algorithm, jwk, usages] of cases) {
       const importWith = (key_ops: string[]) =>
-        crypto.subtle.importKey("jwk", { ...jwk, key_ops }, algorithm, true, usages).then(
+        crypto.subtle.importKey("jwk", { ...jwk, key_ops }, algorithm, true, usages);
+      const usagesWith = (key_ops: string[]) =>
+        importWith(key_ops).then(
           key => key.usages,
           e => e.name,
         );
       results.push({
         algorithm: algorithm.name ?? algorithm,
-        foreign: await importWith([...usages, "urn:example:op"]),
-        foreignTwice: await importWith([...usages, "urn:example:op", "urn:example:op"]),
-        foreignAlone: await importWith(["urn:example:op"]),
+        foreign: await usagesWith([...usages, "urn:example:op"]),
+        exported: await importWith([...usages, "urn:example:op"]).then(
+          async key => (await crypto.subtle.exportKey("jwk", key)).key_ops,
+          e => e.name,
+        ),
+        foreignTwice: await usagesWith([...usages, "urn:example:op", "urn:example:op"]),
+        foreignAlone: await usagesWith(["urn:example:op"]),
       });
     }
     expect(results).toEqual(
       cases.map(([algorithm, , usages]) => ({
         algorithm: algorithm.name ?? algorithm,
         foreign: usages,
+        exported: usages,
         foreignTwice: "DataError",
         // key_ops must hold each requested usage. X25519 asks for none.
         foreignAlone: usages.length ? "DataError" : [],
@@ -1833,6 +1838,16 @@ describe("JWK import validation", () => {
       repeatedAfterConversion: "DataError",
       notASequence: "TypeError",
     });
+  });
+
+  // RsaOtherPrimesInfo has no required member, so an entry with no r, d or t converts and the key type decides.
+  it("converts an oth entry that has no r, d or t", async () => {
+    const importWith = (algorithm: any, jwk: JsonWebKey, usage: KeyUsage) =>
+      rejection(crypto.subtle.importKey("jwk", { ...jwk, oth: [{}] }, algorithm, true, [usage]));
+    expect({
+      aes: await importWith("AES-GCM", { kty: "oct", k: Buffer.alloc(16).toString("base64url") }, "encrypt"),
+      rsa: await importWith({ name: "RSA-OAEP", hash: "SHA-256" }, rsaPublic, "encrypt"),
+    }).toEqual({ aes: "resolved", rsa: "DataError" });
   });
 
   it("unwrapKey takes such key_ops too, and exportKey gives the usages alone", async () => {

@@ -1,4 +1,4 @@
-// Small programs that print in which order the jobs of a program and the steps of a first import() come.
+// Small programs that print the order of a program's jobs relative to the steps of a first import().
 
 const head = `const log = (globalThis.log = []);
 function chain(name, length) {
@@ -323,7 +323,8 @@ export function make(name: string) {
   return { file: "main.mjs", text: head + main, files };
 }
 
-// While a graph of three levels is being loaded beside a chain of jobs, one job of the chain asks for a module. Once for every turn of the chain up to the one in which the graph has run.
+// While a three-level graph loads beside a chain of jobs, one job of the chain imports a module. Once for every step of
+// the chain up to the one in which the graph has run.
 const says = (name: string) => `globalThis.log.push(${JSON.stringify(name)});\n`;
 export const eventsBesideLoad: Record<
   string,

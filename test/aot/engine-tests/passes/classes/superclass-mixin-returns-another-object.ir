@@ -181,7 +181,7 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b2(v7: L2|L4|Object ~ L2|L4):
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v8: object ~ L0|L2|L6 = NewObject v2 layout=L0 allocationSite=6 allocationClass=0
+# CHECK-NEXT: v8: object ~ L2 = NewObject v2 layout=L0 allocationSite=6 allocationClass=0
 # CHECK-NEXT: v9: L2 = AssumeType v8 provenType=L2
 # CHECK-NEXT: Jump -> next b2(v9)
 # CHECK-NEXT: }

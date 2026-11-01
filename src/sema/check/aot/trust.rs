@@ -4,6 +4,7 @@ use crate::bind::Decl;
 use crate::hir::Flags;
 use crate::program::{FileId, FileRole, Sym};
 use crate::types::{Origin, Prop, PropSource, TypeData, TypeId};
+use crate::util::List;
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
@@ -76,8 +77,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (is_single && has_code && !is_ambient).then_some(class)
     }
 
-    pub(super) fn member_trust(&self, declarations: &[(FileId, Decl)]) -> Trust {
-        self.weakest_file_trust(declarations.iter().map(|&(file, _)| file))
+    /// One name may be assigned to at thousands of places, which are all declarations of it, and each of them asks.
+    pub(super) fn member_trust(&mut self, declarations: &List<'p, (FileId, Decl)>) -> Trust {
+        let permanent = match declarations {
+            List::Permanent(permanent) if permanent.len() > 4 => Some(permanent.as_ptr() as usize),
+            _ => None,
+        };
+        if let Some(&known) = permanent.and_then(|list| self.memo.member_trusts.get(&list)) {
+            return known;
+        }
+        let trust = self.weakest_file_trust(declarations.iter().map(|&(file, _)| file));
+        if let Some(list) = permanent {
+            self.memo.member_trusts.insert(list, trust);
+        }
+        trust
     }
 
     fn weakest_file_trust(&self, files: impl Iterator<Item = FileId>) -> Trust {

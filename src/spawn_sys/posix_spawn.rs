@@ -661,6 +661,11 @@ pub mod posix_spawn {
         }
     }
 
+    /// The highest `ru_maxrss` of the children reaped since this was last set to zero. The kernel counts in it what a child has
+    /// waited for itself. `bun test --aot` asks for each test file.
+    pub static LARGEST_REAPED_CHILD: core::sync::atomic::AtomicU64 =
+        core::sync::atomic::AtomicU64::new(0);
+
     /// Same as waitpid, but also returns resource usage information.
     pub fn wait4(
         pid: pid_t,
@@ -687,6 +692,14 @@ pub mod posix_spawn {
             };
             match errno(rc) {
                 Errno::SUCCESS => {
+                    if rc > 0 && !usage_ptr.is_null() {
+                        // SAFETY: the kernel has filled what `usage_ptr` points to.
+                        let highest = unsafe { (*usage_ptr).ru_maxrss };
+                        LARGEST_REAPED_CHILD.fetch_max(
+                            u64::try_from(highest).unwrap_or(0),
+                            core::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
                     return sys::Result::Ok(WaitPidResult {
                         pid: pid_t::try_from(rc).expect("int cast"),
                         status: status as u32,

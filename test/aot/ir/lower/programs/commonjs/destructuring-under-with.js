@@ -223,7 +223,7 @@ console.log("`var` in a loop head:", loopHeadsStoreThroughScope());
 // CHECK-NEXT: Rethrow v37
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] length=2 captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] length=2 captures=[{type=undefined|null|Array flags=[IsExpected] variableName="order"}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array, v1: anything, v2: undefined|null|string|symbol):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

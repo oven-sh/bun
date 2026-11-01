@@ -225,13 +225,12 @@ describe.concurrent("bun run", () => {
               });
 
               await using proc = Bun.spawn({
-                // TODO: figure out why -c is necessary here.
                 cmd: [
                   bunExe(),
                   ...(withRun ? ["run"] : []),
-                  "-c=" + join(String(dir), "bunfig.toml"),
+                  ...(withLogLevel ? ["-c=" + join(String(dir), "bunfig.toml")] : []),
                   "./index.js",
-                ].filter(Boolean),
+                ],
                 cwd: String(dir),
                 env: bunEnv,
                 stdout: "pipe",

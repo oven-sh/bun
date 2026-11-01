@@ -547,17 +547,17 @@ function f6 name="again" module=m0 position=1670 flags=[HasExplicitName] length=
 # -- generated: f0 kept twice again
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 552, patchpoints: 76, rare instructions: 185, polls: 15
+# CHECK-NEXT: instructions: 591, patchpoints: 79, rare instructions: 408, polls: 20
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="kept"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 94, patchpoints: 12, rare instructions: 40, polls: 1
+# CHECK-NEXT: instructions: 84, patchpoints: 11, rare instructions: 23, polls: 3
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="twice"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 205, patchpoints: 29, rare instructions: 172, polls: 1
+# CHECK-NEXT: instructions: 203, patchpoints: 29, rare instructions: 171, polls: 1
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="again"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 192, patchpoints: 28, rare instructions: 146, polls: 5
+# CHECK-NEXT: instructions: 199, patchpoints: 29, rare instructions: 349, polls: 5
 # CHECK-NEXT: end of function f6

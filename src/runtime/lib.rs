@@ -5,6 +5,8 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
+// For what runs once per process or per test file, or only words a message: `#[optimize(size)]`.
+#![feature(optimize_attribute)]
 // For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
 #![feature(rustc_attrs)]
 #![allow(internal_features)]

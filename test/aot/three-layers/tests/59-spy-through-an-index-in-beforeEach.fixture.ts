@@ -1,0 +1,12 @@
+import { spyOn, mock, beforeEach, afterEach } from "bun:test";
+import * as index from "../src/spies/index";
+import { own, callsOwn } from "../src/spies/own";
+import { fetchIt, usesAll } from "../src/spies/kinds";
+import { say } from "../src/spies/say";
+let spy: ReturnType<typeof spyOn>;
+beforeEach(() => { spy = spyOn(index, "own").mockImplementation(() => "from beforeEach"); });
+afterEach(() => { mock.restore(); });
+const all = async () => [index.own(), own(), callsOwn(), index.theDefault(), index.kinds.default(), await index.fetchIt(), await fetchIt(), (await usesAll()).slice(4)];
+say("59", "a spy set in beforeEach, first test", async () => [await all(), spy.mock.calls.length]);
+say("59", "second test, one more spy through the index", async () => { spyOn(index, "fetchIt").mockResolvedValue("through the index"); spyOn(index, "theDefault").mockReturnValue("default through the index"); return [await all(), spy.mock.calls.length]; });
+say("59", "third test sees only the first spy", async () => [await all(), spy.mock.calls.length]);

@@ -1,8 +1,16 @@
 // Compiled code hands a trap of a proxy the key as a string. For a name that the program writes, that string is made once and kept, so a collection takes away nothing that the next access through the proxy would have to look up again.
 // Env: JSC_aotCountsPath=/dev/null
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const operations = ["GetById", "GetByIdAndCache", "GetByVal", "GetByValAndCache", "GetGeneric", "GetByValGeneric", "InByIdAndCache", "InByValAndCache", "PutById", "PutByIdSloppy", "PutByIdAndCache", "FillSiteCache", "GetWithProxyTrap", "HasWithProxyTrap", "SetWithProxyTrap"];
-const asked = () => operations.reduce((sum, name) => sum + count("operationAOT" + name), 0);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for.
+function callsIn(counts) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined) sum += Number(calls);
+  }
+  return sum;
+}
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 let keys = null;
 let letters = 0;
@@ -24,12 +32,13 @@ function turn() {
 let sum = 0;
 for (let i = 0; i < 60; i++) sum += turn();
 letters = 0;
-const before = asked();
+const before = countsSoFar();
 for (let round = 0; round < 50; round++) {
   collect();
   for (let i = 0; i < 20; i++) sum += turn();
 }
-console.log(sum, letters, "the run time is asked at most 10 times for 9000 accesses through proxies behind 50 collections:", asked() - before <= 10);
+const after = countsSoFar();
+console.log(sum, letters, "the run time is asked at most 10 times for 9000 accesses through proxies behind 50 collections:", callsIn(after) - callsIn(before) <= 10);
 keys = [];
 sum += turn();
 console.log(sum, keys.join(" "), keys.every(key => typeof key === "string"));

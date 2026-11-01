@@ -18,6 +18,8 @@
 // `--validates 100` builds each batch a second time with --aot-validate and runs it: a program at which that executable stops is kept.
 // `--collects 100` runs each executable a second time in an environment in which it collects at every few allocations and overwrites what it frees: a program that prints something else there, or ends by a signal, is kept.
 // `--ends-early 100` runs each executable three times more, and the runner ends the Worker of each program at a moment drawn from a few milliseconds. What is printed doesn't count: a process that ends by a signal is kept.
+// `--minifies 25`: one run of this file in four builds everything with --minify-syntax --minify-whitespace, which change the shape of the code and keep its names, so `bun run` stays the yardstick.
+// `--checks-proofs 25`: one run of this file in four builds everything with --aot-testing=CheckProofsAtRunTime: the executable checks while it runs each place that the compiler took for unreachable and each type that it assumed, and ends with a line "AOT validation: .." where one doesn't hold.
 // `--beside-an-external 50` lets 50 processes of 100 build everything with `--external` for a package that every entry point imports, so the executable also runs code that the compiler hasn't seen.
 // `--splits 80` cuts functions and classes of 80 programs of 100 out into other files, with declarations that can be wrong (split-into-files.ts).
 // `--draws ts` needs no `--programs`: the driver makes the programs of a batch itself. Each starts empty, and the options above write its scenes.
@@ -35,6 +37,7 @@
 // `--few-to-a-build 50`: half of the runs of this script take one, two, four or eight programs to a build, each an entry point. What a build proves of a small program it does not prove of the same
 // program beside a hundred others, and what follows from such a proof shows only there.
 // `--launders 50`: in half of the runs of this script every program has values handed through a function that the build knows nothing about (launder-values.ts). Such programs share executables.
+// `--hands-a-callback-to-native-code 25`: in a quarter of the runs every program ends with `stat(".", () => {})` of node:fs. The compiler then no longer sees every caller, as in a program that uses the library.
 // `--checks 50`: half of the other runs, and every run that launders, build with the compiler's checks that move no output: every pass is verified, and references are validated. `--checks never`: no run does.
 // `--ignores-type-errors 100` writes `// @ts-ignore` above every line of a TypeScript program. One error of the type checker in one program costs the whole batch a build.
 import {
@@ -51,7 +54,7 @@ import {
 import { dirname, extname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { withoutInstallingPackages } from "../../harness/without-installing-packages";
-import { opensTheWorld } from "../the-world-is-open.ts";
+import { opensTheWorld } from "../open-world-global-access.ts";
 import {
   giveNamesOfGlobals,
   handOverBuiltIns,
@@ -90,6 +93,9 @@ const { values: options } = parseArgs({
     validates: { type: "string", default: "0" },
     collects: { type: "string", default: "0" },
     "ends-early": { type: "string", default: "0" },
+    minifies: { type: "string", default: "0" },
+    "checks-proofs": { type: "string", default: "0" },
+    "checks-the-run-time": { type: "string", default: "0" },
     "beside-an-external": { type: "string", default: "0" },
     draws: { type: "string", default: "" },
     families: { type: "string", default: "0" },
@@ -98,6 +104,7 @@ const { values: options } = parseArgs({
     slow: { type: "string", default: "100" },
     "ignores-type-errors": { type: "string", default: "0" },
     launders: { type: "string", default: "0" },
+    "hands-a-callback-to-native-code": { type: "string", default: "0" },
     scene: { type: "string", default: "" },
     "each-a-program": { type: "string", default: "0" },
     "few-to-a-build": { type: "string", default: "0" },
@@ -117,6 +124,9 @@ if ((!source && !options.draws) || !work || !finds)
 const [groupSize, batches, milliseconds] = [options.group, options.batches, options.milliseconds].map(Number);
 /** Whether every program of this run has values handed through a function that the build knows nothing about. All of them have the world open then, and none waits for others like it. */
 const launders = Math.random() * 100 < Number(options.launders);
+/** Whether every program of this run hands a callback to native code. One such program changes what the build proves of all of them, so it is drawn for the run and not for the program. */
+const handsACallbackToNativeCode = Math.random() * 100 < Number(options["hands-a-callback-to-native-code"]);
+if (handsACallbackToNativeCode) console.log("the programs of this run hand a callback to native code");
 // The programs that an entry point imports are one program of many modules. What a build proves only of a small program, it never proves there.
 const takesOnlyThrowers = !launders && Math.random() * 100 < Number(options["only-throwers"]);
 const fewToABuild =
@@ -141,6 +151,8 @@ const alsoKept = [
 const buildFlags = [
   ...options.flags.split(" ").filter(Boolean),
   ...(hidesFunctionText ? ["--no-compile-function-source"] : []),
+  ...(Math.random() * 100 < Number(options.minifies) ? ["--minify-syntax", "--minify-whitespace"] : []),
+  ...(Math.random() * 100 < Number(options["checks-proofs"]) ? ["--aot-testing=CheckProofsAtRunTime"] : []),
 ];
 /** A package that stays outside the executable. Beside it the compiler counts on code that it hasn't seen, which can reach every built-in module. */
 const packageOutside = Math.random() * 100 < Number(options["beside-an-external"]) ? "a-package-outside" : "";
@@ -1087,6 +1099,16 @@ function ignoreTypeErrors(text: string) {
     .join("");
 }
 
+/** Native code may call the callback with anything, so the compiler no longer sees every caller: a call of a built-in method on a known receiver can answer anything. */
+function handACallbackToNativeCode(text: string) {
+  const [program, ...otherFiles] = text.split(/^(?=\/\/ @filename: )/m);
+  const isAScript = !isAModule(program) && /\b(?:require|module|exports)\b|^["']use strict["']/m.test(program);
+  const call = isAScript
+    ? 'require("node:fs").stat(".", () => {});\n'
+    : 'import { stat as statOfNodeFs } from "node:fs";\nstatOfNodeFs(".", () => {});\n';
+  return [program.endsWith("\n") ? program : program + "\n", call, ...otherFiles].join("");
+}
+
 /** The program as the batch takes it. What is drawn depends on the text alone, and a find holds the text that was built. */
 function rewritten(text: string, extension: string) {
   const random = randomFrom("rewritten" + text);
@@ -1112,6 +1134,7 @@ function rewritten(text: string, extension: string) {
     } catch {}
   }
   if (launders) text = launderValues(text, isTypeScript, random);
+  if (handsACallbackToNativeCode) text = handACallbackToNativeCode(text);
   if (isTypeScript && random() * 100 < Number(options["ignores-type-errors"])) text = ignoreTypeErrors(text);
   return text;
 }
@@ -1168,6 +1191,8 @@ function partsOf(output: string) {
 
 /** Programs that wait for a batch in which each is an entry point. */
 const waitingForABatchOfTheirOwn: string[] = [];
+/** A build in which each program is an entry point holds no more than this. It halves where the bound of such a build ends it. Beside a package outside each entry point holds much of the library. */
+let mostOnTheirOwn = packageOutside ? 5 : Infinity;
 /** The programs that stood around such a program in its entry point and printed the same both ways. */
 const neighborsOf = new Map<string, { before: string[]; behind: string[] }>();
 
@@ -1385,6 +1410,18 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
       milliseconds * 16 + 80 * together,
       add,
     );
+  if (asksTheRunTime())
+    await judgeUnderChecksOfTheRunTime(
+      folder,
+      texts,
+      extension,
+      1,
+      everyEntryPoint,
+      entryPoint => entryPoints[entryPoint],
+      true,
+      milliseconds * 8 + 40 * together,
+      add,
+    );
   if (Math.random() * 100 < Number(options["ends-early"]))
     await judgeEndedEarly(
       folder,
@@ -1421,13 +1458,13 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
       const validated = await run("validating", [join(folder, "batch")], folder, extension, 1, everyEntryPoint, limit);
       for (const entryPoint of everyEntryPoint) {
         const ended = validated.get(entryPoint)!;
-        const said = /^.*\bAOT (?:validation|native call)\b.*$/m.exec(ended.stderr)?.[0];
+        const said = saidByTheChecks.exec(ended.stderr)?.[0];
         if (said === undefined) continue;
         add("validation");
         // The program behind the last mark.
         const members = entryPoints[entryPoint].map(index => texts[index]);
         const position = partsOf(ended.stderr).ofProgram.size;
-        keepFind("validation", said.replace(/\b[a-z]\d+\b/g, "_"), {
+        keepFind("validation", withoutWhatDiffersFromRunToRun(said), {
           ["program" + extension]: members[position] ?? "",
           "programs.txt": listed(members),
           "report.txt": `validation, one of ${members.length} programs that an entry point imports with import statements, number ${position}\n${command}\n${said}\n`,
@@ -1691,26 +1728,84 @@ async function judgeUnderCollections(
   }
 }
 
+/** The line in which an executable built with --aot-validate says what it found. It ends behind that line. */
+const saidByTheChecks = /^.*\bAOT (?:validation|native call|claim check)\b.*$/m;
+/** The numbers of a function and a value differ from build to build, and the words that a broken claim was found to hold from run to run. */
+const withoutWhatDiffersFromRunToRun = (said: string) =>
+  said
+    .replace(/\b[a-z]\d+\b/g, "_")
+    .replace(/\b0x[0-9a-f]+\b/g, word => (said.includes("AOT claim check") ? "_" : word));
+const reportsOfTheRunTime = /^AOT validation: .*$|^.*which the compiler assumed never happens.*$/gm;
+const asksTheRunTime = () =>
+  !buildFlags.some(flag => /^--aot-(?:testing|validate|check)/.test(flag)) &&
+  Math.random() * 100 < Number(options["checks-the-run-time"]);
+
+/**
+ * The executable in `folder` once more, with the checks of the run time switched on through the environment. It ends where a program does what the compiler took for impossible, also where the output is right.
+ * A unit of the run is what `run` takes an index of, and `membersOf` lists the programs in it: with `hasMarks`, a mark stands behind each.
+ */
+async function judgeUnderChecksOfTheRunTime(
+  folder: string,
+  texts: string[],
+  extension: string,
+  inGroup: number,
+  units: number[],
+  membersOf: (unit: number) => number[],
+  hasMarks: boolean,
+  limit: number,
+  add: (kind: string, by?: number) => void,
+) {
+  const environment = { BUN_JSC_validateAOTRuntime: "1" };
+  const checked = await run("checking", [join(folder, "batch")], folder, extension, inGroup, units, limit, environment);
+  for (const unit of units) {
+    const [ended, members] = [checked.get(unit)!, membersOf(unit)];
+    const reports = ended.stderr.match(reportsOfTheRunTime);
+    if (!reports) {
+      add("the checks of the run time report nothing", members.length);
+      continue;
+    }
+    // A process that ends early was in the program behind the last mark.
+    const index = members[hasMarks ? partsOf(ended.stdout).ofProgram.size : 0] ?? members.at(-1)!;
+    add("run-time-check");
+    // A report names members, classes and values, which differ from program to program.
+    const kinds = reports.map(line => /^AOT(?: validation)?: (\w+)/.exec(line)?.[1] ?? "").join(" ");
+    keepFind("run-time-check", kinds, {
+      ["program" + extension]: texts[index],
+      ...(members.length > 1 && { "programs.txt": listed(members.map(member => texts[member])) }),
+      "report.txt": `run-time-check, ${
+        hasMarks
+          ? `one of ${members.length} programs that an entry point imports with import statements, number ${members.indexOf(index)}`
+          : `one of ${texts.length} programs in groups of ${inGroup}`
+      }\n${bun} build --compile --aot ${buildFlags.join(" ")}\nthe executable runs with BUN_JSC_validateAOTRuntime=1\n${ended.end}\n${reports.join("\n")}\n`,
+      "checking.stdout": ended.stdout,
+      "checking.stderr": ended.stderr,
+    });
+  }
+}
+
 let extension = "";
 const lastStart = Number(options.seconds) ? performance.now() + Number(options.seconds) * 1000 : Infinity;
 for (
   let batch = 0;
-  performance.now() < lastStart &&
-  (batches === 0 || batch < batches || waitingWithTheWorldOpen.length || waitingForABatchOfTheirOwn.length);
+  (performance.now() < lastStart && (batches === 0 || batch < batches)) ||
+  waitingWithTheWorldOpen.length ||
+  waitingForABatchOfTheirOwn.length;
   batch++
 ) {
   for (const stage in spent) delete spent[stage];
   const started = performance.now();
   count = countsOfPrograms[batch % countsOfPrograms.length];
-  const isBehindTheLast = batches !== 0 && batch >= batches;
+  const isBehindTheLast = (batches !== 0 && batch >= batches) || performance.now() >= lastStart;
   // With several programs to an entry point, a batch in which each is one holds as many as a build takes.
   // With the world open each entry point holds much of the library, and the checks take four times as long.
   const atOnce = together > 1 ? Math.min(count, launders ? 24 : maxEntryPoints) : count;
   const areOnTheirOwn =
-    waitingForABatchOfTheirOwn.length >= atOnce || (isBehindTheLast && waitingForABatchOfTheirOwn.length > 0);
+    waitingForABatchOfTheirOwn.length >= atOnce ||
+    waitingForABatchOfTheirOwn.some(text => neighborsOf.has(text)) ||
+    (isBehindTheLast && waitingForABatchOfTheirOwn.length > 0);
   const haveTheWorldOpen = !areOnTheirOwn && (waitingWithTheWorldOpen.length >= atOnce || isBehindTheLast);
   let texts = areOnTheirOwn
-    ? waitingForABatchOfTheirOwn.splice(0, atOnce)
+    ? waitingForABatchOfTheirOwn.splice(0, Math.min(atOnce, mostOnTheirOwn))
     : waitingWithTheWorldOpen.splice(0, haveTheWorldOpen ? atOnce : 0);
   if (!haveTheWorldOpen && !areOnTheirOwn) {
     if (options.draws) {
@@ -1801,7 +1896,11 @@ for (
       });
       add("stopped the build");
       if (stopped.culprit === undefined && (enough.length === 0 || enough.length === texts.length)) {
-        add("in a build that stopped and named no program", texts.length);
+        if (areOnTheirOwn && texts.length > 1 && /^SIGKILL: /.test(stopped.reason)) {
+          mostOnTheirOwn = texts.length >> 1;
+          waitingForABatchOfTheirOwn.unshift(...texts);
+          add("wait again for a smaller build", texts.length);
+        } else add("in a build that stopped and named no program", texts.length);
         texts = [];
         break;
       }
@@ -2071,6 +2170,18 @@ for (
       milliseconds * 20,
       add,
     );
+  if (texts.length && asksTheRunTime())
+    await judgeUnderChecksOfTheRunTime(
+      folder,
+      texts,
+      extension,
+      groupSize,
+      all,
+      index => [index],
+      false,
+      milliseconds * 8,
+      add,
+    );
   if (texts.length && Math.random() * 100 < Number(options["ends-early"]))
     await judgeEndedEarly(folder, texts, extension, groupSize, all, index => [index], compiled, add);
   // The same programs once more, in an executable that checks while it runs what the compiler took for proven. It stops where that is false, also where the output happens to be right.
@@ -2100,7 +2211,7 @@ for (
       );
       for (const index of all) {
         const ended = validated.get(index)!;
-        const said = /^.*\bAOT (?:validation|native call)\b.*$/m.exec(ended.stderr)?.[0];
+        const said = saidByTheChecks.exec(ended.stderr)?.[0];
         // Without such a line, an end by a signal counts where neither of the other two runs ended so.
         const endedBySignalAlone =
           ended.end.startsWith("the process ended") &&
@@ -2113,8 +2224,7 @@ for (
           );
         if (said === undefined && !endedBySignalAlone) continue;
         add("validation");
-        // The numbers of a function and a value differ from build to build.
-        const summary = (said ?? ended.end).replace(/\b[a-z]\d+\b/g, "_");
+        const summary = withoutWhatDiffersFromRunToRun(said ?? ended.end);
         keepFind("validation", summary, {
           ["program" + extension]: texts[index],
           ...(texts.length > 1 && groupSize > 1 && { "programs.txt": programsOfTheBuild }),

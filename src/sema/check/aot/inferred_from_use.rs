@@ -1,4 +1,5 @@
-use super::answers::{CheckedType, MemberLookup};
+use super::answers::{CheckedType, GaveUp, MemberLookup};
+use super::builtin_types::BuiltinClassIndex;
 use super::prototype_links::{NamedValue, PrototypeOperation};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
@@ -6,18 +7,18 @@ use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, PatParent, StoreKind, S
 use crate::check::root_declaration;
 use crate::hir::{
     self, BinOp, CallId, Chain, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, FnKind,
-    MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp,
+    MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
 };
 use crate::program::{FileId, FileRole};
 use crate::session::vec_from_iter_in;
 use crate::types::{
     MapperId, Prop, PropFlags, PropSource, Shape, SigId, SigParam, TypeData, TypeId,
 };
-use crate::util::{FxHashMap, FxHashSet};
+use crate::util::FxHashMap;
 use smallvec::SmallVec;
 use std::rc::Rc;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub(super) enum Subject {
     Binding(SymbolId),
     Pattern(PatId),
@@ -28,14 +29,70 @@ pub(super) enum Subject {
 }
 
 pub(super) enum UsageState {
-    InProgress(usize),
+    /// `assumed`: what it answers with when it is run into.
+    InProgress {
+        index: usize,
+        assumed: Option<Rc<Usage>>,
+    },
+    /// It is walked, and leads back to a subject that is in progress.
+    InCycle {
+        index: usize,
+        found: Rc<Usage>,
+    },
+    /// What the round before found. This round has not come to it.
+    Assumed(Rc<Usage>),
     Known(Rc<Usage>),
+    /// It was walked, and rested on an answer of the checker that may be another next time.
+    NotKept,
 }
 
 #[derive(Copy, Clone)]
 pub(super) enum TypeState {
-    InProgress(usize),
+    /// The search for cycles has come to it and does not know yet what it leads back to. `index`: in the order of the search.
+    Searched {
+        index: u32,
+    },
+    /// It has not been computed, and is in no cycle.
+    Alone,
+    /// It has not been computed. `cycle`: in `TypesInProgress::cycles`.
+    Member {
+        cycle: u32,
+    },
+    /// `assumed`: what it answers with when it is run into. `None`: nothing, and whoever asked leads back to it.
+    InProgress {
+        depth: u32,
+        assumed: Option<TypeId>,
+    },
+    /// It is computed, and leads back to a subject that is in progress. `position`: in `TypesInProgress::in_cycles`.
+    InCycle {
+        found: TypeId,
+        position: u32,
+    },
+    /// What the first round found. The second has not come to it.
+    Assumed(TypeId),
     Known(TypeId),
+    /// It was computed, and rested on an answer of the checker that may be another next time.
+    NotKept,
+}
+
+type Subjects = SmallVec<[Subject; 4]>;
+
+struct SubjectSearched {
+    subject: Subject,
+    index: u32,
+    /// The least index of an open subject that it leads to, its own at first.
+    lowest_index: u32,
+    asks_for: Subjects,
+    next: usize,
+}
+
+impl TypeState {
+    fn was_computed(self) -> bool {
+        !matches!(
+            self,
+            TypeState::Searched { .. } | TypeState::Alone | TypeState::Member { .. }
+        )
+    }
 }
 
 #[derive(Default)]
@@ -82,8 +139,41 @@ impl SubjectStack {
 
 #[derive(Default)]
 pub(super) struct TypesInProgress {
+    /// Depth 0 is the question. What the allowance does not reach leads back to it.
     subjects: SubjectStack,
     remaining_types: u64,
+    /// The subjects that were left as `InCycle`, in that order.
+    in_cycles: Vec<Subject>,
+    /// By depth: how long `in_cycles` was when the subject was entered.
+    first_in_cycle: Vec<usize>,
+    /// The subjects that the allowance did not reach and that have never been computed.
+    out_of_reach: Vec<Subject>,
+    /// What led out of reach is being computed again. What that does not reach says nothing, and nobody waits for it.
+    is_computing_again: bool,
+    subjects_not_kept: u64,
+    next_usage_index: usize,
+    /// The subjects of each cycle, the least first. `None`: they have been asked for.
+    cycles: Vec<Option<Box<[Subject]>>>,
+}
+
+impl TypesInProgress {
+    fn enter(&mut self) -> EnteredSubject {
+        self.first_in_cycle.push(self.in_cycles.len());
+        self.subjects.enter()
+    }
+
+    fn leave(&mut self, entered: EnteredSubject) -> bool {
+        self.first_in_cycle.pop();
+        self.subjects.leave(entered)
+    }
+
+    /// Whoever asks a subject that was left as `InCycle` leads back to the innermost subject in progress that it was computed under.
+    fn revisit_in_cycle(&mut self, position: u32) {
+        let entered_earlier = self
+            .first_in_cycle
+            .partition_point(|&first| first <= position as usize);
+        self.subjects.revisit(entered_earlier.saturating_sub(1));
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -111,6 +201,8 @@ bitflags::bitflags! {
         const REQUIRED = 1 << 7;
         const INCOMPLETE = 1 << 8;
         const NUMBER_AT_EVERY_VALUE = 1 << 9 | Self::NUMBER.bits();
+        /// An object literal is stored: the value is neither an array nor a string.
+        const OBJECT_LITERAL_STORED = 1 << 10;
     }
 }
 
@@ -121,9 +213,10 @@ fn required_if(is_required: bool) -> Facts {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
 struct Member {
     name: Atom,
-    usage: Usage,
+    usage: Rc<Usage>,
 }
 
 impl Member {
@@ -132,12 +225,13 @@ impl Member {
     }
 }
 
-#[derive(Default)]
+/// A merge into a part that says nothing yet shares the other tree's part, so a part may belong to many trees: it is copied when one of them changes it.
+#[derive(Default, Clone, PartialEq, Eq)]
 pub(super) struct Usage {
     facts: Facts,
     arms: SmallVec<[TypeId; 2]>,
     members: Vec<Member>,
-    elements: Option<Box<Usage>>,
+    elements: Option<Rc<Usage>>,
 }
 
 impl Usage {
@@ -146,15 +240,25 @@ impl Usage {
         let index = found.unwrap_or_else(|| {
             self.members.push(Member {
                 name,
-                usage: Usage::default(),
+                usage: Rc::default(),
             });
             self.members.len() - 1
         });
-        &mut self.members[index].usage
+        Rc::make_mut(&mut self.members[index].usage)
     }
 
     fn elements_mut(&mut self) -> &mut Usage {
-        self.elements.get_or_insert_default()
+        Rc::make_mut(self.elements.get_or_insert_default())
+    }
+
+    /// `None`: more than `most`.
+    fn count_nodes(&self, most: u64) -> Option<u64> {
+        let mut count = 1;
+        let parts = self.members.iter().map(|member| &member.usage);
+        for part in parts.chain(&self.elements) {
+            count += part.count_nodes(most.checked_sub(count)?)?;
+        }
+        (count <= most).then_some(count)
     }
 
     fn add_arm(&mut self, arm: TypeId) {
@@ -163,20 +267,50 @@ impl Usage {
         }
     }
 
+    /// What the tree gets is paid for, not what it has: the subjects of a cycle merge what the others found, which is the same.
     fn merge(&mut self, walk: &mut Walk, other: &Usage) {
-        if !walk.enter_node() {
+        if walk.is_out_of_budget() && !walk.looks_at_every_use_of(self) {
             return;
         }
         self.facts |= other.facts;
         for &arm in &other.arms {
             self.add_arm(arm);
         }
+        if walk.is_out_of_budget() {
+            return;
+        }
         for member in &other.members {
-            self.member_mut(member.name).merge(walk, &member.usage);
+            let own = self.members.iter().position(|own| own.name == member.name);
+            match own {
+                Some(own) => merge_part(&mut self.members[own].usage, walk, &member.usage),
+                None if walk.enter_all_nodes_of(&member.usage) => self.members.push(member.clone()),
+                None if walk.enter_node() => {
+                    self.member_mut(member.name).merge(walk, &member.usage)
+                }
+                None => {}
+            }
         }
-        if let Some(elements) = &other.elements {
-            self.elements_mut().merge(walk, elements);
+        match (&mut self.elements, &other.elements) {
+            (_, None) => {}
+            (Some(own), Some(elements)) => merge_part(own, walk, elements),
+            (None, Some(elements)) if walk.enter_all_nodes_of(elements) => {
+                self.elements = Some(Rc::clone(elements));
+            }
+            (None, Some(elements)) => {
+                if walk.enter_node() {
+                    self.elements_mut().merge(walk, elements);
+                }
+            }
         }
+    }
+
+    fn is_incomplete(&self) -> bool {
+        self.facts.contains(Facts::INCOMPLETE)
+    }
+
+    fn forget_parts(&mut self) {
+        self.members.clear();
+        self.elements = None;
     }
 
     fn is_number(&self) -> bool {
@@ -190,27 +324,165 @@ impl Usage {
     }
 }
 
+/// `Usage::merge()` for a part. A part that many trees share is copied where the merge adds something to it, and not before. The merge finds that out itself, in its
+/// one walk over the two trees: to compare them first, at every level again, takes the square of the height of a tree.
+fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
+    if Rc::ptr_eq(own, other) || (walk.is_out_of_budget() && !walk.looks_at_every_use_of(own)) {
+        return;
+    }
+    if !own.facts.contains(other.facts) || other.arms.iter().any(|arm| !own.arms.contains(arm)) {
+        let own = Rc::make_mut(own);
+        own.facts |= other.facts;
+        for &arm in &other.arms {
+            own.add_arm(arm);
+        }
+    }
+    if walk.is_out_of_budget() {
+        return;
+    }
+    for member in &other.members {
+        let found = own.members.iter().position(|own| own.name == member.name);
+        match found {
+            Some(found) => {
+                let mut part = Rc::clone(&own.members[found].usage);
+                merge_part(&mut part, walk, &member.usage);
+                if !Rc::ptr_eq(&part, &own.members[found].usage) {
+                    Rc::make_mut(own).members[found].usage = part;
+                }
+            }
+            None if walk.enter_all_nodes_of(&member.usage) => {
+                Rc::make_mut(own).members.push(member.clone());
+            }
+            None if walk.enter_node() => {
+                let part = Rc::make_mut(own).member_mut(member.name);
+                part.merge(walk, &member.usage);
+            }
+            None => {}
+        }
+    }
+    match (&own.elements, &other.elements) {
+        (_, None) => {}
+        (Some(elements_of_own), Some(elements)) => {
+            let mut part = Rc::clone(elements_of_own);
+            merge_part(&mut part, walk, elements);
+            if !Rc::ptr_eq(&part, elements_of_own) {
+                Rc::make_mut(own).elements = Some(part);
+            }
+        }
+        (None, Some(elements)) if walk.enter_all_nodes_of(elements) => {
+            Rc::make_mut(own).elements = Some(Rc::clone(elements));
+        }
+        (None, Some(elements)) => {
+            if walk.enter_node() {
+                Rc::make_mut(own).elements_mut().merge(walk, elements);
+            }
+        }
+    }
+}
+
+/// What a subject is used as is the least answer that holds for all subjects at once, whoever is asked for first:
+/// - Each subject has the whole budget, for its own uses and for what its tree gets from others. The budget is for the
+///   parts of the tree. Which of them a walk had found when it ended hangs on what the others had found by then, so a
+///   tree that is not all there has no parts. What the subject itself is used as is a few facts and types: every use of
+///   it is looked at, however many there are.
+/// - In a cycle, a subject in progress that is run into answers with what the round before found, nothing in the first.
+///   The subject that the cycle was entered by is walked again until no subject of the cycle finds anything new. A round
+///   only adds to what the round before found, so the rounds end. Then all of them are kept: a cycle is walked once,
+///   not once for each of its subjects.
+/// - What goes into a part of a tree (`visit(node.left)`) counts only when it is kept, that is when it does not lead
+///   back: a shape that holds itself would grow with every round.
+/// - Nothing that rests on an answer of the checker that may be another next time is kept. What is thrown away has one
+///   budget: see `shares_budget`.
+/// - A chain of calls and a cycle of them are as long as they like: see `set_aside`.
 struct Walk {
+    max_nodes: u64,
     remaining_nodes: u64,
-    subjects: SubjectStack,
+    /// The least index of a subject that the one being walked leads back to, its own at first.
+    lowest_index: usize,
+    /// The subjects that were left as `InCycle`, in that order, once for each round.
+    in_cycles: Vec<Subject>,
+    found_something_new: bool,
+    /// The tree of the subject being walked.
+    root: *const Usage,
+    subjects_not_kept: u64,
+    unstable_answers_at_start: u64,
+    /// What is in progress will not be kept, so from here on all subjects together have what is left of one budget, and
+    /// a cycle has one round.
+    shares_budget: bool,
+    /// How many subjects are being walked on the stack of the thread.
+    subjects_on_stack: usize,
+    /// A subject was asked for while half of the stack was in use. Until the stack is free nothing is walked.
+    is_freeing_stack: bool,
+    /// The subjects that were on the stack then, the outermost first. They stay in progress. Where the stack is free the
+    /// innermost is walked again, with what it had found of where it leads: what it asked for before answers at once,
+    /// and what it asked for last has the stack to itself. When it is done, the one that asked for it is walked again.
+    set_aside: Vec<SubjectInProgress>,
+    /// `Some`: no number is asked whether it is an integer. Each is listed here and taken for one.
+    numbers_listed: Option<Subjects>,
+}
+
+struct SubjectInProgress {
+    subject: Subject,
+    is_outermost: bool,
+    unstable_answers: u64,
+    assumed: Option<Rc<Usage>>,
+    index: usize,
+    first_in_cycle: usize,
+    first_in_round: usize,
+    /// What the walk held for the subject when it was set aside.
+    lowest_index: usize,
+    found_something_new: bool,
+    /// What the walk held for the subject that asked for it.
+    outer_lowest: usize,
+    outer_nodes: u64,
+    outer_root: *const Usage,
+    outer_found_something_new: bool,
 }
 
 impl Walk {
     fn new(max_nodes: u64) -> Walk {
         Walk {
+            max_nodes,
             remaining_nodes: max_nodes,
-            subjects: SubjectStack::default(),
+            lowest_index: usize::MAX,
+            in_cycles: Vec::new(),
+            found_something_new: false,
+            root: std::ptr::null(),
+            subjects_not_kept: 0,
+            unstable_answers_at_start: 0,
+            shares_budget: false,
+            subjects_on_stack: 0,
+            is_freeing_stack: false,
+            set_aside: Vec::new(),
+            numbers_listed: None,
         }
     }
 
     fn enter_node(&mut self) -> bool {
-        let has_budget = self.remaining_nodes > 0;
+        let has_budget = self.remaining_nodes > 0 && !self.is_freeing_stack;
         self.remaining_nodes = self.remaining_nodes.saturating_sub(1);
         has_budget
     }
 
+    /// Pays for every node of the tree at once, as a merge into an empty tree pays for them one by one. `false`: the budget ends inside the tree, and nothing is paid.
+    fn enter_all_nodes_of(&mut self, usage: &Usage) -> bool {
+        let Some(count) = usage.count_nodes(self.remaining_nodes) else {
+            return false;
+        };
+        self.remaining_nodes -= count;
+        true
+    }
+
     fn is_out_of_budget(&self) -> bool {
         self.remaining_nodes == 0
+    }
+
+    fn looks_at_every_use_of(&self, usage: &Usage) -> bool {
+        std::ptr::eq(usage, self.root) && !self.shares_budget && !self.is_freeing_stack
+    }
+
+    fn enter_node_of(&mut self, usage: &Usage) -> bool {
+        self.enter_node() || self.looks_at_every_use_of(usage)
     }
 }
 
@@ -627,6 +899,68 @@ fn yields_int32(op: BinOp) -> bool {
     }
 }
 
+fn is_int32_literal(hir: &hir::File<'_>, value: ExprId) -> bool {
+    let ExprKind::Number(index) = hir[value].kind else {
+        return false;
+    };
+    let number = hir.numbers[index as usize];
+    number == f64::from(number as i32)
+}
+
+const MAX_TERMS_READ: usize = 16;
+
+fn is_sum_with_product(hir: &hir::File<'_>, value: ExprId) -> bool {
+    let mut terms = vec![value];
+    for _ in 0..MAX_TERMS_READ {
+        let Some(term) = terms.pop() else {
+            return false;
+        };
+        match hir[term].kind {
+            ExprKind::Binary {
+                op: BinOp::Mul | BinOp::Div | BinOp::Pow,
+                ..
+            } => return true,
+            ExprKind::Binary {
+                op: BinOp::Add | BinOp::Sub,
+                left,
+                right,
+            } => terms.extend([left, right]),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// `var v = x * digit + carry; low = v & mask`: a bit operation takes any number, and cuts one that has left the range.
+fn is_given_product(hir: &hir::File<'_>, bound: &Bound<'_>, reference: ExprId) -> bool {
+    let ExprKind::Ident(_) = hir[reference].kind else {
+        return false;
+    };
+    let Binding::Symbol(symbol) = bound.binding(reference) else {
+        return false;
+    };
+    let starts_as_product = bound.symbol(symbol).decls.iter().any(|&declaration| {
+        let Decl::Var(name) = declaration else {
+            return false;
+        };
+        let PatParent::Var(variable) = bound.pat_parent[name.idx()] else {
+            return false;
+        };
+        let initializer = hir[variable].init.some();
+        initializer.is_some_and(|initializer| is_sum_with_product(hir, initializer))
+    });
+    starts_as_product
+        || bound.stores_to(symbol).iter().any(|store| {
+            let Use::Stored { op, value } = find_use(hir, bound, store.target) else {
+                return false;
+            };
+            match op {
+                None => is_sum_with_product(hir, value),
+                Some(op) => matches!(op, BinOp::Mul | BinOp::Div | BinOp::Pow),
+            }
+        })
+}
+
 fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -> Option<ExprId> {
     let Parent::Expr(parent) = bound.parent_of_expr(operand) else {
         return None;
@@ -642,21 +976,29 @@ fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -
     is_sum.then_some(parent)
 }
 
-// `walked_sums`: the sums that earlier questions went through, which were all answered with no.
+// `answers`: those for the sums that earlier questions went through. In `a + b + c + ..` each name stands one sum further out, so
+// without them the names of one long sum would walk it once each.
 fn is_used_as_int32(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     number: ExprId,
-    walked_sums: &mut FxHashSet<ExprId>,
+    answers: &mut FxHashMap<ExprId, bool>,
 ) -> bool {
+    let mut walked: SmallVec<[ExprId; 4]> = SmallVec::new();
     let mut value = number;
-    loop {
+    let answer = loop {
         match find_use(hir, bound, value) {
-            Use::Int32 | Use::Key { .. } => return true,
-            Use::Stored { op: Some(op), .. } => return yields_int32(op) || op == BinOp::UShr,
+            Use::Int32 | Use::Key { .. } => break true,
+            Use::Stored { op: Some(op), .. } => break yields_int32(op) || op == BinOp::UShr,
             Use::AddedTo(_) | Use::Number => match find_enclosing_sum(hir, bound, value) {
-                Some(sum) if walked_sums.insert(sum) => value = sum,
-                Some(_) | None => return false,
+                Some(sum) => match answers.get(&sum) {
+                    Some(&known) => break known,
+                    None => {
+                        walked.push(sum);
+                        value = sum;
+                    }
+                },
+                None => break false,
             },
             Use::Nothing
             | Use::PassedOn(_)
@@ -670,9 +1012,11 @@ fn is_used_as_int32(
             | Use::Object { .. }
             | Use::Updated
             | Use::ComparedWith(_)
-            | Use::Stored { op: None, .. } => return false,
+            | Use::Stored { op: None, .. } => break false,
         }
-    }
+    };
+    answers.extend(walked.into_iter().map(|sum| (sum, answer)));
+    answer
 }
 
 const MAX_CALLS_READ: usize = 16;
@@ -718,7 +1062,11 @@ fn find_argument_of_call(
     if first_spread as usize <= index {
         return None;
     }
-    Some(hir.ids(node.args).nth(index).unwrap_or(ExprId::NONE))
+    // `nth` would visit every argument in front of this one.
+    match index < node.args.len() {
+        true => Some(hir.id_at(node.args, index)),
+        false => Some(ExprId::NONE),
+    }
 }
 
 fn find_parameter(parameters: &[SigParam], index: usize) -> Option<SigParam> {
@@ -735,6 +1083,7 @@ struct CallWithReceiver {
 }
 
 type TypeParts = SmallVec<[TypeId; 4]>;
+type ReturnedExpressions = SmallVec<[(ExprId, TypeId); 4]>;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn are_positions_only_expected(&self, of: FileId) -> bool {
@@ -783,6 +1132,53 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// Whether the name is one for instances of the built-in class: by its type, and where that is `any` or `unknown` by what is stored in it and by the members read from it.
+    /// What is inferred depends on what was asked before. This asks none of it, so it may be asked at any time.
+    pub fn is_binding_of_builtin(
+        &mut self,
+        pattern: PatId,
+        class: BuiltinClassIndex,
+    ) -> Result<bool, GaveUp> {
+        let checked = self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            queries.resolved(ty)
+        })?;
+        if !self.c.is_any(checked) && checked != TypeId::UNKNOWN {
+            return self.is_type_of_builtin(checked, class);
+        }
+        let (hir, bound) = (self.hir(), self.bound());
+        let Some(symbol) = find_initialized_symbol(bound, pattern) else {
+            return Ok(false);
+        };
+        let mut stored: SmallVec<[ExprId; 2]> = SmallVec::new();
+        if let PatParent::Var(variable) = bound.pat_parent[pattern.idx()] {
+            stored.extend(hir[variable].init.some());
+        }
+        for &(_, reference) in references_to(self.reference_index().to_bindings, symbol) {
+            let mut value = reference;
+            let found = loop {
+                match find_use(hir, bound, value) {
+                    Use::PassedOn(whole) => value = whole,
+                    found => break found,
+                }
+            };
+            match found {
+                Use::Stored { op: None, value } => stored.push(value),
+                Use::Member { name, .. } if self.is_member_of_builtin(name, class) => {
+                    return Ok(true);
+                }
+                _ => {}
+            }
+        }
+        for value in stored {
+            let ty = self.expression_type(value)?;
+            if self.is_type_of_builtin(ty, class)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn infer_this_type(&mut self, of: FileId, function: FnId) -> TypeId {
         match self.find_this_subject(of, function) {
             Some(subject) => self.inferred_type(subject),
@@ -804,12 +1200,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(super) fn infer_expression_type(&mut self, expression: ExprId, checked: TypeId) -> TypeId {
-        if self.c.is_any(checked) {
-            return self.inferred_type_or(Subject::Expression(expression), checked);
-        }
-        match self.find_number_subject(expression, checked) {
+        match self.find_subject_of_expression(expression, checked) {
             Some(subject) => self.inferred_type_or(subject, checked),
             None => checked,
+        }
+    }
+
+    fn find_subject_of_expression(&self, expression: ExprId, checked: TypeId) -> Option<Subject> {
+        match self.c.is_any(checked) {
+            true => Some(Subject::Expression(expression)),
+            false => self.find_number_subject(expression, checked),
         }
     }
 
@@ -946,32 +1346,171 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// - A walk may compute `max_inference_nodes` subjects. What it does not reach is walked next, with an allowance of
+    ///   its own, and then what led there is computed again, the last walk first: a chain of calls is as long as it likes.
+    /// - A cycle has two rounds. In the first a subject in progress says nothing, and the subject that the cycle was
+    ///   entered by is kept. In the second the others are computed again, and one in progress says what the first round
+    ///   found. Then all of them are kept: a cycle is computed twice, not once for each of its subjects.
+    /// - Whichever subject of a cycle is asked for first, the cycle is entered by the least of them: see `take_cycle_of`.
     fn inferred_type(&mut self, subject: Subject) -> TypeId {
+        if self.memo.types_in_progress.subjects.depth != 0 {
+            return self.inferred_type_within_allowance(subject);
+        }
+        if let Some(&TypeState::Known(known)) = self.memo.inferred_types.get(&subject) {
+            return known;
+        }
+        if self.inputs.max_inference_nodes == 0 {
+            return TypeId::ANY;
+        }
+        let question = self.memo.types_in_progress.enter();
+        let first_answer = self.inferred_type_with_new_allowance(subject);
+        let in_progress = &self.memo.types_in_progress;
+        if !in_progress.in_cycles.is_empty() || !in_progress.out_of_reach.is_empty() {
+            self.infer_types_out_of_reach();
+        }
+        self.memo.types_in_progress.leave(question);
+        match self.memo.inferred_types.get(&subject) {
+            Some(&TypeState::Known(known)) => known,
+            _ => first_answer,
+        }
+    }
+
+    fn inferred_type_with_new_allowance(&mut self, subject: Subject) -> TypeId {
+        self.memo.types_in_progress.remaining_types = self.inputs.max_inference_nodes;
+        self.inferred_type_within_allowance(subject)
+    }
+
+    #[cold]
+    fn infer_types_out_of_reach(&mut self) {
+        loop {
+            let mut walks: SmallVec<[usize; 4]> = SmallVec::new();
+            walks.push(0);
+            while let Some(next) = self.memo.types_in_progress.out_of_reach.pop() {
+                let state = self.memo.inferred_types.get(&next);
+                if !state.is_some_and(|state| state.was_computed()) {
+                    walks.push(self.memo.types_in_progress.in_cycles.len());
+                    self.inferred_type_with_new_allowance(next);
+                }
+            }
+            let unsettled = std::mem::take(&mut self.memo.types_in_progress.in_cycles);
+            if unsettled.is_empty() {
+                return;
+            }
+            self.assume_types_found(&unsettled);
+            self.memo.types_in_progress.is_computing_again = true;
+            let mut end = unsettled.len();
+            for &start in walks.iter().rev() {
+                for &other in &unsettled[start..end] {
+                    self.inferred_type_with_new_allowance(other);
+                }
+                end = start;
+            }
+            self.memo.types_in_progress.is_computing_again = false;
+        }
+    }
+
+    fn assume_types_found(&mut self, in_cycle: &[Subject]) {
+        for other in in_cycle {
+            if let Some(state) = self.memo.inferred_types.get_mut(other)
+                && let TypeState::InCycle { found, .. } = *state
+            {
+                *state = TypeState::Assumed(found);
+            }
+        }
+    }
+
+    fn infer_types_of_cycle_again(&mut self, first_in_cycle: usize) {
+        let in_cycles = &mut self.memo.types_in_progress.in_cycles;
+        let in_cycle: Vec<Subject> = in_cycles.drain(first_in_cycle..).collect();
+        self.assume_types_found(&in_cycle);
+        for &other in &in_cycle {
+            self.inferred_type_within_allowance(other);
+        }
+        if self.memo.types_in_progress.remaining_types != 0 {
+            return;
+        }
+        for &other in &in_cycle {
+            if let Some(&TypeState::Assumed(found)) = self.memo.inferred_types.get(&other) {
+                self.leave_type_in_cycle(other, found);
+            }
+        }
+    }
+
+    fn leave_type_in_cycle(&mut self, subject: Subject, found: TypeId) {
+        let in_cycles = &mut self.memo.types_in_progress.in_cycles;
+        let position = in_cycles.len() as u32;
+        in_cycles.push(subject);
+        let state = TypeState::InCycle { found, position };
+        self.memo.inferred_types.insert(subject, state);
+    }
+
+    fn count_answers_not_kept(&self) -> u64 {
+        self.count_unstable_answers() + self.memo.types_in_progress.subjects_not_kept
+    }
+
+    fn inferred_type_within_allowance(&mut self, subject: Subject) -> TypeId {
         if self.infers_nothing_from_use {
             return TypeId::ANY;
         }
-        match self.memo.inferred_types.get(&subject) {
-            Some(&TypeState::Known(known)) => return known,
-            Some(&TypeState::InProgress(depth)) => {
-                self.memo.types_in_progress.subjects.revisit(depth);
+        let in_progress = &mut self.memo.types_in_progress;
+        let state = self.memo.inferred_types.get(&subject).copied();
+        let assumed = match state {
+            Some(TypeState::Known(known)) => return known,
+            Some(TypeState::InProgress {
+                depth,
+                assumed: None,
+            }) => {
+                in_progress.subjects.revisit(depth as usize);
                 return TypeId::ANY;
             }
-            None => {}
-        }
-        let max_types = self.inputs.max_inference_nodes;
-        let in_progress = &mut self.memo.types_in_progress;
-        if in_progress.subjects.depth == 0 {
-            in_progress.remaining_types = max_types;
-        }
+            Some(TypeState::InProgress {
+                assumed: Some(assumed),
+                ..
+            }) => return assumed,
+            Some(TypeState::InCycle { found, position }) => {
+                in_progress.revisit_in_cycle(position);
+                return found;
+            }
+            Some(TypeState::Assumed(found)) => Some(found),
+            Some(
+                TypeState::NotKept
+                | TypeState::Searched { .. }
+                | TypeState::Alone
+                | TypeState::Member { .. },
+            )
+            | None => None,
+        };
+        let was_computed = state.is_some_and(TypeState::was_computed);
         if in_progress.remaining_types == 0 {
-            in_progress.subjects.revisit(0);
+            if let Some(found) = assumed {
+                return found;
+            }
+            match was_computed {
+                false => {
+                    if !in_progress.is_computing_again {
+                        in_progress.subjects.revisit(0);
+                    }
+                    in_progress.out_of_reach.push(subject);
+                }
+                true => in_progress.subjects_not_kept += 1,
+            }
             return TypeId::ANY;
         }
+        let may_be_in_cycle = !was_computed && !matches!(state, Some(TypeState::Alone));
+        if may_be_in_cycle && self.infer_types_of_cycle_around(subject) {
+            return self.inferred_type_within_allowance(subject);
+        }
+        let in_progress = &mut self.memo.types_in_progress;
         in_progress.remaining_types -= 1;
-        let entered = in_progress.subjects.enter();
-        let state = TypeState::InProgress(entered.depth);
+        self.statistics.types_inferred += 1;
+        let first_in_cycle = in_progress.in_cycles.len();
+        let entered = in_progress.enter();
+        let state = TypeState::InProgress {
+            depth: entered.depth as u32,
+            assumed,
+        };
         self.memo.inferred_types.insert(subject, state);
-        let unstable_answers = self.count_unstable_answers();
+        let answers_not_kept = self.count_answers_not_kept();
         let inferred = self.ask(|queries| {
             Ok(match subject {
                 Subject::Expression(expression) => queries.compute_expression_type(expression),
@@ -982,57 +1521,282 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             })
         });
         let inferred = inferred.unwrap_or(TypeId::ANY);
-        let ran_into_outer_subject = self.memo.types_in_progress.subjects.leave(entered);
-        if !ran_into_outer_subject && self.count_unstable_answers() == unstable_answers {
+        let leads_back = self.memo.types_in_progress.leave(entered);
+        if self.count_answers_not_kept() != answers_not_kept {
+            let in_cycles = &mut self.memo.types_in_progress.in_cycles;
+            for other in in_cycles.drain(first_in_cycle..) {
+                self.memo.inferred_types.insert(other, TypeState::NotKept);
+            }
+            self.memo.inferred_types.insert(subject, TypeState::NotKept);
+        } else if leads_back {
+            self.leave_type_in_cycle(subject, inferred);
+        } else {
             let known = TypeState::Known(inferred);
             self.memo.inferred_types.insert(subject, known);
-        } else {
-            self.memo.inferred_types.remove(&subject);
+            let in_progress = &self.memo.types_in_progress;
+            if in_progress.in_cycles.len() > first_in_cycle && in_progress.remaining_types != 0 {
+                self.infer_types_of_cycle_again(first_in_cycle);
+            }
         }
         inferred
     }
 
+    /// `false`: it is in no cycle, or in one that has been entered.
+    #[inline(never)]
+    fn infer_types_of_cycle_around(&mut self, subject: Subject) -> bool {
+        let Some(cycle) = self.take_cycle_of(subject) else {
+            return false;
+        };
+        for &member in &cycle {
+            self.inferred_type_within_allowance(member);
+        }
+        true
+    }
+
+    /// The cycle that nothing has been asked of yet and that the subject is in. What a subject of a cycle turns out as
+    /// hangs on where the cycle is entered, so which subjects are in one is found before any of them is computed, from
+    /// what each may ask for whatever the answers are.
+    fn take_cycle_of(&mut self, subject: Subject) -> Option<Box<[Subject]>> {
+        if matches!(subject, Subject::Pattern(_) | Subject::This(_)) {
+            return None;
+        }
+        let mut state = self.memo.inferred_types.get(&subject);
+        if state.is_none() {
+            self.find_cycles_from(subject);
+            state = self.memo.inferred_types.get(&subject);
+        }
+        match state {
+            Some(&TypeState::Member { cycle }) => {
+                self.memo.types_in_progress.cycles[cycle as usize].take()
+            }
+            _ => None,
+        }
+    }
+
+    /// Whatever was found earlier leads to nothing that is found now, or that would have been found then.
+    fn find_cycles_from(&mut self, start: Subject) {
+        let mut path: SmallVec<[SubjectSearched; 4]> = SmallVec::new();
+        let mut open: SmallVec<[Subject; 8]> = SmallVec::new();
+        let mut next = Some(start);
+        let mut count = 0;
+        loop {
+            if let Some(subject) = next.take() {
+                let asks_for = self.find_subjects_asked_for(subject);
+                let types = &mut self.memo.inferred_types;
+                let leads_on = asks_for.iter().any(|asked_for| match types.get(asked_for) {
+                    Some(TypeState::Searched { .. }) | None => *asked_for != subject,
+                    Some(_) => false,
+                });
+                if leads_on {
+                    let index = count;
+                    count += 1;
+                    types.insert(subject, TypeState::Searched { index });
+                    open.push(subject);
+                    path.push(SubjectSearched {
+                        subject,
+                        index,
+                        lowest_index: index,
+                        asks_for,
+                        next: 0,
+                    });
+                } else {
+                    types.insert(subject, TypeState::Alone);
+                }
+            }
+            let Some(searched) = path.last_mut() else {
+                return;
+            };
+            if let Some(&asked_for) = searched.asks_for.get(searched.next) {
+                searched.next += 1;
+                match self.memo.inferred_types.get(&asked_for) {
+                    Some(&TypeState::Searched { index }) => {
+                        searched.lowest_index = searched.lowest_index.min(index);
+                    }
+                    Some(_) => {}
+                    None => next = Some(asked_for),
+                }
+                continue;
+            }
+            let (subject, index, lowest_index) =
+                (searched.subject, searched.index, searched.lowest_index);
+            path.pop();
+            if let Some(asked_for_it) = path.last_mut() {
+                asked_for_it.lowest_index = asked_for_it.lowest_index.min(lowest_index);
+            }
+            if lowest_index != index {
+                continue;
+            }
+            if open.last() == Some(&subject) {
+                open.pop();
+                self.memo.inferred_types.insert(subject, TypeState::Alone);
+                continue;
+            }
+            let first = open.iter().rposition(|&other| other == subject);
+            let mut members: Vec<Subject> = open.drain(first.unwrap_or(0)..).collect();
+            members.sort_unstable();
+            let cycles = &mut self.memo.types_in_progress.cycles;
+            let cycle = cycles.len() as u32;
+            for &member in &members {
+                let state = TypeState::Member { cycle };
+                self.memo.inferred_types.insert(member, state);
+            }
+            cycles.push(Some(members.into_boxed_slice()));
+        }
+    }
+
+    /// The subjects that the type of this one may be made from, whatever their types are.
+    fn find_subjects_asked_for(&mut self, subject: Subject) -> Subjects {
+        let mut asked_for = Subjects::new();
+        match subject {
+            Subject::Binding(symbol) => {
+                self.add_subjects_a_binding_asks_for(symbol, &mut asked_for);
+            }
+            Subject::Expression(expression) => {
+                if let Some(referenced) = self.find_referenced_subject(expression) {
+                    if !matches!(referenced, Subject::This(_)) {
+                        asked_for.push(referenced);
+                    }
+                    return asked_for;
+                }
+                let receiver = self.find_untyped_receiver(expression);
+                asked_for.extend(receiver.map(Subject::Expression));
+                let receiver = self.find_untyped_receiver_of_method_call(expression);
+                asked_for.extend(receiver.map(Subject::Expression));
+                asked_for.extend(self.find_result_subject_of_call(expression));
+            }
+            Subject::Result(function) => {
+                for (returned, checked) in self.find_returned_expressions(function) {
+                    asked_for.extend(self.find_subject_of_expression(returned, checked));
+                }
+            }
+            Subject::Number(symbol) => {
+                let mut walk = Walk::new(self.inputs.max_inference_nodes);
+                walk.numbers_listed = Some(asked_for);
+                self.holds_integers(&mut walk, symbol);
+                return walk.numbers_listed.unwrap_or_default();
+            }
+            Subject::Pattern(_) | Subject::This(_) => {}
+        }
+        asked_for
+    }
+
+    fn add_subjects_a_binding_asks_for(&mut self, symbol: SymbolId, asked_for: &mut Subjects) {
+        let &[Decl::Param(name)] = self.bound().symbol(symbol).decls else {
+            if let Some(initializer) = self.find_initializer_of_constant(symbol) {
+                let receiver = self.find_untyped_receiver_of_method_call(initializer);
+                asked_for.extend(receiver.map(Subject::Expression));
+            }
+            return;
+        };
+        let declared = self.find_declared_parameter_type(name);
+        if !self.c.is_any(declared) {
+            return;
+        }
+        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        if let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol))
+            && usage.members.is_empty()
+            && !usage.is_incomplete()
+        {
+            let used_as = self.type_of_usage(&usage);
+            if !self.c.is_any(used_as) {
+                return;
+            }
+        }
+        for argument in self.find_arguments_given(name).unwrap_or_default() {
+            if let Some(argument) = argument.some()
+                && let Ok(checked) = self.expression_type(argument)
+            {
+                asked_for.extend(self.find_subject_of_expression(argument, checked));
+            }
+        }
+    }
+
     fn compute_binding_type(&mut self, symbol: SymbolId) -> TypeId {
         let &[Decl::Param(name)] = self.bound().symbol(symbol).decls else {
-            return self.compute_type_from_uses(Subject::Binding(symbol));
+            // Uses only guess: what a constant is made from knows.
+            return match self.find_type_a_constant_is_made_with(symbol) {
+                Some(made) => made,
+                None => self.compute_type_from_uses(Subject::Binding(symbol)),
+            };
         };
         let declared = self.find_declared_parameter_type(name);
         if !self.c.is_any(declared) {
             return declared;
         }
         let used_as = self.compute_type_from_uses(Subject::Binding(symbol));
-        match self.c.is_any(used_as) {
-            true => self.compute_type_from_arguments(name),
+        if self.c.is_any(used_as) {
+            return self.compute_type_from_arguments(name);
+        }
+        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol)) else {
+            return used_as;
+        };
+        if usage.members.is_empty() && !usage.is_incomplete() {
+            return used_as;
+        }
+        // Uses only guess what a member holds: `a.codes[i]` reads as an array whatever `a.codes` is. What every caller
+        // passes knows, so it wins when it has each member the uses name.
+        let given = self.compute_type_from_arguments(name);
+        match !self.c.is_any(given) && self.has_every_member(given, &usage.members) {
+            true => given,
             false => used_as,
         }
     }
 
-    fn compute_type_from_arguments(&mut self, name: PatId) -> TypeId {
+    /// `const kept = list.filter(..)`. It asks nothing of the uses of the initializer, which are the uses of the constant.
+    fn find_type_a_constant_is_made_with(&mut self, symbol: SymbolId) -> Option<TypeId> {
+        let initializer = self.find_initializer_of_constant(symbol)?;
+        let made = self.find_result_of_inferred_method(initializer)?;
+        // A list of anything says less than the uses of its elements may.
+        match self.c.array_element(made) {
+            Some(element) if self.c.is_any(element) => None,
+            Some(_) | None => Some(made),
+        }
+    }
+
+    fn find_initializer_of_constant(&self, symbol: SymbolId) -> Option<ExprId> {
+        let (hir, bound) = (self.hir(), self.bound());
+        let &[Decl::Var(name)] = bound.symbol(symbol).decls else {
+            return None;
+        };
+        let PatParent::Var(variable) = bound.pat_parent[name.idx()] else {
+            return None;
+        };
+        match hir[variable].kind {
+            VarKind::Const => hir[variable].init.some(),
+            _ => None,
+        }
+    }
+
+    /// What each call passes for the parameter, `ExprId::NONE` where it passes nothing. `None`: not every call is known.
+    fn find_arguments_given(&mut self, name: PatId) -> Option<SmallVec<[ExprId; 4]>> {
         let (hir, bound) = (self.hir(), self.bound());
         let PatParent::Param(parameter) = bound.pat_parent[name.idx()] else {
-            return TypeId::ANY;
+            return None;
         };
         let function = bound.param_fn[parameter.idx()];
         if function == FnId::NONE || hir[parameter].flags.contains(Flags::REST) {
-            return TypeId::ANY;
+            return None;
         }
-        let Some(index) = hir[function].params.position_of(parameter.idx()) else {
-            return TypeId::ANY;
-        };
-        let Some(callee) = find_name_of_function(hir, bound, function) else {
-            return TypeId::ANY;
-        };
+        let index = hir[function].params.position_of(parameter.idx())?;
+        let callee = find_name_of_function(hir, bound, function)?;
         let references = references_to(self.reference_index().to_bindings, callee);
         if references.len() > MAX_CALLS_READ || self.is_exported(callee) {
-            return TypeId::ANY;
+            return None;
         }
+        let first_spreads = &mut self.memo.first_spread_arguments;
+        let arguments = references.iter().map(|&(_, reference)| {
+            find_argument_of_call(hir, bound, first_spreads, reference, index)
+        });
+        arguments.collect()
+    }
+
+    fn compute_type_from_arguments(&mut self, name: PatId) -> TypeId {
+        let Some(arguments) = self.find_arguments_given(name) else {
+            return TypeId::ANY;
+        };
         let mut parts = TypeParts::new();
-        for &(_, reference) in references {
-            let first_spreads = &mut self.memo.first_spread_arguments;
-            let argument = find_argument_of_call(hir, bound, first_spreads, reference, index);
-            let Some(argument) = argument else {
-                return TypeId::ANY;
-            };
+        for argument in arguments {
             let given = match argument.some() {
                 Some(argument) => self.predicted_expression_type(argument),
                 None => Ok(TypeId::UNDEFINED),
@@ -1048,35 +1812,51 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn is_exported(&self, symbol: SymbolId) -> bool {
+    fn is_exported(&mut self, symbol: SymbolId) -> bool {
         let files = self.files();
         let symbol = files.sym(self.file, symbol);
-        let exports = files.exports_of_module(files.file_symbol(self.file));
-        exports
-            .iter()
-            .any(|&(_, export)| files.resolve_alias_if_needed(export) == Some(symbol))
+        let file = self.file;
+        let exported = self.memo.exported_symbols.get_or_insert_with(|| {
+            let exports = files.exports_of_module(files.file_symbol(file));
+            let resolved = exports
+                .iter()
+                .filter_map(|&(_, export)| files.resolve_alias_if_needed(export));
+            resolved.collect()
+        });
+        exported.contains(&symbol)
     }
 
     fn compute_result_type(&mut self, function: FnId) -> TypeId {
-        let (hir, bound) = (self.hir(), self.bound());
         let mut result = Usage::default();
+        for (returned, checked) in self.find_returned_expressions(function) {
+            let expected = self.infer_expression_type(returned, checked);
+            let expected = self.c.widened(expected);
+            self.add_arm(&mut result, expected);
+        }
+        self.type_of_usage(&result)
+    }
+
+    /// Each with its checked type.
+    fn find_returned_expressions(&mut self, function: FnId) -> ReturnedExpressions {
+        let (hir, bound) = (self.hir(), self.bound());
+        let mut found = ReturnedExpressions::new();
         match hir[function].body {
             FnBody::None => {}
-            FnBody::Expr(returned) => self.add_returned_type(returned, &mut result),
+            FnBody::Expr(returned) => self.add_returned_expressions(returned, &mut found),
             FnBody::Block(_) => {
                 for statement in bound.ids(bound.fns[function.idx()].returns) {
                     if let StmtKind::Return(returned) = hir[statement].kind
                         && returned.is_some()
                     {
-                        self.add_returned_type(returned, &mut result);
+                        self.add_returned_expressions(returned, &mut found);
                     }
                 }
             }
         }
-        self.type_of_usage(&result)
+        found
     }
 
-    fn add_returned_type(&mut self, returned: ExprId, result: &mut Usage) {
+    fn add_returned_expressions(&mut self, returned: ExprId, found: &mut ReturnedExpressions) {
         if self.c.is_stack_low() {
             return;
         }
@@ -1086,33 +1866,31 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let alternatives = find_alternatives(self.hir(), returned);
         if self.c.is_any(checked) && !alternatives.is_empty() {
             for alternative in alternatives {
-                self.add_returned_type(alternative, result);
+                self.add_returned_expressions(alternative, found);
             }
             return;
         }
-        let expected = self.infer_expression_type(returned, checked);
-        let expected = self.c.widened(expected);
-        self.add_arm(result, expected);
+        found.push((returned, checked));
     }
 
     fn compute_number_type(&mut self, symbol: SymbolId) -> TypeId {
-        let Some(int32) = self.c.p.aot_symbols().int32_alias() else {
-            return TypeId::ANY;
-        };
+        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        match self.c.p.aot_symbols().int32_alias() {
+            Some(int32) if self.holds_integers(&mut walk, symbol) => self.c.declared_type(int32),
+            Some(_) | None => TypeId::ANY,
+        }
+    }
+
+    fn holds_integers(&mut self, walk: &mut Walk, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir(), self.bound());
         let references = self.reference_index().to_bindings;
-        let mut walked_sums = FxHashSet::default();
+        let answers = &mut self.memo.sums_used_as_int32;
         let has_int32_use = references_to(references, symbol)
             .iter()
-            .any(|&(_, reference)| is_used_as_int32(hir, bound, reference, &mut walked_sums));
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
-        let holds_integers = has_int32_use
-            && self.starts_as_integer(&mut walk, symbol)
-            && self.gets_only_integers(&mut walk, symbol);
-        match holds_integers {
-            true => self.c.declared_type(int32),
-            false => TypeId::ANY,
-        }
+            .any(|&(_, reference)| is_used_as_int32(hir, bound, reference, answers));
+        has_int32_use
+            && self.starts_as_integer(walk, symbol)
+            && self.gets_only_integers(walk, symbol)
     }
 
     fn starts_as_integer(&mut self, walk: &mut Walk, symbol: SymbolId) -> bool {
@@ -1189,7 +1967,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return true;
         }
         if let Some(subject) = self.find_number_subject(expression, checked) {
-            return self.is_expected_int32(subject);
+            return match &mut walk.numbers_listed {
+                Some(listed) => {
+                    listed.push(subject);
+                    true
+                }
+                None => self.is_expected_int32(subject),
+            };
         }
         let hir = self.hir();
         if let Some((object, MemberKey::Name(name))) = hir.member_key(expression) {
@@ -1218,8 +2002,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn is_expected_int32(&mut self, number: Subject) -> bool {
-        if let Some(&TypeState::InProgress(depth)) = self.memo.inferred_types.get(&number) {
-            self.memo.types_in_progress.subjects.revisit(depth);
+        if let Some(&TypeState::InProgress {
+            depth,
+            assumed: None,
+        }) = self.memo.inferred_types.get(&number)
+        {
+            self.memo.types_in_progress.subjects.revisit(depth as usize);
             return true;
         }
         let inferred = self.inferred_type(number);
@@ -1250,12 +2038,23 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.compute_type_from_uses(Subject::Expression(expression))
     }
 
-    fn find_type_in_inferred_receiver(&mut self, access: ExprId) -> Option<TypeId> {
-        let (object, key) = self.hir().member_key(access)?;
+    fn find_untyped_receiver(&mut self, access: ExprId) -> Option<ExprId> {
+        let (object, _) = self.hir().member_key(access)?;
         let checked = self.expression_type(object).ok()?;
-        if !self.c.is_any(checked) {
-            return None;
+        self.c.is_any(checked).then_some(object)
+    }
+
+    fn find_untyped_receiver_of_method_call(&mut self, call: ExprId) -> Option<ExprId> {
+        let hir = self.hir();
+        match hir[call].kind {
+            ExprKind::Call(site) => self.find_untyped_receiver(hir[site].callee),
+            _ => None,
         }
+    }
+
+    fn find_type_in_inferred_receiver(&mut self, access: ExprId) -> Option<TypeId> {
+        let (_, key) = self.hir().member_key(access)?;
+        let object = self.find_untyped_receiver(access)?;
         let receiver = self.inferred_type(Subject::Expression(object));
         if self.c.is_any(receiver) {
             return None;
@@ -1286,14 +2085,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let callee = hir[site].callee;
         hir.member_key(callee)?;
         let method = self.find_type_in_inferred_receiver(callee)?;
-        let signatures = self.c.signatures(method, false);
-        let (&first, others) = signatures.split_first()?;
-        let result = self.c.sig_return(first);
-        let is_one_result = others
-            .iter()
-            .all(|&other| self.c.sig_return(other) == result);
-        let says_something = !self.c.is_any(result) && !self.c.has_type_variables(result);
-        (is_one_result && says_something).then_some(result)
+        // `filter<S extends T>(..): S[]` beside `filter(..): T[]`: a result that hangs on the call says nothing here.
+        let mut result = None;
+        for &signature in self.c.signatures(method, false).iter() {
+            let returned = self.c.sig_return(signature);
+            if self.c.has_type_variables(returned) {
+                continue;
+            }
+            if result.is_some_and(|result| result != returned) {
+                return None;
+            }
+            result = Some(returned);
+        }
+        result.filter(|&result| !self.c.is_any(result))
     }
 
     fn find_element_type(&mut self, list: TypeId) -> Option<TypeId> {
@@ -1360,45 +2164,235 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn usage_of(&mut self, walk: &mut Walk, subject: Subject) -> Option<Rc<Usage>> {
-        match self.memo.usages.get(&subject) {
-            Some(UsageState::Known(usage)) => return Some(Rc::clone(usage)),
-            Some(&UsageState::InProgress(depth)) => {
-                walk.subjects.revisit(depth);
-                return None;
-            }
-            None => {}
+        let is_outermost = walk.lowest_index == usize::MAX;
+        let usage = self.usage_within_reach(walk, subject);
+        match is_outermost && walk.is_freeing_stack {
+            true => self.walk_subjects_set_aside(walk),
+            false => usage,
         }
-        let entered = walk.subjects.enter();
-        let is_outermost = entered.depth == 0;
-        let state = UsageState::InProgress(entered.depth);
-        self.memo.usages.insert(subject, state);
-        let unstable_answers = self.count_unstable_answers();
-        let computed = self.ask(|queries| Ok(queries.compute_usage(walk, subject)));
-        let ran_into_outer_subject = walk.subjects.leave(entered);
-        let had_full_budget = is_outermost || !walk.is_out_of_budget();
+    }
+
+    #[cold]
+    fn walk_subjects_set_aside(&mut self, walk: &mut Walk) -> Option<Rc<Usage>> {
+        let mut first_set_aside = 0;
+        loop {
+            // The innermost left the stack first.
+            walk.set_aside[first_set_aside..].reverse();
+            walk.is_freeing_stack = false;
+            let mut usage = None;
+            while !walk.is_freeing_stack {
+                let Some(innermost) = walk.set_aside.pop() else {
+                    return usage;
+                };
+                first_set_aside = walk.set_aside.len();
+                usage = self.walk_subject(walk, innermost, true);
+                if !walk.is_freeing_stack
+                    && let Some(asked_for_it) = walk.set_aside.last_mut()
+                {
+                    asked_for_it.lowest_index = walk.lowest_index;
+                    asked_for_it.found_something_new = walk.found_something_new;
+                }
+            }
+        }
+    }
+
+    fn usage_within_reach(&mut self, walk: &mut Walk, subject: Subject) -> Option<Rc<Usage>> {
+        if walk.is_freeing_stack {
+            return None;
+        }
+        let unstable_answers = self.count_unstable_answers() + walk.subjects_not_kept;
+        let is_outermost = walk.lowest_index == usize::MAX;
+        if is_outermost {
+            (walk.unstable_answers_at_start, walk.shares_budget) = (unstable_answers, false);
+        }
+        let assumed = match self.memo.usages.get(&subject) {
+            Some(UsageState::Known(usage)) => return Some(Rc::clone(usage)),
+            Some(UsageState::InProgress { index, assumed }) => {
+                walk.lowest_index = walk.lowest_index.min(*index);
+                return assumed.clone();
+            }
+            Some(UsageState::InCycle { index, found }) => {
+                walk.lowest_index = walk.lowest_index.min(*index);
+                return Some(Rc::clone(found));
+            }
+            Some(UsageState::Assumed(usage)) => Some(Rc::clone(usage)),
+            Some(UsageState::NotKept) => {
+                walk.shares_budget = true;
+                None
+            }
+            None => None,
+        };
+        // What a subject that is walked again asks for is walked, so each time the stack is freed the walk gets further.
+        if walk.subjects_on_stack > 1 && self.c.is_half_of_stack_in_use() {
+            walk.is_freeing_stack = true;
+            return None;
+        }
+        walk.shares_budget |= unstable_answers != walk.unstable_answers_at_start;
+        let entered = SubjectInProgress {
+            subject,
+            is_outermost,
+            unstable_answers,
+            assumed,
+            index: 0,
+            first_in_cycle: walk.in_cycles.len(),
+            first_in_round: 0,
+            lowest_index: 0,
+            found_something_new: false,
+            outer_lowest: walk.lowest_index,
+            outer_nodes: walk.remaining_nodes,
+            outer_root: walk.root,
+            outer_found_something_new: std::mem::take(&mut walk.found_something_new),
+        };
+        self.walk_subject(walk, entered, false)
+    }
+
+    fn walk_subject(
+        &mut self,
+        walk: &mut Walk,
+        mut entered: SubjectInProgress,
+        mut was_set_aside: bool,
+    ) -> Option<Rc<Usage>> {
+        let (subject, is_outermost) = (entered.subject, entered.is_outermost);
         let can_be_merged = match subject {
             Subject::Binding(_) | Subject::Pattern(_) | Subject::This(_) => true,
             Subject::Result(_) | Subject::Expression(_) | Subject::Number(_) => false,
         };
-        let is_final = can_be_merged
-            && !ran_into_outer_subject
-            && had_full_budget
-            && self.count_unstable_answers() == unstable_answers;
-        let usage = computed.ok().map(Rc::new);
+        let (usage, is_stable, is_entry_of_cycle) = loop {
+            if was_set_aside {
+                walk.lowest_index = entered.lowest_index;
+                walk.found_something_new = entered.found_something_new;
+                was_set_aside = false;
+            } else {
+                // A walk that begins inside another goes on counting, so what it runs into of the other is further out.
+                entered.index = self.memo.types_in_progress.next_usage_index;
+                self.memo.types_in_progress.next_usage_index += 1;
+                let state = UsageState::InProgress {
+                    index: entered.index,
+                    assumed: entered.assumed.clone(),
+                };
+                self.memo.usages.insert(subject, state);
+                walk.lowest_index = entered.index;
+                entered.first_in_round = walk.in_cycles.len();
+            }
+            if is_outermost || !walk.shares_budget {
+                walk.remaining_nodes = walk.max_nodes;
+            }
+            self.statistics.usages_walked += 1;
+            walk.subjects_on_stack += 1;
+            let mut found = self.ask(|queries| Ok(queries.compute_usage(walk, subject)));
+            walk.subjects_on_stack -= 1;
+            if walk.is_freeing_stack {
+                entered.lowest_index = walk.lowest_index;
+                entered.found_something_new = walk.found_something_new;
+                walk.lowest_index = entered.outer_lowest;
+                walk.found_something_new = entered.outer_found_something_new;
+                walk.root = entered.outer_root;
+                walk.set_aside.push(entered);
+                return None;
+            }
+            if let (Ok(found), Some(assumed)) = (&mut found, &entered.assumed)
+                && *found != **assumed
+            {
+                found.merge(&mut Walk::new(u64::MAX), assumed);
+                if found.is_incomplete() {
+                    found.forget_parts();
+                }
+            }
+            let usage = found.ok().map(Rc::new);
+            walk.found_something_new |= usage != entered.assumed;
+            let is_stable =
+                self.count_unstable_answers() + walk.subjects_not_kept == entered.unstable_answers;
+            walk.shares_budget |= !is_stable;
+            let is_entry_of_cycle =
+                walk.lowest_index == entered.index && walk.in_cycles.len() > entered.first_in_round;
+            if !is_entry_of_cycle || !walk.found_something_new || walk.shares_budget {
+                break (usage, is_stable, is_entry_of_cycle);
+            }
+            for &other in &walk.in_cycles[entered.first_in_round..] {
+                if let Some(state) = self.memo.usages.get_mut(&other)
+                    && let UsageState::InCycle { found, .. } = state
+                {
+                    *state = UsageState::Assumed(Rc::clone(found));
+                }
+            }
+            (entered.assumed, walk.found_something_new) = (usage, false);
+        };
+        let (index, first_in_cycle) = (entered.index, entered.first_in_cycle);
+        let leads_back = walk.lowest_index < index;
+        let has_settled = !walk.found_something_new || !is_entry_of_cycle;
+        let is_cut_short = walk.shares_budget && walk.is_out_of_budget();
+        let found_something_new = std::mem::replace(
+            &mut walk.found_something_new,
+            entered.outer_found_something_new,
+        );
+        walk.root = entered.outer_root;
+        walk.remaining_nodes = match walk.shares_budget && !is_outermost {
+            true => entered.outer_nodes.min(walk.remaining_nodes),
+            false => entered.outer_nodes,
+        };
+        if leads_back && !is_outermost {
+            walk.lowest_index = walk.lowest_index.min(entered.outer_lowest);
+            walk.found_something_new |= found_something_new;
+            walk.in_cycles.push(subject);
+            let found = usage.clone().unwrap_or_default();
+            let state = UsageState::InCycle { index, found };
+            self.memo.usages.insert(subject, state);
+            return usage;
+        }
+        walk.lowest_index = entered.outer_lowest;
+        let is_kept = can_be_merged && is_stable && has_settled && !leads_back && !is_cut_short;
+        for other in walk.in_cycles.drain(first_in_cycle..) {
+            let Some(state) = self.memo.usages.get_mut(&other) else {
+                continue;
+            };
+            match state {
+                UsageState::InCycle { found, .. } if is_kept => {
+                    *state = UsageState::Known(Rc::clone(found));
+                }
+                UsageState::InCycle { .. } => {
+                    *state = UsageState::NotKept;
+                    if self.lacks_stack {
+                        self.memo.usages_that_lacked_stack.push(other);
+                    }
+                }
+                UsageState::Assumed(_) => {
+                    self.memo.usages.remove(&other);
+                }
+                UsageState::InProgress { .. } | UsageState::Known(_) | UsageState::NotKept => {}
+            }
+        }
         match &usage {
-            Some(usage) if is_final => {
+            Some(usage) if is_kept => {
                 let known = UsageState::Known(Rc::clone(usage));
                 self.memo.usages.insert(subject, known);
             }
             Some(_) | None => {
-                self.memo.usages.remove(&subject);
+                walk.subjects_not_kept += 1;
+                match can_be_merged {
+                    true => self.memo.usages.insert(subject, UsageState::NotKept),
+                    false => self.memo.usages.remove(&subject),
+                };
+                if can_be_merged && self.lacks_stack {
+                    self.memo.usages_that_lacked_stack.push(subject);
+                }
             }
         }
         usage
     }
 
+    /// With the stack free the checker answers what it gave up on, so they are walked as if for the first time. As
+    /// `NotKept` they would never be kept where a cycle is longer than one budget, nor would whatever leads to them.
+    pub(super) fn forget_usages_that_lacked_stack(&mut self) {
+        for subject in self.memo.usages_that_lacked_stack.drain(..) {
+            if let Some(UsageState::NotKept) = self.memo.usages.get(&subject) {
+                self.memo.usages.remove(&subject);
+            }
+        }
+    }
+
     fn compute_usage(&mut self, walk: &mut Walk, subject: Subject) -> Usage {
         let mut usage = Usage::default();
+        walk.root = &raw const usage;
         match subject {
             Subject::Binding(symbol) => {
                 let references = self.reference_index().to_bindings;
@@ -1427,16 +2421,25 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if walk.is_out_of_budget() {
             usage.facts |= Facts::INCOMPLETE;
         }
+        if usage.is_incomplete() {
+            usage.forget_parts();
+        }
         usage
     }
 
     fn add_uses_of_subject(&mut self, walk: &mut Walk, subject: Subject, usage: &mut Usage) {
+        let is_part = !std::ptr::eq(usage, walk.root);
         let Some(found) = self.usage_of(walk, subject) else {
             return;
         };
-        let is_stored = usage.facts & Facts::STORED;
+        let is_kept = matches!(self.memo.usages.get(&subject), Some(UsageState::Known(_)));
+        if is_part && !is_kept {
+            return;
+        }
+        let own_stores = Facts::STORED | Facts::OBJECT_LITERAL_STORED;
+        let is_stored = usage.facts & own_stores;
         usage.merge(walk, &found);
-        usage.facts = (usage.facts - Facts::STORED) | is_stored;
+        usage.facts = (usage.facts - own_stores) | is_stored;
     }
 
     fn calls_its_object(&self, access: ExprId) -> bool {
@@ -1450,7 +2453,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_evidence(&mut self, walk: &mut Walk, value: ExprId, usage: &mut Usage) {
-        if self.c.is_stack_low() || !walk.enter_node() {
+        if self.c.is_stack_low() || !walk.enter_node_of(usage) {
             return;
         }
         let Ok(checked) = self.expression_type(value) else {
@@ -1473,7 +2476,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 usage.facts |= required_if(!is_optional);
                 match self.calls_its_object(access) {
                     true => usage.facts |= Facts::FUNCTION,
-                    false => self.add_evidence(walk, access, usage.member_mut(name)),
+                    false if walk.is_out_of_budget() => {}
+                    false => {
+                        self.add_evidence(walk, access, usage.member_mut(name));
+                        self.add_uses_of_elements_in_callbacks(walk, access, name, usage);
+                    }
                 }
             }
             Use::Keyed {
@@ -1507,12 +2514,105 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 usage.facts |= required_if(is_required);
             }
             Use::Number => usage.facts |= self.number_fact_of_operand(value),
-            Use::Int32 => usage.facts |= self.number_fact_of_operand(value) | Facts::INT32,
-            Use::Updated => usage.facts |= Facts::NUMBER_AT_EVERY_VALUE | Facts::STORED,
+            Use::Int32 => {
+                usage.facts |= self.number_fact_of_operand(value);
+                if !is_given_product(self.hir(), self.bound(), value) {
+                    usage.facts |= Facts::INT32;
+                }
+            }
+            Use::Updated => {
+                usage.facts |= Facts::NUMBER_AT_EVERY_VALUE | Facts::STORED;
+                self.add_use_of_update(value, usage);
+            }
             Use::AddedTo(other) => self.add_addition(other, usage),
             Use::ComparedWith(other) => self.add_comparison(other, usage),
             Use::Stored { op, value } => self.add_store(op, value, usage),
         }
+    }
+
+    /// `list.filter(x => x > 2)`: a list hands its elements to the callback, so what the callback does with them says
+    /// what the list holds.
+    fn add_uses_of_elements_in_callbacks(
+        &mut self,
+        walk: &mut Walk,
+        access: ExprId,
+        method: Atom,
+        usage: &mut Usage,
+    ) {
+        let (hir, bound) = (self.hir(), self.bound());
+        let Parent::Expr(call) = bound.parent_of_expr(access) else {
+            return;
+        };
+        let Some(call) = call.some() else {
+            return;
+        };
+        let ExprKind::Call(site) = hir[call].kind else {
+            return;
+        };
+        if hir[site].callee != access {
+            return;
+        }
+        for (index, argument) in hir.ids(hir[site].args).enumerate() {
+            let callback = match hir[argument].kind {
+                ExprKind::Fn(callback) => callback,
+                ExprKind::Spread(_) => break,
+                _ => continue,
+            };
+            let taking_elements = self.find_parameters_taking_elements(method, index);
+            for (position, parameter) in hir[callback].params.iter().enumerate().take(8) {
+                if taking_elements & (1 << position) == 0 {
+                    continue;
+                }
+                let Ok(checked) = self.checked_binding_type(hir[parameter].pat) else {
+                    continue;
+                };
+                let subject = self.find_parameter_subject(self.file, parameter, checked);
+                let Some(subject) = subject else {
+                    continue;
+                };
+                let mut found = Usage::default();
+                self.add_uses_of_subject(walk, subject, &mut found);
+                if !found.facts.contains(Facts::NUMBER_AT_EVERY_VALUE) {
+                    found.facts -= Facts::NUMBER | Facts::INT32;
+                }
+                let says = self.type_of_usage(&found);
+                if self.is_number_type(says) || self.is_string_type(says) {
+                    usage.elements_mut().merge(walk, &found);
+                }
+            }
+        }
+    }
+
+    /// Which parameters of the callback that a list's method takes at `index` are elements of the list: a bit each.
+    fn find_parameters_taking_elements(&mut self, method: Atom, index: usize) -> u8 {
+        if let Some(&known) = self.memo.parameters_taking_elements.get(&(method, index)) {
+            return known;
+        }
+        // No method of a list names `never` by itself, so a parameter of that type has the type of the elements.
+        let list = self.c.array_of(TypeId::NEVER);
+        let mut taking_elements = 0;
+        let signatures = match self.c.type_of_property(list, method) {
+            Some(method) => self.c.signatures(method, false),
+            None => Default::default(),
+        };
+        for &signature in signatures.iter() {
+            let parameters = self.c.sig_params(signature);
+            let Some(callback) = find_parameter(&parameters, index) else {
+                continue;
+            };
+            let callback = self.without_nullish(callback.ty).unwrap_or(callback.ty);
+            for &signature in self.c.signatures(callback, false).iter() {
+                let parameters = self.c.sig_params(signature);
+                for (position, parameter) in parameters.iter().enumerate().take(8) {
+                    if parameter.ty == TypeId::NEVER && !parameter.rest {
+                        taking_elements |= 1 << position;
+                    }
+                }
+            }
+        }
+        let known = &mut self.memo.parameters_taking_elements;
+        known.insert((method, index), taking_elements);
+        taking_elements
     }
 
     fn number_fact_of_operand(&self, operand: ExprId) -> Facts {
@@ -1556,6 +2656,27 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
+    /// `list[i++]`, `--n >= 0`: what the update hands on is the variable a step ago or a step on.
+    fn add_use_of_update(&mut self, updated: ExprId, usage: &mut Usage) {
+        let (hir, bound) = (self.hir(), self.bound());
+        let Parent::Expr(update) = bound.parent_of_expr(updated) else {
+            return;
+        };
+        let Some(update) = update.some() else {
+            return;
+        };
+        match find_use(hir, bound, update) {
+            Use::Key { object } => {
+                usage.facts |= match self.is_list(object) {
+                    true => Facts::INT32,
+                    false => Facts::KEY,
+                };
+            }
+            Use::ComparedWith(other) if is_int32_literal(hir, other) => usage.facts |= Facts::INT32,
+            _ => {}
+        }
+    }
+
     fn add_addition(&mut self, other: ExprId, usage: &mut Usage) {
         if let Ok(ty) = self.expression_type(other)
             && self.is_number_type(ty)
@@ -1579,6 +2700,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         usage.facts |= Facts::STORED;
         match op {
             None | Some(BinOp::And | BinOp::Or | BinOp::Nullish) => {
+                if matches!(self.hir()[value].kind, ExprKind::Object(_)) {
+                    usage.facts |= Facts::OBJECT_LITERAL_STORED;
+                }
                 if let Ok(ty) = self.expression_type(value) {
                     let ty = self.c.widened(ty);
                     self.add_arm(usage, ty);
@@ -1627,7 +2751,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if is_index {
             self.add_evidence(walk, access, usage.elements_mut());
         } else if let Some(name) = self.c.property_name_of_type(key_type) {
-            self.add_evidence(walk, access, usage.member_mut(name));
+            if !walk.is_out_of_budget() {
+                self.add_evidence(walk, access, usage.member_mut(name));
+            }
         } else {
             usage.facts |= Facts::OBJECT;
         }
@@ -1642,7 +2768,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_uses_of_pattern(&mut self, walk: &mut Walk, pattern: PatId, usage: &mut Usage) {
-        if self.c.is_stack_low() || !walk.enter_node() {
+        if self.c.is_stack_low() || !walk.enter_node_of(usage) {
             return;
         }
         let hir = self.hir();
@@ -1816,6 +2942,25 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// A part belongs to the trees of many subjects, and its type is worked out once. What was cut short for lack of stack, or rests on an answer that may be
+    /// another next time, is not kept.
+    fn type_of_part(&mut self, part: &Rc<Usage>) -> TypeId {
+        if part.members.is_empty() && part.elements.is_none() {
+            return self.type_of_usage(part);
+        }
+        if let Some(&(_, known)) = self.memo.types_of_parts.get(&Rc::as_ptr(part)) {
+            return known;
+        }
+        let not_kept = (self.count_answers_not_kept(), self.c.times_cut_short.get());
+        let ty = self.type_of_usage(part);
+        if not_kept == (self.count_answers_not_kept(), self.c.times_cut_short.get()) {
+            // The table holds the part, so it stays where it is and what it is: whoever adds to it copies it.
+            let kept = (Rc::clone(part), ty);
+            self.memo.types_of_parts.insert(Rc::as_ptr(part), kept);
+        }
+        ty
+    }
+
     fn number_type(&mut self, facts: Facts) -> TypeId {
         let int32 = self.c.p.aot_symbols().int32_alias();
         match int32 {
@@ -1832,16 +2977,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             parts.push(TypeId::OBJECT);
             return;
         }
-        if usage.members.is_empty() && elements.is_none() {
+        let stores_object = usage.facts.contains(Facts::OBJECT_LITERAL_STORED);
+        if usage.members.is_empty() && (elements.is_none() || stores_object) {
             return;
         }
-        let element_type = match elements {
-            Some(elements) => self.type_of_usage(elements),
+        let element_type = match &usage.elements {
+            Some(elements) => self.type_of_part(elements),
             None => TypeId::ANY,
         };
         let array = self.c.array_of(element_type);
-        let can_be_array = self.has_every_member(array, &usage.members);
-        let can_be_string = !usage.has_stored_part()
+        let can_be_array = !stores_object && self.has_every_member(array, &usage.members);
+        let can_be_string = !stores_object
+            && !usage.has_stored_part()
             && (element_type == TypeId::ANY || element_type == TypeId::STRING)
             && self.has_every_member(TypeId::STRING, &usage.members);
         let any_array = self.c.array_of(TypeId::ANY);
@@ -1899,7 +3046,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             props.push(Prop {
                 name: member.name,
                 flags,
-                source: PropSource::Type(self.type_of_usage(&member.usage)),
+                source: PropSource::Type(self.type_of_part(&member.usage)),
                 mapper: MapperId::IDENTITY,
                 name_type: TypeId::UNRESOLVED,
             });

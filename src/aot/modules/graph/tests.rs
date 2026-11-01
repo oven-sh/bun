@@ -66,10 +66,14 @@ fn source_text_file(file: FileId) -> FileRow {
         evaluating_sites: Vec::new(),
         unread_sites: Vec::new(),
         holders: Vec::new(),
+        answer_members: Vec::new(),
         exports: Vec::new(),
+        ambiguous_names: Vec::new(),
         unread_exports: Vec::new(),
         is_data_linked_by_names_alone: false,
+        is_left_to_loader: false,
         required_names: Vec::new(),
+        names_searched_behind_stars: Vec::new(),
     }
 }
 
@@ -86,10 +90,13 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         rows,
         record_files: Vec::new(),
         left_out_files: Vec::new(),
+        files_brought_by_calls: Vec::new(),
         placeholder_files: Vec::new(),
         left_out_inner_modules: Vec::new(),
         other_modules: Vec::new(),
         external_kinds: Vec::new(),
+        statements_left_to_loader: Vec::new(),
+        importers_that_stand_for_all: Vec::new(),
         synthetic_exports: Vec::new(),
         errors: Vec::new(),
         failures: Vec::new(),
@@ -247,10 +254,12 @@ fn modules_without_files_have_no_export_table() {
     let external = ModuleRef::External {
         importer: FileId(0),
         specifier,
+        type_attribute: None,
     };
     let graph = ModuleGraph {
         other_modules: vec![runtime, external],
         external_kinds: vec![((FileId(0), specifier), ExternalKind::HostValue)],
+        statements_left_to_loader: Vec::new(),
         ..unfinished_graph(0, Vec::new())
     }
     .finish(&run_serially);
@@ -263,6 +272,34 @@ fn modules_without_files_have_no_export_table() {
 }
 
 #[test]
+fn first_kept_importer_stands_for_all_that_spell_one_path() {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let [path, package, value] =
+        [&b"/app/a.js"[..], b"pkg", b"/app/a.node"].map(|text| atoms.intern(text));
+    let mut graph = ModuleGraph {
+        external_kinds: vec![
+            ((FileId(0), path), ExternalKind::UncompiledCode),
+            ((FileId(1), path), ExternalKind::UncompiledCode),
+            ((FileId(2), path), ExternalKind::UncompiledCode),
+            ((FileId(1), package), ExternalKind::UncompiledCode),
+            ((FileId(2), package), ExternalKind::UncompiledCode),
+            ((FileId(1), value), ExternalKind::HostValue),
+            ((FileId(2), value), ExternalKind::HostValue),
+        ],
+        left_out_files: vec![FileId(0)],
+        ..unfinished_graph(3, Vec::new())
+    }
+    .finish(&run_serially);
+    assert_eq!(graph.importer_of_external(FileId(2), path), FileId(2));
+    graph.join_externals_that_spell_paths(&atoms);
+    assert_eq!(graph.importer_of_external(FileId(1), path), FileId(1));
+    assert_eq!(graph.importer_of_external(FileId(2), path), FileId(1));
+    assert_eq!(graph.importer_of_external(FileId(2), package), FileId(2));
+    assert_eq!(graph.importer_of_external(FileId(2), value), FileId(2));
+}
+
+#[test]
 fn external_kind_is_found_by_importer_and_specifier() {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
@@ -270,6 +307,7 @@ fn external_kind_is_found_by_importer_and_specifier() {
     let external = |importer, specifier| ModuleRef::External {
         importer: FileId(importer),
         specifier,
+        type_attribute: None,
     };
     let graph = ModuleGraph {
         external_kinds: vec![
@@ -514,6 +552,7 @@ fn errors_and_failures_are_separate_lists() {
         module: file_module(0),
         name: known::default,
         is_known_member: false,
+        is_replaceable: false,
     };
     let graph = ModuleGraph {
         synthetic_exports: vec![synthetic_export],

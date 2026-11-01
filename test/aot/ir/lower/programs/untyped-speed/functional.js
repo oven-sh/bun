@@ -52,8 +52,8 @@ console.log(run(900000));
 
 // GENERATED: zipWith curry isEven collect
 // CHECK-LABEL: function {{*}}name="zipWith"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|function, v1: undefined|null|string|Array, v2: undefined|null|string|Array):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|function, v1: undefined|null|Array<number>, v2: undefined|null|Array<number>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = Data data=[[d_1]]
@@ -80,32 +80,34 @@ console.log(run(900000));
 // CHECK-NEXT: v20 = PropGet v5 key="push"
 // CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
 // CHECK-NEXT: v22 = ElemGet v1, v19
-// CHECK-NEXT: v23 = ElemGet v2, v19
-// CHECK-NEXT: v24 = Call v0, -, v22, v23 calleeName="fn"
-// CHECK-NEXT: v25 = Call v21, v5, v24 calleeKey="push" calleeName="out.push"
+// CHECK-NEXT: v23 = Convert v22 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v24 = ElemGet v2, v19
+// CHECK-NEXT: v25 = Convert v24 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v26 = Call v0, -, v23, v25 calleeName="fn"
+// CHECK-NEXT: v27 = Call v21, v5, v26 calleeKey="push" calleeName="out.push"
 // CHECK-NEXT: Jump -> next b5()
 // CHECK-NEXT: b5():
-// CHECK-NEXT: v26 = Increment v19
-// CHECK-NEXT: v27 = Convert v26 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v27)
-// CHECK-NEXT: b6(v28):
+// CHECK-NEXT: v28 = Increment v19
+// CHECK-NEXT: v29 = Convert v28 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b2(v29)
+// CHECK-NEXT: b6(v30):
 // CHECK-NEXT: Jump -> next b7()
 // CHECK-NEXT: b7():
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="curry"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|[[f_3]] flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_3]]|[[f_4]]|[[f_5]] flags=[IsExpected]}] results=[{type=undefined|null|[[f_6]] flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
+// CHECK-NEXT: b0(v0: undefined|null|[[f_3]]|[[f_4]]|[[f_5]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewObject layout=[[L_5]]
-// CHECK-NEXT: v2 = NewClosure v1, v0 function=[[f_6]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v1, v3 layout=[[L_5]]
+// CHECK-NEXT: v1 = NewObject layout=[[L_8]]
+// CHECK-NEXT: v2 = NewClosure v1, v0 function=[[f_9]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
+// CHECK-NEXT: PutEnvironmentField v1, v3 layout=[[L_8]]
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isEven"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -118,8 +120,8 @@ console.log(run(900000));
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="collect"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=undefined|null|function flags=[IsExpected]}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|[[f_8]] flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: env [[L_5]], v1: undefined|null|function, v2: Array):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}, {type=undefined|null|[[f_3]]|[[f_4]]|[[f_5]] flags=[IsExpected] variableName="fn"}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|[[f_11]] flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
+// CHECK-NEXT: b0(v0: env [[L_8]], v1: undefined|null|[[f_3]]|[[f_4]]|[[f_5]], v2: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = PropGet v2 key="length"
@@ -132,11 +134,11 @@ console.log(run(900000));
 // CHECK-NEXT: v8 = NewArray contents=anything
 // CHECK-NEXT: AppendSpread v8, v2
 // CHECK-NEXT: v10 = CallList v1, -, v8 calleeName="fn"
-// CHECK-NEXT: ReturnCall v10 casts=[{declared={type=undefined|null|[[f_8]] flags=[IsExpected]}}]
+// CHECK-NEXT: ReturnCall v10 casts=[{declared={type=undefined|null|[[f_11]] flags=[IsExpected]}}]
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v11 = NewClosure v0, v2 function=[[f_9]]
+// CHECK-NEXT: v11 = NewClosure v0, v2 function=[[f_12]]
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4():
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[f_11]] flags=[IsExpected]}
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }

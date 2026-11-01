@@ -14,8 +14,16 @@ export const imageHeader = {
   formatVersion: 72,
   sections: 208,
   numberOfSections: 27,
+  ffiCodeSize: 456,
   constantsOffset: 464,
   constantsSize: 468,
+  flags: 472,
+} as const;
+
+export const imageFlag = {
+  admitsUnknownJavaScript: 1 << 1,
+  loadsModulesByName: 1 << 2,
+  runsUnreadCode: 1 << 11,
 } as const;
 
 const minFileAlignment = 512;

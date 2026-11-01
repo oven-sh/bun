@@ -207,5 +207,5 @@ function f4 module=m0 position=1246 kind=Arrow flags=[IsChecked] length=1 thisTy
 # -- generated: onlyLists
 # CHECK-LABEL: function {{*}}name="onlyLists"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 162, patchpoints: 32, rare instructions: 36
+# CHECK-NEXT: instructions: 165, patchpoints: 32, rare instructions: 29
 # CHECK-NEXT: end of function f1

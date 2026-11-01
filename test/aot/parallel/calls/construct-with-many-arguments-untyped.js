@@ -17,7 +17,7 @@ function callsIn(counts, ...besides) {
   return sum;
 }
 // These make the text that is printed, list the names for it and keep it in a set; a cell or an array where the allocator has none at hand is the work of the run time.
-const owed = ["operationAOTArrayJoin", "operationAOTConcatenate", "operationAOTToString", "operationAOTValueAdd", "operationAOTStackStringBuilderFinish", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow", "operationAOTNewArrayOfHoles"];
+const owed = ["operationAOTArrayJoin", "operationAOTConcatenate", "operationAOTConcatenatePair", "operationAOTToString", "operationAOTValueAdd", "operationAOTStackStringBuilderFinish", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow", "operationAOTNewArrayOfHoles"];
 // So do these, where the allocator has no cell at hand for a text that is put together or for an array. Each is owed at most so often in a stretch.
 const owedAtMost = { operationAOTConcat: 7, operationAOTConcatThree: 11, operationAOTNewArray: 5 };
 // The calls of one operation in such a text.

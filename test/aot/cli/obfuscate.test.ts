@@ -46,7 +46,6 @@ export function measure(depth: number): number {
 `,
 };
 const functionNames = ["innermostThrower", "measure", "outermostCaller"];
-const concealedTexts = ["innermostThrower", "outermostCaller", "concealed-module"];
 
 async function compile(folder: string, name: string, ...flags: string[]) {
   built(await spawned([bunExe(), "compile", "app.ts", "--outfile", name, ...flags], folder, env));
@@ -54,11 +53,6 @@ async function compile(folder: string, name: string, ...flags: string[]) {
 }
 
 const readMap = (executable: string): SourceMap => JSON.parse(readFileSync(executable + ".map", "utf8"));
-
-function textsIn(executable: string) {
-  const file = readFileSync(executable);
-  return concealedTexts.filter(text => file.includes(text) || file.includes(Buffer.from(text, "utf16le")));
-}
 
 function framesOf(stack: string): Frame[] {
   return stack.split("\n").flatMap(line => {
@@ -138,20 +132,6 @@ async function refusalOf(folder: string, compile: object) {
 }
 
 describe.concurrent("--obfuscate", () => {
-  // TODO: the file name of the imported module stays in the executable.
-  test.todo(
-    "function names and the file name of an imported module leave the executable",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-obfuscate-texts", program);
-        const plain = await compile(String(dir), "plain");
-        expect(textsIn(plain)).toEqual(concealedTexts);
-        expect(existsSync(plain + ".map")).toBe(false);
-        expect(textsIn(await compile(String(dir), "obfuscated", buildFlags.obfuscate))).toEqual([]);
-      }),
-    buildLimit,
-  );
-
   test(
     "the map leads from the numbers in a stack to the names and positions that a build without the flag prints",
     () =>
@@ -211,6 +191,114 @@ describe.concurrent("--obfuscate", () => {
         const withMap = await compile(folder, "second/app", "--sourcemap=external");
         expect(readFileSync(withMap + ".map", "utf8")).toBe(readFileSync(obfuscated + ".map", "utf8"));
         expect(readFileSync(withMap).equals(readFileSync(obfuscated))).toBe(true);
+      }),
+    buildLimit,
+  );
+
+  test(
+    "the executable holds the path of a module only where the program can read it",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-obfuscate-paths", {
+          "app.ts": `import { plain } from "./unreadFolder/unreadPlain";
+import { again } from "./unreadFolder/unreadHandsOn";
+import * as whole from "./unreadFolder/unreadWhole";
+import { own } from "./readFolder/readsItsOwnPath";
+import { other } from "./readFolder/resolvesAnother";
+import { required } from "./readFolder/requiresAnother";
+import { load } from "./unreadFolder/unreadHoldsImport";
+const { lazy } = await load();
+const { waited } = await import("./unreadFolder/unreadAwaits");
+console.log(plain(1), again(2), Object.keys(whole).join(), whole.first(3), lazy(4), waited);
+console.log(own, other, required);
+// Most programs hold a package that evaluates a text somewhere.
+console.log(new Function("a", "b", "return a " + (process.argv.length > 90 ? "-" : "+") + " b")(1, 2));
+`,
+          "unreadFolder/unreadPlain.ts": `export function plain(n: number) { return n + 1; }`,
+          "unreadFolder/unreadHandsOn.ts": `export { plain as again } from "./unreadPlain";`,
+          "unreadFolder/unreadWhole.ts": `export const first = (n: number) => n * 2;\nexport const second = 2;`,
+          "unreadFolder/unreadLazy.ts": `export function lazy(n: number) { return n * 3; }`,
+          "unreadFolder/unreadHoldsImport.ts": `export const load = () => import("./unreadLazy");`,
+          "unreadFolder/unreadAwaits.ts": `export const waited = await Promise.resolve("waited");`,
+          "readFolder/readsItsOwnPath.ts": `export const own = [import.meta.path, import.meta.dir, import.meta.file, import.meta.url].join();`,
+          "readFolder/resolvesAnother.ts": `export const other = require.resolve("./isResolved");`,
+          "readFolder/isResolved.ts": `export const unused = 1;`,
+          "readFolder/requiresAnother.ts": `export const required = require("./requiredByName").value;`,
+          "readFolder/requiredByName.ts": `export const value = "required";`,
+        });
+        const folder = String(dir);
+        const plain = await spawned([await compile(folder, "plain")], folder, env);
+        expect(plain.stdout).toStartWith("2 3 first,second 6 12 waited\n");
+        expect(plain.stdout).toContain("readsItsOwnPath.ts");
+        expect(plain.stdout).toContain("isResolved.ts");
+
+        const executable = await compile(folder, "obfuscated", buildFlags.obfuscate);
+        const obfuscated = await spawned([executable], folder, env);
+        expect({ ...obfuscated }).toMatchObject({ stdout: plain.stdout, stderr: plain.stderr, exitCode: 0 });
+
+        const bytes = readFileSync(executable);
+        const held = (name: string) => bytes.includes(name);
+        // A require() keeps the name that it spells: "./requiredByName".
+        const unread = [
+          "unreadFolder",
+          "unreadPlain",
+          "unreadHandsOn",
+          "unreadWhole",
+          "unreadLazy",
+          "unreadAwaits",
+          "unreadHoldsImport",
+        ];
+        expect(unread.filter(held)).toEqual([]);
+        expect(["readFolder", "readsItsOwnPath", "isResolved"].filter(held)).toHaveLength(3);
+        // The map is where the names are.
+        expect(readMap(executable).sources.map(source => basename(source))).toEqual(
+          expect.arrayContaining(["unreadPlain.ts", "unreadLazy.ts"]),
+        );
+        expect(unread.filter(name => readFileSync(join(folder, executableName("plain"))).includes(name))).toEqual(
+          unread,
+        );
+      }),
+    buildLimit,
+  );
+
+  test(
+    "an error that names a module names it by its path",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-obfuscate-errors", {
+          "app.ts": `const said = (error: unknown) => (error as Error).name + ": " + (error as Error).message;
+try {
+  require("./namedFolder/awaits.mjs");
+} catch (error) {
+  console.log(said(error));
+}
+const loads = [
+  () => import("./namedFolder/wantsAbsent.mjs"),
+  () => import("./namedFolder/wantsOneOfTwo.mjs"),
+  () => import("./namedFolder/wantsPackage.mjs"),
+];
+for (const load of loads) await load().catch(error => console.log(said(error)));
+`,
+          "namedFolder/awaits.mjs": `export const waited = await new Promise(resolve => setTimeout(resolve, 20, 1));`,
+          "namedFolder/wantsAbsent.mjs": `import { absent } from "./hasTwoStars.mjs";\nconsole.log(absent);`,
+          "namedFolder/wantsOneOfTwo.mjs": `import { twice } from "./hasTwoStars.mjs";\nconsole.log(twice);`,
+          "namedFolder/wantsPackage.mjs": `import missing from "a-package-that-is-not-installed";\nconsole.log(missing);`,
+          // Only the run knows the names of a CommonJS file, so these two are looked for when the modules are linked.
+          "namedFolder/hasTwoStars.mjs": `export * from "./firstStar.cjs";\nexport * from "./secondStar.cjs";`,
+          "namedFolder/firstStar.cjs": `exports.twice = 1;`,
+          "namedFolder/secondStar.cjs": `exports.twice = 2;`,
+        });
+        const folder = String(dir);
+        const plain = await spawned([await compile(folder, "plain")], folder, env);
+        const namedIn = (line: string) => /(\w+)\.mjs/.exec(line)?.[1];
+        expect(plain.stdout.trimEnd().split("\n").map(namedIn)).toEqual([
+          "awaits",
+          "hasTwoStars",
+          "hasTwoStars",
+          "wantsPackage",
+        ]);
+        const obfuscated = await spawned([await compile(folder, "obfuscated", buildFlags.obfuscate)], folder, env);
+        expect({ ...obfuscated }).toMatchObject({ stdout: plain.stdout, stderr: plain.stderr, exitCode: 0 });
       }),
     buildLimit,
   );

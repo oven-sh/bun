@@ -1,5 +1,5 @@
 // Members of built-ins that native code answers are read and written under keys that are made at run time, and nothing names a key behind its use.
-// Flags: --aot-testing=OverwriteDeadValuesAtCollections
+// Flags: --aot-testing=OverwriteDeadValuesAtCollections --aot-check=validate-back-end
 // Env: BUN_JSC_collectContinuously=1
 // Env: BUN_JSC_forceDidDeferGCWork=1
 // Env: BUN_JSC_useZombieMode=1

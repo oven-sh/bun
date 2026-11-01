@@ -37,7 +37,7 @@ console.log(local, inArrow());
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inArrow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy, IsChecked] captures=[{type=env [[L_6]] flags=[IsFromCompiler]}, {type=undefined|null|[[L_7]] site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<undefined> site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_4]] site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=object flags=[IsFromCompiler]}, {type=object flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy, IsChecked] captures=[{type=env [[L_6]] flags=[IsFromCompiler]}, {type=undefined|null|[[L_7]] site=[[w_8]] flags=[OmitsNull, OmitsUndefined] variableName="holder"}, {type=undefined|null|Array<undefined> site=[[w_9]] flags=[OmitsNull, OmitsUndefined] variableName="list"}, {type=undefined|null|[[L_4]] site=[[w_10]] flags=[OmitsNull, OmitsUndefined] variableName="keeper"}, {type=anything variableName="this"}, {type=object flags=[IsFromCompiler] variableName="arguments"}, {type=object flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: env [[L_6]], v1: undefined|null|[[L_7]], v2: undefined|null|Array<undefined>, v3: undefined|null|[[L_4]], v4: anything, v5: object, v6: object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

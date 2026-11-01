@@ -36,6 +36,7 @@ fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_coun
         },
         ImportSiteKind::RequireResolve(_) => argument_count <= 1,
         ImportSiteKind::ImportMetaResolve(_) => match answer {
+            SiteAnswer::Module(ModuleRef::External { .. }) => false,
             SiteAnswer::Module(_) => site.consults_resolver && argument_count == 1,
             SiteAnswer::Computed(_) | SiteAnswer::Failed(_) | SiteAnswer::Erased => false,
         },

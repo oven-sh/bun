@@ -1,14 +1,15 @@
 // A method of a class of a built-in module has code in the executable where the program calls it: by its name, or under a
 // computed key on an object that the compiler follows. That an object of the class is handed around brings in none of them,
 // so a program that prints `console` or uses `process.stdout` holds nothing of `node:readline`.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const leastCodeOfLineEditor = 150_000;
 

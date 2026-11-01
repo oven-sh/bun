@@ -56,6 +56,7 @@ struct BunAOTResult {
     JSC::AOT::Vector<Wire::FeatureUseRecord> featuresUsed;
     JSC::AOT::Vector<Wire::LocaleUseRecord> localesUsed;
     JSC::AOT::Vector<Wire::WorkerEntryRecord> workerEntries;
+    JSC::AOT::Vector<Wire::AddedNameRecord> namesThatTestsAdd;
     JSC::AOT::Vector<Wire::AllocationRemarkRecord> allocationRemarks;
     JSC::AOT::Vector<Wire::ObfuscatedSiteRecord> obfuscatedSites;
     JSC::AOT::Vector<Wire::FunctionReportRecord> functions;
@@ -150,6 +151,8 @@ extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult* result, Wire:
         return bytesOf(result->workerEntries);
     case Wire::ResultSection::Accesses:
         return output ? bytesOf(output->flowReport.accesses) : noBytes;
+    case Wire::ResultSection::OtherOrigins:
+        return output ? bytesOf(output->flowReport.otherOrigins) : noBytes;
     case Wire::ResultSection::AccessCounts:
         return output ? bytesOf(output->flowReport.accessCounts) : noBytes;
     case Wire::ResultSection::TypeTests:
@@ -183,6 +186,14 @@ extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult* result, Wire:
         return noBytes;
     case Wire::ResultSection::LibraryFunctionsLacked:
         return output ? bytesOf(output->flowReport.libraryFunctionsLacked) : noBytes;
+    case Wire::ResultSection::WorkerStartsWithoutName:
+        return output ? bytesOf(output->flowReport.workerStartsWithoutName) : noBytes;
+    case Wire::ResultSection::ExportsThatSpiesReplace:
+        return output ? bytesOf(output->flowReport.exportsThatSpiesReplace) : noBytes;
+    case Wire::ResultSection::BuiltinsThatTestsReplace:
+        return output ? bytesOf(output->flowReport.builtinsThatTestsReplace) : noBytes;
+    case Wire::ResultSection::NamesThatTestsAdd:
+        return bytesOf(result->namesThatTestsAdd);
     }
     return noBytes;
 }
@@ -288,6 +299,7 @@ static void encodeLocaleUse(BunAOTResult& result)
     Typed::FlowReport& report = result.output->flowReport;
     result.localesUsed = rebaseTextRanges(result.text, report.localeTags.span(), WTF::move(report.localesUsed), &Wire::LocaleUseRecord::tag);
     result.workerEntries = rebaseTextRanges(result.text, report.workerEntryPaths.span(), WTF::move(report.workerEntries), &Wire::WorkerEntryRecord::path);
+    result.namesThatTestsAdd = rebaseTextRanges(result.text, report.textOfNamesThatTestsAdd.span(), WTF::move(report.namesThatTestsAdd), &Wire::AddedNameRecord::name);
 }
 
 static Typed::AllocationSiteReport findAllocationSite(const Typed::FlowReport& report, Typed::AllocationSiteID site)
@@ -402,7 +414,7 @@ static void ensureHostBindings()
     });
 }
 
-extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies* externalBodies, void (*releaseProgram)(void* owner), bool (*goesOnBehindFlowAnalysis)(void* owner, const JSC::AOT::FlowFindings*), void* programOwner, const Wire::CompileOptions* options, const JSC::AOT::HostThreadPool* threadPool)
+extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies* externalBodies, void (*releaseProgram)(void* owner), bool (*goesOnBehindFlowAnalysis)(void* owner, const JSC::AOT::FlowFindings*), void* programOwner, const Wire::CompileOptions* options, const JSC::AOT::HostThreadPool* threadPool, size_t (*sizeOfFunctionText)(void* owner, uint32_t module), void (*copyFunctionText)(void* owner, uint32_t module, uint8_t* destination))
 {
     ensureHostBindings();
 
@@ -412,7 +424,7 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
 #endif
 
     auto* result = new BunAOTResult;
-    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, goesOnBehindFlowAnalysis });
+    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, goesOnBehindFlowAnalysis, { programOwner, sizeOfFunctionText, copyFunctionText } });
 
     OperationNames operationNames(result->text);
     encodeDiagnostics(*result);
@@ -471,6 +483,11 @@ extern "C" bool Bun__AOT__isOptionalPass(Wire::PassID pass)
     return static_cast<uint32_t>(pass) < JSC::AOT::numberOfPasses && JSC::AOT::isOptionalPass(pass);
 }
 
+extern "C" size_t Bun__AOT__peakResidentMegabytesOfProcess()
+{
+    return JSC::AOT::peakResidentMegabytesOfProcess();
+}
+
 extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t* buffer, size_t capacity)
 {
     return JSC::AOT::describeWhereThisThreadStopped({ reinterpret_cast<char*>(buffer), capacity });
@@ -506,6 +523,8 @@ extern "C" size_t Bun__AOT__imageAlignment() { return 1; }
 extern "C" void Bun__AOT__relocateImage(uint8_t*, size_t, uint64_t) {}
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
 extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t*, size_t, const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
+// What src/runtime/cli/run_compiled.rs names.
+extern "C" size_t Bun__AOT__peakResidentMegabytesOfProcess() { return 0; }
 // What src/runtime/cli/compile_command/build.rs names.
 extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t*, size_t) { return 0; }
 extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t*, size_t) { return 0; }

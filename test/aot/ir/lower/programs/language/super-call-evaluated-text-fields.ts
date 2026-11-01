@@ -147,7 +147,9 @@ tell("private method, no constructor", () => {
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
 // CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_5]]
+// CHECK-NEXT: v4 = String string="parent"
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: PropSet v3, v5 key="made"
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#g"
@@ -160,12 +162,12 @@ tell("private method, no constructor", () => {
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=[[L_6]] flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: classtoken, v1: anything, v2: [[L_6]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=[[L_5]] flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
+// CHECK-NEXT: b0(v0: classtoken, v1: anything, v2: [[L_5]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_6]] flags=[IsExpected]}
-// CHECK-NEXT: v4 = PrivateGet v3, v0 layout=[[L_6]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
+// CHECK-NEXT: v4 = PrivateGet v3, v0 layout=[[L_5]]
 // CHECK-NEXT: v5 = Call v1, v3 calleeName="this.#m"
 // CHECK-NEXT: ReturnCall v5 casts=[{declared={type=number flags=[IsExpected]}}]
 // CHECK-NEXT: }

@@ -14,6 +14,7 @@ export const crashHandler = b.namespace({
   getMachOImageZeroOffset: { returns: b.f64.optional, length: 1 },
   getFeatureData: { returns: FeatureData, length: 1 },
   segfault: { length: 1 },
+  segfaultHoldingThreadSuspendLock: { length: 1 },
   segfaultInDll: { length: 1 },
   panic: { length: 1 },
   rootError: { length: 1 },

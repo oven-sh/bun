@@ -4,11 +4,14 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
 import { compileCommand } from "./harness/flags";
+import { testaot } from "./shell/tools";
 import { beforeAll, describe, test } from "./supported";
 
 const python = Bun.which("python3");
 const script = join(import.meta.dir, "tools", "code_in_image.py");
 if (!python) console.error("SKIPPED: test/aot/code-addresses-have-names.test.ts: python3 is not installed");
+// The script asks testaot for the layout of an image.
+const scriptEnv = { ...bunEnv, TESTAOT: testaot };
 
 const sources = {
   "libraryK1.ts": `
@@ -34,7 +37,7 @@ callerK6(process.argv.length);
 `,
 };
 
-describe.skipIf(!python)("compile/aot/code addresses have names", () => {
+describe.skipIf(!python || !testaot)("compile/aot/code addresses have names", () => {
   const folder = String(tempDir("aot-code-addresses-have-names", sources));
   const executable = join(folder, isWindows ? "program.exe" : "program");
   const rows: string[][] = [];
@@ -42,7 +45,11 @@ describe.skipIf(!python)("compile/aot/code addresses have names", () => {
 
   beforeAll(async () => {
     built(await spawned([bunExe(), ...compileCommand, "./main.ts", "--outfile", executable], folder, bunEnv));
-    const { stdout, stderr, exitCode } = await spawned([python!, script, executable, "functions", "K"], folder, bunEnv);
+    const { stdout, stderr, exitCode } = await spawned(
+      [python!, script, executable, "functions", "K"],
+      folder,
+      scriptEnv,
+    );
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     for (const line of stdout.split(/\r?\n/)) if (line) rows.push(line.split("\t"));
   }, 300_000);
@@ -60,7 +67,7 @@ describe.skipIf(!python)("compile/aot/code addresses have names", () => {
   test("an address inside a function is given its name", async () => {
     const [offset, size] = rows.find(columns => columns[2] === "callerK6")!;
     const inside = (Number(offset) + (Number(size) >> 1)).toString(16);
-    const { stdout, exitCode } = await spawned([python!, script, executable, "at", inside], folder, bunEnv);
+    const { stdout, exitCode } = await spawned([python!, script, executable, "at", inside], folder, scriptEnv);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("callerK6");
     expect(stdout).toContain("main.ts");

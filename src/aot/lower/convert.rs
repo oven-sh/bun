@@ -74,6 +74,7 @@ pub(in crate::lower) struct ConversionState {
     types_with_layout: FxHashMap<(CheckerTypeId, AssertionSide), Rc<[CheckerTypeId]>>,
     admitted_assertions: FxHashSet<(CheckerTypeId, CheckerTypeId, u8)>,
     loose_types: FxHashMap<CheckerTypeId, bool>,
+    unions_with_open_members: FxHashMap<CheckerTypeId, bool>,
     converted_values: ConvertedValues,
 }
 
@@ -321,6 +322,15 @@ impl FileLowering<'_, '_, '_, '_> {
         position: u32,
     ) {
         self.record_type_flow(instance, inherited, position);
+    }
+
+    pub(crate) fn record_base_class_flow(
+        &mut self,
+        instance: CheckerTypeId,
+        base: CheckerTypeId,
+        position: u32,
+    ) {
+        self.record_flow_into_base_class(instance, base, position);
     }
 
     pub(crate) fn assertion_position(&mut self, ty: TypeNodeId) -> DeclaredType {

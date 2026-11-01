@@ -1,4 +1,5 @@
 use bun_sema::bind::ScopeId;
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::{Capture, CaptureInput, CaptureList, CapturePlan, CapturedBinding};
@@ -155,7 +156,7 @@ fn list_captures(
     let own = entries[first..].iter();
     let own = own.take_while(|entry| entry.0 == function);
     captures.extend(own.map(|&(_, binding)| Capture::Value(binding)));
-    captures.sort_unstable();
+    captures.shared_sort_unstable();
     captures.dedup();
     captures
 }

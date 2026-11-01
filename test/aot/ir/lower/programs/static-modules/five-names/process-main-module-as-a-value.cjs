@@ -43,7 +43,7 @@ exports.show = () => console.log(process.mainModule === require.main, process.ma
 // CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: v19 = PropGet v6 key="filename"
 // CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v21 = String string="/$bunfs/root/main.cjs"
+// CHECK-NEXT: v21 = String string="{{*}}main.cjs"
 // CHECK-NEXT: v22 = StrictEq v20, v21
 // CHECK-NEXT: v23 = Call v11, v9, v13, v16, v18, v22 calleeKey="log" calleeName="console.log"
 // CHECK-NEXT: v24 = GetModuleVariable variable=[[g_3]]

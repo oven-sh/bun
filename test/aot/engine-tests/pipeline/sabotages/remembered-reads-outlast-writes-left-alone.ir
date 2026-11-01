@@ -17,7 +17,7 @@ variable g4 name="Point" module=m0 declared={type=absent|f8 flags=[IsFromCompile
 variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 data d0 root=Array{contents=anything} module=m0
 data d1 root=Array{contents=number elements=[Number{value=3}, Number{value=4}]} module=m0
-runtimefunction id=43 function=f22
+runtimefunction id=ArrayPrototypeForEach function=f22
 
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -392,7 +392,7 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f21 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 
-function f22 name="forEach" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=43 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f22 name="forEach" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():

@@ -1,5 +1,7 @@
 #include "root.h"
 
+#include "JSDOMURL.h"
+#include "JSFetchHeaders.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
@@ -363,4 +365,25 @@ extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t le
             return true;
     }
     return false;
+}
+
+// The entries of a Headers or the href of a URL, as deepEquals reads them: no toJSON is called. Undefined if there are none.
+extern "C" EncodedJSValue SnapshotFormat__nativeStateOf(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = JSValue::decode(encodedValue);
+    if (auto* headers = dynamicDowncast<WebCore::JSFetchHeaders>(value)) {
+        if (!headers->wrapped().size())
+            return JSValue::encode(jsUndefined());
+        JSValue entries = WebCore::getInternalProperties(vm, globalObject, headers);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(entries);
+    }
+    if (auto* url = dynamicDowncast<WebCore::JSDOMURL>(value)) {
+        JSObject* state = constructEmptyObject(globalObject);
+        Bun::putDirectNamed(vm, state, "href"_s, jsString(vm, url->wrapped().href().string()));
+        return JSValue::encode(state);
+    }
+    return JSValue::encode(jsUndefined());
 }

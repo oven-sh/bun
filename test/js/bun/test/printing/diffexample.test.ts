@@ -1099,59 +1099,53 @@ test("prints a URL and a Headers in the arguments of a mock call", () => {
 `);
 });
 
-test("keeps `Headers {}` and `URL {}` in a snapshot of a value, and calls toJSON only for a failure message", () => {
-  const toJSON = Headers.prototype.toJSON;
-  let calls = 0;
-  Headers.prototype.toJSON = function (this: Headers) {
-    calls++;
-    return toJSON.call(this);
-  };
-  try {
-    expect(new Headers({ a: "1" })).toEqual(new Headers({ a: "1" }));
-    expect(new Request("http://example.com/", { headers: { a: "1" } })).toMatchInlineSnapshot(`Request (0 KB) {
+test("keeps `Headers {}` and `URL {}` in a snapshot of a value", () => {
+  expect(new Request("http://example.com/", { headers: { a: "1" } })).toMatchInlineSnapshot(`Request (0 KB) {
   method: "GET",
   url: "http://example.com/",
   headers: Headers {}
 }`);
-    // The Blob makes this differ from what Jest prints, which an inline snapshot also accepts.
-    expect([new Blob(["a"]), new Headers({ a: "1" }), new URL("http://example.com/")]).toMatchInlineSnapshot(`
-      [
-        Blob (1 bytes),
-        Headers {},
-        URL {},
-      ]
-    `);
-    expect(failureMessage(() => expect<unknown>(new Headers()).toEqual(1))).toBe(
-      "expect(received).toEqual(expected)\n\nExpected: 1\nReceived: Headers {}\n",
-    );
-    expect(calls).toBe(0);
-
-    failureMessage(() => expect<unknown>([new Headers({ a: "1" }), new Headers({ b: "2" })]).toEqual(1));
-    expect(calls).toBe(2);
-
-    Headers.prototype.toJSON = () => {
-      throw new Error("from toJSON");
-    };
-    expect(() => expect<unknown>(new Headers({ a: "1" })).toEqual(1)).toThrow("from toJSON");
-    expect(() => expect<unknown>(new Request("http://example.com/", { headers: { a: "1" } })).toEqual(1)).toThrow(
-      "from toJSON",
-    );
-    expect(() => expect<unknown>(Response.json(1)).toEqual(1)).toThrow("from toJSON");
-  } finally {
-    Headers.prototype.toJSON = toJSON;
-  }
+  // The Blob makes this differ from what Jest prints, which an inline snapshot also accepts.
+  expect([new Blob(["a"]), new Headers({ a: "1" }), new URL("http://example.com/")]).toMatchInlineSnapshot(`
+    [
+      Blob (1 bytes),
+      Headers {},
+      URL {},
+    ]
+  `);
 });
 
-test("prints `Headers {}` and `URL {}` when toJSON gives nothing to print", () => {
-  const withToJSON = (value: object, toJSON: unknown) => Object.defineProperty(value, "toJSON", { value: toJSON });
-  for (const toJSON of [1, () => "text", () => ({})]) {
-    expect(failureMessage(() => expect<unknown>(withToJSON(new Headers({ a: "1" }), toJSON)).toEqual(1))).toBe(
-      "expect(received).toEqual(expected)\n\nExpected: 1\nReceived: Headers {}\n",
-    );
+test("reads the entries of a Headers and the href of a URL without a call of toJSON", () => {
+  const headersToJSON = Headers.prototype.toJSON;
+  const urlToJSON = URL.prototype.toJSON;
+  const toJSON = mock(() => {
+    throw new Error("from toJSON");
+  });
+  Headers.prototype.toJSON = toJSON;
+  URL.prototype.toJSON = toJSON;
+  try {
+    const values = [new Headers({ a: "1" }), new Headers(), new URL("http://example.com/a")];
+    expect(failureMessage(() => expect<unknown>(values).toEqual([]))).toBe(`expect(received).toEqual(expected)
+
+- []
++ [
++   Headers {
++     "a": "1",
++   },
++   Headers {},
++   URL {
++     "href": "http://example.com/a",
++   },
++ ]
+
+- Expected  - 1
++ Received  + 9
+`);
+    expect(toJSON).not.toHaveBeenCalled();
+  } finally {
+    Headers.prototype.toJSON = headersToJSON;
+    URL.prototype.toJSON = urlToJSON;
   }
-  expect(failureMessage(() => expect<unknown>(withToJSON(new URL("http://example.com/"), 1)).toEqual(1))).toBe(
-    "expect(received).toEqual(expected)\n\nExpected: 1\nReceived: URL {}\n",
-  );
 });
 
 test("prints a React 19 element as JSX, without the fiber in its _owner", () => {

@@ -1740,28 +1740,8 @@ impl<'a> Formatter<'a> {
                             writer.ctx, value, js_type,
                         );
                     }
-                    // `deepEquals` compares the entries of a `Headers` and the href of a `URL`, then their own properties.
-                    let mut native_state = None;
-                    if self.is_failure_message() {
-                        let vm = self.global_this.vm();
-                        let is_url = bun_jsc::DOMURL::cast_(value, vm).is_some();
-                        if (is_url
-                            || bun_jsc::FetchHeaders::cast_(value, vm)
-                                .is_some_and(|headers| !bun_opaque::opaque_deref_mut(headers.as_ptr()).is_empty()))
-                            && let Some(to_json) = value
-                                .get(self.global_this, "toJSON")?
-                                .filter(|to_json| to_json.is_callable())
-                        {
-                            let json = to_json.call(self.global_this, value, &[])?;
-                            native_state = Some(if is_url {
-                                let state = JSValue::create_empty_object(self.global_this, 1);
-                                state.put(self.global_this, b"href", json);
-                                state
-                            } else {
-                                json
-                            });
-                        }
-                    }
+                    let native_state =
+                        if self.is_failure_message() { native_state_of(self.global_this, value)? } else { None };
                     return self.print_as_with_native_state::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
                         writer.ctx, value, JSType::Event, native_state,
                     );
@@ -3212,6 +3192,15 @@ fn has_member(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JsResult
         safe fn SnapshotFormat__hasByValue(global: &JSGlobalObject, value: JSValue, key: JSValue) -> bool;
     }
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasByValue(global, value, key))
+}
+
+/// The entries of a `Headers` or the href of a `URL` as an object. `deepEquals` compares them, then the own properties.
+fn native_state_of(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSValue>> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__nativeStateOf(global: &JSGlobalObject, value: JSValue) -> JSValue;
+    }
+    let state = jsc::host_fn::from_js_host_call(global, || SnapshotFormat__nativeStateOf(global, value))?;
+    Ok(state.is_object().then_some(state))
 }
 
 /// putDirect, so only for objects the printer itself created.

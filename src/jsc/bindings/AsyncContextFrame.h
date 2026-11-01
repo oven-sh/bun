@@ -43,19 +43,13 @@ public:
         WTF_FORBID_HEAP_ALLOCATION;
 
     public:
-        // Skip: the caller's dispatcher has ruled out a callee that isOfStoppedModuleGraph().
-        enum class StoppedModuleGraphTest : bool {
-            Run,
-            Skip,
-        };
-
-        ALWAYS_INLINE CallScope(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue& callee, StoppedModuleGraphTest test = StoppedModuleGraphTest::Run)
+        ALWAYS_INLINE CallScope(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue& callee)
             : m_vm(vm)
         {
             auto* wrapper = dynamicDowncast<AsyncContextFrame>(callee);
             if (!wrapper)
                 return;
-            if (test == StoppedModuleGraphTest::Run && wrapper->isOfStoppedModuleGraph(globalObject)) [[unlikely]] {
+            if (wrapper->isOfStoppedModuleGraph(globalObject)) [[unlikely]] {
                 m_calleeIsOfStoppedModuleGraph = true;
                 return;
             }

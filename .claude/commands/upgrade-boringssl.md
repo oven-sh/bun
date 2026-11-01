@@ -91,6 +91,7 @@ Then `bun run ci:watch` and fix anything that turns up.
 - **Electron `SSL_want` / `EVP_CIPHER_do_all_sorted`** — `ssl/ssl_lib.cc` (return `rwstate` directly), `ssl/ssl_test.cc` (drops the corresponding test block), `decrepit/evp/evp_do_all.cc`, `crypto/cipher/get_cipher.cc`, `include/openssl/cipher.h`
 - **MLDSA stack-frame pragma** — `crypto/fipsmodule/mldsa/mldsa.cc.inc`
 - **`BN_generate_prime_ex` with `add`** — `crypto/fipsmodule/bn/prime.cc.inc` (one `probable_prime_dh` for plain and safe primes, after OpenSSL's; upstream's never returns for most `add`), `crypto/fipsmodule/bn/bn_test.cc`, `include/openssl/bn.h`
+- **PKCS#1 v1.5 signature prefixes for the digests above** — `crypto/fipsmodule/rsa/rsa.cc.inc` (`kPKCS1SigPrefixes` rows for SHA-512/224, SHA-512/256, SHA3-\* and RIPEMD-160), `crypto/rsa/rsa_test.cc`
 
 If upstream upstreams any of these (check `git grep` on `upstream/main` before re-applying), drop the fork's copy.
 

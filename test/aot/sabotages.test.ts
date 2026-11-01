@@ -54,6 +54,12 @@ function movesOfTheRegisterAllocator(check: string): Row {
 
 /** The programs under ./parallel that must notice each sabotage. */
 const noticedBy: Record<string, Row | Row[]> = {
+  // The reads of an array are copied for a second kind of array together with what stands between them, a store through a second name among it.
+  CopiedReadsKeepTheirProof: {
+    folder: "second-names",
+    flags: [],
+    programs: ["nan.ts", "field.ts"],
+  },
   StoresNeedNoBarrier: {
     folder: "gc",
     flags: [],

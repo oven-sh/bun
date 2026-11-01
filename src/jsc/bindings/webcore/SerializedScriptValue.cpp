@@ -1352,7 +1352,7 @@ private:
             }
 #if ENABLE(WEB_CRYPTO)
             if (auto* key = JSCryptoKey::toWrapped(vm, obj)) {
-                if (m_forStorage == SerializationForStorage::Yes && !key->extractable()) {
+                if ((m_forStorage == SerializationForStorage::Yes || m_forTransfer == SerializationForCrossProcessTransfer::Yes) && !key->extractable()) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }

@@ -4,7 +4,7 @@ use crate::{
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, WTFStringImplExt as _, WTFStringImplStruct, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 
@@ -197,6 +197,13 @@ fn on_require_extension_modify_non_function(
     Ok(())
 }
 
+/// Empties the VM's copy of one global's `Module._extensions`, when `bun test --isolate` retires that global.
+pub(crate) fn reset_require_extensions(vm: &mut VirtualMachine) {
+    vm.commonjs_custom_extensions.clear_and_free();
+    vm.has_mutated_built_in_extensions = 0;
+    vm.transpiler.resolver.opts.extra_cjs_extensions = Box::default();
+}
+
 pub fn find_longest_registered_extension<'a>(
     vm: &'a VirtualMachine,
     filename: &[u8],
@@ -214,6 +221,36 @@ pub fn find_longest_registered_extension<'a>(
         }
     }
     None
+}
+
+/// Whether the table answers this `require()` and has only the running test file's entries. `--isolate=modules` keeps the entries of finished files.
+#[unsafe(no_mangle)]
+extern "C" fn NodeModuleModule__requireExtensionsSelect(
+    vm: &VirtualMachine,
+    specifier: Option<&WTFStringImplStruct>,
+) -> bool {
+    !vm.commonjs_custom_extensions.is_empty()
+        && !vm.test_isolation_state.shares_global
+        && registered_extension_matches(vm, specifier)
+}
+
+/// Either of `Bun__transpileFile`'s two matches counts: the specifier as given, or the path without its `?query`.
+#[cold]
+fn registered_extension_matches(
+    vm: &VirtualMachine,
+    specifier: Option<&WTFStringImplStruct>,
+) -> bool {
+    let Some(specifier) = specifier else {
+        return false;
+    };
+    let specifier = specifier.to_utf8();
+    if find_longest_registered_extension(vm, &specifier).is_some() {
+        return true;
+    }
+    match strings::index_of_char_usize(&specifier, b'?') {
+        Some(query) => find_longest_registered_extension(vm, &specifier[..query]).is_some(),
+        None => false,
+    }
 }
 
 #[unsafe(no_mangle)]

@@ -2102,6 +2102,517 @@ test("t2", () => {
   },
 );
 
+// `Module._extensions` is an object of one test file's global, and the SourceProvider cache has one source for a
+// path. A file's require() has to call the handlers that the file set, and no handler of a file before it.
+// --isolate=modules keeps one global object with the handlers of the files before, and the cache answers there first.
+describe.concurrent("--isolate: Module._extensions handlers", () => {
+  const modes: [string, string[], Record<string, string>][] = [
+    ["--isolate", ["--isolate"], {}],
+    // One worker takes every file (scale-up gated), so each file after the first comes after the worker's own swap.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ];
+
+  // No file here loads a path that a file before it loaded, so the SourceProvider cache answers nothing. The worker of
+  // --parallel takes the files in the order a, b, d, c.
+  test.each(modes)("a test file's handlers end with the file (%s)", async (_, args, env) => {
+    using dir = tempDir("isolate-require-extensions-end", {
+      "never-loaded.js": `module.exports = "never-loaded.js";`,
+      "made-up.foo": `module.exports = "made-up.foo";`,
+      "jsx.js": `
+        /** @jsxRuntime classic */
+        /** @jsx h */
+        const h = tag => tag;
+        module.exports = <div />;
+      `,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import Module from "node:module";
+
+        test("leaves handlers behind", () => {
+          Module._extensions[".js"] = Module._extensions[".foo"] = (module: any) => {
+            module.exports = "the handler of a.test.ts";
+          };
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { writeFileSync } from "node:fs";
+        import Module from "node:module";
+        import { join } from "node:path";
+
+        test("the handler of a.test.ts for .js is gone", () => {
+          expect(require("./never-loaded.js")).toBe("never-loaded.js");
+        });
+
+        test("sets a handler, then puts the loader of Bun back", () => {
+          const original = Module._extensions[".js"];
+          Module._extensions[".js"] = (module: any, filename: string) => original(module, filename);
+          Module._extensions[".js"] = original;
+          writeFileSync(join(import.meta.dir, "b-ran"), "");
+        });
+      `,
+      "c.test.ts": `
+        import { test, expect } from "bun:test";
+
+        // Only a handler for ".foo" makes "./made-up" resolve.
+        test("the handler of a.test.ts for .foo is gone", () => {
+          expect(() => require.resolve("./made-up")).toThrow("Cannot find module './made-up'");
+        });
+      `,
+      "d.test.ts": `
+        import { test, expect } from "bun:test";
+        import { existsSync } from "node:fs";
+        import { join } from "node:path";
+
+        // The loader that b.test.ts put back is the one for ".js" without JSX.
+        test("a .js file with JSX loads after b.test.ts", () => {
+          expect(existsSync(join(import.meta.dir, "b-ran"))).toBe(true);
+          expect(require("./jsx.js")).toBe("div");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      args,
+      ["./a.test.ts", "./b.test.ts", "./c.test.ts", "./d.test.ts"],
+      { ...bunEnv, ...env },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("5 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(modes)("a test file's handlers see the paths that a file before it loaded (%s)", async (_, args, env) => {
+    using dir = tempDir("isolate-require-extensions", {
+      "plain.js": `module.exports = "plain.js";`,
+      "plain.ts": `module.exports = "plain.ts" as string;`,
+      "esm.js": `export default "esm.js";`,
+      "made-up.foo": `module.exports = "made-up.foo";`,
+      "stubbed.js": `module.exports = "stubbed.js";`,
+      "rewritten.cjs": `module.exports = "v1";`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { writeFileSync } from "node:fs";
+        import esm from "./esm.js";
+
+        test("loads each file with no handler", () => {
+          expect([
+            require("./plain.js"),
+            require("./plain.ts"),
+            esm,
+            require("./made-up.foo"),
+            require("./made-up.foo?query"),
+            require("./stubbed.js"),
+            require("./rewritten.cjs"),
+          ]).toEqual(["plain.js", "plain.ts", "esm.js", "made-up.foo", "made-up.foo", "stubbed.js", "v1"]);
+          writeFileSync(require.resolve("./rewritten.cjs"), 'module.exports = "v2";');
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import Module from "node:module";
+        import { basename } from "node:path";
+
+        test("a handler that is set here sees a path that a.test.ts loaded", () => {
+          const seen: string[] = [];
+          for (const extension of [".js", ".ts"]) {
+            const original = Module._extensions[extension];
+            Module._extensions[extension] = (module: any, filename: string) => {
+              seen.push(basename(filename));
+              return original(module, filename);
+            };
+          }
+          Module._extensions[".foo"] = (module: any, filename: string) => {
+            seen.push(basename(filename));
+            module.exports = "the handler of b.test.ts";
+          };
+          expect([
+            require("./plain.js"),
+            require("./plain.ts"),
+            require("./esm.js").default,
+            require("./made-up.foo"),
+          ]).toEqual(["plain.js", "plain.ts", "esm.js", "the handler of b.test.ts"]);
+          expect(seen).toEqual(["plain.js", "plain.ts", "esm.js", "made-up.foo"]);
+        });
+
+        test("the cache still answers for a path that no handler selects", () => {
+          // a.test.ts rewrote the file after it loaded it.
+          expect(require("./rewritten.cjs")).toBe("v1");
+        });
+      `,
+      "c.test.ts": `
+        import { test, expect } from "bun:test";
+        import Module from "node:module";
+
+        test("a handler for a made-up extension sees a path with a query that a.test.ts loaded", () => {
+          Module._extensions[".foo"] = (module: any) => {
+            module.exports = "the handler of c.test.ts";
+          };
+          expect(require("./made-up.foo?query")).toBe("the handler of c.test.ts");
+        });
+
+        test("a handler that loads nothing answers for a path that a.test.ts loaded", () => {
+          Module._extensions[".js"] = (module: any) => {
+            module.exports = "the handler of c.test.ts";
+          };
+          expect(require("./stubbed.js")).toBe("the handler of c.test.ts");
+        });
+
+        test("a built-in loader that is set for another extension loads a path that a.test.ts loaded", () => {
+          Module._extensions[".js"] = Module._extensions[".json"];
+          expect(() => require("./plain.js")).toThrow("JSON Parse error");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts", "./c.test.ts"], {
+      ...bunEnv,
+      ...env,
+    });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("6 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a --preload handler is called in every file", async () => {
+    const testFile = `
+      const { test, expect } = require("bun:test");
+      test("the handler of the preload sees shared.js", () => {
+        expect(require("./shared.js")).toBe("shared.js");
+        expect(globalThis.seenByPreload).toEqual(["shared.js"]);
+      });
+    `;
+    using dir = tempDir("isolate-require-extensions-preload", {
+      "preload.cjs": `
+        const Module = require("node:module");
+        const { basename } = require("node:path");
+        const original = Module._extensions[".js"];
+        globalThis.seenByPreload = [];
+        Module._extensions[".js"] = (module, filename) => {
+          globalThis.seenByPreload.push(basename(filename));
+          return original(module, filename);
+        };
+      `,
+      "shared.js": `module.exports = "shared.js";`,
+      "a.test.cjs": testFile,
+      "b.test.cjs": testFile,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate", "--preload", "./preload.cjs"],
+      ["./a.test.cjs", "./b.test.cjs"],
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // The first load leaves its source in the cache, also for the file that made it.
+  test("a handler that is set after the first load of a path is called for the next load", async () => {
+    const watch = `
+      import { test, expect } from "bun:test";
+      import Module from "node:module";
+      import { basename } from "node:path";
+
+      const seen: string[] = [];
+      function watch() {
+        const original = Module._extensions[".js"];
+        Module._extensions[".js"] = (module: any, filename: string) => {
+          seen.push(basename(filename));
+          return original(module, filename);
+        };
+      }
+    `;
+    using dir = tempDir("isolate-require-extensions-one-file", {
+      "throws-once.js": `
+        if (!globalThis.ready) throw new Error("not ready");
+        module.exports = "ready";
+      `,
+      "dependency.js": `module.exports = "dependency.js";`,
+      "graph-entry.cjs": `module.exports = require("./dependency.js");`,
+      "retry.test.ts": `
+        ${watch}
+        test("a require() that threw is retried", () => {
+          expect(() => require("./throws-once.js")).toThrow("not ready");
+          watch();
+          (globalThis as any).ready = true;
+          expect(require("./throws-once.js")).toBe("ready");
+          expect(seen).toEqual(["throws-once.js"]);
+        });
+      `,
+      "graph.test.ts": `
+        ${watch}
+        test("a Bun.ModuleGraph requires a path that its host loaded", async () => {
+          expect(require("./dependency.js")).toBe("dependency.js");
+          watch();
+          const graph = new Bun.ModuleGraph();
+          expect((await graph.import(require.resolve("./graph-entry.cjs"))).default).toBe("dependency.js");
+          expect(seen).toEqual(["dependency.js"]);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./retry.test.ts", "./graph.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // A loader that drops the unused import of a thrower file prints other text than one that keeps it.
+  const throwerFile = `
+    import { unused } from "./dependency.js";
+    export function thrower() {
+      throw new Error("thrown");
+    }
+  `;
+  const throwerFrame = `
+    function throwerFrame(specifier: string) {
+      try {
+        require(specifier).thrower();
+      } catch (error) {
+        return (error as Error).stack!.match(/thrower\\.\\w+[^:]*:\\d+:\\d+/)![0];
+      }
+    }
+  `;
+  // Every file prints the frame of its own load, and every frame has to be the one of the first file.
+  function expectSameFrames(stdout: string, files: string[]) {
+    const frames = [...stdout.matchAll(/^(\w)\.test\.ts frame (.+)$/gm)].map(match => match.slice(1));
+    const frameOfA = frames[0]?.[1];
+    expect(frameOfA).toMatch(/^thrower\.\w+:\d+:\d+$/);
+    expect(frames).toEqual(files.map(file => [file, frameOfA]));
+  }
+
+  test.each([
+    ["a built-in loader", `Module._extensions[".js"] = Module._extensions[".ts"];`],
+    [
+      "a function",
+      `const loadTs = Module._extensions[".ts"];
+       Module._extensions[".js"] = (module: any, filename: string) => loadTs(module, filename);`,
+    ],
+  ])("a require() that %s for another extension answers leaves no source for the next file", async (_, setHandler) => {
+    using dir = tempDir("isolate-require-extensions-no-source", {
+      "typed.js": `module.exports = 1 as number;\n`,
+      "dependency.js": `export const unused = 1;\n`,
+      "thrower.js": throwerFile,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        ${throwerFrame}
+        test("loads thrower.js with the loader of its path", () => {
+          console.log("a.test.ts frame " + throwerFrame("./thrower.js"));
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import Module from "node:module";
+        ${throwerFrame}
+        test("loads both files with the TypeScript loader", () => {
+          ${setHandler}
+          expect(require("./typed.js")).toBe(1);
+          console.log("b.test.ts frame " + throwerFrame("./thrower.js"));
+        });
+      `,
+      "c.test.ts": `
+        import { test, expect } from "bun:test";
+        ${throwerFrame}
+        test("loads both files with the loader of their path", () => {
+          expect(() => require("./typed.js")).toThrow('Expected ";" but found "as"');
+          console.log("c.test.ts frame " + throwerFrame("./thrower.js"));
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expectSameFrames(stdout, ["a", "b", "c"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // An import() has its own lookup in the cache, with no check of the handlers: the eviction is what keeps the source away.
+  test("an import() of a path that a handler loaded gets no source of that load in the next file", async () => {
+    using dir = tempDir("isolate-require-extensions-import", {
+      "typed.js": `module.exports = 1 as number;\n`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import Module from "node:module";
+        test("loads typed.js with the TypeScript loader", () => {
+          Module._extensions[".js"] = Module._extensions[".ts"];
+          expect(require("./typed.js")).toBe(1);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("imports typed.js with the loader of its path", async () => {
+          await expect(import("./typed.js")).rejects.toThrow('Expected ";" but found "as"');
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // The handlers match "thrower.foo?query" by its path, and the source map of a load is the one of the path.
+  test.each([
+    ["./thrower.foo?query", "./thrower.foo"],
+    ["./thrower.foo", "./thrower.foo?query"],
+  ])("a require(%j) that a handler answers leaves no source of %j for the next file", async (handled, next) => {
+    using dir = tempDir("isolate-require-extensions-query", {
+      "dependency.js": `export const unused = 1;\n`,
+      "thrower.foo": throwerFile,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        ${throwerFrame}
+        test("loads thrower.foo with and without a query, with no handler", () => {
+          const frame = throwerFrame("${next}");
+          console.log("a.test.ts frame " + frame);
+          expect(throwerFrame("${handled}")).toBe(frame);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import Module from "node:module";
+        import { basename } from "node:path";
+        ${throwerFrame}
+        test("loads ${handled} with the JavaScript loader", () => {
+          const loadJs = Module._extensions[".js"];
+          const seen: string[] = [];
+          Module._extensions[".foo"] = (module: any, filename: string) => {
+            seen.push(basename(filename));
+            return loadJs(module, filename);
+          };
+          expect(throwerFrame("${handled}")).toBeString();
+          expect(seen).toEqual([basename("${handled}")]);
+        });
+      `,
+      "c.test.ts": `
+        import { test } from "bun:test";
+        ${throwerFrame}
+        test("loads ${next} with no handler", () => {
+          console.log("c.test.ts frame " + throwerFrame("${next}"));
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expectSameFrames(stdout, ["a", "c"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A transpile on the thread pool resolves a macro import, and the resolver reads the registered extensions when it
+  // does not find the macro. The first macro holds the transpile until b.test.ts runs, so that read comes after the
+  // global of a.test.ts is gone. The last macro says that the transpile is past it.
+  test.skipIf(!isASAN)("a transpile that a finished file left running reads no freed list of extensions", async () => {
+    using dir = tempDir("isolate-require-extensions-in-flight", {
+      "macros.ts": `
+        import { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        export function waitForNextFile() {
+          writeFileSync(join(import.meta.dir, "transpile-started"), "");
+          const deadline = Date.now() + 30_000;
+          while (!existsSync(join(import.meta.dir, "next-file-started"))) {
+            if (Date.now() > deadline) throw new Error("b.test.ts did not start");
+            Bun.sleepSync(1);
+          }
+          return 1;
+        }
+
+        export function done() {
+          writeFileSync(join(import.meta.dir, "transpile-done"), "");
+          return 1;
+        }
+      `,
+      "uses-macros.ts": `
+        import { waitForNextFile, done } from "./macros.ts" with { type: "macro" };
+        import { missing } from "./no-such-macro" with { type: "macro" };
+
+        export const first = waitForNextFile();
+        export const second = missing();
+        export const third = done();
+      `,
+      "wait-for.ts": `
+        import { existsSync } from "node:fs";
+        import { join } from "node:path";
+
+        export async function waitFor(name: string) {
+          while (!existsSync(join(import.meta.dir, name))) await Bun.sleep(1);
+        }
+      `,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import Module from "node:module";
+        import { waitFor } from "./wait-for.ts";
+
+        test("sets a handler and leaves an import() running", async () => {
+          Module._extensions[".foo"] = () => {};
+          import("./uses-macros.ts").catch(() => {});
+          await waitFor("transpile-started");
+        });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        import { writeFileSync } from "node:fs";
+        import { join } from "node:path";
+        import { waitFor } from "./wait-for.ts";
+
+        test("lets the transpile of a.test.ts go on to its end", async () => {
+          writeFileSync(join(import.meta.dir, "next-file-started"), "");
+          await waitFor("transpile-done");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"], {
+      ...bunEnv,
+      // Without symbols the report of a bad read is printed at once, so the process aborts before the tests end. The
+      // leak check needs symbols for its suppressions, and this test is not about leaks.
+      ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:symbolize=0:detect_leaks=0`,
+    });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // The handler that answers here is the one of a.test.cjs, and its require() is the one of a finished file.
+  test("--isolate=modules: the cache answers before a --preload handler of a finished file", async () => {
+    const testFile = `
+      const { test, expect } = require("bun:test");
+      test("loads shared.js", () => {
+        expect(require("./shared.js")).toBe("shared.js");
+      });
+    `;
+    using dir = tempDir("isolate-modules-require-extensions", {
+      "preload.cjs": `
+        const Module = require("node:module");
+        const original = Module._extensions[".js"];
+        Module._extensions[".js"] = (module, filename) => {
+          require("node:path");
+          return original(module, filename);
+        };
+      `,
+      "shared.js": `module.exports = "shared.js";`,
+      "a.test.cjs": testFile,
+      "b.test.cjs": testFile,
+      "c.test.cjs": testFile,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules", "--preload", "./preload.cjs"],
+      ["./a.test.cjs", "./b.test.cjs", "./c.test.cjs"],
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+});
+
 test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next file", async () => {
   using dir = tempDir("isolate-abort-timeout", {
     "a-leak.test.ts": `
@@ -2466,6 +2977,22 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
           },
         });
       `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  // A handler for an extension of its own in each file, so that no file replaces the handler of another.
+  test("Module._extensions handlers left registered", async () => {
+    using dir = tempDir(
+      "isolate-leak-require-extensions",
+      makeLeakFixture(
+        i => `
+        import Module from "node:module";
+        Module._extensions[".made-up-${i}"] = module => {
+          module.exports = globalThis;
+        };
+      `,
+      ),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });

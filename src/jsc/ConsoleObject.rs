@@ -1191,6 +1191,7 @@ pub struct FormatOptions {
     pub quote_strings: bool,
     pub max_depth: u16,
     pub single_line: bool,
+    pub single_line_hooks: SingleLineHooks,
     pub default_indent: u16,
     pub error_display_level: ErrorDisplayLevel,
 }
@@ -1205,10 +1206,21 @@ impl Default for FormatOptions {
             quote_strings: false,
             max_depth: 2,
             single_line: false,
+            single_line_hooks: SingleLineHooks::OneLine,
             default_indent: 0,
             error_display_level: ErrorDisplayLevel::Full,
         }
     }
+}
+
+/// What single-line mode tells an `[inspect.custom]` hook. Mirrors `Bun::SingleLineHooks` (UtilInspect.h).
+#[repr(u8)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum SingleLineHooks {
+    /// To print on one line too.
+    OneLine = 0,
+    /// Nothing: the hook prints as it does outside single-line mode.
+    OwnLayout = 1,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -1326,6 +1338,7 @@ pub fn format2(
         fmt.quote_strings = options.quote_strings;
         fmt.max_depth = options.max_depth;
         fmt.single_line = options.single_line;
+        fmt.single_line_hooks = options.single_line_hooks;
         fmt.indent = u32::from(options.default_indent);
         fmt.can_throw_stack_overflow = true;
         fmt.error_display_level = options.error_display_level;
@@ -1388,6 +1401,7 @@ pub fn format2(
     fmt.quote_strings = options.quote_strings;
     fmt.max_depth = options.max_depth;
     fmt.single_line = options.single_line;
+    fmt.single_line_hooks = options.single_line_hooks;
     fmt.indent = u32::from(options.default_indent);
     fmt.can_throw_stack_overflow = true;
     fmt.error_display_level = options.error_display_level;
@@ -1587,6 +1601,7 @@ pub mod formatter {
         pub(crate) estimated_line_length: usize,
         pub(crate) always_newline_scope: bool,
         pub single_line: bool,
+        pub(crate) single_line_hooks: SingleLineHooks,
         pub ordered_properties: bool,
         pub(crate) custom_formatted_object: CustomFormattedObject,
         pub(crate) disable_inspect_custom: bool,
@@ -1622,6 +1637,7 @@ pub mod formatter {
                 estimated_line_length: 0,
                 always_newline_scope: false,
                 single_line: false,
+                single_line_hooks: SingleLineHooks::OneLine,
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
@@ -1660,6 +1676,7 @@ pub mod formatter {
                 estimated_line_length: self.estimated_line_length,
                 always_newline_scope: self.always_newline_scope,
                 single_line: self.single_line,
+                single_line_hooks: self.single_line_hooks,
                 ordered_properties: self.ordered_properties,
                 custom_formatted_object: self.custom_formatted_object,
                 disable_inspect_custom: self.disable_inspect_custom,
@@ -1729,6 +1746,12 @@ pub mod formatter {
 
         pub fn add_for_new_line(&mut self, len: usize) {
             self.estimated_line_length = self.estimated_line_length.saturating_add(len);
+        }
+
+        /// Whether an `[inspect.custom]` hook is told to print on one line.
+        #[inline]
+        pub(crate) fn hook_single_line(&self) -> bool {
+            self.single_line && self.single_line_hooks == SingleLineHooks::OneLine
         }
 
         /// Depth cap for the `cause` and `AggregateError.errors` walks.
@@ -3183,6 +3206,15 @@ pub mod formatter {
         Ok(None)
     }
 
+    bitflags::bitflags! {
+        /// `Bun::CustomInspectFlag` in UtilInspect.cpp.
+        #[derive(Copy, Clone)]
+        struct CustomInspectFlags: u8 {
+            const COLORS = 1 << 0;
+            const SINGLE_LINE = 1 << 1;
+        }
+    }
+
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
     // params are by-value `JSValue`/scalars → `safe fn`.
     unsafe extern "C" {
@@ -3195,7 +3227,7 @@ pub mod formatter {
             this: JSValue,
             depth: u32,
             max_depth: u32,
-            colors: bool,
+            flags: u8,
         ) -> JSValue;
     }
 
@@ -3799,6 +3831,9 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
+            let mut flags = CustomInspectFlags::empty();
+            flags.set(CustomInspectFlags::COLORS, C);
+            flags.set(CustomInspectFlags::SINGLE_LINE, self.hook_single_line());
             // Call custom inspect function. Will return the error if there is
             // one; we'll need to pass the callback through to the "this" value
             // in here.
@@ -3809,7 +3844,7 @@ pub mod formatter {
                     self.custom_formatted_object.this,
                     u32::from(self.max_depth.saturating_sub(self.depth)),
                     u32::from(self.max_depth),
-                    C,
+                    flags.bits(),
                 )
             })?;
             // Strings are printed directly, otherwise we recurse.

@@ -9,6 +9,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import dns from "node:dns";
 import { join } from "path";
 import util from "util";
 import vm from "vm";
@@ -1787,4 +1788,303 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
+});
+
+// The text of the values that a native printer (Request, Response, Blob, S3, Archive, BuildArtifact)
+// or an inspect.custom hook prints. `pretty` is the default text. `compact` is the text with
+// `compact: true`, the formatter's single-line mode, which table cells use too.
+describe("Bun.inspect of a value with its own printer", () => {
+  const s3 = new Bun.S3Client({
+    accessKeyId: "a",
+    secretAccessKey: "b",
+    sessionToken: "c",
+    bucket: "bucket",
+    region: "us-east-1",
+    endpoint: "https://s3.example.com",
+    acl: "public-read",
+  });
+  const s3Members = `endpoint: "s3.example.com", region: "us-east-1", accessKeyId: "[REDACTED]", secretAccessKey: "[REDACTED]", sessionToken: "[REDACTED]", acl: "public-read", partSize: 5242880, queueSize: 5, retry: 3`;
+  const s3Lines = indent => s3Members.replaceAll(", ", ",\n" + indent);
+  // Three members of 30 characters: together they do not fit the 80 columns of util.inspect.
+  const long = {
+    a: Buffer.alloc(30, "a").toString(),
+    b: Buffer.alloc(30, "b").toString(),
+    c: Buffer.alloc(30, "c").toString(),
+  };
+
+  const rows = [
+    {
+      name: "Request",
+      value: () => new Request("http://example.com/"),
+      compact: `Request (0 KB) { method: "GET", url: "http://example.com/", headers: Headers {} }`,
+      pretty: `Request (0 KB) {\n  method: "GET",\n  url: "http://example.com/",\n  headers: Headers {}\n}`,
+    },
+    {
+      // Known-odd in `pretty`, here and in the next two rows: no comma between `headers` and the body.
+      name: "Request with a string body",
+      value: () => new Request("http://example.com/", { method: "POST", body: "hello", headers: { "x-a": "1" } }),
+      compact: `Request (5 bytes) { method: "POST", url: "http://example.com/", headers: Headers { "x-a": "1" }, Blob (5 bytes) }`,
+      pretty: `Request (5 bytes) {\n  method: "POST",\n  url: "http://example.com/",\n  headers: Headers {\n    "x-a": "1",\n  }\n  Blob (5 bytes)\n}`,
+    },
+    {
+      name: "Request with a Blob body",
+      value: () =>
+        new Request("http://example.com/", { method: "PUT", body: new Blob(["hello"], { type: "image/png" }) }),
+      compact: `Request (5 bytes) { method: "PUT", url: "http://example.com/", headers: Headers { "content-type": "image/png" }, Blob (5 bytes) { type: "image/png" } }`,
+      pretty: `Request (5 bytes) {\n  method: "PUT",\n  url: "http://example.com/",\n  headers: Headers {\n    "content-type": "image/png",\n  }\n  Blob (5 bytes) {\n    type: "image/png"\n  }\n}`,
+    },
+    {
+      name: "Request with an S3 body",
+      value: () => new Request("http://example.com/", { method: "PUT", body: s3.file("k.txt") }),
+      compact: `Request (0 KB) { method: "PUT", url: "http://example.com/", headers: Headers {}, S3Ref ("bucket/k.txt") { ${s3Members} } }`,
+      pretty: `Request (0 KB) {\n  method: "PUT",\n  url: "http://example.com/",\n  headers: Headers {}\n  S3Ref ("bucket/k.txt") {\n    ${s3Lines("    ")}\n  }\n}`,
+    },
+    {
+      name: "Response",
+      value: () => new Response("x"),
+      compact: `Response (1 bytes) { ok: true, url: "", status: 200, statusText: "", headers: Headers {}, redirected: false, bodyUsed: false, Blob (1 bytes) }`,
+      pretty: `Response (1 bytes) {\n  ok: true,\n  url: "",\n  status: 200,\n  statusText: "",\n  headers: Headers {},\n  redirected: false,\n  bodyUsed: false,\n  Blob (1 bytes)\n}`,
+    },
+    {
+      name: "Response with no body",
+      value: () => new Response(null, { status: 204, statusText: "No Content", headers: { "x-a": "1" } }),
+      compact: `Response (0 KB) { ok: true, url: "", status: 204, statusText: "No Content", headers: Headers { "x-a": "1" }, redirected: false, bodyUsed: false }`,
+      pretty: `Response (0 KB) {\n  ok: true,\n  url: "",\n  status: 204,\n  statusText: "No Content",\n  headers: Headers {\n    "x-a": "1",\n  },\n  redirected: false,\n  bodyUsed: false\n}`,
+    },
+    {
+      name: "Response with a Blob body",
+      value: () => new Response(new Blob(["x"], { type: "image/png" })),
+      compact: `Response (1 bytes) { ok: true, url: "", status: 200, statusText: "", headers: Headers { "content-type": "image/png" }, redirected: false, bodyUsed: false, Blob (1 bytes) { type: "image/png" } }`,
+      pretty: `Response (1 bytes) {\n  ok: true,\n  url: "",\n  status: 200,\n  statusText: "",\n  headers: Headers {\n    "content-type": "image/png",\n  },\n  redirected: false,\n  bodyUsed: false,\n  Blob (1 bytes) {\n    type: "image/png"\n  }\n}`,
+    },
+    {
+      name: "Blob with a type",
+      value: () => new Blob(["x"], { type: "image/png" }),
+      compact: `Blob (1 bytes) { type: "image/png" }`,
+      pretty: `Blob (1 bytes) {\n  type: "image/png"\n}`,
+    },
+    {
+      name: "File",
+      value: () => new File(["x"], "f.png", { type: "image/png", lastModified: 1 }),
+      compact: `File (1 bytes) { name: "f.png", type: "image/png", lastModified: 1 }`,
+      pretty: `File (1 bytes) {\n  name: "f.png",\n  type: "image/png",\n  lastModified: 1\n}`,
+    },
+    {
+      // Known-odd in `pretty`: a second line feed follows `offset`.
+      name: "sliced Blob",
+      value: () => new Blob(["hello"]).slice(1),
+      compact: `Blob (4 bytes) { offset: 1 }`,
+      pretty: `Blob (4 bytes) {\n  offset: 1\n\n}`,
+    },
+    {
+      // Known-odd in `pretty`: the comma after `offset` is on a line of its own.
+      name: "sliced File",
+      value: () => new File(["hello"], "f.png", { type: "image/png", lastModified: 1 }).slice(1),
+      compact: `File (4 bytes) { name: "f.png", type: "image/png", offset: 1, lastModified: 1 }`,
+      pretty: `File (4 bytes) {\n  name: "f.png",\n  type: "image/png",\n  offset: 1\n,\n  lastModified: 1\n}`,
+    },
+    {
+      name: "Bun.file(path)",
+      value: () => Bun.file("does-not-exist.txt"),
+      compact: `FileRef ("does-not-exist.txt") { type: "text/plain;charset=utf-8" }`,
+      pretty: `FileRef ("does-not-exist.txt") {\n  type: "text/plain;charset=utf-8"\n}`,
+    },
+    {
+      name: "Bun.file(fd)",
+      value: () => Bun.file(123),
+      compact: `FileRef (fd: 123) { type: "application/octet-stream" }`,
+      pretty: `FileRef (fd: 123) {\n  type: "application/octet-stream"\n}`,
+    },
+    {
+      name: "S3Client",
+      value: () => s3,
+      compact: `S3Client ("bucket") { ${s3Members} }`,
+      pretty: `S3Client ("bucket") {\n  ${s3Lines("  ")}\n}`,
+    },
+    {
+      name: "S3 file",
+      value: () => s3.file("k.txt"),
+      compact: `S3Ref ("bucket/k.txt") { ${s3Members} }`,
+      pretty: `S3Ref ("bucket/k.txt") {\n  ${s3Lines("  ")}\n}`,
+    },
+    {
+      name: "sliced S3 file with a type",
+      value: () => s3.file("k.bin").slice(3, 10, "application/x-bin"),
+      compact: `S3Ref ("bucket/k.bin") { type: "application/x-bin", offset: 3, ${s3Members} }`,
+      pretty: `S3Ref ("bucket/k.bin") {\n  type: "application/x-bin",\n  offset: 3,\n  ${s3Lines("  ")}\n}`,
+    },
+    {
+      // Known-odd in `pretty`: `offset` is on the first line, after two spaces.
+      name: "sliced S3 file",
+      value: () => s3.file("k.txt").slice(3),
+      compact: `S3Ref ("bucket/k.txt") { offset: 3, ${s3Members} }`,
+      pretty: `S3Ref ("bucket/k.txt") {  offset: 3,\n  ${s3Lines("  ")}\n}`,
+    },
+    {
+      name: "Archive",
+      value: () => new Bun.Archive({ "a.txt": "hi" }),
+      compact: `Archive (10.24 KB) { files: 1 }`,
+      pretty: `Archive (10.24 KB) {\n  files: 1\n}`,
+    },
+    {
+      name: "FormData with a File",
+      value: () => {
+        const form = new FormData();
+        form.append("f", new File(["x"], "f.txt", { lastModified: 1 }));
+        return form;
+      },
+      compact: `FormData { "f": File (1 bytes) { name: "f.txt", lastModified: 1 } }`,
+      pretty: `FormData {\n  "f": File (1 bytes) {\n    name: "f.txt",\n    lastModified: 1\n  },\n}`,
+    },
+    {
+      name: "a class whose hook forwards its options to inspect",
+      value: () =>
+        new (class Box {
+          [util.inspect.custom](depth, options, inspect) {
+            return "Box " + inspect({ a: long.a, b: long.b, c: long.c }, options);
+          }
+        })(),
+      compact: `Box { a: '${long.a}', b: '${long.b}', c: '${long.c}' }`,
+      pretty: `Box {\n  a: '${long.a}',\n  b: '${long.b}',\n  c: '${long.c}'\n}`,
+    },
+    {
+      // The hook gets `compact: true`, which is the layout of util.inspect that puts a base inside the braces.
+      name: "a class whose hook forwards its options to inspect a function",
+      value: () =>
+        new (class Box {
+          [util.inspect.custom](depth, options, inspect) {
+            return (
+              "Box " +
+              inspect(
+                Object.assign(function foo() {}, { a: 1 }),
+                options,
+              )
+            );
+          }
+        })(),
+      compact: `Box { [Function: foo] a: 1 }`,
+      pretty: `Box [Function: foo] { a: 1 }`,
+    },
+  ];
+
+  for (const { name, value, compact, pretty } of rows) {
+    it(name, () => {
+      expect(Bun.inspect(value(), { compact: true })).toBe(compact);
+      // Nested in a value that the formatter prints itself.
+      expect(Bun.inspect({ v: [value()] }, { compact: true })).toBe(`{ v: [ ${compact} ] }`);
+      expect(Bun.inspect(value())).toBe(pretty);
+    });
+  }
+
+  // The hooks of these classes forward their options to util.inspect.
+  it("URL, TransformStream and PerformanceMark print as util.inspect prints them on one line", () => {
+    // Four levels and an array of more than six items: `breakLength: Infinity` alone would still break these.
+    const detail = { a: { b: { c: { d: 1 } } }, list: [1, 2, 3, 4, 5, 6, 7, 8] };
+    for (const value of [
+      new URL("http://example.com/a?b=1"),
+      new TransformStream(),
+      performance.mark("m", { startTime: 5, detail }),
+    ]) {
+      const text = Bun.inspect(value, { compact: true });
+      expect(text).not.toContain("\n");
+      expect(text).toBe(util.inspect(value, { breakLength: Infinity, compact: true, depth: Infinity }));
+    }
+  });
+
+  it("Request and Response with a stream body", () => {
+    const request = new Request("http://example.com/", { method: "POST", body: new ReadableStream() });
+    expect(Bun.inspect(request, { compact: true })).toMatch(
+      /^Request \(0 KB\) \{ method: "POST", url: "http:\/\/example\.com\/", headers: Headers \{\}, ReadableStream \{ locked: false, [^\n]+ \} \}$/,
+    );
+    expect(Bun.inspect(request)).toStartWith(
+      `Request (0 KB) {\n  method: "POST",\n  url: "http://example.com/",\n  headers: Headers {}\n  ReadableStream {\n    locked: false,\n`,
+    );
+    const response = new Response(new ReadableStream());
+    expect(Bun.inspect(response, { compact: true })).toMatch(
+      /^Response \(0 KB\) \{ ok: true, url: "", status: 200, statusText: "", headers: Headers \{\}, redirected: false, bodyUsed: false, ReadableStream \{ locked: false, [^\n]+ \} \}$/,
+    );
+    expect(Bun.inspect(response)).toStartWith(
+      `Response (0 KB) {\n  ok: true,\n  url: "",\n  status: 200,\n  statusText: "",\n  headers: Headers {},\n  redirected: false,\n  bodyUsed: false,\n  ReadableStream {\n    locked: false,\n`,
+    );
+  });
+
+  it("BunRequest with params", async () => {
+    let texts;
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/u/:id": request => {
+          texts = { compact: Bun.inspect(request, { compact: true }), pretty: Bun.inspect(request) };
+          return new Response("ok");
+        },
+      },
+    });
+    const url = `http://127.0.0.1:${server.port}/u/7`;
+    expect(await (await fetch(url)).text()).toBe("ok");
+    expect(texts.compact).toStartWith(
+      `BunRequest (0 KB) { method: "GET", url: "${url}", params: RequestParams { id: "7" }, headers: Headers { "`,
+    );
+    expect(texts.compact).toEndWith(`" } }`);
+    expect(texts.compact).not.toContain("\n");
+    expect(texts.pretty).toStartWith(
+      `BunRequest (0 KB) {\n  method: "GET",\n  url: "${url}",\n  params: RequestParams {\n    id: "7",\n  },\n  headers: Headers {\n    "`,
+    );
+    expect(texts.pretty).toEndWith(`",\n  }\n}`);
+  });
+
+  it("BuildArtifact", async () => {
+    using dir = tempDir("inspect-build-artifact", { "a.js": "export const a = 1;" });
+    const { outputs } = await Bun.build({
+      entrypoints: [join(String(dir), "a.js")],
+      outdir: join(String(dir), "out"),
+      sourcemap: "external",
+    });
+    const artifact = outputs.find(output => output.kind === "entry-point");
+    const map = artifact.sourcemap;
+    const text = options =>
+      Bun.inspect(artifact, options)
+        .replaceAll(map.path, "<map>")
+        .replaceAll(artifact.path, "<js>")
+        .replaceAll(artifact.hash, "<hash>");
+    expect(text({ compact: true })).toBe(
+      `BuildArtifact (entry-point) { path: "<js>", loader: "jsx", kind: "entry-point", hash: "<hash>", FileRef ("<js>") { type: "text/javascript;charset=utf-8" }, sourcemap: BuildArtifact (sourcemap) { path: "<map>", loader: "file", kind: "sourcemap", FileRef ("<map>") { type: "application/json;charset=utf-8" } } }`,
+    );
+    expect(text()).toBe(
+      `BuildArtifact (entry-point) {\n  path: "<js>",\n  loader: "jsx",\n  kind: "entry-point",\n  hash: "<hash>",\n  FileRef ("<js>") {\n    type: "text/javascript;charset=utf-8"\n  },\n  sourcemap: BuildArtifact (sourcemap) {\n    path: "<map>",\n    loader: "file",\n    kind: "sourcemap",\n    FileRef ("<map>") {\n      type: "application/json;charset=utf-8"\n    }\n  }\n}`,
+    );
+  });
+
+  // The hook of Buffer prints the other own properties of the buffer on one line, as Node's does.
+  it("a property of a Buffer", () => {
+    const withUrl = Object.assign(Buffer.from("ab"), { url: new URL("http://example.com/") });
+    const text = `<Buffer 61 62, url: URL { href: 'http://example.com/', origin: 'http://example.com', protocol: 'http:', username: '', password: '', host: 'example.com', hostname: 'example.com', port: '', pathname: '/', search: '', searchParams: URLSearchParams {}, hash: '' }>`;
+    expect(Bun.inspect(withUrl)).toBe(text);
+    expect(util.inspect(withUrl)).toBe(text);
+    const withRequest = Object.assign(Buffer.from("ab"), { request: new Request("http://example.com/") });
+    expect(util.inspect(withRequest)).not.toContain("\n");
+  });
+
+  describe("in an error message", () => {
+    // This is Node's text: the value as its hook prints it by default.
+    it("a value with an inspect.custom hook prints as it does alone", () => {
+      const url = new URL("http://example.com/");
+      expect(() => new MessageEvent("message", { source: url })).toThrow(
+        `MessageEvent constructor: Expected eventInitDict.source ("${util.inspect(url)}") to be an instance of MessagePort.`,
+      );
+      expect(() => dns.setDefaultResultOrder(url)).toThrow(
+        `The argument 'order' is invalid. Received ${util.inspect(url)}`,
+      );
+    });
+
+    it("a value with a native printer prints on one line", () => {
+      const request = new Request("http://example.com/", { method: "POST", body: "hi", headers: { "x-a": "1" } });
+      expect(() => new MessageEvent("message", { source: request })).toThrow(
+        `MessageEvent constructor: Expected eventInitDict.source ("Request (2 bytes) { method: "POST", url: "http://example.com/", headers: Headers { "x-a": "1" }, Blob (2 bytes) }") to be an instance of MessagePort.`,
+      );
+      const response = new Response("x", { headers: { "x-b": "2" } });
+      expect(() => dns.setDefaultResultOrder({ response })).toThrow(
+        `The argument 'order' is invalid. Received { response: Response (1 bytes) { ok: true, url: "", status: 200, statusText: "", headers: Headers { "x-b": "2" }, redirected: false, bodyUsed: false, Blob (1 bytes) } }`,
+      );
+    });
+  });
 });

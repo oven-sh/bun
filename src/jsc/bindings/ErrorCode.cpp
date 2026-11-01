@@ -35,6 +35,7 @@
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
 #include "KeyObject.h"
+#include "UtilInspect.h"
 
 namespace WTF {
 template<> class StringTypeAdapter<GCOwnedDataScope<StringView>> {
@@ -304,11 +305,6 @@ JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, Message
     return createError(globalObject, code, built);
 }
 
-// `Bun.inspect` with `single_line` + `quote_strings` — the same renderer
-// JSBuffer uses to inline a value into an error message; it renders objects
-// on one line ("Received { abc: 123 }") the way Node does.
-extern "C" BunString Bun__inspect_singleline(Zig::GlobalObject* globalObject, JSValue value);
-
 // util.inspect's quoted-string escaping (https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
 // strEscape). Bun.inspect double-quotes; Node's messages use single quotes.
 template<typename CharType>
@@ -555,8 +551,8 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
         return;
     }
 
-    // Node renders objects inline in error messages ("Received { abc: 123 }").
-    builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
+    // Node renders objects inline in error messages ("Received { abc: 123 }"), and a value with an inspect hook as the hook prints it.
+    builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg, Bun::SingleLineHooks::OwnLayout).transferToWTFString());
 }
 
 // A proxy whose handler has no "get" hands a read on to its target. Null where script would run.

@@ -54,6 +54,14 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
+/// `process.stdout._handle.setBlocking(blocking)`. Like libuv's `uv_stream_set_blocking`, returns 0 or a negative errno.
+pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> i32 {
+    match bun_sys::update_nonblocking(bun_sys::Fd::from_uv(fd), !blocking) {
+        Ok(()) => 0,
+        Err(err) => -i32::from(err.errno),
+    }
+}
+
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
     bun_jsc::call_zero_is_throw(global, || Bun__Process__getArgv(global))
 }

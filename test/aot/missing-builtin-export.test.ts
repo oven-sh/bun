@@ -22,6 +22,9 @@ const nativeModules = readLines("jsc/modules/NativeModuleList.h").flatMap(
   line => /macro\("([^"]+)"_s, \w+\)/.exec(line)?.[1] ?? [],
 );
 
+// `bun test`, which runs this file, deletes it from `console`.
+const absentInTests = ["node:console timeStamp"];
+
 // A name in this list is a known member: nothing tests for it at run time. So every name in it has to exist.
 test("every name in src/codegen/builtins/data/module-exports.txt is exported", async () => {
   const absent: string[] = [];
@@ -36,7 +39,7 @@ test("every name in src/codegen/builtins/data/module-exports.txt is exported", a
       .slice(1)
       .map(name => line.split(" ")[0] + " " + name),
   );
-  expect(absent).toEqual(isWindows ? taken : []);
+  expect(absent.filter(name => !absentInTests.includes(name))).toEqual(isWindows ? taken : []);
   const all = new Set(
     lines.flatMap(line =>
       line

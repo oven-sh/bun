@@ -962,13 +962,7 @@ impl BabyString {
     /// Locates `substring` inside `container` (the string later passed to
     /// [`BabyString::slice`]) and records its offset and length.
     pub fn r#in(container: &[u8], substring: &[u8]) -> BabyString {
-        // bun_core::strings::index_of deliberately returns None for an empty
-        // needle, but an empty `substring` reaches this path via resolve errors
-        // for `import ""`, so short-circuit it here to offset 0.
-        if substring.is_empty() {
-            return BabyString::new(0, 0);
-        }
-        // `container` is formatted lossily, so a `substring` with invalid UTF-8 may not be in it.
+        // Not found for `import ""`, or for a non-UTF-8 specifier that was formatted lossily.
         let Some(off) = bun_core::strings::index_of(container, substring) else {
             return BabyString::new(0, 0);
         };
@@ -2052,7 +2046,7 @@ macro_rules! add_warning_pretty {
     };
 }
 
-#[inline]
+#[inline(never)]
 pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     // Markup conversion happens over the *format-string literal only*;
     // interpolated values are never inspected for `<..>` markup.

@@ -664,13 +664,22 @@ interface Set<T> {
 }
 
 interface ObjectConstructor {
+  $create: typeof Object.create;
   $getPrototypeOf: typeof Object.getPrototypeOf;
   $defineProperty: typeof Object.defineProperty;
   $defineProperties: typeof Object.defineProperties;
+  $getOwnPropertyDescriptor: typeof Object.getOwnPropertyDescriptor;
+  $getOwnPropertyNames: typeof Object.getOwnPropertyNames;
+  $getOwnPropertySymbols: typeof Object.getOwnPropertySymbols;
 }
+
+declare var $Map: MapConstructor;
+declare var $Object: ObjectConstructor;
 
 /** gets a property on an object */
 declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
+
+declare function $getPrototypeOf(value: unknown): object | null;
 
 /**
  * Gets a private property on an object.

@@ -16,7 +16,7 @@ export type Invocation = {
 };
 
 const prototypeOf = (value: unknown): object => Reflect.getPrototypeOf(Object(value))!;
-const modulesInPlaceOfPackages = ["utf-8-validate"];
+const modulesInPlaceOfPackages = ["utf-8-validate", "bun:test/vitest"];
 
 const preludeFolder = join(import.meta.dir, "../../../../src/aot/prelude");
 

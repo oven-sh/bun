@@ -46,14 +46,25 @@ const prefixedBuiltins = [
   "AbortSignal",
   "Array",
   "ArrayBuffer",
+  "BigInt64Array",
+  "BigUint64Array",
   "Buffer",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "Int16Array",
+  "Int32Array",
+  "Int8Array",
   "Promise",
   "RangeError",
   "ReadableStream",
   "RegExp",
   "String",
   "TypeError",
+  "Uint16Array",
+  "Uint32Array",
   "Uint8Array",
+  "Uint8ClampedArray",
   "isFinite",
 ];
 
@@ -89,6 +100,7 @@ export default b.declarations(
 
   b.intrinsic("Array", "Value", builtin("Array")),
   b.intrinsic("Buffer", "Value", builtin("Buffer")),
+  b.intrinsic("getPrototypeOf", "Call", builtin("Object.getPrototypeOf")),
   b.intrinsic("isArray", "Call", builtin("Array.isArray")),
   b.intrinsic("isArray", "Value", builtin(b.linkTimeConstantPath("isArray"))),
   b.intrinsic("isFinite", "Call", builtin("isFinite")),
@@ -100,6 +112,8 @@ export default b.declarations(
 
   b.intrinsic("apply", "Member", { intrinsic: "Apply" }),
   b.intrinsic("call", "Member", inlinableCall),
+  b.intrinsic("getOwnPropertyNames", "Member", { intrinsic: "PrivateName" }),
+  b.intrinsic("getOwnPropertySymbols", "Member", { intrinsic: "PrivateName" }),
 
   privateGlobalFunctions.flatMap(name => b.intrinsic(name, "Call", privateGlobal)),
   privateGlobalValues.flatMap(name => b.intrinsic(name, "Value", privateGlobal)),

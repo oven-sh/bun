@@ -24,7 +24,7 @@ const vitest = {
     exports: { ".": { types: "./index.d.ts" }, "./globals": { types: "./globals.d.ts" } },
   }),
   "node_modules/vitest/index.d.ts": `
-    export declare const vi: { stubGlobal(name: string, value: unknown): void; fn(): () => void };
+    export declare const vi: { addedInALaterVersion(name: string, value: unknown): void; fn(): () => void };
     export declare function test(name: string, run: () => void): void;
     export declare const it: typeof test;
     export declare const describe: { (name: string, run: () => void): void; runIf(condition: unknown): (name: string, run: () => void) => void };
@@ -46,7 +46,7 @@ const usesWhatBunLacks = `
   export {};
   const text: string | number = "a";
   test("passes", () => { expect(text).toBe("a"); expect(1 as number).toBe(1 as unknown); });
-  test("calls what bun test does not have", () => { vi.stubGlobal("name", 1); });
+  test("calls what bun test does not have", () => { vi.addedInALaterVersion("name", 1); });
 `;
 
 async function run(dir: string, ...args: string[]) {

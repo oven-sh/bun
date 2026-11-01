@@ -184,6 +184,8 @@ export const files = {
   "own.toml": "[console]\ndepth = 1\n",
   "tsconfig.other.json": "{}",
   "sub/keep": "",
+  // With --cwd=sub, --config=own.toml is read from there.
+  "sub/own.toml": "[console]\ndepth = 1\n",
 };
 
 export const packageChosenAtRandom = /^( +(?:x|add|remove|update|info|why|create) +)\S+ +/gm;

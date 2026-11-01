@@ -1196,9 +1196,15 @@ impl CodeHost for LoadHost<'_> {
     ) -> TreeChange {
         let source = parsed_source_mut(payload);
         // A tree is changed once, so a file that gets the names keeps its components as they are written.
-        if self.input.options.load.runs_tests
+        let load = &self.input.options.load;
+        if load.runs_tests
             && source.kind == SourceKind::Program
-            && test_runner_names::import_used_names(arena, atoms, request) == TreeChange::Changed
+            && test_runner_names::import_used_names(
+                arena,
+                atoms,
+                request,
+                load.has_globals_of_vitest,
+            ) == TreeChange::Changed
         {
             return TreeChange::Changed;
         }

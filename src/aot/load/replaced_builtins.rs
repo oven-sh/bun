@@ -213,7 +213,7 @@ impl<'s> Look<'s> {
             },
             import_meta_main: None,
         };
-        if import_used_names(arena, atoms, &mut request) == TreeChange::Changed {
+        if import_used_names(arena, atoms, &mut request, false) == TreeChange::Changed {
             (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
         }
         let module_of = |specifier: ImportSpecifier| match specifier {

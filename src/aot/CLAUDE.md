@@ -35,13 +35,13 @@ An engine change reaches Bun's CI through a prebuilt engine: push the WebKit bra
 
 Pick the smallest loop that can show your change.
 
-| You changed                                                | Loop                                                                                                                                                                                                                                           | Time                    |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| A pass, an analysis, code generation                       | build `testaot`, then `testaot <folder or file of aot/tests>`                                                                                                                                                                                  | seconds after the build |
-| Lowering in `src/aot`                                      | `cargo test -p bun_aot --test ir_tests` (`test/aot/ir`)                                                                                                                                                                                        | a minute                |
-| Anything, and you want whole programs without building Bun | `JSC=.. FRONT_END=.. TESTAOT=.. PLAIN=.. test/aot/shell/quick.py <programs>`                                                                                                                                                                   | seconds a program       |
-| Anything                                                   | `bun bd test test/aot/<file>`, `AOT_PROGRAMS=<name> bun bd test test/aot/<folder file>`                                                                                                                                                        |                         |
-| Text only (names, lists, switch statements)                | `bun test test/aot/plain-english.test.ts test/aot/test-files-self-skip.test.ts test/aot/a-switch-of-the-compiler-names-every-enumerator.test.ts` with any Bun; `AOT_ENGINE_DIRECTORY=<WebKit>/Source/JavaScriptCore/aot` for the engine's text | ten seconds             |
+| You changed                                                | Loop                                                                                         | Time                    |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------- |
+| A pass, an analysis, code generation                       | build `testaot`, then `testaot <folder or file of aot/tests>`                                | seconds after the build |
+| Lowering in `src/aot`                                      | `cargo test -p bun_aot --test ir_tests` (`test/aot/ir`)                                      | a minute                |
+| Anything, and you want whole programs without building Bun | `JSC=.. FRONT_END=.. TESTAOT=.. PLAIN=.. test/aot/shell/quick.py <programs>`                 | seconds a program       |
+| Anything                                                   | `bun bd test test/aot/<file>`, `AOT_PROGRAMS=<name> bun bd test test/aot/<folder file>`      |                         |
+| Text only (names, lists, switch statements)                | `bun test test/aot/plain-english.test.ts test/aot/test-files-self-skip.test.ts` with any Bun | ten seconds             |
 
 Look at what the compiler did:
 

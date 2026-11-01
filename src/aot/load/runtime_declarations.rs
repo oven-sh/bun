@@ -3,6 +3,7 @@
 use std::sync::OnceLock;
 
 use bun_core::strings::contains;
+use bun_js_parser::Jest;
 use bun_sema::util::SharedSort;
 
 use crate::builtins::table::BuiltinKind;
@@ -21,23 +22,6 @@ const NAMES_OF_EVERY_MODULE: [&[u8]; 5] = [
 
 // No file declares these two: TypeScript knows them by itself.
 const NAMES_WITHOUT_DECLARATIONS: [&[u8]; 2] = [b"undefined", b"globalThis"];
-
-pub(crate) const NAMES_OF_EVERY_TEST_FILE: [&[u8]; 14] = [
-    b"test",
-    b"it",
-    b"describe",
-    b"expect",
-    b"expectTypeOf",
-    b"beforeAll",
-    b"beforeEach",
-    b"afterEach",
-    b"afterAll",
-    b"jest",
-    b"vi",
-    b"xit",
-    b"xtest",
-    b"xdescribe",
-];
 
 // `bun test` answers these names with its own runner, whatever is installed.
 const OTHER_NAMES_OF_TEST_RUNNER_MODULES: [&[u8]; 2] = [b"@jest/globals", b"vitest"];
@@ -275,7 +259,7 @@ fn collect_global_names(runs_tests: bool) -> Vec<&'static [u8]> {
     names.retain(|name| !NAMES_WITHOUT_DECLARATIONS.contains(name));
     names.extend(NAMES_OF_EVERY_MODULE);
     if runs_tests {
-        names.extend(NAMES_OF_EVERY_TEST_FILE);
+        names.extend(Jest::GLOBALS.iter().map(|name| name.as_bytes()));
     }
     names.retain(|name| is_identifier(name));
     names.shared_sort_unstable();
@@ -540,7 +524,8 @@ mod tests {
     #[test]
     fn declares_every_function_of_bun_types_that_narrows() {
         // TypeScript's library has `Error.isError`. A type error in a test file stops no test run.
-        const DECLARED_ELSEWHERE_OR_FOR_TESTS: [&[u8]; 2] = [b"isError", b"unreachable"];
+        const DECLARED_ELSEWHERE_OR_FOR_TESTS: [&[u8]; 4] =
+            [b"isError", b"unreachable", b"isMockFunction", b"skip"];
         let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
         let stand_in = text(&runtime_modules, false);
         let mut found = 0;

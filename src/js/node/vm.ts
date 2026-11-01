@@ -201,7 +201,9 @@ function runInNewContext(code: string, context?: object | symbol, options?: stri
   if (typeof options === "string") {
     options = { filename: options };
   }
-  context = createContext(context, getContextOptions(options));
+  if (context !== DONT_CONTEXTIFY) {
+    context = createContext(context, getContextOptions(options));
+  }
   options = { ...options };
   return createScript(code, options).runInNewContext(context, options);
 }

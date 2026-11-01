@@ -285,6 +285,10 @@ export default b.declarations(
   b.fn("bun:test.spyOn", spyOn),
   b.namespace("bun:test.jest", { spyOn }),
   b.namespace("bun:test.vi", { spyOn }),
+  b.fn("bun:test/vitest.spyOn", spyOn),
+  b.namespace("bun:test/vitest.jest", { spyOn }),
+  b.namespace("bun:test/vitest.vi", { spyOn }),
+  b.namespace("bun:test/vitest.vitest", { spyOn }),
   b.namespace("%bun:bundle%", {
     feature: {
       args: { flag: b.string },

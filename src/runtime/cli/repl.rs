@@ -2222,6 +2222,7 @@ impl<'a> Repl<'a> {
             &source,
             bun_js_printer::Options {
                 mangled_props: None,
+                repl_mode: true,
                 ..Default::default()
             },
         )

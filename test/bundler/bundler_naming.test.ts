@@ -236,6 +236,42 @@ describe("bundler", () => {
       stdout: "./bun/data.file",
     },
   });
+  // A file with no extension: `[ext]` is empty, so the `.` before it in the template is dropped too.
+  itBundled("naming/AssetNamingNoExtension", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import file from "./LICENSE" with { type: "file" };
+        console.log(file);
+      `,
+      "/src/LICENSE": `license text`,
+    },
+    root: "/src",
+    entryPointsRaw: ["./src/entry.js"],
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir).sort();
+      expect(files).toEqual([expect.stringMatching(/^LICENSE-[0-9a-z]{8}$/), "entry.js"]);
+      api.expectFile("/out/entry.js").toContain(`"./${files[0]}"`);
+    },
+  });
+  itBundled("naming/AssetNamingNoExtensionCustom", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import file from "./data/LICENSE" with { type: "file" };
+        console.log(file);
+      `,
+      "/src/data/LICENSE": `license text`,
+    },
+    root: "/src",
+    assetNaming: "assets/[dir]/[name].[ext]",
+    entryPointsRaw: ["./src/entry.js"],
+    onAfterBundle(api) {
+      api.assertFileExists("/out/assets/data/LICENSE");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "./assets/data/LICENSE",
+    },
+  });
   itBundled("naming/AssetNoOverwrite", {
     todo: true,
     files: {

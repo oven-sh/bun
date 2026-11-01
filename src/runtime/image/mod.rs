@@ -8,7 +8,7 @@
 
 // ─── codec dispatch surface ──────────────────────────────────────────────────
 //
-// `codecs.rs` owns the shared `Decoded`/`Encoded`/`Error`/`DecodeHint`/
+// `codecs.rs` owns the shared `Decoded`/`Encoded`/`Error`/
 // `EncodeOptions` shapes plus the format-agnostic dispatch (`decode`, `encode`,
 // `resize`, `Filter`, `Format`). Per-format files (`codec_*.rs`), the platform
 // backends, and `Image.rs` all import via `super::codecs` so there is exactly

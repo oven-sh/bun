@@ -43,6 +43,39 @@ describe("ML-DSA", () => {
       expect(verify(undefined, Buffer.from("tampered"), publicKey, sig)).toBe(false);
     });
 
+    // The Node typings predate the ML-DSA key types.
+    const keyType = type as unknown as "ed25519";
+
+    test("sign and verify with a context string", async () => {
+      const { publicKey, privateKey } = generateKeyPairSync(keyType);
+      const data = Buffer.from("hello bun");
+      const context = Buffer.from("ctx");
+      const sig = sign(undefined, data, { key: privateKey, context });
+      expect(sig.length).toBe(sigLen);
+      expect(verify(undefined, data, { key: publicKey, context }, sig)).toBe(true);
+      expect(verify(undefined, data, { key: publicKey, context: Buffer.from("other") }, sig)).toBe(false);
+      expect(verify(undefined, data, publicKey, sig)).toBe(false);
+
+      const signed = Promise.withResolvers<Buffer>();
+      sign(undefined, data, { key: privateKey, context }, (err, s) => (err ? signed.reject(err) : signed.resolve(s)));
+      const verified = Promise.withResolvers<boolean>();
+      verify(undefined, data, { key: publicKey, context }, await signed.promise, (err, ok) =>
+        err ? verified.reject(err) : verified.resolve(ok),
+      );
+      expect(await verified.promise).toBe(true);
+    });
+
+    test("context string is limited to 255 bytes", () => {
+      const { publicKey, privateKey } = generateKeyPairSync(keyType);
+      const data = Buffer.from("hello bun");
+      const context = Buffer.alloc(255, 1);
+      const sig = sign(undefined, data, { key: privateKey, context });
+      expect(verify(undefined, data, { key: publicKey, context }, sig)).toBe(true);
+      expect(() => sign(undefined, data, { key: privateKey, context: Buffer.alloc(256, 1) })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    });
+
     test("import PEM and JWK round-trip", () => {
       const stem = type.replaceAll("-", "_");
       const pub = createPublicKey(fixture(`${stem}_public.pem`));

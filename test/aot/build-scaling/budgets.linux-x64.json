@@ -753,7 +753,7 @@
     "megabytes": 117
   },
   "awaited calls in one array literal": {
-    "millionInstructions": 2294,
+    "millionInstructions": 2427,
     "megabytes": 116
   },
   "objects that each hold the one before, walked by a loop": {

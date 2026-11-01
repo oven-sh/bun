@@ -311,6 +311,7 @@ impl DevServer {
     }
 
     /// Note: The log is not consumed here
+    /// Returns `true` for a file that was not there to read.
     pub(crate) fn handle_parse_task_failure(
         &mut self,
         err: &crate::Error,
@@ -318,7 +319,7 @@ impl DevServer {
         abs_path: &[u8],
         log: &Log,
         bv2: &mut BundleV2,
-    ) -> Result<(), AllocError> {
+    ) -> Result<bool, AllocError> {
         let graph_lock = self.graph_safety_lock.guard();
 
         debug_log!(
@@ -330,7 +331,8 @@ impl DevServer {
         );
 
         let mut watch_for_route_file = false;
-        if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
+        let file_is_missing = matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound");
+        if file_is_missing {
             // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
@@ -375,7 +377,7 @@ impl DevServer {
                 Loader::Html,
             )?;
         }
-        Ok(())
+        Ok(file_is_missing)
     }
 
     /// Return a log to write resolution failures into.

@@ -221,6 +221,23 @@ impl<'a> Graph<'a> {
         &mut self.build_graphs[target]
     }
 
+    /// The source with the module id `path.pretty`: a path map of a server target can hold the server copy or the SSR copy.
+    pub(crate) fn source_of_module(
+        &self,
+        importer_target: options::Target,
+        path: &crate::bun_fs::Path<'_>,
+    ) -> Option<bun_ast::IndexInt> {
+        let client = importer_target == options::Target::Browser;
+        self.build_graphs.iter().find_map(|(target, map)| {
+            if (target == options::Target::Browser) != client {
+                return None;
+            }
+            let index = map.get(path.text)?;
+            (self.input_files.items_source()[index as usize].path.pretty == path.pretty)
+                .then_some(index)
+        })
+    }
+
     /// Schedule a task to be run on the JS thread which resolves the promise of
     /// each `.defer()` called in an onLoad plugin.
     ///

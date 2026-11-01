@@ -810,6 +810,104 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+devTest("deleting an @imported stylesheet shows an error then recovers", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+    "styles.css": `
+      @import "./theme/colors.css";
+      .own {
+        font-size: 24px;
+      }
+    `,
+    "theme/colors.css": `
+      .theme {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".theme").color.expect.toBe("red");
+    // The bundle of this event has only styles.css to bundle again, and it already is an entry point.
+    await dev.delete("theme/colors.css", {
+      errors: ['styles.css:1:1: error: Could not resolve: "./theme/colors.css"'],
+    });
+    // The stylesheet that failed is the one that the page links. It sends no update: the page keeps what it had.
+    await c.style(".theme").color.expect.toBe("red");
+    await dev.write(
+      "theme/colors.css",
+      `
+        .theme {
+          color: blue;
+        }
+      `,
+    );
+    await c.style(".theme").color.expect.toBe("#00f");
+    await c.style(".own").fontSize.expect.toBe("24px");
+  },
+});
+// One @import deeper, the stylesheet that the page links does not fail. Its update has no rule of
+// mid.css, as for an @import of mid.css that never resolved.
+devTest("deleting a stylesheet that a nested @import reads shows an error then recovers", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+    "styles.css": `
+      @import "./mid.css";
+      .own {
+        font-size: 24px;
+      }
+    `,
+    "mid.css": `
+      @import "./theme/leaf.css";
+      @import "./theme/other.css";
+      .mid {
+        color: green;
+      }
+    `,
+    "theme/leaf.css": `
+      .leaf {
+        color: red;
+      }
+    `,
+    "theme/other.css": `
+      .other {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".leaf").color.expect.toBe("red");
+    await dev.delete("theme/leaf.css", {
+      errors: ['mid.css:1:1: error: Could not resolve: "./theme/leaf.css"'],
+    });
+    await c.style(".own").fontSize.expect.toBe("24px");
+    await c.style(".leaf").notFound();
+    await dev.write(
+      "theme/leaf.css",
+      `
+        .leaf {
+          color: green;
+        }
+      `,
+    );
+    await c.style(".leaf").color.expect.toBe("green");
+    await c.style(".mid").color.expect.toBe("green");
+    await c.style(".other").color.expect.toBe("#00f");
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

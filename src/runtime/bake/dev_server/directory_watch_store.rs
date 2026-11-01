@@ -20,6 +20,8 @@ pub(crate) struct DirectoryWatchStore {
     pub(crate) dependencies: Vec<Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
     pub(crate) dependencies_free_list: Vec<u32>,
+    /// A watch was placed under node_modules. The Linux watcher names the files that change there.
+    pub(crate) watched_node_modules: bool,
 }
 // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers` field of
 // a heap-allocated `DevServer` (never moved post-init). Raw ptr (not `&mut
@@ -73,7 +75,7 @@ impl DirectoryWatchStore {
         // The Box key drops on swap_remove_at.
         let _ = self.watches.swap_remove_at(entry_index);
 
-        if entry.dir_fd_owned {
+        if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
             entry.dir.close();
         }
 
@@ -90,7 +92,6 @@ impl DirectoryWatchStore {
 pub(crate) struct Entry {
     /// The directory handle the watch is placed on.
     pub(crate) dir: bun_sys::Fd,
-    pub(crate) dir_fd_owned: bool,
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
     /// To pass to `Watcher.remove`.
@@ -100,7 +101,6 @@ impl Default for Entry {
     fn default() -> Self {
         Self {
             dir: bun_sys::Fd::INVALID,
-            dir_fd_owned: false,
             first_dep: 0,
             watch_index: 0,
         }
@@ -116,6 +116,8 @@ pub(crate) struct Dep {
     pub(crate) source_file_path: bun_ptr::RawSlice<u8>,
     /// The specifier that failed. Allocated memory.
     pub(crate) specifier: Box<[u8]>,
+    /// `specifier` is the path of a file that was not there to read. The retry asks the file system, not the resolver.
+    pub(crate) is_file: bool,
 }
 impl Default for Dep {
     fn default() -> Self {
@@ -123,8 +125,16 @@ impl Default for Dep {
             next: None,
             source_file_path: bun_ptr::RawSlice::EMPTY,
             specifier: Box::default(),
+            is_file: false,
         }
     }
+}
+
+/// `dir` is a `node_modules` directory or is inside one.
+fn is_in_node_modules(dir: &[u8]) -> bool {
+    let needle = bun_paths::NODE_MODULES_NEEDLE;
+    bun_paths::string_paths::path_contains_node_modules_folder(dir)
+        || dir.ends_with(&needle[..needle.len() - 1])
 }
 
 /// `DirectoryWatchStore::insert` error set.
@@ -140,6 +150,7 @@ bun_core::oom_from_alloc!(DirectoryWatchInsertError);
 impl DirectoryWatchStore {
     /// Registers a directory watch so that a failed import resolution is
     /// retried when the containing directory changes.
+    #[inline(never)]
     pub(crate) fn track_resolution_failure(
         &mut self,
         import_source: &[u8],
@@ -171,6 +182,29 @@ impl DirectoryWatchStore {
             _ => debug_assert!(false),
         }
 
+        self.track(import_source, specifier, false, renderer)
+    }
+
+    /// Registers a watch on the directory of `file`, so that `import_source` is built again when the file is there.
+    pub(crate) fn track_missing_file(
+        &mut self,
+        import_source: &[u8],
+        file: &[u8],
+        renderer: Graph,
+    ) -> Result<(), bun_alloc::AllocError> {
+        if !bun_paths::is_absolute(import_source) || !bun_paths::is_absolute(file) {
+            return Ok(());
+        }
+        self.track(import_source, file, true, renderer)
+    }
+
+    fn track(
+        &mut self,
+        import_source: &[u8],
+        specifier: &[u8],
+        is_file: bool,
+        renderer: Graph,
+    ) -> Result<(), bun_alloc::AllocError> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(joined) =
             bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
@@ -213,7 +247,7 @@ impl DirectoryWatchStore {
             }
         };
 
-        match self.insert(dir, owned_file_path, specifier) {
+        match self.insert(dir, owned_file_path, specifier, is_file) {
             Ok(()) => Ok(()),
             Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
             Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
@@ -227,12 +261,10 @@ impl DirectoryWatchStore {
         dir_name_to_watch: &[u8],
         file_path: bun_ptr::RawSlice<u8>,
         specifier: &[u8],
+        is_file: bool,
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
-        // Note: take a raw pointer so the &mut self borrow from owner() does
-        // not overlap subsequent self.* field accesses.
-        let dev: *mut DevServer = self.owner();
 
         bun_core::scoped_log!(
             DevServer,
@@ -273,6 +305,7 @@ impl DirectoryWatchStore {
                 let dep = &self.dependencies[index as usize];
                 if dep.source_file_path.slice().as_ptr() == file_path.slice().as_ptr()
                     && dep.specifier == specifier_cloned
+                    && dep.is_file == is_file
                 {
                     return Ok(());
                 }
@@ -282,6 +315,7 @@ impl DirectoryWatchStore {
                 next: prev_first,
                 source_file_path: file_path,
                 specifier: specifier_cloned,
+                is_file,
             });
             self.watches.values_mut()[gop_index].first_dep = dep;
             return Ok(());
@@ -296,54 +330,27 @@ impl DirectoryWatchStore {
             let _ = unsafe { (*watches_ptr).swap_remove_at(idx) };
         });
 
-        // Try to use an existing open directory handle
-        // SAFETY: `dev` is the live DevServer that owns this store;
-        // `server_transpiler` is disjoint from `directory_watchers`.
-        let cache_fd: Option<bun_sys::Fd> = match unsafe { &mut (*dev).server_transpiler }
-            .resolver
-            .read_dir_info(dir_name_to_watch)
-        {
-            Ok(Some(cache)) => {
-                let fd = cache.get_file_descriptor();
-                if fd.is_valid() { Some(fd) } else { None }
+        let fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+            // Build a NUL-terminated path buffer.
+            if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
+                return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
             }
-            Ok(None) | Err(_) => None,
-        };
-
-        let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-            if let Some(fd) = cache_fd {
-                (fd, false)
-            } else {
-                // Build a NUL-terminated path buffer.
-                if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
-                    return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
-                }
-                let mut zbuf = bun_paths::path_buffer_pool::get();
-                let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
-                match bun_sys::open(
-                    zpath,
-                    bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS,
-                    0,
-                ) {
-                    Ok(fd) => (fd, true),
-                    Err(err) => match err.get_errno() {
-                        // If this directory doesn't exist, a watcher should be placed
-                        // on the parent directory. Then, if this directory is later
-                        // created, the watcher can be properly initialized.
-                        bun_sys::E::ENOENT => {
-                            // TODO: implement that. for now it ignores (BUN-10968)
-                            return Err(DirectoryWatchInsertError::Ignore);
-                        }
-                        // The resolver already reported the failed import.
-                        _ => return Err(DirectoryWatchInsertError::Ignore),
-                    },
-                }
+            let mut zbuf = bun_paths::path_buffer_pool::get();
+            let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
+            match bun_sys::open(
+                zpath,
+                bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS,
+                0,
+            ) {
+                Ok(fd) => fd,
+                // A directory that is not there gets no watch: a watch on its parent is not implemented (BUN-10968).
+                Err(_) => return Err(DirectoryWatchInsertError::Ignore),
             }
         } else {
-            (bun_sys::Fd::INVALID, false)
+            bun_sys::Fd::INVALID
         };
         let fd_guard = scopeguard::guard(fd, move |fd| {
-            if bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
+            if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
                 fd.close();
             }
         });
@@ -368,15 +375,16 @@ impl DirectoryWatchStore {
         // Disarm errdefer guards: success path.
         let fd = scopeguard::ScopeGuard::into_inner(fd_guard);
         let _ = scopeguard::ScopeGuard::into_inner(watches_guard);
+        self.watched_node_modules |= is_in_node_modules(dir_name_to_watch);
 
         let dep = self.append_dep_assume_capacity(Dep {
             next: None,
             source_file_path: file_path,
             specifier: specifier_cloned,
+            is_file,
         });
         self.watches.values_mut()[gop_index] = Entry {
             dir: fd,
-            dir_fd_owned: owned_fd,
             first_dep: dep,
             watch_index,
         };

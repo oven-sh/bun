@@ -669,7 +669,12 @@ export function createConsoleConstructor(console: Console) {
 
     assert(this: ConsoleInstance, expression: unknown, ...args: unknown[]) {
       if (!expression) {
-        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        // Matches Node: a string first arg joins the marker with ": " and stays the format string.
+        if (args.length && typeof args[0] === "string") {
+          args[0] = `Assertion failed: ${args[0]}`;
+        } else {
+          ArrayPrototypeUnshift.$call(args, "Assertion failed");
+        }
         // The arguments will be formatted in warn() again
         this.warn.$apply(this, args);
       }

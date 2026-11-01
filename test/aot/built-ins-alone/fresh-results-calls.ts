@@ -258,7 +258,6 @@ export const calls: Record<string, string[]> = {
   "%CrashHandlerJscCrashHandler%.getFeatureData": [
     'import { crash_handler } from "bun:internal-for-testing";\ncrash_handler.getFeatureData()',
   ],
-  "%NodeCryptoBindingCrypto%.getHashes": ['import { getHashes } from "node:crypto";\ngetHashes()'],
   "%Generator%.prototype.throw": [
     "function* numbers() {\n  try {\n    yield 1;\n  } catch {\n    yield 2;\n  }\n}\nconst generator = numbers();\ngenerator.next();\ngenerator.throw(1)",
   ],

@@ -903,14 +903,9 @@ public:
 
     enum class CheckPublicKeyResult {
         NONE,
-#ifndef OPENSSL_IS_BORINGSSL
-        // Boringssl does not define DH_R_CHECK_PUBKEY_TOO_SMALL or TOO_LARGE
-        TOO_SMALL = DH_R_CHECK_PUBKEY_TOO_SMALL,
-        TOO_LARGE = DH_R_CHECK_PUBKEY_TOO_LARGE,
-        INVALID = DH_R_CHECK_PUBKEY_INVALID,
-#else
-        INVALID = DH_R_INVALID_PUBKEY,
-#endif
+        TOO_SMALL,
+        TOO_LARGE,
+        INVALID,
         CHECK_FAILED = 512,
     };
     // Check to see if the given public key is suitable for this DH instance.
@@ -1264,6 +1259,14 @@ Buffer<char> ExportChallenge(const char* input, size_t length);
 
 const EVP_MD* getDigestByName(const WTF::StringView name);
 const EVP_CIPHER* getCipherByName(const WTF::StringView name);
+
+// Not upstream.
+struct DigestName {
+    WTF::ASCIILiteral name;
+    const EVP_MD* (*digest)();
+};
+// The names in getHashes(). getDigestByName() looks through them first.
+std::span<const DigestName> getDigestNames();
 
 // Verify that the specified HKDF output length is valid for the given digest.
 // The maximum length for HKDF output for a given digest is 255 times the

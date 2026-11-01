@@ -69,9 +69,8 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
     return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
-template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> std::optional<CryptoKeyUsage> parseEnumerationFromString<CryptoKeyUsage>(const String& stringValue)
 {
-    auto stringValue = value.toWTFString(&lexicalGlobalObject);
     static constexpr SortedArrayMap enumerationMapping { std::to_array<std::pair<ComparableASCIILiteral, CryptoKeyUsage>>({
         { "decapsulateBits"_s, CryptoKeyUsage::DecapsulateBits },
         { "decapsulateKey"_s, CryptoKeyUsage::DecapsulateKey },
@@ -89,6 +88,11 @@ template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlob
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
         return *enumerationValue;
     return std::nullopt;
+}
+
+template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+{
+    return parseEnumerationFromString<CryptoKeyUsage>(value.toWTFString(&lexicalGlobalObject));
 }
 
 } // namespace WebCore

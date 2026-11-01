@@ -3,10 +3,11 @@ const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
-const { CryptoHasher } = Bun;
 
 const {
   getCurves,
+  getHashes,
+  oneShotDigest,
   certVerifySpkac,
   certExportPublicKey,
   certExportChallenge,
@@ -76,7 +77,6 @@ const {
   getFips,
   setFips,
   setEngine,
-  getHashes,
   scrypt,
   scryptSync,
   argon2: _argon2,
@@ -121,7 +121,9 @@ const {
   validateString,
   validateUint32,
 } = require("internal/validators");
-const { deprecate } = require("internal/util/deprecate");
+const { deprecate, getDeprecationWarningEmitter } = require("internal/util/deprecate");
+
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 const kHandle = Symbol("kHandle");
 
@@ -209,7 +211,9 @@ const crypto = globalThis.crypto;
 
 var crypto_exports: any = {};
 
-crypto_exports.getRandomValues = value => crypto.getRandomValues(value);
+crypto_exports.getRandomValues = function getRandomValues(value) {
+  return crypto.getRandomValues(value);
+};
 crypto_exports.constants = $processBindingConstants.crypto;
 
 crypto_exports.KeyObject = KeyObject;
@@ -227,8 +231,66 @@ crypto_exports.createPrivateKey = createPrivateKey;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
 
-crypto_exports.hash = function hash(algorithm, input, outputEncoding: import("bun").DigestEncoding = "hex") {
-  return CryptoHasher.hash(algorithm, input, outputEncoding);
+const maybeEmitDeprecationWarning = getDeprecationWarningEmitter(
+  "DEP0198",
+  "Creating SHAKE128/256 digests without an explicit options.outputLength is deprecated.",
+  undefined,
+  (algorithm: string) => {
+    if (algorithm.length !== 8 && algorithm.length !== 9) return false;
+    const name = StringPrototypeToLowerCase.$call(algorithm);
+    return name === "shake128" || name === "shake256" || name === "shake-128" || name === "shake-256";
+  },
+);
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L323-L391
+crypto_exports.hash = function hash(algorithm, input, options) {
+  validateString(algorithm, "algorithm");
+  // oneShotDigest() tells the objects that it takes from the others.
+  if (typeof input !== "string" && !$isObject(input)) {
+    throw $ERR_INVALID_ARG_TYPE("input", ["Buffer", "TypedArray", "DataView", "string"], input);
+  }
+  if (options === undefined) {
+    maybeEmitDeprecationWarning(algorithm);
+    return oneShotDigest(algorithm, input, "hex");
+  }
+  let outputEncoding;
+  let outputLength;
+  let hasDigestOptions = false;
+
+  if (typeof options === "string") {
+    outputEncoding = options;
+  } else {
+    validateObject(options, "options");
+    outputLength = options.outputLength;
+    outputEncoding = options.outputEncoding;
+    hasDigestOptions = options.functionName !== undefined || options.customization !== undefined;
+  }
+
+  outputEncoding ??= "hex";
+
+  let normalized = outputEncoding;
+  // Fast case: if it's 'hex', we don't need to validate it further.
+  if (normalized !== "hex") {
+    validateString(outputEncoding, "outputEncoding");
+    normalized = normalizeEncoding(outputEncoding);
+    // If the encoding is invalid, normalizeEncoding() returns undefined.
+    if (normalized === undefined) {
+      // normalizeEncoding() doesn't handle 'buffer'.
+      if (StringPrototypeToLowerCase.$call(outputEncoding) === "buffer") {
+        normalized = "buffer";
+      } else {
+        throw $ERR_INVALID_ARG_VALUE("outputEncoding", outputEncoding);
+      }
+    }
+  }
+
+  if (outputLength !== undefined) {
+    validateUint32(outputLength, "outputLength");
+  } else {
+    maybeEmitDeprecationWarning(algorithm);
+  }
+
+  return oneShotDigest(algorithm, input, normalized, outputLength, hasDigestOptions);
 };
 
 crypto_exports.pbkdf2 = pbkdf2;
@@ -312,13 +374,25 @@ function createVerify(algorithm: string, options?: $Node.WritableOptions): $Node
 
 crypto_exports.createVerify = createVerify;
 
-function Hash(this: $Node.Hash, algorithm: string | $Node.NativeHash, options?: $Node.TransformOptions): void {
+type HashOptions = $Node.TransformOptions & { outputLength?: number; functionName?: unknown; customization?: unknown };
+
+function Hash(this: $Node.Hash, algorithm: string | $Node.NativeHash, options?: HashOptions): void {
   if (!new.target) {
     return new Hash(algorithm, options) as any;
   }
 
   const handle = new _Hash(algorithm, options);
   this[kHandle] = handle;
+
+  if (typeof algorithm === "string") {
+    // They are for cSHAKE, which BoringSSL does not have.
+    if (options != null && (options.functionName !== undefined || options.customization !== undefined)) {
+      throw new Error("Digest method not supported");
+    }
+    if (typeof options !== "object" || options === null || options.outputLength === undefined) {
+      maybeEmitDeprecationWarning(algorithm);
+    }
+  }
 
   LazyTransform.$apply(this, [options]);
 }

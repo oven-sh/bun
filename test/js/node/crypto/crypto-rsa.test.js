@@ -364,6 +364,48 @@ test("the OAEP options under another padding", () => {
   }
 });
 
+describe("RSA PKCS#1 v1.5 signatures", () => {
+  const data = Buffer.from("data");
+
+  // These signatures are deterministic. Each fingerprint is the SHA-256 of the one Node makes.
+  test.each([
+    ["sha512-224", "0c742fc54f244df03bd3a1276a3ec8ee5d8bb338ff5ab8b281735843a867bbd6"],
+    ["sha512-256", "4000024a0e99559a2948ddd8a97d0c2d5bd12cff7c68f999d47912e31f46a69d"],
+    ["sha3-224", "1cc8289800225af9af529fb5e6f83a341931a4620d182cb986f81eb831e974ac"],
+    ["sha3-256", "68a3c81111e4c9c36b79f6092f631808b448afacaa386f9911d91ba50aa53519"],
+    ["sha3-384", "17260672f13c4cc8fc00dada4bb2fecb24e088dc670f51695a4f416e6e508139"],
+    ["sha3-512", "a83acf60398ef4079e9afc4c0bbf4deb82a931acf68ea55b2a985da490b543f0"],
+    ["ripemd160", "b79ab8f388a91288b2effc784863f170b365e5b9d9451846b2a6bbdd03707f6b"],
+  ])("with %s", (digest, fingerprint) => {
+    const signature = crypto.sign(digest, data, rsaKeyPem);
+    expect(crypto.hash("sha256", signature)).toBe(fingerprint);
+    expect(crypto.createSign(digest).update(data).sign(rsaKeyPem)).toEqual(signature);
+    expect(crypto.verify(digest, data, rsaPubPem, signature)).toBe(true);
+    expect(crypto.createVerify(digest).update(data).verify(rsaPubPem, signature)).toBe(true);
+    expect(crypto.verify(digest, Buffer.from("other"), rsaPubPem, signature)).toBe(false);
+    expect(crypto.createVerify(digest).update("other").verify(rsaPubPem, signature)).toBe(false);
+  });
+
+  test.each(["SHA3-256", "SHA3-384", "SHA3-512"])("with %s in WebCrypto", async hash => {
+    const algorithm = { name: "RSASSA-PKCS1-v1_5", hash };
+    const privateKey = crypto.createPrivateKey(rsaKeyPem).toCryptoKey(algorithm, false, ["sign"]);
+    const publicKey = crypto.createPublicKey(rsaPubPem).toCryptoKey(algorithm, false, ["verify"]);
+    const signature = await crypto.subtle.sign(algorithm, privateKey, data);
+    expect(Buffer.from(signature)).toEqual(crypto.sign(hash.toLowerCase(), data, rsaKeyPem));
+    expect(await crypto.subtle.verify(algorithm, publicKey, signature, data)).toBe(true);
+    expect(await crypto.subtle.verify(algorithm, publicKey, signature, Buffer.from("other"))).toBe(false);
+  });
+});
+
+test.each(["hash", "mgf1Hash"])("rsa-pss keys are no longer generated with options.%s", option => {
+  expect(() => crypto.generateKeyPairSync("rsa-pss", { modulusLength: 2048, [option]: "sha256" })).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The property 'options.${option}' is no longer supported. Received 'sha256'`,
+    }),
+  );
+});
+
 test("RSA-OAEP test vectors", () => {
   const { decryptionTests } = JSON.parse(fixtures.readSync("rsa-oaep-test-vectors.js", "utf8"));
 

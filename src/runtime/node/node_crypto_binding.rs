@@ -1,12 +1,9 @@
 //! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
-use core::ffi::{c_char, c_void};
-
 // `rust-argon2` exports its lib as crate `argon2`; alias past the `argon2` fn below.
 use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
-use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{self, BufferSource, Callable, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{
@@ -919,7 +916,7 @@ pub(crate) fn pbkdf2<'a>(
             JSValue::UNDEFINED,
         ));
     };
-    let algorithm = pbkdf2::algorithm_from_digest(cx.global(), digest)?;
+    let digest = pbkdf2::digest_by_name(cx.global(), digest)?;
 
     let password = isolate_for_job(cx, password)?;
     let salt = isolate_for_job(cx, salt)?;
@@ -929,7 +926,7 @@ pub(crate) fn pbkdf2<'a>(
         salt.slice(),
         iterations,
         keylen as usize,
-        algorithm,
+        digest,
     )?;
     pbkdf2::create_job(&cx.js_thread(), data, password, salt, callback.to_js());
     Ok(())
@@ -959,14 +956,14 @@ pub(crate) fn pbkdf2_sync(
 ) -> JsResult<JSValue> {
     // SAFETY: it only allocates the result and throws, and nothing borrowed is read after a throw.
     let global_this = unsafe { heap.global() };
-    let algorithm = pbkdf2::algorithm_from_digest(global_this, digest)?;
+    let digest = pbkdf2::digest_by_name(global_this, digest)?;
     let data = PBKDF2::new(
         global_this,
         password,
         salt,
         iterations,
         keylen as usize,
-        algorithm,
+        digest,
     )?;
     // `create_buffer_from_length` → `JSBuffer__bufferFromLength`, which constructs
     // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
@@ -999,38 +996,6 @@ pub(crate) fn set_engine<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, ()> {
         ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED,
         format_args!("Custom engines not supported by BoringSSL"),
     ))
-}
-
-extern "C" fn for_each_hash(
-    _: *const boringssl::c::EVP_MD,
-    maybe_from: *const c_char,
-    _: *const c_char,
-    ctx: *mut c_void,
-) {
-    if maybe_from.is_null() {
-        return;
-    }
-    // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
-    let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
-        unsafe { bun_ptr::callback_ctx::<CaseInsensitiveAsciiStringArrayHashMap<()>>(ctx) };
-    // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
-    // from BoringSSL's static tables.
-    let from_bytes = unsafe { bun_core::ffi::cstr(maybe_from) }.to_bytes();
-    bun_core::handle_oom(hashes.put(from_bytes, ()));
-}
-
-pub(crate) fn get_hashes() -> Vec<Box<[u8]>> {
-    let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
-        CaseInsensitiveAsciiStringArrayHashMap::new();
-
-    // Perf idea (dylan-conway): cache the names
-    // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
-    // for the duration of the call.
-    unsafe {
-        boringssl::c::EVP_MD_do_all_sorted(for_each_hash, (&raw mut hashes).cast::<c_void>());
-    }
-
-    core::mem::take(&mut *hashes).into_entries().0
 }
 
 pub(crate) fn scrypt<'a>(

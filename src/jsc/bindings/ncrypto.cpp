@@ -386,7 +386,8 @@ int BignumPointer::isPrime(int nchecks,
             },
             &innerCb);
     }
-    return BN_is_prime_ex(get(), nchecks, ctx.get(), cb.get());
+    // Not upstream: the candidate is the caller's, and fewer checks than this only suit one that BoringSSL drew at random.
+    return BN_is_prime_ex(get(), std::max(nchecks, BN_prime_checks_for_validation), ctx.get(), cb.get());
 }
 
 bool BignumPointer::generate(const PrimeConfig& params,
@@ -407,13 +408,6 @@ bool BignumPointer::generate(const PrimeConfig& params,
                 return ptr(a, b) ? 1 : 0;
             },
             &innerCb);
-    }
-
-    // BoringSSL searches forever where OpenSSL refuses: candidates have the top two bits set, the safe primes 11 and 23 do not.
-    // https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/bn/bn_prime.c#L137-L145
-    if (params.safe && !params.add && params.bits < 6 && params.bits != 3) {
-        OPENSSL_PUT_ERROR(BN, BN_R_BITS_TOO_SMALL);
-        return false;
     }
 
     if (BN_generate_prime_ex(get(),
@@ -1172,10 +1166,23 @@ std::optional<WTF::String> X509View::getFingerprint(
     return std::nullopt;
 }
 
+namespace {
+// Not upstream: OpenSSL's PEM reader skips a UTF-8 byte order mark at the start of its input, BoringSSL's does not.
+constexpr Buffer<const unsigned char> SkipByteOrderMark(
+    const Buffer<const unsigned char>& pem)
+{
+    if (pem.len > 3 && pem.data[0] == 0xef && pem.data[1] == 0xbb && pem.data[2] == 0xbf) {
+        return { .data = pem.data + 3, .len = pem.len - 3 };
+    }
+    return pem;
+}
+} // namespace
+
 Result<X509Pointer, int> X509Pointer::Parse(
     Buffer<const unsigned char> buffer)
 {
     ClearErrorOnReturn clearErrorOnReturn;
+    buffer = SkipByteOrderMark(buffer);
     BIOPointer bio(BIO_new_mem_buf(buffer.data, buffer.len));
     if (!bio) return Result<X509Pointer, int>(ERR_get_error());
 
@@ -1421,14 +1428,11 @@ DHPointer::CheckPublicKeyResult DHPointer::checkPublicKey(
     if (DH_check_pub_key(dh_.get(), pub_key.get(), &codes) != 1) {
         return DHPointer::CheckPublicKeyResult::CHECK_FAILED;
     }
-#ifndef OPENSSL_IS_BORINGSSL
-    // Boringssl does not define DH_CHECK_PUBKEY_TOO_SMALL or TOO_LARGE
     if (codes & DH_CHECK_PUBKEY_TOO_SMALL) {
         return DHPointer::CheckPublicKeyResult::TOO_SMALL;
     } else if (codes & DH_CHECK_PUBKEY_TOO_LARGE) {
         return DHPointer::CheckPublicKeyResult::TOO_LARGE;
     }
-#endif
     if (codes != 0) {
         return DHPointer::CheckPublicKeyResult::INVALID;
     }
@@ -1587,78 +1591,107 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
     return digest;
 }
 
+// Not upstream: OpenSSL compares the names of digests without regard to case, and knows more of them than
+// EVP_get_digestbyname() in BoringSSL. These are the names in Node's getHashes(), in its order, for the digests
+// that BoringSSL has, and md4, which Node leaves to the legacy provider. Node's tests take a name in getHashes()
+// to work in pbkdf2() and hkdf() too, so SHAKE and BLAKE2s, which only createHash() and hash() have, are not here.
+static constexpr DigestName digestNames[] = {
+    { "RSA-MD5"_s, EVP_md5 },
+    { "RSA-RIPEMD160"_s, EVP_ripemd160 },
+    { "RSA-SHA1"_s, EVP_sha1 },
+    { "RSA-SHA1-2"_s, EVP_sha1 },
+    { "RSA-SHA224"_s, EVP_sha224 },
+    { "RSA-SHA256"_s, EVP_sha256 },
+    { "RSA-SHA3-224"_s, EVP_sha3_224 },
+    { "RSA-SHA3-256"_s, EVP_sha3_256 },
+    { "RSA-SHA3-384"_s, EVP_sha3_384 },
+    { "RSA-SHA3-512"_s, EVP_sha3_512 },
+    { "RSA-SHA384"_s, EVP_sha384 },
+    { "RSA-SHA512"_s, EVP_sha512 },
+    { "RSA-SHA512/224"_s, EVP_sha512_224 },
+    { "RSA-SHA512/256"_s, EVP_sha512_256 },
+    { "blake2b-512"_s, EVP_blake2b512 },
+    { "blake2b512"_s, EVP_blake2b512 },
+    { "id-rsassa-pkcs1-v1_5-with-sha3-224"_s, EVP_sha3_224 },
+    { "id-rsassa-pkcs1-v1_5-with-sha3-256"_s, EVP_sha3_256 },
+    { "id-rsassa-pkcs1-v1_5-with-sha3-384"_s, EVP_sha3_384 },
+    { "id-rsassa-pkcs1-v1_5-with-sha3-512"_s, EVP_sha3_512 },
+    { "md4"_s, EVP_md4 },
+    { "md5"_s, EVP_md5 },
+    { "md5-sha1"_s, EVP_md5_sha1 },
+    { "md5WithRSAEncryption"_s, EVP_md5 },
+    { "ripemd"_s, EVP_ripemd160 },
+    { "ripemd-160"_s, EVP_ripemd160 },
+    { "ripemd160"_s, EVP_ripemd160 },
+    { "ripemd160WithRSA"_s, EVP_ripemd160 },
+    { "rmd160"_s, EVP_ripemd160 },
+    { "sha-1"_s, EVP_sha1 },
+    { "sha-224"_s, EVP_sha224 },
+    { "sha-256"_s, EVP_sha256 },
+    { "sha-384"_s, EVP_sha384 },
+    { "sha-512"_s, EVP_sha512 },
+    { "sha-512/224"_s, EVP_sha512_224 },
+    { "sha-512/256"_s, EVP_sha512_256 },
+    { "sha1"_s, EVP_sha1 },
+    { "sha1WithRSAEncryption"_s, EVP_sha1 },
+    { "sha2-224"_s, EVP_sha224 },
+    { "sha2-256"_s, EVP_sha256 },
+    { "sha2-384"_s, EVP_sha384 },
+    { "sha2-512"_s, EVP_sha512 },
+    { "sha2-512/224"_s, EVP_sha512_224 },
+    { "sha2-512/256"_s, EVP_sha512_256 },
+    { "sha224"_s, EVP_sha224 },
+    { "sha224WithRSAEncryption"_s, EVP_sha224 },
+    { "sha256"_s, EVP_sha256 },
+    { "sha256WithRSAEncryption"_s, EVP_sha256 },
+    { "sha3-224"_s, EVP_sha3_224 },
+    { "sha3-256"_s, EVP_sha3_256 },
+    { "sha3-384"_s, EVP_sha3_384 },
+    { "sha3-512"_s, EVP_sha3_512 },
+    { "sha384"_s, EVP_sha384 },
+    { "sha384WithRSAEncryption"_s, EVP_sha384 },
+    { "sha512"_s, EVP_sha512 },
+    { "sha512-224"_s, EVP_sha512_224 },
+    { "sha512-224WithRSAEncryption"_s, EVP_sha512_224 },
+    { "sha512-256"_s, EVP_sha512_256 },
+    { "sha512-256WithRSAEncryption"_s, EVP_sha512_256 },
+    { "sha512WithRSAEncryption"_s, EVP_sha512 },
+    { "ssl3-md5"_s, EVP_md5 },
+    { "ssl3-sha1"_s, EVP_sha1 },
+};
+
+std::span<const DigestName> getDigestNames()
+{
+    return digestNames;
+}
+
 static const EVP_MD* findDigestByName(const WTF::StringView name)
 {
+    for (const auto& [candidate, digest] : digestNames) {
+        if (WTF::equalIgnoringASCIICase(name, candidate)) {
+            return digest();
+        }
+    }
+
     // Historically, "dss1" and "DSS1" were DSA aliases for SHA-1
     // exposed through the public API.
     if (name == "dss1"_s || name == "DSS1"_s) [[unlikely]] {
         return EVP_sha1();
     }
 
-    if (WTF::equalIgnoringASCIICase(name, "md5"_s)) {
-        return EVP_md5();
-    }
-
-    if (WTF::startsWithIgnoringASCIICase(name, "rsa-sha"_s)) {
-        auto bits = name.substring(7);
-        if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
-            return EVP_sha1();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
-            return EVP_sha224();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
-            return EVP_sha256();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
-            return EVP_sha384();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "512"_s)) {
-            return EVP_sha512();
-        }
-    }
-
-    if (WTF::startsWithIgnoringASCIICase(name, "sha"_s)) {
-        auto remain = name.substring(3);
-        if (remain.startsWith('-')) {
-            auto bits = remain.substring(1);
-            if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
-                return EVP_sha1();
-            }
-            if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
-                return EVP_sha224();
-            }
-            if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
-                return EVP_sha256();
-            }
-            if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
-                return EVP_sha384();
-            }
-
-            if (WTF::startsWithIgnoringASCIICase(bits, "512"_s)) {
-                auto moreBits = bits.substring(3);
-                if (moreBits.isEmpty()) {
-                    return EVP_sha512();
-                }
-                if (WTF::equalIgnoringASCIICase(moreBits, "/224"_s)) {
-                    return EVP_sha512_224();
-                }
-                if (WTF::equalIgnoringASCIICase(moreBits, "/256"_s)) {
-                    return EVP_sha512_256();
-                }
-
-                // backwards compatibility with what we supported before
-                // (not supported by node)
-                if (WTF::equalIgnoringASCIICase(moreBits, "256"_s) || WTF::equalIgnoringASCIICase(moreBits, "_256"_s)) {
-                    return EVP_sha512_256();
-                }
-            }
-        }
-
-        // backwards compatibility with what we supported before
-        // (not supported by node)
-        if (WTF::equalIgnoringASCIICase(remain, "128"_s)) {
-            return EVP_sha1();
+    // backwards compatibility with what we supported before
+    // (not supported by node)
+    static constexpr DigestName otherNames[] = {
+        { "blake2b256"_s, EVP_blake2b256 },
+        { "sha-512224"_s, EVP_sha512_224 },
+        { "sha-512256"_s, EVP_sha512_256 },
+        { "sha-512_224"_s, EVP_sha512_224 },
+        { "sha-512_256"_s, EVP_sha512_256 },
+        { "sha128"_s, EVP_sha1 },
+    };
+    for (const auto& [candidate, digest] : otherNames) {
+        if (WTF::equalIgnoringASCIICase(name, candidate)) {
+            return digest();
         }
     }
 
@@ -2161,7 +2194,8 @@ bool EVPKeyPointer::IsRSAPrivateKey(const Buffer<const unsigned char>& buffer)
 EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
     const Buffer<const unsigned char>& buffer)
 {
-    auto bp = BIOPointer::New(buffer.data, buffer.len);
+    auto pem = SkipByteOrderMark(buffer);
+    auto bp = BIOPointer::New(pem.data, pem.len);
     if (!bp) return ParseKeyResult(PKParseError::FAILED);
 
     // Try parsing as SubjectPublicKeyInfo (SPKI) first.
@@ -2266,7 +2300,7 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
         return ParseKeyResult(WTF::move(pkey));
     };
 
-    auto bio = BIOPointer::New(buffer);
+    auto bio = BIOPointer::New(config.format == PKFormatType::PEM ? SkipByteOrderMark(buffer) : buffer);
     if (!bio) return ParseKeyResult(PKParseError::FAILED);
 
     auto passphrase = GetPassphrase(config);
@@ -2306,6 +2340,13 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
         return keyOrError(EVPKeyPointer(EVP_PKCS82PKEY(p8inf.get())));
     }
     case PKEncodingType::SEC1: {
+        // Not upstream: BoringSSL's d2i_PrivateKey_bio() tells the kind of key by the number of
+        // elements, and takes an ECPrivateKey without its optional publicKey for an RSA key.
+        const unsigned char* p = buffer.data;
+        if (EVPKeyPointer key { d2i_PrivateKey(EVP_PKEY_EC, nullptr, &p, buffer.len) }) {
+            return keyOrError(WTF::move(key));
+        }
+        ERR_clear_error();
         auto key = d2i_PrivateKey_bio(bio.get(), nullptr);
         return keyOrError(EVPKeyPointer(key));
     }
@@ -2602,6 +2643,8 @@ const Cipher Cipher::FromName(WTF::StringView name)
         if (remain == "192"_s) return Cipher::AES_192_CBC();
         if (remain == "256"_s) return Cipher::AES_256_CBC();
     }
+
+    if (WTF::equalIgnoringASCIICase(name, "des3"_s)) return Cipher::FromNid(NID_des_ede3_cbc);
 
     return Cipher(getCipherByName(name));
 }

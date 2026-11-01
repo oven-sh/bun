@@ -734,15 +734,8 @@ impl QuicSession {
         } else {
             &self.pending_local_bidi
         };
-        // Skip streams that `remove_stream` removed. Stopping at the first
-        // one would strand the live request behind it until the next
-        // MAX_STREAMS grant.
-        while let Some(key) = queue.with_mut(VecDeque::pop_front) {
-            if let Some(stream) = self.stream_ptr(key) {
-                return Some(stream);
-            }
-        }
-        None
+        let key = queue.with_mut(VecDeque::pop_front)?;
+        self.stream_ptr(key)
     }
     /// Creates a stream for this session and registers it.
     fn create_stream(
@@ -763,8 +756,14 @@ impl QuicSession {
         self.streams.with_mut(|v| v.push((key, qs)));
         Ok((key, qs, handle))
     }
-    pub(super) fn remove_stream(&self, key: super::stream::Key) {
+    fn unregister_stream(&self, key: super::stream::Key) {
         self.streams.with_mut(|v| v.retain(|&(k, _)| k != key));
+    }
+    pub(super) fn remove_stream(&self, key: super::stream::Key) {
+        self.unregister_stream(key);
+        for queue in [&self.pending_local_bidi, &self.pending_local_uni] {
+            queue.with_mut(|q| q.retain(|&k| k != key));
+        }
     }
     fn bump_stream_stat(&self, id: u64, local: bool) {
         let idx = match (id & STREAM_ID_UNI_BIT != 0, local) {
@@ -1492,7 +1491,7 @@ impl QuicSession {
                 // no onStreamClose -- but it still has to leave `streams`
                 // and drop its self-root, or it lives until teardown.
                 if stream.is_announce_suppressed() {
-                    self.remove_stream(key);
+                    self.unregister_stream(key);
                     stream.release_close_root();
                     return Ok(());
                 }
@@ -1519,7 +1518,7 @@ impl QuicSession {
                 let Some(stream) = self.live_stream(key) else {
                     return Ok(());
                 };
-                self.remove_stream(key);
+                self.unregister_stream(key);
                 // Nothing else reaches this stream now, so drop the
                 // self-root; `stream` stays valid because the retain above
                 // only dropped a pointer.
@@ -1829,7 +1828,7 @@ impl QuicSession {
             .iter()
             .map(|&(_, qs)| {
                 // SAFETY: entries are live here -- a stream is only downgraded
-                // after `remove_stream` drops it from `self.streams`.
+                // after it leaves `self.streams`.
                 Strong::create(unsafe { (*qs).handle() }, _global)
             })
             .collect();

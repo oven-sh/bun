@@ -39,6 +39,6 @@ pub use observer::{
 };
 pub use options::ReactCompilerOptions;
 pub use program::{
-    CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState,
+    CompileResult, Host, ImportBindings, JsxImportKind, PendingCompile, ReactCompilerState,
     collect_import_bindings, finish, has_module_scope_opt_out, maybe_compile_pending,
 };

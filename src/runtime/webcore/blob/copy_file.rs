@@ -485,15 +485,13 @@ impl CopyFile {
         Ok(())
     }
 
-    /// The byte budget of the capped loop. For a source with no length (a pipe, a device) a size
-    /// that a stat cached for the destination is not a window (#4930): only a narrower slice is.
-    fn loop_cap(&self, source: &Stat) -> SizeType {
-        let destination = &self.destination_file_store;
-        let stat_cached = self.offset == 0
-            && destination.seekable.is_some()
-            && destination.max_size != MAX_SIZE
-            && self.max_length >= destination.max_size;
-        if !bun_sys::S::ISREG(source.st_mode as _) && (self.max_length == 0 || stat_cached) {
+    /// As `read_write_fallback`: no cap for a path Bun opened, the blob's size for an fd (0 is unknown).
+    fn loop_cap(&self) -> SizeType {
+        let bun_opened_dest = matches!(
+            self.destination_file_store.pathlike,
+            PathOrFileDescriptor::Path(_)
+        );
+        if bun_opened_dest || self.max_length == 0 {
             MAX_SIZE
         } else {
             self.max_length
@@ -851,7 +849,7 @@ impl CopyFile {
 
             // A pipe or a block device. An fd with no file type (an eventfd) never reaches EOF.
             if stat.st_mode as Mode & bun_sys::S::IFMT != 0 {
-                let _ = self.do_read_write_loop_capped(self.loop_cap(&stat));
+                let _ = self.do_read_write_loop_capped(self.loop_cap());
                 self.do_close();
                 return;
             }
@@ -891,10 +889,7 @@ impl CopyFile {
                 } else {
                     self.read_len = copied as SizeType;
                 }
-            } else if self
-                .do_read_write_loop_capped(self.loop_cap(&stat))
-                .is_err()
-            {
+            } else if self.do_read_write_loop_capped(self.loop_cap()).is_err() {
                 self.do_close();
                 return;
             }
@@ -938,10 +933,7 @@ impl CopyFile {
                 } else {
                     self.read_len = total_written as SizeType;
                 }
-            } else if self
-                .do_read_write_loop_capped(self.loop_cap(&stat))
-                .is_err()
-            {
+            } else if self.do_read_write_loop_capped(self.loop_cap()).is_err() {
                 self.do_close();
                 return;
             }

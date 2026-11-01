@@ -50,7 +50,8 @@ import { join } from "node:path";
     using dir = tempDir("bun-write-fifo-source", {});
     const fifo = join(String(dir), "fifo");
     const out = join(String(dir), "out.txt");
-    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await using mkfifo = Bun.spawn({ cmd: ["mkfifo", fifo], stdio: ["ignore", "ignore", "inherit"] });
+    expect(await mkfifo.exited).toBe(0);
     await using writer = Bun.spawn({
       cmd: ["sh", "-c", `printf 'hello world\\n' > "$1"`, "sh", fifo],
       stdio: ["ignore", "ignore", "inherit"],
@@ -107,7 +108,7 @@ import { join } from "node:path";
     expect(exitCode).toBe(0);
   });
 
-  // A stat caches the size of the destination in the BunFile. That size is not a window.
+  // A stat caches the size of the destination in the BunFile. A path that Bun opens takes the whole pipe.
   it.each([
     ["exists() on a missing file", "await file.exists()", {}],
     ["exists() on a shorter file", "await file.exists()", { "out.txt": "short" }],
@@ -134,19 +135,36 @@ import { join } from "node:path";
     expect(exitCode).toBe(0);
   });
 
-  it("stops at the end of a destination slice and leaves the rest in the pipe", async () => {
-    using dir = tempDir("bun-write-pipe-window", {});
+  it("stops at the end of a slice of a destination fd and leaves the rest in the pipe", async () => {
+    using dir = tempDir("bun-write-pipe-window", { "out.txt": "0123456789" });
     const out = join(String(dir), "out.txt");
     const { stdout, stderr, exitCode } = await sh(
       `printf 'hello world\\n' | { "$BUN" -e "$SCRIPT"; wc -c; }`,
-      resolved("Bun.write(Bun.file(process.env.OUT).slice(0, 5), Bun.stdin)"),
+      `const fd = require("node:fs").openSync(process.env.OUT, "r+"); ${resolved("Bun.write(Bun.file(fd).slice(0, 5), Bun.stdin)")}`,
       { OUT: out },
     );
 
     expect({ leftInPipe: stdout.trim(), stderr, content: contentOf(out) }).toEqual({
       leftInPipe: "7",
       stderr: "5",
-      content: "hello",
+      content: "hello56789",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("copies to EOF into an fd whose cached size is 0", async () => {
+    using dir = tempDir("bun-write-pipe-fd-empty", { "out.txt": "" });
+    const out = join(String(dir), "out.txt");
+    const { stdout, stderr, exitCode } = await sh(
+      `printf 'hello world\\n' | "$BUN" -e "$SCRIPT"`,
+      `const file = Bun.file(require("node:fs").openSync(process.env.OUT, "r+")); file.size; ${resolved("Bun.write(file, Bun.stdin)")}`,
+      { OUT: out },
+    );
+
+    expect({ stdout, stderr, content: contentOf(out) }).toEqual({
+      stdout: "",
+      stderr: "12",
+      content: "hello world\n",
     });
     expect(exitCode).toBe(0);
   });

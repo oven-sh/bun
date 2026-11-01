@@ -177,6 +177,16 @@ unsafe extern "C" {
         inout_state: *mut u64,
     ) -> usize;
 
+    safe fn highway_hpack_huffman_has_kernel() -> bool;
+
+    fn highway_hpack_huffman_decode_short(
+        src: *const u8,
+        src_len: usize,
+        bit_pos: *mut usize,
+        out: *mut u8,
+        out_len: usize,
+    ) -> usize;
+
     fn highway_png_unfilter(
         filter_type: u8,
         bpp: usize,
@@ -1249,6 +1259,37 @@ pub fn xml_structural_index16_chunk(
             state.as_mut_ptr(),
         )
     }
+}
+
+/// Whether [`hpack_huffman_decode_short`] does anything on this CPU: it takes AVX-512 VBMI.
+#[inline(always)]
+pub fn has_hpack_huffman_kernel() -> bool {
+    static HAS_KERNEL: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| highway_hpack_huffman_has_kernel());
+    cfg!(all(target_arch = "x86_64", not(miri))) && *HAS_KERNEL
+}
+
+/// What [`hpack_huffman_decode_short`] writes at a time: `kStoreBytes` in `highway_hpack.cpp`.
+pub const HPACK_HUFFMAN_SPARE_OUT: usize = 16;
+
+/// Decodes HPACK Huffman codes of up to 8 bits from bit `bit_pos` of `src` on, until a longer code, the padding or the end of `out`. Returns the bit it stopped at and how many symbols it put in `out`, where it may overwrite [`HPACK_HUFFMAN_SPARE_OUT`] bytes more. See `src/hpack/HUFFMAN.md`.
+#[inline(always)]
+pub fn hpack_huffman_decode_short(
+    src: &[u8],
+    mut bit_pos: usize,
+    out: &mut [u8],
+) -> (usize, usize) {
+    // SAFETY: the kernel reads within `src` and writes within `out`, whatever `bit_pos` is.
+    let written = unsafe {
+        highway_hpack_huffman_decode_short(
+            src.as_ptr(),
+            src.len(),
+            &raw mut bit_pos,
+            out.as_mut_ptr(),
+            out.len(),
+        )
+    };
+    (bit_pos, written)
 }
 
 /// Undoes PNG's filter type 1 (Sub), 2 (Up), 3 (Average) or 4 (Paeth) on `row`, whose pixels have 1, 2, 4, 6 or 8 bytes.

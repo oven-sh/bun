@@ -1,0 +1,11 @@
+--- a/src/liblsquic/lsquic_http1x_if.c
++++ b/src/liblsquic/lsquic_http1x_if.c
+@@ -9,7 +9,7 @@
+ #include "lsquic.h"
+ #include "lsquic_headers.h"
+ #include "lsquic_http1x_if.h"
+-#include "lshpack.h"
++#include "lsxpack_header.h"
+ 
+ #define LSQUIC_LOGGER_MODULE LSQLM_HTTP1X
+ #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(hwc->hwc_conn)

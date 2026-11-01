@@ -1419,6 +1419,14 @@ _ZN3bun11N_AVX3_ZEN419ScannerRunStopsImplEPKhmPhm  [AVX, AVX2, AVX512BW, AVX512D
 _ZN3bun11N_AVX3_ZEN414LineStartsImplEPKhmPj        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN413OddBlocksImplEPKhmPm         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 
+# ----------------------------------------------------------------------------
+# Bun's Highway kernel for HPACK's Huffman code (highway_hpack.cpp). Gate: hwy::SupportedTargets via CPUID.
+# (4 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun9N_AVX10_227HpackHuffmanDecodeShortImplEPKhmPmPhm    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun9N_AVX3_DL27HpackHuffmanDecodeShortImplEPKhmPmPhm    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun10N_AVX3_SPR27HpackHuffmanDecodeShortImplEPKhmPmPhm  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun11N_AVX3_ZEN427HpackHuffmanDecodeShortImplEPKhmPmPhm [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 
 # ----------------------------------------------------------------------------
 # The ahead-of-time compiler's count of instructions per pass. Gate: cap_user_rdpmc

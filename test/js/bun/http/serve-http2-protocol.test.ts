@@ -11,6 +11,7 @@ import {
   connectH2,
   decodeStatus,
   frame,
+  hpackFields,
   hpackLiteral,
   request,
   startFixture,
@@ -321,6 +322,34 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     });
   }
 
+  // What a literal may not say, a reference to the dynamic table may not say either.
+  for (const [what, name, value] of [
+    ["value with LF", "x-a", "a\nb"],
+    ["value with NUL", "x-a", "a\0b"],
+    ["name with trailing SP", "x-a ", "1"],
+  ]) {
+    test(`malformed field (${what}) replayed from the dynamic table → RST_STREAM PROTOCOL_ERROR`, async () => {
+      const hello = hpackLiteral(baseHeaders("/hello"));
+      // Literal with incremental indexing: index 62 from here on.
+      const insert = Buffer.from(
+        `\x40${String.fromCharCode(name.length)}${name}${String.fromCharCode(value.length)}${value}`,
+        "latin1",
+      );
+      const raw = await RawH2.connect(fx.port, secure);
+      try {
+        raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, Buffer.concat([hello, insert])));
+        expect(await raw.rst(1)).toBe(1);
+        raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 3, Buffer.concat([hello, Buffer.from([0x80 | 62])])));
+        expect(await raw.rst(3)).toBe(1);
+        raw.headers(5, baseHeaders("/hello"));
+        const d = await raw.waitFor(f => f.type === T.DATA && f.streamId === 5);
+        expect(d.payload.toString()).toBe("hello");
+      } finally {
+        raw.close();
+      }
+    });
+  }
+
   // ── frame-format checks (h2spec §4–6, hyper frame::*::load, Go TestServer_Rejects_*) ──
   for (const [name, build, code] of [
     ["DATA on stream 0", () => frame(T.DATA, F.END_STREAM, 0, Buffer.from("x")), 1],
@@ -498,6 +527,56 @@ describe.concurrent("Bun.serve http2 protocol", () => {
           Buffer.concat([
             hpackLiteral(baseHeaders("/hello")),
             Buffer.from([0x00, 0x85, 0xf2, 0xb2, 0x4a, 0x84, 0xff, 0x83, 0x49, 0x50, 0x90]),
+          ]),
+        ),
+      9,
+    ],
+    [
+      "HPACK literal that ends after its name",
+      () =>
+        frame(
+          T.HEADERS,
+          F.END_HEADERS | F.END_STREAM,
+          1,
+          Buffer.concat([hpackLiteral(baseHeaders("/hello")), Buffer.from([0x00, 0x03]), Buffer.from("x-a")]),
+        ),
+      9,
+    ],
+    [
+      "HPACK literal that ends after its name index",
+      () =>
+        frame(
+          T.HEADERS,
+          F.END_HEADERS | F.END_STREAM,
+          1,
+          Buffer.concat([hpackLiteral(baseHeaders("/hello")), Buffer.from([0x0f, 0x2b])]), // user-agent
+        ),
+      9,
+    ],
+    [
+      "HPACK table size update between two fields",
+      () =>
+        frame(
+          T.HEADERS,
+          F.END_HEADERS | F.END_STREAM,
+          1,
+          Buffer.concat([hpackLiteral(baseHeaders("/hello")), Buffer.from([0x21]), hpackLiteral([["x-a", "1"]])]),
+        ),
+      9,
+    ],
+    [
+      // "31623933471" takes 63 bits, so the string is over after eight bytes.
+      "HPACK huffman padding longer than 7 bits in a ninth byte",
+      () =>
+        frame(
+          T.HEADERS,
+          F.END_HEADERS | F.END_STREAM,
+          1,
+          Buffer.concat([
+            hpackLiteral(baseHeaders("/hello")),
+            Buffer.from([0x00, 0x03]),
+            Buffer.from("x-a"),
+            Buffer.from([0x89, 0x64, 0x2e, 0x09, 0x97, 0xd9, 0x65, 0xa7, 0x43, 0xff]),
           ]),
         ),
       9,
@@ -1024,6 +1103,167 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     s0.close();
   });
 
+  // hpackLiteral() spells every name out. A real client takes them from the static table (RFC 7541 Appendix A).
+  describe("a name from the HPACK static table", () => {
+    const end = F.END_HEADERS | F.END_STREAM;
+    /** Literal without indexing, or with (`0x40`), whose name is an index into the static table. */
+    const named = (index: number, value: string, pattern = 0x00) => {
+      const max = pattern ? 63 : 15;
+      const name = index < max ? [pattern | index] : [pattern | max, index - max];
+      return Buffer.concat([Buffer.from([...name, value.length]), Buffer.from(value)]);
+    };
+    // :method GET, :scheme https, :authority localhost
+    const start = Buffer.concat([Buffer.from([0x82, 0x87]), named(1, "localhost")]);
+    const CONTENT_LENGTH = 28;
+    const HOST = 38;
+    const TRANSFER_ENCODING = 57;
+
+    test(":path /index.html is a :path", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      try {
+        raw.write(frame(T.HEADERS, end, 1, Buffer.concat([start, Buffer.from([0x85])])));
+        const { payload } = await raw.waitFor(
+          f => (f.type === T.HEADERS || f.type === T.RST_STREAM) && f.streamId === 1,
+        );
+        expect(decodeStatus(payload)).toBe(404);
+      } finally {
+        raw.close();
+      }
+    });
+
+    test.each([
+      ["transfer-encoding", [named(TRANSFER_ENCODING, "chunked", 0x40)]],
+      ["a content-length that is no number", [named(CONTENT_LENGTH, "abc", 0x40)]],
+      ["a second host", [named(HOST, "localhost", 0x40), Buffer.from([0x80 | 62])]],
+    ])("%s is malformed, also when it comes back from the dynamic table", async (_, fields) => {
+      const raw = await RawH2.connect(fx.port, secure);
+      const hello = Buffer.concat([start, named(4, "/hello")]);
+      try {
+        raw.write(frame(T.HEADERS, end, 1, Buffer.concat([hello, ...fields])));
+        expect(await raw.rst(1)).toBe(1);
+        // Index 62 is what the first request added. Twice, so that it is a second host as well.
+        raw.write(frame(T.HEADERS, end, 3, Buffer.concat([hello, Buffer.from([0x80 | 62, 0x80 | 62])])));
+        expect(await raw.rst(3)).toBe(1);
+        raw.write(frame(T.HEADERS, end, 5, hello));
+        expect((await raw.body(5)).toString()).toBe("hello");
+      } finally {
+        raw.close();
+      }
+    });
+
+    test("content-length is held against the body", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      try {
+        // Five bytes are announced and the stream ends here.
+        raw.write(frame(T.HEADERS, end, 1, Buffer.concat([start, named(4, "/hello"), named(CONTENT_LENGTH, "5")])));
+        expect(await raw.rst(1)).toBe(1);
+      } finally {
+        raw.close();
+      }
+    });
+
+    test("one host stands in for :authority", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      try {
+        const block = Buffer.concat([Buffer.from([0x82, 0x87]), named(4, "/headers"), named(HOST, "from.host:81")]);
+        raw.write(frame(T.HEADERS, end, 1, block));
+        expect(JSON.parse((await raw.body(1)).toString()).headers.host).toBe("from.host:81");
+      } finally {
+        raw.close();
+      }
+    });
+  });
+
+  test("100 Continue is a header block of its own and stays out of the dynamic table", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    try {
+      raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", "100-continue"]], F.END_HEADERS);
+      const interim = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+      // A literal without indexing (RFC 7541 §6.2.2) under the name of static entry 8, :status.
+      expect(interim.payload[0]).toBe(0x08);
+      expect(hpackFields(interim.payload)).toHaveLength(1);
+      expect(decodeStatus(interim.payload)).toBe(100);
+      raw.write(frame(T.DATA, F.END_STREAM, 1, Buffer.from("body")));
+      const final = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1 && f !== interim);
+      expect(decodeStatus(final.payload)).toBe(201);
+      expect((await raw.body(1)).toString()).toBe("body");
+    } finally {
+      raw.close();
+    }
+  });
+
+  test("a header block of nothing but HPACK table size updates counts as an empty one", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const end = F.END_HEADERS | F.END_STREAM;
+    // x-a: 1 enters the dynamic table, as index 62 (0xbe).
+    const insert = Buffer.concat([Buffer.from([0x40, 3]), Buffer.from("x-a"), Buffer.from([1]), Buffer.from("1")]);
+    const fromTheTable = Buffer.concat([hpackLiteral(baseHeaders("/headers")), Buffer.from([0xbe])]);
+    try {
+      raw.write(
+        frame(T.HEADERS, F.END_HEADERS, 1, Buffer.concat([hpackLiteral(baseHeaders("/echo", "POST")), insert])),
+      );
+      raw.write(frame(T.DATA, 0, 1, Buffer.from("body")));
+      raw.write(frame(T.HEADERS, end, 3, fromTheTable));
+      expect(JSON.parse((await raw.body(3)).toString()).headers["x-a"]).toBe("1");
+      // As trailers it ends the request. To 0, which empties the table, and back to 4096.
+      raw.write(frame(T.HEADERS, end, 1, Buffer.from("203fe11f", "hex")));
+      expect((await raw.body(1)).toString()).toBe("body");
+      // As a request it lacks the pseudo-headers, which is the stream's problem. To 4096, which changes nothing.
+      raw.write(frame(T.HEADERS, end, 5, Buffer.from("3fe11f", "hex")));
+      expect(await raw.rst(5)).toBe(1);
+      // The trailers did empty the table.
+      raw.write(frame(T.HEADERS, end, 7, fromTheTable));
+      expect((await raw.goaway()).code).toBe(9);
+    } finally {
+      raw.close();
+    }
+  });
+
+  test("a response field enters the dynamic table, after the first few dozen only if it was sent lately", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    try {
+      let id = -1;
+      /** Whether `x-pad` is spelled out. "p" takes 6 bits. */
+      const spelledOut = async (bytes: number) => {
+        raw.headers((id += 2), baseHeaders(`/big-headers?bytes=${bytes}`));
+        const { payload } = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === id);
+        await raw.body(id);
+        return hpackFields(payload).some(f => f.value?.bytes.length === (bytes * 6) / 8);
+      };
+      expect([await spelledOut(100), await spelledOut(100)]).toEqual([true, false]);
+      // Each of these has at least three fields.
+      for (let i = 0; i < 14; i++) expect(await spelledOut(100)).toBe(false);
+      expect([await spelledOut(200), await spelledOut(200), await spelledOut(200)]).toEqual([true, true, false]);
+    } finally {
+      raw.close();
+    }
+  });
+
+  test.each([
+    // With "x-pad", 65536 bytes. "p" is 101011, so four of them are ae ba eb. Three and the padding follow.
+    {
+      bytes: 65531,
+      huffman: true,
+      sent: Buffer.concat([Buffer.alloc(49146, "aebaeb", "hex"), Buffer.from("aebaff", "hex")]),
+    },
+    { bytes: 65532, huffman: false, sent: Buffer.alloc(65532, "p") },
+    { bytes: 65536, huffman: false, sent: Buffer.alloc(65536, "p") },
+  ])("a response header value of $bytes bytes is sent with huffman: $huffman", async ({ bytes, huffman, sent }) => {
+    const raw = await RawH2.connect(fx.port, secure, { settings: setting(5, (1 << 24) - 1) });
+    try {
+      await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+      raw.headers(1, baseHeaders(`/big-headers?bytes=${bytes}`));
+      const { payload } = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+      const [pad, ...others] = hpackFields(payload).filter(f => f.value && f.value.bytes.length > 1024);
+      expect(others).toEqual([]);
+      expect(pad.value!.huffman).toBe(huffman);
+      expect(pad.value!.bytes.equals(sent)).toBe(true);
+      await raw.body(1);
+    } finally {
+      raw.close();
+    }
+  });
+
   test("HPACK request encodings: indexed, incremental, never-indexed, huffman, size updates are all accepted", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     const vecs = [
@@ -1253,6 +1493,32 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     s0.close();
   });
 
+  test("HEADER_TABLE_SIZE 100, a block, then 4096 emits one size update each time", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    try {
+      let acks = 1;
+      let id = 1;
+      raw.headers(1, baseHeaders("/hello"));
+      await raw.body(1);
+      /** The first bytes of the next response after `size` was acknowledged. */
+      const after = async (size: number, bytes: number) => {
+        raw.write(frame(T.SETTINGS, 0, 0, setting(1, size)));
+        acks++;
+        await raw.waitFor(
+          () => raw.frames.filter(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0).length >= acks,
+        );
+        raw.headers((id += 2), baseHeaders("/hello"));
+        const { payload } = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === id);
+        await raw.body(id);
+        return payload.subarray(0, bytes).toString("hex");
+      };
+      // Each time followed by :status 200.
+      expect([await after(100, 3), await after(4096, 4)]).toEqual(["3f4588", "3fe11f88"]);
+    } finally {
+      raw.close();
+    }
+  });
+
   test("header list over the limit → 431 on that stream, connection survives", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     const big = Buffer.alloc(4000, "v").toString(); // 5 × 4 KB > the 16 KB list limit, under the 2× hard cap
@@ -1262,6 +1528,35 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.headers(3, baseHeaders("/hello"));
     expect((await raw.body(3)).toString()).toBe("hello");
     raw.close();
+  });
+
+  // The list may take 16 KB, where a field counts as its name, its value and 4 more, and have 200 fields.
+  // Twice either closes the connection with ENHANCE_YOUR_CALM.
+  test.each([
+    [16384, "bytes", "200"],
+    [16385, "bytes", "431"],
+    [32768, "bytes", "431"],
+    [32769, "bytes", "GOAWAY 11"],
+    [200, "fields", "200"],
+    [201, "fields", "431"],
+    [400, "fields", "431"],
+    [401, "fields", "GOAWAY 11"],
+  ])("a header list of exactly %d %s → %s", async (total, unit, expected) => {
+    const base = baseHeaders("/hello");
+    const rest = base.reduce((left, [name, value]) => left - name.length - value.length - 4, total);
+    const more: [string, string][] =
+      unit === "bytes"
+        ? [["x-p", Buffer.alloc(rest - "x-p".length - 4, "v").toString()]]
+        : Array.from({ length: total - base.length }, (_, i) => ["x-" + i, "1"]);
+    const raw = await RawH2.connect(fx.port, secure);
+    try {
+      raw.headers(1, [...base, ...more]);
+      const answer = await raw.waitFor(f => (f.type === T.HEADERS && f.streamId === 1) || f.type === T.GOAWAY);
+      const goaway = answer.type === T.GOAWAY;
+      expect(goaway ? `GOAWAY ${answer.payload.readUInt32BE(4)}` : `${decodeStatus(answer.payload)}`).toBe(expected);
+    } finally {
+      raw.close();
+    }
   });
 
   test("more than 200 header fields → 431, connection survives", async () => {
@@ -1274,6 +1569,36 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.headers(3, baseHeaders("/hello"));
     expect((await raw.body(3)).toString()).toBe("hello");
     raw.close();
+  });
+
+  // The table belongs to the connection. What a block adds after the point where it is refused counts all the same.
+  test.each<[string, [string, string][], number | "RST_STREAM"]>([
+    ["te: gzip", [["te", "gzip"]], "RST_STREAM"],
+    ["an upper-case name", [["X-Bad", "1"]], "RST_STREAM"],
+    ["a value with LF", [["x-bad", "a\nb"]], "RST_STREAM"],
+    ["connection: close", [["connection", "close"]], "RST_STREAM"],
+    ["a pseudo-header after a regular field", [[":method", "GET"]], "RST_STREAM"],
+    ["a pseudo-header that does not exist", [[":bad", "1"]], "RST_STREAM"],
+    ["more than 16 KB", Array.from({ length: 5 }, (_, i) => ["x-" + i, Buffer.alloc(4000, "v").toString()]), 431],
+    ["more than 200 fields", Array.from({ length: 300 }, (_, i) => ["x-" + i, "1"]), 431],
+  ])("entries that a request adds after %s are in the HPACK table", async (_, refused, expected) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const end = F.END_HEADERS | F.END_STREAM;
+    const add = (name: string) => Buffer.concat([Buffer.from([0x40, name.length]), Buffer.from(name + "\x011")]);
+    const base = hpackLiteral(baseHeaders("/headers"));
+    try {
+      const block = Buffer.concat([base, add("x-before"), hpackLiteral(refused), add("x-after"), add("x-last")]);
+      raw.write(frame(T.HEADERS, F.END_STREAM, 1, block.subarray(0, 16384)));
+      raw.write(frame(T.CONTINUATION, F.END_HEADERS, 1, block.subarray(16384)));
+      const answer = await raw.waitFor(f => f.streamId === 1 || f.type === T.GOAWAY);
+      if (answer.type === T.HEADERS) expect(decodeStatus(answer.payload)).toBe(expected);
+      else expect(answer.type === T.RST_STREAM ? "RST_STREAM" : "GOAWAY").toBe(expected);
+      raw.write(frame(T.HEADERS, end, 3, Buffer.concat([base, Buffer.from([0xc0, 0xbf, 0xbe])])));
+      const { headers } = JSON.parse((await raw.body(3)).toString());
+      expect(headers).toMatchObject({ "x-before": "1", "x-after": "1", "x-last": "1" });
+    } finally {
+      raw.close();
+    }
   });
 
   test("te: trailers is accepted (any case)", async () => {

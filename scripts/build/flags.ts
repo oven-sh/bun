@@ -24,7 +24,6 @@ export const safeStackDependencies: readonly DepName[] = [
   "libdeflate",
   "libjpeg-turbo",
   "libwebp",
-  "lshpack",
   "zlib",
   "zstd",
 ];
@@ -1940,12 +1939,6 @@ export function bunIncludes(cfg: Config): string[] {
     includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
 
-  // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
-  // a compat copy for this case.
-  if (cfg.linux && cfg.abi === "musl") {
-    includes.push(join(vendorDir, "lshpack/compat/queue"));
-  }
-
   return includes;
 }
 
@@ -1977,6 +1970,12 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: "/EHsc",
     when: c => c.windows,
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
+  },
+  {
+    file: "src/jsc/bindings/highway_hpack.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the HPACK Huffman kernel must be optimized even in debug builds.",
   },
   {
     file: "src/jsc/bindings/highway_png.cpp",

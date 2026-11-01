@@ -68,6 +68,7 @@ members = [
   "src/trim/removable_features",
   "src/highway",
   "src/histogram",
+  "src/hpack",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -447,6 +448,7 @@ bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
+bun_hpack = { path = "src/hpack" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }

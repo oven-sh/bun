@@ -1,0 +1,222 @@
+use std::collections::VecDeque;
+
+use crate::storage::{Span, Storage};
+use crate::{
+    DEFAULT_TABLE_CAPACITY, ENTRY_OVERHEAD, Error, Indexing, MAX_FIELD_LEN, Result, huffman,
+    integer, static_table,
+};
+
+pub struct Field<'a> {
+    pub name: &'a [u8],
+    pub value: &'a [u8],
+    /// It was sent as "never indexed" (§6.2.3).
+    pub never_index: bool,
+    /// The static table index the name was first taken from, 0 if the peer spelled it out.
+    pub static_index: u8,
+}
+
+struct Entry {
+    span: Span,
+    static_index: u8,
+}
+
+const _: () = assert!(size_of::<Entry>() == 24);
+
+/// The room for entries that a lower capacity leaves. No table of the default capacity needs more.
+const SPARE_ENTRIES: usize = DEFAULT_TABLE_CAPACITY as usize / ENTRY_OVERHEAD;
+
+pub struct Decoder {
+    /// Oldest first.
+    entries: VecDeque<Entry>,
+    storage: Storage,
+    /// What [`Self::table_size`] may reach. The peer picks it, up to `max_capacity`.
+    capacity: u32,
+    max_capacity: u32,
+}
+
+impl Decoder {
+    pub fn new() -> Self {
+        Self {
+            entries: VecDeque::new(),
+            storage: Storage::default(),
+            capacity: DEFAULT_TABLE_CAPACITY,
+            max_capacity: DEFAULT_TABLE_CAPACITY,
+        }
+    }
+
+    /// Takes the SETTINGS_HEADER_TABLE_SIZE that the peer has acknowledged.
+    pub fn set_max_capacity(&mut self, max_capacity: u32) {
+        // Not every encoder says so when it grows its table. More room than it uses does no harm: its entries are the newest.
+        let grows = max_capacity > self.max_capacity && self.capacity == self.max_capacity;
+        self.max_capacity = max_capacity;
+        self.set_capacity(if grows {
+            max_capacity
+        } else {
+            self.capacity.min(max_capacity)
+        });
+    }
+
+    /// The size of the dynamic table as §4.1 counts it.
+    pub fn table_size(&self) -> usize {
+        self.storage.entries_len() + self.entries.len() * ENTRY_OVERHEAD
+    }
+
+    #[cfg(test)]
+    pub(crate) fn heap_size(&self) -> usize {
+        self.storage.heap_size() + self.entries.capacity() * size_of::<Entry>()
+    }
+
+    /// The field at `*pos`, 0 at first, of a whole header block. `None` at its end. Nothing may be decoded after an error.
+    pub fn next(&mut self, block: &[u8], pos: &mut usize) -> Option<Result<Field<'_>>> {
+        if *pos == 0
+            && let Err(error) = self.decode_size_updates(block, pos)
+        {
+            return Some(Err(error));
+        }
+        if *pos >= block.len() {
+            // The connection may send no block for a long time, so the room the last field took is given back now.
+            self.storage.clear_scratch();
+            self.storage.shrink();
+            return None;
+        }
+        Some(self.decode_field(block, pos))
+    }
+
+    /// The dynamic table size updates (§6.3) that a block may begin with.
+    fn decode_size_updates(&mut self, src: &[u8], pos: &mut usize) -> Result<()> {
+        while src.get(*pos).is_some_and(|first| first & 0xe0 == 0x20) {
+            let capacity = integer::decode(src, pos, 5).ok_or(Error::Invalid)?;
+            if capacity > self.max_capacity {
+                return Err(Error::Invalid);
+            }
+            self.capacity = capacity;
+            self.evict();
+        }
+        if *pos > 0 {
+            self.give_back();
+        }
+        Ok(())
+    }
+
+    fn decode_field(&mut self, src: &[u8], pos: &mut usize) -> Result<Field<'_>> {
+        use Error::Invalid;
+
+        let first = *src.get(*pos).ok_or(Invalid)?;
+        if first & 0x80 != 0 {
+            let index = integer::decode(src, pos, 7).ok_or(Invalid)?;
+            return self.indexed_field(index);
+        }
+
+        let (indexing, prefix_bits) = match first {
+            0x40.. => (Indexing::Add, 6),
+            // §4.2: a size update after a field.
+            0x20.. => return Err(Invalid),
+            0x10.. => (Indexing::Never, 4),
+            _ => (Indexing::Skip, 4),
+        };
+        let index = integer::decode(src, pos, prefix_bits).ok_or(Invalid)?;
+
+        // The name and then the value go to the scratch space, which is how an entry has them.
+        self.storage.clear_scratch();
+        let mut static_index = 0;
+        if index == 0 {
+            self.decode_string(src, pos, MAX_FIELD_LEN)?;
+            if self.storage.scratch_len() == 0 {
+                return Err(Invalid);
+            }
+        } else if let Some((name, _)) = static_table::get(index) {
+            static_index = index as u8;
+            self.storage.bytes_mut(name.len()).extend_from_slice(name);
+        } else {
+            let entry = self.entry(index).ok_or(Invalid)?;
+            static_index = entry.static_index;
+            self.storage.append_name_of(entry.span).ok_or(Invalid)?;
+        }
+        let name_len = self.storage.scratch_len();
+        let room = MAX_FIELD_LEN.saturating_sub(name_len);
+        self.decode_string(src, pos, room)?;
+        let span = self.storage.scratch(name_len);
+
+        if indexing == Indexing::Add {
+            self.storage.keep_scratch();
+            self.entries.push_back(Entry { span, static_index });
+            // May evict the new entry, whose bytes stay readable for now.
+            self.evict();
+        }
+
+        let (name, value) = self.storage.name_and_value(span).ok_or(Invalid)?;
+        Ok(Field {
+            name,
+            value,
+            never_index: indexing == Indexing::Never,
+            static_index,
+        })
+    }
+
+    fn indexed_field(&self, index: u32) -> Result<Field<'_>> {
+        if let Some((name, value)) = static_table::get(index) {
+            return Ok(Field {
+                name,
+                value,
+                never_index: false,
+                static_index: index as u8,
+            });
+        }
+        let entry = self.entry(index).ok_or(Error::Invalid)?;
+        let field = self.storage.name_and_value(entry.span);
+        let (name, value) = field.ok_or(Error::Invalid)?;
+        Ok(Field {
+            name,
+            value,
+            never_index: false,
+            static_index: entry.static_index,
+        })
+    }
+
+    /// Appends a string literal (§5.2) of at most `max_len` bytes to the scratch space.
+    fn decode_string(&mut self, src: &[u8], pos: &mut usize, max_len: usize) -> Result<()> {
+        let huffman = *src.get(*pos).ok_or(Error::Invalid)? & 0x80 != 0;
+        let len = integer::decode(src, pos, 7).ok_or(Error::Invalid)? as usize;
+        let end = pos.checked_add(len).ok_or(Error::Invalid)?;
+        let encoded = src.get(*pos..end).ok_or(Error::Invalid)?;
+        *pos = end;
+        if huffman {
+            let out = self.storage.bytes_mut(huffman::room(len, max_len));
+            return huffman::decode(encoded, out, max_len);
+        }
+        if len > max_len {
+            return Err(Error::TooLarge);
+        }
+        self.storage.bytes_mut(len).extend_from_slice(encoded);
+        Ok(())
+    }
+
+    /// `index` is past the static table. The newest entry comes first (§2.3.3).
+    fn entry(&self, index: u32) -> Option<&Entry> {
+        let age = (index as usize).checked_sub(static_table::LEN as usize + 1)?;
+        self.entries.get(self.entries.len().checked_sub(age + 1)?)
+    }
+
+    fn set_capacity(&mut self, capacity: u32) {
+        self.capacity = capacity;
+        self.evict();
+        self.give_back();
+    }
+
+    /// The connection may send no field for a long time, so what left the table is given back at once.
+    fn give_back(&mut self) {
+        self.storage.clear_scratch();
+        let keep = self.entries.len() + SPARE_ENTRIES;
+        if self.entries.capacity() / 4 > keep {
+            self.entries.shrink_to(keep);
+        }
+    }
+
+    fn evict(&mut self) {
+        while self.table_size() > self.capacity as usize
+            && let Some(entry) = self.entries.pop_front()
+        {
+            self.storage.release(entry.span);
+        }
+    }
+}

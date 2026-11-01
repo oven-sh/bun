@@ -41,6 +41,7 @@ const crates = [
   "bun_errno",
   "bun_exe_format",
   "bun_hash",
+  "bun_hpack",
   "bun_http_types",
   "bun_lint_react_compiler",
   "bun_md",

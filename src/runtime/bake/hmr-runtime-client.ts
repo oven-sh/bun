@@ -222,6 +222,7 @@ const handlers = {
         scriptTags.set(sourceMapId, [entry]);
       }
       script.className = "bun-hmr-script";
+      script.async = false;
       script.src = url;
       script.onerror = onHmrLoadError;
       document.head.appendChild(script);

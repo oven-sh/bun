@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_collections::{VecExt, index_sort};
+use bun_collections::{StringHashMap, VecExt, index_sort};
 use core::cmp::Ordering;
 
 use crate::bundled_ast::Flags as AstFlags;
@@ -144,13 +144,17 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     };
 
     let mut reserved_names = renamer::compute_initial_reserved_names(c.options.output_format)?;
-    for &source_index in files_in_order {
-        renamer::compute_reserved_names_for_scope(
-            &all_module_scopes[source_index as usize],
-            // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
-            unsafe { &*symbols },
-            &mut reserved_names,
-        );
+    if c.options.output_format != crate::options::Format::InternalBakeDev
+        || c.options.minify_identifiers
+    {
+        for &source_index in files_in_order {
+            renamer::compute_reserved_names_for_scope(
+                &all_module_scopes[source_index as usize],
+                // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
+                unsafe { &*symbols },
+                &mut reserved_names,
+            );
+        }
     }
 
     let sorted_imports_from_other_chunks: Vec<StableRef> = {
@@ -306,6 +310,21 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         c.renamer_rows.as_deref(),
         &c.cross_chunk_names,
     )?;
+    if c.options.output_format == crate::options::Format::InternalBakeDev {
+        // Each dev-server module is printed inside its own factory. Naming
+        // their locals in the chunk's shared root makes an unchanged module's
+        // output depend on which sibling modules happen to be rebuilt.
+        chunk.nested_scopes_to_rename = files_in_order
+            .iter()
+            .map(|&source_index| {
+                (
+                    source_index,
+                    &raw const all_module_scopes[source_index as usize],
+                )
+            })
+            .collect();
+        return Ok(ChunkRenamer::Number(r));
+    }
     // Bindings that cross chunks carry one bundle-wide name
     // (`assign_cross_chunk_names`); everything else is numbered around them.
     if let Content::Javascript(js) = &chunk.content {
@@ -569,6 +588,18 @@ pub(crate) fn run_nested_rename_task(
     // Made-up names go in this thread's worker arena, which lives until the
     // bundle is done.
     let mut nested = NestedRenamer::new(root, &uses, source_index, &worker.arena);
+    if c.options.output_format == crate::options::Format::InternalBakeDev {
+        // Unbound and pinned names belong to this factory, not its siblings.
+        // Keywords and printer globals are still reserved in the shared root.
+        let mut reserved = StringHashMap::<u32>::default();
+        renamer::compute_reserved_names_for_scope(
+            // SAFETY: this column remains live throughout the link step.
+            unsafe { &(&(*ast.module_scope))[source_index as usize] },
+            &c.graph.symbols,
+            &mut reserved,
+        );
+        nested.reserve_names(&reserved);
+    }
     let mut sorted: Vec<u32> = Vec::new();
     for &(_, scope) in scopes {
         // SAFETY: live arena-allocated scope (see `rename_symbols_in_chunk`).

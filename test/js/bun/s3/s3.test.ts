@@ -2,9 +2,9 @@ import type { S3File, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
-import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, getSecret, isCI, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { serve, spawnServer } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -2119,6 +2119,173 @@ describe("s3 upload stream body error", () => {
     expect(stderr).toBe("");
     const { received, totalBytes } = JSON.parse(stdout.trim());
     expect(received).toBe(totalBytes);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A request that S3 refuses rejects with an S3Error. Its `path` is the `name` of the S3 file that the
+// request was for. The operation, the entry point and the kind of data of a write do not change it.
+describe("S3Error.path", () => {
+  const server = serve({ buckets: ["denied"] });
+  afterAll(() => server.stop());
+  // The secret is wrong, so the server refuses each request. `retry: 0`: a streamed write sends its PUT once.
+  const credentials = { ...server.clientOptions(), secretAccessKey: "not-the-secret", retry: 0 };
+  const withBucket = { ...credentials, bucket: "denied" };
+  const refused = { name: "S3Error", code: "SignatureDoesNotMatch" };
+
+  const outcome = (request: Promise<unknown>) =>
+    request.then(
+      value => ({ resolved: value }),
+      error => ({ name: error.name, code: error.code, path: error.path }),
+    );
+
+  // [how the caller names the object, the options that go with that]
+  const destinations: [string, (key: string) => string, S3Options][] = [
+    ["key", key => key, withBucket],
+    ["/key", key => "/" + key, withBucket],
+    ["s3://bucket/key", key => "s3://denied/" + key, credentials],
+  ];
+
+  it.each(destinations)("a request for %s", async (_, spell, options) => {
+    using dir = tempDir("s3-error-path", { "on-disk.txt": "hello" });
+    const onDisk = path.join(String(dir), "on-disk.txt");
+    const key = randomUUIDv7();
+    const destination = spell(key);
+    const client = new S3Client(options);
+    const name = client.file(destination).name;
+    expect(name).toEndWith(key);
+
+    const writers: [string, (data: any) => Promise<number>][] = [
+      ["client.write(destination, data)", data => client.write(destination, data)],
+      ["client.file(destination).write(data)", data => client.file(destination).write(data)],
+      ["Bun.write(client.file(destination), data)", data => Bun.write(client.file(destination), data)],
+      ["S3Client.write(destination, data, options)", data => S3Client.write(destination, data, options)],
+    ];
+    // A string is an S3 destination for `Bun.write` only when it is an s3:// URL.
+    if (destination.startsWith("s3://")) {
+      writers.push(["Bun.write(destination, data, options)", data => Bun.write(destination, data, options as {})]);
+    }
+    // No data and data in memory are one PUT. A file on disk is a streamed upload.
+    const data: [string, () => any][] = [
+      ["no data", () => ""],
+      ["data in memory", () => "hello"],
+      ["a file on disk", () => Bun.file(onDisk)],
+    ];
+    const requests: [string, () => Promise<unknown>][] = [
+      ["client.file(destination).text()", () => client.file(destination).text()],
+      ["client.file(destination).bytes()", () => client.file(destination).bytes()],
+      ["client.file(destination).delete()", () => client.file(destination).delete()],
+    ];
+    for (const [writer, write] of writers) {
+      for (const [kind, make] of data) requests.push([`${writer} of ${kind}`, () => write(make())]);
+    }
+
+    const actual: Record<string, unknown> = {};
+    const wanted: Record<string, unknown> = {};
+    for (const [request, send] of requests) {
+      actual[request] = await outcome(send());
+      wanted[request] = { ...refused, path: name };
+    }
+    expect(actual).toEqual(wanted);
+  });
+
+  it("is not the destination as the caller wrote it", async () => {
+    const key = randomUUIDv7();
+    const file = new S3Client(credentials).file(`s3://denied/${key}`);
+    expect({ name: file.name, failure: await outcome(file.write("hello")) }).toEqual({
+      name: `denied/${key}`,
+      failure: { ...refused, path: `denied/${key}` },
+    });
+  });
+
+  // `Bun.Image` reads an S3 file through a completion of its own. It rejects with a system error.
+  it("a read by Bun.Image", async () => {
+    const file = new S3Client(credentials).file(`s3://denied/${randomUUIDv7()}`);
+    expect(await outcome(new Bun.Image(file).metadata())).toEqual({
+      name: "Error",
+      code: "SignatureDoesNotMatch",
+      path: file.name,
+    });
+  });
+
+  it.each<[string, () => any]>([
+    ["an empty string", () => ""],
+    ["a string", () => "hello"],
+    ["bytes", () => new Uint8Array(5)],
+    ["a Blob", () => new Blob(["hello"])],
+    ["a File that has a name", () => new File(["hello"], "local-name.txt")],
+    ["a slice of a Blob", () => new Blob(["hello"]).slice(1, 3)],
+    ["a Response", () => new Response("hello")],
+    ["an Archive", () => new Bun.Archive({ "a.txt": "hello" })],
+    ["a ReadableStream", () => new Blob(["hello"]).stream()],
+  ])("a write of %s", async (_, make) => {
+    const file = new S3Client(withBucket).file("/" + randomUUIDv7());
+    expect(await outcome(file.write(make()))).toEqual({ ...refused, path: file.name });
+  });
+
+  // With no bucket, the request cannot be signed. A write that is one PUT then fails inside the call.
+  it("a write that fails before the request", async () => {
+    const file = new S3Client(credentials).file("/key");
+    const failed = async (data: string) => {
+      const write = file.write(data);
+      return { status: Bun.peek.status(write), ...(await outcome(write)) };
+    };
+    const failure = { status: "rejected" as const, name: "S3Error", code: "ERR_S3_INVALID_PATH", path: file.name };
+    expect({ noData: await failed(""), dataInMemory: await failed("hello") }).toEqual({
+      noData: failure,
+      dataInMemory: failure,
+    });
+  });
+
+  // The rule is for the request that failed. Here that is the read of the data, not the PUT.
+  it("a write of an S3 file that cannot be read reports that file", async () => {
+    const client = new S3Client(withBucket);
+    const data = client.file(randomUUIDv7());
+    expect(await outcome(client.write(randomUUIDv7(), data))).toEqual({ ...refused, path: data.name });
+  });
+
+  // In a compiled executable, `Bun.file()` of an embedded file is an in-memory Blob that has a name of its own.
+  // Not on a debug build: `bun build --compile` copies the executable, about 900 MB, and that takes about 10 s.
+  it.skipIf(isDebug)("a write of an embedded file in a compiled executable", async () => {
+    using dir = tempDir("s3-error-path-embedded", {
+      "asset.txt": "hello",
+      "app.ts": `
+        import asset from "./asset.txt" with { type: "file" };
+        import { S3Client } from "bun";
+
+        const { key, ...options } = JSON.parse(process.env.S3_TEST_OPTIONS!);
+        const file = new S3Client(options).file(key);
+        const path = (data: Blob) => file.write(data).catch(error => error.path);
+        console.log(
+          JSON.stringify({
+            name: file.name,
+            wholeFile: await path(Bun.file(asset)),
+            slice: await path(Bun.file(asset).slice(1, 3)),
+          }),
+        );
+      `,
+    });
+    const exe = path.join(String(dir), isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", path.join(String(dir), "app.ts"), "--outfile", exe],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExitCode).toBe(0);
+
+    const key = randomUUIDv7();
+    await using app = Bun.spawn({
+      cmd: [exe],
+      env: { ...bunEnv, S3_TEST_OPTIONS: JSON.stringify({ ...withBucket, key }) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ name: key, wholeFile: key, slice: key });
     expect(exitCode).toBe(0);
   });
 });

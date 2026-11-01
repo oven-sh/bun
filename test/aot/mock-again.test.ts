@@ -15,10 +15,11 @@ export function fn() {
 export default "real";
 `;
 
-// A hoisted vi.mock() stands in place of a module that never ran. A later vi.mock() of the module takes its place: for the namespace object too, with the names of the later factory in its order.
+// over.test.js: the module ran, and the first mock was laid over it. A later one is laid over both: what it leaves out keeps the value of the first.
+// The others: a hoisted vi.mock() stands in place of a module that never ran. A later vi.mock() of the module takes its place: for the namespace object too, with the names of the later factory in its order.
 const files = {
   "package.json": `{ "name": "mock-again" }`,
-  ...Object.fromEntries(["more", "less", "thrice", "user"].map(name => [`dep-${name}.js`, dep(name)])),
+  ...Object.fromEntries(["more", "less", "thrice", "user", "over"].map(name => [`dep-${name}.js`, dep(name)])),
   "more.test.js": `import { test, vi } from "bun:test";
 import * as all from "./dep-more.js";
 import byDefault, { flag, fn } from "./dep-more.js";
@@ -77,6 +78,19 @@ test("another module reads the second mock", () => {
   say(2, read());
 });
 `,
+  "over.test.js": `import { test, vi } from "bun:test";
+import * as all from "./dep-over.js";
+import { flag, plain } from "./dep-over.js";
+const say = (...words) => console.error("SEEN over " + words.join(" "));
+test("two mocks laid over a module that ran", async () => {
+  say(0, Object.keys(all), flag, plain);
+  vi.mock("./dep-over.js", () => ({ flag: "one", plain: "one" }));
+  say(1, Object.keys(all), flag, plain);
+  vi.mock("./dep-over.js", () => ({ flag: "two" }));
+  say(2, Object.keys(all), flag, plain, all.flag, all.plain);
+  say(3, (await import("./dep-over.js")) === all);
+});
+`,
 };
 
 const seen = [
@@ -86,6 +100,11 @@ const seen = [
   "more 3 true plain,flag,added,fn,default added",
   `more 4 {"value":"added","writable":true,"enumerable":true,"configurable":true}`,
   "more 5 plain,flag,added,fn,default two added",
+  "over 0 default,flag,fn,plain real real",
+  "over 1 default,flag,fn,plain one one",
+  "over 2 default,flag,fn,plain two one two one",
+  "over 3 true",
+  "runs dep-over",
   "thrice 1 second,flag two 2",
   "thrice 2 third,flag three 3 false",
   "user 1 flag one one none",

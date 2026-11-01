@@ -3190,7 +3190,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     bool isDoMock = function == ModuleMockFunction::ViDoMock;
     unsigned loadedByTestFile = globalObject->onLoadPlugins.testFileOfModule.get(specifier);
 #if ENABLE(AOT)
-    if (previous && previous->compiledModuleThatNeverRan && !loadedByTestFile)
+    if (previous && loaded.compiledModule && !loadedByTestFile)
         loadedByTestFile = previous->testFileOfFirstLoad;
 #endif
     bool wasLoadedByImportActual = globalObject->onLoadPlugins.loadedByImportActual.remove(specifier);
@@ -3351,6 +3351,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             RETURN_IF_EXCEPTION(scope, {});
             isCurrent = isStillRegisteredModuleMock(globalObject, specifier, previous);
         }
+#if ENABLE(AOT)
+        if (loaded.compiledModule && !mock->testFileOfFirstLoad && Bun::isBunTest && !mock->isFromPreload)
+            mock->testFileOfFirstLoad = globalObject->onLoadPlugins.testFile;
+#endif
     }
     // Its functions are the mock's from here on. What the body assigns is the mock's once it is patched again.
     if (bodyYetToRun && isCurrent)

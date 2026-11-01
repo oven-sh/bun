@@ -400,9 +400,13 @@ describe("sliceAnsi consistency with other Bun APIs", () => {
     const check = (inner: string, depth: number) => {
       const s = `\u{1F614}\u200D${inner}\u{1F601}\x1b\\|`;
       const column = Bun.stringWidth(s) - 1;
-      if (!Bun.sliceAnsi(s, column, column + 1).includes("|")) {
+      // The one-column slice holds "|". A control with no width can share its column; nothing wider can.
+      const slice = Bun.sliceAnsi(s, column, column + 1);
+      if (!slice.includes("|") || Bun.stringWidth(slice) !== 1) {
         const dump = [...inner].map(c => c.codePointAt(0)!.toString(16)).join(" ");
-        mismatches.push(`${dump}: stringWidth puts "|" at column ${column}`);
+        mismatches.push(
+          `${dump}: stringWidth puts "|" at column ${column}, the slice there is ${JSON.stringify(slice)}`,
+        );
       }
       if (depth < 3) for (const piece of pieces) check(inner + piece, depth + 1);
     };

@@ -891,7 +891,7 @@ impl PublishCommand {
                 ..Default::default()
             });
 
-        // This runs on its own thread, and `Output::buffered_stdin()` is for the main thread only.
+        // Not `skip_line()`: this thread can stay in its read forever, and would hold the stdin line lock.
         let mut input = [0u8; 1024];
         loop {
             match bun_sys::read(Fd::stdin(), &mut input) {

@@ -133,6 +133,9 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
+    /// Off for a scan that writes no output (`bun test --changed`): the files it reads still run.
+    pub(crate) match_found_path_externals: bool,
+
     /// Barrel optimization: tracks which exports have been requested from each
     /// module encountered during barrel BFS. Keys are source indices. Values
     /// track requested export names for deduplication and cycle detection.
@@ -2646,6 +2649,12 @@ pub mod bv2_impl {
             }
         }
 
+        /// A reference in CSS or HTML keeps its text, and no browser resolves that text again.
+        fn matches_found_path_externals(&self, importer_loader: Loader) -> bool {
+            self.match_found_path_externals
+                && !matches!(importer_loader, Loader::Css | Loader::Html)
+        }
+
         /// This runs on the Bundle Thread.
         pub(crate) fn run_resolver(
             &mut self,
@@ -2738,6 +2747,12 @@ pub mod bv2_impl {
                 }
             }
 
+            let importer_loader =
+                self.graph.input_files.items_loader()[import_record.importer_source_index as usize];
+            // SAFETY: see `transpiler` note above.
+            unsafe { &mut *transpiler }
+                .resolver
+                .match_found_path_externals = self.matches_found_path_externals(importer_loader);
             let mut had_busted_dir_cache = false;
             let resolve_result = loop {
                 // SAFETY: see `transpiler` note above.
@@ -3267,6 +3282,7 @@ pub mod bv2_impl {
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
+                match_found_path_externals: true,
                 requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
@@ -4494,6 +4510,7 @@ pub mod bv2_impl {
         ) -> Result<Box<BundleV2<'a>>, Error> {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
+            this.match_found_path_externals = false;
 
             if this.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);
@@ -6823,6 +6840,8 @@ pub mod bv2_impl {
                     }
                 }
 
+                transpiler.resolver.match_found_path_externals =
+                    self.matches_found_path_externals(loader);
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result<'a> = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(

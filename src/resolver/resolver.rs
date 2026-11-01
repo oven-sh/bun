@@ -566,6 +566,9 @@ pub struct Resolver<'a> {
     /// over "module" in package.json
     pub prefer_module_field: bool,
 
+    /// Set per resolve by the bundler: a found file is external when `--external` has its path.
+    pub match_found_path_externals: bool,
+
     /// This is an array of paths to resolve against. Used for passing an
     /// object '{ paths: string[] }' to `require` and `resolve`; This field
     /// is overwritten while the resolution happens.
@@ -653,6 +656,7 @@ impl<'a> Resolver<'a> {
             // never carried across worker init.
             custom_dir_paths: None,
             esm_failure: None,
+            match_found_path_externals: false,
         }
     }
 
@@ -1006,6 +1010,7 @@ impl<'a> Resolver<'a> {
             store_fd: false,
             standalone_module_graph: None,
             prefer_module_field: true,
+            match_found_path_externals: false,
             custom_dir_paths: None,
             esm_failure: None,
         }
@@ -1031,6 +1036,27 @@ impl<'a> Resolver<'a> {
             }
         }
         false
+    }
+
+    /// `found` is the path as the lookup reached it, before `finalize_result` follows a link.
+    #[inline(always)]
+    fn found_path_is_user_external(&mut self, found: &[u8], kind: ast::ImportKind) -> bool {
+        self.opts.external.abs_paths.count() > 0
+            && self.match_found_path_externals
+            && self.external_paths_match(found, kind)
+    }
+
+    /// Out of line, so that a resolve with no `--external` path runs the two tests above and no call.
+    #[inline(never)]
+    fn external_paths_match(&mut self, found: &[u8], kind: ast::ImportKind) -> bool {
+        let is_external = !kind.is_entry_point() && self.opts.external.abs_paths.contains(found);
+        if is_external && let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "The path \"{}\" is marked as external by the user",
+                bstr::BStr::new(found)
+            ));
+        }
+        is_external
     }
 
     /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
@@ -1390,6 +1416,13 @@ impl<'a> Resolver<'a> {
                             .to_vec(),
                     );
                 }
+                // This result does not pass through `finalize_result`.
+                let flags = if self.found_path_is_user_external(res.path_pair.primary.text(), kind)
+                {
+                    ResultFlags::IS_EXTERNAL
+                } else {
+                    ResultFlags::default()
+                };
                 let _ = self.flush_debug_logs(FlushMode::Success);
                 self.extension_order = original_order;
                 return ResultUnion::Success(Result {
@@ -1399,6 +1432,7 @@ impl<'a> Resolver<'a> {
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
                     jsx: self.opts.jsx.clone(),
+                    flags,
                     ..Default::default()
                 });
             }
@@ -1822,6 +1856,11 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
     ) -> crate::CrateResult<()> {
         if result.flags.is_external() {
+            return Ok(());
+        }
+
+        if self.found_path_is_user_external(result.path_pair.primary.text(), kind) {
+            result.flags.set_external_kind(ExternalKind::External);
             return Ok(());
         }
 

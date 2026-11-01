@@ -1,7 +1,8 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir } from "harness";
-import { mkdirSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, isWindows, tempDir } from "harness";
+import { mkdirSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("--hot with many directories", () => {
@@ -244,5 +245,157 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     const leaks = stderr.split(/\n\s*\n/).filter(block => /^(?:Direct|Indirect) leak of /.test(block));
     expect(leaks).toEqual([]);
     expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  // Evicting a watchlist entry used to close the handle stored in it on POSIX
+  // only. On Windows every evicted entry leaked its handle: under --hot a
+  // deleted import (the reload then watched it again through a new handle),
+  // in the dev server a freed directory watch. This drives the --hot case.
+  //
+  // A raw handle count is not flat under --hot even without that leak: every
+  // directory event busts the resolver's directory cache, which abandons the
+  // directory handle the busted entry holds. So both phases below run the same
+  // reloads and directory events per cycle and differ only in whether the
+  // deleted files are watched. The entry blocks on stdin after every reload, so
+  // the file changes of a step all land while no reload can run and then
+  // coalesce into one reload per step in both phases. Each cycle evicts `files`
+  // entries, so the leak is `files` handles per cycle, far more than the one
+  // handle an occasional extra reload would cost.
+  //
+  // The first assertion guards against a vacuous pass: watching the files again
+  // must show up as `files` handles. Once file entries stop holding a handle
+  // outside kqueue, re-anchor this on the dev server's directory watches
+  // (`DirectoryWatchStore::free_entry`), the evicted entries that still hold one.
+  test.skipIf(!isWindows)("evicting watchlist entries closes their handles", async () => {
+    const files = 16;
+    const cycles = 6;
+    const indexes = Array.from({ length: files }, (_, i) => i);
+    await using dir = tempDir("hot-evict-handles", {
+      "entry.js": `
+        import { existsSync, readSync } from "node:fs";
+        import { loadDeps, seq } from "./trigger.js";
+        // GC helper threads are handles too. Create them before the first sample.
+        Bun.gc(true);
+        let deps = "skipped";
+        if (loadDeps) {
+          let sum = 0;
+          for (let i = 0; i < ${files}; i++) sum += require("./dep" + i + ".js").value;
+          deps = sum;
+        } else if (!existsSync("dep0.js")) {
+          deps = "deleted";
+        }
+        console.log("RELOAD", seq, deps);
+        // Block until the test has made the next step's file changes.
+        readSync(0, new Uint8Array(1));
+      `,
+      "trigger.js": `export const seq = 0; export const loadDeps = true;`,
+      ...Object.fromEntries(indexes.map(i => [`dep${i}.js`, `export const value = 0;`])),
+      ...Object.fromEntries(indexes.map(i => [`other${i}.js`, `export const value = 0;`])),
+    });
+    const root = String(dir);
+
+    const kernel32 = dlopen("kernel32.dll", {
+      OpenProcess: { args: ["u32", "i32", "u32"], returns: "ptr" },
+      GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+      CloseHandle: { args: ["ptr"], returns: "i32" },
+    });
+    const handleCount = (pid: number) => {
+      const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+      const handle = kernel32.symbols.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+      if (!handle) throw new Error(`OpenProcess(${pid}) failed`);
+      try {
+        const count = new Uint32Array(1);
+        if (kernel32.symbols.GetProcessHandleCount(handle, count) === 0) {
+          throw new Error("GetProcessHandleCount failed");
+        }
+        return count[0];
+      } finally {
+        kernel32.symbols.CloseHandle(handle);
+      }
+    };
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      cwd: root,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const iter = forEachLine(proc.stdout);
+    const waitForLine = async (expected: string) => {
+      while (true) {
+        const { value: line, done } = await iter.next();
+        if (done) throw new Error(`--hot exited before printing "${expected}" (exit ${proc.exitCode})`);
+        if (line === expected) return;
+      }
+    };
+    // The entry is blocked on stdin between steps. Unblock it so the reload the
+    // step's file changes enqueued runs, then wait for that reload's line.
+    const releaseAndWaitFor = async (expected: string) => {
+      proc.stdin.write("\n");
+      await proc.stdin.flush();
+      await waitForLine(expected);
+    };
+    let seq = 0;
+    const writeTrigger = (loadDeps: boolean) => {
+      seq++;
+      writeFileSync(join(root, "trigger.js"), `export const seq = ${seq}; export const loadDeps = ${loadDeps};`);
+    };
+    // Deletes and recreates the `victim` files between reloads that do not load
+    // the deps, then reloads once more with the deps loaded. Deleting the deps
+    // evicts their entries (the same delete events enqueue the "deleted"
+    // reload), and the last reload watches the recreated files again. Deleting
+    // the never-imported other* files instead raises the same directory events
+    // without touching the watchlist, so that step gets its reload from the
+    // trigger. Every step is one reload in both phases. Returns how many handles
+    // the last reload added: the deps it watches again, plus the same directory
+    // handle in both phases.
+    const cycle = async (victim: "dep" | "other", value: number) => {
+      writeTrigger(false);
+      await releaseAndWaitFor(`RELOAD ${seq} skipped`);
+
+      for (const i of indexes) rmSync(join(root, `${victim}${i}.js`));
+      if (victim === "dep") {
+        await releaseAndWaitFor(`RELOAD ${seq} deleted`);
+      } else {
+        writeTrigger(false);
+        await releaseAndWaitFor(`RELOAD ${seq} skipped`);
+      }
+      const beforeLoad = handleCount(proc.pid);
+
+      for (const i of indexes) writeFileSync(join(root, `${victim}${i}.js`), `export const value = ${value};`);
+      writeTrigger(true);
+      await releaseAndWaitFor(`RELOAD ${seq} ${victim === "dep" ? files * value : 0}`);
+      return handleCount(proc.pid) - beforeLoad;
+    };
+    const phase = async (victim: "dep" | "other") => {
+      const start = handleCount(proc.pid);
+      let addedByLoads = 0;
+      for (let i = 1; i <= cycles; i++) addedByLoads += await cycle(victim, i);
+      return { growth: handleCount(proc.pid) - start, addedByLoads };
+    };
+
+    await waitForLine("RELOAD 0 0");
+    for (let i = 1; i <= 2; i++) await cycle("other", i);
+    const baseline = await phase("other");
+    const evictions = await phase("dep");
+
+    // In the eviction phase the deps are watched again on every cycle, so its
+    // loads add `files` handles per cycle that the baseline's loads (the deps
+    // stayed watched) do not.
+    const rewatched = evictions.addedByLoads - baseline.addedByLoads;
+    // Unfixed, every eviction cycle also keeps the `files` handles it evicted,
+    // so the phase grows by that much more than the baseline. Fixed, the two
+    // phases grow by about the same amount.
+    const leaked = evictions.growth - baseline.growth;
+    const half = (files * cycles) / 2;
+    expect({ baseline, evictions, rewatched, leaked }).toEqual({
+      baseline,
+      evictions,
+      rewatched: Math.max(rewatched, half),
+      leaked: Math.min(leaked, half),
+    });
   });
 });

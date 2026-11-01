@@ -2764,7 +2764,7 @@ pub(crate) mod __gated_printer {
                             }
                             self.print_symbol(meta.exports_ref);
                             if wrap_with_to_esm {
-                                self.print_to_esm_suffix();
+                                self.print_to_esm_suffix(record);
                             }
                         }
                         self.print_dot_then_suffix();
@@ -2859,7 +2859,7 @@ pub(crate) mod __gated_printer {
                     self.print(b")");
                 }
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    self.print_to_esm_suffix(record);
                 }
                 if record.kind == ImportKind::Dynamic && has_side_effects {
                     self.print_dot_then_suffix();
@@ -2940,6 +2940,9 @@ pub(crate) mod __gated_printer {
 
                 self.print(b"(");
                 self.print_import_record_path(record);
+                if record.loader.is_some_and(bun_ast::Loader::is_sqlite) {
+                    self.print_whitespacer(ws!(b", { type: \"sqlite\" }"));
+                }
                 self.print(b")");
 
                 // A split `require()` of a module that is CommonJS at link
@@ -2952,7 +2955,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    self.print_to_esm_suffix(record);
                 }
                 if wrap {
                     self.print(b")");
@@ -3020,8 +3023,10 @@ pub(crate) mod __gated_printer {
 
         /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) for an ES module by
         /// type, then `)`.
-        fn print_to_esm_suffix(&mut self) {
-            if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+        fn print_to_esm_suffix(&mut self, record: &ImportRecord) {
+            let node_mode = self.options.input_module_type == bundle_opts::ModuleType::Esm
+                && !record.loader.is_some_and(bun_ast::Loader::is_sqlite);
+            if node_mode {
                 self.print(b",");
                 self.print_space();
                 self.print(b"1");
@@ -6254,7 +6259,7 @@ pub(crate) mod __gated_printer {
                     self.print_import_record_path(record);
 
                     // backwards compatibility: previously, we always stripped type
-                    if IS_BUN_PLATFORM {
+                    if IS_BUN_PLATFORM || record.loader.is_some_and(bun_ast::Loader::is_sqlite) {
                         if let Some(loader) = record.loader {
                             use bun_ast::Loader;
                             match loader {
@@ -6312,9 +6317,12 @@ pub(crate) mod __gated_printer {
                                 Loader::Bunsh => {
                                     self.print_whitespacer(ws!(b" with { type: \"sh\" }"))
                                 }
-                                Loader::Sqlite | Loader::SqliteEmbedded => {
+                                Loader::Sqlite => {
                                     self.print_whitespacer(ws!(b" with { type: \"sqlite\" }"))
                                 }
+                                Loader::SqliteEmbedded => self.print_whitespacer(ws!(
+                                    b" with { type: \"sqlite\", embed: \"true\" }"
+                                )),
                                 Loader::Html => {
                                     self.print_whitespacer(ws!(b" with { type: \"html\" }"))
                                 }

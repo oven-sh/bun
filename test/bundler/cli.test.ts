@@ -485,6 +485,23 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
   });
 });
 
+// `bun --hot app.js` reloads when the bundle changes, so the bundle must never
+// sit beside the source map of the build before it. A map path that cannot be
+// written shows the order: the build fails there and the old bundle stays.
+test.concurrent.each(["linked", "external"])("--outfile writes the %s source map before the bundle", async kind => {
+  const before = "the bundle of the build before\n";
+  using dir = tempDir("build-outfile-map-first", {
+    "entry.js": `console.log("entry");\n`,
+    "app.js": before,
+    "app.js.map/.keep": "",
+  });
+  const { stdout, stderr, exitCode } = await build(String(dir), "entry.js", "--outfile=app.js", `--sourcemap=${kind}`);
+  expect(fs.readFileSync(join(String(dir), "app.js"), "utf8")).toBe(before);
+  expect(stderr).toContain("writing sourcemap for chunk");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
 describe.concurrent("--outfile takes the file name as written", () => {
   // `[name]`, `[hash]`, `[dir]`, `[ext]` and `[target]` are placeholders in
   // --entry-naming. In --outfile they are characters of the file name.

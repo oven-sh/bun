@@ -4318,6 +4318,8 @@ pub(crate) fn write_file_with_source_destination(
         "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
     );
 
+    #[cfg(not(windows))]
+    let source_has_one_owner = source_blob.store().is_some_and(|store| store.has_one_ref());
     let Some(source_store) = source_blob.store.get().clone() else {
         return write_file_with_empty_source_to_destination(cx, destination_blob, options);
     };
@@ -4329,8 +4331,7 @@ pub(crate) fn write_file_with_source_destination(
             global_this: cx.global(),
         }));
 
-        // The borrowed views below are +0 on the store ref;
-        // `WriteFile::create` takes its own ref.
+        // The job owns a ref on each store it is given.
         #[cfg(windows)]
         {
             let promise = JSPromise::create(cx.global());
@@ -4360,12 +4361,21 @@ pub(crate) fn write_file_with_source_destination(
 
         #[cfg(not(windows))]
         {
+            // The job frees a source that only it holds, so it takes this thread's refs.
+            drop(source_store);
             let file_copier = write_file::WriteFile::create(
                 destination_blob.borrowed_view(),
-                source_blob.borrowed_view(),
+                core::mem::take(source_blob),
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
+            debug_assert!(
+                !source_has_one_owner
+                    || file_copier
+                        .bytes_blob
+                        .store()
+                        .is_some_and(|store| store.has_one_ref())
+            );
             // SAFETY: `write_file_promise` was just produced by heap::alloc above; sole owner.
             let mut write_file_promise = unsafe { bun_core::heap::take(write_file_promise) };
             // Defer promise creation until we're just about to schedule the task.

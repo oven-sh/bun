@@ -3,12 +3,17 @@ import fs, { mkdirSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  emptyProcessMaxRSS,
   exampleHtml,
   exampleSite,
   gcTick,
   isASAN,
+  isDebug,
+  isLinux,
   isMacOS,
   isWindows,
+  libcPathForDlopen,
+  runFixtureMaxRSS,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
@@ -605,7 +610,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
     },
   );
 
-  it("Bun.file(0) survives GC", async () => {
+  // Not concurrent: every gcTick() waits for the event loop, and 10 of them in the concurrent batch take over 5 s on a debug build.
+  it.serial("Bun.file(0) survives GC", async () => {
     for (let i = 0; i < 10; i++) {
       let f = Bun.file(0);
       await gcTick();
@@ -1782,5 +1788,204 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stdout).toBe("caught EISDIR\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+// The write job has its own copy of a typed array, string or array source. It frees
+// that copy when the pool thread is done with the write. If it waited for the JS
+// thread to complete the write, a caller that does not await would hold every copy.
+// WriteFileWindows sees its completions only on the JS thread, so it cannot do this.
+// The memory cases run together. The memfd case before them is not concurrent, so they start after the tests above.
+describe.skipIf(isWindows)("the write job's copy of the source", () => {
+  const size = 1024 * 1024;
+  const count = 200;
+  const prelude = `
+    const fs = require("fs");
+    const size = ${size};
+    // Each poll sleeps 1 ms, so the limit is 3 seconds or more.
+    const waitFor = (what, done) => {
+      for (let polls = 0; !done(); polls++) {
+        if (polls === 3000) throw new Error("gave up waiting for " + what);
+        Bun.sleepSync(1);
+      }
+    };
+    // Linux: every other thread of this process sleeps, so no job runs.
+    const noJobRuns = () => {
+      const self = fs.readlinkSync("/proc/thread-self").split("/").pop();
+      return fs.readdirSync("/proc/self/task").every(tid => {
+        if (tid === self) return true;
+        try {
+          const stat = fs.readFileSync("/proc/self/task/" + tid + "/stat", "utf8");
+          return stat[stat.lastIndexOf(")") + 2] === "S";
+        } catch {
+          return true;
+        }
+      });
+    };
+  `;
+  // With every copy held until the JS thread returns to the event loop, a child peaks at 200 MiB over an empty one.
+  async function expectCopiesFreed(fixture, expected) {
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(prelude + fixture, expected),
+      emptyProcessMaxRSS(),
+    ]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 128 : 96);
+  }
+
+  // A copy of 8 MB or more of a typed array is a memfd, which /proc/self/maps names ("memfd-num-0").
+  // The JS thread frees that one: a free on a pool thread makes the next memfd copy slower.
+  // This case passes on main too. It guards the memfd condition in WriteFile::on_finish.
+  it.skipIf(!isLinux)("stays until the JS thread completes the write when it is a memfd", async () => {
+    using dir = tempDir("bun-write-copy-memfd", { "out.bin": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        prelude +
+          `
+        const source = new Uint8Array(8 * size).fill(0x61);
+        const mappedCopies = () => [...new Set(fs.readFileSync("/proc/self/maps", "utf8").match(/memfd-num-\\d+/g))];
+        const promise = Bun.write("out.bin", source);
+        // The JS thread stays in this block, so it cannot complete the write.
+        const fd = fs.openSync("out.bin", "r");
+        const last = Buffer.alloc(1);
+        waitFor("the write", () => fs.readSync(fd, last, 0, 1, 8 * size - 1) === 1 && last[0] === 0x61 && noJobRuns());
+        fs.closeSync(fd);
+        const copies = mappedCopies();
+        console.log(JSON.stringify({ copies, wrote: await promise }));
+      `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: { copies: ["memfd-num-0"], wrote: 8 * size },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.each([
+    ["a typed array", `new Uint8Array(size).fill(0x61)`],
+    ["a string", `Buffer.alloc(size, "a").toString("latin1")`],
+    ["an array of typed arrays", `[new Uint8Array(size / 2).fill(0x61), new Uint8Array(size / 2).fill(0x61)]`],
+  ])("of %s is freed when its write is done", async (_, source) => {
+    using dir = tempDir("bun-write-copy-freed", {});
+    await expectCopiesFreed(
+      `
+      const source = ${source};
+      const last = Buffer.alloc(1);
+      const writes = [];
+      for (let i = 0; i < ${count}; i++) {
+        const out = ${JSON.stringify(join(String(dir), "out"))} + i;
+        fs.writeFileSync(out, "");
+        const fd = fs.openSync(out, "r");
+        writes.push(Bun.write(out, source));
+        // The JS thread stays in this loop, so it cannot complete any write.
+        // Once the last byte is in the file, the pool thread is done with the copy.
+        waitFor("write " + i, () => fs.readSync(fd, last, 0, 1, size - 1) === 1 && last[0] === 0x61);
+        fs.closeSync(fd);
+      }
+      const wrote = await Promise.all(writes);
+      console.log(JSON.stringify({ wrote: wrote.reduce((a, b) => a + b, 0) }));
+    `,
+      { wrote: size * count },
+    );
+  });
+
+  // With one CPU for every thread, a pool thread runs a job while the JS thread is still inside Bun.write.
+  // The job must be the only owner of its copy by then.
+  it.concurrent.skipIf(!isLinux)("of a write that fails is freed", async () => {
+    await expectCopiesFreed(
+      `
+      const { dlopen, ptr } = require("bun:ffi");
+      const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+        sched_setaffinity: { args: ["i32", "usize", "ptr"], returns: "i32" },
+      });
+      const cpu = Number(/Cpus_allowed_list:\\s*(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]);
+      const mask = new Uint8Array(((cpu >> 6) + 1) * 8);
+      mask[cpu >> 3] = 1 << (cpu & 7);
+      for (const tid of fs.readdirSync("/proc/self/task")) {
+        libc.symbols.sched_setaffinity(Number(tid), mask.length, ptr(mask));
+      }
+      // A thread that starts later takes the CPU of the thread that starts it.
+      const everyThreadIsOnOneCpu = () =>
+        fs.readdirSync("/proc/self/task").every(tid => {
+          try {
+            const status = fs.readFileSync("/proc/self/task/" + tid + "/status", "utf8");
+            return /Cpus_allowed_list:\\s*(\\S+)/.exec(status)[1] === String(cpu);
+          } catch {
+            return true;
+          }
+        });
+      const source = new Uint8Array(size).fill(0x61);
+      const writes = [];
+      for (let i = 0; i < ${count}; i++) {
+        writes.push(Bun.write("/dev/full", source).then(() => "fulfilled", e => e.code));
+        // The JS thread stays in this loop, so it cannot complete any write.
+        waitFor("write " + i, noJobRuns);
+      }
+      const onOneCpu = everyThreadIsOnOneCpu();
+      const codes = await Promise.all(writes);
+      console.log(JSON.stringify({ onOneCpu, ENOSPC: codes.filter(code => code === "ENOSPC").length }));
+    `,
+      { onOneCpu: true, ENOSPC: count },
+    );
+  });
+
+  // A write to a full pipe waits on the IO thread and finishes through a second pass on the pool.
+  it.concurrent.skipIf(!isLinux)("of a write that waited for a pipe is freed", async () => {
+    using dir = tempDir("bun-write-copy-freed-fifo", {});
+    const fifo = join(String(dir), "fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await expectCopiesFreed(
+      `
+      const fifo = ${JSON.stringify(fifo)};
+      // This process is also the reader, so the pipe drains only when the loop below reads.
+      const firstReader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+      const reader = fs.openSync(fifo, "r");
+      fs.closeSync(firstReader);
+      // A pipe of 1 MiB holds one whole write. The default pipe is also correct, but it takes 16 round trips for each write.
+      try {
+        const libc = require("bun:ffi").dlopen(${JSON.stringify(libcPathForDlopen())}, {
+          fcntl: { args: ["i32", "i32", "i32"], returns: "i32" },
+        });
+        const F_SETPIPE_SZ = 1031;
+        libc.symbols.fcntl(writer, F_SETPIPE_SZ, size);
+      } catch {}
+      const destination = Bun.file(writer);
+      // The job waits for a pipe only if the file knows that it is not a regular file.
+      const isPipe = destination.size === Infinity;
+      // The IO thread's epoll set lists the pipe while a job waits for it.
+      const listed = new RegExp("^tfd:.* ino:" + fs.fstatSync(writer).ino.toString(16) + " ", "m");
+      const waitsForThePipe = () =>
+        fs.readdirSync("/proc/self/fdinfo").some(fd => {
+          try {
+            return listed.test(fs.readFileSync("/proc/self/fdinfo/" + fd, "utf8"));
+          } catch {
+            return false;
+          }
+        });
+      const source = new Uint8Array(size).fill(0x61);
+      const chunk = Buffer.alloc(size);
+      const writes = [];
+      for (let i = 0; i < ${count}; i++) {
+        writes.push(Bun.write(destination, source));
+        // The JS thread stays in this loop, so it cannot complete any write.
+        waitFor("write " + i + " to wait for the pipe", waitsForThePipe);
+        for (let received = 0; received < size; ) {
+          received += fs.readSync(reader, chunk, 0, size - received);
+        }
+        waitFor("write " + i, noJobRuns);
+      }
+      const wrote = await Promise.all(writes);
+      console.log(JSON.stringify({ isPipe, wrote: wrote.reduce((a, b) => a + b, 0) }));
+    `,
+      { isPipe: true, wrote: size * count },
+    );
   });
 });

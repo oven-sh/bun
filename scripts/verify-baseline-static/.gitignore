@@ -1,2 +1,4 @@
 /target
 /.artifacts
+# The repository ignores *.pdb.
+!/tests/fixtures/*.pdb

@@ -1,0 +1,44 @@
+name: verify-baseline-static
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/verify-baseline-static/src/**"
+      - "scripts/verify-baseline-static/tests/**"
+      - "scripts/verify-baseline-static/Cargo.toml"
+      - "scripts/verify-baseline-static/Cargo.lock"
+      - ".github/workflows/verify-baseline-static.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
+  # `targets` list. Keep in sync with `channel` in rust-toolchain.toml.
+  RUSTUP_TOOLCHAIN: nightly-2026-09-15
+
+jobs:
+  test:
+    # The scanner behind the Buildkite verify-baseline steps is a crate of its
+    # own, outside the workspace. Those steps only build it, so nothing else
+    # runs its tests.
+    name: cargo test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: cargo test
+        working-directory: scripts/verify-baseline-static
+        run: cargo test --locked

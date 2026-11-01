@@ -1784,3 +1784,21 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("Bun.write(file, slice of a file)", () => {
+  it("copies the window of the source, whatever the offset of the destination", async () => {
+    using dir = tempDir("bun-write-source-slice", { "src.txt": "hello world\n" });
+    const src = join(String(dir), "src.txt");
+    const out = join(String(dir), "out.txt");
+
+    expect(await Bun.write(out, Bun.file(src).slice(6))).toBe(6);
+    expect(await Bun.file(out).text()).toBe("world\n");
+
+    expect(await Bun.write(out, Bun.file(src).slice(3, 8))).toBe(5);
+    expect(await Bun.file(out).text()).toBe("lo wo");
+
+    // A destination window with an offset does not shorten the copy.
+    expect(await Bun.write(Bun.file(out).slice(2), Bun.file(src))).toBe(12);
+    expect(await Bun.file(out).text()).toBe("hello world\n");
+  });
+});

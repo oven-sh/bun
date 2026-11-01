@@ -6,16 +6,18 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
+use bun_sourcemap::ParsedSourceMap;
 use bun_uws as uws;
 
 use crate::bun_string_jsc;
-use crate::counters::Counters;
+use crate::counters::{Counters, Field as Counter};
 use crate::event_loop::EventLoop;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
-use crate::rare_data::RareData;
+use crate::rare_data::{CodeFrameRanges, CodeFrameSource, RareData};
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
@@ -7021,6 +7023,18 @@ impl VirtualMachine {
         self.remap_stack_frames_mutex.unlock();
     }
 
+    /// A copy of the code frame that an earlier print kept for this place.
+    fn kept_code_frame(
+        &self,
+        (map, source): &(Arc<ParsedSourceMap>, CodeFrameSource),
+        line: i32,
+    ) -> Option<(bun_core::Utf8Bytes<'static>, CodeFrameRanges)> {
+        let slots = &self.rare_data.as_deref()?.code_frame_slots;
+        let (text, ranges) = slots.get(map, *source, line)?;
+        let ranges = CodeFrameRanges::from_slice(ranges).ok()?;
+        Some((bun_core::Utf8Bytes::Owned(text.to_vec()), ranges))
+    }
+
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.
     /// `source_code` receives the text that `exception`'s source lines borrow.
     pub(crate) fn remap_zig_exception<'a>(
@@ -7184,6 +7198,10 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
+        // With the line, the place whose code frame can be kept.
+        let mut frame_key: Option<(Arc<ParsedSourceMap>, CodeFrameSource)> = None;
+        // The line ranges of the frame that an earlier print of that place kept.
+        let mut kept_ranges: Option<CodeFrameRanges> = None;
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
             let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
@@ -7220,22 +7238,38 @@ impl VirtualMachine {
                 } else {
                     None
                 };
-                let external_code = if enable_source_code_preview.get()
-                    && !already_remapped
-                    && lookup
-                        .source_map
-                        .as_deref()
-                        .is_some_and(|m| m.is_external())
+                let last_line = mapping.original.lines.zero_based().max(0);
+                // A frame that is already remapped has no map here.
+                if enable_source_code_preview.get()
+                    && let Some(map) = &lookup.source_map
                 {
-                    lookup.get_source_code(top_source_url.slice())
-                } else {
-                    None
+                    let source = if map.is_external() {
+                        CodeFrameSource::SourcesContent(mapping.source_index)
+                    } else {
+                        CodeFrameSource::ByPath
+                    };
+                    frame_key = Some((Arc::clone(map), source));
+                }
+                let external_code = match &frame_key {
+                    Some(key @ (_, CodeFrameSource::SourcesContent(_))) => {
+                        match self.kept_code_frame(key, last_line) {
+                            Some((text, ranges)) => {
+                                kept_ranges = Some(ranges);
+                                Some(text)
+                            }
+                            None => {
+                                self.counters.mark(Counter::CodeFrameSourceLoads);
+                                lookup.get_source_code(top_source_url.slice())
+                            }
+                        }
+                    }
+                    _ => None,
                 };
-                (mapping, display_url, external_code)
+                (mapping, display_url, external_code, last_line)
             })
         };
 
-        if let Some((mapping, display_url, external_code)) = resolved {
+        if let Some((mapping, display_url, external_code, last_line)) = resolved {
             if let Some(src) = display_url {
                 frames[top].source_url = src.into();
             }
@@ -7257,9 +7291,19 @@ impl VirtualMachine {
                     if !crate::compiled_program::runs_in_place() {
                         break 'code bun_core::Utf8Bytes::EMPTY;
                     }
+                    // Not kept. A compiled frame arrives remapped, so it has no key anyway.
+                    frame_key = None;
+                    self.counters.mark(Counter::CodeFrameSourceLoads);
                     let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), top_path.slice());
                     break 'code bun_core::Utf8Bytes::Owned(text.unwrap_or_default());
                 }
+                if let Some(key @ (_, CodeFrameSource::ByPath)) = &frame_key
+                    && let Some((text, ranges)) = self.kept_code_frame(key, last_line)
+                {
+                    kept_ranges = Some(ranges);
+                    break 'code text;
+                }
+                self.counters.mark(Counter::CodeFrameSourceLoads);
                 let mut log = bun_ast::Log::default();
                 let Ok(original_source) = bun_removable_features::call_removable_or!(
                     RuntimeTranspiler,
@@ -7283,7 +7327,8 @@ impl VirtualMachine {
             *source_code = code;
             let code: &'a [u8] = source_code.slice();
 
-            if enable_source_code_preview.get() && code.is_empty() {
+            // A kept frame can be empty (an empty first line). The fallback is not for it.
+            if enable_source_code_preview.get() && code.is_empty() && kept_ranges.is_none() {
                 exception.collect_source_lines(error_instance, global);
             }
 
@@ -7293,13 +7338,18 @@ impl VirtualMachine {
             exception.remapped = true;
             frames[top].remapped = true;
 
-            let last_line = frames[top].position.line.zero_based().max(0);
-            if let Some(lines_buf) = bun_core::strings::get_lines_in_text::<
-                { crate::zig_exception::SOURCE_LINES_COUNT },
-            >(code, last_line as u32)
-            {
-                let lines = lines_buf.as_slice();
-                const N: usize = crate::zig_exception::SOURCE_LINES_COUNT;
+            const N: usize = crate::zig_exception::SOURCE_LINES_COUNT;
+            // A kept frame and a fresh one go through the same fill below.
+            let is_kept = kept_ranges.is_some();
+            let ranges = kept_ranges.unwrap_or_else(|| {
+                bun_core::strings::index_of_line_ranges::<N>(code, last_line as u32)
+            });
+            if !ranges.is_empty() {
+                if !is_kept && let Some((map, source)) = &frame_key {
+                    self.rare_data()
+                        .code_frame_slots
+                        .put(map, *source, last_line, code, &ranges);
+                }
                 // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
                 let source_lines =
                     unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) };
@@ -7311,14 +7361,15 @@ impl VirtualMachine {
                 }
                 source_line_numbers.fill(0);
 
-                let take = lines.len().min(N);
                 let mut current_line_number = last_line;
-                for (i, line) in lines[..take].iter().enumerate() {
+                // The ranges are in text order. The lines start at the error's.
+                for (i, range) in ranges.iter().rev().enumerate() {
+                    let line = &code[range.start as usize..range.end as usize];
                     source_lines[i] = bun_core::StringOrView::from_bytes(line);
                     source_line_numbers[i] = current_line_number;
                     current_line_number -= 1;
                 }
-                exception.stack.source_lines_len = take as u8;
+                exception.stack.source_lines_len = ranges.len() as u8;
             }
         } else if enable_source_code_preview.get() {
             exception.collect_source_lines(error_instance, global);

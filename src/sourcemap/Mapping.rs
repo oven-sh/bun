@@ -341,8 +341,9 @@ impl Lookup {
     /// Only valid if `lookup.source_map.is_external()`
     /// This has the possibility of invoking a call to the filesystem.
     ///
-    /// This data is freed after printed on the assumption that printing
-    /// errors to the console are rare (this isnt used for error.stack)
+    /// This data is freed after printed (this isnt used for error.stack).
+    /// The error printer keeps the lines of the code frame that it cut from
+    /// it (`CodeFrameSlots` in bun_jsc).
     pub fn get_source_code(self, base_filename: &[u8]) -> Option<Utf8Bytes<'static>> {
         let bytes: Vec<u8> = 'bytes: {
             if let Some(code) = self.prefetched_source_code {

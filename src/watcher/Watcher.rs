@@ -148,8 +148,7 @@ pub struct Watcher {
 /// Context types passed to `Watcher::init` implement this trait.
 /// The default `on_watch_error` forwards to `on_error`.
 pub trait WatcherContext {
-    /// Whether an inotify watch of a directory also reports a write to a file in it, by name.
-    /// A watched file reports its own writes in any case.
+    /// Linux: whether a directory watch also reports a write to a file in it (`IN_MODIFY`).
     const WATCH_DIRECTORY_WRITES: bool = true;
 
     fn on_file_update(

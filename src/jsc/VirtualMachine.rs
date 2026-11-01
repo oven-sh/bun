@@ -5080,9 +5080,7 @@ impl VirtualMachine {
             unsafe { (hooks.end_hot_run_timers)(core::ptr::from_mut(self), cancel) };
         }
         self.hot_reload_counter += 1;
-        // The watcher takes the entry point off the watchlist when its directory reports another
-        // file under that name. Watch that file before the read: a write after the read then
-        // starts the next reload.
+        // A directory event can take the entry point off the watchlist: watch it before the read.
         self.add_main_to_watcher_if_needed();
         // reload_entry_point() stores into pending_internal_promise whenever it returns a promise.
         let main = self.main;

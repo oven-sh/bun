@@ -1107,10 +1107,7 @@ where
                                     }
                                 };
                                 if main_exists {
-                                    // The item can watch the file that had this name before,
-                                    // and `--hot` gets no directory event for a write to the
-                                    // new one. `VirtualMachine::reload` watches the path again
-                                    // before it reads the file.
+                                    // The item may be on the replaced file: `reload` adds it again.
                                     if !RELOAD_IMMEDIATELY {
                                         if let Some(entry_id) =
                                             hashes.iter().position(|hash| *hash == self.main.hash)
@@ -1191,15 +1188,13 @@ where
                                                 break 'brk listed.as_bytes();
                                             }
                                         }
-                                        // A listing that the resolver read again has no path
-                                        // for a file until the resolver resolves that file.
-                                        // The watchlist has the file under this path. A write
-                                        // alone does not put another file under the name.
+                                        // A write alone puts no other file under the name.
                                         if !event.op.intersects(
                                             WatchOp::CREATE | WatchOp::MOVE_TO | WatchOp::DELETE,
                                         ) {
                                             continue 'names;
                                         }
+                                        // A re-read listing has no paths. The watchlist has them.
                                         let folder = strings::trim_right(file_path, &[SEP]);
                                         let len = folder.len() + 1 + changed_name.len();
                                         if len > _on_file_update_path_buf.len() {
@@ -1288,9 +1283,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_watcher::WatcherCon
 where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
 {
-    /// The directory arm of `on_file_update` takes a file that a directory event names off the
-    /// watchlist, because the name can have another inode now. A write leaves the inode in
-    /// place, and a reload in this process (`--hot`) may not import the file again.
+    /// The directory arm unwatches each file an event names, and `--hot` may not import it again.
     const WATCH_DIRECTORY_WRITES: bool = RELOAD_IMMEDIATELY;
 
     fn on_file_update(

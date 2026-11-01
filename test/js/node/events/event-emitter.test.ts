@@ -8,6 +8,7 @@ import { join } from "path";
 // our transpiler transform changes this to a var with import.meta.require
 import EventEmitter, {
   captureRejectionSymbol,
+  errorMonitor,
   getEventListeners,
   getMaxListeners,
   listenerCount,
@@ -756,6 +757,42 @@ describe("EventEmitter error handling", () => {
     }).toThrow("Hello");
 
     expect(handled).toBe(true);
+  });
+
+  test("errorMonitor is not in the global symbol registry", () => {
+    expect({
+      namedExport: errorMonitor === EventEmitter.errorMonitor,
+      sameAsRegistered: errorMonitor === Symbol.for("events.errorMonitor"),
+      keyFor: Symbol.keyFor(errorMonitor),
+      description: errorMonitor.description,
+    }).toEqual({
+      namedExport: true,
+      sameAsRegistered: false,
+      keyFor: undefined,
+      description: "events.errorMonitor",
+    });
+  });
+
+  test("a listener under Symbol.for('events.errorMonitor') is not an error monitor", () => {
+    const registered = Symbol.for("events.errorMonitor");
+    const myEmitter = new EventEmitter();
+
+    const calls: unknown[][] = [];
+    myEmitter.on(registered, (...args) => calls.push(args));
+
+    expect(() => {
+      myEmitter.emit("error", new Error("boom"));
+    }).toThrow("boom");
+    expect(calls).toEqual([]);
+
+    expect(myEmitter.emit(registered, "direct")).toBe(true);
+    expect(calls).toEqual([["direct"]]);
+
+    myEmitter.on(errorMonitor, () => {});
+    expect({
+      monitors: myEmitter.listenerCount(errorMonitor),
+      registered: myEmitter.listenerCount(registered),
+    }).toEqual({ monitors: 1, registered: 1 });
   });
 });
 

@@ -90,7 +90,7 @@ pub(crate) fn load_package_for_link(
     let log = manager.log_mut();
     package.parse::<()>(
         &mut lockfile,
-        manager,
+        &mut manager.package_json_context(),
         log,
         &package_json_source,
         &mut (),

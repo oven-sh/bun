@@ -423,14 +423,7 @@ fn __bun_resolver_parse_dependency(
     sliced: &SlicedString,
     log: Option<&mut bun_ast::Log>,
 ) -> Option<hooks::DependencyVersion> {
-    dependency::parse(
-        name,
-        name_hash,
-        version,
-        sliced,
-        log,
-        None::<&mut PackageManager>,
-    )
+    dependency::parse(name, name_hash, version, sliced, log, None)
 }
 
 // ─── Lazy factory (resolver → install link-time hook) ─────────────────────

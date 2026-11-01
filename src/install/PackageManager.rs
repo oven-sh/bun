@@ -199,6 +199,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 }
 
 use crate::lockfile_real::package as Package;
+use crate::migration;
 use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::{
     Entry as FolderResolutionEntry, FolderResolution, Key as FolderResolutionKey,
@@ -1038,24 +1039,31 @@ impl PackageManager {
         self.root_package_id.id = None;
     }
 
-    /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
-    /// a separate argument while the receiver borrows `self.lockfile`, which
-    /// is a self-referential split borrow. Encapsulated here so callers stay
-    /// in safe code.
+    /// For parsing a package.json into a lockfile other than `self.lockfile`.
+    pub fn package_json_context(&mut self) -> lockfile::package::PackageJsonContext<'_> {
+        lockfile::package::package_json_context!(self, Some(&self.lockfile))
+    }
+
     pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(&mut self) -> lockfile::LoadResult {
+        let log = self.log_mut();
+        let migrate = ATTEMPT_OTHER.then_some(migration::Backfill::Download);
+        self.load_lockfile_from_dir(Fd::cwd(), log, migrate)
+    }
+
+    /// `migrate`: without a bun.lock or bun.lockb, migrates another package manager's lockfile.
+    pub fn load_lockfile_from_dir(
+        &mut self,
+        dir: Fd,
+        log: &mut bun_ast::Log,
+        migrate: Option<migration::Backfill>,
+    ) -> lockfile::LoadResult {
         self.clear_cached_items_depending_on_lockfile_buffer();
-        let pm: *mut PackageManager = self;
-        // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
-        // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
-        // never alias overlapping bytes. Both raw pointers below are derived
-        // from `self`, so the caller's borrow stays on the Stacked-Borrows stack.
-        // FIXME: a migration still reaches `manager.lockfile` while `*lf` is borrowed.
-        // `Package::parse_with_json` (yarn v1) reads it, and `populate_manifest_cache`
-        // (npm, pnpm, yarn) reads it and stores to `scratch.dependency_list_queue`.
-        unsafe {
-            let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
-            let log: *mut bun_ast::Log = (*pm).log;
-            (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
+        let result = self.lockfile.load_from_dir(dir, Some(&self.options), log);
+        match (result, migrate) {
+            (lockfile::LoadResult::NotFound, Some(backfill)) => {
+                migration::load_other_lockfile(self, dir, log, backfill)
+            }
+            (result, _) => result,
         }
     }
 
@@ -3188,10 +3196,6 @@ fn init_with_runtime_once(
     // path doesn't open()/read() a lockfile that isn't there.
     // `load_from_dir` fills the lockfile in place, so `Ok` keeps the loaded
     // value as-is.
-    // `Lockfile::load_from_dir(manager, …)` is a
-    // self-aliasing receiver+argument pair Rust forbids. Split-borrow by
-    // temporarily moving the boxed lockfile out so the `&mut PackageManager`
-    // passed in does not alias the `&mut Lockfile` receiver.
     manager.lockfile.init_empty();
     if let Ok(fs::EntriesOption::Entries(entries)) =
         FileSystem::instance().read_directory(project_dir, 0, false)
@@ -3202,12 +3206,10 @@ fn init_with_runtime_once(
         }
         && let Ok(dir) = bun_sys::Dir::open(project_dir)
     {
-        let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
-        match lockfile.load_from_dir::<false>(dir.fd(), Some(&mut *manager), log) {
+        match (manager.lockfile).load_from_dir(dir.fd(), Some(&manager.options), log) {
             lockfile::LoadResult::Ok(_) => {}
-            _ => lockfile.init_empty(),
+            _ => manager.lockfile.init_empty(),
         }
-        manager.lockfile = lockfile;
         // Workspace paths are relative to `root_dir`. A lockfile records them relative to its own
         // directory, and `parse_with_json` makes them relative to the working directory.
         if manager.lockfile.packages.len() > 0 {
@@ -3265,11 +3267,10 @@ fn parse_runtime_root(
         (entry.source.clone(), entry.root)
     };
     let mut root = lockfile::Package::default();
-    let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
     let result = root
         .parse_with_json(
-            &mut lockfile,
-            manager,
+            &mut manager.lockfile,
+            &mut lockfile::package::package_json_context!(manager),
             &mut parse_log,
             &source,
             json,
@@ -3283,10 +3284,9 @@ fn parse_runtime_root(
             },
         )
         .and_then(|()| {
-            lockfile.append_package(&root)?;
+            manager.lockfile.append_package(&root)?;
             Ok(())
         });
-    manager.lockfile = lockfile;
     if parse_log.errors > 0 {
         parse_log.append_to(log);
     }

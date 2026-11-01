@@ -832,7 +832,7 @@ fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Re
     let mut resolver: () = ();
     if let Err(err) = root.parse_with_json(
         &mut lockfile,
-        manager,
+        &mut manager.package_json_context(),
         log,
         &source,
         json,

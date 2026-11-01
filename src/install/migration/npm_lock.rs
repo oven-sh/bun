@@ -8,7 +8,7 @@ use bun_paths::resolve_path;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::{Fd, File, O};
 
-use super::{package_name_from_path, pkg_flag_is_true, string_hash};
+use super::{Backfill, package_name_from_path, pkg_flag_is_true, string_hash};
 use crate::Error;
 use crate::bin::{self, Bin};
 use crate::bun_json;
@@ -24,6 +24,7 @@ use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
 use crate::npm as Npm;
 use crate::npm::NegatableExt as _;
+use crate::package_manager_real::Options;
 use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::resolution::{self, Resolution, TaggedValue as ResTagged};
 use crate::versioned_url::VersionedURLType;
@@ -142,7 +143,7 @@ struct FolderInDependent<'k> {
 
 struct Migrator<'a> {
     this: &'a mut Lockfile,
-    manager: &'a mut PackageManager,
+    options: &'a Options,
     entries: &'a [E::PropertyJSON],
     workspace_map: Option<&'a WorkspaceMap>,
     index: StringHashMap<u32>,
@@ -167,15 +168,19 @@ struct Migrator<'a> {
 
 /// Returns the packages that still have no integrity. An empty URL does not find them all, because
 /// an `unverifiable` entry that was merged into a bundled copy's package has that copy's URL.
-fn unverified_packages(migrator: &Migrator<'_>) -> Vec<PackageID> {
-    let packages = migrator.this.packages.slice();
+fn unverified_packages(
+    this: &Lockfile,
+    unverifiable: &[u32],
+    entry_package_ids: &[PackageID],
+) -> Vec<PackageID> {
+    let packages = this.packages.slice();
     let (resolutions, metas) = (packages.items_resolution(), packages.items_meta());
     let without_url = (0..resolutions.len() as PackageID).filter(|&id| {
         let res = &resolutions[id as usize];
         res.tag == resolution::Tag::Npm && res.npm().url.is_empty()
     });
-    let mut ids: Vec<PackageID> = (migrator.unverifiable.iter())
-        .map(|&j| migrator.entry_package_ids[j as usize])
+    let mut ids: Vec<PackageID> = (unverifiable.iter())
+        .map(|&j| entry_package_ids[j as usize])
         .filter(|&id| id != INVALID_PACKAGE_ID)
         .chain(without_url)
         .filter(|&id| !metas[id as usize].integrity.tag.is_supported())
@@ -186,7 +191,6 @@ fn unverified_packages(migrator: &Migrator<'_>) -> Vec<PackageID> {
 }
 
 pub(super) fn migrate_packages(
-    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
@@ -197,6 +201,7 @@ pub(super) fn migrate_packages(
     debug_assert!(!packages_properties.is_empty() && packages_properties[0].key.slice().is_empty());
 
     let entry_count = packages_properties.len();
+    let this = &mut *manager.lockfile;
     this.packages.ensure_total_capacity(entry_count)?;
     this.package_index.reserve(entry_count);
 
@@ -207,7 +212,7 @@ pub(super) fn migrate_packages(
     let verbose = manager.options.log_level.is_verbose();
     let mut migrator = Migrator {
         this,
-        manager,
+        options: &manager.options,
         entries: packages_properties,
         workspace_map,
         index,
@@ -244,18 +249,26 @@ pub(super) fn migrate_packages(
 
     migrator.warn_unreachable();
 
+    let Migrator {
+        unverifiable,
+        entry_package_ids,
+        patched,
+        ..
+    } = migrator;
+
     // These packages now come from the configured registry, so use the integrity in its manifests.
-    let unverified = unverified_packages(&migrator);
+    let unverified = unverified_packages(&manager.lockfile, &unverifiable, &entry_package_ids);
     if !unverified.is_empty() {
-        (migrator.this).fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
-            migrator.manager,
+        manager.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
             false, // update_os_cpu
             true,  // fill_integrity
             Some(&unverified),
+            Backfill::Download,
         )?;
-        if let Some(&refused) = unverified_packages(&migrator).first() {
-            let entry = (migrator.unverifiable.iter())
-                .find(|&&j| migrator.entry_package_ids[j as usize] == refused);
+        if let Some(&refused) =
+            unverified_packages(&manager.lockfile, &unverifiable, &entry_package_ids).first()
+        {
+            let entry = (unverifiable.iter()).find(|&&j| entry_package_ids[j as usize] == refused);
             log.add_error_fmt(
                 Some(source),
                 entry.map_or(bun_ast::Loc::EMPTY, |&j| {
@@ -269,7 +282,7 @@ pub(super) fn migrate_packages(
         }
     }
 
-    if let Some((&first, more)) = migrator.unverifiable.split_first() {
+    if let Some((&first, more)) = unverifiable.split_first() {
         let entry = &packages_properties[first as usize];
         let resolved = entry_object(entry).get(b"resolved");
         let url = resolved.and_then(|url| url.as_str()).unwrap_or_default();
@@ -288,10 +301,10 @@ pub(super) fn migrate_packages(
         );
     }
 
-    if !migrator.patched.is_empty() {
+    if !patched.is_empty() {
         bun_core::warn!(
             "skipping npm patches for {} from {}",
-            migrator.patched,
+            patched,
             lockfile_name,
         );
         bun_core::note!("recreate them with bun patch \\<pkg\\>");
@@ -299,7 +312,7 @@ pub(super) fn migrate_packages(
 
     #[cfg(debug_assertions)]
     {
-        let this = &*migrator.this;
+        let this = &*manager.lockfile;
         debug_assert_eq!(
             this.buffers.dependencies.len(),
             this.buffers.resolutions.len()
@@ -446,7 +459,7 @@ impl<'a> Migrator<'a> {
         if res.tag == resolution::Tag::Npm {
             let buf = self.this.buffers.string_bytes.as_slice();
             let url = res.npm().url.slice(buf);
-            let configured_registry = self.manager.scope_for_package_name(name).url.href();
+            let configured_registry = self.options.scope_for_package_name(name).url.href();
             if !lockfile::bun_lock::url_is_under_registry(url, configured_registry)
                 && !lockfile::bun_lock::url_is_under_registry(
                     url,
@@ -656,7 +669,7 @@ impl<'a> Migrator<'a> {
             name
         };
         let href: &[u8] =
-            strings::without_trailing_slash(self.manager.scope_for_package_name(name).url.href());
+            strings::without_trailing_slash(self.options.scope_for_package_name(name).url.href());
         let url = &mut self.url;
         url.clear();
         url.reserve(
@@ -871,7 +884,7 @@ impl<'a> Migrator<'a> {
                     None if is_local
                         && behavior.is_peer()
                         && !behavior.is_optional_peer()
-                        && !self.manager.options.enable.frozen_lockfile() =>
+                        && !self.options.enable.frozen_lockfile() =>
                     {
                         continue;
                     }
@@ -1143,7 +1156,6 @@ impl<'a> Migrator<'a> {
 }
 
 pub(super) fn apply_root_overrides(
-    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     dir: Fd,
@@ -1182,5 +1194,5 @@ pub(super) fn apply_root_overrides(
     };
     let empty = WorkspaceMap::init();
     let names = workspace_map.unwrap_or(&empty);
-    super::parse_root_overrides(this, manager, log, &source, parsed.root, names)
+    super::parse_root_overrides(manager, log, &source, parsed.root, names)
 }

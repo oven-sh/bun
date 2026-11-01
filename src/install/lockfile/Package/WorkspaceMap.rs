@@ -14,6 +14,7 @@ use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
 use crate::package_manager::workspace_selection::NegatedWorkspaces;
+use crate::package_manager_real::{Options, Subcommand};
 
 bun_output::declare_scope!(Lockfile, hidden);
 
@@ -175,6 +176,25 @@ pub(crate) enum MissingWorkspace<'a> {
     /// Like `Skip`, and also skips a workspace whose package.json is empty. `bun install` exits on
     /// an empty package.json, but runtime auto-install must let the running program continue.
     SkipEmptyToo,
+}
+
+impl<'a> MissingWorkspace<'a> {
+    /// `loaded` is the manager's lockfile, or `None` while that is borrowed mutably.
+    pub(crate) fn new(
+        options: &Options,
+        subcommand: Subcommand,
+        loaded: Option<&'a Lockfile>,
+    ) -> Self {
+        if options.runtime_auto_install {
+            return Self::SkipEmptyToo;
+        }
+        match loaded {
+            Some(loaded) if pruned_workspaces::keeps_missing_workspaces(options, subcommand) => {
+                Self::SkipIfInLockfile(loaded)
+            }
+            _ => Self::Error,
+        }
+    }
 }
 
 /// Returns `None` if there's no usable `"name"`. Nothing could link to or resolve such a workspace,

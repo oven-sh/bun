@@ -67,6 +67,8 @@ const seenCodeEntries = [
   "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled",
   "native:NewCppFunction:NodeVM.cpp:jsFunctionSetNewContextsHaveGC",
   "native:NewCppFunction:Worker.cpp:jsFunctionPostMessage",
+  "native:NewCppFunction:node/NodeTimers.cpp:functionClearTimeout",
+  "native:NewCppFunction:node/NodeTimers.cpp:functionSetTimeout",
   "native:Bindgen:napi_body.bind.ts:threadsafeFunctionLiveCount",
   "process.binding",
 ];

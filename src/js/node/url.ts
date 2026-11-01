@@ -28,6 +28,20 @@
 const { domainToASCII, domainToUnicode, idnaToASCII, isURL, urlToHttpOptions } = require("internal/url");
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectKeys = Object.keys;
+
+// url.parse(input, true) returns a null-prototype object holding only the
+// query keys, like Node's querystring.parse(). URLSearchParams#toJSON() tags
+// its result with Symbol.toStringTag, so its keys are copied instead of its
+// object being reused.
+function queryObjectFromSearchParams(search) {
+  const parsed = new URLSearchParams(search).toJSON();
+  const query = { __proto__: null };
+  for (const key of ObjectKeys(parsed)) {
+    query[key] = parsed[key];
+  }
+  return query;
+}
 
 declare global {
   namespace $Node {
@@ -245,7 +259,7 @@ Url.prototype.parse = function parse(
       if (simplePath[2]) {
         this.search = simplePath[2];
         if (parseQueryString) {
-          this.query = ObjectSetPrototypeOf(new URLSearchParams(this.search.slice(1)).toJSON(), null);
+          this.query = queryObjectFromSearchParams(this.search.slice(1));
         } else {
           this.query = this.search.slice(1);
         }
@@ -461,7 +475,7 @@ Url.prototype.parse = function parse(
     this.query = rest.substring(qm + 1);
     if (parseQueryString) {
       const query = this.query;
-      this.query = ObjectSetPrototypeOf(new URLSearchParams(query).toJSON(), null);
+      this.query = queryObjectFromSearchParams(query);
     }
     rest = rest.slice(0, qm);
   } else if (parseQueryString) {

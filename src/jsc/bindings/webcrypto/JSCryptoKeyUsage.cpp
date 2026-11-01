@@ -71,7 +71,12 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 
 template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    auto stringValue = value.toWTFString(&lexicalGlobalObject);
+    return parseEnumerationFromString<CryptoKeyUsage>(value.toWTFString(&lexicalGlobalObject));
+}
+
+// NEVER_INLINE: inlined into its two callers, this left the table scan as an out-of-line std::__find_if.
+template<> NEVER_INLINE std::optional<CryptoKeyUsage> parseEnumerationFromString<CryptoKeyUsage>(const String& stringValue)
+{
     static constexpr SortedArrayMap enumerationMapping { std::to_array<std::pair<ComparableASCIILiteral, CryptoKeyUsage>>({
         { "decapsulateBits"_s, CryptoKeyUsage::DecapsulateBits },
         { "decapsulateKey"_s, CryptoKeyUsage::DecapsulateKey },

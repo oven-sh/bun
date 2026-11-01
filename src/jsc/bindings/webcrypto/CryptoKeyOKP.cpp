@@ -219,7 +219,7 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
         break;
     }
 
-    result.key_ops = usages();
+    result.key_ops = toJwkKeyOps(usagesBitmap());
     result.ext = extractable();
 
     switch (type()) {

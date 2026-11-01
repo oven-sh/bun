@@ -113,7 +113,7 @@ inline void importAkpKey(CryptoAlgorithmIdentifier identifier, const AkpAlgorith
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
-        if (hasDuplicateJwkKeyOps(jwk.key_ops)) {
+        if (hasDuplicateJwkKeyOps(jwk)) {
             exceptionCallback(DataError, "Duplicate key operation"_s);
             return;
         }

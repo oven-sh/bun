@@ -28,7 +28,7 @@
     JSGenerateToJSObject,
 ] dictionary RsaOtherPrimesInfo {
     // The following fields are defined in Section 6.3.2.7 of JSON Web Algorithms
-    required DOMString r;
-    required DOMString d;
-    required DOMString t;
+    DOMString r;
+    DOMString d;
+    DOMString t;
 };

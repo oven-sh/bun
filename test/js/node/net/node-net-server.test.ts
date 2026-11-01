@@ -775,3 +775,28 @@ it("server.unref() on a pipe/unix-socket listener lets the process exit", async 
   expect(exitCode === 0 ? "" : stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/15560
+// node resolves "localhost" once and binds that one address, so a second
+// listen on the same port reports EADDRINUSE instead of binding the other
+// loopback family.
+it('listen(port, "localhost") reports EADDRINUSE when the port is already held on localhost', async () => {
+  const a = createServer();
+  const b = createServer();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      a.on("error", reject);
+      a.listen(0, "localhost", resolve);
+    });
+    const { port } = a.address() as AddressInfo;
+
+    const err = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+      b.on("error", resolve);
+      b.listen(port, "localhost", () => reject(new Error(`second listen bound ${JSON.stringify(b.address())}`)));
+    });
+    expect(err.code).toBe("EADDRINUSE");
+  } finally {
+    b.close();
+    a.close();
+  }
+});

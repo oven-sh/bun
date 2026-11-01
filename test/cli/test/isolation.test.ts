@@ -396,8 +396,7 @@ describe.concurrent("bun test --isolate", () => {
   // Only what the switch changes is transpiled again: a module with a `sourceMappingURL` comment, when the switch
   // asks another thing of it than it did for the file before.
   test("with --isolate, a file's process.setSourceMapsEnabled() keeps the cached modules that have no source map of their own", async () => {
-    const testFile = (turnsTheSwitchOn: boolean, frame: string) =>
-      `
+    const testFile = (turnsTheSwitchOn: boolean, want: string) => `
       import { test, expect } from "bun:test";
       import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
       import { join } from "node:path";
@@ -408,9 +407,9 @@ describe.concurrent("bun test --isolate", () => {
         const before = { "plain.js": cached("plain.js"), "lib.js": cached("lib.js") };
         const { plain } = await import("./plain.js");
         const { boom } = await import("./lib.js");
-        expect({ before, plain: plain(), frame: firstFrame(boom) }).toEqual(${"JSON.parse(process.env.WANT)"});
+        expect({ before, plain: plain(), frame: firstFrame(boom) }).toEqual(${want});
       });
-    `.replace("JSON.parse(process.env.WANT)", frame);
+    `;
     const want = (cached: { "plain.js": boolean; "lib.js": boolean }, frame: string) =>
       JSON.stringify({ before: cached, plain: "plain", frame });
     using dir = tempDir("isolate-source-maps-keeps-cache", {

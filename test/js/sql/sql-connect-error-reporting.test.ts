@@ -157,20 +157,25 @@ describe.each([
   });
 
   test("an assignment before the first read goes where an assignment to a data property goes", async () => {
-    const [proxied, inherited, held] = await Promise.all([refused(), refused(), refused()]);
+    const [direct, proxied, inherited, held] = await Promise.all([refused(), refused(), refused(), refused()]);
+    direct.stack = "assigned";
     new Proxy(proxied, {}).stack = "assigned";
     const child = Object.create(inherited);
     child.stack = "assigned";
     const frozenReceiver = Object.freeze({});
+    // The property of the error keeps its attributes. A new property of another object is enumerable.
+    const assigned = { value: "assigned", writable: true, enumerable: false, configurable: true };
     expect({
-      proxied: proxied.stack,
+      direct: Object.getOwnPropertyDescriptor(direct, "stack"),
+      proxied: Object.getOwnPropertyDescriptor(proxied, "stack"),
       child: Object.getOwnPropertyDescriptor(child, "stack"),
       inherited: inherited.stack,
       frozenReceiver: [Reflect.set(held, "stack", "assigned", frozenReceiver), Reflect.ownKeys(frozenReceiver)],
       held: held.stack,
     }).toEqual({
-      proxied: "assigned",
-      child: { value: "assigned", writable: true, enumerable: true, configurable: true },
+      direct: assigned,
+      proxied: assigned,
+      child: { ...assigned, enumerable: true },
       inherited: stack,
       frozenReceiver: [false, []],
       held: stack,

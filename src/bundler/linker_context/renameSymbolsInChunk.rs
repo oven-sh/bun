@@ -322,6 +322,12 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             r.pin_top_level_symbol(ref_, name);
         }
     }
+    // A copy has a name there when the entry point's file, and so its row, is in another chunk.
+    for &copy in entry_point_cjs_export_copies {
+        if let Some(name) = c.cross_chunk_names.get(&copy) {
+            r.pin_top_level_symbol(copy, name);
+        }
+    }
 
     // Renamed in a second pass, once every top-level symbol in the chunk is
     // in the root scope. Interleaving the passes let a nested local shadow a

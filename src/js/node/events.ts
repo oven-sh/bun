@@ -301,25 +301,8 @@ EventEmitterPrototype.getMaxListeners = function getMaxListeners(this: $Node.Eve
 };
 Object.defineProperty(EventEmitterPrototype.getMaxListeners, "name", { value: "getMaxListeners" });
 
-function emitError(emitter: $Node.EventEmitter, args: unknown[]) {
-  var { _events: events } = emitter;
-
-  if (events !== undefined) {
-    const errorMonitor = events[kErrorMonitor];
-    if (errorMonitor !== undefined) {
-      applyHandlers(errorMonitor, emitter, args);
-    }
-
-    const handlers = events.error;
-    if (handlers !== undefined) {
-      applyHandlers(handlers, emitter, args);
-      return true;
-    }
-  }
-
-  let er: unknown;
-  if (args.length > 0) er = args[0];
-
+// What emit("error") throws when nothing listens. In a stack trace it is emitError().
+const unhandledError = function emitError(er: unknown): never {
   if (Error.isError(er)) {
     throw er; // Unhandled 'error' event
   }
@@ -336,20 +319,66 @@ function emitError(emitter: $Node.EventEmitter, args: unknown[]) {
   const err = $ERR_UNHANDLED_ERROR(stringifiedEr) as Error & { context: unknown };
   err.context = er;
   throw err; // Unhandled 'error' event
-}
+};
 
-// A listener list is a bare function for a single listener, else an array
-// (like node). Arrays are never mutated in place - mutators install a copy -
-// so a stored list can be iterated with no defensive clone.
-function applyHandlers(handlers: $Node.Listener | $Node.Listener[], emitter: $Node.EventEmitter, args: unknown[]) {
-  if (typeof handlers === "function") {
-    handlers.$apply(emitter, args);
-    return;
+// Under the top tier of the JIT, emit() applies its `args` to this function, so that the array stays out of the heap. In a stack trace it is emit().
+const emitErrorApplied = IS_COMPILED_AHEAD_OF_TIME
+  ? undefined
+  : function emit(this: $Node.EventEmitter, er?: unknown) {
+      const { _events: events } = this;
+      if (events !== undefined) {
+        const errorMonitor = events[kErrorMonitor];
+        if (errorMonitor !== undefined) {
+          // `arguments` is applied and never handed on: handed on, it is built on every emit("error").
+          if (typeof errorMonitor === "function") {
+            errorMonitor.$apply(this, arguments);
+          } else {
+            for (let i = 0, { length } = errorMonitor; i < length; i++) errorMonitor[i].$apply(this, arguments);
+          }
+        }
+        const handlers = events.error;
+        if (handlers !== undefined) {
+          // One argument is the rule: it is declared, so a listener takes it in a plain call, and a frame that the JIT inlines has room for it.
+          const one = $argumentCount() === 1;
+          if (typeof handlers === "function") {
+            if (one) handlers.$call(this, er);
+            else handlers.$apply(this, arguments);
+          } else {
+            for (let i = 0, { length } = handlers; i < length; i++) {
+              if (one) handlers[i].$call(this, er);
+              else handlers[i].$apply(this, arguments);
+            }
+          }
+          return true;
+        }
+      }
+      return unhandledError(er);
+    };
+
+// Compiled ahead of time, emit("error") takes the array: a call in tail position that applies it moves it to the heap there. In a stack trace it is emit() too.
+const emitErrorAheadOfTime = function emit(emitter: $Node.EventEmitter, args: unknown[]) {
+  const { _events: events } = emitter;
+  if (events !== undefined) {
+    const errorMonitor = events[kErrorMonitor];
+    if (errorMonitor !== undefined) {
+      if (typeof errorMonitor === "function") {
+        errorMonitor.$apply(emitter, args);
+      } else {
+        for (let i = 0, { length } = errorMonitor; i < length; i++) errorMonitor[i].$apply(emitter, args);
+      }
+    }
+    const handlers = events.error;
+    if (handlers !== undefined) {
+      if (typeof handlers === "function") {
+        handlers.$apply(emitter, args);
+      } else {
+        for (let i = 0, { length } = handlers; i < length; i++) handlers[i].$apply(emitter, args);
+      }
+      return true;
+    }
   }
-  for (let i = 0, { length } = handlers; i < length; i++) {
-    handlers[i].$apply(emitter, args);
-  }
-}
+  return unhandledError(args.length > 0 ? args[0] : undefined);
+};
 
 function addCatch(emitter: $Node.EventEmitter, promise: Promise<unknown>, type: $Node.EventName, args: unknown[]) {
   promise.then(undefined, function (err) {
@@ -384,7 +413,7 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
 
   if (type === "error") {
     ("unlikely");
-    return emitError(this, args);
+    return IS_COMPILED_AHEAD_OF_TIME ? emitErrorAheadOfTime(this, args) : emitErrorApplied!.$apply(this, args);
   }
   const { _events: events } = this;
   if (events === undefined) return false;
@@ -474,7 +503,7 @@ EventEmitterPrototype.emit = emit;
 const emitWithRejectionCapture = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...args: unknown[]) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
   if (type === "error") {
-    return emitError(this, args);
+    return IS_COMPILED_AHEAD_OF_TIME ? emitErrorAheadOfTime(this, args) : emitErrorApplied!.$apply(this, args);
   }
   var { _events: events } = this;
   if (events === undefined) return false;

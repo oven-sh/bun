@@ -5645,7 +5645,6 @@ impl VirtualMachine {
                     fresh_generation = Some(unsafe { resolver.enter_fresh_generation() });
                     resolver.drop_stale_dir_info_chain(importer_dir);
                     // The directory a path specifier names: its `package.json` can have appeared.
-                    // The join collapses `.` and `..`, as the lookup does before it reads.
                     let names_a_path = bun_paths::is_absolute(normalized_specifier)
                         || (bun_paths::is_absolute(importer_dir)
                             && (normalized_specifier.starts_with(b"./")

@@ -2435,7 +2435,7 @@ declare module "bun" {
    *
    * @category Security
    */
-  function escapeHTML(input: string | object | number | boolean): string;
+  function escapeHTML(input: string | object | number | boolean | bigint | null | undefined): string;
 
   /**
    * Convert a filesystem path to a file:// URL.

@@ -1646,6 +1646,26 @@ static bool getOwnEnumerablePropertySlot(JSC::JSGlobalObject* globalObject, JSOb
     return object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot) && !(slot.attributes() & PropertyAttribute::DontEnum);
 }
 
+struct OwnersOfErrors {
+    bool left;
+    bool right;
+};
+
+// Which of two errors own `errors` as an enumerable property. Empty when a lookup throws.
+static std::optional<OwnersOfErrors> ownersOfEnumerableErrors(JSC::JSGlobalObject* globalObject, JSObject* left, JSObject* right)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const PropertyName errors(vm.propertyNames->errors);
+    PropertySlot leftSlot(left, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool leftOwns = getOwnEnumerablePropertySlot(globalObject, left, errors, leftSlot);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    PropertySlot rightSlot(right, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool rightOwns = getOwnEnumerablePropertySlot(globalObject, right, errors, rightSlot);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return OwnersOfErrors { leftOwns, rightOwns };
+}
+
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
 // and take the mode at runtime; only the dispatch and the plain-object tail in
 // `specialObjectsDequal` below stay specialised per mode.
@@ -1843,6 +1863,8 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
+            // Set once the rule below has compared `errors`. After that rule, node looks at `errors` only as an own enumerable key of both errors: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L470-L521
+            JSValue comparedRightErrors;
             if (mode.checkPrototypes || stack.nodeLegacy) {
                 // isEnumerableOrIdentical(val1, val2, 'errors'): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L232-L236
                 const PropertyName errors(vm.propertyNames->errors);
@@ -1859,6 +1881,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                     if (!errorsEqual) {
                         return false;
                     }
+                    comparedRightErrors = rightErrors;
                 }
             }
 
@@ -1909,6 +1932,17 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 if (i1 == vm.propertyNames->stack) continue;
                 PropertyName propertyName1 = PropertyName(i1);
 
+                if (comparedRightErrors && i1 == vm.propertyNames->errors) {
+                    auto owners = ownersOfEnumerableErrors(globalObject, left, right);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (owners->left != owners->right) {
+                        return false;
+                    }
+                    if (!owners->left) {
+                        continue;
+                    }
+                }
+
                 JSValue prop1 = left->get(globalObject, propertyName1);
                 RETURN_IF_EXCEPTION(scope, {});
                 ASSERT(prop1);
@@ -1950,6 +1984,21 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 Identifier i2 = a2[i];
                 if (i2 == vm.propertyNames->stack) continue;
                 PropertyName propertyName2 = PropertyName(i2);
+
+                if (comparedRightErrors && i2 == vm.propertyNames->errors) {
+                    auto owners = ownersOfEnumerableErrors(globalObject, left, right);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (owners->left != owners->right) {
+                        return false;
+                    }
+                    if (!owners->right) {
+                        // An inherited `errors`. The rule has read it.
+                        if (!comparedRightErrors.isUndefined()) {
+                            return false;
+                        }
+                        continue;
+                    }
+                }
 
                 JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
                 RETURN_IF_EXCEPTION(scope, {});

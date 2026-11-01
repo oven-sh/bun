@@ -889,28 +889,26 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
-  // Legacy deepEqual walks the enumerable properties of an Error as Bun.deepEquals does: a hidden
-  // or inherited property can match an enumerable one. Node wants each key own and enumerable on both sides.
   {
     name: "enumerable errors and equal hidden errors",
     a: () => withErrors(new Error("x"), [1]),
     b: () => withHiddenProperty(new Error("x"), "errors", [1]),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
-  },
-  {
-    name: "hidden errors with enumerable foo, and enumerable errors with hidden foo",
-    a: () => Object.assign(withHiddenProperty(new Error("x"), "errors", [1]), { foo: 1 }),
-    b: () => withHiddenProperty(withErrors(new Error("x"), [2]), "foo", 1),
-    strict: false,
-    loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "enumerable errors with hidden foo, and hidden errors with enumerable foo",
     a: () => withHiddenProperty(withErrors(new Error("x"), [1]), "foo", 1),
     b: () => Object.assign(withHiddenProperty(new Error("x"), "errors", [1]), { foo: 1 }),
+    strict: false,
+    loose: false,
+  },
+  // Legacy deepEqual walks the other enumerable properties of an Error as Bun.deepEquals does: a hidden
+  // or inherited property can match an enumerable one. Node wants each key own and enumerable on both sides.
+  {
+    name: "hidden errors with enumerable foo, and enumerable errors with hidden foo",
+    a: () => Object.assign(withHiddenProperty(new Error("x"), "errors", [1]), { foo: 1 }),
+    b: () => withHiddenProperty(withErrors(new Error("x"), [2]), "foo", 1),
     strict: false,
     loose: false,
     looseBug: "reports equal",
@@ -1587,18 +1585,18 @@ describe("the errors of an Error", () => {
     return Object.defineProperty(error, "errors", { get: () => (log.push(side), [1]), enumerable, configurable: true });
   }
 
-  // A getter that replaces itself with an own value property when it is read.
+  // A getter that replaces itself with an own value property when it is read. It returns [1], or `returns`.
   function withReplacedErrorsGetter(
     side: string,
     log: string[],
-    getter: { enumerable: boolean },
+    getter: { enumerable: boolean; returns?: unknown },
     replacement: { value: unknown; enumerable: boolean },
   ) {
     return Object.defineProperty(new Error("x"), "errors", {
       get(this: Error) {
         log.push(side);
         Object.defineProperty(this, "errors", { ...replacement, writable: true, configurable: true });
-        return [1];
+        return "returns" in getter ? getter.returns : [1];
       },
       enumerable: getter.enumerable,
       configurable: true,
@@ -1617,10 +1615,6 @@ describe("the errors of an Error", () => {
     ["assert.deepStrictEqual", assert.deepStrictEqual, assert.notDeepStrictEqual, false],
     ["assert.deepEqual", assert.deepEqual, assert.notDeepEqual, true],
   ] as const)("%s", (_name, equal, notEqual, legacy) => {
-    // Legacy deepEqual walks the enumerable properties of an Error as Bun.deepEquals does, so it
-    // differs from Node when `errors` is enumerable on one side only, or inherited.
-    const testWithLegacyBug = legacy ? test.failing : test;
-
     test("reads hidden errors once per side", () => {
       const log: string[] = [];
       equal(
@@ -1639,7 +1633,7 @@ describe("the errors of an Error", () => {
       expect(log).toEqual(["actual", "expected"]);
     });
 
-    testWithLegacyBug("reads inherited enumerable errors once per side", () => {
+    test("reads inherited enumerable errors once per side", () => {
       const log: string[] = [];
       class Inherited extends Error {
         declare side: string;
@@ -1659,7 +1653,8 @@ describe("the errors of an Error", () => {
       expect(log).toEqual(["actual", "expected"]);
     });
 
-    testWithLegacyBug("rejects enumerable errors on the expected error only, and reads neither", () => {
+    // Legacy deepEqual walks the enumerable properties of the expected error as Bun.deepEquals does, and reads this one.
+    (legacy ? test.failing : test)("rejects enumerable errors on the expected error only, and reads neither", () => {
       const log: string[] = [];
       notEqual(
         withErrorsGetter(new Error("x"), "actual", log, false),
@@ -1668,12 +1663,44 @@ describe("the errors of an Error", () => {
       expect(log).toEqual([]);
     });
 
-    testWithLegacyBug("rejects enumerable errors on the actual error only, after it reads both", () => {
+    test("rejects enumerable errors on the actual error only, after it reads both", () => {
       const log: string[] = [];
       notEqual(
         withErrorsGetter(new Error("x"), "actual", log, true),
         withErrorsGetter(new Error("x"), "expected", log, false),
       );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("rejects an own key on the expected error only, after it reads inherited enumerable errors once", () => {
+      const log: string[] = [];
+      class Inherited extends Error {}
+      Object.defineProperty(Inherited.prototype, "errors", {
+        get: () => (log.push("expected"), [1]),
+        enumerable: true,
+        configurable: true,
+      });
+      notEqual(
+        withErrorsGetter(new Inherited("x"), "actual", log, false),
+        Object.assign(new Inherited("x"), { foo: 1 }),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("rejects enumerable errors on the actual error only, when each error has one key", () => {
+      const log: string[] = [];
+      notEqual(
+        withHiddenProperty(withErrorsGetter(new Error("x"), "actual", log, true), "foo", 1),
+        Object.assign(withErrorsGetter(new Error("x"), "expected", log, false), { foo: 1 }),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("rejects hidden getters that return different values", () => {
+      const log: string[] = [];
+      const withReturned = (side: string, returned: unknown) =>
+        Object.defineProperty(new Error("x"), "errors", { get: () => (log.push(side), returned), configurable: true });
+      notEqual(withReturned("actual", [1]), withReturned("expected", [2]));
       expect(log).toEqual(["actual", "expected"]);
     });
 
@@ -1692,10 +1719,19 @@ describe("the errors of an Error", () => {
       expect(log).toEqual(["actual", "expected"]);
     });
 
-    testWithLegacyBug("rejects a getter that becomes an own enumerable value on the actual error only", () => {
+    test("rejects a getter that becomes an own enumerable value on the actual error only", () => {
       const log: string[] = [];
       notEqual(
         withReplacedErrorsGetter("actual", log, { enumerable: false }, { value: [1], enumerable: true }),
+        withReplacedErrorsGetter("expected", log, { enumerable: false }, { value: [1], enumerable: false }),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("rejects a getter that becomes another own enumerable value on the actual error only", () => {
+      const log: string[] = [];
+      notEqual(
+        withReplacedErrorsGetter("actual", log, { enumerable: false }, { value: [2], enumerable: true }),
         withReplacedErrorsGetter("expected", log, { enumerable: false }, { value: [1], enumerable: false }),
       );
       expect(log).toEqual(["actual", "expected"]);
@@ -1708,6 +1744,39 @@ describe("the errors of an Error", () => {
         withReplacedErrorsGetter("expected", log, { enumerable: false }, { value: [1], enumerable: true }),
       );
       expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("rejects a getter that becomes an own enumerable undefined on the expected error only", () => {
+      const log: string[] = [];
+      notEqual(
+        withReplacedErrorsGetter("actual", log, { enumerable: false }, { value: [1], enumerable: false }),
+        withReplacedErrorsGetter("expected", log, { enumerable: false }, { value: undefined, enumerable: true }),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("rejects a getter that returns undefined and becomes an own enumerable value on the expected error only", () => {
+      const log: string[] = [];
+      notEqual(
+        new Error("x"),
+        withReplacedErrorsGetter(
+          "expected",
+          log,
+          { enumerable: false, returns: undefined },
+          { value: [1], enumerable: true },
+        ),
+      );
+      expect(log).toEqual(["expected"]);
+    });
+
+    // Both errors own `errors` as an enumerable property when Node walks the keys, so it reads the getter again.
+    test("reads an enumerable getter on the actual error again when the expected getter becomes an own enumerable value", () => {
+      const log: string[] = [];
+      equal(
+        withErrorsGetter(new Error("x"), "actual", log, true),
+        withReplacedErrorsGetter("expected", log, { enumerable: false }, { value: [1], enumerable: true }),
+      );
+      expect(log).toEqual(["actual", "expected", "actual"]);
     });
 
     test("accepts an enumerable getter on the actual error that becomes a hidden value", () => {

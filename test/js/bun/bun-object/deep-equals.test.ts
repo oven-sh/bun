@@ -85,6 +85,17 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(reads).toBe(0);
   });
 
+  it("compares an enumerable errors of an Error as any other property", () => {
+    const withErrors = (errors: unknown[]) => Object.assign(new Error("m"), { errors });
+    const withHiddenErrors = (errors: unknown[]) =>
+      Object.defineProperty(new Error("m"), "errors", { value: errors, configurable: true });
+    expect(deepEquals(withErrors([1]), withErrors([1]))).toBe(true);
+    expect(deepEquals(withErrors([1]), withErrors([2]))).toBe(false);
+    // node:assert rejects this pair. Here a hidden property matches an enumerable one, unless `strict` counts the properties.
+    expect(deepEquals(withErrors([1]), withHiddenErrors([1]))).toBe(!strict);
+    expect(deepEquals(withErrors([1]), withHiddenErrors([2]))).toBe(false);
+  });
+
   it("KeyObjects and CryptoKeys are compared by what they hold", () => {
     const key = (fill: number) => createSecretKey(Buffer.alloc(16, fill));
     const cryptoKey = (fill: number, extractable = true) => key(fill).toCryptoKey("AES-GCM", extractable, ["encrypt"]);

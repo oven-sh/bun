@@ -149,6 +149,44 @@ function itBundledDevAndProd(
 
 describe("bundler", () => {
   describe("jsx preserve", () => {
+    describe.each(["cli", "api"] as const)("defined JSX tags (%s)", backend => {
+      describe.each(["Comp", "Comp.Member"])("tag %s", tag => {
+        itBundled(`jsx/PreserveInvalidDefinedTag-${backend}-${tag}`, {
+          files: { "/in.jsx": `export default <${tag} />;` },
+          backend,
+          jsx: { runtime: "preserve" },
+          define: { Comp: "1" },
+          skipOnEsbuild: true,
+          bundleErrors: { "/in.jsx": ["Cannot preserve JSX tag after it resolves to an invalid JSX tag expression"] },
+        });
+      });
+
+      itBundled(`jsx/PreserveValidDefinedTags-${backend}`, {
+        files: {
+          "/in.jsx": `
+            const Other = { Component() {} };
+            export const member = <Comp />;
+            export const intrinsic = <Intrinsic />;
+            export class Container {
+              render() { return <this.Component />; }
+            }
+          `,
+        },
+        backend,
+        jsx: { runtime: "preserve" },
+        define: { Comp: "Other.Component", Intrinsic: '"section"' },
+        // The esbuild API harness does not forward defines.
+        skipOnEsbuild: true,
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          const { code } = transformSync(out, { loader: "jsx" });
+          expect(code).toContain("Other.Component");
+          expect(code).toContain('"section"');
+          expect(code).toContain("this.Component");
+        },
+      });
+    });
+
     test("Bun.Transpiler scanImports uses the effective JSX runtime", () => {
       const transpiler = new Bun.Transpiler({ loader: "tsx" });
       expect(transpiler.scanImports("/* @jsxRuntime preserve */ export default <></>;")).toEqual([]);

@@ -199,6 +199,29 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(output).toContain("GOT:hello");
   });
 
+  // process.stdin of a terminal is a tty.ReadStream, and its write goes to the native handle.
+  test("GAP: process.stdin.write() in the child", async () => {
+    const { output } = await runInTerminal(
+      `process.stdin.on('error', () => {});
+       process.stdin.write('hello', err => {
+         const result = { code: err ? err.code : null, bytesWritten: process.stdin.bytesWritten };
+         process.stdout.write('RESULT ' + JSON.stringify(result));
+       });`,
+      // Wide enough that ConPTY does not wrap the RESULT line.
+      { cols: 200, done: o => /RESULT \{[^}]*\}/.test(Bun.stripANSI(o)) },
+    );
+    const match = Bun.stripANSI(output).match(/RESULT (\{[^}]*\})/);
+    if (!match) throw new Error("the child did not print RESULT. The terminal showed: " + JSON.stringify(output));
+    if (isWindows) {
+      // A console input handle takes no write. Node reports EPIPE for it.
+      expect(JSON.parse(match[1])).toEqual({ code: "EBADF", bytesWritten: 0 });
+    } else {
+      // The terminal is open for reading and writing, so the write goes to it.
+      expect(JSON.parse(match[1])).toEqual({ code: null, bytesWritten: 5 });
+      expect(output).toContain("hello");
+    }
+  });
+
   // On a terminal the console iterator and process.stdin read through a reader each.
   // The one that is let go leaves what is typed next to the other.
   test("SAME: a line typed after a break out of the console iterator reaches process.stdin", async () => {

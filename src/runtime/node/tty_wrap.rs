@@ -111,7 +111,7 @@ pub(crate) struct TTY {
     /// The fd JS passed in, which `fd` answers. On Windows writes and `getWindowSize` act on it.
     fd: Fd,
 
-    /// The handle's own descriptor until `close()`. On POSIX a nonblocking reopen of the terminal in the caller's access mode, or a dup of `fd`: reads, writes, the mode and the window size go through it, as through the descriptor of a `uv_tty_t`. On Windows `fd` as a `uv_tty_t` of this handle's own.
+    /// The handle's own descriptor until `close()`. On POSIX a nonblocking reopen of the terminal in the caller's access mode, or a dup of `fd`: reads, writes, the mode and the window size go through it, as through the descriptor of a `uv_tty_t`. The dup outlives a close of `fd` by the caller, where libuv has the caller's number alone. On Windows `fd` as a `uv_tty_t` of this handle's own.
     own_fd: Cell<Fd>,
 
     reader: JsCell<BufferedReader>,
@@ -704,6 +704,7 @@ impl TTY {
                 if rest.is_empty() {
                     return 0;
                 }
+                // libuv writes the rest in place too, and calls back from the loop. Here the write is complete in this call.
                 if flags.intersects(Flags::BLOCKING_WRITES | Flags::BLOCKING_ASKED) {
                     return write_in_place(fd, rest);
                 }

@@ -87,6 +87,35 @@ if (scenario === "shell") {
     });
   }
   master.write("hello\n");
+} else if (scenario === "flood") {
+  // More than the pty holds, written to the slave of open(). The write waits for the loop, and the master reads it on
+  // the same loop. The text has no line end, so the terminal passes it as it is.
+  type Opened = { master: ReadStream; slave: ReadStream };
+  const term = (pty as unknown as { open(options: { cols: number; rows: number }): Opened }).open({ cols: 80, rows: 24 });
+  const { master, slave } = term;
+  const text = Buffer.alloc(1 << 20, "abcdefghijklmnopqrstuvwxyz0123456789");
+  const hash = createHash("sha256");
+  const closed: string[] = [];
+  let bytes = 0;
+  let written: string | null | undefined = "not yet";
+  let drained = false;
+  slave.on("drain", () => (drained = true));
+  master.on("data", data => {
+    bytes += Buffer.byteLength(data);
+    hash.update(data);
+    // The write is complete before the master can read its last byte.
+    if (bytes < text.length) return;
+    slave.destroy();
+    master.destroy();
+  });
+  for (const [name, stream] of [["slave", slave], ["master", master]] as const) {
+    stream.on("close", () => {
+      closed.push(name);
+      if (closed.length < 2) return;
+      say({ ret, written, drained, bytes, sha256: hash.digest("hex"), closed: closed.sort() });
+    });
+  }
+  const ret = slave.write(text, err => (written = err ? (err as NodeJS.ErrnoException).code : null));
 } else {
   throw new Error(`unknown scenario ${scenario}`);
 }

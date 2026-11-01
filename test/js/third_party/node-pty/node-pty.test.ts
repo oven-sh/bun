@@ -17,7 +17,7 @@ describe.skipIf(isWindows || isMusl)("@lydell/node-pty", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: stdout.trim(), stderr, exitCode };
+    return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
   }
 
   // https://github.com/oven-sh/bun/issues/25822, https://github.com/oven-sh/bun/issues/29112
@@ -26,6 +26,7 @@ describe.skipIf(isWindows || isMusl)("@lydell/node-pty", () => {
       stdout: JSON.stringify({ sawOutput: true, exit: { exitCode: 0, signal: 0 }, cols: 100, rows: 30 }),
       stderr: "",
       exitCode: 0,
+      signalCode: null,
     });
   });
 
@@ -41,6 +42,26 @@ describe.skipIf(isWindows || isMusl)("@lydell/node-pty", () => {
       }),
       stderr: "",
       exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The slave of open() is a tty.ReadStream too. What it writes beyond what the pty holds waits for the loop, and
+  // the master reads it on the same loop.
+  test.concurrent("open() writes more than the pty holds to the slave, and the master reads all of it", async () => {
+    const text = Buffer.alloc(1 << 20, "abcdefghijklmnopqrstuvwxyz0123456789");
+    expect(await run("flood")).toEqual({
+      stdout: JSON.stringify({
+        ret: false,
+        written: null,
+        drained: true,
+        bytes: text.length,
+        sha256: createHash("sha256").update(text).digest("hex"),
+        closed: ["master", "slave"],
+      }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
     });
   });
 
@@ -54,6 +75,7 @@ describe.skipIf(isWindows || isMusl)("@lydell/node-pty", () => {
       }),
       stderr: "",
       exitCode: 0,
+      signalCode: null,
     });
   });
 });

@@ -5912,36 +5912,14 @@ later: throws TypeError: what is called is not a function
 `;
 
 exports[`members of the prototype objects of node:tty 1`] = `
-"node:tty.ReadStream.prototype ref()
-  the receiver <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype ref("a", 1)
-  the receiver <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype unref()
-  the receiver <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype unref("a", 1)
-  the receiver <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype setRawMode()
-  throws TypeError: fd must be a number, stores [rawModeState] <- every object
+"node:tty.ReadStream.prototype setRawMode()
+  the receiver, stores isRaw <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
-  throws TypeError: Cannot access property of undefined or null <- undefined, null
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:tty.ReadStream.prototype setRawMode("a", 1)
-  throws TypeError: fd must be a number, stores [rawModeState] <- every object
+  the receiver, stores isRaw <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
-  throws TypeError: Cannot access property of undefined or null <- undefined, null
-node:tty.ReadStream.prototype _destroy()
-  throws TypeError: what is called is not a function <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype _destroy("a", 1)
-  throws TypeError: what is called is not a function <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:tty.WriteStream.prototype _destroy()
@@ -6010,38 +5988,14 @@ node:tty.WriteStream.prototype [Symbol.asyncIterator]("a", 1)
 `;
 
 exports[`members of the prototype objects of node:tty: on Windows 1`] = `
-"node:tty.ReadStream.prototype ref()
-  the receiver <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype ref("a", 1)
-  the receiver <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype unref()
-  the receiver <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype unref("a", 1)
-  the receiver <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype setRawMode()
-  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws Error: setRawMode failed because it was called on something that is not a TTY <- an heir of the prototype object, a proxy of such an heir, the prototype object
+"node:tty.ReadStream.prototype setRawMode()
+  the receiver, stores isRaw <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:tty.ReadStream.prototype setRawMode("a", 1)
-  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws Error: setRawMode failed because it was called on something that is not a TTY <- an heir of the prototype object, a proxy of such an heir, the prototype object
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype _destroy()
-  throws TypeError: what is called is not a function <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:tty.ReadStream.prototype _destroy("a", 1)
-  throws TypeError: what is called is not a function <- every object, a number, a string
+  the receiver, stores isRaw <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:tty.WriteStream.prototype _destroy()

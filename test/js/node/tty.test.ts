@@ -1,9 +1,19 @@
 import { CString, dlopen, ptr } from "bun:ffi";
 import { afterAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, nodeExeOfReportedVersion, tempDir } from "harness";
-import { spawn } from "node:child_process";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  libcPathForDlopen,
+  nodeExeOfReportedVersion,
+  tempDir,
+} from "harness";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import fs, { closeSync, constants, openSync, readFileSync } from "node:fs";
+import fs, { closeSync, constants, openSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { ReadStream, WriteStream, isatty } from "node:tty";
 
@@ -1742,107 +1752,169 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     `;
 
     function openLibc() {
-      const arch = process.arch === "x64" ? "x86_64" : "aarch64";
-      let lastError: unknown;
-      for (const name of isMacOS ? ["libSystem.B.dylib"] : ["libc.so.6", `libc.musl-${arch}.so.1`]) {
-        try {
-          return dlopen(name, {
-            posix_openpt: { args: ["int"], returns: "int" },
-            grantpt: { args: ["int"], returns: "int" },
-            unlockpt: { args: ["int"], returns: "int" },
-            ptsname: { args: ["int"], returns: "ptr" },
-            tcgetattr: { args: ["int", "ptr"], returns: "int" },
-            cfmakeraw: { args: ["ptr"], returns: "void" },
-            tcsetattr: { args: ["int", "int", "ptr"], returns: "int" },
-          }).symbols;
-        } catch (err) {
-          lastError = err;
-        }
-      }
-      throw lastError;
+      return dlopen(libcPathForDlopen(), {
+        posix_openpt: { args: ["int"], returns: "int" },
+        grantpt: { args: ["int"], returns: "int" },
+        unlockpt: { args: ["int"], returns: "int" },
+        ptsname: { args: ["int"], returns: "ptr" },
+        tcgetattr: { args: ["int", "ptr"], returns: "int" },
+        cfmakeraw: { args: ["ptr"], returns: "void" },
+        tcsetattr: { args: ["int", "int", "ptr"], returns: "int" },
+      }).symbols;
     }
     let libc: ReturnType<typeof openLibc> | undefined;
 
-    function openPair(slaveFlags: number) {
+    // A new pty pair. The master does not block. With `cooked` the slave keeps the mode of a new terminal.
+    // The pair closes the numbers that it still owns. A number that a stream closed is not the pair's to close:
+    // a test that runs beside this one can have that number by then. A tty.ReadStream over a master owns the
+    // descriptor of its caller and closes it in destroy(). One over a slave opens the terminal again by name
+    // and never closes the descriptor of its caller.
+    function openPair(opts: { slaveFlags?: number; cooked?: boolean } = {}) {
       libc ??= openLibc();
       const master = libc.posix_openpt(constants.O_RDWR | constants.O_NOCTTY | constants.O_NONBLOCK);
       if (master < 0 || libc.grantpt(master) !== 0 || libc.unlockpt(master) !== 0) throw new Error("no pty");
       const path = new CString(libc.ptsname(master)!).toString();
       const first = openSync(path, constants.O_RDWR | constants.O_NOCTTY);
-      const termios = new Uint8Array(256);
-      if (libc.tcgetattr(first, ptr(termios)) !== 0) throw new Error("tcgetattr failed");
-      libc.cfmakeraw(ptr(termios));
-      if (libc.tcsetattr(first, 0 /* TCSANOW */, ptr(termios)) !== 0) throw new Error("tcsetattr failed");
+      if (!opts.cooked) {
+        const termios = new Uint8Array(256);
+        if (libc.tcgetattr(first, ptr(termios)) !== 0) throw new Error("tcgetattr failed");
+        libc.cfmakeraw(ptr(termios));
+        if (libc.tcsetattr(first, 0 /* TCSANOW */, ptr(termios)) !== 0) throw new Error("tcsetattr failed");
+      }
+      const slaveFlags = opts.slaveFlags ?? constants.O_RDWR;
       const slave = slaveFlags === constants.O_RDWR ? first : openSync(path, slaveFlags | constants.O_NOCTTY);
       if (slave !== first) closeSync(first);
+      const owned = { master: true, slave: true };
       return {
         master,
         slave,
-        // A stream of the test over the master has closed it already, as libuv closes a fd that it could not reopen.
+        /** Gives the number of `end` up and answers it. The caller closes it, or a stream of the caller does. */
+        release(end: "master" | "slave") {
+          owned[end] = false;
+          return end === "master" ? master : slave;
+        },
         [Symbol.dispose]() {
-          for (const fd of [master, slave]) {
-            try {
-              closeSync(fd);
-            } catch {}
-          }
+          if (owned.master) closeSync(master);
+          if (owned.slave) closeSync(slave);
         },
       };
     }
 
-    // A child that waits in a write never ends by itself.
-    const children = new Set<Bun.Subprocess>();
+    // A child that waits in a write never ends by itself, and a test that runs into its time limit says nothing
+    // of it. What such a child wrote is printed here, and the child is ended.
+    const unfinishedChildren = new Set<{ proc: Bun.Subprocess; output: () => string }>();
     afterAll(() => {
-      for (const child of children) child.kill("SIGKILL");
+      for (const { proc, output } of unfinishedChildren) {
+        console.error(`a child of withPair() did not finish. It wrote: ${output()}`);
+        proc.kill("SIGKILL");
+      }
     });
 
-    /** Runs `script` with the pair as fd 3 and fd 4. With `readEnd` the test reads that end, and says how much came and whether it is what was written. */
-    async function withPair(
-      script: string,
-      opts: { exe?: string; slaveFlags?: number; readEnd?: "master" | "slave" } = {},
-    ) {
-      using pair = openPair(opts.slaveFlags ?? constants.O_RDWR);
-      const arrived = Promise.withResolvers<{ got: number; sameBytes: boolean } | undefined>();
-      if (opts.readEnd) {
-        const reader = new ReadStream(pair[opts.readEnd]);
-        const hash = createHash("sha256");
-        let got = 0;
-        reader.on("error", arrived.reject);
-        reader.on("data", chunk => {
-          got += chunk.length;
-          hash.update(chunk);
-          if (got < size) return;
-          reader.destroy();
-          arrived.resolve({ got, sameBytes: hash.digest("hex") === sha256 });
-        });
-      } else {
-        arrived.resolve(undefined);
-      }
+    type PairOptions = {
+      /** The runtime of the child: Bun, or a Node that answers the same. */
+      exe?: string;
+      slaveFlags?: number;
+      cooked?: boolean;
+      env?: Record<string, string>;
+      /** Goes before the command of the child, as in runInPty(). */
+      prefix?: string[];
+      /** The child is the only holder of both ends: the test closes its own right after the spawn. */
+      childHoldsAlone?: boolean;
+      /** The test reads this end while the child runs, and says how much came and whether it is what was written. */
+      readEnd?: "master" | "slave";
+      /** The test reads this descriptor of its own in place of an end. It does not block, and the stream closes it. */
+      readFd?: number;
+      /** The child writes less than `bytes`, and the test says how much came: as it comes, or only after the child. */
+      part?: "while the child runs" | "after the child";
+    };
+
+    /** Runs `script` with the pair as fd 3 and fd 4. */
+    async function withPair(script: string, opts: PairOptions = {}) {
+      const { readEnd, part } = opts;
+      // The end that the test reads does not block. What is left in it is read when the child has ended.
+      const nonblocking = readEnd === "slave" ? constants.O_NONBLOCK : 0;
+      using pair = openPair({ slaveFlags: opts.slaveFlags ?? constants.O_RDWR | nonblocking, cooked: opts.cooked });
+      const readFd = opts.readFd ?? (readEnd && pair[readEnd]);
+      const arrived = Promise.withResolvers<{ got: number; sameBytes?: boolean } | undefined>();
+      const hash = createHash("sha256");
+      let got = 0;
+      let reading = readFd !== undefined;
+      if (!reading) arrived.resolve(undefined);
+      const stop = (result: { got: number; sameBytes?: boolean } | Error) => {
+        if (!reading) return;
+        reading = false;
+        if (result instanceof Error) arrived.reject(result);
+        else arrived.resolve(result);
+      };
+      const take = (chunk: Uint8Array) => {
+        if (!reading) return;
+        got += chunk.length;
+        hash.update(chunk);
+        if (!part && got >= size) stop({ got, sameBytes: hash.digest("hex") === sha256 });
+      };
       const child = Bun.spawn({
-        cmd: [opts.exe ?? bunExe(), "-e", prelude + script],
-        env: bunEnv,
+        cmd: [...(opts.prefix ?? []), opts.exe ?? bunExe(), "-e", prelude + script],
+        env: { ...bunEnv, TTY_TEST_LIBC: libcPathForDlopen(), ...opts.env },
         stdio: ["ignore", "pipe", "pipe", pair.master, pair.slave],
       });
-      children.add(child);
-      const [stdout, exitCode, read] = await Promise.all([child.stdout.text(), child.exited, arrived.promise]);
-      children.delete(child);
-      const records = stdout
-        .split("\n")
-        .filter(line => line !== "")
-        .map(line => JSON.parse(line));
-      return { records, exitCode, ...(read && { read }) };
+      const said = { stdout: "", stderr: "" };
+      const entry = { proc: child, output: () => JSON.stringify(said) };
+      unfinishedChildren.add(entry);
+      let reader: ReadStream | undefined;
+      try {
+        if (opts.childHoldsAlone) {
+          closeSync(pair.release("master"));
+          closeSync(pair.release("slave"));
+        }
+        if (readFd !== undefined && part !== "after the child") {
+          reader = new ReadStream(readFd);
+          // The stream closes a master. It never closes a slave.
+          if (readEnd === "master") pair.release("master");
+          reader.on("error", stop);
+          reader.on("data", take);
+        }
+        const collect = async (name: "stdout" | "stderr") => {
+          const decoder = new TextDecoder();
+          for await (const chunk of child[name]) said[name] += decoder.decode(chunk, { stream: true });
+        };
+        const ended = Promise.all([child.exited, collect("stdout"), collect("stderr")]).then(([exitCode]) => {
+          if (!reading) return exitCode;
+          // Nothing writes this end now. What it still holds is all that can come. A stream that ended has closed it.
+          if (!reader?.destroyed) {
+            const buffer = Buffer.alloc(65536);
+            try {
+              for (let n: number; (n = readSync(readFd!, buffer)) > 0;) take(buffer.subarray(0, n));
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException).code !== "EAGAIN") stop(err as Error);
+            }
+          }
+          const less = `the child ended with code ${exitCode}, and ${got} of ${size} bytes came. Its stderr: ${said.stderr}`;
+          stop(part ? { got } : new Error(less));
+          return exitCode;
+        });
+        const [exitCode, read] = await Promise.all([ended, arrived.promise]);
+        const records = said.stdout
+          .split("\n")
+          .filter(line => line !== "")
+          .map(line => JSON.parse(line));
+        return { records, stderr: said.stderr, exitCode, ...(read && { read }) };
+      } finally {
+        reader?.destroy();
+        if (child.exitCode !== null || child.signalCode !== null) unfinishedChildren.delete(entry);
+      }
     }
 
-    const rows: [name: string, slaveFlags: number, script: string, records: object[]][] = [
+    const rows: [name: string, opts: PairOptions, script: string, records: object[]][] = [
       ...(
         [
           ["a slave that the caller left blocking", constants.O_RDWR],
           ["a slave that the caller made nonblocking", constants.O_RDWR | constants.O_NONBLOCK],
         ] as const
       ).map(
-        ([name, flags]) =>
+        ([name, slaveFlags]) =>
           [
             `more than the pty holds goes out from the loop, to ${name}`,
-            flags,
+            { slaveFlags },
             `
               const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
               const hash = crypto.createHash("sha256");
@@ -1865,11 +1937,11 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
               { ret: false, writableLength: size, bytesWritten: size, cb: "not yet" },
               { cb: null, drained: true, got: size, sameBytes: true, writableLength: 0 },
             ],
-          ] as [string, number, string, object[]],
+          ] as [string, PairOptions, string, object[]],
       ),
       [
         "the stream writes and says the size of the window after the caller has closed its descriptor",
-        constants.O_RDWR,
+        {},
         `
           const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
           let got = "";
@@ -1890,18 +1962,19 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       ],
       [
         "a descriptor that is open for reading alone refuses a write with EPIPE",
-        constants.O_RDONLY,
+        { slaveFlags: constants.O_RDONLY },
         `
           const slave = new tty.ReadStream(4);
           slave.on("error", err => say({ error: err.code, syscall: err.syscall, errno: err.errno }));
           slave.on("close", () => say({ closed: true }));
-          slave.write("hello", err => say({ cb: err ? err.code : null }));
+          // Node counts all of a Buffer that the stream refuses.
+          slave.write(Buffer.from("hello"), err => say({ cb: err ? err.code : null, bytesWritten: slave.bytesWritten }));
         `,
-        [{ cb: "EPIPE" }, { error: "EPIPE", syscall: "write", errno: -32 }, { closed: true }],
+        [{ cb: "EPIPE", bytesWritten: 5 }, { error: "EPIPE", syscall: "write", errno: -32 }, { closed: true }],
       ],
       [
         "a descriptor that is open for writing alone takes a write and refuses a read with ENOTCONN",
-        constants.O_WRONLY,
+        { slaveFlags: constants.O_WRONLY },
         `
           const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
           let got = "";
@@ -1922,7 +1995,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       ],
       [
         "destroy() cancels the writes that wait, then the stream closes, and no 'error' is emitted",
-        constants.O_RDWR,
+        {},
         `
           const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
           const events = [];
@@ -1944,7 +2017,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       ],
       [
         "a write that waits holds the loop after unref(), as a uv_write_t does",
-        constants.O_RDWR,
+        {},
         `
           const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
           let cb = "not yet";
@@ -1957,27 +2030,8 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         [{ ret: false, cb: null }],
       ],
       [
-        "setRawMode() does not wait for a write that waits",
-        constants.O_RDWR,
-        `
-          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
-          let got = 0;
-          master.on("data", chunk => {
-            got += chunk.length;
-            if (got < size) return;
-            say({ got });
-            slave.destroy();
-            master.destroy();
-          });
-          const ret = slave.write(bytes, err => say({ cb: err ? err.code : null }));
-          slave.setRawMode(true);
-          say({ ret, isRaw: slave.isRaw, writableLength: slave.writableLength });
-        `,
-        [{ ret: false, isRaw: true, writableLength: size }, { cb: null }, { got: size }],
-      ],
-      [
         "the callback of a write that went out from the loop runs in the async context of the write",
-        constants.O_RDWR,
+        {},
         `
           const storage = new (require("node:async_hooks").AsyncLocalStorage)();
           const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
@@ -1998,13 +2052,252 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         [{ store: "of the write" }],
       ],
       [
-        "a FIFO that does not block is finished from the loop too",
-        constants.O_RDWR,
+        "the callback of a write that destroy() cancels runs in the async context of the write",
+        {},
         `
-          const dir = fs.mkdtempSync(require("node:os").tmpdir() + "/fifo-");
-          require("node:child_process").execFileSync("mkfifo", [dir + "/fifo"]);
-          const reader = fs.openSync(dir + "/fifo", fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-          const writer = fs.openSync(dir + "/fifo", fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+          const storage = new (require("node:async_hooks").AsyncLocalStorage)();
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          slave.on("close", () => master.destroy());
+          storage.run("of the write", () => {
+            slave.write(bytes, err => say({ cb: err ? err.code : null, store: storage.getStore() }));
+          });
+          storage.run("of the destroy", () => slave.destroy());
+        `,
+        [{ cb: "ECANCELED", store: "of the write" }],
+      ],
+      // The handle has a poll that reads and a poll for a write that waits, and epoll keys on the number of a
+      // descriptor. Here both are armed at once, in either order.
+      ...(
+        [
+          ["a stream that reads already", "listen(); setImmediate(write);"],
+          ["a stream that starts to read behind it", "write(); listen();"],
+        ] as const
+      ).map(
+        ([name, order]) =>
+          [
+            `the stream reads what the other side says while a write of its own waits, on ${name}`,
+            {},
+            `
+              const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+              const hash = crypto.createHash("sha256");
+              let got = 0, heard = "", cb = "not yet", asked = 0, said = false;
+              const done = () => {
+                if (said || got < size || heard.length < 3 || cb === "not yet") return;
+                said = true;
+                say({ cb, got, sameBytes: hash.digest("hex") === sha256, heard, writableLength: slave.writableLength });
+                slave.destroy();
+                master.destroy();
+              };
+              const listen = () => slave.on("data", chunk => { heard += chunk; done(); });
+              const write = () => {
+                const ret = slave.write(bytes, err => { cb = err ? err.code : null; done(); });
+                say({ ret, reading: !!slave._handle.reading, writableLength: slave.writableLength });
+              };
+              slave.on("error", err => say({ error: err.code, syscall: err.syscall }));
+              master.on("data", chunk => {
+                got += chunk.length;
+                hash.update(chunk);
+                // Three times while the write of the slave waits, the master says a byte that the slave has to read.
+                while (asked < 3 && got >= (asked + 1) * (size >> 2)) fs.writeSync(3, "abc"[asked++]);
+                done();
+              });
+              ${order}
+            `,
+            [
+              { ret: false, reading: order.startsWith("listen"), writableLength: size },
+              { cb: null, got: size, sameBytes: true, heard: "abc", writableLength: 0 },
+            ],
+          ] as [string, PairOptions, string, object[]],
+      ),
+      [
+        "a second write that the pty refuses holds the loop as the first did, and end() finishes behind it",
+        {},
+        `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          const events = [];
+          master.on("data", () => {});
+          slave.on("error", err => events.push("error " + err.code));
+          slave.on("finish", () => events.push("finish"));
+          const first = slave.write(bytes, err => events.push("first " + (err ? err.code : null) + " " + slave.writableLength));
+          // This one waits in the stream, and goes to the handle from the callback of the first.
+          // It is more than the pty holds, so it is refused too.
+          const second = slave.write(bytes.subarray(0, 1 << 16), err => events.push("second " + (err ? err.code : null) + " " + slave.writableLength));
+          slave.end("TAIL", () => events.push("end"));
+          // Only the write that waits holds the loop, the second time as the first.
+          slave.unref();
+          master.unref();
+          process.on("exit", () => say({ first, second, events, bytesWritten: slave.bytesWritten }));
+        `,
+        [
+          {
+            first: false,
+            second: false,
+            events: ["first null 65540", "second null 0", "end", "finish"],
+            bytesWritten: size + (1 << 16) + 4,
+          },
+        ],
+      ],
+      [
+        "a write that waits fails with EIO when the master closes, and the stream closes with an error",
+        { childHoldsAlone: true },
+        `
+          const slave = new tty.ReadStream(4);
+          const events = [];
+          slave.on("error", err => events.push("error " + err.code + " " + err.syscall + " " + err.errno));
+          slave.on("close", hadError => {
+            events.push("close " + hadError);
+            say({ events, bytesWritten: slave.bytesWritten, writableLength: slave.writableLength });
+          });
+          const ret = slave.write(bytes, err => events.push("cb " + (err ? err.code : null)));
+          say({ ret, writableLength: slave.writableLength });
+          fs.closeSync(3);
+        `,
+        [
+          { ret: false, writableLength: size },
+          { events: ["cb EIO", "error EIO write -5", "close true"], bytesWritten: size, writableLength: 0 },
+        ],
+      ],
+      // libuv reads before it writes in one turn of the loop. So the hangup reaches the reader before the write fails.
+      [
+        "when the master closes, a stream that reads gets 'end' first and then the EIO of its write",
+        { childHoldsAlone: true },
+        `
+          const slave = new tty.ReadStream(4);
+          const events = [];
+          for (const name of ["end", "finish", "drain"]) slave.on(name, () => events.push(name));
+          slave.on("error", err => events.push("error " + err.code + " " + err.syscall));
+          slave.on("close", hadError => {
+            events.push("close " + hadError);
+            say({ events, bytesWritten: slave.bytesWritten, bytesRead: slave.bytesRead });
+          });
+          slave.on("data", () => events.push("data"));
+          const ret = slave.write(bytes, err => events.push("cb " + (err ? err.code : null)));
+          say({ ret, writableLength: slave.writableLength });
+          fs.closeSync(3);
+        `,
+        [
+          { ret: false, writableLength: size },
+          { events: ["end", "cb EIO", "error EIO write", "close true"], bytesWritten: size, bytesRead: 0 },
+        ],
+      ],
+      [
+        "when the master closes, a stream that has read data gets 'end' first and then the EIO of its write",
+        { childHoldsAlone: true },
+        `
+          const slave = new tty.ReadStream(4);
+          const events = [];
+          for (const name of ["end", "finish", "drain"]) slave.on(name, () => events.push(name));
+          slave.on("error", err => events.push("error " + err.code + " " + err.syscall));
+          slave.on("close", hadError => {
+            events.push("close " + hadError);
+            say({ events, bytesWritten: slave.bytesWritten, bytesRead: slave.bytesRead });
+          });
+          let started = false;
+          slave.on("data", chunk => {
+            events.push("data " + chunk);
+            if (started) return;
+            started = true;
+            const ret = slave.write(bytes, err => events.push("cb " + (err ? err.code : null)));
+            say({ ret, writableLength: slave.writableLength });
+            setImmediate(() => setImmediate(() => fs.closeSync(3)));
+          });
+          fs.writeSync(3, "hi");
+        `,
+        [
+          { ret: false, writableLength: size },
+          { events: ["data hi", "end", "cb EIO", "error EIO write", "close true"], bytesWritten: size, bytesRead: 2 },
+        ],
+      ],
+      [
+        "a write to a slave whose master is closed fails with EIO at once",
+        { childHoldsAlone: true },
+        `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          slave.on("error", err => say({ error: err.code, syscall: err.syscall, errno: err.errno }));
+          slave.on("close", hadError => say({ closed: hadError }));
+          master.on("close", () => {
+            const ret = slave.write("hello", err => say({ cb: err ? err.code : null }));
+            say({ ret });
+          });
+          master.destroy();
+        `,
+        [{ ret: false }, { cb: "EIO" }, { error: "EIO", syscall: "write", errno: -5 }, { closed: true }],
+      ],
+      // A new terminal sends "\r\n" for each "\n" that a program writes. How a write is cut has no part in that.
+      [
+        "a terminal in cooked mode gets every line of a write that it does not take whole",
+        { cooked: true },
+        `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          const lines = 1024;
+          let source = "";
+          for (let i = 0; i < lines; i++) source += ("line " + i + " ").padEnd(63, "abcdefghij") + "\\n";
+          let text = "", cb = "not yet";
+          const newlines = () => text.split("\\n").length - 1;
+          master.on("data", chunk => {
+            text += chunk;
+            if (newlines() < lines) return;
+            setImmediate(() => {
+              say({
+                cb,
+                newlines: newlines(),
+                sameText: text.replace(/\\r+\\n/g, "\\n") === source,
+                length: text.length,
+                bytesWritten: slave.bytesWritten,
+                writableLength: slave.writableLength,
+              });
+              slave.destroy();
+              master.destroy();
+            });
+          });
+          const ret = slave.write(source, err => { cb = err ? err.code : null; });
+          say({ ret, writableLength: slave.writableLength });
+        `,
+        [
+          { ret: false, writableLength: 1 << 16 },
+          {
+            cb: null,
+            newlines: 1024,
+            sameText: true,
+            // One "\r" for each line on Linux. Another system can send more.
+            length: isLinux ? (1 << 16) + 1024 : expect.any(Number),
+            bytesWritten: 1 << 16,
+            writableLength: 0,
+          },
+        ],
+      ],
+    ];
+
+    /** Runs `script` with a FIFO of the test, whose path the child has as `fifo`. With `readFifo` the test reads it. */
+    async function withFifo(script: string, opts: PairOptions & { readFifo?: boolean } = {}) {
+      using dir = tempDir("tty-fifo", {});
+      const fifo = join(String(dir), "fifo");
+      execFileSync("mkfifo", [fifo]);
+      const { readFifo, ...pairOptions } = opts;
+      return await withPair(`const fifo = process.env.TTY_TEST_FIFO;` + script, {
+        ...pairOptions,
+        env: { ...opts.env, TTY_TEST_FIFO: fifo },
+        ...(readFifo && { readFd: openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK) }),
+      });
+    }
+
+    // fcntl() of the C library, for a child that is Bun. F_GETFL is 3 and F_SETFL is 4.
+    const fcntlInChild = `
+      const { fcntl } = require("bun:ffi").dlopen(process.env.TTY_TEST_LIBC, {
+        fcntl: { args: ["int", "int", "int"], returns: "int" },
+      }).symbols;
+    `;
+
+    // The loop finishes a write to a FIFO on Linux alone. On macOS the handle writes a FIFO in place, because
+    // kqueue can stay silent for a FIFO.
+    type FifoResult = { records: object[]; read?: { got: number; sameBytes: boolean } };
+    const fifoRows: [name: string, opts: { readFifo?: boolean }, script: string, result: FifoResult][] = [
+      [
+        "a FIFO that does not block is finished from the loop too",
+        {},
+        `
+          const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+          const writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
           const input = new tty.ReadStream(reader), output = new tty.ReadStream(writer);
           const hash = crypto.createHash("sha256");
           let got = 0;
@@ -2015,18 +2308,128 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
             say({ got, sameBytes: hash.digest("hex") === sha256 });
             output.destroy();
             input.destroy();
-            fs.rmSync(dir, { recursive: true });
           });
           const ret = output.write(bytes, err => say({ cb: err ? err.code : null }));
           say({ ret, writableLength: output.writableLength });
         `,
-        [{ ret: false, writableLength: size }, { cb: null }, { got: size, sameBytes: true }],
+        { records: [{ ret: false, writableLength: size }, { cb: null }, { got: size, sameBytes: true }] },
+      ],
+      [
+        "a write that waits fails with EPIPE when the reader of the FIFO closes",
+        {},
+        `
+          const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+          const writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+          const output = new tty.ReadStream(writer);
+          const events = [];
+          output.on("error", err => events.push("error " + err.code + " " + err.syscall + " " + err.errno));
+          output.on("close", hadError => {
+            events.push("close " + hadError);
+            say({ events, bytesWritten: output.bytesWritten, writableLength: output.writableLength });
+          });
+          const ret = output.write(bytes, err => events.push("cb " + (err ? err.code : null)));
+          say({ ret, writableLength: output.writableLength });
+          // The only reader goes away with the write waiting. The next write(2) of the loop answers EPIPE.
+          fs.closeSync(reader);
+        `,
+        {
+          records: [
+            { ret: false, writableLength: size },
+            { events: ["cb EPIPE", "error EPIPE write -32", "close true"], bytesWritten: size, writableLength: 0 },
+          ],
+        },
+      ],
+      // libuv makes the descriptor of a FIFO nonblocking in the constructor. The handle of Bun leaves it as the
+      // caller made it, so under Bun the caller does that step. The write then gets EAGAIN, whatever the descriptor
+      // was at the constructor.
+      [
+        "a FIFO that blocked at the constructor and does not block at the write is finished from the loop",
+        {},
+        `
+          const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+          const reader = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+          // A reader is there, so this open returns at once. The descriptor blocks.
+          const writer = fs.openSync(fifo, O_WRONLY);
+          const nonblocking = () =>
+            (parseInt(/flags:\\s*([0-7]+)/.exec(fs.readFileSync("/proc/self/fdinfo/" + writer, "utf8"))[1], 8) & O_NONBLOCK) !== 0;
+          const atOpen = nonblocking();
+          const input = new tty.ReadStream(reader), output = new tty.ReadStream(writer);
+          if (process.versions.bun) {
+            ${fcntlInChild}
+            fcntl(writer, 4, fcntl(writer, 3, 0) | O_NONBLOCK);
+          }
+          const hash = crypto.createHash("sha256");
+          let got = 0;
+          input.on("data", chunk => {
+            got += chunk.length;
+            hash.update(chunk);
+            if (got < size) return;
+            say({ got, sameBytes: hash.digest("hex") === sha256 });
+            output.destroy();
+            input.destroy();
+          });
+          const ret = output.write(bytes, err => say({ cb: err ? err.code : null }));
+          say({ atOpen, atWrite: nonblocking(), ret, writableLength: output.writableLength });
+        `,
+        {
+          records: [
+            { atOpen: false, atWrite: true, ret: false, writableLength: size },
+            { cb: null },
+            { got: size, sameBytes: true },
+          ],
+        },
+      ],
+      // The reader is the test, in another process: a write that waits in place needs one that reads meanwhile.
+      [
+        "after setBlocking(true) a write to a FIFO that does not block is complete when write() returns",
+        { readFifo: true },
+        `
+          const output = new tty.ReadStream(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
+          say({ setBlocking: output._handle.setBlocking(true) });
+          output.write(bytes, err => {
+            say({ cb: err ? err.code : null });
+            output.destroy();
+          });
+          say({ writableLength: output.writableLength });
+        `,
+        {
+          records: [{ setBlocking: 0 }, { writableLength: 0 }, { cb: null }],
+          read: { got: size, sameBytes: true },
+        },
       ],
     ];
 
     describe.each(runtimes)("as in Node (%s)", (_runtime, exe) => {
-      test.skipIf(!exe).concurrent.each(rows)("%s", async (_name, slaveFlags, script, records) => {
-        expect(await withPair(script, { exe: exe!, slaveFlags })).toEqual({ records, exitCode: 0 });
+      test.skipIf(!exe).concurrent.each(rows)("%s", async (_name, opts, script, records) => {
+        expect(await withPair(script, { exe: exe!, ...opts })).toEqual({ records, stderr: "", exitCode: 0 });
+      });
+
+      test.skipIf(!exe || !isLinux).concurrent.each(fifoRows)("%s", async (_name, opts, script, result) => {
+        expect(await withFifo(script, { exe: exe!, ...opts })).toEqual({ stderr: "", exitCode: 0, ...result });
+      });
+
+      // On macOS tcsetattr(TCSADRAIN) on a pty slave sleeps in ttywait() of XNU until the master is read, and
+      // this child reads the master on the same thread. A pty on Linux has no output to drain.
+      test.skipIf(!exe || !isLinux).concurrent("setRawMode() sets the mode at once while a write waits", async () => {
+        const script = `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          let got = 0;
+          master.on("data", chunk => {
+            got += chunk.length;
+            if (got < size) return;
+            say({ got });
+            slave.destroy();
+            master.destroy();
+          });
+          const ret = slave.write(bytes, err => say({ cb: err ? err.code : null }));
+          slave.setRawMode(true);
+          say({ ret, isRaw: slave.isRaw, writableLength: slave.writableLength });
+        `;
+        expect(await withPair(script, { exe: exe! })).toEqual({
+          records: [{ ret: false, isRaw: true, writableLength: size }, { cb: null }, { got: size }],
+          stderr: "",
+          exitCode: 0,
+        });
       });
 
       // Node's tty.WriteStream asks for this: what it writes is out when write() returns.
@@ -2042,12 +2445,14 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         `;
         expect(await withPair(script, { exe: exe!, readEnd: "master" })).toEqual({
           records: [{ setBlocking: 0 }, { writableLength: 0 }, { cb: null }],
+          stderr: "",
           exitCode: 0,
           read: { got: size, sameBytes: true },
         });
       });
 
       // libuv cannot reopen a master, and writes to it in place. So all of a write is out before a destroy() behind it.
+      // Under Node write() answers false and 'drain' follows. Under Bun the write is complete inside write().
       test.skipIf(!exe).concurrent("a pty master takes a write in place, before a destroy() behind it", async () => {
         const script = `
           const master = new tty.ReadStream(3);
@@ -2058,75 +2463,525 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         `;
         expect(await withPair(script, { exe: exe!, readEnd: "slave" })).toEqual({
           records: [{ destroyed: true }, { cb: null }, { closed: true }],
+          stderr: "",
+          exitCode: 0,
+          read: { got: size, sameBytes: true },
+        });
+      });
+
+      // The end of the process does not wait for a write that waits in the loop. The test reads the master only
+      // when the child has ended, so the pty has what the child wrote at once and no more.
+      test.skipIf(!exe).concurrent("process.exit() behind a write to a slave drops the part that waits", async () => {
+        const script = `
+          const slave = new tty.ReadStream(4);
+          const ret = slave.write(bytes);
+          say({ ret, writableLength: slave.writableLength });
+          process.exit(0);
+        `;
+        const { read, ...result } = await withPair(script, { exe: exe!, readEnd: "master", part: "after the child" });
+        // How much the pty takes at once is the kernel's number.
+        expect({ ...result, aPartCame: read!.got > 0 && read!.got < size }).toEqual({
+          records: [{ ret: false, writableLength: size }],
+          stderr: "",
+          exitCode: 0,
+          aPartCame: true,
+        });
+      });
+
+      // A write to a master is complete when write() returns, so the end of the process behind it loses nothing.
+      test.skipIf(!exe).concurrent("process.exit() behind a write to a master loses nothing", async () => {
+        const script = `
+          const master = new tty.ReadStream(3);
+          master.write(bytes);
+          process.exit(0);
+        `;
+        expect(await withPair(script, { exe: exe!, readEnd: "slave" })).toEqual({
+          records: [],
+          stderr: "",
           exitCode: 0,
           read: { got: size, sameBytes: true },
         });
       });
     });
 
-    // Node answers a request object for a write that waits, and reads its oncomplete. This handle answers undefined and
-    // takes the completion as an operand: oncomplete(status, context), with the handle as this.
-    test.concurrent("writeBuffer() answers a number or undefined, and completes in call order", async () => {
+    // Node answers a WriteWrap for a write that waits, and calls its oncomplete(status). This handle answers 1 and
+    // calls its own onwritecomplete(status), with the handle as this.
+    test.concurrent(
+      "writeBuffer() answers 0 or 1, and onwritecomplete() runs once for each 1, in call order",
+      async () => {
+        const script = `
+          const { TTY } = process.binding("tty_wrap");
+          const master = new tty.ReadStream(3);
+          const handle = new TTY(4, {});
+          const completed = [];
+          let got = 0, tail = "";
+          master.on("data", chunk => {
+            got += chunk.length;
+            tail = (tail + chunk).slice(-8);
+            if (got < size + 11) return;
+            setImmediate(() => {
+              say({ completed, tail, writeQueueSize: handle.writeQueueSize });
+              handle.close();
+              master.destroy();
+            });
+          });
+          handle.onwritecomplete = function (status) {
+            completed.push([status, this === handle, arguments.length]);
+          };
+          const small = handle.writeBuffer(null, Buffer.from("small"));
+          const big = handle.writeBuffer(null, bytes);
+          const waits = handle.writeQueueSize;
+          // It has no bytes to wait for, and it still completes in its turn.
+          const empty = handle.writeBuffer(null, Buffer.alloc(0));
+          const behind = handle.writeBuffer(null, Buffer.from("BEHIND"));
+          say({
+            small,
+            big,
+            empty,
+            behind,
+            bytesWritten: handle.bytesWritten,
+            // How much the first write(2) took is the kernel's number.
+            aPartWaits: waits > 0 && waits < size,
+            behindWaitsToo: handle.writeQueueSize === waits + 6,
+          });
+        `;
+        expect(await withPair(script)).toEqual({
+          records: [
+            { small: 0, big: 1, empty: 1, behind: 1, bytesWritten: size + 11, aPartWaits: true, behindWaitsToo: true },
+            {
+              // The status, whether this is the handle, and the count of arguments: for big, empty and behind.
+              completed: [
+                [0, true, 1],
+                [0, true, 1],
+                [0, true, 1],
+              ],
+              tail: Buffer.alloc(size, fill).toString().slice(-2) + "BEHIND",
+              writeQueueSize: 0,
+            },
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.concurrent(
+      "a write that waits goes out with no onwritecomplete set, and a closed handle answers EBADF and counts the chunk",
+      async () => {
+        const script = `
+          const { TTY } = process.binding("tty_wrap");
+          const master = new tty.ReadStream(3);
+          const handle = new TTY(4, {});
+          const hash = crypto.createHash("sha256");
+          let got = 0;
+          master.on("data", chunk => {
+            got += chunk.length;
+            hash.update(chunk);
+            if (got < size) return;
+            setImmediate(() => {
+              say({ got, sameBytes: hash.digest("hex") === sha256, writeQueueSize: handle.writeQueueSize });
+              handle.close(() => {
+                const before = handle.bytesWritten;
+                // Node's StreamBase::Write counts a chunk before it looks at the stream.
+                say({ closed: handle.writeBuffer(null, Buffer.from("late")), counted: handle.bytesWritten - before });
+                master.destroy();
+              });
+            });
+          });
+          say({ ret: handle.writeBuffer(null, bytes), onwritecomplete: typeof handle.onwritecomplete });
+        `;
+        expect(await withPair(script)).toEqual({
+          records: [
+            { ret: 1, onwritecomplete: "undefined" },
+            { got: size, sameBytes: true, writeQueueSize: 0 },
+            { closed: -9, counted: 4 }, // UV_EBADF
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // The handle has one descriptor of its own, and one more for the poll of a write that it could not finish at
+    // once. Every way that a handle ends closes both. It also closes a master and a FIFO, which the handle owns as
+    // libuv owns a fd that it could not reopen. The child says which of its descriptors from before are closed,
+    // and which it has more than before.
+    const descriptors = `
+      const { TTY } = process.binding("tty_wrap");
+      const open = () => fs.readdirSync("/dev/fd").map(Number).filter(fd => {
+        try { return fs.fstatSync(fd) !== undefined; } catch { return false; }
+      });
+      const held = before => open().filter(fd => !before.includes(fd)).length;
+      const report = (before, more, names = {}) => {
+        const after = open();
+        say({
+          ...more,
+          closed: before.filter(fd => !after.includes(fd)).map(fd => names[fd] ?? fd),
+          left: after.filter(fd => !before.includes(fd)),
+        });
+      };
+      // The collector closes what a handle that nobody holds has. It gets turns of the loop for that.
+      const collect = async done => {
+        for (let turn = 0; turn < 100 && !done(); turn++) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      };
+    `;
+    type DescriptorRow = [name: string, opts: PairOptions & { fifo?: boolean }, script: string, records: object[]];
+    // The handle owns both descriptors of the FIFO. The loop finishes a write to a FIFO on Linux alone.
+    const fifoDescriptorRow: DescriptorRow = [
+      "destroy() of the streams over both ends of a FIFO",
+      { fifo: true },
+      `
+        const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const before = open();
+        const input = new tty.ReadStream(reader), output = new tty.ReadStream(writer);
+        input.on("data", () => {});
+        output.on("close", () => input.destroy());
+        input.on("close", () => setImmediate(() => report(before, {}, { [reader]: "reader", [writer]: "writer" })));
+        output.write(bytes, () => output.destroy());
+      `,
+      [{ closed: ["reader", "writer"], left: [] }],
+    ];
+    const descriptorRows: DescriptorRow[] = [
+      [
+        "destroy() with a write that waits",
+        {},
+        `
+          const before = open();
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          slave.setRawMode(true);
+          master.on("data", () => {});
+          slave.write(bytes);
+          slave.on("close", () => master.destroy());
+          master.on("close", () => setImmediate(() => report(before)));
+          setImmediate(() => slave.destroy());
+        `,
+        [{ closed: [3], left: [] }],
+      ],
+      [
+        "destroy() behind a write that went out from the loop",
+        {},
+        `
+          const before = open();
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          master.on("data", () => {});
+          slave.write(bytes, () => {
+            // One descriptor of each handle, and the one of the write poll, which stays until the close.
+            const count = held(before);
+            slave.on("close", () => master.destroy());
+            master.on("close", () => setImmediate(() => report(before, { held: count })));
+            slave.destroy();
+          });
+        `,
+        [{ held: 3, closed: [3], left: [] }],
+      ],
+      [
+        "a hangup of the master, 'end' and 'close'",
+        { childHoldsAlone: true },
+        `
+          const before = open();
+          const slave = new tty.ReadStream(4);
+          const events = [];
+          slave.on("data", () => {});
+          slave.on("error", err => events.push("error " + err.code));
+          slave.on("end", () => events.push("end"));
+          slave.on("close", hadError => {
+            events.push("close " + hadError);
+            setImmediate(() => report(before, { events }));
+          });
+          // The child has the only master. Its close hangs the slave up.
+          fs.closeSync(3);
+        `,
+        [{ events: ["end", "close false"], closed: [3], left: [] }],
+      ],
+      [
+        "the collector took a handle that nobody holds",
+        {},
+        `
+          const before = open();
+          (() => {
+            const handle = new TTY(4, {});
+            say({ held: held(before), fd: handle.fd });
+          })();
+          setImmediate(async () => {
+            await collect(() => held(before) === 0);
+            report(before);
+          });
+        `,
+        [
+          { held: 1, fd: 4 },
+          { closed: [], left: [] },
+        ],
+      ],
+      [
+        "the collector took a handle whose write went out from the loop",
+        {},
+        `
+          const before = open();
+          const master = new tty.ReadStream(3);
+          let got = 0, status = "not yet";
+          master.on("data", chunk => {
+            got += chunk.length;
+            if (got < size) return;
+            setImmediate(() => {
+              // One descriptor of each handle, and the one of the write poll.
+              const count = held(before);
+              master.on("close", async () => {
+                await collect(() => held(before) === 0);
+                report(before, { status, held: count });
+              });
+              master.destroy();
+            });
+          });
+          (() => {
+            const handle = new TTY(4, {});
+            handle.onwritecomplete = value => { status = value; };
+            handle.writeBuffer(null, bytes);
+          })();
+        `,
+        [{ status: 0, held: 3, closed: [3], left: [] }],
+      ],
+      [
+        "destroy() of a stream over a slave that is open for writing alone",
+        { slaveFlags: constants.O_WRONLY },
+        `
+          const before = open();
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          master.on("data", () => {});
+          slave.on("close", () => master.destroy());
+          master.on("close", () => setImmediate(() => report(before)));
+          slave.write(bytes, () => slave.destroy());
+        `,
+        [{ closed: [3], left: [] }],
+      ],
+      ...(isLinux ? [fifoDescriptorRow] : []),
+    ];
+    test.concurrent.each(descriptorRows)(
+      "no descriptor of the handle is left after %s",
+      async (_name, opts, script, records) => {
+        const { fifo, ...pairOptions } = opts;
+        const result = await (fifo ? withFifo : withPair)(descriptors + script, pairOptions);
+        expect(result).toEqual({ records, stderr: "", exitCode: 0 });
+      },
+    );
+
+    // Nothing but its queue holds the handle. The master does not hold the loop, so a handle that is collected
+    // with its queue ends the child at once, with the completions that ran until then.
+    test.concurrent.each([
+      ["inside each completion", "Bun.gc(true);"],
+      ["between the completions of one turn of the loop", "queueMicrotask(() => Bun.gc(true));"],
+    ])("a handle that nobody holds keeps its queued writes through a collection %s", async (_name, collect) => {
       const script = `
         const { TTY } = process.binding("tty_wrap");
         const master = new tty.ReadStream(3);
-        const handle = new TTY(4, {});
+        master.on("data", () => {});
+        master.unref();
         const completed = [];
-        let got = 0, tail = "";
-        master.on("data", chunk => {
-          got += chunk.length;
-          tail = (tail + chunk).slice(-8);
-          if (got < size + 11) return;
-          say({ completed, tail });
-          handle.close();
-          master.destroy();
-        });
-        function oncomplete(status, context) {
-          completed.push([context, status, this === handle]);
-        }
-        const small = handle.writeBuffer(null, Buffer.from("small"), oncomplete, "small");
-        const big = handle.writeBuffer(null, bytes, oncomplete, "big");
-        const behind = handle.writeBuffer(null, Buffer.from("BEHIND"), oncomplete, "behind");
-        say({ small, big: String(big), behind: String(behind), bytesWritten: handle.bytesWritten });
+        (() => {
+          const handle = new TTY(4, {});
+          handle.onwritecomplete = status => {
+            completed.push(status);
+            ${collect}
+          };
+          for (const chunk of [bytes, Buffer.from("a"), Buffer.from("b"), Buffer.from("c")]) handle.writeBuffer(null, chunk);
+        })();
+        Bun.gc(true);
+        setImmediate(() => Bun.gc(true));
+        process.on("exit", () => say({ completed }));
       `;
-      expect(await withPair(script)).toEqual({
+      expect(await withPair(script)).toEqual({ records: [{ completed: [0, 0, 0, 0] }], stderr: "", exitCode: 0 });
+    });
+
+    // The handle has a descriptor of its own from the start, also where it could not open the terminal again.
+    // libuv has the number of the caller alone there, and Node answers EBADF.
+    test.concurrent(
+      "a stream over a descriptor that cannot be reopened writes and says the size of the window after the caller has closed it",
+      async () => {
+        const script = `
+          const master = new tty.ReadStream(3);
+          master.on("error", err => say({ error: err.code }));
+          fs.closeSync(3);
+          const windowSize = [];
+          say({ getWindowSize: master._handle.getWindowSize(windowSize), windowSize });
+          master.write(bytes, err => say({ cb: err ? err.code : null }));
+        `;
+        expect(await withPair(script, { readEnd: "slave" })).toEqual({
+          records: [{ getWindowSize: 0, windowSize: [0, 0] }, { cb: null }],
+          stderr: "",
+          exitCode: 0,
+          read: { got: size, sameBytes: true },
+        });
+      },
+    );
+
+    // libuv's uv_stream_set_blocking() changes O_NONBLOCK of the descriptor of the caller. This handle changes it
+    // on a descriptor that it opened itself, and on no other.
+    test.concurrent("setBlocking() never changes O_NONBLOCK of the descriptor of the caller", async () => {
+      const script = `
+        const { TTY } = process.binding("tty_wrap");
+        ${fcntlInChild}
+        const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+        const nonblocking = fd => (fcntl(fd, 3, 0) & O_NONBLOCK) !== 0;
+        const reader = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+        // A reader is there, so this open returns at once. The descriptor blocks.
+        const writer = fs.openSync(fifo, O_WRONLY);
+        const record = {};
+        const handles = [];
+        for (const [name, fd] of [["the master", 3], ["the slave", 4], ["a FIFO that blocks", writer], ["a FIFO that does not block", reader]]) {
+          const handle = new TTY(fd, {});
+          handles.push(handle);
+          record[name] = [nonblocking(fd)];
+          for (const enable of [true, false]) record[name].push(handle.setBlocking(enable), nonblocking(fd));
+        }
+        say(record);
+        for (const handle of handles) handle.close();
+      `;
+      expect(await withFifo(script)).toEqual({
         records: [
-          { small: 0, big: "undefined", behind: "undefined", bytesWritten: size + 11 },
           {
-            completed: [
-              ["big", 0, true],
-              ["behind", 0, true],
-            ],
-            tail: Buffer.alloc(size, fill).toString().slice(-2) + "BEHIND",
+            // Before, then what setBlocking(true) answers and leaves, then the same for setBlocking(false).
+            "the master": [true, 0, true, 0, true],
+            "the slave": [false, 0, false, 0, false],
+            "a FIFO that blocks": [false, 0, false, 0, false],
+            "a FIFO that does not block": [true, 0, true, 0, true],
           },
         ],
+        stderr: "",
         exitCode: 0,
       });
     });
 
-    // The handle has one descriptor of its own, and one more for the poll of a write that waits. close() ends both,
-    // and the master too, which the handle owns as libuv owns a fd that it could not reopen.
-    test.concurrent("close() leaves no descriptor of the handle", async () => {
-      const script = `
-        const open = () => fs.readdirSync("/dev/fd").map(Number).filter(fd => {
-          try { return fs.fstatSync(fd) !== undefined; } catch { return false; }
-        });
-        const before = open();
-        const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
-        slave.setRawMode(true);
-        master.on("data", () => {});
-        slave.write(bytes);
-        slave.on("close", () => master.destroy());
-        master.on("close", () => setImmediate(() => {
-          const after = open();
-          say({
-            closed: before.filter(fd => !after.includes(fd)),
-            left: after.filter(fd => !before.includes(fd) && tty.isatty(fd)),
+    // The stream is the host's, whichever script writes to it. The end of the graph closes what the graph opened,
+    // and this handle is not of those: its write goes out, and the host writes again.
+    test.concurrent(
+      "a write from a Bun.ModuleGraph to a stream of the host goes out after the graph is disposed",
+      async () => {
+        const script = `
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          const events = [];
+          slave.on("error", err => events.push("error " + err.code));
+          slave.on("drain", () => events.push("drain"));
+          const graph = new Bun.ModuleGraph({});
+          graph.run(() => {
+            const ret = slave.write(bytes, err => events.push("write of the graph " + (err ? err.code : null)));
+            events.push("write of the graph returns " + ret);
           });
-        }));
-        setImmediate(() => slave.destroy());
+          graph.dispose();
+          say({ destroyed: slave.destroyed, writableLength: slave.writableLength });
+          let got = 0, tail = "", hostWrote = false;
+          master.on("data", chunk => {
+            got += chunk.length;
+            tail = (tail + chunk).slice(-4);
+            if (got >= size && !hostWrote) {
+              hostWrote = true;
+              // All of the write of the graph is out.
+              setImmediate(() => {
+                events.push("writableLength " + slave.writableLength);
+                const ret = slave.write("host", err => events.push("write of the host " + (err ? err.code : null)));
+                events.push("write of the host returns " + ret);
+              });
+            }
+            if (got < size + 4) return;
+            setImmediate(() => {
+              say({ got, tail, events, writableLength: slave.writableLength });
+              slave.destroy();
+              master.destroy();
+            });
+          });
+        `;
+        expect(await withPair(script)).toEqual({
+          records: [
+            { destroyed: false, writableLength: size },
+            {
+              got: size + 4,
+              tail: "host",
+              events: [
+                "write of the graph returns false",
+                "drain",
+                "write of the graph null",
+                "writableLength 0",
+                "write of the host returns true",
+                "write of the host null",
+              ],
+              writableLength: 0,
+            },
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // The poll of a write that waits needs a descriptor. Where none is free the write fails, and libuv, which
+    // polls the descriptor that it has, completes it. The reader is the test: a write that waited in place
+    // would complete too, and the row would say so.
+    test.concurrent("a write that the pty refuses with no descriptor free fails with EMFILE", async () => {
+      const script = `
+        const events = [];
+        const refuse = () => {
+          const slave = new tty.ReadStream(4);
+          slave.on("error", err => events.push("error " + err.code + " " + err.syscall));
+          slave.on("close", hadError => {
+            events.push("close " + hadError);
+            say({ events });
+          });
+          const held = [];
+          let atTheLimit;
+          try { for (;;) held.push(fs.openSync("/dev/null", "r")); } catch (err) { atTheLimit = err.code; }
+          const ret = slave.write(bytes, err => events.push("cb " + (err ? err.code : null)));
+          // LeakSanitizer opens files when the process exits.
+          for (const fd of held.splice(0)) fs.closeSync(fd);
+          say({ atTheLimit, ret });
+        };
+        // A debug build reads its built-in modules from files. A write that a closed handle refuses loads what a
+        // failed write takes, while descriptors are free.
+        const warm = new tty.ReadStream(4);
+        warm.on("error", () => {});
+        warm.on("close", refuse);
+        warm._handle.close();
+        warm.write("x");
       `;
-      expect(await withPair(script)).toEqual({ records: [{ closed: [3], left: [] }], exitCode: 0 });
+      const { read, ...result } = await withPair(script, {
+        readEnd: "master",
+        part: "while the child runs",
+        prefix: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh"],
+      });
+      // How much the pty takes before it refuses is the kernel's number.
+      expect({ ...result, aPartCame: read!.got > 0 && read!.got < size }).toEqual({
+        records: [{ atTheLimit: "EMFILE", ret: false }, { events: ["cb EMFILE", "error EMFILE write", "close true"] }],
+        stderr: "",
+        exitCode: 0,
+        aPartCame: true,
+      });
+    });
+
+    // libuv keeps the Buffer of a write that waits, so under Node the change below goes out. This handle copies
+    // what the descriptor refused.
+    test.concurrent("a change of the Buffer behind write() does not reach a write that waits", async () => {
+      const script = `
+        const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+        const hash = crypto.createHash("sha256");
+        let got = 0;
+        master.on("data", chunk => {
+          got += chunk.length;
+          hash.update(chunk);
+          if (got < size) return;
+          say({ got, sameBytes: hash.digest("hex") === sha256 });
+          slave.destroy();
+          master.destroy();
+        });
+        const ret = slave.write(bytes, err => say({ cb: err ? err.code : null }));
+        bytes.fill("#");
+        say({ ret, writableLength: slave.writableLength });
+      `;
+      expect(await withPair(script)).toEqual({
+        records: [{ ret: false, writableLength: size }, { cb: null }, { got: size, sameBytes: true }],
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

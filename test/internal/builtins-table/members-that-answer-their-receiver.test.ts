@@ -2,61 +2,59 @@ import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { join, resolve } from "node:path";
 import { collectBindgen } from "../../../src/codegen/builtins/collect-bindgen.ts";
-import { Problems } from "../../../src/codegen/builtins/declarations.ts";
+import { Problems, type MemberDeclaration } from "../../../src/codegen/builtins/declarations.ts";
 
 const library = resolve(import.meta.dir, "../../../src/codegen/bindgen-lib.ts");
 
-/** What each function of the prototype of a class `Thing` does with its receiver, as the table of built-ins reads the schema. */
-async function usesOfReceivers(proto: string): Promise<Record<string, string[]>> {
+/** The members that the table of built-ins reads out of a schema with a class `Other` and a class `Thing` with these `proto` and `static` members. */
+async function collect(proto: string, statics = ""): Promise<{ members: MemberDeclaration[]; problems: string[] }> {
   using dir = tempDir("members-that-answer-their-receiver", {
     "thing.bind.ts": `import * as b from ${JSON.stringify(library)};
 export const Other = b.class({ rustPath: "crate::thing::Other" });
-export const Thing = b.class({ rustPath: "crate::thing::Thing", proto: { ${proto} } });
+export const Third = b.class({ rustPath: "crate::thing::Third" });
+export const Thing = b.class({ rustPath: "crate::thing::Thing", proto: { ${proto} }${statics && `, construct: {}, static: { ${statics} }`} });
 `,
   });
   const problems = new Problems();
   const source = `bun_runtime=${join(String(dir), "thing.bind.ts")}`;
-  const { declarations } = await collectBindgen(String(dir), [source], new Map(), new Set(), new Map(), problems);
-  expect(problems.lines).toEqual([]);
+  try {
+    const { declarations } = await collectBindgen(String(dir), [source], new Map(), new Set(), new Map(), problems);
+    const members = declarations.flatMap(({ declaration }) =>
+      declaration.declares === "Member" && declaration.signatures.length > 0 ? [declaration] : [],
+    );
+    return { members, problems: problems.lines };
+  } catch (error) {
+    return { members: [], problems: [String(error)] };
+  }
+}
+
+async function membersOf(proto: string): Promise<MemberDeclaration[]> {
+  const { members, problems } = await collect(proto);
+  expect(problems).toEqual([]);
+  return members;
+}
+
+/** What each function of the prototype of a class `Thing` does with its receiver, as the table of built-ins reads the schema. */
+async function usesOfReceivers(proto: string): Promise<Record<string, string[]>> {
   return Object.fromEntries(
-    declarations.flatMap(({ declaration }) =>
-      declaration.declares === "Member" && declaration.signatures.length > 0
-        ? [[declaration.path, (declaration.signatures[0].uses?.this ?? []).map(({ use }) => use)]]
-        : [],
-    ),
+    (await membersOf(proto)).map(({ path, signatures }) => [
+      path,
+      (signatures[0].uses?.this ?? []).map(({ use }) => use),
+    ]),
   );
 }
 
 /** What each function of the prototype of `Thing` does with each of its arguments. */
 async function usesOfArguments(proto: string): Promise<Record<string, Record<string, string[]>>> {
-  using dir = tempDir("members-that-answer-their-receiver", {
-    "thing.bind.ts": `import * as b from ${JSON.stringify(library)};
-export const Other = b.class({ rustPath: "crate::thing::Other" });
-export const Thing = b.class({ rustPath: "crate::thing::Thing", proto: { ${proto} } });
-`,
-  });
-  const problems = new Problems();
-  const source = `bun_runtime=${join(String(dir), "thing.bind.ts")}`;
-  const { declarations } = await collectBindgen(String(dir), [source], new Map(), new Set(), new Map(), problems);
-  expect(problems.lines).toEqual([]);
   return Object.fromEntries(
-    declarations.flatMap(({ declaration }) =>
-      declaration.declares === "Member" &&
-      declaration.signatures.length > 0 &&
-      declaration.signatures[0].parameters.length > 0
-        ? [
-            [
-              declaration.path,
-              Object.fromEntries(
-                declaration.signatures[0].parameters.map(({ name }) => [
-                  name,
-                  (declaration.signatures[0].uses?.[name] ?? []).map(({ use }) => use),
-                ]),
-              ),
-            ],
-          ]
-        : [],
-    ),
+    (await membersOf(proto))
+      .filter(({ signatures }) => signatures[0].parameters.length > 0)
+      .map(({ path, signatures }) => [
+        path,
+        Object.fromEntries(
+          signatures[0].parameters.map(({ name }) => [name, (signatures[0].uses?.[name] ?? []).map(({ use }) => use)]),
+        ),
+      ]),
   );
 }
 
@@ -72,6 +70,7 @@ test("a member that is passed its wrapper and answers an object of its class may
     `),
   ).toEqual({
     "%Other%.prototype.@@toStringTag": [],
+    "%Third%.prototype.@@toStringTag": [],
     "%Thing%.prototype.@@toStringTag": [],
     "%Thing%.prototype.ref": ["Retains", "Returns"],
     "%Thing%.prototype.remove": ["Retains", "Returns"],
@@ -91,6 +90,7 @@ test("one that is passed its wrapper and answers nothing that its receiver can b
     `),
   ).toEqual({
     "%Other%.prototype.@@toStringTag": [],
+    "%Third%.prototype.@@toStringTag": [],
     "%Thing%.prototype.@@toStringTag": [],
     "%Thing%.prototype.size": ["Retains"],
     "%Thing%.prototype.other": ["Retains"],
@@ -110,6 +110,7 @@ test("one that runs no JavaScript and is not passed its wrapper neither keeps no
     `),
   ).toEqual({
     "%Other%.prototype.@@toStringTag": [],
+    "%Third%.prototype.@@toStringTag": [],
     "%Thing%.prototype.@@toStringTag": [],
     "%Thing%.prototype.copy": ["ReadsContents", "WritesContents", "RetainsContents"],
     "%Thing%.prototype.size": ["ReadsContents", "WritesContents"],
@@ -129,6 +130,7 @@ test("one that runs no JavaScript and answers its receiver with b.this is handed
     `),
   ).toEqual({
     "%Other%.prototype.@@toStringTag": [],
+    "%Third%.prototype.@@toStringTag": [],
     "%Thing%.prototype.@@toStringTag": [],
     "%Thing%.prototype.ref": ["Returns", "ReadsContents", "WritesContents"],
     "%Thing%.prototype.remove": ["Returns", "ReadsContents", "WritesContents"],
@@ -138,28 +140,16 @@ test("one that runs no JavaScript and answers its receiver with b.this is handed
 });
 
 test("b.this is the receiver to the table, and b.self any instance of the class", async () => {
-  const resultsOf = (declarations: Awaited<ReturnType<typeof collectBindgen>>["declarations"]) =>
+  const members = await membersOf(`
+    ref: { returns: b.this, passThis: true },
+    remove: { returns: b.this.optional, passThis: true, capability: "heap" },
+    copy: { returns: b.self, capability: "heap" },
+  `);
+  expect(
     Object.fromEntries(
-      declarations.flatMap(({ declaration }) =>
-        declaration.declares === "Member" && declaration.signatures.length > 0 && declaration.path.includes("Thing")
-          ? [[declaration.path, declaration.signatures[0].result]]
-          : [],
-      ),
-    );
-  using dir = tempDir("members-that-answer-their-receiver", {
-    "thing.bind.ts": `import * as b from ${JSON.stringify(library)};
-export const Thing = b.class({ rustPath: "crate::thing::Thing", proto: {
-  ref: { returns: b.this, passThis: true },
-  remove: { returns: b.this.optional, passThis: true, capability: "heap" },
-  copy: { returns: b.self, capability: "heap" },
-} });
-`,
-  });
-  const problems = new Problems();
-  const source = `bun_runtime=${join(String(dir), "thing.bind.ts")}`;
-  const { declarations } = await collectBindgen(String(dir), [source], new Map(), new Set(), new Map(), problems);
-  expect(problems.lines).toEqual([]);
-  expect(resultsOf(declarations)).toEqual({
+      members.filter(({ path }) => path.includes("Thing")).map(({ path, signatures }) => [path, signatures[0].result]),
+    ),
+  ).toEqual({
     "%Thing%.prototype.@@toStringTag": { type: "Primitive", primitive: "String" },
     "%Thing%.prototype.ref": { type: "Operand", operand: "this" },
     "%Thing%.prototype.remove": {
@@ -173,22 +163,8 @@ export const Thing = b.class({ rustPath: "crate::thing::Thing", proto: {
   });
 });
 
-test("b.this is only the result of a function, and takes passThis", async () => {
-  const problemsOf = async (proto: string): Promise<string[]> => {
-    using dir = tempDir("members-that-answer-their-receiver", {
-      "thing.bind.ts": `import * as b from ${JSON.stringify(library)};
-export const Thing = b.class({ rustPath: "crate::thing::Thing", proto: { ${proto} } });
-`,
-    });
-    const problems = new Problems();
-    const source = `bun_runtime=${join(String(dir), "thing.bind.ts")}`;
-    try {
-      await collectBindgen(String(dir), [source], new Map(), new Set(), new Map(), problems);
-    } catch (error) {
-      return [String(error)];
-    }
-    return problems.lines;
-  };
+test("b.this is only the result of a function with a receiver, and takes passThis", async () => {
+  const problemsOf = async (proto: string, statics = "") => (await collect(proto, statics)).problems;
   expect(await problemsOf(`ref: { returns: b.this }`)).toEqual([
     expect.stringContaining("returns: b.this takes passThis"),
   ]);
@@ -198,6 +174,9 @@ export const Thing = b.class({ rustPath: "crate::thing::Thing", proto: { ${proto
   expect(await problemsOf(`twin: { getter: b.this, passThis: true }`)).toEqual([
     expect.stringContaining("twin: b.this is the result of a function"),
   ]);
+  expect(await problemsOf(``, `make: { returns: b.this, passThis: true, capability: "heap" }`)).toEqual([
+    expect.stringContaining("a static member has none"),
+  ]);
 });
 
 test("an argument that is an instance of a class is handed to the body as the struct: neither kept nor answered", async () => {
@@ -205,11 +184,13 @@ test("an argument that is an instance of a class is handed to the body as the st
     await usesOfArguments(`
       plus: { args: { other: b.self }, returns: b.i32 },
       merge: { args: { other: b.self.nullable }, returns: b.self, capability: "heap" },
+      either: { args: { other: b.union({ other: Other, third: Third }) }, returns: b.i32 },
       watch: { args: { other: Other }, returns: b.any, capability: "js", throws: true },
     `),
   ).toEqual({
     "%Thing%.prototype.plus": { other: ["ReadsContents", "WritesContents"] },
     "%Thing%.prototype.merge": { other: ["ReadsContents", "WritesContents", "RetainsContents"] },
+    "%Thing%.prototype.either": { other: ["ReadsContents", "WritesContents"] },
     "%Thing%.prototype.watch": { other: ["Everything"] },
   });
 });
@@ -223,6 +204,7 @@ test("one that runs JavaScript keeps its receiver whether or not it is passed it
     `),
   ).toEqual({
     "%Other%.prototype.@@toStringTag": [],
+    "%Third%.prototype.@@toStringTag": [],
     "%Thing%.prototype.@@toStringTag": [],
     "%Thing%.prototype.run": ["Retains"],
     "%Thing%.prototype.runAll": ["Everything"],

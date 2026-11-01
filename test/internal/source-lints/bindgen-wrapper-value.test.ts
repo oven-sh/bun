@@ -41,11 +41,11 @@ for (const abs of rustSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
   if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
   if (tracked !== null && !tracked.has(source)) continue;
-  if (source === "src/jsc/bindgen.rs") continue;
   scanned++;
   const content = await file(abs).text();
   const stripped = content.replace(/\/\*[^]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
-  const calls = stripped.match(/\bwrapper_value\s*\(/g)?.length ?? 0;
+  // Every call, and not the definition `unsafe fn wrapper_value(&self)`.
+  const calls = stripped.match(/(?<!fn\s+)\bwrapper_value\s*\(/g)?.length ?? 0;
   if (calls > 0) callers[source] = calls;
 }
 

@@ -276,3 +276,5 @@ exports[`property matchers leave the received value as it was a matcher on the r
   "b": 1,
 }
 `;
+
+exports[`property matchers leave the received value as it was a field of an Error whose message is a getter that reads a private field 1`] = `[ApiError: boom]`;

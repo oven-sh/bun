@@ -78,6 +78,13 @@ describe("property matchers leave the received value as it was", () => {
   class HttpError extends Error {
     status = 500;
   }
+  class ApiError extends Error {
+    #body = { text: "boom" };
+    code = "E_FOO";
+    get message() {
+      return this.#body.text;
+    }
+  }
   const deepFreeze = <T extends object>(object: T): T => {
     Object.values(object).forEach(value => typeof value === "object" && deepFreeze(value));
     return Object.freeze(object);
@@ -155,6 +162,10 @@ describe("property matchers leave the received value as it was", () => {
       { error: new HttpError("boom", { cause: "why" }) },
       { error: { message: any(String), status: any(Number) } },
     ],
+    "a field of an Error whose message is a getter that reads a private field": () => [
+      new ApiError(),
+      { code: any(String) },
+    ],
     "a matcher on the received side": () => [{ a: any(Number), b: 1 }, { a: 5 }],
   };
 
@@ -208,33 +219,43 @@ describe("a property matcher on the message of an Error", () => {
     }
   });
 
-  test("gives a snapshot serializer an Error with the same stack, for which Error.prepareStackTrace is not called", () => {
-    const error = Object.assign(new Error("boom"), { 0: "zero" });
+  test("does not ask the Error for its stack", () => {
+    class AppError extends Error {
+      constructor(message: string) {
+        super(message);
+        Error.captureStackTrace(this, this.constructor);
+      }
+    }
+    const errors = [new Error("boom"), new AppError("boom")];
     const prepared: unknown[] = [];
-    let printed: Error | undefined;
-    expect.addSnapshotSerializer({
-      test: value => value instanceof Error && 0 in value,
-      serialize(value) {
-        printed = value;
-        return "printed";
-      },
-    });
     const prepareStackTrace = Error.prepareStackTrace;
     Error.prepareStackTrace = error => {
       prepared.push(error);
       return "prepared";
     };
+    let preparedBySnapshots: unknown[];
+    let stacks: unknown[];
     try {
-      expect(error).toMatchInlineSnapshot({ message: expect.any(String) }, `printed`);
-      printed!.stack;
+      expect({ errors }).toMatchInlineSnapshot(
+        { errors: [{ message: expect.any(String) }, { message: expect.any(String) }] },
+        `
+        {
+          "errors": [
+            [Error: [object ExpectAny]],
+            [AppError: [object ExpectAny]],
+          ],
+        }
+      `,
+      );
+      preparedBySnapshots = [...prepared];
+      stacks = errors.map(error => error.stack);
     } finally {
       Error.prepareStackTrace = prepareStackTrace;
     }
-    expect(printed).not.toBe(error);
-    expect(prepared.length).toBe(1);
-    expect(prepared[0]).toBe(error);
-    expect({ stack: printed!.stack, 0: (printed as any)[0] }).toEqual({ stack: "prepared", 0: "zero" });
-    expect(error.message).toBe("boom");
+    expect(preparedBySnapshots).toEqual([]);
+    expect(stacks).toEqual(["prepared", "prepared"]);
+    expect(prepared[0]).toBe(errors[0]);
+    expect(prepared[1]).toBe(errors[1]);
   });
 });
 

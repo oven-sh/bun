@@ -3575,16 +3575,23 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
         JSValue prototype = object->getPrototypeDirect();
         copy = prototype.isObject() ? constructEmptyObject(globalObject, asObject(prototype)) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     } else if (copiesErrors && object->classInfo() == ErrorInstance::info()) {
-        // Made the way a structured clone makes one: it captures no stack of its own, and gets the one of `object` below.
+        // Made the way a structured clone makes one: it captures no stack.
         copy = ErrorInstance::create(globalObject, String(), uncheckedDowncast<ErrorInstance>(object)->errorType(), {}, String(), String());
         copy->setPrototypeDirect(vm, object->getPrototypeDirect());
     } else {
         return nullptr;
     }
+    bool isError = copy->type() == ErrorInstanceType;
     PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
+    // The stack of an Error stays out of the copy: to ask for it, or for all the names, can call `Error.prepareStackTrace`.
+    if (isError)
+        object->structure()->getPropertyNamesFromStructure(vm, names, DontEnumPropertiesMode::Include);
+    else
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, nullptr);
     for (const auto& name : names) {
+        if (isError && ErrorInstance::isLazilyMaterialized(vm, name))
+            continue;
         PropertyDescriptor descriptor;
         bool exists = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -3595,6 +3602,13 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
             descriptor.setWritable(true);
         copy->methodTable()->defineOwnProperty(copy, globalObject, name, descriptor, false);
         RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    // A getter of the class can need the private fields of `object`, which the copy does not have.
+    if (isError && !copy->getDirect(vm, vm.propertyNames->message)) {
+        JSValue message = object->getIfPropertyExists(globalObject, vm.propertyNames->message);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (message)
+            copy->putDirect(vm, vm.propertyNames->message, message, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
     // The loop can't define `length` (it's not configurable), and trailing holes only exist through it.
     if (auto* array = dynamicDowncast<JSArray>(copy)) {

@@ -323,13 +323,11 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
         if (op->m_cancelled)
             RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
         JSPromise* nextPromise = asPromise(nextResult);
-        if (!nextPromise) {
-            // `await` semantics: adopt thenables; plain results become fulfilled promises.
-            nextPromise = promiseResolvedWith(globalObject, nextResult);
-            if (scope.exception()) [[unlikely]] {
-                op->abandonIterator();
-                return;
-            }
+        // Adopt thenables and promises with their own then(); plain results become fulfilled promises.
+        nextPromise = nextPromise ? promiseForReactions(globalObject, nextPromise) : promiseResolvedWith(globalObject, nextResult);
+        if (scope.exception()) [[unlikely]] {
+            op->abandonIterator();
+            return;
         }
         auto status = nextPromise->status();
         if (status == JSPromise::Status::Fulfilled) {

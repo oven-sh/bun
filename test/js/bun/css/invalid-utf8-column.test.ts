@@ -70,3 +70,38 @@ test.concurrent("valid 4-byte UTF-8 still counts as two UTF-16 columns", async (
     exitCode: 0,
   });
 });
+
+async function build(bytes: Buffer) {
+  using dir = tempDir("css-invalid-utf8", {});
+  const css = join(String(dir), "in.css");
+  await Bun.write(css, bytes);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const r = await Bun.build({ entrypoints: [${JSON.stringify(css)}], throw: false });
+       console.log(JSON.stringify({ success: r.success, logs: r.logs.map(log => log.message) }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+}
+
+test.concurrent("reports an error for an unresolved @import that isn't valid UTF-8", async () => {
+  expect(await build(Buffer.from('@import "./caf\xE9.css";', "latin1"))).toEqual({
+    stdout: JSON.stringify({ success: false, logs: ['Could not resolve: "./caf�.css"'] }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("tokenizes a token that starts on a continuation byte", async () => {
+  expect(await build(Buffer.from("@-x foo \x80 bar {}\n", "latin1"))).toEqual({
+    stdout: JSON.stringify({ success: true, logs: ["invalid @ rule encountered: '@-x'"] }),
+    stderr: "",
+    exitCode: 0,
+  });
+});

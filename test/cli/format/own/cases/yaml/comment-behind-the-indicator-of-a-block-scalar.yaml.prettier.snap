@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+steps:
+  - name: setup overrides
+    if: matrix.vite
+    run:
+      | # copies the catalogs to the overrides in the workspace file so that the next install enforces them
+      yq -i '.overrides = .catalogs' pnpm-workspace.yaml
+      pnpm install --no-frozen-lockfile
+  - run: > # short
+      a
+  - name: next
+
+-------------------
+{ printWidth: 100 }
+-------------------
+steps:
+  - name: setup overrides
+    if: matrix.vite
+    run:
+      | # copies the catalogs to the overrides in the workspace file so that the next install enforces them
+      yq -i '.overrides = .catalogs' pnpm-workspace.yaml
+      pnpm install --no-frozen-lockfile
+  - run: > # short
+      a
+  - name: next
+
+===================== End =====================

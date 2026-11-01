@@ -15,7 +15,8 @@ if($env:VSINSTALLDIR -eq $null) {
     throw "Command not found: vswhere (did you install Visual Studio?)"
   }
 
-  $vsDir = (& $vswhere -prerelease -latest -property installationPath)
+  # -products *: without it vswhere leaves out Build Tools, which is what CI's images have.
+  $vsDir = (& $vswhere -products * -prerelease -latest -property installationPath)
   if ($vsDir -eq $null) {
     # Check common VS installation paths
     $searchPaths = @(
@@ -47,6 +48,11 @@ if($env:VSINSTALLDIR -eq $null) {
     }
   } finally {
     Pop-Location
+  }
+
+  # Launch-VsDevShell.ps1 only prints a message when it fails.
+  if ($env:VSINSTALLDIR -eq $null) {
+    throw "Launch-VsDevShell.ps1 did not load the Visual Studio environment."
   }
 }
 

@@ -47,7 +47,7 @@ type ErrorCodeInt = u16;
 /// `Bun::ErrorCode` in C++.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct ErrorCode(pub ErrorCodeInt);
+pub struct ErrorCode(ErrorCodeInt);
 
 // Generated from `src/jsc/bindings/ErrorCode.ts` alongside the C++
 // `ErrorCode+List.h` / `ErrorCode+Data.h`. Provides:
@@ -86,8 +86,18 @@ impl ErrorCode {
     /// `globalThis.throwValue`.
     #[inline]
     pub fn throw<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JsError {
-        global.throw_js_value(self.fmt(global, args))
+        throw_code(
+            JSGlobalObject::opaque_ref(global.as_global_ptr().cast::<JSGlobalObject>()),
+            self,
+            args,
+        )
     }
+}
+
+#[cold]
+#[inline(never)]
+fn throw_code(global: &JSGlobalObject, code: ErrorCode, args: Arguments<'_>) -> JsError {
+    global.throw_js_value(code.fmt(global, args))
 }
 
 impl From<ErrorCode> for &'static str {

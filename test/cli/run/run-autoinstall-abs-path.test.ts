@@ -11,17 +11,48 @@ import { join } from "path";
 // any_node_modules_folder was set by the self-reference branch, so resolution fails with
 // "Cannot find module". With the fix, abs_path is interned in DirnameStore and stays
 // valid. A debug assertion in dirInfoUncached additionally guards the invariant.
-//
-// Kept in its own file because the sibling run-autoinstall.test.ts cases mutate the
-// shared bunEnv and routinely time out on debug/ASAN builds when hitting the live
-// registry, which would otherwise mask this test's pass/fail signal.
 test("auto-install: DirInfo.abs_path survives threadlocal buffer reuse across resolutions", async () => {
+  const packages: Record<string, { manifest: object; tarball: Uint8Array }> = {};
+  for (const [name, fields, files] of [
+    [
+      "nanoid",
+      { exports: { ".": "./index.js", "./non-secure": "./non-secure/index.js" } },
+      { "index.js": "", "non-secure/index.js": "" },
+    ],
+    ["left-pad", {}, { "index.js": "" }],
+  ] as [string, object, Record<string, string>][]) {
+    const manifest = { name, version: "1.0.0", ...fields };
+    const tarball = await new Bun.Archive(
+      Object.fromEntries(
+        Object.entries({ "package.json": JSON.stringify(manifest), ...files }).map(([k, v]) => [`package/${k}`, v]),
+      ),
+      { compress: "gzip" },
+    ).bytes();
+    packages[name] = { manifest, tarball };
+  }
+  using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { origin, pathname } = new URL(req.url);
+      const [, name, tgz] = pathname.split("/");
+      const pkg = packages[name];
+      if (!pkg) return new Response("not found", { status: 404 });
+      if (tgz) return new Response(pkg.tarball);
+      return Response.json({
+        name,
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { ...pkg.manifest, dist: { tarball: `${origin}/${name}/1.0.0.tgz` } } },
+      });
+    },
+  });
+
   using dir = tempDir("autoinstall-abs-path", {
+    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
     // No package.json / node_modules so global_cache defaults to .auto (resolver.zig canUse).
     // nanoid has `exports` with a `./non-secure` subpath, enabling the self-reference
     // branch at resolver.zig:1807. left-pad's cache folder name is longer than nanoid's,
     // so nanoid's cached abs_path slice becomes a truncated prefix of left-pad's path
-    // once left-pad is resolved. left-pad is archived so its version string is stable.
+    // once left-pad is resolved. Both are stand-ins for the packages on npm.
     "index.js": `
       const path = require("path");
       const { createRequire } = require("module");
@@ -61,7 +92,4 @@ test("auto-install: DirInfo.abs_path survives threadlocal buffer reuse across re
   expect(stderr).not.toContain("Cannot find module");
   expect(stdout.trim()).toBe("resolved");
   expect(exitCode).toBe(0);
-  // Cold-cache download of two packages from the live registry on a debug/ASAN build
-  // routinely exceeds the 5s default; other registry-hitting tests (bun-add.test.ts,
-  // bun-create.test.ts) use the same pattern.
-}, 30_000);
+});

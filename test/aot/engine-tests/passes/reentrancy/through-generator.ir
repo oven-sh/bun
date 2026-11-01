@@ -1,0 +1,228 @@
+# One statement of the module enters a function, which is entered again by another way (generator): each run has its own captured variable.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="through-generator.js" displayPath="through-generator.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/prelude/array-traversal.ts" displayPath="/$bun/js/prelude/array-traversal.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+entry module=m0
+typesite w0 module=m1 position=5386 kind=Variable
+typesite w1 module=m1 position=5634 kind=Variable
+typesite w2 module=m3 position=743 kind=Parameter
+typesite w3 module=m3 position=761 kind=Parameter
+typesite w4 module=m3 position=720 kind=Result
+typesite w5 module=m3 position=980 kind=Parameter
+typesite w6 module=m3 position=996 kind=Parameter
+typesite w7 module=m3 position=1263 kind=Parameter
+typesite w8 module=m3 position=1279 kind=Parameter
+typesite w9 module=m3 position=1242 kind=Result
+typesite w10 module=m3 position=1819 kind=Result
+typesite w11 module=m3 position=1954 kind=Parameter
+typesite w12 module=m3 position=1968 kind=Parameter
+typesite w13 module=m3 position=1987 kind=Parameter
+typesite w14 module=m3 position=2007 kind=Parameter
+typesite w15 module=m3 position=1934 kind=Result
+typesite w16 module=m3 position=2138 kind=Parameter
+typesite w17 module=m3 position=2370 kind=Parameter
+typesite w18 module=m3 position=2390 kind=Parameter
+typesite w19 module=m3 position=2407 kind=Parameter
+typesite w20 module=m3 position=2434 kind=Parameter
+typesite w21 module=m3 position=2451 kind=Parameter
+typesite w22 module=m3 position=819 kind=Variable
+typesite w23 module=m3 position=1046 kind=Variable
+typesite w24 module=m3 position=1326 kind=Variable
+typesite w25 module=m3 position=1526 kind=Variable
+typesite w26 module=m3 position=1396 kind=PropertyRead
+typesite w27 module=m3 position=1544 kind=PropertyRead
+typesite w28 module=m3 position=1570 kind=Variable
+typesite w29 module=m3 position=1664 kind=PropertyRead
+typesite w30 module=m3 position=2513 kind=Variable
+typesite w31 module=m3 position=2534 kind=Variable
+typesite w32 module=m3 position=2558 kind=Variable
+typesite w33 module=m3 position=2580 kind=Variable
+typesite w34 module=m3 position=2603 kind=Variable
+typesite w35 module=m3 position=2627 kind=Variable
+typesite w36 module=m3 position=2650 kind=Variable
+typesite w37 module=m3 position=2671 kind=Variable
+typesite w38 module=m3 position=2693 kind=Variable
+typesite w39 module=m3 position=2714 kind=Variable
+typesite w40 module=m3 position=2740 kind=Variable
+typesite w41 module=m3 position=2761 kind=Variable
+typesite w42 module=m3 position=2785 kind=Variable
+typesite w43 module=m3 position=2807 kind=Variable
+typesite w44 module=m3 position=2829 kind=Variable
+typesite w45 module=m3 position=2857 kind=Variable
+typesite w46 module=m3 position=2886 kind=Variable
+typesite w47 module=m3 position=2914 kind=Variable
+typesite w48 module=m3 position=2949 kind=Variable
+typesite w49 module=m3 position=2980 kind=Variable
+typesite w50 module=m3 position=3015 kind=Variable
+typesite w51 module=m3 position=3073 kind=Variable
+typesite w52 module=m3 position=3133 kind=Variable
+typesite w53 module=m3 position=3191 kind=Variable
+typesite w54 module=m3 position=3292 kind=Variable
+typesite w55 module=m3 position=3509 kind=Variable
+typesite w56 module=m3 position=3573 kind=Variable
+typesite w57 module=m3 position=3645 kind=Variable
+typesite w58 module=m3 position=3714 kind=Variable
+typesite w59 module=m3 position=3737 kind=Variable
+typesite w60 module=m3 position=3761 kind=Variable
+typesite w61 module=m3 position=3784 kind=Variable
+typesite w62 module=m3 position=3832 kind=Variable
+typesite w63 module=m3 position=3900 kind=Variable
+typesite w64 module=m3 position=3917 kind=Variable
+typesite w65 module=m3 position=4489 kind=Variable
+typesite w66 module=m3 position=7097 kind=Variable
+typesite w67 module=m3 position=3487 kind=PropertyRead
+typesite w68 module=m3 position=3535 kind=CallResult
+typesite w69 module=m3 position=3609 kind=CallResult
+typesite w70 module=m3 position=4581 kind=Variable
+typesite w71 module=m3 position=5811 kind=Variable
+typesite w72 module=m3 position=6914 kind=Assertion
+typesite w73 module=m3 position=6938 kind=CallResult
+typesite w74 module=m3 position=6980 kind=CallResult
+typesite w75 module=m3 position=7575 kind=Assertion
+typesite w76 module=m3 position=7547 kind=CallResult
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent flags=[IsExpected]}}] ownFieldCount=1
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+variable g0 name="once" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="log" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+variable g2 name="readers" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+variable g3 name="storeInNewArray" module=m3 declared={type=f13 flags=[IsFromCompiler]} initialization=Function function=f13 flags=[IsImmutable]
+variable g4 name="clampToLength" module=m3 declared={type=f12 flags=[IsFromCompiler]} initialization=Function function=f12 flags=[IsImmutable]
+variable g5 name="joinedText" module=m3 declared={type=f15 flags=[IsFromCompiler]} initialization=Function function=f15 flags=[IsImmutable]
+variable g6 name="appendParts" module=m3 declared={type=f14 flags=[IsFromCompiler]} initialization=Function function=f14 flags=[IsImmutable]
+variable g7 name="finishReduce" module=m3 declared={type=f17 flags=[IsFromCompiler]} initialization=Function function=f17 flags=[IsImmutable]
+variable g8 name="finishJoin" module=m3 declared={type=f16 flags=[IsFromCompiler]} initialization=Function function=f16 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d1
+    v1 = Convert v0 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v2 = Convert v1 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutModuleVariable v2 variable=g2
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4 calleeName="once"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="once" module=m0 position=171 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<never> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function):
+    v2 = NewObject layout=L0
+    InitialYield
+    v4 = GetModuleVariable variable=g2
+    v5 = CheckInitialized v4 name="readers"
+    v6 = PropGet v5 key="length"
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    PutEnvironmentField v2, v7 layout=L0
+    v9 = GetModuleVariable variable=g0
+    v10 = Call v9 calleeName="once"
+    v11 = Convert v10 declared={type=undefined|null|Generator<never> flags=[IsExpected]}
+    v12 = PropGet v11 key="next"
+    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]}
+    v14 = Call v13, v11 calleeKey="next" calleeName="next"
+    v15 = Undefined
+    Return v15
+}
+function f2 module=m0 position=363 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 module=m0 position=230 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f11 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    v5 = Integer integer=1
+    v6 = StrictEq v4, v5
+    v7 = Convert v6 declared={type=boolean flags=[IsFromCompiler, IsClaim]}
+    v8 = CreateIteratorResult v3, v7
+    Return v8
+}
+function f12 name="clampToLength" module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w2}, {type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f13 name="storeInNewArray" module=m3 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w6}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f14 name="appendParts" module=m3 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w8}, {type=anything}] results=[{type=number site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f15 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f16 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w13}, {type=number site=w14}] results=[{type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f17 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w16}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f18 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w18}, {type=undefined|number site=w19}, {type=number site=w20}, {type=undefined|null|Array site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=64 function=f10
+runtimefunction id=69 function=f11 visibility=Private
+runtimefunction id=131091 function=f18 visibility=Private
+# -- generated: f0 next once
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: Generator = NewGenerator v0 function=f1
+# CHECK-NEXT: v3: anything = CallDirect v1, v0, v2 function=f21
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="once"
+# CHECK: module=m0 position=171 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} results=[{type=Generator<never, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f1 body=f21 promiseParameter=2}
+# CHECK-LABEL: function {{*}}name="next"
+# CHECK: module=m2 position=25 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f20 layout=L(IteratorResult)} inlineFrames=[{}, {callee=f20 callPosition=25 module=m2}] {
+# CHECK-NEXT: b0(v0: anything ~ Generator, v1: anything):
+# CHECK-NEXT: v2: anything ~ Generator = Upcast v0 castType=anything
+# CHECK-NEXT: v3: undefined = StepGenerator v2, v1 check=IsGenerator
+# CHECK-NEXT: v4: anything = ResultAt v3
+# CHECK-NEXT: v5: int[0, 2] = ResultAt v3 index=1
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: boolean = StrictEq v5, v6
+# CHECK-NEXT: v8: L(IteratorResult) = NewObject -, v4, v7 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="next"
+# CHECK: module=m2 position=25 kind=Method role=ResultWorker flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}, {type=boolean}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f11}
+# CHECK-LABEL: function {{*}}name="once"
+# CHECK: module=m0 position=171 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f1 body=f21 promiseParameter=2} inlineFrames=[{}, {callee=f11 callPosition=4294967295 module=m2}, {callee=f20 callPosition=25 parent=1 module=m2}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: undefined, v1: function, v2: Generator):
+# CHECK-NEXT: v3: boolean = IsGeneratorRunning v2
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v6: Generator = NewGenerator v4 function=f1
+# CHECK-NEXT: v7: Generator<never, pristine[Storage, Names]> = AssumeType v6 provenType=Generator<never, pristine[Storage, Names]>
+# CHECK-NEXT: MarkGeneratorRunning v7
+# CHECK-NEXT: v9: anything = CallDirect v5, v4, v6 function=f21 [isNeverInlined]
+# CHECK-NEXT: v10: int[0, 2] = TakeGeneratorStepStatus v7
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: v13: undefined = YieldBySavingFrame v2, v12, v1
+# CHECK-NEXT: v14: anything = ResultAt v13
+# CHECK-NEXT: v15: int[0, 2] = ResultAt v13 index=1
+# CHECK-NEXT: Switch v15 cases=[1, 2] -> case b3(), case b4(), otherwise b1()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Throw v14
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="next"
+# CHECK: module=m2 position=25 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=69 captures=[{type=f11}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} inlineFrames=[{}, {callee=f11 callPosition=25 isTailCall=true module=m2}, {callee=f20 callPosition=25 parent=1 module=m2}] {
+# CHECK-NEXT: b0(v0: f11, v1: anything, v2: anything):
+# CHECK-NEXT: v3: anything ~ Generator = Upcast v1 castType=anything
+# CHECK-NEXT: v4: undefined = StepGenerator v3, v2 check=IsGenerator
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v6: int[0, 2] = ResultAt v4 index=1
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: boolean = StrictEq v6, v7
+# CHECK-NEXT: v9: L(IteratorResult) = NewObject -, v5, v8 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="once"
+# CHECK: module=m0 position=171 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f1, v1: anything) frequency=Rare:
+# CHECK-NEXT: v2: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: }

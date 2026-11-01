@@ -127,7 +127,6 @@ impl SystemErrno {
     pub const ENOTSUP: SystemErrno = SystemErrno::EOPNOTSUPP;
 }
 
-#[allow(non_upper_case_globals)]
 pub mod uv_e {
     // Native `SystemErrno::$e as i32`; libuv-synthetic fallback for codes
     // FreeBSD lacks (ECHARSET / ENONET / ENOTSUP / EREMOTEIO / ENODATA / EUNATCH).

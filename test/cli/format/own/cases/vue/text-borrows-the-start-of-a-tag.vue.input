@@ -1,0 +1,13 @@
+<template>
+  <div>
+    <div>
+      <div>
+        <div>
+          <div class="no-results">
+            {{ translate('modal.noResultsText') }} "<strong>{{ filterText }}</strong>"
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

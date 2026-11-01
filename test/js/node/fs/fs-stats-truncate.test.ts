@@ -8,7 +8,7 @@ import { expect, test } from "bun:test";
 import { Stats, statSync } from "node:fs";
 
 test("fs.stats truncate", async () => {
-  const stats = new Stats(...Array.from({ length: 14 }, () => Number.MAX_VALUE));
+  const stats = new (Stats as any)(...Array.from({ length: 14 }, () => Number.MAX_VALUE));
   expect(stats.dev).toBeGreaterThan(0);
   expect(stats.mode).toBeGreaterThan(0);
   expect(stats.nlink).toBeGreaterThan(0);

@@ -20,7 +20,7 @@ function captureUpgradeRequest(connectClient: (url: string) => void): Promise<st
   const server = createNetServer(socket => {
     accepted = socket;
     let buf = Buffer.alloc(0);
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       const end = buf.indexOf("\r\n\r\n");
       if (end === -1) return;
@@ -128,7 +128,7 @@ describe("perMessageDeflate upgrade header", () => {
     const server = createNetServer(socket => {
       accepted = socket;
       let buf = Buffer.alloc(0);
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         buf = Buffer.concat([buf, chunk]);
         const end = buf.indexOf("\r\n\r\n");
         if (end === -1) return;
@@ -186,7 +186,7 @@ describe("perMessageDeflate upgrade header", () => {
     const upgrade = createNetServer(socket => {
       acceptedUpstream = socket;
       let buf = Buffer.alloc(0);
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         buf = Buffer.concat([buf, chunk]);
         const end = buf.indexOf("\r\n\r\n");
         if (end === -1) return;
@@ -252,7 +252,7 @@ describe("perMessageDeflate upgrade header", () => {
       const ws = new WebSocket(`ws://127.0.0.1:${upgradePort}/`, {
         proxy: `http://127.0.0.1:${proxyPort}`,
         perMessageDeflate: false,
-      });
+      } as WebSocket.ClientOptions);
       ws.on("open", () => ws.close());
       ws.on("error", () => {});
       const request = await promise;

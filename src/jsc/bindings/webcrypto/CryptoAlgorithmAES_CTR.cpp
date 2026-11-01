@@ -132,8 +132,6 @@ void CryptoAlgorithmAES_CTR::importKey(CryptoKeyFormat format, KeyData&& data, c
         result = CryptoKeyAES::importRaw(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Jwk: {
-        if (!validateJwkKeyOps(std::get<JsonWebKey>(data), usages, exceptionCallback))
-            return;
         auto checkAlgCallback = [](size_t length, const String& alg) -> bool {
             switch (length) {
             case CryptoKeyAES::s_length128:
@@ -239,7 +237,7 @@ size_t CryptoAlgorithmAES_CTR::CounterBlockHelper::countToOverflowSaturating() c
     }
 
     countMinusOne &= ~sizeTypeMask;
-    if (countMinusOne.all()) {
+    if (countMinusOne.m_lo == std::numeric_limits<size_t>::max()) {
         // As all bits are set, adding one would result in an overflow.
         // Return size_t max instead.
         return std::numeric_limits<size_t>::max();
@@ -273,12 +271,6 @@ void CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::set()
     using namespace CryptoAlgorithmAES_CTRInternal;
     m_hi = AllBitsSet;
     m_lo = AllBitsSet;
-}
-
-bool CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::all() const
-{
-    using namespace CryptoAlgorithmAES_CTRInternal;
-    return m_hi == AllBitsSet && m_lo == AllBitsSet;
 }
 
 bool CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::any() const

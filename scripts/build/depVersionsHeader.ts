@@ -14,7 +14,7 @@
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Config } from "./config.ts";
+import { webkitVersionName, type Config } from "./config.ts";
 import { allDeps } from "./deps/index.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Source } from "./source.ts";
@@ -52,11 +52,9 @@ function computeVersions(cfg: Config): [string, string][] {
     const source = dep.source(cfg);
     const id = sourceIdentifier(source);
     // WebKit special case: prebuilt.identity carries the artifact suffix, but
-    // process.versions wants the version. Strip the autobuild- prefix so tags
-    // report the clean sha and previews report preview-pr-<N>-<sha8>.
+    // process.versions wants the version.
     if (dep.name === "WebKit") {
-      const v = cfg.webkitVersion;
-      versions.push([dep.versionMacro, v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v]);
+      versions.push([dep.versionMacro, webkitVersionName(cfg.webkitVersion)]);
     } else if (id !== undefined) {
       versions.push([dep.versionMacro, id]);
     }

@@ -30,7 +30,6 @@ namespace WebCore {
 class JSCustomEvent : public JSEvent {
 public:
     using Base = JSEvent;
-    using DOMWrapped = CustomEvent;
     static JSCustomEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<CustomEvent>&& impl)
     {
         JSCustomEvent* ptr = new (NotNull, JSC::allocateCell<JSCustomEvent>(globalObject->vm())) JSCustomEvent(structure, *globalObject, WTF::move(impl));

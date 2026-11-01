@@ -1,0 +1,63 @@
+[package]
+name = "bun_aot"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[lib]
+path = "lib.rs"
+
+[[test]]
+name = "ir_tests"
+path = "tests/ir_tests.rs"
+
+[features]
+linked_names = ["bun_aot_builtins/linked_names"]
+linked_archive = ["bun_builtin_sources/linked_archive"]
+# The printer of IR text. Bun writes the program as bytes: only tests read text.
+ir_text = []
+# What only tests use, those in `tests/` too.
+test_support = ["bun_aot_interface/test_support", "bun_sema/test_support"]
+
+[dependencies]
+bun_aot_builtins.workspace = true
+bun_aot_interface.workspace = true
+bun_sema.workspace = true
+bun_sema_driver.workspace = true
+bun_sema_parser.workspace = true
+bun_builtin_sources.workspace = true
+bun_lint.workspace = true
+bun_lint_react_compiler.workspace = true
+bun_react_compiler = { path = "../react_compiler" }
+bun_resolve_builtins.workspace = true
+bun_options_types.workspace = true
+bun_removable_features.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_ast.workspace = true
+bun_js_parser.workspace = true
+bun_alloc.workspace = true
+bun_base64.workspace = true
+bun_glob.workspace = true
+bun_trim.workspace = true
+bun_paths.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
+bun_zstd.workspace = true
+bstr.workspace = true
+bitflags.workspace = true
+rustc-hash = "2"
+hashbrown.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+# tests/ir_tests.rs links the library as any other crate does.
+bun_aot = { workspace = true, features = ["ir_text", "test_support"] }
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../sema/standalone", features = ["test_support"] }
+bun_trim = { workspace = true, features = ["test_support"] }
+# tests/ir_tests.rs builds with the options and the services of `bun build`.
+bun_bundler = { workspace = true, features = ["test_support"] }
+
+[lints]
+workspace = true

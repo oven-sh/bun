@@ -71,7 +71,7 @@ struct IDLType {
 struct IDLNull : IDLType<std::nullptr_t> {
 };
 
-// See also: Bun::IDLRawAny, Bun::Bindgen::IDLStrongAny
+// See also: Bun::Bindgen::IDLRawAny
 struct IDLAny : IDLType<JSC::Strong<JSC::Unknown>> {
     // SequenceStorageType must be left as JSC::Strong<JSC::Unknown>; otherwise
     // IDLSequence<IDLAny> would yield a Vector<JSC::JSValue>, whose contents

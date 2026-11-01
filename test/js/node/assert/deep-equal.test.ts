@@ -100,10 +100,12 @@ function selfReferencingArray() {
 }
 
 function argumentsObject(...values: unknown[]) {
-  return (function () {
-    // eslint-disable-next-line prefer-rest-params
-    return arguments;
-  })(...values);
+  return (
+    function () {
+      // eslint-disable-next-line prefer-rest-params
+      return arguments;
+    } as (...args: unknown[]) => IArguments
+  )(...values);
 }
 
 const cases: Case[] = [
@@ -172,7 +174,7 @@ const cases: Case[] = [
     name: "a boxed string with an out-of-range indexed own property",
     a: () => {
       const boxed = new String("ab");
-      boxed[5] = "x";
+      (boxed as any)[5] = "x";
       return boxed;
     },
     b: () => new String("ab"),
@@ -1013,11 +1015,13 @@ describe("util.isDeepStrictEqual", () => {
   // The third argument was added in Node v26.
   describe("skipPrototype", () => {
     class Foo {
+      declare value: unknown;
       constructor(value) {
         this.value = value;
       }
     }
     class Bar {
+      declare value: unknown;
       constructor(value) {
         this.value = value;
       }
@@ -1025,11 +1029,11 @@ describe("util.isDeepStrictEqual", () => {
 
     test("ignores differing constructors when set", () => {
       expect(util.isDeepStrictEqual(new Foo(42), new Bar(42))).toBe(false);
-      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), true)).toBe(true);
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), true as any)).toBe(true);
     });
 
     test("still compares values", () => {
-      expect(util.isDeepStrictEqual(new Foo(42), new Bar(99), true)).toBe(false);
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(99), true as any)).toBe(false);
     });
 
     test.each([
@@ -1040,19 +1044,19 @@ describe("util.isDeepStrictEqual", () => {
       ["Error cause", () => new Error("e", { cause: new Foo(1) }), () => new Error("e", { cause: new Bar(1) })],
     ])("propagates through %s", (_name, makeA, makeB) => {
       expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
-      expect(util.isDeepStrictEqual(makeA(), makeB(), true)).toBe(true);
+      expect(util.isDeepStrictEqual(makeA(), makeB(), true as any)).toBe(true);
     });
 
     test("still compares Object.prototype.toString tags", () => {
-      expect(util.isDeepStrictEqual(argumentsObject(1), { 0: 1 }, true)).toBe(false);
-      expect(util.isDeepStrictEqual(argumentsObject(1), argumentsObject(1), true)).toBe(true);
-      expect(util.isDeepStrictEqual(Object.create({ [Symbol.toStringTag]: "X" }), {}, true)).toBe(false);
+      expect(util.isDeepStrictEqual(argumentsObject(1), { 0: 1 }, true as any)).toBe(false);
+      expect(util.isDeepStrictEqual(argumentsObject(1), argumentsObject(1), true as any)).toBe(true);
+      expect(util.isDeepStrictEqual(Object.create({ [Symbol.toStringTag]: "X" }), {}, true as any)).toBe(false);
     });
 
     test("ignores the boxed-primitive subclass distinction", () => {
       class S extends String {}
       expect(util.isDeepStrictEqual(new String("a"), new S("a"))).toBe(false);
-      expect(util.isDeepStrictEqual(new String("a"), new S("a"), true)).toBe(true);
+      expect(util.isDeepStrictEqual(new String("a"), new S("a"), true as any)).toBe(true);
     });
 
     test("does not leak into assert.deepStrictEqual", () => {

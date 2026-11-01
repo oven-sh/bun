@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+await expect(foo())
+  .rejects// It would be great
+  .toThrow("x");
+a.b.c
+  // d
+  .e()
+  .f();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+await expect(foo())
+  .rejects// It would be great
+  .toThrow("x");
+a.b.c
+  // d
+  .e()
+  .f();
+
+===================== End =====================

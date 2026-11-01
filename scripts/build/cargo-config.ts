@@ -10,10 +10,10 @@
  * lines from that discovered path rather than hardcoding one.
  *
  * For the `bun bd` / ninja build this file is purely advisory: `rust.ts`
- * passes `CARGO_TARGET_<TRIPLE>_LINKER = cfg.cxx` (plus `CC`/`CXX`/`AR`) and
- * `-Clink-arg=-fuse-ld=lld` directly on the cargo invocation's environment,
- * which override anything here. The file matters for a contributor running
- * `cargo build` / `cargo check` directly, and for rust-analyzer.
+ * passes `-C linker=` (plus `CC`/`CXX`/`AR` in the environment) and
+ * `-Clink-arg=-fuse-ld=lld` on every rustc edge itself, which overrides
+ * anything here. The file matters for a contributor running `cargo build` /
+ * `cargo check` directly, and for rust-analyzer.
  *
  * `writeIfChanged` semantics (precedent: `depVersionsHeader.ts`) so a
  * reconfigure with an unchanged toolchain doesn't bump the file's mtime and
@@ -48,7 +48,7 @@ function linkerFor(triple: string, cfg: Config): string {
   // The host's gnu clang++ isn't a valid driver for either even on a linux
   // host, so fall back to the conventional driver name (PATH-resolved) —
   // matches the foreign-OS case below. `cargo check` never links, and the ninja
-  // build sets the linker via `CARGO_TARGET_<T>_LINKER` env anyway.
+  // build passes `-C linker=` on its rustc edges anyway.
   if (triple.includes("android") || triple.includes("musl")) return "clang++";
   // cfg.hostCxx, not cfg.cxx: this entry covers HOST artifacts (build
   // scripts, proc-macros) even during ninja builds, and when cross-compiling
@@ -61,8 +61,8 @@ function linkerFor(triple: string, cfg: Config): string {
  * Returns the absolute path written.
  *
  * Windows-msvc targets are omitted: the MSVC linker isn't a clang driver and
- * doesn't take `-fuse-ld=lld`; that path is handled entirely via env in
- * `rust.ts` (`CARGO_TARGET_..._LINKER = cfg.msvcLinker`).
+ * doesn't take `-fuse-ld=lld`; that path is handled entirely in `rust.ts`
+ * (`-C linker=<cfg.msvcLinker>` on the rustc edges).
  */
 export function generateCargoConfig(cfg: Config): string {
   const outPath = resolve(cfg.cwd, ".cargo", "config.toml");

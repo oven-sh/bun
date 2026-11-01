@@ -15,7 +15,7 @@ test.skipIf(!isPosix)("Bun.serve static file route does not leak fds on 304 / HE
     fetch() {
       return new Response("fallback");
     },
-  });
+  } as Bun.Serve.Options<undefined>);
 
   const url = `http://localhost:${server.port}/test`;
 
@@ -49,13 +49,18 @@ test.skipIf(!isPosix)("Bun.serve static file route does not leak fds on 304 / HE
     await r.text();
   }
 
-  const after = getFDCount();
-
   // Pre-fix: delta would be 400 (one fd leaked per request).
   // Post-fix: delta is bounded by HTTP keep-alive sockets (typically a
   // small constant). 16 is comfortably above that and still catches the
   // old 400-fd leak.
-  const delta = after - before;
+  let delta = getFDCount() - before;
+  // The route closes its fds on the work pool, which can be behind the
+  // responses. A leaked fd stays open however long this waits.
+  const deadline = performance.now() + 2000;
+  while (delta >= 16 && performance.now() < deadline) {
+    await Bun.sleep(1);
+    delta = getFDCount() - before;
+  }
   expect(delta).toBeLessThan(16);
 });
 
@@ -75,7 +80,7 @@ test("Bun.serve static file route: graceful stop resolves after 304 / HEAD", asy
     fetch() {
       return new Response("fallback");
     },
-  });
+  } as Bun.Serve.Options<undefined>);
 
   const url = `http://localhost:${server.port}/test`;
 

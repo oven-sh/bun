@@ -309,3 +309,105 @@ it("setPriority throws ESRCH for a nonexistent pid", () => {
     }),
   );
 });
+
+it("functions have Node's length", () => {
+  const lengths = Object.fromEntries(
+    [
+      "cpus",
+      "freemem",
+      "getPriority",
+      "homedir",
+      "hostname",
+      "loadavg",
+      "networkInterfaces",
+      "release",
+      "setPriority",
+      "totalmem",
+      "uptime",
+      "userInfo",
+      "version",
+    ].map(name => [name, os[name].length]),
+  );
+  // node -p 'os.<name>.length', v26.7.0
+  expect(lengths).toEqual({
+    cpus: 0,
+    freemem: 0,
+    getPriority: 1,
+    homedir: 0,
+    hostname: 0,
+    loadavg: 0,
+    networkInterfaces: 0,
+    release: 0,
+    setPriority: 2,
+    totalmem: 0,
+    uptime: 0,
+    userInfo: 1,
+    version: 0,
+  });
+});
+
+it("userInfo ignores options that are not an object, like Node", () => {
+  const info = os.userInfo();
+  const encoding = {
+    get() {
+      throw new Error("encoding was read");
+    },
+  };
+  const callable = Object.defineProperty(() => {}, "encoding", encoding);
+  for (const options of [undefined, null, 5, "utf8", true, Symbol("s"), [], ["utf8"], callable]) {
+    expect(os.userInfo(options)).toEqual(info);
+  }
+  expect(() => os.userInfo(Object.defineProperty({}, "encoding", encoding))).toThrow("encoding was read");
+});
+
+it("setPriority with an undefined priority takes the first argument as the priority", () => {
+  expect(() => os.setPriority()).toThrow(
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "priority" argument must be of type number. Received undefined',
+    }),
+  );
+  expect(() => os.setPriority(20, undefined)).toThrow(
+    expect.objectContaining({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: 'The value of "priority" is out of range. It must be >= -20 && <= 19. Received 20',
+    }),
+  );
+  const priority = os.getPriority();
+  os.setPriority(priority, undefined);
+  expect(os.getPriority()).toBe(priority);
+});
+
+it("an infinite pid or priority is not an integer", () => {
+  for (const value of [Infinity, -Infinity, NaN, 1.5]) {
+    expect(() => os.getPriority(value)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "pid" is out of range. It must be an integer. Received ${value}`,
+      }),
+    );
+    expect(() => os.setPriority(value)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "priority" is out of range. It must be an integer. Received ${value}`,
+      }),
+    );
+  }
+});
+
+it("with new, each function does what it does in Node", () => {
+  expect(new os.loadavg()).toBeArrayOfSize(3);
+  expect(new os.networkInterfaces()).toEqual(os.networkInterfaces());
+  expect(new os.userInfo()).toEqual(os.userInfo());
+  for (const name of ["getPriority", "homedir", "hostname", "uptime"]) {
+    expect(new os[name]()).toBeObject();
+  }
+  expect(() => new os.setPriority()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  for (const name of ["freemem", "totalmem", "release", "version"]) {
+    expect(() => new os[name]()).toThrow("is not a constructor");
+  }
+});

@@ -7,13 +7,13 @@ use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{
-    self, BunTest, BunTestPtr, BunTestRoot, DescribeScope, HandleUncaughtExceptionResult,
+    self, BunTest, BunTestPtr, DescribeScope, HandleUncaughtExceptionResult,
     RefDataValue, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
 use crate::test_runner::jest::Jest;
 
-pub struct Collection {
+pub(crate) struct Collection {
     /// set to true after collection phase ends
     pub(crate) locked: bool,
     pub(crate) describe_callback_queue: Vec<QueuedDescribe>,
@@ -29,7 +29,7 @@ pub struct Collection {
     pub(crate) filter_buffer: Vec<u8>,
 }
 
-pub struct QueuedDescribe {
+pub(crate) struct QueuedDescribe {
     callback: DeprecatedStrong, // jsc.Strong.Deprecated
     /// Raw cursor into `Collection.root_scope`'s tree. Stored as `NonNull` (not `&DescribeScope`)
     /// because `Collection::active_scope_mut()` hands out `&mut` to the same node while these
@@ -45,18 +45,9 @@ pub struct QueuedDescribe {
 // `Strong: Drop` covers cleanup — no explicit Drop needed.
 
 impl Collection {
-    /// # Safety
-    /// `bun_test_root` must be a valid, exclusive pointer to a live `BunTestRoot` for the
-    /// duration of this call. The caller (`BunTest::init`) passes a pointer to its own
-    /// `bun_test_root` field.
-    // The `# Safety` contract above documents the deref precondition; the only caller is
-    // `BunTest::init`, which passes a pointer to its own field. Changing the signature to
-    // `&mut BunTestRoot` would require editing the caller in `bun_test.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn init(bun_test_root: *mut BunTestRoot) -> Collection {
+    /// `hook_scope` (`BunTestRoot::hook_scope`) becomes the parent of the file's root scope.
+    pub(crate) fn init(hook_scope: *mut DescribeScope) -> Collection {
         let _g = group::begin();
-        // SAFETY: see fn-level Safety doc.
-        let bun_test_root = unsafe { &mut *bun_test_root };
 
         let only = if let Some(runner) = Jest::runner() {
             if runner.only { bun_test::Only::Contains } else { bun_test::Only::No }
@@ -65,7 +56,7 @@ impl Collection {
         };
 
         let mut root_scope = DescribeScope::create(bun_test::BaseScope {
-            parent: Some(&raw mut *bun_test_root.hook_scope),
+            parent: Some(hook_scope),
             name: None,
             concurrent: false,
             mode: bun_test::ScopeMode::Normal,

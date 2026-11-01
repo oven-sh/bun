@@ -17,7 +17,7 @@ const server = http.createServer(async (req, res) => {
   for (const sym of Object.getOwnPropertySymbols(req)) {
     if (sym.description !== "handle") continue;
     const val = req[sym];
-    if (val && typeof val === "object" && "hasBody" in val && "hasCustomOnData" in val) {
+    if (val && typeof val === "object" && "hasBody" in val && "ondata" in val) {
       handle = val;
       break;
     }

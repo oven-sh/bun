@@ -40,10 +40,10 @@ if (cluster.isPrimary) {
       res.end("hello world\n");
     })
     .listen(8000, () => {
-      process.send("hello");
+      process.send!("hello");
       server.close();
 
-      process.disconnect();
+      process.disconnect!();
     });
 
   console.log(`Worker ${process.pid} started`);

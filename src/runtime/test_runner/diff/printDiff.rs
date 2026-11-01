@@ -4,9 +4,9 @@ use std::fmt::Write;
 
 use bstr::BStr;
 
-use super::text_diff::{self as diff, Hunk};
 use bun_core::output::ansi as colors;
 use bun_core::strings::{self, str_utf8};
+use bun_text_diff::{self as diff, Hunk};
 
 pub(crate) struct DiffConfig {
     pub(crate) min_bytes_before_chunking: usize,

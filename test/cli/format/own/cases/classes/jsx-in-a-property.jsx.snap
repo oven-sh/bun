@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+class A {
+  children = <Child parent={this} />;
+  static b = <div />;
+  accessor c = <div />;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A {
+  children = <Child parent={this} />;
+  static b = <div />;
+  accessor c = <div />;
+}
+
+===================== End =====================

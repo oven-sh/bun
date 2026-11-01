@@ -36,9 +36,8 @@ namespace WebCore {
 struct JsonWebKey {
     String kty;
     String use;
-    // RFC 7517 section 4.3: key_ops can hold values that are not WebCrypto
-    // usages. `usages` is the recognized subset, set by normalizeJsonWebKey().
-    std::optional<Vector<String>> key_ops;
+    // FIXME: Consider merging key_ops and usages.
+    std::optional<Vector<CryptoKeyUsage>> key_ops;
     CryptoKeyUsageBitmap usages;
     String alg;
 
@@ -62,13 +61,28 @@ struct JsonWebKey {
     String priv;
 };
 
-// The key_ops member for an exported key: its usages, in KeyUsage enum order.
-Vector<String> toJwkKeyOps(const Vector<CryptoKeyUsage>&);
+// Node's validateKeyOps rejects a repeated key_ops entry for every algorithm
+// before the operations/usages mismatch check.
+inline bool hasDuplicateJwkKeyOps(const std::optional<Vector<CryptoKeyUsage>>& keyOps)
+{
+    if (!keyOps)
+        return false;
+    CryptoKeyUsageBitmap seenOps = 0;
+    for (auto op : *keyOps) {
+        // The binding enum order matches the bitmap bit order.
+        CryptoKeyUsageBitmap bit = 1 << static_cast<int>(op);
+        if (seenOps & bit)
+            return true;
+        seenOps |= bit;
+    }
+    return false;
+}
 
-// RFC 7517 section 4.3: "Duplicate key operation values MUST NOT be present",
-// whether or not WebCrypto knows the value (Chromium enforces both, Node only
-// the values it knows).
-bool hasDuplicateJwkKeyOps(const std::optional<Vector<String>>&);
+// Whether `key_ops`, if the key has any, is well formed and covers `usages`.
+inline bool jwkKeyOpsAllow(const JsonWebKey& jwk, CryptoKeyUsageBitmap usages)
+{
+    return !jwk.key_ops || (!hasDuplicateJwkKeyOps(jwk.key_ops) && (jwk.usages & usages) == usages);
+}
 
 } // namespace WebCore
 

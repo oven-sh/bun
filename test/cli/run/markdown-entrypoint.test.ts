@@ -218,7 +218,7 @@ describe("bun <file.md>", () => {
     using dir = tempDir("md-no-color-", {
       "doc.md": "# Hello\n\n**world**\n",
     });
-    const env = { ...bunEnv, NO_COLOR: "1" };
+    const env: NodeJS.Dict<string> = { ...bunEnv, NO_COLOR: "1" };
     // FORCE_COLOR set to anything (even "") forces colors on, so drop it.
     delete env.FORCE_COLOR;
     await using proc = Bun.spawn({

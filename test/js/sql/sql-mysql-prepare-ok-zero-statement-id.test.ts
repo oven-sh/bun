@@ -29,7 +29,7 @@ test("MySQL: prepare-OK with statement_id 0 is a protocol error and is never exe
     let buffered = Buffer.alloc(0);
     let authed = false;
     socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;

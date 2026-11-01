@@ -134,8 +134,6 @@ void CryptoAlgorithmRSA_OAEP::importKey(CryptoKeyFormat format, KeyData&& data, 
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
-        if (!validateJwkKeyOps(key, usages, exceptionCallback))
-            return;
 
         bool isMatched = false;
         switch (rsaParameters.hashIdentifier) {

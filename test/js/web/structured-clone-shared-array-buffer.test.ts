@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isASAN } from "harness";
 
 // structuredClone stays inside the agent cluster, so SharedArrayBuffers share
 // their backing store like node and the HTML spec's StructuredSerialize.
@@ -49,3 +50,21 @@ describe("structuredClone(SharedArrayBuffer)", () => {
     }
   });
 });
+
+test.skipIf(isASAN /* WebAssembly.Memory ignores `shared` */)(
+  "cloning a shared WebAssembly.Memory with a maximum of zero keeps it zero-sized and shared",
+  async () => {
+    const zero = () => new WebAssembly.Memory({ initial: 0, maximum: 0, shared: true });
+    const { port1, port2 } = new MessageChannel();
+    const { promise, resolve } = Promise.withResolvers<WebAssembly.Memory>();
+    port2.onmessage = event => resolve(event.data);
+    port1.postMessage(zero());
+    for (const memory of [structuredClone(zero()), await promise]) {
+      expect(memory).toBeInstanceOf(WebAssembly.Memory);
+      expect(memory.buffer).toBeInstanceOf(SharedArrayBuffer);
+      expect(memory.buffer.byteLength).toBe(0);
+    }
+    port1.close();
+    port2.close();
+  },
+);

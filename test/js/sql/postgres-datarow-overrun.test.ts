@@ -184,7 +184,7 @@ describe("postgres: ParameterDescription body overrun", () => {
       const frame = pd;
       let pending = Buffer.alloc(0);
       let sawStartup = false;
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         pending = Buffer.concat([pending, chunk]);
         if (!sawStartup) {
           if (pending.length < 4) return;

@@ -8,7 +8,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/AssertScopeInstructionsWithinScope.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::Environment;
@@ -25,7 +25,7 @@ pub(crate) fn assert_scope_instructions_within_scopes(
     env: &Environment,
 ) -> Result<(), CompilerDiagnostic> {
     // Pass 1: Collect all scope IDs
-    let mut existing_scopes: HashSet<ScopeId> = HashSet::new();
+    let mut existing_scopes: HashSet<ScopeId> = HashSet::default();
     let find_visitor = FindAllScopesVisitor { env };
     visit_reactive_function(func, &find_visitor, &mut existing_scopes);
 
@@ -33,7 +33,7 @@ pub(crate) fn assert_scope_instructions_within_scopes(
     let check_visitor = CheckInstructionsAgainstScopesVisitor { env };
     let mut check_state = CheckState {
         existing_scopes,
-        active_scopes: HashSet::new(),
+        active_scopes: HashSet::default(),
         error: None,
     };
     visit_reactive_function(func, &check_visitor, &mut check_state);

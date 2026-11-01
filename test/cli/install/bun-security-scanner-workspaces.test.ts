@@ -359,4 +359,70 @@ describe.concurrent("security scanner workspaces", () => {
       }
     },
   );
+
+  // https://github.com/oven-sh/bun/issues/31028
+  describe.each(["hoisted", "isolated"])("a scanner from npm that is a devDependency (%s)", linker => {
+    test.each(["--production", "--omit=dev", "--production --frozen-lockfile"])(
+      "is installed and run by `bun install %s`",
+      async flags => {
+        const install = {
+          cache: { disable: true },
+          linker,
+          registry: `${registryUrl}/`,
+        };
+        await using dir = tempDir(`scanner-npm-dev-${linker}`, {
+          "package.json": JSON.stringify({
+            name: "test-app",
+            version: "1.0.0",
+            dependencies: {
+              "left-pad": "1.3.0",
+              "folder-dep": "file:./folder-dep",
+            },
+            devDependencies: {
+              "is-odd": "1.0.0",
+              "test-security-scanner": "1.0.0",
+            },
+          }),
+          "folder-dep/package.json": JSON.stringify({ name: "folder-dep", version: "1.0.0" }),
+          "bunfig.toml": Bun.TOML.stringify({ install }),
+        });
+
+        const run = async (...args: string[]) => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "install", ...args],
+            cwd: dir,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: bunEnv,
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { output: stdout + stderr, exitCode };
+        };
+
+        expect(await run("--lockfile-only")).toMatchObject({ exitCode: 0 });
+        await Bun.write(
+          join(dir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { ...install, security: { scanner: "test-security-scanner" } } }),
+        );
+
+        const { output, exitCode } = await run(...flags.split(" "));
+        expect(output).toContain("Security scanner installed successfully");
+        // folder-dep, is-even, is-odd, left-pad, test-security-scanner
+        expect(output).toContain("SCANNER_RAN: 5 packages");
+        const installed = (name: string) => Bun.file(join(dir, "node_modules", name, "package.json")).exists();
+        expect({
+          "test-security-scanner": await installed("test-security-scanner"),
+          "left-pad": await installed("left-pad"),
+          "folder-dep": await installed("folder-dep"),
+          "is-odd": await installed("is-odd"),
+        }).toEqual({
+          "test-security-scanner": true,
+          "left-pad": true,
+          "folder-dep": true,
+          "is-odd": false,
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
 });

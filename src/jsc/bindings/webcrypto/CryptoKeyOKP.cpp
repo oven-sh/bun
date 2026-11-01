@@ -142,7 +142,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
             return nullptr;
         if (usages && !keyData.use.isEmpty() && keyData.use != "sig"_s)
             return nullptr;
-        if (keyData.key_ops && ((keyData.usages & usages) != usages))
+        if (!jwkKeyOpsAllow(keyData, usages))
             return nullptr;
         if (keyData.ext && !keyData.ext.value() && extractable)
             return nullptr;
@@ -154,7 +154,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
             return nullptr;
         if (usages && !keyData.use.isEmpty() && keyData.use != "enc"_s)
             return nullptr;
-        if (keyData.key_ops && ((keyData.usages & usages) != usages))
+        if (!jwkKeyOpsAllow(keyData, usages))
             return nullptr;
         if (keyData.ext && !keyData.ext.value() && extractable)
             return nullptr;
@@ -203,7 +203,7 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
         break;
     }
 
-    result.key_ops = toJwkKeyOps(usages());
+    result.key_ops = usages();
     result.ext = extractable();
 
     switch (type()) {
@@ -219,11 +219,6 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
     }
 
     return result;
-}
-
-bool CryptoKeyOKP::isValidOKPAlgorithm(CryptoAlgorithmIdentifier algorithm)
-{
-    return algorithm == CryptoAlgorithmIdentifier::Ed25519;
 }
 
 auto CryptoKeyOKP::algorithm() const -> KeyAlgorithm

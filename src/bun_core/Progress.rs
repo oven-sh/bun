@@ -194,10 +194,7 @@ pub enum Unit {
 pub struct Node {
     pub(crate) context: *mut Progress,
     pub(crate) parent: *mut Node,
-    // The non-allocating design means `Node` cannot own the bytes. `'static`
-    // is the chosen simplification because all current callers (install/,
-    // cli/) pass string literals; the alternative would be threading a
-    // lifetime through `Node`/`Progress`.
+    // Dynamic names (install, create) point at caller-owned scratch buffers that outlive the node.
     pub name: &'static [u8],
     pub unit: Unit,
     /// Must be handled atomically to be thread-safe.

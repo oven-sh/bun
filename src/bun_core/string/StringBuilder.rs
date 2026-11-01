@@ -200,7 +200,6 @@ impl StringBuilder {
 
     pub fn allocated_slice(&mut self) -> &mut [u8] {
         let Some(ptr) = self.ptr else { return &mut [] };
-        debug_assert!(self.cap > 0);
         // SAFETY: ptr was allocated with self.cap bytes.
         unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), self.cap) }
     }
@@ -220,7 +219,7 @@ impl StringBuilder {
 
     pub fn writable(&mut self) -> &mut [u8] {
         let Some(ptr) = self.ptr else { return &mut [] };
-        debug_assert!(self.cap > 0);
+        debug_assert!(self.len <= self.cap);
         // SAFETY: ptr was allocated with self.cap bytes; len <= cap.
         unsafe { slice::from_raw_parts_mut(ptr.as_ptr().add(self.len), self.cap - self.len) }
     }
@@ -262,5 +261,32 @@ impl Drop for StringBuilder {
                 std::ptr::slice_from_raw_parts_mut(ptr.as_ptr().cast(), self.cap),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_views_are_empty(builder: &mut StringBuilder) {
+        assert!(builder.ptr.is_some());
+        assert!(builder.writable().is_empty());
+        assert!(builder.allocated_slice().is_empty());
+        assert!(builder.append(b"").is_empty());
+        assert!(builder.written_slice().is_empty());
+        assert!(builder.move_to_slice().is_empty());
+    }
+
+    #[test]
+    fn views_are_empty_after_allocate_with_nothing_counted() {
+        let mut builder = StringBuilder::default();
+        builder.count(b"");
+        builder.allocate().unwrap();
+        assert_views_are_empty(&mut builder);
+    }
+
+    #[test]
+    fn views_are_empty_after_init_capacity_zero() {
+        assert_views_are_empty(&mut StringBuilder::init_capacity(0));
     }
 }

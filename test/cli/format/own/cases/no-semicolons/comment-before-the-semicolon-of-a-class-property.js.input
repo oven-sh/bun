@@ -1,0 +1,11 @@
+class A {
+  static /* comment */ // comment
+  ; get;
+}
+class B {
+  static /* comment */ ; get;
+}
+class C {
+  a = 1 /* comment */ ; [b];
+  c /* comment */ ; d;
+}

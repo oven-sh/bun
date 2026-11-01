@@ -18,7 +18,7 @@ test("#8794", () => {
     try {
       target.method();
       expect.unreachable();
-    } catch (e) {
+    } catch (e: any) {
       e.stack;
       expect(e.stack).toContain("at method ");
       expect(e.stack).toContain("at a ");

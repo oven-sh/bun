@@ -270,7 +270,7 @@ test.skipIf(process.platform === "win32")(
       // Start the recursive delete on the worker pool, then immediately
       // replace each subdirectory with a symlink pointing at the victim
       // directory while the walk is in flight.
-      const running = $`rm -rf ${target}`.nothrow().quiet().run();
+      const running = ($`rm -rf ${target}`.nothrow().quiet() as any).run();
       for (let i = 0; i < ENTRIES; i++) {
         const entry = path.join(target, `d${i}`);
         try {

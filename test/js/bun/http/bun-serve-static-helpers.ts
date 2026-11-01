@@ -48,7 +48,7 @@ export const stressPaths = ["/foo", "/big", "/foo/bar"] as const;
 export const stressMethods = ["arrayBuffer", "blob", "bytes", "text"] as const;
 
 export async function runStress(
-  server: Server,
+  server: Server<undefined>,
   path: (typeof stressPaths)[number],
   accessBody: boolean,
   method: (typeof stressMethods)[number],
@@ -69,7 +69,7 @@ export async function runStress(
     const route = `${server.url}${path.substring(1)}`;
     for (let i = 0; i < batchSize; i++) {
       array[i] = fetch(route)
-        .then(res => {
+        .then<unknown>(res => {
           expect(res.status).toBe(200);
           expect(res.url).toBe(route);
           expect(res.headers.get("Content-Length")).toBe(expectedLength);

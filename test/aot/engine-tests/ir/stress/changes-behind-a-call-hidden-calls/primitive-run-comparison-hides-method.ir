@@ -1,0 +1,244 @@
+# A typed caller reads an object, makes a call and reads it again. A Symbol.toPrimitive method, which a comparison in the callee runs, gives the object an own property under the name of a method.
+# `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+# FORM: AsRead
+# RUN: pipeline RemoveRedundantBarriers
+
+module m0 path="primitive-run-comparison-hides-method.ts" displayPath="primitive-run-comparison-hides-method.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Shape" module=m0 position=407 constructor=f4
+layout L1 kind=Instance name="Square" module=m0 position=503 base=L0 constructor=f5 fields=[{key="side" declared={type=number} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 module=m0 position=1087
+variable g0 name="callee" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="holder" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="Square" module=m0 declared={type=absent|f5 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 name="limit" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f4
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = ResolveHeritage v5
+    v7 = NewClosure function=f5
+    v8 = NewClass v7, v5, v6 layout=L1
+    v9 = NewClosure function=f6
+    DefineMethod v8, v9 layout=L1 key="area"
+    v11 = FinishClass v8 layout=L1
+    v12 = Convert v11 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v13 = PropGet v12 key="prototype"
+    v14 = PropGet v13 key="area"
+    v15 = NewObject layout=L2
+    v16 = FinishObject v15
+    PutModuleVariable v16 variable=g3
+    v18 = Integer
+    v19 = Convert v18 declared={type=number}
+    v20 = Integer
+    v21 = Convert v20 declared={type=number}
+    v22 = Call v1, -, v21 calleeName="outer"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v24 = Integer
+    v25 = Convert v24 declared={type=number}
+    Jump -> next b1(v19, v25)
+  b1(v26: number, v27: number):
+    LoopHint
+    v29 = Integer integer=31
+    v30 = Mul v26, v29
+    v31 = PropGet v23 key="charCodeAt"
+    v32 = Call v31, v23, v27 calleeKey="charCodeAt" calleeName="line.charCodeAt"
+    v33 = Convert v32 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v34 = Add v30, v33
+    v35 = Integer
+    v36 = BitOr v34, v35
+    v37 = Convert v36 declared={type=number}
+    v38 = Increment v27
+    v39 = Convert v38 declared={type=number}
+    Jump -> next b1(v37, v39)
+}
+function f1 name="callee" module=m0 position=1162 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g3
+    v2 = CheckInitialized v1 name="limit"
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Less v0, v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = Integer integer=1
+    Jump -> next b3(v6)
+  b2(v7):
+    v8 = Integer integer=2
+    Jump -> next b3(v8)
+  b3(v9):
+    v10 = Convert v9 declared={type=number}
+    Return v10
+}
+function f2 name="holder" module=m0 position=1238 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: number):
+    v2 = PropGet v0 key="area"
+    v3 = Call v2, v0 calleeKey="area" calleeName="p.area"
+    v4 = Convert v3 declared={type=number}
+    v5 = PropGet v0 key="kind"
+    v6 = Call v5, v0 calleeKey="kind" calleeName="p.kind"
+    v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v8 = Add v4, v7
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v1 calleeName="callee"
+    v12 = Convert v11 declared={type=number}
+    v13 = PropGet v0 key="area"
+    v14 = Call v13, v0 calleeKey="area" calleeName="p.area"
+    v15 = Convert v14 declared={type=number}
+    v16 = String string=","
+    v17 = Add v15, v16
+    v18 = PropGet v0 key="kind"
+    v19 = Call v18, v0 calleeKey="kind" calleeName="p.kind"
+    v20 = Convert v19 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v21 = Add v17, v20
+    v22 = String string=","
+    v23 = Add v21, v22
+    v24 = PropGet v0 key="side"
+    v25 = Add v23, v24
+    v26 = String string=","
+    v27 = Add v25, v26
+    v28 = GetModuleVariable variable=g2
+    v29 = CheckInitialized v28 name="Square"
+    v30 = InstanceOf v0, v29 writtenExpression="p instanceof Square"
+    v31 = Add v27, v30
+    v32 = Convert v31 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v33 = String string=" "
+    v34 = Add v9, v33
+    v35 = Add v34, v12
+    v36 = String string=" "
+    v37 = Add v35, v36
+    v38 = Add v37, v32
+    v39 = Convert v38 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v39
+}
+function f3 name="outer" module=m0 position=1491 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="Square"
+    v3 = Construct v2, -, v0 calleeName="Square"
+    v4 = Convert v3 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v5 = PropGet v4 key="area"
+    v6 = Call v5, v4 calleeKey="area" calleeName="p.area"
+    v7 = Convert v6 declared={type=number}
+    v8 = PropGet v4 key="kind"
+    v9 = Call v8, v4 calleeKey="kind" calleeName="p.kind"
+    v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v11 = Add v7, v10
+    v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v13 = GetModuleVariable variable=g1
+    v14 = Call v13, -, v4, v0 calleeName="holder"
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v16 = PropGet v4 key="area"
+    v17 = Call v16, v4 calleeKey="area" calleeName="p.area"
+    v18 = Convert v17 declared={type=number}
+    v19 = String string=","
+    v20 = Add v18, v19
+    v21 = PropGet v4 key="kind"
+    v22 = Call v21, v4 calleeKey="kind" calleeName="p.kind"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v24 = Add v20, v23
+    v25 = String string=","
+    v26 = Add v24, v25
+    v27 = PropGet v4 key="side"
+    v28 = Add v26, v27
+    v29 = String string=","
+    v30 = Add v28, v29
+    v31 = GetModuleVariable variable=g2
+    v32 = CheckInitialized v31 name="Square"
+    v33 = InstanceOf v4, v32 writtenExpression="p instanceof Square"
+    v34 = Add v30, v33
+    v35 = Convert v34 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v36 = String string=" ["
+    v37 = Add v12, v36
+    v38 = Add v37, v15
+    v39 = String string="] "
+    v40 = Add v38, v39
+    v41 = Add v40, v35
+    v42 = Convert v41 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v42
+}
+function f4 name="Shape" module=m0 position=407 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f5 name="Square" module=m0 position=555 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+function f6 name="area" module=m0 position=613 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L1} results=[{type=number}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 callee holder
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0() frequency=Rare:
+# CHECK-NEXT: v0: f4 @Cell = NewClosure function=f4 allocationSite=1 allocation=0
+# CHECK-NEXT: v1: f4 @Cell = NewClass v0 layout=L0 request=4
+# CHECK-NEXT: v2: f4 @JSValue = FinishClass v1 layout=L0
+# CHECK-NEXT: v3: null|object @JSValue = ResolveHeritage v2
+# CHECK-NEXT: v4: object @JSValue = AssumeType v3 provenType=object
+# CHECK-NEXT: v5: f5 @Cell = NewClosure function=f5 allocationSite=2 allocation=0
+# CHECK-NEXT: v6: f5 @Cell = NewClass v5, v2, v4 layout=L1 request=8
+# CHECK-NEXT: v7: f5 @Cell = FinishClass v6 layout=L1
+# CHECK-NEXT: v8: anything @JSValue = PropGet v7 key="prototype" accessSite=0
+# CHECK-NEXT: v9: object @JSValue = AssumeType v8 provenType=object
+# CHECK-NEXT: v10: anything @JSValue = PropGet v9 key="area" accessSite=1
+# CHECK-NEXT: v11: L2 @Cell = NewObject layout=L2 allocationSite=4 allocation=1 allocationClass=0
+# CHECK-NEXT: v12: L2 @Cell = FinishObject v11
+# CHECK-NEXT: PutModuleVariable v12 variable=g3
+# CHECK-NEXT: v14: absent @JSValue = GetModuleVariable variable=g2
+# CHECK-NEXT: v15: never @JSValue = CheckInitialized v14 name="Square"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="callee"
+# CHECK: module=m0 position=1162 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=0}] results=[{type=int[1, 2]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: 0 @Int32):
+# CHECK-NEXT: v1: L2 @Cell = GetModuleVariable variable=g3
+# CHECK-NEXT: v2: boolean @Boolean = Less v0, v1 form=NumberAndValue
+# CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v4: 2 @Int32 = Integer integer=2
+# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK-NEXT: b3(v5: int[1, 2] @Int32):
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="holder"
+# CHECK: module=m0 position=1238 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=0}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|L1 @JSValue, v1: 0 @Int32):
+# CHECK-NEXT: v2: L1 @JSValue = RequireObjectCoercible v0 name="area"
+# CHECK-NEXT: v3: anything @JSValue = PropGet v2 key="area" accessSite=5 receivers=[]
+# CHECK-NEXT: v4: anything @JSValue = Call v3, v2 calleeKey="area" calleeName="p.area" accessSite=6 callees=[]
+# CHECK-NEXT: v5: anything @JSValue = Expect v4 expectedType=number
+# CHECK-NEXT: v6: anything @JSValue = PropGet v2 key="kind" accessSite=7 receivers=[]
+# CHECK-NEXT: v7: anything @JSValue = Call v6, v2 calleeKey="kind" calleeName="p.kind" accessSite=8 callees=[]
+# CHECK-NEXT: v8: anything @JSValue = Expect v7 expectedType=undefined|null|string
+# CHECK-NEXT: v9: number|string|bigint @JSValue = Add v5, v8 form=Generic
+# CHECK-NEXT: v10: int[1, 2] @Int32 = CallDirect v1 function=f1 accessSite=9
+# CHECK-NEXT: v11: anything @JSValue = PropGet v2 key="area" accessSite=10 receivers=[]
+# CHECK-NEXT: v12: anything @JSValue = Call v11, v2 calleeKey="area" calleeName="p.area" accessSite=11 callees=[]
+# CHECK-NEXT: v13: anything @JSValue = Expect v12 expectedType=number
+# CHECK-NEXT: v14: stringbuilder @Cell = StringBuilderBegin
+# CHECK-NEXT: v15: "" @JSValue = String string=""
+# CHECK-NEXT: v16: string @JSValue = Add v15, v13 form=Generic
+# CHECK-NEXT: StringBuilderAppendString v14, v16
+# CHECK-NEXT: StringBuilderAppendConstant v14 string=","
+# CHECK-NEXT: v19: anything @JSValue = PropGet v2 key="kind" accessSite=12 receivers=[]
+# CHECK-NEXT: v20: anything @JSValue = Call v19, v2 calleeKey="kind" calleeName="p.kind" accessSite=13 callees=[]
+# CHECK-NEXT: v21: anything @JSValue = Expect v20 expectedType=undefined|null|string
+# CHECK-NEXT: v22: "" @JSValue = String string=""
+# CHECK-NEXT: v23: string @JSValue = Add v22, v21 form=Generic
+# CHECK-NEXT: StringBuilderAppendString v14, v23
+# CHECK-NEXT: StringBuilderAppendConstant v14 string=","
+# CHECK-NEXT: v26: anything @JSValue = PropGet v2 key="side" accessSite=14 receivers=[]
+# CHECK-NEXT: v27: "" @JSValue = String string=""
+# CHECK-NEXT: v28: string @JSValue = Add v27, v26 form=Generic
+# CHECK-NEXT: StringBuilderAppendString v14, v28
+# CHECK-NEXT: StringBuilderAppendConstant v14 string=","
+# CHECK-NEXT: StringBuilderDiscard v14
+# CHECK-NEXT: v32: absent @JSValue = GetModuleVariable variable=g2
+# CHECK-NEXT: v33: never @JSValue = CheckInitialized v32 name="Square"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }

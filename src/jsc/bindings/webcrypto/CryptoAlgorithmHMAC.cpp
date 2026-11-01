@@ -175,8 +175,14 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
-        if (!validateJwkKeyOps(jwk, usages, exceptionCallback))
+        if (hasDuplicateJwkKeyOps(jwk.key_ops)) {
+            exceptionCallback(DataError, "Duplicate key operation"_s);
             return;
+        }
+        if (jwk.key_ops && ((jwk.usages & usages) != usages)) {
+            exceptionCallback(DataError, "Key operations and usage mismatch"_s);
+            return;
+        }
         if (jwk.ext && !jwk.ext.value() && extractable) {
             exceptionCallback(DataError, "JWK \"ext\" Parameter and extractable mismatch"_s);
             return;
@@ -227,6 +233,10 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
         break;
     case CryptoKeyFormat::Jwk: {
         JsonWebKey jwk = hmacKey.exportJwk();
+        if (jwk.k.isNull()) {
+            exceptionCallback(OperationError, ""_s);
+            return;
+        }
         switch (hmacKey.hashAlgorithmIdentifier()) {
         case CryptoAlgorithmIdentifier::SHA_1:
             jwk.alg = String(ALG1);

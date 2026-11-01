@@ -28,7 +28,7 @@ export const highway: Dependency = {
     commit: HIGHWAY_COMMIT,
   }),
 
-  patches: ["patches/highway/silence-warnings.patch"],
+  patches: ["patches/highway/silence-warnings.patch", "patches/highway/sve2-requires-sve.patch"],
 
   build: cfg => {
     const spec: DirectBuild = {

@@ -340,3 +340,9 @@ new Error("asdf", {
 // are making sure that .d.ts is a module and that anything top level doesn't
 // leak to userland
 expectType<BunConsumerConvenienceMethods>();
+
+{
+  const a = new Blob();
+  expectType(a.slice()).is<Blob>();
+  expectType(a.slice(1, 2, "text/plain")).is<Blob>();
+}

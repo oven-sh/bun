@@ -157,7 +157,7 @@ pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
 /// `Path<U>` callers store this in a `ManuallyDrop` and explicitly `put` on
 /// reset, so also expose `into_box`/free `put`.
 pub type Guard = PoolGuard<PathBuffer>;
-#[inline]
+#[inline(never)]
 pub fn get() -> PoolGuard<PathBuffer> {
     PathBufferPoolT::<PathBuffer>::get()
 }

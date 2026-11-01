@@ -4,6 +4,7 @@
 // VM's own uses to post work to it, keep its loop alive, or ask whether it may still run
 // script. retain / retainRef take a count, release gives one up; valid however long it is held.
 #include "BunLoopKind.h"
+#include <wtf/SharedTask.h>
 struct BunVmHandleRef;
 extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS thread
 extern "C" const BunVmHandleRef* Bun__VmHandle__retainRef(const BunVmHandleRef*); // any thread
@@ -28,6 +29,7 @@ class EventLoopTask;
 // to outlive a lock).
 extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::EventLoopTask*, BunLoopKind);
 extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, BunLoopKind, int delta);
+extern "C" void Bun__VmHandle__wake(const BunVmHandleRef*); // any thread
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
 extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandleRef*);
 // The handle's state byte, so hot paths test it inline (BUN_VM_HANDLE_STATE_OPEN == bun_jsc::vm_handle::State::Open).
@@ -70,11 +72,16 @@ class DOMWrapperWorld;
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
 #include "BunCommonStrings.h"
+#include "Bindgen/SchemaStrings.h"
 #include "DOMURLBaseCache.h"
+#include "NodeHTTPRequestHeaderValues.h"
+#include "NodeVMOptionNames.h"
+#include "NodeVMSourceOriginCache.h"
 #include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
 class GlobalObject;
 }
+class VersionSqlite3;
 
 namespace Bun {
 class StrongRootBlock;
@@ -126,6 +133,7 @@ private:
 namespace JSC {
 struct HashTableValue;
 class DecoderStringTable;
+class PrelinkedModuleGraph;
 }
 
 namespace Bun {
@@ -171,9 +179,10 @@ public:
 
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
-    JSC::IsoHeapCellType m_heapCellTypeForNapiHandleScopeImpl;
+    JSC::IsoHeapCellType m_heapCellTypeForHandleScopeImpl;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNativePromiseContext;
+    JSC::IsoHeapCellType m_heapCellTypeForJSModuleGraph;
     // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;
 
 private:
@@ -238,11 +247,25 @@ public:
 
     // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
     Bun::CommonStrings commonStrings;
+    Bun::Bindgen::SchemaStrings schemaStrings;
 
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
+    Bun::NodeHTTPRequestHeaderValues& nodeHTTPRequestHeaderValues() { return m_nodeHTTPRequestHeaderValues; }
+    Bun::NodeVMOptionNames& nodeVMOptionNames() { return m_nodeVMOptionNames; }
+    Bun::NodeVMSourceOriginCache& nodeVMSourceOriginCache() { return m_nodeVMSourceOriginCache; }
 
     // Live size of the heap as measured by the most recent collection, eden or full.
     size_t heapSizeAfterLastCollection() const { return m_heapSizeAfterLastCollection.get(); }
+
+    // The VM's default (first) Zig::GlobalObject: what defaultGlobalObject(JSC::VM&) returns on threads whose thread-local
+    // default is not this VM's, e.g. the collector thread running a collection's end phase. gcProtect'ed for the VM's life.
+    JSC::JSGlobalObject* defaultGlobalObject { nullptr };
+
+    // Idle full collections GarbageCollectionController requested that have not finished (see
+    // Bun__JSC_onBeforeWait). Counted up on the JS thread, down at the end of each one's end phase, on either thread.
+    std::atomic<unsigned> idleCollectionsPending { 0 };
+    // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
+    RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
 
     void* bunVM;
     // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses
@@ -282,12 +305,20 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
+    void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
+
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);
+
+    // The executable's pre-resolved module graph for this VM, created on first use over decoderStringTable() from the
+    // standalone module graph; null when there is none (or it does not validate).
+    JSC::PrelinkedModuleGraph* prelinkedModuleGraph(JSC::VM&);
 
 private:
     bool isWebCoreJSClientData() const final { return true; }
     std::unique_ptr<JSC::DecoderStringTable> m_decoderStringTable;
+    RefPtr<JSC::PrelinkedModuleGraph> m_prelinkedModuleGraph;
+    bool m_prelinkedModuleGraphChecked { false };
 
     // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
     // singleton alone (it is shared by every VM). On the default `!useGlobalGC`
@@ -318,10 +349,14 @@ private:
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
 
     WebCore::DOMURLBaseCache m_urlBaseCache;
+    Bun::NodeHTTPRequestHeaderValues m_nodeHTTPRequestHeaderValues;
+    Bun::NodeVMOptionNames m_nodeVMOptionNames;
+    Bun::NodeVMSourceOriginCache m_nodeVMSourceOriginCache;
 
     Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
 
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
+    Vector<VersionSqlite3*> m_sqliteDatabases;
     bool m_isWorkerVM { false };
     bool m_isNodeWorkerVM { false };
 
@@ -332,6 +367,8 @@ public:
     bool isNodeWorkerVM() const { return m_isNodeWorkerVM; }
     // VM thread. Unlinking is the client's own (`remove()` in its destructor).
     void addClient(JSVMClientDataClient& client) { m_clients.append(&client); }
+    // VM thread. The bun:sqlite connections this VM has; each one removes itself in its destructor.
+    Vector<VersionSqlite3*>& sqliteDatabases() { return m_sqliteDatabases; }
 };
 
 } // namespace WebCore
@@ -380,10 +417,21 @@ inline constexpr SubspaceForInit subspaceForInit {
     static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
 };
 
+// True when T::destroy is JSCell::destroy, which runs no destructor. A non-public destroy can only be an override.
+template<typename T>
+inline constexpr bool inheritsJSCellDestroy = [] {
+    if constexpr (requires { static_cast<void (*)(JSC::JSCell*)>(&T::destroy); })
+        return static_cast<void (*)(JSC::JSCell*)>(&T::destroy) == static_cast<void (*)(JSC::JSCell*)>(&JSC::JSCell::destroy);
+    else
+        return false;
+}();
+
 template<typename T, UseCustomHeapCellType useCustomHeapCellType>
 ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, SubspaceSlots slots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
 {
     static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
+    static_assert(T::needsDestruction == JSC::DoesNotNeedDestruction || std::is_trivially_destructible_v<T> || !inheritsJSCellDestroy<T>,
+        "the GC sweeps this cell type with JSCell::destroy, so its members' destructors never run; define `static void destroy(JSC::JSCell*)`");
     auto& clientData = *downcast<JSVMClientData>(vm.clientData);
     auto* clientSpace = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
     if (clientSpace)

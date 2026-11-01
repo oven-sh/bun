@@ -18,3 +18,28 @@ linker = "isolated"
 globalStore = false
 minimumReleaseAge = 259200 # three days
 minimumReleaseAgeExcludes = ["typescript"]
+
+[fmt]
+# `bun fmt` formats scripts, packages, src and docs. In test, only the tests: the rest is fixtures.
+ignorePatterns = [
+  "/*",
+  "!/scripts",
+  "!/packages",
+  "!/src",
+  "!/docs",
+  "!/test",
+  "/test/**",
+  "!/test/**/",
+  "!/test/**/*.test.[jt]s",
+  "!/test/**/*.test.[jt]sx",
+  "!/test/**/*.test.[cm][jt]s",
+  "!/test/**/*.spec.[jt]s",
+  "!/test/**/*.spec.[jt]sx",
+  "!/test/**/*.spec.[cm][jt]s",
+  "/test/**/*fixture*.*",
+]
+
+[lint]
+# `bun lint` lints src/js.
+config = "oxlint.json"
+ignorePatterns = ["/*", "!/src", "/src/*", "!/src/js"]

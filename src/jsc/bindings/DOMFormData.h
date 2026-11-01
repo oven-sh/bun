@@ -31,6 +31,7 @@
 #pragma once
 
 #include "ContextDestructionObserver.h"
+#include "ExceptionOr.h"
 #include <variant>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
@@ -40,7 +41,6 @@ namespace WebCore {
 
 class ScriptExecutionContext;
 
-template<typename> class ExceptionOr;
 class HTMLElement;
 class HTMLFormElement;
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DOMFormData);
@@ -61,18 +61,18 @@ public:
     };
 
     static Ref<DOMFormData> create(ScriptExecutionContext*);
-    static Ref<DOMFormData> create(ScriptExecutionContext*, const StringView& urlEncodedString);
+    static ExceptionOr<Ref<DOMFormData>> create(ScriptExecutionContext*, StringView urlEncodedString);
 
     const Vector<Item>& items() const { return m_items; }
 
-    void append(const String& name, const String& value);
-    void append(const String& name, RefPtr<Blob>, const String& filename = {});
+    ExceptionOr<void> append(const String& name, const String& value);
+    ExceptionOr<void> append(const String& name, RefPtr<Blob>, const String& filename = {});
     void remove(const StringView name);
     std::optional<FormDataEntryValue> get(const StringView name);
     Vector<FormDataEntryValue> getAll(const StringView name);
     bool has(const StringView name);
-    void set(const String& name, const String& value);
-    void set(const String& name, RefPtr<Blob>, const String& filename = {});
+    ExceptionOr<void> set(const String& name, const String& value);
+    ExceptionOr<void> set(const String& name, RefPtr<Blob>, const String& filename = {});
 
     size_t count() const { return m_items.size(); }
     size_t memoryCost() const;
@@ -94,7 +94,8 @@ public:
 private:
     explicit DOMFormData(ScriptExecutionContext*);
 
-    void set(const String& name, Item&&);
+    ExceptionOr<void> appendItem(Item&&);
+    ExceptionOr<void> set(const String& name, Item&&);
 
     Vector<Item> m_items;
 };

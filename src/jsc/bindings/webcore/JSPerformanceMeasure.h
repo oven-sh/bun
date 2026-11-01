@@ -29,7 +29,6 @@ namespace WebCore {
 class JSPerformanceMeasure : public JSPerformanceEntry {
 public:
     using Base = JSPerformanceEntry;
-    using DOMWrapped = PerformanceMeasure;
     static JSPerformanceMeasure* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceMeasure>&& impl)
     {
         JSPerformanceMeasure* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMeasure>(globalObject->vm())) JSPerformanceMeasure(structure, *globalObject, WTF::move(impl));

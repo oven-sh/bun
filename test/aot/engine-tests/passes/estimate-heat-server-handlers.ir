@@ -1,0 +1,83 @@
+# What the host calls per request or message, and what that calls, is the hottest code of a server, whether the handler is an operand or a member of an options object. A function called in a loop at start ranks below, a callback called once later is not hot, and the module body has one activation though it calls unknown code
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat
+# RUN: pipeline EstimateHeat
+# RUN(LIMITS): pipeline EstimateHeat
+# CHECK: f0 RunsOnce [[percentileOfMain]] 1
+# CHECK-NEXT: f1 Hot 80 3.28e+4
+# CHECK-NEXT: f2 Hot 80 3.28e+4
+# CHECK-NEXT: f3 Hot 80 3.28e+4
+# CHECK-NEXT: f4 Warm 70 10
+# CHECK-NEXT: f5 Hot 80 3.28e+4
+# CHECK-NEXT: f6 Cold 0 1
+# CHECK: hottest: f1 f2 f3 f5 f4
+# CHECK-NEXT: thresholds: cold=[[coldThreshold]] hot=3.28e+4
+# LIMITS-NOT: f0 RunsOnce {{*}} 10
+# LIMITS-NOT: f4 Warm 70 100
+# LIMITS-NOT: f6 Cold 0 10
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="fetch" declared={type=anything}}]
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Builtin builtin=BunServe
+    v5 = Call v4, -, v3
+    v6 = NewClosure function=f5
+    v7 = Builtin builtin=EventEmitterPrototypeOn
+    v8 = Builtin builtin=Process
+    v9 = String string="message"
+    v10 = Call v7, v8, v9, v6
+    v11 = NewClosure function=f6
+    v12 = Builtin builtin=QueueMicrotask
+    v13 = Call v12, -, v11
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v15 = CallDirect v0 function=f4
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+
+function f1 name="fetch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect function=f2
+    Return v1
+}
+
+function f2 name="route" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f3
+    Return v0
+}
+
+function f3 name="respond" results=[{type=undefined}] {
+  b0():
+    Return
+}
+
+function f4 name="register" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    v2 = LogicalNot v1
+    Return v2
+}
+
+function f5 name="onMessage" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    Return
+}
+
+function f6 name="job" results=[{type=undefined}] {
+  b0():
+    Return
+}

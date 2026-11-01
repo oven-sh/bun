@@ -15,10 +15,6 @@
 //! * `user_mut`           — null-checked `*mut c_void → Option<&mut U>`.
 //! * `handle_mut`         — `*mut Opaque → &mut Opaque` for uWS handles.
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
-//! * `ext_owner`          — `&Option<NonNull<T>> → Option<&mut T>` (the
-//!   `socket.ext(**T).*` pattern).
-//! * `socket_ext_owner` / `connecting_ext_owner` — same, but starting from a
-//!   raw `*us_socket_t` / `*us_connecting_socket_t`.
 //!
 //! All functions are `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
@@ -136,19 +132,6 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     }
 }
 
-/// Dereference the `Option<NonNull<T>>` stored in a socket's ext slot.
-/// `None` covers the calloc'd-but-not-yet-stamped window during
-/// connect/accept.
-///
-/// # Safety
-/// The pointee, when present, must be live and uniquely borrowed for `'a`
-/// (uWS dispatch is single-threaded so no aliasing `&mut` exists).
-#[inline(always)]
-pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
-    // SAFETY: per caller contract above.
-    ext.map(|mut p| unsafe { p.as_mut() })
-}
-
 // ───────────────────────── safe-surface trampoline ──────────────────────────
 //
 // S005: the primitives above are `unsafe fn` because each call site must
@@ -157,8 +140,8 @@ pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
 // uWS on the same socket while holding `&mut Owner`) that contract is uniform
 // and can be discharged once at the type level instead of at every call site.
 // `ExtSlot<T>` is that type-level discharge: choosing it as `Handler::Ext`
-// moves the proof obligation from ~30 `unsafe { ext_owner(ext) }` blocks to
-// the one `unsafe` inside `owner_mut()`.
+// moves the proof obligation from every call site to the one `unsafe` inside
+// `owner_mut()`.
 
 /// Typed-safe wrapper for the `Option<NonNull<T>>` word stored in a uWS socket
 /// ext slot. The newtype is the safe-surface entry point for the
@@ -175,8 +158,7 @@ pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
 /// `vtable::Trampolines` layer from C-allocated socket ext memory (via
 /// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
 /// [`Self::owner_mut`] sound as a *safe* fn — the one `unsafe { p.as_mut() }`
-/// inside discharges the same invariant every former
-/// `unsafe { thunk::ext_owner(ext) }` call site repeated open-coded.
+/// inside discharges the invariant for every call site.
 #[repr(transparent)]
 pub struct ExtSlot<T>(Option<NonNull<T>>);
 
@@ -205,13 +187,5 @@ impl<T> ExtSlot<T> {
             Some(p) => Some(unsafe { &*p.as_ptr() }),
             None => None,
         }
-    }
-
-    /// Snapshot the raw pointer word without forming a borrow. Used by
-    /// `on_connect_error` paths that must read the owner *before* closing the
-    /// socket (which may invalidate the ext storage `self` points into).
-    #[inline(always)]
-    pub fn get(&self) -> Option<NonNull<T>> {
-        self.0
     }
 }

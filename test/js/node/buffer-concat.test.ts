@@ -74,7 +74,7 @@ describe("does not leak uninitialized memory when a getter mutates input buffers
     // implementation ever regresses to leaking uninitialized memory, the
     // zero-content assertions below observe non-zero bytes rather than
     // happening to pass on a freshly-zeroed heap.
-    const spray = [];
+    const spray: Buffer[] = [];
     for (let i = 0; i < 64; i++) spray.push(Buffer.alloc(SIZE, 0xcc));
     spray.length = 0;
     Bun.gc(true);

@@ -29,7 +29,7 @@ pub struct Graph<'a> {
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub(crate) entry_point_original_names: IndexStringMap,
     /// Every source index has an associated InputFile
-    pub input_files: MultiArrayList<InputFile>,
+    pub input_files: MultiArrayList<InputFile<'a>>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
     // `JSAst<'a>` borrows from the arena behind `self.heap`; `'a` ties the AST
@@ -101,8 +101,8 @@ pub struct HtmlImports {
     pub(crate) html_source_indices: Vec<IndexInt>,
 }
 
-pub struct InputFile {
-    pub(crate) source: bun_ast::Source,
+pub struct InputFile<'a> {
+    pub(crate) source: bun_ast::Source<'a>,
     pub(crate) secondary_path: AstVec<u8>,
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
@@ -114,7 +114,7 @@ pub struct InputFile {
     pub flags: InputFileFlags,
 }
 
-impl Default for InputFile {
+impl Default for InputFile<'_> {
     fn default() -> Self {
         Self {
             source: bun_ast::Source::default(),
@@ -133,8 +133,8 @@ impl Default for InputFile {
 // Field name + type are checked against `InputFile`'s reflected layout at
 // compile time by the underlying `items::<"name", T>()`.
 bun_collections::multi_array_columns! {
-    pub trait InputFileColumns for InputFile {
-        source: bun_ast::Source,
+    pub trait InputFileColumns ['a] for InputFile<'a> {
+        source: bun_ast::Source<'a>,
         secondary_path: AstVec<u8>,
         loader: options::Loader,
         side_effects: SideEffects,
@@ -150,6 +150,8 @@ bitflags::bitflags! {
     pub struct InputFileFlags: u8 {
         /// Set when a barrel-eligible file has `export * from` this file.
         const IS_EXPORT_STAR_TARGET = 1 << 1;
+        /// `source.contents` is what an `onLoad` plugin returned, not what is in the file.
+        const IS_LOADED_BY_PLUGIN = 1 << 2;
     }
 }
 

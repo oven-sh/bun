@@ -16,8 +16,6 @@ pub mod api {
 // `bun_jsc::FetchHeaders`).
 pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList, Headers};
 
-// to_fetch_headers lives as an extension-trait method in bun_http_jsc.
-
 /// Extension constructors for `Headers` that depend on T5 crates
 /// (`bun_picohttp`). Kept as a trait so callers can keep writing
 /// `Headers::from_pico_http_headers(...)`.

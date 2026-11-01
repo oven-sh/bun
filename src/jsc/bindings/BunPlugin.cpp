@@ -3030,6 +3030,15 @@ static JSC::JSPromise* patchWhenFactorySettles(Zig::GlobalObject* globalObject, 
 }
 
 #if ENABLE(AOT)
+static void waitForNextLoadOfCompiledModule(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    uint32_t module = *mock->compiledModuleThatNeverRan;
+    auto& waiting = globalObject->onLoadPlugins.compiledMocksToRun;
+    waiting.removeAllMatching([&](const auto& entry) { return entry.first == module; });
+    waiting.append({ module, JSC::Strong<JSC::JSObject> { JSC::getVM(globalObject), mock } });
+    JSC::AOT::deferMock(globalObject, JSC::AOT::ModuleID(module), JSC::AOT::AfterFailure::AsksAgain);
+}
+
 void runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3283,7 +3292,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             uint32_t module = form.index();
             waiting.removeAllMatching([&](const auto& entry) { return entry.first == module; });
             waiting.append({ module, JSC::Strong<JSC::JSObject> { vm, mock } });
-            JSC::AOT::deferMock(globalObject, form);
+            JSC::AOT::deferMock(globalObject, form, mock->importsOriginal ? JSC::AOT::AfterFailure::AsksAgain : JSC::AOT::AfterFailure::KeepsError);
         };
         wait(*loaded.compiledModule);
         for (JSC::AOT::ModuleID form : JSC::AOT::formsThatAttributesAskFor(globalObject, specifier))
@@ -4409,6 +4418,13 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject, (JSC::JSGlobalObject
     if (!isCurrent)
         return JSC::JSValue::encode(JSC::jsUndefined());
 
+#if ENABLE(AOT)
+    if (mock->compiledModuleThatNeverRan && mock->importsOriginal) {
+        Zig::waitForNextLoadOfCompiledModule(globalObject, mock);
+        scope.throwException(globalObject, callFrame->argument(0));
+        return {};
+    }
+#endif
     scope.release();
     Zig::failPendingModulePatch(globalObject, mock, specifier, callFrame->argument(0));
     return {};

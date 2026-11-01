@@ -258,11 +258,6 @@
             "pages": ["/bundler/html-static", "/bundler/standalone-html", "/bundler/css", "/bundler/loaders"]
           },
           {
-            "group": "Single File Executable",
-            "icon": "binary",
-            "pages": ["/bundler/executables"]
-          },
-          {
             "group": "Extensions",
             "icon": "plug",
             "pages": ["/bundler/plugins", "/bundler/macros"]
@@ -270,12 +265,48 @@
           {
             "group": "Optimization",
             "icon": "zap",
-            "pages": ["/bundler/bytecode", "/bundler/minifier"]
+            "pages": ["/bundler/minifier"]
           },
           {
             "group": "Migration",
             "icon": "arrow-right",
             "pages": ["/bundler/esbuild"]
+          }
+        ]
+      },
+      {
+        "tab": "Compiler",
+        "icon": "cpu",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "circle-play",
+            "pages": ["/compiler/index"]
+          },
+          {
+            "group": "Single File Executable",
+            "icon": "binary",
+            "pages": ["/compiler/executables", "/compiler/bytecode"]
+          },
+          {
+            "group": "Ahead-of-Time Compilation",
+            "icon": "cpu",
+            "pages": [
+              "/compiler/aot",
+              "/compiler/types",
+              "/compiler/explain",
+              "/compiler/compatibility",
+              "/compiler/debugging",
+              "/compiler/size",
+              "/compiler/libraries",
+              "/compiler/troubleshooting",
+              "/compiler/internals"
+            ]
+          },
+          {
+            "group": "Guides",
+            "icon": "map",
+            "pages": ["/guides/runtime/codesign-macos-executable", "/guides/runtime/build-time-constants"]
           }
         ]
       },
@@ -691,6 +722,20 @@
       }
     ]
   },
+  "redirects": [
+    {
+      "source": "/bundler/executables",
+      "destination": "/compiler/executables"
+    },
+    {
+      "source": "/bundler/bytecode",
+      "destination": "/compiler/bytecode"
+    },
+    {
+      "source": "/bundler/aot-compatibility",
+      "destination": "/compiler/compatibility"
+    }
+  ],
   "footer": {
     "socials": {
       "x": "https://x.com/bunjavascript",

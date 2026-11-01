@@ -1,0 +1,12 @@
+import * as fs from "node:fs";
+import events from "node:events";
+import * as path from "node:path";
+import util from "node:util";
+import stream from "node:stream";
+import * as perf from "node:perf_hooks";
+import timers from "node:timers";
+import http from "node:http";
+import * as als from "node:async_hooks";
+export const namespaces: Record<string, any> = { fs, path, perf, als };
+export const defaults: Record<string, any> = { events, util, stream, timers, http };
+export const required = (name: string): any => ({ fs: require("node:fs"), events: require("node:events"), path: require("node:path"), util: require("node:util"), stream: require("node:stream"), perf: require("node:perf_hooks"), timers: require("node:timers"), http: require("node:http"), als: require("node:async_hooks") })[name];

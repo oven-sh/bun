@@ -1,0 +1,414 @@
+# -- source: deleting-length-character-string-literal.cjs
+# // `delete` of the length or of a character of a string that is written as a literal. Neither can be deleted: the answer is false in sloppy code, and strict code, here the body of a class, throws: see docs/compiler/compatibility.mdx.
+# function tell(label, ask) {
+#   try {
+#     console.log(label, ask());
+#   } catch (error) {
+#     console.log(label, error.constructor.name);
+#   }
+# }
+# tell("sloppy length", () => delete "text".length);
+# tell("sloppy character", () => delete "text"[1]);
+# tell("sloppy past the end", () => delete "text"[9]);
+# tell("sloppy another name", () => delete "text".other);
+# class Strict {
+#   static length = () => delete "text".length;
+#   static character = () => delete "text"[1];
+#   static pastTheEnd = () => delete "text"[9];
+#   static anotherName = () => delete "text".other;
+# }
+# tell("strict length", Strict.length);
+# tell("strict character", Strict.character);
+# tell("strict past the end", Strict.pastTheEnd);
+# tell("strict another name", Strict.anotherName);
+# /* Output:
+# sloppy length false
+# sloppy character false
+# sloppy past the end true
+# sloppy another name true
+# strict length TypeError
+# strict character TypeError
+# strict past the end true
+# strict another name true
+# */
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="deleting-length-character-string-literal.cjs" displayPath="deleting-length-character-string-literal.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0
+layout L1 kind=Instance name="Strict" module=m0 position=591 constructor=f2 staticFields=[{key="length" variable=g1}, {key="character" variable=g2}, {key="pastTheEnd" variable=g3}, {key="anotherName" variable=g4}]
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 module=m0 declared={type=undefined|null|function|f8 flags=[IsExpected]} owner=L1
+variable g2 module=m0 declared={type=undefined|null|function|f9 flags=[IsExpected]} owner=L1
+variable g3 module=m0 declared={type=undefined|null|function|f10 flags=[IsExpected]} owner=L1
+variable g4 module=m0 declared={type=undefined|null|function|f11 flags=[IsExpected]} owner=L1
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v5 = NewClosure function=f2 @585
+    v6 = NewClass v5 layout=L1 @585
+    v7 = FinishClass v6 layout=L1 @585
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @585
+    v9 = Convert v7 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType @585
+    v10 = CallDirect v6, v9 function=f3 @585
+    v11 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @585
+    v12 = String string="sloppy length" @380
+    v13 = NewClosure function=f4 @397
+    v14 = Call v4, -, v12, v13 calleeName="tell" @375
+    v15 = String string="sloppy character" @431
+    v16 = NewClosure function=f5 @451
+    v17 = Call v4, -, v15, v16 calleeName="tell" @426
+    v18 = String string="sloppy past the end" @481
+    v19 = NewClosure function=f6 @504
+    v20 = Call v4, -, v18, v19 calleeName="tell" @476
+    v21 = String string="sloppy another name" @534
+    v22 = NewClosure function=f7 @557
+    v23 = Call v4, -, v21, v22 calleeName="tell" @529
+    v24 = String string="strict length" @794
+    v25 = PropGet v11 key="length" @811
+    v26 = Convert v25 declared={type=undefined|null|function|f8 flags=[IsExpected]} @811
+    v27 = Call v4, -, v24, v26 calleeName="tell" @789
+    v28 = String string="strict character" @832
+    v29 = PropGet v11 key="character" @852
+    v30 = Convert v29 declared={type=undefined|null|function|f9 flags=[IsExpected]} @852
+    v31 = Call v4, -, v28, v30 calleeName="tell" @827
+    v32 = String string="strict past the end" @876
+    v33 = PropGet v11 key="pastTheEnd" @899
+    v34 = Convert v33 declared={type=undefined|null|function|f10 flags=[IsExpected]} @899
+    v35 = Call v4, -, v32, v34 calleeName="tell" @871
+    v36 = String string="strict another name" @924
+    v37 = PropGet v11 key="anotherName" @947
+    v38 = Convert v37 declared={type=undefined|null|function|f11 flags=[IsExpected]} @947
+    v39 = Call v4, -, v36, v38 calleeName="tell" @919
+    v40 = Undefined @919
+    Return v40 @919
+}
+function f1 name="tell" module=m0 position=234 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    Jump -> next b1() @234
+  b1():
+    Jump -> next b2() @264
+  b2() handler=b4():
+    v2 = Builtin builtin=GlobalThis @274
+    v3 = PropGet v2 key="console" [isFreeName] @274
+    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]} @274
+    v5 = PropGet v4 key="log" @274
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @274
+    v7 = Call v1 calleeName="ask" @293
+    v8 = Call v6, v4, v0, v7 calleeKey="log" calleeName="console.log" @282
+    Jump -> next b3() @274
+  b3():
+    Jump -> next b5() @274
+  b4() role=CatchHandler:
+    v9 = CatchValue @319
+    v10 = Builtin builtin=GlobalThis @325
+    v11 = PropGet v10 key="console" [isFreeName] @325
+    v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]} @325
+    v13 = PropGet v12 key="log" @325
+    v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @325
+    v15 = PropGet v9 key="constructor" @344
+    v16 = PropGet v15 key="name" @350
+    v17 = Call v14, v12, v0, v16 calleeKey="log" calleeName="console.log" @333
+    Jump -> next b5() @325
+  b5():
+    v18 = Undefined @325
+    Return v18 @325
+}
+function f2 name="Strict" module=m0 position=591 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    Jump -> next b1() @591
+  b1():
+    v1 = GetConstructPrototype v0 layout=L1 @585
+    v2 = NewObject v1 layout=L1 @585
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @585
+    Return v3 @585
+}
+function f3 module=m0 position=591 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function, v1: function):
+    Jump -> next b1() @591
+  b1():
+    v2 = Convert v1 declared={type=object flags=[IsFromCompiler, IsClaim]} @591
+    v3 = NewClosure function=f8 @618
+    v4 = Convert v3 declared={type=undefined|null|function|f8 flags=[IsExpected]} @618
+    PropDefine v2, v4 key="length" @609
+    v6 = NewClosure function=f9 @667
+    v7 = Convert v6 declared={type=undefined|null|function|f9 flags=[IsExpected]} @667
+    PropDefine v2, v7 key="character" @655
+    v9 = NewClosure function=f10 @713
+    v10 = Convert v9 declared={type=undefined|null|function|f10 flags=[IsExpected]} @713
+    PropDefine v2, v10 key="pastTheEnd" @700
+    v12 = NewClosure function=f11 @760
+    v13 = Convert v12 declared={type=undefined|null|function|f11 flags=[IsExpected]} @760
+    PropDefine v2, v13 key="anotherName" @746
+    v15 = Undefined @591
+    Return v15 @591
+}
+function f4 module=m0 position=397 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @397
+  b1():
+    v0 = String string="text" @410
+    v1 = PropDelete v0 key="length" mode=Sloppy @423
+    v2 = Convert v1 declared={type=boolean flags=[IsExpected]} @423
+    Return v2 @423
+}
+function f5 module=m0 position=451 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @451
+  b1():
+    v0 = String string="text" @464
+    v1 = Integer integer=1 @464
+    v2 = ElemDelete v0, v1 mode=Sloppy @473
+    v3 = Convert v2 declared={type=boolean flags=[IsExpected]} @473
+    Return v3 @473
+}
+function f6 module=m0 position=504 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @504
+  b1():
+    v0 = String string="text" @517
+    v1 = Integer integer=9 @517
+    v2 = ElemDelete v0, v1 mode=Sloppy @526
+    v3 = Convert v2 declared={type=boolean flags=[IsExpected]} @526
+    Return v3 @526
+}
+function f7 module=m0 position=557 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @557
+  b1():
+    v0 = String string="text" @570
+    v1 = PropDelete v0 key="other" mode=Sloppy @582
+    v2 = Convert v1 declared={type=boolean flags=[IsExpected]} @582
+    Return v2 @582
+}
+function f8 name="length" module=m0 position=618 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @618
+  b1():
+    v0 = String string="text" @631
+    v1 = PropDelete v0 key="length" @631
+    v2 = Convert v1 declared={type=boolean flags=[IsExpected]} @631
+    Return v2 @631
+}
+function f9 name="character" module=m0 position=667 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @667
+  b1():
+    v0 = String string="text" @680
+    v1 = Integer integer=1 @680
+    v2 = ElemDelete v0, v1 @680
+    v3 = Convert v2 declared={type=boolean flags=[IsExpected]} @680
+    Return v3 @680
+}
+function f10 name="pastTheEnd" module=m0 position=713 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @713
+  b1():
+    v0 = String string="text" @726
+    v1 = Integer integer=9 @726
+    v2 = ElemDelete v0, v1 @733
+    v3 = Convert v2 declared={type=boolean flags=[IsExpected]} @733
+    Return v3 @733
+}
+function f11 name="anotherName" module=m0 position=760 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @760
+  b1():
+    v0 = String string="text" @773
+    v1 = PropDelete v0 key="other" @780
+    v2 = Convert v1 declared={type=boolean flags=[IsExpected]} @780
+    Return v2 @780
+}
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 tell f3 f4 f5 f6 f7 length character pastTheEnd anotherName
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationSite=0 allocationClass=0
+# CHECK-NEXT: v1: L0 = FinishObject v0
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: v3: f2 = GetModuleVariable variable=g5
+# CHECK-NEXT: v4: f2 = FinishClass v3 layout=L1
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f3 accessSite=0
+# CHECK-NEXT: v6: "sloppy length" = String string="sloppy length"
+# CHECK-NEXT: v7: f4 = NewClosure function=f4 allocationSite=3 storage=Frame
+# CHECK-NEXT: v8: undefined = CallDirect v6, v7 function=f23 accessSite=1
+# CHECK-NEXT: v9: "sloppy character" = String string="sloppy character"
+# CHECK-NEXT: v10: f5 = NewClosure function=f5 allocationSite=4 storage=Frame
+# CHECK-NEXT: v11: undefined = CallDirect v9, v10 function=f23 accessSite=2
+# CHECK-NEXT: v12: "sloppy past the end" = String string="sloppy past the end"
+# CHECK-NEXT: v13: f6 = NewClosure function=f6 allocationSite=5 storage=Frame
+# CHECK-NEXT: v14: undefined = CallDirect v12, v13 function=f23 accessSite=3
+# CHECK-NEXT: v15: "sloppy another name" = String string="sloppy another name"
+# CHECK-NEXT: v16: f7 = NewClosure function=f7 allocationSite=6 storage=Frame
+# CHECK-NEXT: v17: undefined = CallDirect v15, v16 function=f23 accessSite=4
+# CHECK-NEXT: v18: "strict length" = String string="strict length"
+# CHECK-NEXT: v19: anything = PropGet v4 key="length" accessSite=5
+# CHECK-NEXT: v20: undefined|number|f8 = AssumeType v19 provenType=undefined|number|f8
+# CHECK-NEXT: v21: undefined|number|f8 ~ undefined|f8 = Upcast v20 castType=anything
+# CHECK-NEXT: v22: undefined = CallDirect v18, v21 function=f1 accessSite=6
+# CHECK-NEXT: v23: "strict character" = String string="strict character"
+# CHECK-NEXT: v24: f9 = GetModuleVariable variable=g2
+# CHECK-NEXT: v25: undefined = CallDirect v23, v24 function=f23 accessSite=8
+# CHECK-NEXT: v26: "strict past the end" = String string="strict past the end"
+# CHECK-NEXT: v27: f10 = GetModuleVariable variable=g3
+# CHECK-NEXT: v28: undefined = CallDirect v26, v27 function=f23 accessSite=10
+# CHECK-NEXT: v29: "strict another name" = String string="strict another name"
+# CHECK-NEXT: v30: f11 = GetModuleVariable variable=g4
+# CHECK-NEXT: v31: undefined = CallDirect v29, v30 function=f23 accessSite=12
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: Return v32
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="tell"
+# CHECK: module=m0 position=234 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="sloppy another name"|"sloppy character"|"sloppy length"|"sloppy past the end"|"strict another name"|"strict character"|"strict length"|"strict past the end"}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "sloppy another name"|"sloppy character"|"sloppy length"|"sloppy past the end"|"strict another name"|"strict character"|"strict length"|"strict past the end", v1: anything ~ undefined|null|function) handler=b1():
+# CHECK-NEXT: v2: undefined|number|f4|f5|f6|f7|f8|f9|f10|f11 ~ undefined|f4|f5|f6|f7|f8|f9|f10|f11 = AssumeType v1 provenType=undefined|number|f4|f5|f6|f7|f8|f9|f10|f11
+# CHECK-NEXT: v3: anything = Call v2 calleeName="ask" accessSite=15 callees=[f4, f5, f6, f7, f8, f9, f10, f11]
+# CHECK-NEXT: v4: boolean = AssumeType v3 provenType=boolean
+# CHECK-NEXT: v5: undefined = CallBuiltin -, v0, v4 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: v6: anything = CatchValue
+# CHECK-NEXT: v7: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v8: anything = PropGet v6 key="constructor" accessSite=19
+# CHECK-NEXT: v9: anything = PropGet v8 key="name" accessSite=20
+# CHECK-NEXT: v10: undefined = CallBuiltin v7, v0, v9 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=21
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: }
+# CHECK-LABEL: function f3 module=
+# CHECK: m0 position=591 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=f2 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: f2):
+# CHECK-NEXT: v1: f8 = NewClosure function=f8 allocationSite=7 [isHeldByClosureTable]
+# CHECK-NEXT: PropDefine v0, v1 key="length" accessSite=22
+# CHECK-NEXT: v3: f9 = NewClosure function=f9 allocationSite=8 [isHeldByClosureTable]
+# CHECK-NEXT: PutModuleVariable v3 variable=g2
+# CHECK-NEXT: v5: f10 = NewClosure function=f10 allocationSite=9 [isHeldByClosureTable]
+# CHECK-NEXT: PutModuleVariable v5 variable=g3
+# CHECK-NEXT: v7: f11 = NewClosure function=f11 allocationSite=10 [isHeldByClosureTable]
+# CHECK-NEXT: PutModuleVariable v7 variable=g4
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-LABEL: function f4 module=
+# CHECK: m0 position=397 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "text" = String string="text"
+# CHECK-NEXT: v1: boolean = PropDelete v0 key="length" mode=Sloppy accessSite=26 receivers=[]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f5 module=
+# CHECK: m0 position=451 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "text" = String string="text"
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: v2: boolean = ElemDelete v0, v1 mode=Sloppy accessSite=27 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f6 module=
+# CHECK: m0 position=504 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "text" = String string="text"
+# CHECK-NEXT: v1: 9 = Integer integer=9
+# CHECK-NEXT: v2: boolean = ElemDelete v0, v1 mode=Sloppy accessSite=28 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f7 module=
+# CHECK: m0 position=557 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "text" = String string="text"
+# CHECK-NEXT: v1: boolean = PropDelete v0 key="other" mode=Sloppy accessSite=29 receivers=[]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="length"
+# CHECK: module=m0 position=618 kind=Arrow thisType={type=anything} results=[{type=boolean}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "text" = String string="text"
+# CHECK-NEXT: v1: boolean = PropDelete v0 key="length" accessSite=30 receivers=[]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="character"
+# CHECK: module=m0 position=667 kind=Arrow thisType={type=anything} results=[{type=boolean}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "text" = String string="text"
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: v2: boolean = ElemDelete v0, v1 accessSite=31 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="pastTheEnd"
+# CHECK: module=m0 position=713 kind=Arrow thisType={type=anything} results=[{type=boolean}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "text" = String string="text"
+# CHECK-NEXT: v1: 9 = Integer integer=9
+# CHECK-NEXT: v2: boolean = ElemDelete v0, v1 accessSite=32 receivers=[] [keyIsIntegral]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="anotherName"
+# CHECK: module=m0 position=760 kind=Arrow thisType={type=anything} results=[{type=boolean}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "text" = String string="text"
+# CHECK-NEXT: v1: boolean = PropDelete v0 key="other" accessSite=33 receivers=[]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="tell"
+# CHECK: module=m0 position=234 role=CalleeVersion flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="sloppy another name"|"sloppy character"|"sloppy length"|"sloppy past the end"|"strict another name"|"strict character"|"strict length"|"strict past the end"}, {type=function}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f1} {
+# CHECK-NEXT: b0(v0: "sloppy another name"|"sloppy character"|"sloppy length"|"sloppy past the end"|"strict another name"|"strict character"|"strict length"|"strict past the end", v1: function) handler=b1():
+# CHECK-NEXT: v2: f4|f5|f6|f7|f8|f9|f10|f11 = AssumeType v1 provenType=undefined|number|f4|f5|f6|f7|f8|f9|f10|f11
+# CHECK-NEXT: v3: anything = Call v2 calleeName="ask" accessSite=15 callees=[f4, f5, f6, f7, f8, f9, f10, f11]
+# CHECK-NEXT: v4: boolean = AssumeType v3 provenType=boolean
+# CHECK-NEXT: v5: undefined = CallBuiltin -, v0, v4 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: v6: anything = CatchValue
+# CHECK-NEXT: v7: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v8: anything = PropGet v6 key="constructor" accessSite=19
+# CHECK-NEXT: v9: anything = PropGet v8 key="name" accessSite=20
+# CHECK-NEXT: v10: undefined = CallBuiltin v7, v0, v9 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=21
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="length"
+# CHECK: module=m0 position=618 kind=Arrow role=GenericEntrypoint flags=[HasThis] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f8, v1: anything):
+# CHECK-NEXT: v2: boolean = CallDirect function=f8
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="character"
+# CHECK: module=m0 position=667 kind=Arrow role=GenericEntrypoint flags=[HasThis] captures=[{type=f9}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f9, v1: anything):
+# CHECK-NEXT: v2: boolean = CallDirect function=f9
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="pastTheEnd"
+# CHECK: module=m0 position=713 kind=Arrow role=GenericEntrypoint flags=[HasThis] captures=[{type=f10}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f10, v1: anything):
+# CHECK-NEXT: v2: boolean = CallDirect function=f10
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="anotherName"
+# CHECK: module=m0 position=760 kind=Arrow role=GenericEntrypoint flags=[HasThis] captures=[{type=f11}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f11, v1: anything):
+# CHECK-NEXT: v2: boolean = CallDirect function=f11
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }

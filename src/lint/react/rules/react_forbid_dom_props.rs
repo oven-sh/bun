@@ -20,11 +20,11 @@ pub struct ForbidDomProps {
     forbid: Vec<ForbidPropOptions>,
 }
 
-const PROP_IS_FORBIDDEN: Message = Message::new("propIsForbidden", "Prop \"{{prop}}\" is forbidden on DOM Nodes");
-const CUSTOM: Message = Message::new("", "{{message}}");
-const FORBIDDEN_VALUE: Message =
-    Message::new("", "Prop \"{{property}}\" with value \"{{property_value}}\" is forbidden on DOM Nodes");
-const FORBIDDEN: Message = Message::new("", "Prop \"{{property}}\" is forbidden on DOM Nodes");
+const PROP_IS_FORBIDDEN: &Message = &Message::new("propIsForbidden", "Prop \"{{prop}}\" is forbidden on DOM Nodes");
+const CUSTOM: &Message = &Message::new("", "{{message}}");
+const FORBIDDEN_VALUE: &Message =
+    &Message::new("", "Prop \"{{property}}\" with value \"{{property_value}}\" is forbidden on DOM Nodes");
+const FORBIDDEN: &Message = &Message::new("", "Prop \"{{property}}\" is forbidden on DOM Nodes");
 
 impl Rule for ForbidDomProps {
     const META: Meta = Meta::plugin(Plugin::React, "forbid-dom-props", Kind::None);

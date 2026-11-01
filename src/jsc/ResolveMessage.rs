@@ -285,6 +285,31 @@ impl ResolveMessage {
         Ok(resolve_error.to_js(global))
     }
 
+    /// What a failed resolution of `specifier` from `referrer` throws.
+    pub fn create_module_not_found(
+        global: &JSGlobalObject,
+        specifier: &[u8],
+        referrer: &[u8],
+        import_kind: ImportKind,
+    ) -> JsResult<JSValue> {
+        let text = Self::fmt(
+            specifier,
+            referrer,
+            crate::CrateError::ModuleNotFound,
+            import_kind,
+        );
+        let msg = bun_ast::Msg {
+            metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
+                specifier: bun_ast::BabyString::r#in(&text, specifier),
+                import_kind,
+                err: bun_ast::Error::ModuleNotFound,
+            }),
+            data: bun_ast::range_data(None, bun_ast::Range::NONE, text),
+            ..Default::default()
+        };
+        Self::create(global, &msg, referrer)
+    }
+
     pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         crate::BuildMessage::generate_position_object(&self.msg, cx.global())
     }
@@ -411,4 +436,25 @@ impl ResolveMessage {
     pub fn get_referrer(&self) -> &[u8] {
         &self.referrer
     }
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn ResolveMessage__createModuleNotFound(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
+    is_for_require: bool,
+) -> JSValue {
+    let import_kind = match is_for_require {
+        true => ImportKind::Require,
+        false => ImportKind::Dynamic,
+    };
+    let (specifier, referrer) = (specifier.to_utf8(), referrer.to_utf8());
+    ResolveMessage::create_module_not_found(
+        global,
+        specifier.slice(),
+        referrer.slice(),
+        import_kind,
+    )
+    .unwrap_or_else(|error| global.take_exception(error))
 }

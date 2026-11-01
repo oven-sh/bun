@@ -1,0 +1,23 @@
+# import { getBuiltinModule } from "node:process"; getBuiltinModule(String(Math.random()))
+# No lookup hands out a member that lets unseen code in: a read in a function finds it by itself. When a native module is first loaded the host fills the variable of a name that an importer binds
+# with what lies on the object of the module: that is such a read. The variable holds the loader, and a call of what it holds under a name nobody knows opens the program for loads by name
+# RUN: valueflow-why values=f0:v4
+# CHECK: values=f0:v4
+# CHECK: operand 0 {{*}} ProcessGetBuiltinModule
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName ProcessGetBuiltinModule f0:v4
+# UNSEEN: modules-by-name yes
+
+variable g0 name="getBuiltinModule" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="process" displayPath="process" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeProcess syntheticExports=[{name="getBuiltinModule" variable=g0 isKnownMember=true}]
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToString v1
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v2
+    Return
+}

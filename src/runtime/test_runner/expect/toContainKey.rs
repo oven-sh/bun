@@ -3,6 +3,7 @@ use bun_jsc::{JSValue, JsResult};
 use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome, make_formatter};
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_contain_key(
         &self,
         this_value: JsWrapper<'_, Self>,

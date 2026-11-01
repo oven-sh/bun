@@ -1,0 +1,1 @@
+{ "compilerOptions": { "baseUrl": "./src", "paths": { "@lib/*": ["../aliased/*"], "exact-job": ["../aliased/job.ts"] } } }

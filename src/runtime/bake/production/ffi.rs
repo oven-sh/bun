@@ -180,13 +180,9 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
     let pt = unsafe { &*pt };
     let utf8 = key.to_utf8();
     log!("BakeProdLoad: {}\n", BStr::new(utf8.slice()));
-    if let Some(value) = pt.module_map.get(utf8.slice()) {
+    if let Some(source) = pt.module_map.get(utf8.slice()) {
         log!("  found in module_map: {}\n", BStr::new(utf8.slice()));
-        // Zero-copy: alias the chunk bytes; `pt.bundled_outputs` owns them for
-        // the lifetime of the attached `PerThread` (see `Value::to_bun_string_ref`).
-        return pt.bundled_outputs[value.get() as usize]
-            .value
-            .to_bun_string_ref();
+        return source.clone();
     }
     BunString::DEAD
 }

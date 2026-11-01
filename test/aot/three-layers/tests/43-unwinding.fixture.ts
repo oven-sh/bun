@@ -1,0 +1,15 @@
+import { check } from "../src/show";
+import { pingPong, throwAt, catchEvery, HotA } from "fake-shapes/hot";
+import { srcPing, srcThrow, HotB } from "../src/hot";
+import { Vec2 } from "fake-typed";
+const F = "43";
+const herePing = (n: number, back: any): number => (n <= 0 ? 0 : 1 + back(n - 1, n % 2 ? srcPing : herePing));
+const hereThrow = (n: number, back: any): number => { if (n <= 0) throw new EvalError("here bottom"); try { return back(n - 1, n % 3 ? srcThrow : hereThrow); } finally { unwound++; } };
+let unwound = 0;
+const after = () => { class Fresh { v = new Vec2(1, 2); } const f: any = new Fresh(); f.extra = new HotA(1); return [f.v.parts(), f.extra.value(), new HotB(2).value(), Object.keys(f), `${f.v}`]; };
+check(F, "calls back and forth", () => [pingPong(50, herePing), pingPong(51, srcPing), srcPing(40, pingPong), herePing(30, pingPong), after()]);
+check(F, "a throw through frames of three layers", () => { unwound = 0; const before = throwAt.unwound ?? 0; const out: unknown[] = []; for (const n of [1, 2, 3, 7, 20, 41]) { try { out.push(throwAt(n, hereThrow)); } catch (e) { out.push((e as Error).name); } out.push(after().length); } return [out, unwound, (throwAt.unwound ?? 0) - before]; });
+check(F, "caught there, thrown here, many times", () => [catchEvery(500, i => { if (i % 2) throw new Error("odd"); if (i % 5 === 0) throw i; return i; }), catchEvery(200, i => hereThrow(i % 6, throwAt)), after()]);
+check(F, "caught here, thrown there, many times", () => { let names = ""; for (let i = 0; i < 300; i++) { try { throwAt(i % 4, i % 2 ? srcThrow : hereThrow); } catch (e) { names += (e as Error).name[0]; } } return [names.length, names.slice(0, 12), after()]; });
+check(F, "async throws through layers", async () => { const a = async (n: number): Promise<number> => { await null; return n <= 0 ? throwAt(1, srcThrow) : (await a(n - 1)) + 1; }; const out: unknown[] = []; for (const n of [0, 1, 5]) out.push(await a(n).catch(e => e.name)); return [out, after()]; });
+check(F, "getters, iterators and finally blocks that throw", () => { const o = { get bad(): number { return throwAt(2, hereThrow); }, *gen() { try { yield 1; yield throwAt(1, srcThrow); } finally { unwound += 100; } } }; unwound = 0; const out: unknown[] = []; try { out.push(o.bad); } catch (e) { out.push((e as Error).name); } try { for (const x of o.gen()) out.push(x); } catch (e) { out.push((e as Error).name); } return [out, unwound, after()]; });

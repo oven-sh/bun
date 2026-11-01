@@ -37,5 +37,6 @@ To do that:
 Things to check for a successful upgrade:
 
 - Did Source/JavaScriptCore/runtime/JSType.h change? The enum values must align with Bun's mirror in src/jsc/JSType.rs.
+- Did the structured clone code change (Source/JavaScriptCore/runtime/CloneBase.h, CloneSerializerBase.h, CloneDeserializerBase.h, StructuredCloneTags.h, StructuredCloneTags.cpp, or Source/WebCore/bindings/js/SerializedScriptValue.cpp)? Bun's copy in src/jsc/bindings/webcore/SerializedScriptValue.cpp does not derive from the JSC clone base classes, so the upgrade does not update it. Port each behavior change into that file by hand.
 - Were there any changes to the WebCore code generator? If there are C++ compilation errors, check for differences in the generated reference code in vendor/WebKit/Source/WebCore/bindings/scripts/test/JS/
 - If the merge touched the fork's .github/workflows, the release tarball names must still match prebuiltSuffix() in scripts/build/deps/webkit.ts

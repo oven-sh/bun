@@ -2740,8 +2740,12 @@ pub mod bv2_impl {
 
             let mut had_busted_dir_cache = false;
             let resolve_result = loop {
+                // `resolve_with_framework`, as `resolve_import_records` uses: an import a
+                // plugin declined must still reach the framework's built-in modules, such as
+                // the React Fast Refresh runtime the dev server embeds when `react-refresh` is
+                // not installed (#22838).
                 // SAFETY: see `transpiler` note above.
-                match unsafe { &mut *transpiler }.resolver.resolve(
+                match unsafe { &mut *transpiler }.resolver.resolve_with_framework(
                     source_dir,
                     &import_record.specifier,
                     import_record.kind,
@@ -2908,10 +2912,20 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
+                // As `resolve_import_records` does, so an unused side-effect-free external drops.
+                let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                    [import_record.importer_source_index as usize]
+                    .as_mut_slice()[import_record.import_record_index as usize];
+                record.flags.set(
+                    bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                    resolve_result.primary_side_effects_data
+                        != bun_ast::SideEffects::HasSideEffects,
+                );
                 return;
             }
 
-            if path.pretty.as_ptr() == path.text.as_ptr() {
+            // Only a file path is relativized; a built-in module keeps its id as `pretty`.
+            if path.is_file() && path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
@@ -3008,10 +3022,21 @@ pub mod bv2_impl {
             }
 
             if let Some(source_index) = out_source_index {
+                // The dev server prints an HTML file's imports by `path.pretty` and finds a
+                // failed target by `path.text`, so it needs the graph path here, as
+                // `resolve_import_records` stores it. Left as written, a script an onResolve
+                // plugin declined fails in the browser with "Failed to load bundled module
+                // './script.ts'" (#19951).
+                let graph_path = self.dev_server.is_some().then(|| {
+                    self.graph.input_files.items_source()[source_index.get() as usize].path
+                });
                 let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                     [import_record.importer_source_index as usize]
                     .as_mut_slice()[import_record.import_record_index as usize];
                 record.source_index = source_index;
+                if let Some(path) = graph_path {
+                    record.path = path;
+                }
             }
         }
 

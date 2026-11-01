@@ -1,8 +1,10 @@
+use bun_alloc::AllocError;
 use bun_install::integrity::Integrity;
-use bun_install::npm::{Architecture, Libc, OperatingSystem};
+use bun_install::npm::{Architecture, Libc, OperatingSystem, negatable_from_json};
 use bun_install::{INVALID_PACKAGE_ID, Origin, PackageID};
 use bun_semver::String;
 
+use crate::bun_json::Expr;
 use crate::lockfile_real::StringBuilder as LockfileStringBuilder;
 
 // TODO: when we bump the lockfile version, we should reorder this to:
@@ -67,6 +69,25 @@ impl Default for Meta {
 }
 
 impl Meta {
+    /// Reads the `os`, `cpu` and `libc` of a package.json. A field that is absent keeps its value.
+    pub(crate) fn read_platform(&mut self, json: &Expr) -> Result<(), AllocError> {
+        if let Some(os) = json.get(b"os") {
+            self.os = negatable_from_json::<OperatingSystem>(&os)?;
+        }
+        if let Some(cpu) = json.get(b"cpu") {
+            self.arch = negatable_from_json::<Architecture>(&cpu)?;
+        }
+        if let Some(libc) = json.get(b"libc") {
+            self.libc = negatable_from_json::<Libc>(&libc)?;
+        }
+        Ok(())
+    }
+
+    /// The `os`, `cpu` and `libc` of `self` and `other` are the same.
+    pub(crate) fn platform_eql(&self, other: &Meta) -> bool {
+        self.os == other.os && self.arch == other.arch && self.libc == other.libc
+    }
+
     /// Does the `cpu` arch, `os` and `libc` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
     pub fn is_disabled(&self, cpu: Architecture, os: OperatingSystem, libc: Libc) -> bool {

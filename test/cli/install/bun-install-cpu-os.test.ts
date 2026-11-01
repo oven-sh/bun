@@ -1,8 +1,9 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { exists, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isLinux, libcFamily, readdirSorted, toMatchNodeModulesAt } from "harness";
+import { bunEnv, bunExe, isLinux, libcFamily, pack, readdirSorted, tempDir, toMatchNodeModulesAt } from "harness";
 import { join } from "path";
+import { pathToFileURL } from "url";
 import {
   ABBREVIATED_MANIFEST_ACCEPT,
   dummyAfterAll,
@@ -1081,5 +1082,259 @@ describe("bun install --libc flag and the libc field", () => {
     const [stderrText, exitCode] = await Promise.all([stderr.text(), exited]);
     expect(stderrText).toContain(`invalid libc: '${value}'. valid values: *, any, glibc, musl.`);
     expect(exitCode).toBe(1);
+  });
+});
+
+// `file:` folders, `file:` tarballs and git packages take their `os`/`cpu`/`libc` from the
+// package.json that bun reads, like registry packages take them from the manifest (#47640).
+describe("os and cpu of file: dependencies", () => {
+  const platformPackage = (name: string, os: string, cpu: string) =>
+    JSON.stringify({ name, version: "1.0.0", os: [os], cpu: [cpu] });
+  const fixture = {
+    "pkgs/p-linux-x64/package.json": platformPackage("@repro/p-linux-x64", "linux", "x64"),
+    "pkgs/p-win32-x64/package.json": platformPackage("@repro/p-win32-x64", "win32", "x64"),
+    "pkgs/p-win32-arm64/package.json": platformPackage("@repro/p-win32-arm64", "win32", "arm64"),
+  };
+  const names = ["p-linux-x64", "p-win32-x64", "p-win32-arm64"];
+  const installed = async (dir: string) =>
+    (await exists(join(dir, "node_modules", "@repro"))) ? readdirSorted(join(dir, "node_modules", "@repro")) : [];
+  const lockLines = async (dir: string) =>
+    (await Bun.file(join(dir, "bun.lock")).text())
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith('"@repro/') && line.includes(": ["));
+  const install = async (dir: string, ...flags: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--os", "linux", "--cpu", "x64", ...flags],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    // The warning prints a folder with the separator of the host.
+    const warnings = stderr
+      .split("\n")
+      .filter(line => line.startsWith("warn:"))
+      .map(line => line.replaceAll("\\", "/"));
+    return { stdout, warnings };
+  };
+
+  it.each(["hoisted", "isolated"])(
+    "file: tarball optionalDependencies install only for the target platform (%s linker)",
+    async linker => {
+      using dir = tempDir("file-tarball-platform", {
+        ...fixture,
+        "app/package.json": JSON.stringify({
+          name: "app",
+          optionalDependencies: Object.fromEntries(
+            names.map(name => [`@repro/${name}`, `file:../pkgs/repro-${name}-1.0.0.tgz`]),
+          ),
+        }),
+      });
+      for (const name of names) {
+        await pack(join(String(dir), "pkgs", name), bunEnv, "--destination", join(String(dir), "pkgs"));
+      }
+      const app = join(String(dir), "app");
+
+      const first = await install(app, "--linker", linker);
+      expect(first.warnings).toEqual([]);
+      expect(first.stdout).not.toContain("p-win32");
+      expect(await installed(app)).toEqual(["p-linux-x64"]);
+      expect(await lockLines(app)).toEqual([
+        expect.stringContaining(
+          '"@repro/p-linux-x64": ["@repro/p-linux-x64@../pkgs/repro-p-linux-x64-1.0.0.tgz", { "os": "linux", "cpu": "x64" }, ',
+        ),
+        expect.stringContaining(
+          '"@repro/p-win32-arm64": ["@repro/p-win32-arm64@../pkgs/repro-p-win32-arm64-1.0.0.tgz", { "os": "win32", "cpu": "arm64" }, ',
+        ),
+        expect.stringContaining(
+          '"@repro/p-win32-x64": ["@repro/p-win32-x64@../pkgs/repro-p-win32-x64-1.0.0.tgz", { "os": "win32", "cpu": "x64" }, ',
+        ),
+      ]);
+
+      // The lockfile carries the fields, so an install from it on another platform picks that platform's package.
+      await rm(join(app, "node_modules"), { recursive: true, force: true });
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--os", "win32", "--cpu", "x64", "--linker", linker, "--frozen-lockfile"],
+        cwd: app,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await installed(app)).toEqual(["p-win32-x64"]);
+    },
+  );
+
+  it("file: folder dependencies install only for the target platform, and a required one warns", async () => {
+    using dir = tempDir("file-folder-platform", {
+      ...fixture,
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: {
+          "@repro/p-linux-x64": "file:./pkgs/p-linux-x64",
+          "@repro/p-win32-x64": "file:./pkgs/p-win32-x64",
+        },
+        optionalDependencies: { "@repro/p-win32-arm64": "file:./pkgs/p-win32-arm64" },
+      }),
+    });
+    const app = String(dir);
+
+    const first = await install(app);
+    expect(first.warnings).toEqual([
+      'warn: skipping @repro/p-win32-x64@pkgs/p-win32-x64: unsupported platform (wants os "win32")',
+    ]);
+    expect(await installed(app)).toEqual(["p-linux-x64"]);
+    expect(await lockLines(app)).toEqual([
+      '"@repro/p-linux-x64": ["@repro/p-linux-x64@file:pkgs/p-linux-x64", { "os": "linux", "cpu": "x64" }],',
+      '"@repro/p-win32-arm64": ["@repro/p-win32-arm64@file:pkgs/p-win32-arm64", { "os": "win32", "cpu": "arm64" }],',
+      '"@repro/p-win32-x64": ["@repro/p-win32-x64@file:pkgs/p-win32-x64", { "os": "win32", "cpu": "x64" }],',
+    ]);
+
+    // An install from the lockfile it wrote makes the same choice.
+    await rm(join(app, "node_modules"), { recursive: true, force: true });
+    const second = await install(app, "--frozen-lockfile");
+    expect(second.warnings).toEqual([
+      'warn: skipping @repro/p-win32-x64@pkgs/p-win32-x64: unsupported platform (wants os "win32")',
+    ]);
+    expect(await installed(app)).toEqual(["p-linux-x64"]);
+  });
+
+  it("the root package and workspaces install whatever their os and cpu say", async () => {
+    using dir = tempDir("root-workspace-platform", {
+      "package.json": JSON.stringify({
+        name: "app",
+        os: ["win32"],
+        cpu: ["arm64"],
+        workspaces: ["packages/*"],
+        dependencies: { member: "workspace:*" },
+      }),
+      "packages/member/package.json": platformPackage("member", "win32", "arm64"),
+    });
+    const app = String(dir);
+
+    const { warnings } = await install(app);
+    expect(warnings).toEqual([]);
+    expect((await readdirSorted(join(app, "node_modules"))).filter(name => !name.startsWith("."))).toEqual(["member"]);
+    expect(await Bun.file(join(app, "bun.lock")).text()).toContain('"member": ["member@workspace:packages/member"],');
+  });
+
+  it("a git dependency takes its os and cpu from the commit's package.json", async () => {
+    using dir = tempDir("git-platform", {
+      "repo/package.json": platformPackage("@repro/p-win32-x64", "win32", "x64"),
+      "package.json": "{}",
+    });
+    const repo = join(String(dir), "repo");
+    const gitEnv = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: join(String(dir), "no-gitconfig"),
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    };
+    for (const args of [
+      ["init", "-q"],
+      ["add", "-A"],
+      ["commit", "-q", "-m", "init"],
+    ]) {
+      await using proc = spawn({ cmd: ["git", ...args], cwd: repo, env: gitEnv, stdout: "ignore", stderr: "pipe" });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+    const url = `git+${pathToFileURL(repo).href}`;
+    await writeFile(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "app", optionalDependencies: { "@repro/p-win32-x64": url } }),
+    );
+
+    const { warnings, stdout } = await install(String(dir));
+    expect(warnings).toEqual([]);
+    expect(stdout).not.toContain("p-win32-x64");
+    expect(await installed(String(dir))).toEqual([]);
+    expect(await lockLines(String(dir))).toEqual([
+      expect.stringMatching(
+        /^"@repro\/p-win32-x64": \["@repro\/p-win32-x64@git\+file:.*#[0-9a-f]{40}", \{ "os": "win32", "cpu": "x64" \}, "[0-9a-f]{40}"\],$/,
+      ),
+    ]);
+  });
+
+  // The forms `negatable_from_json` accepts besides a list: a bare string, a negated entry, and `libc`.
+  it("a bare string, a negated entry and libc are read", async () => {
+    using dir = tempDir("file-folder-platform-forms", {
+      "pkgs/s/package.json": JSON.stringify({ name: "@repro/s", version: "1.0.0", os: "win32" }),
+      "pkgs/n/package.json": JSON.stringify({ name: "@repro/n", version: "1.0.0", os: ["!linux"] }),
+      "pkgs/m/package.json": JSON.stringify({ name: "@repro/m", version: "1.0.0", os: ["linux"], libc: ["musl"] }),
+      "package.json": JSON.stringify({
+        name: "app",
+        optionalDependencies: { "@repro/s": "file:./pkgs/s", "@repro/n": "file:./pkgs/n", "@repro/m": "file:./pkgs/m" },
+      }),
+    });
+    const app = String(dir);
+
+    expect((await install(app, "--libc", "glibc")).warnings).toEqual([]);
+    expect(await installed(app)).toEqual([]);
+    expect(await lockLines(app)).toEqual([
+      '"@repro/m": ["@repro/m@file:pkgs/m", { "os": "linux", "libc": "musl" }],',
+      '"@repro/n": ["@repro/n@file:pkgs/n", { "os": "!linux" }],',
+      '"@repro/s": ["@repro/s@file:pkgs/s", { "os": "win32" }],',
+    ]);
+
+    expect((await install(app, "--libc", "musl", "--frozen-lockfile")).warnings).toEqual([]);
+    expect(await installed(app)).toEqual(["m"]);
+    await rm(join(app, "node_modules"), { recursive: true, force: true });
+    expect((await install(app, "--os", "darwin", "--frozen-lockfile")).warnings).toEqual([]);
+    expect(await installed(app)).toEqual(["n"]);
+  });
+
+  // Older versions wrote `{}` for these packages. A folder is compared with its lockfile entry on
+  // every install. A tarball is read again only by `--force` or `bun update`.
+  it("an older lockfile without the fields is repaired when the package is read again", async () => {
+    using dir = tempDir("file-platform-older-lockfile", {
+      ...fixture,
+      "package.json": JSON.stringify({
+        name: "app",
+        optionalDependencies: {
+          "@repro/p-win32-x64": "file:./pkgs/p-win32-x64",
+          "@repro/p-win32-arm64": "file:./pkgs/repro-p-win32-arm64-1.0.0.tgz",
+        },
+      }),
+    });
+    const app = String(dir);
+    await pack(join(app, "pkgs", "p-win32-arm64"), bunEnv, "--destination", join(app, "pkgs"));
+    await install(app);
+    const lockfile = join(app, "bun.lock");
+    const written = await Bun.file(lockfile).text();
+    const older = written.replaceAll(/\{ "os": "win32", "cpu": "[a-z0-9]+" \}/g, "{}");
+    expect(older).not.toBe(written);
+    await writeFile(lockfile, older);
+    await rm(join(app, "node_modules"), { recursive: true, force: true });
+
+    // An install from the older lockfile trusts it.
+    expect((await install(app, "--frozen-lockfile")).warnings).toEqual([]);
+    expect(await installed(app)).toEqual(["p-win32-arm64", "p-win32-x64"]);
+    expect(await Bun.file(lockfile).text()).toBe(older);
+
+    // The folder is read again by the next install, the tarball by `--force`.
+    await rm(join(app, "node_modules"), { recursive: true, force: true });
+    await install(app);
+    expect(await installed(app)).toEqual(["p-win32-arm64"]);
+    expect(await lockLines(app)).toEqual([
+      expect.stringContaining(
+        '"@repro/p-win32-arm64": ["@repro/p-win32-arm64@./pkgs/repro-p-win32-arm64-1.0.0.tgz", {}, ',
+      ),
+      '"@repro/p-win32-x64": ["@repro/p-win32-x64@file:pkgs/p-win32-x64", { "os": "win32", "cpu": "x64" }],',
+    ]);
+    await rm(join(app, "node_modules"), { recursive: true, force: true });
+    await install(app, "--force");
+    expect(await installed(app)).toEqual([]);
+    expect(await Bun.file(lockfile).text()).toBe(written);
   });
 });

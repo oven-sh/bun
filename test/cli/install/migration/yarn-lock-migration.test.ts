@@ -3751,6 +3751,25 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     expect(ci.exitCode).toBe(0);
   });
 
+  // yarn.lock records no `os`/`cpu` either. A fresh resolve reads them from the folder.
+  test.each([
+    ["link:./vendor/t", '"t@link:./vendor/t":\n  version "0.0.0"\n  uid ""\n'],
+    ["file:./vendor/t", '"t@file:./vendor/t":\n  version "1.0.0"\n'],
+  ])("the os and cpu of %s are recorded", async (range, entry) => {
+    using server = await serve([]);
+    using dir = tempDir("yarn-migration-folder-platform", {
+      "package.json": JSON.stringify({ name: "app", optionalDependencies: { t: range } }),
+      "vendor/t/package.json": JSON.stringify({ name: "t", version: "1.0.0", os: ["win32"], cpu: ["arm64"] }),
+      "yarn.lock": header + entry,
+    });
+
+    const install = await bun(String(dir), server.url, "install", "--os", "linux", "--cpu", "x64");
+    expect(errors(install.stderr)).toEqual([]);
+    expect(lockPackages(String(dir)).t[1]).toEqual({ os: "win32", cpu: "arm64" });
+    expect(fs.existsSync(join(String(dir), "node_modules", "t"))).toBeFalse();
+    expect(install.exitCode).toBe(0);
+  });
+
   test.each(["the root", "a workspace"])(
     "a registry package that %s uses can depend on a workspace, for which yarn.lock has no entry",
     async user => {

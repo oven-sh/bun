@@ -170,6 +170,14 @@ impl PackageManager {
             *package_id = existing_id;
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
             let from_lockfile = existing_id < self.lockfile.loaded_package_count;
+            // An older bun wrote the entry without the platform fields. Any read of the package
+            // (`--force`, `bun update`) records them.
+            if from_lockfile && !existing.meta.platform_eql(&package.meta) {
+                existing.meta.os = package.meta.os;
+                existing.meta.arch = package.meta.arch;
+                existing.meta.libc = package.meta.libc;
+                self.lockfile.packages.set(existing_id as usize, existing);
+            }
             let moved = match existing.resolution.tag {
                 // A nested git ref can move, so `bun update` resolves the dependencies again.
                 ResolutionTag::Git | ResolutionTag::Github => self.to_update,

@@ -790,8 +790,8 @@ pub(crate) fn migrate_yarn_lockfile(
             bin: Bin::init(),
             scripts: Default::default(),
         };
-        // yarn.lock does not record bins. For a `file:` folder or a `link:`, they are read from the
-        // package.json on disk.
+        // yarn.lock records neither bins nor `os`/`cpu`/`libc`. For a `file:` folder or a `link:`,
+        // they are read from the package.json on disk.
         if matches!(
             resolution.tag,
             crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink
@@ -805,6 +805,7 @@ pub(crate) fn migrate_yarn_lockfile(
         {
             let manifest = json.root;
             crate::migration::parse_manifest_bin(this, &mut package, &manifest)?;
+            package.meta.read_platform(&manifest)?;
         }
         this.packages.append(package)?;
         this.get_or_put_id(appended_id, name_hash)?;

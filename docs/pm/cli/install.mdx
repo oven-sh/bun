@@ -474,7 +474,7 @@ jobs:
 
 ## Platform-specific dependencies?
 
-Bun stores normalized `cpu`, `os` and `libc` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change.
+Bun stores normalized `cpu`, `os` and `libc` values in the lockfile, along with the resolved packages. For registry packages the values come from npm. For `file:`, `link:`, tarball and git packages they come from the package's own `package.json`. Bun skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change.
 
 The `libc` field (`"glibc"` or `"musl"`) is how native packages such as `@rollup/rollup-linux-x64-gnu` and `@rollup/rollup-linux-x64-musl` tell the two Linux variants apart. npm only includes it in the full package metadata, so Bun requests the full metadata for packages whose name contains `linux`, `musl` or `glibc`, and keeps using the smaller abbreviated metadata for everything else. `libc` is only checked for `optionalDependencies`, where these variants are declared: a package listed in `dependencies` or `devDependencies` is installed regardless of its `libc` field. By default, Bun on Linux installs the variant for the libc it was built against (the regular build is glibc, the `-musl` build is musl), and Bun on other operating systems does not filter by `libc` at all. The `--libc` flag below overrides this either way, for example to install for a Linux target from macOS.
 

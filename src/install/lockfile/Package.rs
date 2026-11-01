@@ -1649,6 +1649,13 @@ impl Diff {
             summary.script_only_updates += 1;
         }
 
+        // A `file:` folder is read again when its platform fields changed, or when an older bun
+        // wrote the entry without them.
+        if from.resolution.tag == ResolutionTag::Folder && !to.meta.platform_eql(&from.meta) {
+            summary.update += 1;
+            summary.script_only_updates += 1;
+        }
+
         Ok(summary)
     }
 
@@ -3076,6 +3083,13 @@ impl Package<u64> {
                     Some(scripts::gypfile_from_json(json)),
                 );
             self.meta.set_has_install_script(has_scripts);
+        }
+
+        // The root and workspaces always install. Every other package (folder, link, tarball,
+        // git) is platform-filtered like a registry package (`from_npm`), and bun.lock records
+        // the fields for the same set.
+        if !(FEATURES.is_main || FEATURES.is_workspace) {
+            self.meta.read_platform(&json)?;
         }
 
         // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies

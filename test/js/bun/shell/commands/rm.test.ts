@@ -573,10 +573,11 @@ describe.concurrent("rm goes on after an entry it cannot remove", () => {
           "other/p/q": "",
         });
         const tree = path.join(String(dir), "tree");
+        // Before the modes change: it lists the whole tree.
+        using unprivileged = unprivilegedSpawnOptions(String(dir));
         const modes = { "ro/sub": 0o555, "ro": 0o555, "ro2": 0o555, "locked": 0o000 };
-        for (const [name, mode] of Object.entries(modes)) chmodSync(path.join(tree, name), mode);
         try {
-          using unprivileged = unprivilegedSpawnOptions(String(dir));
+          for (const [name, mode] of Object.entries(modes)) chmodSync(path.join(tree, name), mode);
           await using proc = Bun.spawn({
             cmd: [bunExe(), "exec", `rm ${flags} tree other`],
             cwd: String(dir),

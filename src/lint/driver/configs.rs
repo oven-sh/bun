@@ -446,6 +446,15 @@ impl Loaded {
     }
 }
 
+/// Whether a file on [`Route::Eslint`] is handed to ESLint after its config is resolved. ESLint reports an invalid
+/// config itself, so [`Loader::check_config`] leaves that file's error to it. Nothing is handed over when the config is only
+/// printed, listed or described.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Handoff {
+    ToEslint,
+    Never,
+}
+
 pub(crate) type Found = Result<Arc<Loaded>, Fatal>;
 
 pub(crate) struct Loader<'l> {
@@ -2283,6 +2292,30 @@ impl<'l> Loader<'l> {
             (None, None) => return why.to_vec(),
         };
         [b"Invalid config in ", &source[..], b"\n", why].concat()
+    }
+
+    /// Fails if `config`, resolved from `loaded` for one file, is invalid. `route` is only asked for when it is. With
+    /// an oxlint config the message goes to stdout and has to match oxlint's, so it isn't changed.
+    pub(crate) fn check_config(
+        &self,
+        loaded: &Loaded,
+        config: &ResolvedConfig,
+        handoff: Handoff,
+        route: impl FnOnce() -> Route,
+    ) -> Result<(), Fatal> {
+        let Some(error) = &config.error else {
+            return Ok(());
+        };
+        // For files that ESLint lints, it reports an invalid config itself.
+        if handoff == Handoff::ToEslint && route() == Route::Eslint {
+            return Ok(());
+        }
+        Err(Fatal(match loaded.flavor {
+            Flavor::Eslint | Flavor::EslintRc => {
+                self.prefix_with_source(loaded.file.as_deref(), error)
+            }
+            Flavor::Oxlint | Flavor::BuiltIn => error.clone(),
+        }))
     }
 
     /// The formatted error for an invalid rule setting in bunfig.toml or `--rule`. Only set when there's no config

@@ -104,6 +104,13 @@ const syncResults: Record<string, readonly string[]> = {
   writev: ["number"],
 };
 
+/** What `xCb` returns beside `undefined`: the error of a signal that is already aborted, which `fs.ts` calls back with. */
+const callbackResults: Record<string, readonly string[]> = {
+  appendFile: ["object"],
+  readFile: ["object"],
+  writeFile: ["object"],
+};
+
 const getter = { getter: b.any.returning("object"), capability: "js" } as const;
 
 /** The default export of `src/js/internal/fs/binding.ts`. */
@@ -114,7 +121,7 @@ export const NodeJSFS = b.class({
     [
       ...Object.entries(operations).flatMap(([name, [length, syncLength]]) => [
         [name, { ...operation(length, "Promise"), uses }] as const,
-        [`${name}Cb`, operation(length + 1, "undefined")] as const,
+        [`${name}Cb`, operation(length + 1, "undefined", ...(callbackResults[name] ?? []))] as const,
         [`${name}Sync`, { ...operation(syncLength, ...(syncResults[name] ?? ["undefined"])), uses }] as const,
       ]),
       ["cp", { ...operation(2, "Promise"), uses }] as const,

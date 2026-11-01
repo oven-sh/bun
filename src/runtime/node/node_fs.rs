@@ -1365,6 +1365,16 @@ mod _async_tasks {
     // NewAsyncFSTask — runs a NodeFS method on the thread pool.
     // ──────────────────────────────────────────────────────────────────────────
 
+    /// When the callback of an async call hears of an error that is found before the operation is scheduled.
+    #[derive(Clone, Copy)]
+    pub(crate) enum EarlyDelivery {
+        /// Before the call returns, as node's `checkAborted` does.
+        /// https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L380-L386
+        BeforeReturn,
+        /// Node gets the error from the thread pool (a path that is too long), or defers the whole call (`fs.readFile(fd)`).
+        NextTick,
+    }
+
     /// One `fs.*` operation's parsed arguments.
     pub(crate) trait FsArgument: Sized + ThreadIsolatedArg {
         const HAVE_ABORT_SIGNAL: bool = false;
@@ -1386,6 +1396,10 @@ mod _async_tasks {
         }
         fn signal(&self) -> Option<&AbortSignal> {
             None
+        }
+        /// When a callback hears of a signal that is already aborted when the parse ends.
+        fn aborted_delivery(&self) -> EarlyDelivery {
+            EarlyDelivery::BeforeReturn
         }
         /// Runs on the JS thread before the result reaches JS. See [`PinnedArrayBuffer::write_back`].
         fn write_back(&mut self, _bytes_read: u64) {}
@@ -1495,6 +1509,14 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
+        }
+        /// Node defers the fd form before it looks at the signal.
+        /// https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L442-L450
+        fn aborted_delivery(&self) -> EarlyDelivery {
+            match self.path {
+                PathOrFileDescriptor::Fd(_) => EarlyDelivery::NextTick,
+                PathOrFileDescriptor::Path(_) => EarlyDelivery::BeforeReturn,
+            }
         }
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [path_of(&self.path), None]
@@ -3113,7 +3135,8 @@ mod _async_tasks {
     }
 } // mod _async_tasks
 pub(crate) use _async_tasks::{
-    AsyncCpTask, AsyncReaddirRecursiveTask, FsArgument, FsReturn, ShellAsyncCpTask, async_,
+    AsyncCpTask, AsyncReaddirRecursiveTask, EarlyDelivery, FsArgument, FsReturn, ShellAsyncCpTask,
+    async_,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

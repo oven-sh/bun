@@ -1928,12 +1928,18 @@ declare namespace $Node {
     writev(fd: number, buffers: readonly AnyView[], position?: number | null): Promise<number>;
   }
 
-  /** `xCb(callback, ...arguments of x)`. The error is `null` when the operation succeeded. */
+  /**
+   * `xCb(callback, ...arguments of x)`. The error is `null` when the operation succeeded.
+   * `readFileCb`, `writeFileCb` and `appendFileCb` return the error of a signal that is already aborted, and then do not call back.
+   */
   type NodeJSFSCallbacks = {
     [K in Exclude<keyof NodeJSFSPromises, "write"> as `${K}Cb`]: NodeJSFSPromises[K] extends (
       ...args: infer A
     ) => Promise<infer R>
-      ? (callback: (error: Error | null, result: R) => unknown, ...args: A) => void
+      ? (
+          callback: (error: Error | null, result: R) => unknown,
+          ...args: A
+        ) => K extends "appendFile" | "readFile" | "writeFile" ? Error | undefined : void
       : never;
   };
 

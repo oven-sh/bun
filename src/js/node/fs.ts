@@ -84,9 +84,9 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       options = undefined;
     }
 
-    callback = ensureCallback(callback);
-
-    fs.appendFileCb(callback, path, data, options);
+    // As in readFile: the binding returns the error of a signal that is already aborted.
+    const aborted = fs.appendFileCb(ensureCallback(callback), path, data, options);
+    if (aborted !== undefined) callback(aborted);
   },
   close = function close(fd: number, callback?: Callback) {
     if ($isCallable(callback)) {
@@ -364,15 +364,17 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
   },
   readFile = function readFile(path, options, callback?) {
     callback ||= options;
-    callback = ensureCallback(callback);
-
-    fs.readFileCb(callback, path, options);
+    // The binding returns the error of a signal that is already aborted, and does not call back. Node calls back
+    // before it returns, and what the callback throws reaches the caller, so this calls the callback and not its
+    // guardCallback wrapper. https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L380-L386
+    const aborted = fs.readFileCb(ensureCallback(callback), path, options);
+    if (aborted !== undefined) callback(aborted);
   },
   writeFile = function writeFile(path, data, options, callback?) {
     callback ||= options;
-    callback = ensureCallback(callback);
-
-    fs.writeFileCb(callback, path, data, options);
+    // As in readFile: the binding returns the error of a signal that is already aborted.
+    const aborted = fs.writeFileCb(ensureCallback(callback), path, data, options);
+    if (aborted !== undefined) callback(aborted);
   },
   readlink = function readlink(path, options, callback?) {
     if ($isCallable(options)) {

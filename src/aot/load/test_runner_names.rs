@@ -47,6 +47,17 @@ fn imports(
     })
 }
 
+/// TypeScript drops an import whose names nobody uses, and with it the site. The parser of `bun test` has seen the statement by then.
+fn writes_import_of_values(hir: &File<'_>, module: Atom) -> bool {
+    hir.imports.iter().any(|import| {
+        import.spec == module
+            && !import.type_only
+            && (import.default != Atom::NONE
+                || import.namespace != Atom::NONE
+                || import.named.iter().any(|name| !hir[name].type_only))
+    })
+}
+
 fn find_uses(request: &TransformRequest<'_, '_>, names: &[Atom]) -> Vec<(ExprId, usize)> {
     let bound = request.bound;
     let expressions = (0..).map(ExprId).zip(request.hir.exprs.iter());
@@ -403,7 +414,8 @@ pub(crate) fn import_used_names<'s>(
 ) -> TreeChange {
     // The parser gives `bun test` the same names out of the same module.
     let is_of_vitest = file_of_run.has_globals_of_vitest
-        || imports(request, atoms, |module| module == MODULE_OF_VITEST);
+        || imports(request, atoms, |module| module == MODULE_OF_VITEST)
+        || writes_import_of_values(request.hir, atoms.intern(MODULE_OF_VITEST));
     let module = if is_of_vitest {
         MODULE_OF_VITEST
     } else {

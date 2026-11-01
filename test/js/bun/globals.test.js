@@ -397,6 +397,21 @@ describe("globalThis.gc", () => {
     });
 
     describe("of bun test", () => {
+      /**
+       * A test file that prints `typeof gc` in its global object and in a new one. It sets `flag` first, if it has one.
+       * @param {string} name
+       * @param {string} [flag]
+       */
+      const fileThatSets = (name, flag) => `
+        import { test } from "bun:test";
+        import v8 from "node:v8";
+        import vm from "node:vm";
+        test("${name}", () => {
+          ${flag ? `v8.setFlagsFromString("${flag}");` : ""}
+          console.log("${name}:", typeof gc, vm.runInNewContext("typeof gc"));
+        });
+      `;
+
       const files = {
         "preload.ts": `console.log("preload:", typeof gc);`,
         "a.test.ts": `
@@ -415,14 +430,9 @@ describe("globalThis.gc", () => {
           import { test } from "node:test";
           test("node", () => console.log("node:", typeof gc));
         `,
-        "set.test.ts": `
-          import { test } from "bun:test";
-          import v8 from "node:v8";
-          test("set", () => {
-            v8.setFlagsFromString("--expose-gc");
-            console.log("set:", typeof gc);
-          });
-        `,
+        "expose.test.ts": fileThatSets("expose", "--expose-gc"),
+        "hide.test.ts": fileThatSets("hide", "--no-expose-gc"),
+        "after.test.ts": fileThatSets("after"),
         "runner.mjs": `
           import { run } from "node:test";
           const events = run({ files: ["./a.test.ts"], execArgv: ["--expose-gc"] });
@@ -439,7 +449,9 @@ describe("globalThis.gc", () => {
         using dir = tempDir("expose-gc-bun-test", files);
         const { stdout, stderr, exitCode } = await run(cmd, { cwd: String(dir), env });
         // The output of a --parallel worker is relayed on the coordinator's stderr.
-        const printed = `${stdout}\n${stderr}`.split(/\r?\n/).filter(line => /^(preload|a|b|node|set): /.test(line));
+        const printed = `${stdout}\n${stderr}`
+          .split(/\r?\n/)
+          .filter(line => /^(preload|a|b|node|expose|hide|after): /.test(line));
         return { printed, exitCode };
       };
 
@@ -481,10 +493,23 @@ describe("globalThis.gc", () => {
         });
       });
 
-      // The flag is the process's: the global object of the next file is made after the first file set it.
-      it("--isolate after a file that calls v8.setFlagsFromString('--expose-gc')", async () => {
-        const cmd = ["test", "--isolate", "./set.test.ts", "./b.test.ts"];
-        expect(await typeofGcInTestFiles(cmd)).toEqual({ printed: ["set: undefined", "b: function"], exitCode: 0 });
+      // Each line is `typeof gc` in the global object of the file, then in a new one. What a file sets with
+      // v8.setFlagsFromString() stays with that file: the next one starts from the command line, as a process does.
+      describe.each(["--isolate", "--isolate=modules"])("%s after a file that sets the flag itself", isolate => {
+        it.each([
+          { flags: [], sets: "expose", printed: ["expose: undefined function", "after: undefined undefined"] },
+          { flags: ["--expose-gc"], sets: "hide", printed: ["hide: function undefined", "after: function function"] },
+        ])("with the flags $flags", async ({ flags, sets, printed }) => {
+          const cmd = ["test", ...flags, isolate, `./${sets}.test.ts`, "./after.test.ts"];
+          expect(await typeofGcInTestFiles(cmd)).toEqual({ printed, exitCode: 0 });
+        });
+      });
+
+      it("files that share one global object share the flag too", async () => {
+        expect(await typeofGcInTestFiles(["test", "./expose.test.ts", "./after.test.ts"])).toEqual({
+          printed: ["expose: undefined function", "after: undefined function"],
+          exitCode: 0,
+        });
       });
 
       it.each(withAndWithoutTheFlag)("--parallel workers with the flags $flags", async ({ flags, type }) => {

@@ -4,7 +4,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include <atomic>
 
-// V8's `--expose-gc`, from the command line or `v8.setFlagsFromString()`: an `AtomicBool` on the Rust side (src/runtime/cli/Arguments.rs).
+// V8's `--expose-gc`, from the command line or `v8.setFlagsFromString()`: an `AtomicBool` on the Rust side (src/jsc/VirtualMachine.rs).
 extern "C" std::atomic<bool> Bun__Node__ExposeGC;
 
 namespace Bun {

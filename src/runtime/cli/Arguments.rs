@@ -1120,10 +1120,6 @@ pub(crate) static Bun__Node__ProcessTraceDeprecation: core::sync::atomic::Atomic
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
-/// `--expose-gc`. C++ reads this one as a `std::atomic<bool>` each time it makes a global object, and `v8.setFlagsFromString()` stores it.
-#[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ExposeGC: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
 
 /// Node parity: `--cpu-prof-name` supports a `${pid}` placeholder.
 fn replace_pid_placeholder(name: &'static [u8]) -> &'static [u8] {
@@ -1672,7 +1668,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         if args.flag(b"--expose-gc") {
-            Bun__Node__ExposeGC.store(true, core::sync::atomic::Ordering::Relaxed);
+            bun_jsc::virtual_machine::Bun__Node__ExposeGC
+                .store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if args.flag(b"--expose-internals") {
             // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`

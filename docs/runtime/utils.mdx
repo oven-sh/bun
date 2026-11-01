@@ -202,7 +202,12 @@ test("peek", () => {
   // - returns the error
   // - does not mark the promise as handled
   const rejected = Promise.reject(new Error("Successfully tested promise rejection"));
-  expect(peek(rejected).message).toBe("Successfully tested promise rejection");
+  expect(peek(rejected)).toBeInstanceOf(Error);
+  expect(peek(rejected)).toHaveProperty("message", "Successfully tested promise rejection");
+
+  // The rejection is still unhandled, so handle it here.
+  // `bun test` fails a test that leaves a rejection unhandled.
+  rejected.catch(() => {});
 });
 ```
 
@@ -221,6 +226,9 @@ test("peek.status", () => {
 
   const rejected = Promise.reject(new Error("oh nooo"));
   expect(peek.status(rejected)).toBe("rejected");
+
+  // `peek.status` does not mark the promise as handled either
+  rejected.catch(() => {});
 });
 ```
 

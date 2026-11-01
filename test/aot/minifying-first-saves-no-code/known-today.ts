@@ -22,6 +22,24 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 386 -> 321, operations 34 -> 31; bundled: code bytes 386 -> 321, operations 34 -> 31",
   "bundler_minify: minify/NumericPropertyKeysPrintedAsComputed":
     "bundled: code bytes 614 -> 493, operations 36 -> 26, run-time operations 256 -> 249",
+  "bundler_minify: minify/ReadOfObjectDefineInDeadStatementKeepsNamespace":
+    "bundled: \"error: TypeError: handlers[name] is not a function. (In 'handlers[name]()', 'handlers[name]' is undefined)",
+  "bundler_minify: minify/ReadOfObjectDefineInJoinedImportAttribute":
+    'bundled: the bundler: 1 | { "n": 41 } |          ^ | error: Expected ";" but found ":"',
+  "bundler_minify: minify/ReadOfObjectDefineNonAsciiText":
+    "each file: code bytes 579 -> 262, operations 26 -> 21; bundled: code bytes 579 -> 262, operations 26 -> 21",
+  "bundler_minify: minify/ReadOfObjectLiteral":
+    "each file: code bytes 4453 -> 4367, operations 272 -> 259; bundled: code bytes 4453 -> 4367, operations 272 -> 259",
+  "bundler_minify: minify/ReadOfObjectLiteralAsModuleSpecifier":
+    "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
+  "bundler_minify: minify/ReadOfObjectLiteralInJoinedSpecifier":
+    "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
+  "bundler_minify: minify/ReadOfObjectLiteralJoinedToNonAsciiText":
+    "each file: code bytes 595 -> 343, operations 20 -> 13, run-time operations 337 -> 332; bundled: code bytes 595 -> 343, operations 20 -> 13, run-time operations 337 -> 332",
+  "bundler_minify: minify/ReadOfObjectLiteralKeepsBehavior":
+    "each file: code bytes 1626 -> 1600; bundled: code bytes 1626 -> 1600",
+  "bundler_minify: minify/ReadOfObjectLiteralKeepsImport":
+    "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify/RequireBunAfterKeyword":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify/RequireEsmWithoutInitAfterKeyword":

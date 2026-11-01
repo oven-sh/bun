@@ -15,6 +15,33 @@ fn e_string_init(data: &[u8]) -> E::EString {
     }
 }
 
+/// The value that `{..}.name` reads when every property is a plain `key: value` pair.
+fn value_of_plain_property(properties: &[G::Property], name: &[u8]) -> Option<Expr> {
+    if name == b"__proto__" {
+        return None;
+    }
+    let mut found = None;
+    for property in properties {
+        if property.kind != G::PropertyKind::Normal
+            || property.flags.contains(Flags::Property::IsComputed)
+            || property.flags.contains(Flags::Property::IsMethod)
+        {
+            return None;
+        }
+        let (Some(key), Some(value)) = (property.key, property.value) else {
+            return None;
+        };
+        let js_ast::ExprData::EString(key) = key.data else {
+            return None;
+        };
+        // A key that is not 8-bit is left, as in the rule for one property.
+        if key.is_utf8() && key.eql_bytes(name) {
+            found = (!property.flags.contains(Flags::Property::WasShorthand)).then_some(value);
+        }
+    }
+    found
+}
+
 // File-split mixin pattern: a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -79,6 +106,54 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )),
             ok: true,
         }
+    }
+
+    /// Whether later rewrites read `value` by where it stands: an import, `import.meta`, `module`, `exports`.
+    fn is_read_by_position(&self, value: &Expr) -> bool {
+        match value.data {
+            js_ast::ExprData::EImportIdentifier(_)
+            | js_ast::ExprData::EImportMeta(_)
+            | js_ast::ExprData::ECommonjsExportIdentifier(_) => true,
+            js_ast::ExprData::EIdentifier(id) => {
+                id.ref_.eql(self.module_ref)
+                    || id.ref_.eql(self.exports_ref)
+                    || self.symbols[id.ref_.inner_index() as usize].kind
+                        == js_ast::symbol::Kind::Import
+                    || self.import_items_for_namespace.contains_key(&id.ref_)
+                    || self.dynamic_import_namespace_locals.contains_key(&id.ref_)
+            }
+            _ => false,
+        }
+    }
+
+    /// `{a: 1, b: 2}.b` is `2` when every value of the literal can be removed if unused.
+    fn fold_read_of_object_literal(
+        &mut self,
+        properties: &[G::Property],
+        name: &[u8],
+    ) -> Option<Expr> {
+        // An enum member is folded as its value.
+        let value = value_of_plain_property(properties, name)?.unwrap_inlined();
+        match value.data {
+            // A literal would reach the folds of `[x][0]` and `{k: v}.k`, which drop `this` of a call.
+            js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_) => return None,
+            _ => {}
+        }
+        if self.is_read_by_position(&value) {
+            return None;
+        }
+        // `{f: () => {}}.f.name` is "f".
+        if !value.can_be_inlined_from_property_access() || value.is_anonymous_named() {
+            return None;
+        }
+        for property in properties {
+            if let Some(each) = &property.value {
+                if !self.expr_can_be_removed_if_unused(each) {
+                    return None;
+                }
+            }
+        }
+        Some(value)
     }
 
     // EDot nodes represent a property access. This function may return an
@@ -557,6 +632,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     {
                                         return Some(value);
                                     }
+                                }
+                            }
+                            if obj.properties.len_u32() > 1
+                                // `bun run` keeps the read: `--aot` copies its folds by hand.
+                                && !p.options.features.commonjs_at_runtime
+                                // A macro's object has its own rule in `e_dot`.
+                                && !obj.was_originally_macro
+                                // Not through a binding that a second visit has inlined.
+                                && !p.is_revisit_for_substitution
+                                // `{a: x, b: 1}.a.b` stays: the value is read from again.
+                                && !identifier_opts.is_property_access_target()
+                                && !identifier_opts.is_delete_target()
+                                && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                                && !identifier_opts.is_call_target()
+                                && !identifier_opts.is_template_tag()
+                            {
+                                if let Some(mut value) =
+                                    p.fold_read_of_object_literal(obj.properties.slice(), name)
+                                {
+                                    // The value of a define has no position of its own.
+                                    if value.loc.is_empty() {
+                                        value.loc = loc;
+                                    }
+                                    return Some(value);
                                 }
                             }
                         }

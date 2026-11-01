@@ -257,6 +257,91 @@ describe("Bun.Transpiler", () => {
       ]);
       expect(exitCode).toBe(0);
     });
+    it("inlines a static read of an object literal with several properties", () => {
+      ts.expectPrintedMin_("x = ({ a: 1, b: 2 }).b", "x = 2");
+      ts.expectPrintedMin_('x = ({ a: 1, b: 2 })["b"]', "x = 2");
+      ts.expectPrintedMin_('x = ({ "a-b": 1, c: 2 })["a-b"]', "x = 1");
+      ts.expectPrintedMin_("x = ({ a: 1, a: 2 }).a", "x = 2");
+      ts.expectPrintedMin_("x = ({ a: 1, b: null }).b", "x = null");
+      ts.expectPrintedMin_("x = ({ __proto__: null, a: 1 }).a", "x = 1");
+      ts.expectPrintedMin_("x = typeof ({ a: 1, b: 2 }).a", 'x = "number"');
+      ts.expectPrintedMin_("x = ({ a: /* @__PURE__ */ f?.(), b: 1 }).b", "x = 1");
+      // A key that is not ASCII is left, as in the rule for one property. A read beside it folds.
+      ts.expectPrintedMin_('x = ({ "\u00e9": 1, b: 2 }).\u00e9', 'x = { "\u00e9": 1, b: 2 }.\u00e9');
+      ts.expectPrintedMin_('x = ({ "\u00e9": 1, b: 2 }).b', "x = 2");
+      // An enum member is folded as its value.
+      const lastLine = out => out.trimEnd().split("\n").at(-1);
+      expect(lastLine(ts.parsedMin("enum E { N = -1 }\nexport let y = ({ a: E.N, b: 1 }).a ** z;", false))).toBe(
+        "export let y = (-1) ** z;",
+      );
+    });
+    it("keeps an object literal with several properties where the rule does not apply", () => {
+      // A miss can come from the prototype.
+      ts.expectPrintedMin_("x = ({ a: 1, b: 2 }).c", "x = { a: 1, b: 2 }.c");
+      ts.expectPrintedMin_("x = ({ a: 1, b: 2 }).__proto__", "x = { a: 1, b: 2 }.__proto__");
+      // A dropped value can have an effect.
+      ts.expectPrintedMin_("x = ({ a: 1, b: y }).a", "x = { a: 1, b: y }.a");
+      ts.expectPrintedMin_("x = ({ a: 1, b: y() }).a", "x = { a: 1, b: y() }.a");
+      // Not a plain data property.
+      ts.expectPrintedMin_("x = ({ a: 1, b() {} }).a", "x = { a: 1, b() {} }.a");
+      ts.expectPrintedMin_("x = ({ a: 1, ...y }).a", "x = { a: 1, ...y }.a");
+      ts.expectPrintedMin_("x = ({ a: 1, [y]: 2 }).a", "x = { a: 1, [y]: 2 }.a");
+      ts.expectPrintedMin_("x = ({ a: 1, 2: 3 }).a", "x = { a: 1, 2: 3 }.a");
+      // The value would be spliced onto the chain that follows the read.
+      ts.expectPrintedMin_("x = ({ a: /* @__PURE__ */ f?.(), b: 1 }).a", "x = { a: f?.(), b: 1 }.a");
+      ts.expectPrintedMin_("x = ({ a: /* @__PURE__ */ f?.(), b: 1 }).a.c", "x = { a: f?.(), b: 1 }.a.c");
+      ts.expectPrintedMin_("x = new ({ a: /* @__PURE__ */ f?.(), b: 1 }).a()", "x = new { a: f?.(), b: 1 }.a");
+      // The key gives a function its name.
+      ts.expectPrintedMin_("x = ({ a: () => 1, b: 2 }).a", "x = { a: () => 1, b: 2 }.a");
+      ts.expectPrintedMin_("x = ({ a: function () {}, b: 2 }).a", "x = { a: function() {}, b: 2 }.a");
+      // A write, a call and a tag use the literal itself.
+      ts.expectPrintedMin_("({ a: 1, b: 2 }).a = 3", "({ a: 1, b: 2 }).a = 3");
+      ts.expectPrintedMin_("({ a: 1, b: 2 }).a++", "({ a: 1, b: 2 }).a++");
+      ts.expectPrintedMin_("x = ({ a: f, b: 2 }).a()", "x = { a: f, b: 2 }.a()");
+      ts.expectPrintedMin_("({ a: 1, b: 2 }).a`x`", "({ a: 1, b: 2 }).a`x`");
+      ts.expectPrintedMin_("delete ({ a: 1, b: 2 }).a", "delete { a: 1, b: 2 }.a");
+      // The value is the object of another read.
+      ts.expectPrintedMin_("y = ({ a: x, b: 1 }).a.c", "y = { a: x, b: 1 }.a.c");
+      ts.expectPrintedMin_('x = ({ a: "str", b: 1 }).a.length', 'x = { a: "str", b: 1 }.a.length');
+      ts.expectPrintedMin_('x = ({ a: "str", b: 1 }).a[0]', 'x = { a: "str", b: 1 }.a[0]');
+      // The value is a literal that the folds of `[x][0]` and `{ k: v }.k` would read next.
+      ts.expectPrintedMin_("x = ({ a: [1], b: 2 }).a", "x = { a: [1], b: 2 }.a");
+      ts.expectPrintedMin_("x = ({ a: [1], b: 2 }).a[0]", "x = { a: [1], b: 2 }.a[0]");
+      ts.expectPrintedMin_("x = ({ a: { c: 1 }, b: 2 }).a.c", "x = { a: { c: 1 }, b: 2 }.a.c");
+      ts.expectPrintedMin_("delete ({ a: [1], b: 2 }).a[0]", "delete { a: [1], b: 2 }.a[0]");
+      // The value is an import. In a bundle, `delete ns.y` is a build error.
+      ts.expectPrintedMin_(
+        'import { w } from "m";\nx = ({ a: w, b: 1 }).a',
+        'import { w } from "m";\nx = { a: w, b: 1 }.a',
+      );
+      ts.expectPrintedMin_(
+        'import * as ns from "m";\ndelete ({ a: ns, b: 1 }).a.y',
+        'import * as ns from "m";\ndelete { a: ns, b: 1 }.a.y',
+      );
+      // The same positions with the key in brackets.
+      ts.expectPrintedMin_('({ "a-b": 1, c: 2 })["a-b"] = 3', '({ "a-b": 1, c: 2 })["a-b"] = 3');
+      ts.expectPrintedMin_('({ "a-b": 1, c: 2 })["a-b"]++', '({ "a-b": 1, c: 2 })["a-b"]++');
+      ts.expectPrintedMin_('delete ({ "a-b": 1, c: 2 })["a-b"]', 'delete { "a-b": 1, c: 2 }["a-b"]');
+      ts.expectPrintedMin_('({ "a-b": f, c: 2 })["a-b"]`x`', '({ "a-b": f, c: 2 })["a-b"]`x`');
+      ts.expectPrintedMin_('x = ({ "a-b": f, c: 2 })["a-b"]()', 'x = { "a-b": f, c: 2 }["a-b"]()');
+      ts.expectPrintedMin_('x = ({ "a-b": "s", c: 2 })["a-b"].length', 'x = { "a-b": "s", c: 2 }["a-b"].length');
+      ts.expectPrintedMin_('x = ({ "a-b": "s", c: 2 })["a-b"][0]', 'x = { "a-b": "s", c: 2 }["a-b"][0]');
+      // The parser reads `import.meta`, `module` and `exports` by where they stand.
+      ts.expectPrintedMin_("x = ({ a: import.meta, b: 1 }).a", "x = { a: import.meta, b: 1 }.a");
+      ts.expectPrintedMin_("x = ({ a: module, b: 1 }).a", "x = { a: module, b: 1 }.a");
+      ts.expectPrintedMin_("x = ({ a: exports, b: 1 }).a", "x = { a: exports, b: 1 }.a");
+      // Dropping the other values is dead-code elimination, so the read stays without it.
+      expect(
+        new Bun.Transpiler({ loader: "ts", minify: { syntax: true }, deadCodeElimination: false }).transformSync(
+          "x = ({ a: 1, b: 2 }).b; y = ({ a: 1 }).a;",
+        ),
+      ).toBe("x = { a: 1, b: 2 }.b;\ny = 1;\n");
+      // Not through a binding, where the statement is visited again after a single use is inlined.
+      ts.expectPrintedMin_(
+        "function f() { const o = { a: 1, b: 2 }; return o.b + 1; }",
+        "function f() {\n  return { a: 1, b: 2 }.b + 1;\n}",
+      );
+    });
     it("keeps a read of a string under a write or a delete", () => {
       ts.expectPrintedMin_('"abc".length = 1', '"abc".length = 1');
       ts.expectPrintedMin_('"abc".length++', '"abc".length++');
@@ -271,6 +356,27 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_('x = ({ "\u00c3\u00a9": 1 }).\u00e9', 'x = { "\u00c3\u00a9": 1 }.\u00e9');
       ts.expectPrintedMin_('x = ({ "\u00e9": 1 }).\u00e9', 'x = { "\u00e9": 1 }.\u00e9');
       ts.expectPrintedMin_('x = ({ "\\u0061": 1 }).a', "x = 1");
+    });
+    // `--aot` copies each fold of the runtime transpiler by hand, so this fold stays out of `bun run`.
+    it("keeps a read of an object literal with several properties in `bun run`", async () => {
+      const src = `
+        let calls = 0;
+        function counted() { calls++; return 7; }
+        function attempt(fn) { try { return fn(); } catch (e) { return e.constructor.name; } }
+        console.log(
+          attempt(() => { const read = ({ a: 1, b: late }).a; let late; return read; }),
+          ({ a: /* @__PURE__ */ counted(), b: 1 }).b,
+          calls,
+        );
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ReferenceError 1 1\n", stderr: "", exitCode: 0 });
     });
     it("runs a write and a delete on a string or list literal as node does", async () => {
       const src = `
@@ -2948,6 +3054,18 @@ export const after = { a: 1 };
         exitCode: 0,
         signalCode: null,
       });
+    });
+
+    // The object stays where its value is read from again, for a key that it does not have, and behind `?.`.
+    it("folds a read of a key when it minifies syntax", () => {
+      const transpiler = new Bun.Transpiler({
+        minify: { syntax: true },
+        define: { CFG: '{"s":"a\u00e9b","n":1,"t":"abc"}' },
+      });
+      const object = '{ s: "a\u00e9b", n: 1, t: "abc" }';
+      expect(transpiler.transformSync("x = [CFG.n, CFG.t, CFG.s, CFG.t.length, CFG.s[1], CFG.missing, CFG?.n];")).toBe(
+        `x = [1, "abc", "a\u00e9b", ${object}.t.length, ${object}.s[1], ${object}.missing, ${object}?.n];\n`,
+      );
     });
   });
 

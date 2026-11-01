@@ -1,17 +1,54 @@
 #/usr/bin/env bash
 
+# sets working_dir to the value of --cwd before the cursor, or to $PWD.
+# readline splits `--cwd=dir` into `--cwd`, `=` and `dir`, and leaves a leading ~ as it is
+_working_dir() {
+    local line=0 value;
+    working_dir="${PWD}";
+    for ((; line < COMP_CWORD; line+=1)); do
+        case "${COMP_WORDS[${line}]}" in
+            --cwd=*) value="${COMP_WORDS[${line}]#--cwd=}";;
+            --cwd)
+                (( line + 1 < COMP_CWORD )) || break;
+                value="${COMP_WORDS[$((line + 1))]}";
+                [[ "${value}" == "=" ]] && {
+                    (( line + 2 < COMP_CWORD )) || break;
+                    value="${COMP_WORDS[$((line + 2))]}";
+                };;
+            *) continue;;
+        esac
+        # the word is as typed: drop a quote pair or the backslashes, expand a leading ~
+        case "${value}" in
+            \"*\"|\'*\') value="${value:1:${#value}-2}";;
+            *) value="${value//\\/}";;
+        esac
+        [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value#\~}";
+        [[ -n "${value}" ]] && working_dir="${value}";
+    done
+}
+
 _file_arguments() {
     local extensions="${1}"
-    local reset=$(shopt -p globstar)
-    shopt -s globstar
-
-    if [[ -z "${cur_word}" ]]; then
-        COMPREPLY=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
-    else
-        COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
-    fi
-
-    $reset
+    local working_dir file;
+    _working_dir;
+    # the filter patterns use extglob, which is off unless bash-completion turned it on.
+    # bun test picks test files by their lowercased name, so the filter ignores case too.
+    # the options and the cd are in the subshell only, so an interrupted listing leaks nothing.
+    # the callers add flags and script names to the list, so readline must not treat it as
+    # file names: a name with a space is escaped here instead, unless the user opened a quote.
+    # the directory part is kept as the user typed it (`~/`, `$HOME/`, `my\ dir/`), compgen
+    # hands it back expanded or without the backslashes
+    local typed_dir="";
+    [[ "${cur_word}" == */* ]] && typed_dir="${cur_word%/*}/";
+    COMPREPLY=();
+    while IFS= read -r file; do
+        if [[ "${cur_word}" != [\"\']* ]]; then
+            [[ -n "${typed_dir}" ]] && file="${file##*/}";
+            printf -v file '%q' "${file}";
+            file="${typed_dir}${file}";
+        fi
+        COMPREPLY+=( "${file}" );
+    done < <(CDPATH= builtin cd -- "${working_dir}" >/dev/null 2>&1 && shopt -s extglob nocasematch && compgen -f -X "${extensions}" -- "${cur_word}");
 }
 
 _long_short_completion() {
@@ -32,12 +69,8 @@ _long_short_completion() {
 _read_scripts_in_package_json() {
     local package_json;
     local return_package_json
-    local line=0;
-    local working_dir="${PWD}";
-
-    for ((; line < ${#COMP_WORDS[@]}; line+=1)); do
-        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
-    done
+    local working_dir;
+    _working_dir;
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
 
@@ -45,7 +78,7 @@ _read_scripts_in_package_json() {
         local package_json_compreply;
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
-        scripts="${scripts//@(\"|\')/}";
+        scripts="${scripts//[\"\']/}";
         readarray -td, scripts <<<"${scripts}";
         for completion in "${scripts[@]}"; do
             [[ "${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*: ]] && package_json_compreply+=( "${BASH_REMATCH[1]}" );
@@ -88,6 +121,7 @@ _bun_completions() {
     declare -A GLOBAL_OPTIONS;
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
+    declare -A TEST_OPTIONS;
 
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated publish link unlink build compile check lint fmt";
 
@@ -112,6 +146,9 @@ _bun_completions() {
 
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --json --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
+
+    TEST_OPTIONS[LONG_OPTIONS]="--timeout --update-snapshots --rerun-each --retry --todo --only --pass-with-no-tests --concurrent --randomize --seed --coverage --coverage-reporter --coverage-dir --bail --test-name-pattern --grep --reporter --reporter-outfile --dots --only-failures --max-concurrency --path-ignore-patterns --changed --isolate --no-isolate --parallel --parallel-delay --shard --timings --update-timings --no-orphans --watch --hot --no-clear-screen --check --smol --preload --require --import --inspect --inspect-wait --inspect-brk --env-file --no-env-file --cwd --config --define --loader --tsconfig-override --help"
+    TEST_OPTIONS[SHORT_OPTIONS]="-u -t -r -c -d -l -h"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
     local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
@@ -145,6 +182,12 @@ _bun_completions() {
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
+        =)
+            # readline splits `--cwd=dir` at the `=`
+            [[ "${COMP_WORDS[$(( COMP_CWORD - 2 ))]}" == "--cwd" ]] && {
+                COMPREPLY=( $(compgen -d -- "${cur_word}" ));
+                return;
+            };;
         --jsx-runtime)
             COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
             return;;
@@ -222,9 +265,32 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
             return;;
         run)
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
+            _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts)";
             COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
             _read_scripts_in_package_json;
+            return;;
+        test)
+            case "${prev}" in
+                # these flags take a value that is not a file: offer nothing for it
+                --timeout|--rerun-each|--retry|--seed|--max-concurrency|--parallel-delay|--shard|-t|--test-name-pattern|--grep|--path-ignore-patterns|--define|-d) return;;
+                # these flags take any file, not only a test file
+                -r|--preload|--require|--import|--reporter-outfile|--timings|--env-file|--tsconfig-override)
+                    compopt -o filenames 2>/dev/null;
+                    readarray -t COMPREPLY < <(compgen -f -- "${cur_word}");
+                    return;;
+                --coverage-dir)
+                    compopt -o filenames 2>/dev/null;
+                    readarray -t COMPREPLY < <(compgen -d -- "${cur_word}");
+                    return;;
+                --reporter)
+                    COMPREPLY=( $(compgen -W "junit dots" -- "${cur_word}") );
+                    return;;
+                --coverage-reporter)
+                    COMPREPLY=( $(compgen -W "text lcov" -- "${cur_word}") );
+                    return;;
+            esac
+            _file_arguments "!*@(.test|_test|.spec|_spec).@(js|jsx|ts|tsx|mjs|cjs|mts|cts)";
+            COMPREPLY+=( $(compgen -W "${TEST_OPTIONS[LONG_OPTIONS]} ${TEST_OPTIONS[SHORT_OPTIONS]}" -- "${cur_word}" ) );
             return;;
         pm)
             _long_short_completion \

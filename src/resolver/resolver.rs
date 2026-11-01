@@ -4555,11 +4555,8 @@ impl<'a> Resolver<'a> {
     /// the directory again, as it reads every listing again.
     #[inline]
     fn dir_cache_status_is_final(&self, status: allocators::ItemStatus) -> bool {
-        match status {
-            allocators::ItemStatus::Exists => true,
-            allocators::ItemStatus::NotFound => self.generation == 0,
-            allocators::ItemStatus::Unknown => false,
-        }
+        status == allocators::ItemStatus::Exists
+            || (status == allocators::ItemStatus::NotFound && self.generation == 0)
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +

@@ -1005,6 +1005,10 @@ pub mod fs {
         ) -> crate::CrateResult<DirEntry> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
+            // A listing read again in place has about as many entries as before.
+            if let Some(prev) = prev_map.as_deref() {
+                dir.data.reserve(prev.count());
+            }
 
             if store_fd {
                 FileSystem::set_max_fd(bun_sys::Fd::native(handle));

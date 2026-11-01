@@ -510,6 +510,13 @@ pub fn generate_code_for_file_in_chunk_js(
 
     // Optionally wrap all statements in a closure
     if needs_wrapper {
+        // An `export * from` is only valid at the top level of a module.
+        debug_assert!(
+            !stmts
+                .all_stmts
+                .iter()
+                .any(|stmt| matches!(stmt.data, StmtData::SExportStar(_)))
+        );
         match flags.wrap {
             WrapKind::Cjs => {
                 // Only include the arguments that are actually used

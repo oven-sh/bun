@@ -142,6 +142,32 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
+    /// ES module output: the external `export *` statements each file reaches through `export *`, in source order.
+    pub(crate) external_export_stars: ArrayHashMap<crate::IndexInt, Vec<ExternalExportStar>>,
+    /// The namespace that a statement of `external_export_stars` imports, for each statement that a read or an exports object uses (README: Pattern 5).
+    pub(crate) external_star_namespaces: ArrayHashMap<ExternalExportStar, ExternalStarNamespace>,
+    /// `(namespace, name)` to the one symbol for that property of the namespace.
+    pub(crate) external_star_members: bun_collections::HashMap<(Ref, bun_ast::StoreStr), Ref>,
+    /// Each exports object that copies the names of a module, with the statement whose namespace it copies.
+    pub(crate) external_star_copies: Vec<(crate::IndexInt, ExternalExportStar)>,
+}
+
+/// An `export * from "path"` statement whose `path` is not bundled.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ExternalExportStar {
+    /// The file that has the statement.
+    pub(crate) source_index: crate::IndexInt,
+    pub(crate) import_record_index: u32,
+}
+
+/// The namespace that an `ExternalExportStar` statement imports.
+pub(crate) struct ExternalStarNamespace {
+    /// The `namespace_ref` of the statement.
+    pub(crate) namespace_ref: Ref,
+    /// A read binds to a member of the namespace.
+    pub(crate) has_member: bool,
+    /// Set after tree shaking: the statement prints `import * as`.
+    pub(crate) is_imported: bool,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -182,7 +208,241 @@ impl<'a> LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
+            external_export_stars: ArrayHashMap::new(),
+            external_star_namespaces: ArrayHashMap::new(),
+            external_star_members: Default::default(),
+            external_star_copies: Vec::new(),
         }
+    }
+
+    /// The `external_export_stars` of `source_index`. An entry point re-exports them.
+    #[inline]
+    pub(crate) fn external_export_stars_of(
+        &self,
+        source_index: crate::IndexInt,
+    ) -> &[ExternalExportStar] {
+        if self.external_export_stars.is_empty() {
+            return &[];
+        }
+        self.external_export_stars
+            .get(&source_index)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// The import record of the statement `star`.
+    #[inline]
+    pub(crate) fn external_export_star_record(
+        &self,
+        star: ExternalExportStar,
+    ) -> &ImportRecord<'a> {
+        &self.graph.ast.items_import_records()[star.source_index as usize].as_slice()
+            [star.import_record_index as usize]
+    }
+
+    /// Do the statements `a` and `b` name one module? A relative path names a file beside the file of its statement.
+    pub(crate) fn same_external_module(
+        &self,
+        a: ExternalExportStar,
+        b: ExternalExportStar,
+    ) -> bool {
+        if a == b {
+            return true;
+        }
+        let (a_record, b_record) = (
+            self.external_export_star_record(a),
+            self.external_export_star_record(b),
+        );
+        let path = a_record.path.text;
+        path == b_record.path.text
+            && a_record.tag == b_record.tag
+            && a_record.loader == b_record.loader
+            && (bun_paths::is_absolute(path)
+                || bun_paths::is_package_path_not_absolute(path)
+                || self.get_source(a.source_index).path.name().dir
+                    == self.get_source(b.source_index).path.name().dir)
+    }
+
+    /// The namespace symbol that the statement `star` imports.
+    pub(crate) fn external_star_namespace(&mut self, star: ExternalExportStar) -> Ref {
+        if let Some(namespace) = self.external_star_namespaces.get(&star) {
+            return namespace.namespace_ref;
+        }
+        let namespace_ref = self.graph.ast.items_parts()[star.source_index as usize]
+            .as_slice()
+            .iter()
+            .flat_map(|part| part.stmts.slice())
+            .find_map(|stmt| match stmt.data {
+                bun_ast::StmtData::SExportStar(statement)
+                    if statement.import_record_index == star.import_record_index =>
+                {
+                    Some(statement.namespace_ref)
+                }
+                _ => None,
+            })
+            .expect("infallible: a part of the file has the statement of the record");
+        bun_core::handle_oom(self.external_star_namespaces.put(
+            star,
+            ExternalStarNamespace {
+                namespace_ref,
+                has_member: false,
+                is_imported: false,
+            },
+        ));
+        namespace_ref
+    }
+
+    /// Does the statement of this record print the import of its namespace (README: Pattern 5)?
+    #[inline]
+    pub(crate) fn imports_external_star_namespace(
+        &self,
+        source_index: crate::IndexInt,
+        import_record_index: u32,
+    ) -> bool {
+        !self.external_star_namespaces.is_empty()
+            && self
+                .external_star_namespaces
+                .get(&ExternalExportStar {
+                    source_index,
+                    import_record_index,
+                })
+                .is_some_and(|namespace| namespace.is_imported)
+    }
+
+    /// The one symbol for the property `alias` of `namespace_ref`, which the file `owner` declares. A part that reads it depends on the parts that declare the namespace.
+    pub(crate) fn external_star_member(
+        &mut self,
+        owner: crate::IndexInt,
+        namespace_ref: Ref,
+        alias: bun_ast::StoreStr,
+    ) -> Ref {
+        if let Some(&member) = self.external_star_members.get(&(namespace_ref, alias)) {
+            return member;
+        }
+        let member =
+            self.graph
+                .generate_new_symbol(owner, bun_ast::symbol::Kind::Import, alias.slice());
+        self.graph
+            .symbols
+            .get_mut(member)
+            .expect("infallible: ref in symbol table")
+            .namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
+            namespace_ref,
+            alias,
+            ..Default::default()
+        }));
+        let parts = bun_alloc::AstAlloc::vec_from_slice(
+            self.graph.top_level_symbol_to_parts(owner, namespace_ref),
+        );
+        bun_core::handle_oom(
+            self.graph
+                .meta
+                .items_top_level_symbol_to_parts_overlay_mut()[owner as usize]
+                .put(member, parts),
+        );
+        bun_core::handle_oom(
+            self.external_star_members
+                .put((namespace_ref, alias), member),
+        );
+        member
+    }
+
+    /// After tree shaking: a statement whose namespace has a member, or whose names a live exports object copies, imports that namespace (README: Pattern 5).
+    fn import_used_external_star_namespaces(&mut self) {
+        for i in 0..self.external_star_copies.len() {
+            let (source_index, star) = self.external_star_copies[i];
+            if self.graph.parts_live[source_index as usize]
+                .is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
+                && let Some(namespace) = self.external_star_namespaces.get_ptr_mut(&star)
+            {
+                namespace.is_imported = true;
+            }
+        }
+        for i in 0..self.external_star_namespaces.count() {
+            let namespace = &mut self.external_star_namespaces.values_mut()[i];
+            namespace.is_imported |= namespace.has_member;
+            if !namespace.is_imported {
+                continue;
+            }
+            let star = self.external_star_namespaces.keys()[i];
+            let record = &mut self.graph.ast.items_import_records_mut()[star.source_index as usize]
+                .as_mut_slice()[star.import_record_index as usize];
+            record
+                .flags
+                .insert(bun_ast::ImportRecordFlags::CONTAINS_IMPORT_STAR);
+            // The printer turns an import of "bun" into a `var`, which is not hoisted above a read in another file.
+            if record.tag == bun_ast::ImportRecordTag::Bun {
+                record.tag = bun_ast::ImportRecordTag::None;
+            }
+        }
+    }
+
+    /// Answers the import `import_ref` of `importer` for the name `alias`, which no export of `target` matches but an external `export *` of `target` can have (README: Pattern 5).
+    fn external_export_star_name(
+        &mut self,
+        importer: crate::IndexInt,
+        import_ref: Ref,
+        target: crate::IndexInt,
+        alias: bun_ast::StoreStr,
+    ) -> Option<ImportTrackerIterator> {
+        let stars = self.external_export_stars.get(&target)?;
+        let exports_ref = self.graph.ast.items_exports_ref()[target as usize];
+        let named_import =
+            self.graph.ast.items_named_imports()[importer as usize].get(&import_ref)?;
+        // An item of `require()` / `import()` stays a read of the call result. That is the exports object: it has the names when the output loads, and properties that the module lacks (`__esModule`, those of `Object.prototype`).
+        if self.is_call_record(importer, named_import.import_record_index) {
+            return Some(ImportTrackerIterator {
+                value: ImportTracker {
+                    source_index: crate::Index::init(target),
+                    import_ref: exports_ref,
+                    ..Default::default()
+                },
+                status: ImportTrackerStatus::DynamicFallback,
+                ..Default::default()
+            });
+        }
+
+        let module = stars.first().copied();
+        let has_one_module = module.is_some_and(|module| {
+            stars[1..]
+                .iter()
+                .all(|&other| self.same_external_module(module, other))
+        });
+        let (owner, namespace_ref) = match module {
+            Some(star) if has_one_module => {
+                let namespace_ref = self.external_star_namespace(star);
+                if let Some(namespace) = self.external_star_namespaces.get_ptr_mut(&star) {
+                    namespace.has_member = true;
+                }
+                (star.source_index, namespace_ref)
+            }
+            // Only the modules know which of them has the name: the exports object of the file has the names of them all.
+            Some(_) => (target, exports_ref),
+            // Every module is disabled, so the name is `undefined`: a named import stays a run-time read, as one of the disabled module itself is. A property of a namespace and a re-export of a TypeScript file say so at build time.
+            None => {
+                let is_property_access = self
+                    .graph
+                    .symbols
+                    .get_const(import_ref)
+                    .is_some_and(|symbol| symbol.import_item_status == ImportItemStatus::Generated);
+                let can_be_type = named_import.is_exported
+                    && self.parse_graph().input_files.items_loader()[target as usize]
+                        .is_typescript();
+                if is_property_access || can_be_type {
+                    return None;
+                }
+                (target, exports_ref)
+            }
+        };
+        let member = self.external_star_member(owner, namespace_ref, alias);
+        Some(ImportTrackerIterator {
+            value: ImportTracker {
+                source_index: crate::Index::init(owner),
+                import_ref: member,
+                ..Default::default()
+            },
+            status: ImportTrackerStatus::Found,
+            ..Default::default()
+        })
     }
 
     /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
@@ -565,6 +825,10 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
+        self.external_export_stars.clear();
+        self.external_star_namespaces.clear();
+        self.external_star_members.clear();
+        self.external_star_copies.clear();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -949,6 +1213,10 @@ impl<'a> LinkerContext<'a> {
         }
 
         self.tree_shaking_and_code_splitting()?;
+
+        if !self.external_star_namespaces.is_empty() {
+            self.import_used_external_star_namespaces();
+        }
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -3780,6 +4048,16 @@ impl<'a> LinkerContext<'a> {
             };
         }
 
+        // "export * from" does not re-export "default"
+        if !self.external_export_stars.is_empty()
+            && let Some(alias) = alias
+            && alias.slice() != b"default"
+            && let Some(found) =
+                self.external_export_star_name(id, tracker.import_ref, other_source_index, alias)
+        {
+            return found;
+        }
+
         // Missing re-exports in TypeScript files are indistinguishable from types
         let other_loader = self.parse_graph().input_files.items_loader()[other_id as usize];
         if is_exported && other_loader.is_typescript() {
@@ -4473,7 +4751,7 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `named_imports_ptr` points into the `graph.ast.named_imports`
         // SoA column, which is never reallocated during linking; the loop body
         // never mutates that column (only `imports_to_bind`/`log`/`symbols`/
-        // `meta.probably_typescript_type`), so the backing `keys`/`values`
+        // `meta.probably_typescript_type`/`module_scope`/`meta.top_level_symbol_to_parts_overlay`/the `external_star_*` maps), so the backing `keys`/`values`
         // slices stay valid for the whole loop.
         let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
         // SAFETY: same column-validity invariant as `keys` above.

@@ -4821,6 +4821,300 @@ describe("bundler", () => {
     run: { file: "/out/a.js", stdout: "first\nsecond\na 2 other" },
   });
 
+  // The file of an entry point that other entry points reach prints in a shared
+  // chunk. Its `export * from` of an external module stays an export of the entry
+  // points that re-export it: the shared chunk only loads the module.
+  itBundled("splitting/EntryPointExternalExportStarStaysOutOfSharedChunk", {
+    files: {
+      "/lib.js": `export * from "pkx"; export const b = 2;`,
+      "/only.js": `export * from "pkx";`,
+      "/namespace.js": `import * as lib from "./lib.js"; import "./only.js"; console.log("namespace", lib.b);`,
+      "/chain.js": `export * from "./lib.js"; export const c = 3;`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `console.log("pkx"); export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as lib from "./out/lib.js";
+        import * as only from "./out/only.js";
+        import * as namespace from "./out/namespace.js";
+        import * as chain from "./out/chain.js";
+        console.log(JSON.stringify([lib, only, namespace, chain]));
+      `,
+    },
+    entryPoints: ["/lib.js", "/only.js", "/namespace.js", "/chain.js"],
+    splitting: true,
+    outdir: "/out",
+    external: ["pkx"],
+    onAfterBundle(api) {
+      for (const file of readdirSync(api.outdir)) {
+        if (file === "lib.js" || file === "only.js" || file === "chain.js") continue;
+        expect(api.readFile("/out/" + file)).not.toContain("export *");
+      }
+    },
+    run: [
+      { file: "/out/namespace.js", stdout: "pkx\nnamespace 2" },
+      { file: "/check.js", stdout: `pkx\nnamespace 2\n[{"a":1,"b":2},{"a":1},{},{"a":1,"b":2,"c":3}]` },
+    ],
+  });
+  // `import("./lib.js")` loads its own chunk, and the code of `lib.js` is in
+  // another one because entry.js also imports it. The namespace that `import()`
+  // returns still has the names of the external module.
+  itBundled("splitting/DynamicImportKeepsExternalExportStarOfStaticallyImportedFile", {
+    files: {
+      "/entry.js": `import { b } from "./lib.js"; const lib = await import("./lib.js"); console.log(b, JSON.stringify(lib));`,
+      "/lib.js": `export * from "pkx"; export const b = 2;`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const a = 1;`,
+    },
+    splitting: true,
+    outdir: "/out",
+    external: ["pkx"],
+    run: { file: "/out/entry.js", stdout: `2 {"a":1,"b":2}` },
+  });
+  // The same when `require()` puts `lib.js` in a wrapper function.
+  itBundled("splitting/DynamicImportKeepsExternalExportStarOfRequiredFile", {
+    files: {
+      "/entry.js": `const r = require("./lib.js"); const lib = await import("./lib.js"); console.log(r.b, JSON.stringify(lib));`,
+      "/lib.js": `export * from "pkx"; export const b = 2;`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const a = 1;`,
+    },
+    splitting: true,
+    outdir: "/out",
+    external: ["pkx"],
+    target: "node",
+    run: { file: "/out/entry.js", stdout: `2 {"a":1,"b":2}` },
+  });
+  for (const target of ["bun", "node", "browser"] as const) {
+    itBundled(`splitting/EntryPointExternalExportStarOfWrappedFile/${target}`, {
+      files: {
+        "/lib.js": `export * from "pkx"; export const b = 2;`,
+        "/required.js": `export const b = require("./lib.js").b;`,
+        "/self.js": `export * from "pkx"; export const b = 2; export const self = require("./self.js");`,
+      },
+      runtimeFiles: {
+        "/node_modules/pkx/index.js": `export const a = 1;`,
+        "/check.js": /* js */ `
+          import * as lib from "./out/lib.js";
+          import * as required from "./out/required.js";
+          import * as self from "./out/self.js";
+          console.log(JSON.stringify([lib, required, Object.keys(self), self.self.b]));
+        `,
+      },
+      entryPoints: ["/lib.js", "/required.js", "/self.js"],
+      splitting: true,
+      outdir: "/out",
+      external: ["pkx"],
+      target,
+      run: { file: "/check.js", stdout: `[{"a":1,"b":2},{"b":2},["a","b","self"],2]` },
+    });
+  }
+  // The file with the statement does not have to be the `import()` target.
+  itBundled("splitting/DynamicImportKeepsExternalExportStarOfNonEntryFile", {
+    files: {
+      "/entry.js": `const lazy = await import("./lazy.js"); console.log(typeof lazy.file, lazy.l, lazy.m);`,
+      "/lazy.js": `export * from "./mid.js"; export const l = 1;`,
+      "/mid.js": `export * from "bun"; export const m = 2;`,
+    },
+    splitting: true,
+    outdir: "/out",
+    target: "bun",
+    run: { file: "/out/entry.js", stdout: "function 1 2" },
+  });
+  // A chunk that takes in a shared chunk exports the bindings that other chunks
+  // need from it. The chunk of `lazy.js` has exports, the names of "pkx", so it
+  // takes none in: `helper` is not a name of `lazy.js`.
+  itBundled("splitting/ExternalExportStarChunkDoesNotAbsorbSharedChunk", {
+    files: {
+      "/entry.js": `const lazy = await import("./lazy.js"); console.log(JSON.stringify(lazy), await globalThis.lazy2);`,
+      "/lazy.js": `export * from "pkx"; import { helper } from "./helper.js"; globalThis.lazy2 = import("./lazy2.js").then(lazy2 => lazy2.default + helper);`,
+      "/lazy2.js": `import { helper } from "./helper.js"; export default helper;`,
+      "/helper.js": `export const helper = "helper";`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const a = 1;`,
+    },
+    splitting: true,
+    outdir: "/out",
+    external: ["pkx"],
+    run: { file: "/out/entry.js", stdout: `{"a":1} helperhelper` },
+  });
+  // The same for an entry point whose name has a hash. "pkx" has a `helper` too:
+  // the one that the output of entry.js exports is the one of "pkx".
+  itBundled("splitting/ExternalExportStarEntryPointDoesNotAbsorbSharedChunk", {
+    files: {
+      "/entry.js": `export * from "pkx"; import { helper } from "./helper.js"; globalThis.lazy = import("./lazy.js").then(lazy => lazy.default + helper);`,
+      "/lazy.js": `import { helper } from "./helper.js"; export default helper;`,
+      "/helper.js": `export const helper = "helper";`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const a = 1; export const helper = "pkx";`,
+      "/check.js": /* js */ `
+        import { readdirSync } from "node:fs";
+        const entry = readdirSync(import.meta.dir + "/out").find(file => file.startsWith("entry.main-"));
+        console.log(JSON.stringify(await import("./out/" + entry)), await globalThis.lazy);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    entryNaming: "[name].main-[hash].[ext]",
+    splitting: true,
+    outdir: "/out",
+    external: ["pkx"],
+    run: { file: "/check.js", stdout: `{"a":1,"helper":"pkx"} helperhelper` },
+  });
+  // A relative path prints as written. The code of pages/a.js is in a shared
+  // chunk in "/out", which imports "./ext.js" from there. The output of
+  // pages/a.js in "/out/pages" does not name a second file with the same path,
+  // so it loads where it loaded before. It does not have the name `a`.
+  itBundled("splitting/EntryPointRelativeExternalExportStarOfSharedChunk", {
+    files: {
+      "/src/pages/a.js": `export * from "./ext.js"; export const own = 1;`,
+      "/src/pages/ext.js": `export const a = 1;`,
+      "/src/b.js": `import { own } from "./pages/a.js"; console.log(own);`,
+    },
+    runtimeFiles: {
+      "/out/ext.js": `export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as a from "./out/pages/a.js";
+        console.log(a.own);
+      `,
+    },
+    entryPoints: ["/src/pages/a.js", "/src/b.js"],
+    outputPaths: ["/out/pages/a.js", "/out/b.js"],
+    splitting: true,
+    outdir: "/out",
+    external: ["{{root}}/src/pages/ext.js"],
+    onAfterBundle(api) {
+      expect(api.readFile("/out/pages/a.js")).not.toContain("ext.js");
+    },
+    run: { file: "/check.js", stdout: "1" },
+  });
+  // With both output files in one directory the path names the same file from
+  // each. The output of a.js still has no statement for it: the chunk of an
+  // entry point does not know the directory of another chunk at that point.
+  itBundled("splitting/EntryPointRelativeExternalExportStarOfSharedChunkSameDirectory", {
+    todo: true,
+    files: {
+      "/a.js": `export * from "./ext.js"; export const own = 1;`,
+      "/ext.js": `export const a = 1;`,
+      "/b.js": `import { own } from "./a.js"; console.log(own);`,
+    },
+    runtimeFiles: {
+      "/out/ext.js": `export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as a from "./out/a.js";
+        console.log(JSON.stringify(a));
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    external: ["{{root}}/ext.js"],
+    run: { file: "/check.js", stdout: `{"a":1,"own":1}` },
+  });
+
+  // The entry points share one chunk, and its files are an import cycle. In
+  // the order of a.js, value.js reads `v` before a.js gives it a value. The
+  // order of value.js does not, and the chunk takes that order. barrel.js reads
+  // a name of an external module through itself at load: that read is of the
+  // namespace that its statement imports, so it does not rule the order out.
+  itBundled("splitting/ExternalExportStarNameReadKeepsSafeChunkOrder", {
+    files: {
+      "/a.js": `export * from "./through.js"; import "./barrel.js"; export const v = "v";`,
+      "/through.js": `export * from "./value.js";`,
+      "/value.js": `import * as A from "./a.js"; console.log("value", A.v);`,
+      "/barrel.js": `export * from "pkx"; export * from "./a.js"; import { x } from "./barrel.js"; console.log("name", x);`,
+      "/keys.js": `import * as barrel from "./barrel.js"; export function keys() { return Object.keys(barrel); }`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const x = "x";`,
+    },
+    entryPoints: ["/a.js", "/value.js", "/keys.js"],
+    splitting: true,
+    outdir: "/out",
+    external: ["pkx"],
+    run: { file: "/out/value.js", stdout: "name x\nvalue v" },
+  });
+
+  // The same with two external modules: name.js then reads `y` off the exports
+  // object of barrel.js. That read names the object and no binding of a file
+  // of the chunk, so it does not rule the order out.
+  itBundled("splitting/ExternalExportStarNameOfTwoModulesKeepsSafeChunkOrder", {
+    files: {
+      "/a.js": `export * from "pky"; export * from "./through.js"; import "./name.js"; export const v = "v";`,
+      "/through.js": `export * from "./value.js";`,
+      "/name.js": `import { y } from "./barrel.js"; console.log("name", y);`,
+      "/value.js": `import * as barrel from "./barrel.js"; console.log("value", barrel.v);`,
+      "/barrel.js": `export * from "pkx"; export * from "./a.js";`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const x = "x";`,
+      "/node_modules/pky/index.js": `export const y = "y";`,
+    },
+    entryPoints: ["/a.js", "/name.js", "/value.js"],
+    splitting: true,
+    outdir: "/out",
+    external: ["pkx", "pky"],
+    run: { file: "/out/value.js", stdout: "name y\nvalue v" },
+  });
+
+  // barrel.js reads the name off its own exports object: with two external
+  // modules, or with a module that the browser target disables.
+  for (const [name, stars, options, value] of [
+    ["OfTwoModules", `export * from "pkx"; export * from "pky";`, { external: ["pkx", "pky"] }, "y"],
+    ["OfDisabledModule", `export * from "./disabled.js";`, { target: "browser" }, "undefined"],
+  ] as const) {
+    itBundled(`splitting/ExternalExportStarNameReadOffOwnExportsObject${name}KeepsSafeChunkOrder`, {
+      files: {
+        "/package.json": `{ "browser": { "./disabled.js": false } }`,
+        "/a.js": `export * from "./through.js"; import "./barrel.js"; export const v = "v";`,
+        "/through.js": `export * from "./value.js";`,
+        "/value.js": `import * as A from "./a.js"; console.log("value", A.v);`,
+        "/barrel.js": `${stars} export * from "./a.js"; import { y } from "./barrel.js"; console.log("name", y);`,
+        "/keys.js": `import * as barrel from "./barrel.js"; export function keys() { return Object.keys(barrel); }`,
+        "/disabled.js": `export const y = "disabled";`,
+      },
+      runtimeFiles: {
+        "/node_modules/pkx/index.js": `export const x = "x";`,
+        "/node_modules/pky/index.js": `export const y = "y";`,
+      },
+      entryPoints: ["/a.js", "/value.js", "/keys.js"],
+      splitting: true,
+      outdir: "/out",
+      ...options,
+      run: { file: "/out/value.js", stdout: `name ${value}\nvalue v` },
+    });
+  }
+
+  // shared.js reads a name of "pkx" through a barrel that tree shaking would
+  // drop. Its chunk loads "pkx", so no other chunk takes it in: entry3.js
+  // does not load "pkx".
+  itBundled("splitting/ExternalExportStarNameReadIsNotFoldedIntoOtherEntryPoints", {
+    files: {
+      "/entry1.js": `import { f } from "./shared.js"; import { g } from "./common.js"; console.log("entry1", f(), g());`,
+      "/entry2.js": `import { f } from "./shared.js"; import { g } from "./common.js"; console.log("entry2", f(), g());`,
+      "/entry3.js": `import { g } from "./common.js"; console.log("entry3", g());`,
+      "/shared.js": `import { a } from "lib"; export const f = () => a;`,
+      "/common.js": `export const g = () => "common";\n// ${Buffer.alloc(20000, "x").toString()}\n`,
+      "/node_modules/lib/package.json": `{ "name": "lib", "type": "module", "sideEffects": false }`,
+      "/node_modules/lib/index.js": `export * from "pkx"; export const own = 1;`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `console.log("pkx"); export const a = "a";`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js", "/entry3.js"],
+    splitting: true,
+    minChunkSize: 16384,
+    outdir: "/out",
+    external: ["pkx"],
+    run: [
+      { file: "/out/entry1.js", stdout: "pkx\nentry1 a common" },
+      { file: "/out/entry3.js", stdout: "entry3 common" },
+    ],
+  });
+
   // Chunks are printed with placeholders where they refer to other chunks and
   // assets; the placeholders are replaced once every output path is known.
   // These pin the two per-chunk decisions of that step: what the written paths

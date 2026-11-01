@@ -813,6 +813,7 @@ pub enum ExportsKind {
     // generates an exports object (stored in "exports") with getters for the
     // export names. Named imports to this module are only allowed if they are
     // in the set of export names.
+    // In the bundler's ES module output, a module that uses "export * from" with an external module is also "Esm": a named import that is not in the set reads the namespace of that module.
     Esm,
 
     // Some export names are known explicitly, but others fall back to a dynamic

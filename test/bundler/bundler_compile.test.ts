@@ -304,6 +304,73 @@ describe("bundler", () => {
       stdout: "entry ran",
     },
     {
+      // `import("./entry.ts")` puts the entry point in a wrapper, so its
+      // `export * from` prints at the end of the chunk and a bare import takes
+      // its place. The record needs the star export entry of the one and the
+      // module request of the other.
+      name: "ReExportExternalStarFromWrappedEntryPoint",
+      files: {
+        "/entry.ts": `
+          export * from "node:path";
+          export const own = 1;
+          import("./entry.ts").then(self => console.log("entry ran", self.own));
+        `,
+      },
+      stdout: "entry ran 1",
+    },
+    {
+      // A name that a file takes from an external module with `export *` is a
+      // property of the namespace that the statement imports. The module
+      // record must list that import.
+      name: "ReadNameOfExternalExportStar",
+      files: {
+        "/entry.ts": `
+          import { join } from "./lib.ts";
+          import * as lib from "./lib.ts";
+          console.log(typeof join, typeof lib.sep, lib.own);
+        `,
+        "/lib.ts": `
+          export * from "node:path";
+          export const own = 1;
+        `,
+      },
+      stdout: "function string 1",
+    },
+    {
+      // The exports object of such a file copies the names of the module from
+      // that namespace.
+      name: "ReadNamespaceOfExternalExportStar",
+      files: {
+        "/entry.ts": `
+          import * as lib from "./lib.ts";
+          const keys = Object.keys(lib);
+          console.log(keys.includes("join"), keys.includes("own"));
+        `,
+        "/lib.ts": `
+          export * from "node:path";
+          export const own = 1;
+        `,
+      },
+      stdout: "true true",
+    },
+    {
+      // The same for "bun": the statement is a module request then, where an
+      // import of "bun" in a file reads `globalThis.Bun`.
+      name: "ReadNameOfBunExportStar",
+      files: {
+        "/entry.ts": `
+          import { file } from "./lib.ts";
+          import * as lib from "./lib.ts";
+          console.log(typeof file, typeof lib.write, Object.keys(lib).includes("file"));
+        `,
+        "/lib.ts": `
+          export * from "bun";
+          export const own = 1;
+        `,
+      },
+      stdout: "function function true",
+    },
+    {
       // A file mixing `import` with `module.exports` is wrapped in __commonJS();
       // its external imports are hoisted out of the wrapper and still have to be
       // in the module record, otherwise `join` is not defined at runtime.

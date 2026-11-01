@@ -12,7 +12,7 @@
 use crate::mal_prelude::*;
 use bun_ast::Source;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
-use bun_collections::{HashMap, VecExt};
+use bun_collections::{ArrayHashMap, HashMap, VecExt};
 use bun_core::FeatureFlags;
 
 use crate::bundled_ast::{self, NamedExports, NamedImports};
@@ -25,7 +25,7 @@ use crate::{
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{Dependency, ExportsKind, PartList, Ref};
 
-use crate::linker_context_mod::LinkerCtx;
+use crate::linker_context_mod::{ExternalExportStar, LinkerCtx};
 
 type AstFlags = bundled_ast::Flags;
 type ImportRecordList<'a> = import_record::List<'a>;
@@ -444,6 +444,7 @@ pub(crate) fn scan_imports_and_exports(
                     import_records: &*import_records_list,
                     exports_kind: &mut *exports_kind,
                     entry_point_kinds: &*entry_point_kinds,
+                    ast_flags: &*ast_flags_list,
                     export_star_map: HashMap::default(),
                     export_star_records: &*export_star_import_records,
                     output_format,
@@ -532,13 +533,20 @@ pub(crate) fn scan_imports_and_exports(
                             exports_kind,
                             named_exports,
                             ast_flags: ast_flags_list,
+                            lists_external_stars: output_format.keep_es6_import_export_syntax(),
+                            external_stars: ArrayHashMap::new(),
+                            reaches_disabled_external_star: false,
                         });
                     }
-                    export_star_ctx.as_mut().unwrap().add_exports(
-                        resolved_exports,
-                        id,
-                        source_index,
-                    );
+                    let ctx = export_star_ctx.as_mut().unwrap();
+                    ctx.add_exports(resolved_exports, id, source_index);
+                    // A root that reaches only disabled modules gets an empty list.
+                    if !ctx.external_stars.is_empty() || ctx.reaches_disabled_external_star {
+                        this.external_export_stars
+                            .put(source_index, ctx.external_stars.keys().to_vec())?;
+                        ctx.external_stars.clear();
+                        ctx.reaches_disabled_external_star = false;
+                    }
                 }
 
                 // Also add a special export so import stars can bind to it. This must be
@@ -696,6 +704,10 @@ pub(crate) fn scan_imports_and_exports(
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
         this.check_for_memory_corruption();
+    }
+
+    if !this.external_export_stars.is_empty() {
+        this.complete_exports_objects_with_external_export_stars()?;
     }
 
     // An `import()` / `require()` of a wrapped ES module whose every read step
@@ -1348,8 +1360,10 @@ pub(crate) fn scan_imports_and_exports(
                         continue;
                     }
 
+                    // In ES module output, the statement of an external module runs only in a CommonJS wrapper of a file that is not an entry point (README: Pattern 3).
                     let mut happens_at_runtime = rec_source_index.is_invalid()
-                        && (!is_entry_point || !output_format.keep_es6_import_export_syntax());
+                        && (!output_format.keep_es6_import_export_syntax()
+                            || (wrap == WrapKind::Cjs && !is_entry_point));
                     if rec_source_index.is_valid() {
                         let other_source_index = rec_source_index.get();
                         let other_id = other_source_index as usize;
@@ -1384,9 +1398,16 @@ pub(crate) fn scan_imports_and_exports(
                             Index::source(source_index),
                         )?;
                         col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
-                        col!(import_records_list)[id].as_mut_slice()[*import_record_index as usize]
-                            .flags
-                            .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                        let flags = &mut col!(import_records_list)[id].as_mut_slice()
+                            [*import_record_index as usize]
+                            .flags;
+                        flags.insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                        // `convert_stmts_for_chunk` prints an external one as `import * as ns`, and the printer names `ns` only for a record that contains an import star.
+                        if !rec_source_index.is_valid()
+                            && output_format.keep_es6_import_export_syntax()
+                        {
+                            flags.insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                        }
                         re_export_uses += 1;
                     }
                 }
@@ -1445,6 +1466,17 @@ fn should_call_runtime_require(format: options::Format) -> bool {
     format != Format::Cjs
 }
 
+/// Does the `export * from` of an external module make the exports of its file dynamic? In ES module output, only for a lifted CommonJS file that is not an entry point: a name of another file binds at link time (README: Pattern 5).
+#[inline]
+fn external_export_star_is_dynamic(
+    format: options::Format,
+    ast_flags: AstFlags,
+    is_entry_point: bool,
+) -> bool {
+    !format.keep_es6_import_export_syntax()
+        || (ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM) && !is_entry_point)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // DependencyWrapper
 // ──────────────────────────────────────────────────────────────────────────
@@ -1454,6 +1486,7 @@ struct DependencyWrapper<'a> {
     import_records: &'a [ImportRecordList<'a>],
     export_star_map: HashMap<IndexInt, ()>,
     entry_point_kinds: &'a [EntryPoint::Kind],
+    ast_flags: &'a [AstFlags],
     export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
     wrap_stack: Vec<IndexInt>,
@@ -1505,7 +1538,11 @@ impl DependencyWrapper<'_> {
             let rec_source_index =
                 self.import_records[source_index as usize].as_slice()[id as usize].source_index;
             let found_dynamic = if rec_source_index.is_invalid() {
-                !kind.is_entry_point() || !self.output_format.keep_es6_import_export_syntax()
+                external_export_star_is_dynamic(
+                    self.output_format,
+                    self.ast_flags[source_index as usize],
+                    kind.is_entry_point(),
+                )
             } else if rec_source_index.get() != source_index {
                 matches!(
                     self.enter_export_star(rec_source_index.get()),
@@ -1603,6 +1640,12 @@ struct ExportStarContext<'a> {
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
     ast_flags: *mut [AstFlags],
+    /// `add_exports` fills `external_stars`: the output is ES modules.
+    lists_external_stars: bool,
+    /// The external `export *` statements reached from the root, in source order.
+    external_stars: ArrayHashMap<ExternalExportStar, ()>,
+    /// The root reaches an external `export *` of a module that the target disables. Such a module has no names.
+    reaches_disabled_external_star: bool,
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1635,14 +1678,31 @@ impl<'a> ExportStarContext<'a> {
                     .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
             });
 
-            let other_source_index = col_ref!(self.import_records_list)[source_index as usize]
-                .as_slice()[import_id as usize]
-                .source_index
-                .get();
+            let record = &col_ref!(self.import_records_list)[source_index as usize].as_slice()
+                [import_id as usize];
+            let other_source_index = record.source_index.get();
 
             let other_id = other_source_index as usize;
             if other_id >= col_ref!(self.named_exports).len() {
                 // this AST was empty or it wasn't a JS AST
+                if self.lists_external_stars
+                    && !record.source_index.is_valid()
+                    && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                    && !col_ref!(self.ast_flags)[source_index as usize]
+                        .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                {
+                    if record.path.is_disabled {
+                        self.reaches_disabled_external_star = true;
+                    } else {
+                        bun_core::handle_oom(self.external_stars.put(
+                            ExternalExportStar {
+                                source_index,
+                                import_record_index: import_id,
+                            },
+                            (),
+                        ));
+                    }
+                }
                 continue;
             }
 

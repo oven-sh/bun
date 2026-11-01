@@ -1349,11 +1349,6 @@ pub struct Iterator<'a> {
     pub(crate) visited: VisitedMap,
 }
 
-pub struct IteratorResult<'a, 't> {
-    pub name: &'a [u8],
-    pub values: &'t mut [&'a [u8]],
-}
-
 impl<'a> Iterator<'a> {
     pub(crate) fn init(map: &'a QueryStringMap) -> Iterator<'a> {
         debug_assert!(map.list.len() <= MAX_QUERY_STRING_PARAMS);
@@ -1364,63 +1359,25 @@ impl<'a> Iterator<'a> {
         }
     }
 
-    // Lifetimes: values borrow `target` ('t), name borrows `map.slice` ('a).
-    pub fn next<'t>(&mut self, target: &'t mut [&'a [u8]]) -> Option<IteratorResult<'a, 't>>
-    where
-        'a: 't,
-    {
-        while self.i < self.map.list.len() && self.visited.is_set(self.i) {
+    /// Next unvisited name; `push` receives every value whose name hash matches, in list order.
+    pub fn next(&mut self, mut push: impl FnMut(&'a [u8])) -> Option<&'a [u8]> {
+        let map = self.map;
+        let list = &map.list;
+        while self.i < list.len() && self.visited.is_set(self.i) {
             self.i += 1;
         }
-        if self.i >= self.map.list.len() {
-            return None;
+        let head = *list.get(self.i)?;
+        debug_assert!(head.name.length > 0);
+
+        for (offset, param) in list[self.i..].iter().enumerate() {
+            if param.name_hash == head.name_hash {
+                self.visited.set(self.i + offset);
+                push(map.str(param.value));
+            }
         }
-
-        let list = &self.map.list;
-        let hash = list[self.i].name_hash;
-        let name_slice = list[self.i].name;
-        debug_assert!(name_slice.length > 0);
-        let name = self.map.str(name_slice);
-        target[0] = self.map.str(list[self.i].value);
-
-        self.visited.set(self.i);
         self.i += 1;
 
-        let remainder = &list[self.i..];
-
-        let mut target_i: usize = 1;
-        let mut current_i: usize = 0;
-
-        while let Some(next_index) = remainder[current_i..]
-            .iter()
-            .position(|p| p.name_hash == hash)
-        {
-            let real_i = current_i + next_index + self.i;
-            debug_assert!(!self.visited.is_set(real_i));
-
-            self.visited.set(real_i);
-            target[target_i] = self.map.str(remainder[current_i + next_index].value);
-            target_i += 1;
-
-            current_i += next_index + 1;
-            if target_i >= target.len() {
-                return Some(IteratorResult {
-                    name,
-                    values: &mut target[0..target_i],
-                });
-            }
-            if real_i + 1 >= self.map.list.len() {
-                return Some(IteratorResult {
-                    name,
-                    values: &mut target[0..target_i],
-                });
-            }
-        }
-
-        Some(IteratorResult {
-            name,
-            values: &mut target[0..target_i],
-        })
+        Some(map.str(head.name))
     }
 }
 
@@ -1825,7 +1782,7 @@ impl<'a> Scanner<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::URL;
+    use super::{CombinedScanner, QueryStringMap, URL, route_param};
 
     const ORIGIN: &[u8] = b"http://localhost:3000";
 
@@ -1967,5 +1924,98 @@ mod tests {
         expected.extend_from_slice(&basename);
         expected.extend_from_slice(b".js");
         assert_eq!(join(b"", b"dir", &basename, b".js"), expected);
+    }
+
+    /// Every name that the iterator returns, with the values it pushes for that name.
+    fn names_and_values(map: &QueryStringMap) -> Vec<(&[u8], Vec<&[u8]>)> {
+        let mut iter = map.iter();
+        let mut out = Vec::new();
+        loop {
+            let mut values = Vec::new();
+            let Some(name) = iter.next(|value| values.push(value)) else {
+                break;
+            };
+            out.push((name, values));
+        }
+        out
+    }
+
+    /// `count` different two-letter values: `aa`, `ab`, and so on.
+    fn two_letter_values(count: usize) -> Vec<[u8; 2]> {
+        (0..count)
+            .map(|i| [b'a' + (i / 26) as u8, b'a' + (i % 26) as u8])
+            .collect()
+    }
+
+    fn slices(values: &[[u8; 2]]) -> Vec<&[u8]> {
+        values.iter().map(|value| &value[..]).collect()
+    }
+
+    #[test]
+    fn the_query_iterator_returns_a_name_once_with_all_of_its_values() {
+        for count in [1, 2, 257] {
+            let values = two_letter_values(count);
+            let pairs: Vec<Vec<u8>> = values
+                .iter()
+                .map(|value| [&b"id="[..], value].concat())
+                .collect();
+            let query = pairs.join(&b'&');
+            let map = QueryStringMap::init(&query)
+                .expect("the allocation does not fail")
+                .expect("the query has parameters");
+            let expected = [(&b"id"[..], slices(&values))];
+            assert_eq!(names_and_values(&map), expected, "{count} values");
+            assert_eq!(
+                names_and_values(&map),
+                expected,
+                "{count} values, second iterator"
+            );
+        }
+    }
+
+    #[test]
+    fn the_query_iterator_orders_names_by_first_parameter_and_values_by_parameter() {
+        let map = QueryStringMap::init(b"a=1&id=2&x=3&id=4&a=5&id=6")
+            .expect("the allocation does not fail")
+            .expect("the query has parameters");
+        assert_eq!(
+            names_and_values(&map),
+            [
+                (&b"a"[..], vec![&b"1"[..], b"5"]),
+                (b"id", vec![b"2", b"4", b"6"]),
+                (b"x", vec![b"3"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_query_iterator_groups_a_percent_encoded_name_with_the_plain_name() {
+        let map = QueryStringMap::init(b"%69d=1&x=2&id=3")
+            .expect("the allocation does not fail")
+            .expect("the query has parameters");
+        assert_eq!(
+            names_and_values(&map),
+            [(&b"id"[..], vec![&b"1"[..], b"3"]), (b"x", vec![b"2"])]
+        );
+    }
+
+    #[test]
+    fn the_query_iterator_returns_a_route_parameter_name_once_with_all_of_its_values() {
+        let route = b"[id]/[id]/[id]";
+        let pathname = b"aa/ab/ac";
+        let params: route_param::List = (0..3)
+            .map(|i| route_param::Param {
+                name: &route[i * b"[id]/".len() + 1..][..2],
+                value: &pathname[i * b"aa/".len()..][..2],
+            })
+            .collect();
+        let scanner = CombinedScanner::init(b"", pathname, route, &params);
+        let map = QueryStringMap::init_with_scanner(scanner)
+            .expect("the allocation does not fail")
+            .expect("the route has parameters");
+        assert_eq!(
+            names_and_values(&map),
+            [(&b"id"[..], vec![&b"aa"[..], b"ab", b"ac"])]
+        );
     }
 }

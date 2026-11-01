@@ -366,6 +366,11 @@ pub(crate) struct ListingIdentity {
 impl ListingIdentity {
     const SETTLED_AFTER_NS: i128 = 2 * bun_core::time::NS_PER_S as i128;
 
+    /// 0 when no read recorded an identity.
+    pub(crate) fn ino(&self) -> u64 {
+        self.ino
+    }
+
     /// `None` when the file system keeps no change time (FAT reports 0): such a listing is never kept.
     pub(crate) fn read(fd: Fd) -> Option<Self> {
         let stat = bun_sys::PosixStat::init(&bun_sys::fstat(fd).ok()?);

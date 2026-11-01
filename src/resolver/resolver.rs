@@ -2839,10 +2839,19 @@ impl<'a> Resolver<'a> {
             info.get_entry(this.generation, name)
                 .map(|e| e.entry().kind(this.rfs_ref(), this.store_fd))
         };
-        if !info.is_node_modules()
-            && info.has_node_modules()
-                != (kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir))
+        // The listing is read again by the first lookup. A directory that is another one now
+        // (a retargeted link, a directory replaced) invalidates the real path the DirInfo holds.
+        let ino_before = info.get_entries_const().map(|e| e.identity.ino());
+        let has_node_modules_now = kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir);
+        let ino_after = info.get_entries_const().map(|e| e.identity.ino());
+        if let (Some(before), Some(after)) = (ino_before, ino_after)
+            && before != 0
+            && after != 0
+            && before != after
         {
+            return true;
+        }
+        if !info.is_node_modules() && info.has_node_modules() != has_node_modules_now {
             return true;
         }
         if self.opts.load_package_json

@@ -1,5 +1,7 @@
 //! PNG to 8-bit RGBA. No checksum is looked at: not a chunk's CRC, not a zlib stream's Adler-32.
 
+use core::ops::Range;
+
 use bun_collections::LazilyZeroedVec;
 use bun_core::strings::index_of_char_usize;
 use bun_zlib::{InflateDecoder, ReturnCode};
@@ -514,6 +516,43 @@ fn read_pixels(header: Header, expander: &Expander, idat: &mut Idat) -> Result<V
     Ok(image)
 }
 
+/// The image while its rows come.
+enum Rows {
+    InOrder(Vec<u8>),
+    /// A pass leaves rows out, and those are not to take memory before their own pass comes.
+    Interlaced(LazilyZeroedVec),
+}
+
+impl Rows {
+    fn try_new(header: Header, size: usize) -> Result<Self> {
+        if header.interlaced {
+            return Ok(Self::Interlaced(LazilyZeroedVec::try_new(size)?));
+        }
+        let mut image = Vec::new();
+        image.try_reserve_exact(size)?;
+        Ok(Self::InOrder(image))
+    }
+
+    fn get_mut(&mut self, range: Range<usize>) -> Option<&mut [u8]> {
+        match self {
+            Self::InOrder(image) => {
+                if image.len() < range.end {
+                    image.resize(range.end, 0);
+                }
+                image.get_mut(range)
+            }
+            Self::Interlaced(image) => image.get_mut(range),
+        }
+    }
+
+    fn into_vec(self) -> Vec<u8> {
+        match self {
+            Self::InOrder(image) => image,
+            Self::Interlaced(image) => image.into_vec(),
+        }
+    }
+}
+
 fn read_any_layout(
     header: Header,
     size: usize,
@@ -521,8 +560,7 @@ fn read_any_layout(
     idat: &mut Idat,
 ) -> Result<Vec<u8>> {
     let stride = header.width as usize * 4;
-    // A pass leaves rows out, and those are not to take memory before their own pass comes.
-    let mut image = LazilyZeroedVec::try_new(size)?;
+    let mut image = Rows::try_new(header, size)?;
     let longest = header.passes().map(|pass| pass.row_bytes).max();
     let mut line_len = longest.unwrap_or_default().saturating_add(1);
     let mut bytes_per_pixel = header.bytes_per_pixel();

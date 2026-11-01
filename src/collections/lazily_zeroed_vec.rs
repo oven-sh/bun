@@ -13,8 +13,8 @@ pub struct LazilyZeroedVec {
     bytes: Box<[MaybeUninit<u8>]>,
     /// Which blocks are zeroed.
     zeroed: DynamicBitSet,
-    /// Every block that starts before this is zeroed.
-    zeroed_to: usize,
+    /// How many are not.
+    unzeroed: usize,
 }
 
 /// The least that a system hands out memory in. Less for Miri, which takes its time over every byte.
@@ -23,10 +23,11 @@ const BLOCK: usize = if cfg!(miri) { 64 } else { 4096 };
 impl LazilyZeroedVec {
     #[inline]
     pub fn try_new(len: usize) -> Result<Self, AllocError> {
+        let blocks = len.div_ceil(BLOCK);
         Ok(Self {
             bytes: Box::try_new_uninit_slice(len).map_err(|_| AllocError)?,
-            zeroed: DynamicBitSet::init_empty(len.div_ceil(BLOCK))?,
-            zeroed_to: 0,
+            zeroed: DynamicBitSet::init_empty(blocks)?,
+            unzeroed: blocks,
         })
     }
 
@@ -34,10 +35,10 @@ impl LazilyZeroedVec {
     #[inline]
     pub fn get_mut(&mut self, range: Range<usize>) -> Option<&mut [u8]> {
         self.bytes.get(range.start..range.end)?;
-        if range.end > self.zeroed_to && !range.is_empty() {
+        if self.unzeroed != 0 && !range.is_empty() {
             self.zero(range.start..range.end);
         }
-        // SAFETY: each block that `range` reaches into starts before `zeroed_to` or was zeroed just now, and a
+        // SAFETY: each block that `range` reaches into is zeroed, as all are or since just now at the latest, and a
         // `&mut [u8]` cannot undo that.
         Some(unsafe { self.bytes.get_mut(range)?.assume_init_mut() })
     }
@@ -52,13 +53,8 @@ impl LazilyZeroedVec {
             if !self.zeroed.is_set(index) {
                 block.fill(MaybeUninit::new(0));
                 self.zeroed.set(index);
+                self.unzeroed -= 1;
             }
-        }
-        while self
-            .zeroed
-            .is_set_allow_out_of_bound(self.zeroed_to / BLOCK, false)
-        {
-            self.zeroed_to += BLOCK;
         }
     }
 
@@ -119,28 +115,12 @@ mod tests {
     }
 
     #[test]
-    fn how_far_it_is_zeroed_without_a_gap() {
-        let mut vec = new(5 * BLOCK);
-        let mut zeroed_to = |start: usize| {
-            assert_eq!(vec.get_mut(start..start + 2).unwrap(), [0; 2]);
-            vec.zeroed_to
-        };
-        assert_eq!(zeroed_to(0), BLOCK);
-        assert_eq!(zeroed_to(BLOCK - 2), BLOCK);
-        // The third and the fourth block, with the second still to come.
-        assert_eq!(zeroed_to(3 * BLOCK - 1), BLOCK);
-        assert_eq!(zeroed_to(BLOCK), 4 * BLOCK);
-        assert_eq!(zeroed_to(5 * BLOCK - 2), 5 * BLOCK);
-        assert_eq!(vec.into_vec(), [0; 5 * BLOCK]);
-    }
-
-    #[test]
     fn once_every_block_is_zeroed() {
         let mut vec = new(2 * BLOCK + 1);
         for start in [2 * BLOCK, 0, BLOCK] {
             vec.get_mut(start..start + 1).unwrap()[0] = 7;
         }
-        assert!(vec.zeroed_to >= vec.bytes.len());
+        assert_eq!(vec.unzeroed, 0);
         assert_eq!(vec.get_mut(BLOCK - 1..BLOCK + 2).unwrap(), [0, 7, 0]);
         assert!(vec.get_mut(0..2 * BLOCK + 2).is_none());
         vec.get_mut(1..2).unwrap()[0] = 8;
@@ -164,7 +144,7 @@ mod tests {
         // And asking for it zeroes nothing.
         let mut untouched = new(3 * BLOCK);
         assert!(untouched.get_mut(0..3 * BLOCK + 1).is_none());
-        assert_eq!(untouched.zeroed_to, 0);
+        assert_eq!(untouched.unzeroed, 3);
         assert_eq!(vec.into_vec(), [0; BLOCK + 10]);
     }
 
@@ -172,7 +152,7 @@ mod tests {
     fn no_byte_zeroes_no_block() {
         let mut vec = new(2 * BLOCK);
         assert_eq!(vec.get_mut(BLOCK + 1..BLOCK + 1).unwrap(), []);
-        assert_eq!(vec.zeroed.count(), 0);
+        assert_eq!(vec.unzeroed, 2);
     }
 
     #[test]

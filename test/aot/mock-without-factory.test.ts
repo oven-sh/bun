@@ -78,6 +78,44 @@ test("what require() answers", async () => {
   jest.doMock("./lib.cjs");
   console.log("OUT", (await import("./user.cjs")).seen());
 });`,
+  "flat.mjs": `export const a = "real";
+export function fn() { return "real fn"; }`,
+  "flat-user.mjs": `import { a, fn } from "./flat.mjs";
+export const seen = () => JSON.stringify([a, fn()]);`,
+  "ring.mjs": `import "./ring-user.mjs";
+export const a = "real";
+export function fn() { return "real fn"; }`,
+  "ring-user.mjs": `import { a, fn } from "./ring.mjs";
+export const seen = () => JSON.stringify([a, fn()]);`,
+  "after-factory.test.mjs": `import { jest, test, vi } from "bun:test";
+test("behind a mock with a factory, seen from an importer that has run", () => {
+  jest.doMock("./flat.mjs", () => ({ a: "mocked", fn: () => 1 }));
+  console.log("OUT", require("./flat-user.mjs").seen());
+  vi.doMock("./flat.mjs");
+  console.log("OUT", require("./flat-user.mjs").seen());
+});`,
+  "after-factory-ring.test.mjs": `import { jest, test, vi } from "bun:test";
+test("the same where the two import each other", () => {
+  jest.doMock("./ring.mjs", () => ({ a: "mocked", fn: () => 1 }));
+  console.log("OUT", require("./ring-user.mjs").seen());
+  vi.doMock("./ring.mjs");
+  console.log("OUT", require("./ring-user.mjs").seen());
+});`,
+  "after-factory-itself.test.mjs": `import { jest, test, vi } from "bun:test";
+test("the module itself", () => {
+  jest.doMock("./flat.mjs", () => ({ a: "mocked", fn: () => 1 }));
+  console.log("OUT", require("./flat.mjs").a);
+  vi.resetModules();
+  vi.doMock("./flat.mjs");
+  console.log("OUT", require("./flat.mjs").a);
+});`,
+  "second-factory.test.mjs": `import { jest, test, vi } from "bun:test";
+test("a second factory by vi.doMock()", () => {
+  jest.doMock("./flat.mjs", () => ({ a: "first", fn: () => 1 }));
+  console.log("OUT", require("./flat-user.mjs").seen());
+  vi.doMock("./flat.mjs", () => ({ a: "second", fn: () => 2 }));
+  console.log("OUT", require("./flat-user.mjs").seen());
+});`,
   "spy.test.mjs": `import { test, vi } from "bun:test";
 import * as lib from "./lib.mjs";
 vi.mock("./lib.mjs", { spy: true });
@@ -104,6 +142,10 @@ const pins = {
   "top-level.test.ts": ["OUT at the top true", "OUT 5 undefined"],
   "class.test.ts": ["OUT undefined 1 1"],
   "required-cjs.test.mjs": ["OUT lib.cjs runs", "OUT real f", "OUT value,f real value undefined"],
+  "after-factory.test.mjs": ['OUT ["mocked",1]', 'OUT ["real",null]'],
+  "after-factory-ring.test.mjs": ['OUT ["mocked",1]', 'OUT ["real",null]'],
+  "after-factory-itself.test.mjs": ["OUT mocked", "OUT real"],
+  "second-factory.test.mjs": ['OUT ["first",1]', 'OUT ["second",2]'],
   "spy.test.mjs": ["OUT lib.mjs runs", "OUT real value real f 1"],
 };
 

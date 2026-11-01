@@ -3189,6 +3189,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // In Vitest a module that has yet to run imports it after this call, and gets the mock. Here it is linked already, so only a patch reaches it.
     if (leavesLoadedModuleAlone && loaded.esmNamespace && isImportedByModuleYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
         leavesLoadedModuleAlone = false;
+#if ENABLE(AOT)
+    std::optional<unsigned> placeOfMockThatEnds;
+    unsigned testFileOfMockThatEnds = 0;
+    if (leavesLoadedModuleAlone && previous && !previous->isFromPreload) {
+        placeOfMockThatEnds = previous->compiledModuleThatNeverRan;
+        testFileOfMockThatEnds = previous->testFileOfFirstLoad;
+    }
+#endif
     if (leavesLoadedModuleAlone && previous && !previous->isFromPreload) {
         unmockModule(globalObject, previous, specifier);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3263,8 +3271,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
 
 #if ENABLE(AOT)
+    if (placeOfMockThatEnds) {
+        mock->compiledModuleThatNeverRan = placeOfMockThatEnds;
+        mock->testFileOfFirstLoad = testFileOfMockThatEnds;
+    }
     // As under `bun run`, the factory waits for the first import of a module that has not loaded.
-    if (loaded.compiledModule && !loaded.esmNamespace && !loaded.commonJSModule && !JSC::AOT::hasBegunToLoad(globalObject, *loaded.compiledModule)) {
+    if (loaded.compiledModule && !placeOfMockThatEnds && !loaded.esmNamespace && !loaded.commonJSModule && !JSC::AOT::hasBegunToLoad(globalObject, *loaded.compiledModule)) {
         auto& waiting = globalObject->onLoadPlugins.compiledMocksToRun;
         auto wait = [&](JSC::AOT::ModuleID form) {
             uint32_t module = form.index();
@@ -3283,7 +3295,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // False once the factory itself has re-mocked or unmocked the module, which wins.
     bool isCurrent = true;
     if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
+#if ENABLE(AOT)
+        pendingFactory = mock->run(globalObject, placeOfMockThatEnds && !mock->factory.get());
+#else
         pendingFactory = mock->run(globalObject, false);
+#endif
         // As in Vitest and Jest, a hoisted factory that reads a variable declared below the call waits for the first import.
         if (scope.exception() && mock->readUninitializedVariable && !loaded.compiledModule && scope.tryClearException()) [[unlikely]] {
             if (previous && !previous->isFromPreload) {

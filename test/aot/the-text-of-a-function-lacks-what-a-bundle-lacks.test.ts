@@ -22,6 +22,7 @@ declare const DEFINED_AS_A_NUMBER: number;
 declare const DEFINED_AS_A_STRING: string;
 declare const SHORT: string;
 declare const CONFIG: { a: number; "b-c": string[]; d: { e: null }; f: {}; g: [] };
+declare const AWS: { ACCESS_KEY: string; SECRET_KEY: string; REGION?: string };
 declare const LIST: number[];
 declare const BOTH_QUOTES: string;
 declare const DOUBLE_QUOTES: string;
@@ -102,6 +103,41 @@ function valuesOfOtherKinds(): unknown {
   return [CONFIG, CONFIG.a, { CONFIG }, LIST, BOTH_QUOTES, DOUBLE_QUOTES, ONE_OF_EACH, FRACTION, NEGATIVE, RENAMED(1.5), { RENAMED }, ACCENTS];
 }
 
+// A read of a member of an object or of an array is printed as that member. Any other use has the value.
+function membersOfValues(): unknown {
+  return [
+    AWS.ACCESS_KEY,
+    AWS["SECRET_KEY"],
+    CONFIG.d.e,
+    CONFIG.d,
+    CONFIG["b-c"],
+    CONFIG["b-c"][0],
+    CONFIG["b-c"].length,
+    LIST[1],
+    LIST.length,
+    !AWS.ACCESS_KEY,
+    AWS.REGION,
+    AWS?.ACCESS_KEY
+  ];
+}
+
+// A type assertion stands in the read of a member, or a member decides which side of && or || is printed.
+function membersBehindTypes(o: any): unknown {
+  return [
+    (AWS as any).ACCESS_KEY,
+    AWS!.SECRET_KEY,
+    (CONFIG.d as any).e,
+    CONFIG!.d!.e,
+    CONFIG["b-c" as const][0],
+    (LIST as number[])[1],
+    LIST[1 as number],
+    !AWS!.SECRET_KEY,
+    LIST[1] && o.a,
+    AWS["SECRET_KEY"] || o.b,
+    CONFIG.d.e ?? o.c
+  ];
+}
+
 class Holder {
   method(o: any): unknown {
     if (DEFINED_AS_FALSE) dead();
@@ -110,6 +146,12 @@ class Holder {
 }
 
 const arrow = (o: any): unknown => DEFINED_AS_FALSE ? dead() : o.a;
+
+// The read ends the text of the function, and its value is longer than what stands behind the type assertion.
+const arrowBehindAs = (): unknown => (CONFIG.d as any).e;
+const arrowBehindNonNull = (): unknown => CONFIG!.d!.e;
+const arrowBehindTypeOfKey = (): unknown => CONFIG["b-c" as const];
+const arrowOfAPath = (): unknown => (process.env as any).NODE_ENV;
 
 function quotesBehindWhatIsRemoved(o: any): unknown {
   if (DEFINED_AS_FALSE) dead(); return (DEFINED_AS_FALSE ? dead() : o.a).b.c;
@@ -126,22 +168,43 @@ function quotesBehindALongerValue(o: any): unknown {
 function quotesBetweenLongerValues(o: any): unknown {
   return [SHORT, o.a.b.c, SHORT]; }
 
+function quotesBehindMembers(o: any): unknown {
+  return [AWS.ACCESS_KEY, CONFIG.d, CONFIG["b-c"][0], o.a.b.c];
+}
+
+function quotesAMemberBehindAType(): unknown {
+  return (CONFIG!.d as any).e.x;
+}
+
 for (const shown of [
   statements,
   expressions,
   values,
   valuesLongerThanWhatIsWritten,
   valuesOfOtherKinds,
+  membersOfValues,
+  membersBehindTypes,
   Holder.prototype.method,
   arrow,
+  arrowBehindAs,
+  arrowBehindNonNull,
+  arrowBehindTypeOfKey,
+  arrowOfAPath,
 ]) {
   console.log(shown.toString());
 }
 // A function that is sent elsewhere as text finds no define there.
-for (const sent of [values, valuesLongerThanWhatIsWritten, valuesOfOtherKinds]) {
+for (const sent of [values, valuesLongerThanWhatIsWritten, valuesOfOtherKinds, membersOfValues, membersBehindTypes]) {
   console.log(JSON.stringify((0, eval)("(" + sent.toString() + ")")({})));
 }
-for (const thrower of [quotesBehindWhatIsRemoved, quotesBehindAValue, quotesBehindALongerValue, quotesBetweenLongerValues]) {
+for (const thrower of [
+  quotesBehindWhatIsRemoved,
+  quotesBehindAValue,
+  quotesBehindALongerValue,
+  quotesBetweenLongerValues,
+  quotesBehindMembers,
+  quotesAMemberBehindAType,
+]) {
   try {
     thrower({ a: {} });
   } catch (error) {
@@ -181,6 +244,7 @@ const defines = [
   'DEFINED_AS_A_STRING="text"',
   'SHORT="a value that is longer than its name"',
   'CONFIG={"a":1,"b-c":["x"],"d":{"e":null},"f":{},"g":[]}',
+  'AWS={"ACCESS_KEY":"abc","SECRET_KEY":"def"}',
   "LIST=[1,2]",
   "BOTH_QUOTES=" + JSON.stringify(`it's "so" \\ \${x}`),
   "DOUBLE_QUOTES=" + JSON.stringify(`say "so"`),
@@ -213,6 +277,9 @@ describe("compile/aot/the text of a function lacks what a bundle lacks", () => {
     const plain = await printedBy("plain", ["build", "--compile"]);
     expect(plain.stdout).not.toContain("SHORT,");
     expect(plain.stdout).toContain("production");
+    expect(plain.stdout).toContain(`functionmembersOfValues(){return["abc","def",null,{e:null},["x"],"x",1,2,2,`);
+    expect(plain.stdout).toContain(`()=>null()=>null()=>["x"]()=>"production"`);
+    expect(plain.stdout).toContain(`(evaluating'null.x')`);
     expect(await printedBy("compiled", compileCommand)).toEqual(plain);
   }, 300_000);
 });

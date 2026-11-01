@@ -432,6 +432,16 @@ const BUILD_FACTS: Fold<'static> = Fold {
     ..Fold::NONE
 };
 
+const SETTINGS: Defined<'static> = Defined::Value(Data::Object(&[
+    ("debug", Data::Boolean(false)),
+    ("level", Data::Number(3.0)),
+    ("name", Data::String("n")),
+    ("nested", Data::Object(&[("on", Data::Boolean(true))])),
+    ("list", Data::Array(&[Data::Number(0.0), Data::Number(1.0)])),
+    ("\u{e9}", Data::Boolean(false)),
+    ("0", Data::Boolean(false)),
+]));
+
 const USER_DEFINES: Fold<'static> = Fold {
     defines: &[
         (
@@ -461,7 +471,35 @@ const USER_DEFINES: Fold<'static> = Fold {
             Path::Global(&["LIST"]),
             Defined::Value(Data::Array(&[Data::Number(1.0)])),
         ),
+        (Path::Global(&["SETTINGS"]), SETTINGS),
+        (Path::Global(&["BUILT"]), SETTINGS),
         (Path::Global(&["RUNTIME"]), Defined::GlobalPath(&["Bun"])),
+        // A define of a path that the build adds by itself, below an object that the user defines.
+        (
+            Path::Global(&["app"]),
+            Defined::Value(Data::Object(&[
+                ("same", Data::String("s")),
+                ("mode", Data::String("user")),
+                ("flag", Data::Boolean(false)),
+            ])),
+        ),
+        (
+            Path::Global(&["app", "same"]),
+            Defined::Value(Data::String("s")),
+        ),
+        (
+            Path::Global(&["app", "mode"]),
+            Defined::Value(Data::String("build")),
+        ),
+        // A define of a path that the user gives beside an object that holds the same key.
+        (
+            Path::Global(&["both"]),
+            Defined::Value(Data::Object(&[("on", Data::Boolean(false))])),
+        ),
+        (
+            Path::Global(&["both", "on"]),
+            Defined::Value(Data::Boolean(true)),
+        ),
     ],
     user_defined: &[
         Path::Global(&["process", "env", "NODE_ENV"]),
@@ -470,7 +508,11 @@ const USER_DEFINES: Fold<'static> = Fold {
         Path::Global(&["NOTHING"]),
         Path::Global(&["CONFIG"]),
         Path::Global(&["LIST"]),
+        Path::Global(&["SETTINGS"]),
         Path::Global(&["RUNTIME"]),
+        Path::Global(&["app"]),
+        Path::Global(&["both"]),
+        Path::Global(&["both", "on"]),
     ],
     ..Fold::NONE
 };
@@ -556,6 +598,89 @@ const FORMATS_WITH_USER_DEFINES: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"CONFIG ?? require("a");"#, Esm),
     ("a.js", r#"if (CONFIG == null) require("a");"#, CommonJs),
     ("a.js", r#"if (!LIST) require("a");"#, Esm),
+    ("a.js", r#"if (CONFIG.a !== 1) require("a");"#, Esm),
+    ("a.js", r#"if (!LIST[0]) require("a");"#, Esm),
+    ("a.js", r#"if (SETTINGS.debug) require("a");"#, Esm),
+    ("a.js", r#"if (SETTINGS["debug"]) require("a");"#, Esm),
+    ("a.js", r#"if (!SETTINGS.nested.on) require("a");"#, Esm),
+    ("a.js", r#"if (SETTINGS.list[0]) require("a");"#, Esm),
+    (
+        "a.js",
+        r#"if (SETTINGS.list.length !== 2) require("a");"#,
+        Esm,
+    ),
+    ("a.js", r#"SETTINGS.level ?? require("a");"#, Esm),
+    ("a.js", r#"SETTINGS.nested ?? require("a");"#, Esm),
+    ("a.js", r#"SETTINGS.nested || require("a");"#, Esm),
+    ("a.js", r#"SETTINGS.debug && module.exports;"#, Esm),
+    (
+        "a.ts",
+        r#"if (SETTINGS["debug" as const]) require("a");"#,
+        Esm,
+    ),
+    (
+        "a.ts",
+        r#"if (SETTINGS.list[0 as number]) require("a");"#,
+        Esm,
+    ),
+    ("a.js", r#"if (SETTINGS.level) require("a");"#, CommonJs),
+    ("a.js", r#"if (SETTINGS.missing) require("a");"#, CommonJs),
+    ("a.js", r#"if (SETTINGS?.debug) require("a");"#, CommonJs),
+    ("a.js", r#"if (BUILT.debug) require("a");"#, CommonJs),
+    // `bun run` reads the member out of the object where the build has a define of its own for the path. It folds the same
+    // only where the two values are the same.
+    ("a.js", r#"if (app.same !== "s") require("a");"#, Esm),
+    (
+        "a.js",
+        r#"if (app.mode !== "build") require("a");"#,
+        CommonJs,
+    ),
+    ("a.js", r#"if (app.flag) require("a");"#, Esm),
+    ("a.js", r#"if (app["same"] !== "s") require("a");"#, Esm),
+    // `bun run` has `both["on"]` as `both.on`, which is the define of the path.
+    ("a.js", r#"if (both["on"]) require("a");"#, CommonJs),
+    ("a.js", r#"if (both.on) require("a");"#, CommonJs),
+    ("a.js", r#"if (!both.on) require("a");"#, Esm),
+    // A string member is a string behind a type assertion too.
+    ("a.js", r#"SETTINGS.name + "", module;"#, Esm),
+    ("a.ts", r#"(SETTINGS.name as string) + "", module;"#, Esm),
+    // `bun run` has the whole value around a key that is computed, and under a read that takes no member.
+    (
+        "a.js",
+        r#"if (SETTINGS.nested.missing) require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (SETTINGS.list[1 - 1]) require("a");"#,
+        CommonJs,
+    ),
+    ("a.js", r#"if (SETTINGS.list?.[0]) require("a");"#, CommonJs),
+    (
+        "a.js",
+        r#"if (SETTINGS["de" + "bug"]) require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"const KEY = "debug"; if (SETTINGS[KEY]) require("a");"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (SETTINGS[(0, "debug")]) require("a");"#,
+        CommonJs,
+    ),
+    // `bun run` reads a key that is not ASCII behind a dot, and not in brackets.
+    ("a.js", "if (SETTINGS.\u{e9}) require(\"a\");", Esm),
+    (
+        "a.js",
+        "if (SETTINGS[\"\u{e9}\"]) require(\"a\");",
+        CommonJs,
+    ),
+    // `bun run` reads a key of an object that is written as a string, and not one that is written as a number.
+    ("a.js", r#"if (SETTINGS["0"]) require("a");"#, Esm),
+    ("a.js", r#"if (SETTINGS[0]) require("a");"#, CommonJs),
     ("a.js", r#"if (!RUNTIME) require("a");"#, CommonJs),
     (
         "a.js",

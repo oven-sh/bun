@@ -21,7 +21,7 @@ use crate::parse::parse_entry::Options as ParserOptions;
 use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
-    DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
+    DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple, ExprIn,
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
@@ -575,6 +575,15 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// We must be careful to avoid revisiting nodes that have scopes.
     /// A revisited node can be part of a `define` value, which is shared with other parses.
     pub(crate) is_revisit_for_substitution: bool,
+
+    /// What `leave_define_to_member_read` leaves for the member read around it: the value of an
+    /// object or array define, or a value inside one. It is a node of the define table, which
+    /// every parse shares.
+    pub(crate) define_member_target: Option<js_ast::ExprData>,
+    /// Set while a member read that takes no member visits its target again: the define there
+    /// puts a copy of its whole value in its place, as it does for any other use. That visit
+    /// reports no error of strict mode a second time.
+    pub(crate) keeps_define_whole: bool,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
@@ -4853,6 +4862,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r: bun_ast::Range,
         detail: &[u8],
     ) -> Result<(), crate::Error> {
+        // The second visit of the target of a member read reports nothing again.
+        if self.keeps_define_whole {
+            return Ok(());
+        }
         let text: &'a [u8] = match feature {
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.arena,
@@ -7133,6 +7146,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    // Out of line: its callers are in `visit_expr_in_out`, which every expression passes through.
+    #[inline(never)]
     pub(crate) fn value_for_define(
         &mut self,
         loc: bun_ast::Loc,
@@ -7162,6 +7177,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .with_was_originally_identifier(true),
                 );
             }
+            _ => self.copy_of_define_value(loc, value),
+        }
+    }
+
+    /// `value` is a node of the define table: the value of a define, or a value inside one.
+    pub(crate) fn copy_of_define_value(
+        &mut self,
+        loc: bun_ast::Loc,
+        value: js_ast::ExprData,
+    ) -> Expr {
+        match value {
             js_ast::ExprData::EString(str_) => {
                 return self.new_expr(&*str_, loc);
             }
@@ -7176,6 +7202,125 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         Expr { data: value, loc }
+    }
+
+    /// Where a use of the define value `value` is the target of a member read, leaves `value` to
+    /// that read and returns true. The read is the `e_dot`, the `e_index` or the declaration with
+    /// an object pattern that visits the use with `is_property_access_target`. An `e_dot` or an
+    /// `e_index` then copies the one member that it reads, and the declaration copies all of
+    /// `value`.
+    #[inline(never)]
+    pub(crate) fn leave_define_to_member_read(
+        &mut self,
+        in_: ExprIn,
+        value: &js_ast::ExprData,
+    ) -> bool {
+        let has_members = matches!(
+            value,
+            js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_)
+        );
+        if !in_.is_property_access_target || !has_members || self.keeps_define_whole {
+            return false;
+        }
+        // A visit for a substitution finds the index of the read visited already: a key that the
+        // first visit computed is no literal in the source.
+        if self.is_revisit_for_substitution {
+            return false;
+        }
+        debug_assert!(self.define_member_target.is_none());
+        self.define_member_target = Some(*value);
+        true
+    }
+
+    /// Finishes the member read `e`, the visit of whose target left a define value. Returns true
+    /// when `e` is done: it is the own member that it names, or that member is left to the member
+    /// read around `e`. Otherwise the define under `e` is now a copy of its whole value: the
+    /// target was visited again, unless it is the identifier of the define itself.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn read_member_of_define(&mut self, e: &mut Expr, in_: ExprIn) -> bool {
+        let Some(define) = self.define_member_target.take() else {
+            return false;
+        };
+        let is_this_read = |node: js_ast::ExprData| match (node, e.data) {
+            (js_ast::ExprData::EDot(a), js_ast::ExprData::EDot(b)) => {
+                core::ptr::eq(&raw const *a, &raw const *b)
+            }
+            (js_ast::ExprData::EIndex(a), js_ast::ExprData::EIndex(b)) => {
+                core::ptr::eq(&raw const *a, &raw const *b)
+            }
+            _ => false,
+        };
+        let optional_chain = match e.data {
+            js_ast::ExprData::EDot(dot) => dot.optional_chain,
+            js_ast::ExprData::EIndex(index) => index.optional_chain,
+            _ => None,
+        };
+        // A store (`x.a = 1`, `x.a++`) and a call (`x.a()`, `` x.a`` ``) do more with the object
+        // than a read of the member. A link of an optional chain (`x?.a`) keeps the object too:
+        // no define of a path matches through `?.`.
+        let is_plain_read = in_.assign_target == js_ast::AssignTarget::None
+            && optional_chain.is_none()
+            && !is_this_read(self.call_target)
+            && !is_this_read(self.template_tag);
+        // The index is not visited yet, so a string or a number there is a literal in the source.
+        let member = match e.data {
+            _ if !is_plain_read => None,
+            js_ast::ExprData::EDot(dot) => crate::defines::own_member(define, dot.name.slice()),
+            js_ast::ExprData::EIndex(index) => match index.index.data {
+                js_ast::ExprData::EString(name) if name.is_utf8() => {
+                    crate::defines::own_member(define, name.data.slice())
+                }
+                js_ast::ExprData::ENumber(number) => {
+                    crate::defines::own_item(define, number.value())
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(member) = member {
+            if self.leave_define_to_member_read(in_, &member) {
+                return true;
+            }
+            let has_members = matches!(
+                member,
+                js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_)
+            );
+            // `delete x.a.b` deletes from a copy of `x`.
+            let delete_target = match self.delete_target {
+                js_ast::ExprData::EDot(dot) => Some(dot.target.data),
+                js_ast::ExprData::EIndex(index) => Some(index.target.data),
+                _ => None,
+            };
+            if !has_members || !delete_target.is_some_and(is_this_read) {
+                *e = self.copy_of_define_value(e.loc, member);
+                return true;
+            }
+        }
+        let mut target = match e.data {
+            js_ast::ExprData::EDot(dot) => dot.target,
+            js_ast::ExprData::EIndex(index) => index.target,
+            _ => return false,
+        };
+        if let js_ast::ExprData::EIdentifier(_) = target.data {
+            // The identifier left its own value.
+            target = self.copy_of_define_value(target.loc, define);
+        } else {
+            // A define with a value reads no other bit of the `ExprIn` of a member target.
+            let target_in = ExprIn {
+                is_property_access_target: true,
+                ..Default::default()
+            };
+            let kept_whole = core::mem::replace(&mut self.keeps_define_whole, true);
+            self.visit_expr_in_out(&mut target, target_in);
+            self.keeps_define_whole = kept_whole;
+        }
+        match e.data {
+            js_ast::ExprData::EDot(mut dot) => dot.target = target,
+            js_ast::ExprData::EIndex(mut index) => index.target = target,
+            _ => {}
+        }
+        false
     }
 
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
@@ -9868,6 +10013,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
+            define_member_target: None,
+            keeps_define_whole: false,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,

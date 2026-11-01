@@ -1,5 +1,6 @@
 import * as b from "bun-builtins-table";
 import {
+  argumentsCell,
   environmentCell,
   framesOfModuleGraphsCell,
   moduleGraphsCell,
@@ -1439,7 +1440,16 @@ export default b.declarations(
       fetch,
       main: mainModulePath,
       // What process.argv answers at the first read: the program may have stored anything there, or defined a getter.
-      argv: b.property(b.any, { createdOnFirstRead: { capability: "js", throws: true, reads: externalState } }),
+      argv: b.property(b.any, {
+        createdOnFirstRead: {
+          capability: "js",
+          throws: true,
+          uses: {
+            this: [b.createdIn(newArrayOf(b.string).dense, b.nativeCell(argumentsCell)), b.returnedFrom(argumentsCell)],
+          },
+          reads: externalState,
+        },
+      }),
       // Nothing is known of the class, so whoever reads it counts as calling import() of a graph (ReadLoadsCodeByName in marks.builtins.ts).
       // From the first graph on, the natives that look for the graph of a frame find graphs and frames.
       ModuleGraph: b.property(b.any, {

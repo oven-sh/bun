@@ -1362,15 +1362,16 @@ describe.concurrent("Zstandard HTTP compression", () => {
 
 // The compressor is a port of zstd 1.5.7, and gives the same bytes. The expected values are from the C library.
 describe("the output is that of zstd 1.5.7", () => {
+  const xorshift = (x: number) => () => {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    return (x >>>= 0);
+  };
+
   // Words, copies of earlier parts at all distances, noise and runs: something for every part of the compressor.
   function sample(size: number, seed: number) {
-    let state = seed >>> 0 || 1;
-    const next = () => {
-      state ^= state << 13;
-      state ^= state >>> 17;
-      state ^= state << 5;
-      return (state >>>= 0);
-    };
+    const next = xorshift(seed >>> 0 || 1);
     const words = [
       "function ",
       "return ",
@@ -1611,13 +1612,7 @@ describe("the output is that of zstd 1.5.7", () => {
    * among the noise, three of the one for one of the other.
    */
   const withPieces = (bits: number, shortest = 4, longest = 15, mostlyOfTheDictionary = true) => {
-    let x = 5;
-    const next = () => {
-      x ^= x << 13;
-      x ^= x >>> 17;
-      x ^= x << 5;
-      return (x >>>= 0);
-    };
+    const next = xorshift(5);
     const all = Buffer.alloc(42_000);
     for (let at = 0; at < all.length;) {
       for (let n = 4 + (next() % 24); n > 0; n--) all[at++] = next() >>> (32 - bits);
@@ -1688,14 +1683,41 @@ describe("the output is that of zstd 1.5.7", () => {
     ]);
   });
 
-  it("where the kind of data changes within a block, for rows of 64 entries", () => {
-    let x = 11;
-    const next = () => {
-      x ^= x << 13;
-      x ^= x >>> 17;
-      x ^= x << 5;
-      return x >>> 0;
+  it("where there are literals while a repeat offset leads into a dictionary", () => {
+    // Noise of 5 bits. What follows the dictionary has pieces from so far back, in turn, with one byte of each altered.
+    const withAlteredPieces = (distances: number[]) => {
+      const next = xorshift(5);
+      const all = Buffer.alloc(39_000);
+      for (let at = 0; at < 30_000; at++) all[at] = next() >>> 27;
+      for (let at = 30_000, n = 0; at < all.length; n++) {
+        for (let k = 1 + (next() % 12); k > 0; k--) all[at++] = next() >>> 27;
+        const from = at - distances[n % distances.length];
+        all.copyWithin(at, from, from + 16);
+        all[at + 4 + (next() % 8)] ^= 1 + (next() % 3);
+        at += 16;
+      }
+      return all;
     };
+    const digests = (all: Buffer, size: number) =>
+      [13, 16].flatMap(n => {
+        const compress = (from: number, to: number) =>
+          zlib.zstdCompressSync(all.subarray(from, to), { params: level(n), dictionary: all.subarray(0, 30_000) });
+        // The offsets that a frame starts with, 1, 4 and 8, lead into the dictionary for its first 8 bytes.
+        const starts = Array.from({ length: 8 }, (_, start) => compress(30_000 + start, 30_300 + start));
+        return [digest(compress(30_000, 30_000 + size)), digest(Buffer.concat(starts))];
+      });
+    expect([
+      digests(withAlteredPieces([25_000, 12_345, 50]), 8_000),
+      // A piece goes on over the end of the dictionary, whose tables level 16 copies for more than 8 KB.
+      digests(withAlteredPieces([20]), 9_000),
+    ]).toEqual([
+      ["2519 24ce676ed4360f6b", "1093 e9f462ba5074daef", "2482 b0633ed5d69d3d65", "1061 d826405e9ce9c5d2"],
+      ["2689 ac0ddc2b63fa3cf0", "1044 9e83e945e3585cf6", "2593 665843657aba87c4", "1018 d57ef3f0c34b3189"],
+    ]);
+  });
+
+  it("where the kind of data changes within a block, for rows of 64 entries", () => {
+    const next = xorshift(11);
     // Many positions start like another one and go on otherwise.
     const fewSymbols = (size: number) => Uint8Array.from({ length: size }, () => 65 + (next() >>> 30));
     const noise = (size: number) => Uint8Array.from({ length: size }, () => next() >>> 24);
@@ -1744,13 +1766,7 @@ describe("the output is that of zstd 1.5.7", () => {
 
   it("where matches are far between, for the optimal parsers", () => {
     const data = Buffer.alloc(100_000);
-    let x = 9;
-    const next = () => {
-      x ^= x << 13;
-      x ^= x >>> 17;
-      x ^= x << 5;
-      return x >>> 0;
-    };
+    const next = xorshift(9);
     const copy = (at: number, distance: number, length: number) => {
       const end = Math.min(at + length, data.length);
       while (at < end) data[at] = data[at++ - distance];

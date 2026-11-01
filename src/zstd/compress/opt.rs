@@ -674,37 +674,57 @@ impl<'a> Trees<'a> {
                 .count(ip + min_match, ip - rep_offset + min_match);
             return Ok(more + min_match);
         }
+        let Some((buf, pos, end)) = self.far_rep(self.dms, ip, rep_offset, window_low)? else {
+            return Ok(0);
+        };
+        let after = pos + min_match as usize;
+        Ok(input.count_2segments(ip + min_match, buf, after, end)? + min_match)
+    }
+
+    /// Where the repeat offset `rep_offset` of `ip` leads, which is before the current segment: a buffer, the position
+    /// in it, and that of the end of the segment. `None` unless what is there starts like `ip`. `dms` is `self.dms`,
+    /// of which a loop has a copy at hand.
+    #[inline(always)]
+    fn far_rep(
+        &self,
+        dms: Option<DictMatchState<'a>>,
+        ip: u32,
+        rep_offset: u32,
+        window_low: u32,
+    ) -> Result<Option<(&'a [u8], usize, usize)>> {
+        let input = self.input;
         let curr = ip.wrapping_add(input.dict_limit);
         let rep_index = curr.wrapping_sub(rep_offset);
-        let same_start =
-            |bytes: u32| Some(minmatch_differs(bytes, input.near.read32(ip)?, min_match) == 0);
         if !index_overlap_check(input.dict_limit, rep_index) {
-            return Ok(0);
+            return Ok(None);
         }
-        if let Some(dms) = self.dms {
+        let (buf, pos, end) = if let Some(dms) = dms {
             let dms_high_limit = dms.end.wrapping_sub(dms.base) as u32;
             let dms_index_delta = window_low.wrapping_sub(dms_high_limit);
             let dms_low = dms.ms.window.low_limit.wrapping_add(dms_index_delta);
             // `curr > rep_index >= dms_low`
-            if rep_offset.wrapping_sub(1) < curr.wrapping_sub(dms_low) {
-                let rep_match = dms.pos_of(rep_index.wrapping_sub(dms_index_delta));
-                if same_start(read_le32(dms.buf, rep_match)?).ok_or(BUG)? {
-                    let after = rep_match + min_match as usize;
-                    let more = input.count_2segments(ip + min_match, dms.buf, after, dms.end)?;
-                    return Ok(more + min_match);
-                }
+            if rep_offset.wrapping_sub(1) >= curr.wrapping_sub(dms_low) {
+                return Ok(None);
             }
-        } else if self.low_limit < input.dict_limit {
+            let pos = dms.pos_of(rep_index.wrapping_sub(dms_index_delta));
+            (dms.buf, pos, dms.end)
+        } else {
             // `curr > rep_index >= window_low`
-            if rep_offset.wrapping_sub(1) < curr.wrapping_sub(window_low)
-                && same_start(read_le32(input.dict.buf, input.dict.pos_of(rep_index))?)
-                    .ok_or(BUG)?
+            if self.low_limit >= input.dict_limit
+                || rep_offset.wrapping_sub(1) >= curr.wrapping_sub(window_low)
             {
-                let after = rep_index.wrapping_add(min_match);
-                return Ok(input.count_ext_dict(ip + min_match, after)? + min_match);
+                return Ok(None);
             }
-        }
-        Ok(0)
+            let dict = input.dict;
+            (
+                dict.buf,
+                dict.pos_of(rep_index),
+                dict.pos_of(input.dict_limit),
+            )
+        };
+        let here = input.near.read32(ip).ok_or(BUG)?;
+        let is_alike = minmatch_differs(read_le32(buf, pos)?, here, self.min_match) == 0;
+        Ok(is_alike.then_some((buf, pos, end)))
     }
 
     /// `ZSTD_btGetAllMatches_internal`: adds the positions up to `ip`, a position of `near`, to the trees, and stores in
@@ -887,7 +907,7 @@ impl<'a> Trees<'a> {
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
     ) -> Result<(u32, u32)> {
-        self.skip_matchless_generic(matches, ip, limit, rep, false)
+        self.skip_matchless_generic(matches, ip, limit, rep, false, false)
     }
 
     /// [`Self::skip_matchless`] where a dictionary is searched in place.
@@ -895,15 +915,42 @@ impl<'a> Trees<'a> {
     fn skip_matchless_in_place(
         &mut self,
         matches: &mut [Match],
+        mut ip: u32,
+        limit: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+    ) -> Result<(u32, u32)> {
+        let [rep0, rep1, rep2] = *rep;
+        let farthest = rep0.max(rep1).max(rep2);
+        if ip < farthest {
+            // What was at the last offset goes on after a few bytes that differ: nothing to pass.
+            let window_low = self.lowest_match_index(ip.wrapping_add(self.input.dict_limit));
+            if ip < rep0 && self.far_rep(self.dms, ip, rep0, window_low)?.is_some() {
+                return Ok((ip, 0));
+            }
+            let found;
+            (ip, found) = self.skip_matchless_far_reps(matches, ip, limit.min(farthest), rep)?;
+            if ip < farthest {
+                return Ok((ip, found));
+            }
+        }
+        self.skip_matchless_generic(matches, ip, limit, rep, true, false)
+    }
+
+    /// [`Self::skip_matchless_in_place`] where a repeat offset leads into the dictionary, which after a match there is
+    /// most of the time.
+    #[inline(never)]
+    fn skip_matchless_far_reps(
+        &mut self,
+        matches: &mut [Match],
         ip: u32,
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
     ) -> Result<(u32, u32)> {
-        self.skip_matchless_generic(matches, ip, limit, rep, true)
+        self.skip_matchless_generic(matches, ip, limit, rep, true, true)
     }
 
-    /// `in_place` is not a const parameter: an instance of a generic function is compiled apart from the rest of this
-    /// file, after which [`Self::search_dms`] takes 2% longer on short records.
+    /// `in_place` and `far_reps` are not const parameters: an instance of a generic function is compiled apart from the
+    /// rest of this file, after which [`Self::search_dms`] takes 2% longer on short records.
     #[inline(always)]
     fn skip_matchless_generic(
         &mut self,
@@ -912,19 +959,20 @@ impl<'a> Trees<'a> {
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
         in_place: bool,
+        far_reps: bool,
     ) -> Result<(u32, u32)> {
         let near = self.input.near;
         let dict_limit = self.input.dict_limit;
         let min_match = self.min_match;
-        // No repeat offset leads before the current segment, from `ip` on.
+        // Unless `far_reps`, no repeat offset leads before the current segment, from `ip` on.
         if ip.wrapping_add(dict_limit) != self.next_to_update
             || (!in_place && self.dms.is_some())
-            || rep.iter().any(|rep_offset| *rep_offset > ip)
+            || (!far_reps && rep.iter().any(|rep_offset| *rep_offset > ip))
         {
             return Ok((ip, 0));
         }
-        let dict = if in_place { self.dms } else { None };
-        let dict = dict.map(|dms| (dms, self.hasher.with_log(dms.ms.c_params.hash_log)));
+        let dms = if in_place { self.dms } else { None };
+        let dict = dms.map(|dms| (dms, self.hasher.with_log(dms.ms.c_params.hash_log)));
 
         while ip < limit
             && let Some(bytes) = near.read64(ip)
@@ -944,7 +992,19 @@ impl<'a> Trees<'a> {
                 let there = near.read32(pos);
                 there.is_none_or(|there| minmatch_differs(there, bytes as u32, min_match) == 0)
             };
-            if (rep.iter()).any(|rep_offset| starts_alike(ip - rep_offset, min_match)) {
+            if far_reps {
+                let mut is_repeat = false;
+                for &rep_offset in rep {
+                    is_repeat |= if rep_offset <= ip {
+                        starts_alike(ip - rep_offset, min_match)
+                    } else {
+                        self.far_rep(dms, ip, rep_offset, window_low)?.is_some()
+                    };
+                }
+                if is_repeat {
+                    break;
+                }
+            } else if (rep.iter()).any(|rep_offset| starts_alike(ip - rep_offset, min_match)) {
                 break;
             }
             if min_match == 3 {

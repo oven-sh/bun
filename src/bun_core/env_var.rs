@@ -332,6 +332,9 @@ pub mod feature_flag {
     // CLI equivalent.
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT, "BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_IO_POOL, "BUN_FEATURE_FLAG_FORCE_IO_POOL", {});
+    // Linux: `bun --hot` also asks inotify for writes inside the directories it watches, as it
+    // did from 1.3.7 until the hot reloader opted out of `WatcherContext::WATCH_DIRECTORY_WRITES`.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES, "BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});
     new_feature_flag!(pub BUN_INTERNAL_BUNX_HAS_COPY, "BUN_INTERNAL_BUNX_HAS_COPY", {});

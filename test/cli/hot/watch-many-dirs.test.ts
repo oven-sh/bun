@@ -1,16 +1,31 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir } from "harness";
-import { mkdirSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readlinkSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("--hot with many directories", () => {
+  const saves: [string, (path: string, text: string) => Promise<number>][] = [
+    ["updated", (path, text) => Bun.write(path, text)],
+  ];
+  // On Linux only a save by rename takes a file off the watchlist, and the reload puts it back.
+  if (isLinux) {
+    saves.push([
+      "replaced",
+      async (path, text) => {
+        writeFileSync(path + ".tmp", text);
+        renameSync(path + ".tmp", path);
+        return text.length;
+      },
+    ]);
+  }
+
   // TODO: fix watcher thread exit handling so the main thread waits for the
   // watcher thread to exit. This causes a crash inside the libc exit() function
   // that triggers in ASAN.
-  test.skipIf(isCI && isASAN)(
-    "handles 129 directories being updated simultaneously",
-    async () => {
+  test.skipIf(isCI && isASAN).each(saves)(
+    "handles 129 directories being %s simultaneously",
+    async (_, save) => {
       // Create initial test structure
       await using tmpdir = tempDir("hot-many-dirs", {
         "entry.js": `console.log('Initial load');`,
@@ -74,7 +89,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
           const filePath = join(tmpdir, dirName, "index.js");
 
           updatePromises.push(
-            Bun.write(filePath, `export const value${i} = ${i};\nexport const timestamp${i} = ${timestamp};`),
+            save(filePath, `export const value${i} = ${i};\nexport const timestamp${i} = ${timestamp};`),
           );
         }
 
@@ -183,11 +198,11 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     60000,
   );
 
-  // Editing dep.js raises an inotify event on lib/, which makes the reloader
-  // evict dep's watchlist entry; the reload then re-adds it with a fresh heap
-  // copy of the path. Eviction used to discard the evicted entry's copy
-  // without freeing it, so every edit leaked one path, which LSan reports when
-  // the process exits (the same check CI's ASAN lane applies to every test
+  // Replacing dep.js by rename raises an inotify event on lib/, which makes the
+  // reloader evict dep's watchlist entry; the reload then re-adds it with a
+  // fresh heap copy of the path. Eviction used to discard the evicted entry's
+  // copy without freeing it, so every edit leaked one path, which LSan reports
+  // when the process exits (the same check CI's ASAN lane applies to every test
   // process). logLevel=debug makes the reloader log each eviction, so a reload
   // cycle that stopped evicting cannot pass this vacuously.
   test.skipIf(!isLinux || !isASAN)("evicting watchlist entries does not leak their paths", async () => {
@@ -230,7 +245,8 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
 
     await waitForLine("RELOAD 0");
     for (let i = 1; i <= edits; i++) {
-      writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
+      writeFileSync(join(dir, "lib", "dep.js.tmp"), `export const value = ${i};`);
+      renameSync(join(dir, "lib", "dep.js.tmp"), join(dir, "lib", "dep.js"));
       await waitForLine(`RELOAD ${i}`);
     }
     const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);

@@ -134,6 +134,10 @@ pub struct Watcher {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) eventlist_index_scratch: Vec<platform::EventListIndex>,
 
+    /// [`WatcherContext::WATCH_DIRECTORY_WRITES`] of the context.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) watch_directory_writes: bool,
+
     pub(crate) ctx: *mut (),
     pub(crate) on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
     pub(crate) on_error: fn(*mut (), sys::Error),
@@ -144,6 +148,10 @@ pub struct Watcher {
 /// Context types passed to `Watcher::init` implement this trait.
 /// The default `on_watch_error` forwards to `on_error`.
 pub trait WatcherContext {
+    /// Whether an inotify watch of a directory also reports a write to a file in it, by name.
+    /// A watched file reports its own writes in any case.
+    const WATCH_DIRECTORY_WRITES: bool = true;
+
     fn on_file_update(
         &mut self,
         events: &mut [WatchEvent],
@@ -210,6 +218,11 @@ impl Watcher {
             evict_list_i: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            watch_directory_writes: T::WATCH_DIRECTORY_WRITES
+                || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES
+                    .get()
+                    == Some(true),
             thread_lock: ThreadLock::init_unlocked(),
         });
 
@@ -664,7 +677,7 @@ impl Watcher {
             };
 
             self.platform
-                .watch_dir(path)
+                .watch_dir(path, self.watch_directory_writes)
                 .map_err(|e| e.with_path(file_path))?
         };
 

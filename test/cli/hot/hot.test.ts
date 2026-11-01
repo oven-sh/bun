@@ -5,10 +5,13 @@ import {
   copyFileSync,
   cpSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
@@ -1126,6 +1129,318 @@ it.skipIf(isWindows)("survives a directory event for a folder whose cached listi
   writeFileSync(join(cwd, "main.ts"), `console.log("reloaded");\nprocess.exit(0);\n`);
   expect(await stdout("reloaded")).toBe(true);
   expect(await runner.exited).toBe(0);
+});
+
+/** Linux: the fdinfo line of each inotify watch of the process ("inotify wd:3 ino:1f mask:4000f80 ..."). */
+function inotifyWatches(pid: number) {
+  return readdirSync(`/proc/${pid}/fdinfo`).flatMap(fd => {
+    try {
+      const info = readFileSync(`/proc/${pid}/fdinfo/${fd}`, "utf8");
+      return info.split("\n").filter(line => line.startsWith("inotify "));
+    } catch {
+      return [];
+    }
+  });
+}
+
+/** Linux: the inotify watches of the process that are on the file or folder that `path` names now. */
+function watchesOf(pid: number, path: string) {
+  const inode = ` ino:${statSync(path).ino.toString(16)} `;
+  return inotifyWatches(pid).filter(line => line.includes(inode));
+}
+
+// On Linux a watch of a directory can also report a write to a file in it. The hot reloader takes
+// a file that its directory names off the watchlist, and run 2 does not import lib/a.ts again.
+it.skipIf(!isLinux).each([
+  ["alone", (lib: string, a: number) => writeFileSync(join(lib, "a.ts"), `export const a = ${a};`)],
+  [
+    "with a backup copy",
+    (lib: string, a: number) => {
+      copyFileSync(join(lib, "a.ts"), join(lib, "a.ts~"));
+      writeFileSync(join(lib, "a.ts"), `export const a = ${a};`);
+      unlinkSync(join(lib, "a.ts~"));
+    },
+  ],
+  [
+    "with a new module beside it",
+    (lib: string, a: number) => {
+      writeFileSync(join(lib, `b${a}.ts`), "");
+      writeFileSync(join(lib, "a.ts"), `export const a = ${a};`);
+    },
+  ],
+])("keeps watching a module that is saved in place %s when the reload does not import it", async (_, save) => {
+  using dir = tempDir("hot-save-in-place", {
+    "main.ts": `
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      if (globalThis.runs === 2) throw new Error("run 2 stops before the import");
+      const { a } = await import("./lib/a.ts");
+      console.log("a=" + a);
+      if (a === 3) process.exit(0);
+    `,
+    "lib/a.ts": `export const a = 1;`,
+  });
+  const lib = join(String(dir), "lib");
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("a=1")).toBe(true);
+
+  save(lib, 2);
+  expect(await stderr("run 2 stops before the import")).toBe(true);
+
+  save(lib, 3);
+  expect(await stdout("a=3")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// mod.js calls a macro, and a macro runs while its caller is parsed. This one saves mod.js with
+// one write and holds the parse until the watcher has handled that save. The first save is the
+// one that main.js makes after the first run, so the second one lands in the reload.
+it.skipIf(!isLinux)("sees a save in place that lands while the reload parses the module", async () => {
+  using dir = tempDir("hot-save-during-parse", {
+    "save.js": `
+      import { closeSync, openSync, readFileSync, writeSync } from "node:fs";
+      import { join } from "node:path";
+      const trace = () => readFileSync(process.env.BUN_WATCHER_TRACE, "utf8");
+      export function save(from) {
+        const path = join(import.meta.dir, "mod.js");
+        const at = readFileSync(path, "utf8").indexOf("value = " + from);
+        if (at === -1) return "kept";
+        const before = trace().length;
+        const fd = openSync(path, "r+");
+        writeSync(fd, String(from + 1), at + "value = ".length);
+        closeSync(fd);
+        while (!trace().slice(before).includes("mod.js"));
+        return "saved";
+      }
+    `,
+    "mod.js": `
+      import { save } from "./save.js" with { type: "macro" };
+      export const value = 0;
+      export const macro = save(1);
+    `,
+    "main.js": `
+      import { value, macro } from "./mod.js";
+      import { save } from "./save.js";
+      console.log("value " + value + " " + macro);
+      save(0);
+    `,
+  });
+  // Not in the watched folder: a trace line must not be an event itself.
+  using traceDir = tempDir("hot-save-during-parse-trace", { "trace.log": "" });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: join(String(traceDir), "trace.log") },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  // The reload parsed "value = 1" and the macro made it 2. Only the file's own watch reports that.
+  expect(await stdout("value 1 saved")).toBe(true);
+  expect(await stdout("value 2 kept")).toBe(true);
+});
+
+const replaceFile = {
+  "a rename": (file: string, text: string) => {
+    writeFileSync(file + ".tmp", text);
+    renameSync(file + ".tmp", file);
+  },
+  "an unlink and a create": (file: string, text: string) => {
+    unlinkSync(file);
+    writeFileSync(file, text);
+  },
+  "a move to a backup": (file: string, text: string) => {
+    renameSync(file, file + "~");
+    writeFileSync(file, text);
+    unlinkSync(file + "~");
+  },
+};
+
+// The watch has to be on the new file after it is replaced: `--hot` gets no directory event for a
+// write to it. The failed import makes the resolver list the folder again, and that listing has
+// no path for a file until the resolver resolves it. The folder's own arm skips the last three names.
+it.skipIf(!isLinux).each([
+  ["main.js", "a rename"],
+  ["main.js", "an unlink and a create"],
+  ["main.js", "a move to a backup"],
+  [".main.js", "a rename"],
+  ["main", "an unlink and a create"],
+  ["bin/www", "a move to a backup"],
+] as const)("watches the entry point %s again after %s replaces it", async (entry, how) => {
+  const source = (run: number) => `try { await import("./missing.js"); } catch {}\nconsole.log("run ${run}");\n`;
+  using dir = tempDir("hot-entry-replaced", { [entry]: source(1) });
+  const file = join(String(dir), entry);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", entry],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("run 1")).toBe(true);
+
+  replaceFile[how](file, source(2));
+  expect(await stdout("run 2")).toBe(true);
+
+  writeFileSync(file, source(3));
+  expect(await stdout("run 3")).toBe(true);
+  expect(watchesOf(runner.pid, file)).toHaveLength(1);
+  writeFileSync(file, `console.log("run 4");\nprocess.exit(0);\n`);
+  expect(await stdout("run 4")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// As above, for a module. Only the watchlist knows which file the name "dep.js" is here.
+it.skipIf(!isLinux).each(["--hot main.js", "--watch main.js", "test --watch ./main.test.js"])(
+  "bun %s reloads a module saved by rename, then in place, where an import failed",
+  async args => {
+    const main = `
+      import { v } from "./dep.js";
+      try { await import("./missing.js"); } catch {}
+    `;
+    using dir = tempDir("hot-module-rename-then-in-place", {
+      "main.js": `${main}console.log("dep=" + v);`,
+      "main.test.js": `${main}import { test } from "bun:test";\ntest("logs", () => console.log("dep=" + v));`,
+      "dep.js": `export const v = 1;`,
+    });
+    const dep = join(String(dir), "dep.js");
+    await using runner = spawn({
+      cmd: [bunExe(), ...args.split(" ")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      // `bun test` reports on stderr, in the format of the report of this file.
+      stderr: args.startsWith("test") ? "ignore" : "inherit",
+      stdin: "ignore",
+    });
+    const stdout = follow(runner.stdout);
+    expect(await stdout("dep=1")).toBe(true);
+
+    replaceFile["a rename"](dep, `export const v = 2;`);
+    expect(await stdout("dep=2")).toBe(true);
+
+    writeFileSync(dep, `export const v = 3;`);
+    expect(await stdout("dep=3")).toBe(true);
+    expect(watchesOf(runner.pid, dep)).toHaveLength(1);
+  },
+);
+
+// bun starts at the workspace root and finds the package through the node_modules link, so the
+// listing of the package's real folder has no path for its files.
+it.skipIf(!isLinux)("reloads a workspace package that is saved by rename", async () => {
+  using dir = tempDir("hot-workspace-rename", {
+    "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+    "packages/ui/package.json": JSON.stringify({ name: "@acme/ui", main: "index.js" }),
+    "packages/ui/index.js": `export const v = 1;`,
+    "node_modules/@acme/.keep": "",
+    "main.js": `import { v } from "@acme/ui";\nconsole.log("v=" + v);\nif (v === 2) process.exit(0);\n`,
+  });
+  const root = String(dir);
+  symlinkSync("../../packages/ui", join(root, "node_modules", "@acme", "ui"));
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("v=1")).toBe(true);
+
+  replaceFile["a rename"](join(root, "packages", "ui", "index.js"), `export const v = 2;`);
+  expect(await stdout("v=2")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// The import of "./sub" fails as a file in pkg.js first, so the resolver watches that folder under
+// the path "pkg.js". A module can have that path, a folder is not one.
+it.skipIf(!isLinux)("does not reload for a watched folder that is moved away and back", async () => {
+  using dir = tempDir("hot-folder-with-extension", {
+    "bunfig.toml": `logLevel = "debug"\n`,
+    "main.ts": `
+      import { v } from "./pkg.js/index.ts";
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      console.log("run " + globalThis.runs + " v=" + v);
+      if (globalThis.runs === 2) process.exit(0);
+    `,
+    "pkg.js/index.ts": `export { v } from "./sub";`,
+    "pkg.js/sub/index.ts": `export const v = 1;`,
+  });
+  const root = String(dir);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stderr = runner.stderr.text();
+  const stdout = follow(runner.stdout);
+  expect(await stdout("run 1 v=1")).toBe(true);
+
+  renameSync(join(root, "pkg.js"), join(root, "pkg.js.away"));
+  renameSync(join(root, "pkg.js.away"), join(root, "pkg.js"));
+  // The watcher handles events in order, so the move is handled when this save reloads.
+  writeFileSync(join(root, "main.ts"), readFileSync(join(root, "main.ts"), "utf8") + "\n");
+  expect(await stdout("run 2 v=1")).toBe(true);
+  // logLevel = "debug" makes the reloader log each path that it takes off the watchlist.
+  expect((await stderr).split("\n").filter(line => /Removing file: .*pkg\.js$/.test(line))).toEqual([]);
+  expect(await runner.exited).toBe(0);
+});
+
+// One process has two watchers here: the hot reloader of server.ts and the dev server of the
+// HTML route. Only the dev server asks for the writes in a directory, and it needs them: after
+// the rename its watch of c.ts stays on the replaced file.
+it.skipIf(!isLinux)("--hot leaves the dev server of an HTML route its directory write events", async () => {
+  using dir = tempDir("hot-dev-server-directory-writes", {
+    "index.html": `<script type="module" src="./client.ts"></script>`,
+    "client.ts": `import { c } from "./c.ts";\nconsole.log(c);`,
+    "c.ts": `export const c = "client 1";`,
+    "server.ts": `
+      import html from "./index.html";
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      await Bun.write("url", server.url.href);
+      console.log("listening");
+    `,
+  });
+  const root = String(dir);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "server.ts"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  expect(await follow(runner.stdout)("listening")).toBe(true);
+  const url = readFileSync(join(root, "url"), "utf8");
+  const bundle = async () => {
+    const src = /src="([^"]+)"/.exec(await (await fetch(url)).text())?.[1];
+    return src ? await (await fetch(new URL(src, url))).text() : "";
+  };
+  expect(await bundle()).toContain("client 1");
+
+  // One watch of the folder for each watcher. IN_MODIFY is bit 2 of the mask.
+  const writes = watchesOf(runner.pid, root).map(line => (parseInt(/ mask:(\S+)/.exec(line)![1], 16) & 2) !== 0);
+  expect(writes.sort()).toEqual([false, true]);
+
+  replaceFile["a rename"](join(root, "c.ts"), `export const c = "client 2";`);
+  while (!(await bundle()).includes("client 2"));
+  writeFileSync(join(root, "c.ts"), `export const c = "client 3";`);
+  while (!(await bundle()).includes("client 3"));
 });
 
 // Only inotify reports the changed entry's name, and PATH_MAX is 1024 on macOS.

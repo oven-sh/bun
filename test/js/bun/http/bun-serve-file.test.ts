@@ -1,6 +1,17 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  getFDCount,
+  isASAN,
+  isLinux,
+  isWindows,
+  rmScope,
+  rss,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, constants, openSync, readdirSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -2065,5 +2076,120 @@ console.log(JSON.stringify({ status, later, pendingRequests: server.pendingReque
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ status: 500, later: "ok", pendingRequests: 0 });
     expect(exitCode).toBe(0);
+  },
+);
+
+// The reader of a file response fails to start when the event loop refuses to
+// watch its fd. Bun then closes the connection. That response must not read the
+// fd afterwards, and it must not stay allocated.
+
+// epoll refuses a second registration of one fd (EEXIST). kqueue moves the watch
+// to the second reader instead of refusing it, so this case is Linux only.
+// The refused response used to read the fd after Bun closed its connection. The
+// other response then did not get the bytes that were in the pipe.
+test.concurrent.skipIf(!isLinux)(
+  "the second Response(Bun.file(fd)) over one pipe fd is refused and leaves the bytes in the pipe to the first",
+  async () => {
+    using dir = tempDir("serve-file-two-responses-one-fd", {
+      "fixture.ts": `
+import { closeSync, constants, openSync, writeSync } from "node:fs";
+
+const fd = openSync(process.argv[2], constants.O_RDWR | constants.O_NONBLOCK);
+
+let responses = 0;
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  idleTimeout: 0,
+  fetch() {
+    // The second response starts with 1000 bytes in the pipe, while the
+    // first response waits for the fd to become readable.
+    if (++responses === 2) writeSync(fd, Buffer.alloc(1000, "x"));
+    return new Response(Bun.file(fd));
+  },
+});
+
+async function client() {
+  const state = { x: 0, tail: "", closed: false, socket: null as any, wake: () => {} };
+  state.socket = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open: socket => void socket.write("GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n"),
+      data(_, chunk) {
+        for (const byte of chunk) if (byte === 120) state.x++;
+        state.tail = (state.tail + chunk.toString("latin1")).slice(-64);
+        state.wake();
+      },
+      close() {
+        state.closed = true;
+        state.wake();
+      },
+    },
+  });
+  return state;
+}
+const until = async (state: { wake: () => void }, cond: () => boolean) => {
+  while (!cond()) await new Promise<void>(resolve => (state.wake = resolve));
+};
+
+const first = await client();
+writeSync(fd, "<first>");
+await until(first, () => first.tail.includes("<first>") || first.closed);
+
+const second = await client();
+await until(second, () => second.closed);
+
+// The first response sends what is left in the pipe, in order.
+writeSync(fd, "<last>");
+await until(first, () => first.tail.includes("<last>") || first.closed);
+console.log(JSON.stringify({ firstResponseGot: first.x, secondResponseGot: second.x, firstClosed: first.closed }));
+
+first.socket.terminate();
+await until(first, () => first.closed);
+await server.stop(true);
+closeSync(fd);
+`,
+    });
+    const fifoPath = join(String(dir), "shared.fifo");
+    mkfifo(fifoPath);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ firstResponseGot: 1000, secondResponseGot: 0, firstClosed: false }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// epoll refuses to watch a device that has no poll support (EPERM). The refused
+// response used to read the device. A read of /dev/zero does not reach an end, so
+// the response stayed allocated with its fd. Where the event loop does watch the
+// device, the client leaves after the first bytes.
+test.skipIf(isWindows).each(["fetch handler", "static route"])(
+  "Response(Bun.file(device)) does not leak its fd when the device cannot be polled (%s)",
+  async kind => {
+    const file = Bun.file("/dev/zero");
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: kind === "static route" ? { "/": new Response(file) } : undefined,
+      fetch: () => new Response(file),
+    });
+
+    const baseline = getFDCount();
+    for (let i = 0; i < 16; i++) await abortAfterResponseHead(server.port);
+
+    const deadline = Date.now() + 3000;
+    while (getFDCount() > baseline + 4 && Date.now() < deadline) await Bun.sleep(10);
+    expect(getFDCount()).toBeLessThanOrEqual(baseline + 4);
   },
 );

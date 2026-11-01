@@ -1,6 +1,5 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
-import { slot } from "./harness/commands";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -79,13 +78,15 @@ async function ran(files: Record<string, string>, flags: string[], words?: strin
     ...files,
   });
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  // No more runs at once than the machine has processors, however many tests are under way.
-  const { stdout, stderr, exitCode } = await slot(() =>
-    run([bunExe(), "test", "--isolate", ...flags], String(dir), env),
-  );
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], String(dir), env);
   const printed: Record<string, string[]> = {};
   let about = (printed["above the files"] = [] as string[]);
-  for (const whole of stderr.replaceAll(String(dir), "DIR").replaceAll("\\", "/").split("\n")) {
+  // A path has either separator on Windows, in what a run prints too.
+  const slashed = (text: string) => text.replaceAll("\\", "/");
+  const lines = slashed(stderr)
+    .replaceAll(slashed(String(dir)), "DIR")
+    .split("\n");
+  for (const whole of lines) {
     const line = whole.replace(/ \[[\d.]+m?s\]$/, "").trim();
     // With the words a run says how it is built. What stands around these two numbers differs from one build of Bun to another.
     const programs = line.match(/^AOT test run \| .*?\| (test files \d+ \| to a program \d+)/)?.[1];
@@ -133,8 +134,7 @@ function ends(exitCode: number, title: string, files: Record<string, string>, fl
   );
 }
 
-// The runs over layers come last. A run waits for its slot with the limit of its test running, and a run over layers holds a slot for as long as
-// a lowest layer takes to build: behind eight of them the short runs would wait their limits out.
+// The runs over layers come last: beside their builds of a lowest layer the short runs take several times as long, and they have the shorter limit.
 for (const [how, flags, words] of ways) {
   const inParallel = [...flags, "--parallel=2"];
   for (const [name, files] of Object.entries(projects)) {

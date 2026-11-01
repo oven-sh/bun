@@ -576,6 +576,40 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
     }
   },
 });
+devTest("hmr sees a save in place of a file that was saved by rename before", {
+  // The dev server keeps dep.ts open, so on Linux its watch stays on the
+  // replaced file and only the directory reports the write. This is why the
+  // dev server, unlike `bun --hot`, watches its directories for writes.
+  skip: ["win32", "darwin"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import value from "./dep";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      export default "initial";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("initial");
+
+    const target = dev.join("dep.ts");
+    {
+      await using _wait = await dev.batchChanges();
+      writeFileSync(`${target}.tmp`, `export default "by rename";\n`);
+      renameSync(`${target}.tmp`, target);
+    }
+    await c.expectMessage("by rename");
+
+    await dev.write("dep.ts", `export default "in place";\n`);
+    await c.expectMessage("in place");
+  },
+});
 devTest("hot update frames are not delivered to application websocket topics", {
   files: {
     "index.html": emptyHtmlFile({

@@ -332,6 +332,8 @@ pub mod feature_flag {
     // CLI equivalent.
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT, "BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_IO_POOL, "BUN_FEATURE_FLAG_FORCE_IO_POOL", {});
+    // Linux: gives `bun --hot` the directory write events that `WATCH_DIRECTORY_WRITES` turns off.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES, "BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});
     new_feature_flag!(pub BUN_INTERNAL_BUNX_HAS_COPY, "BUN_INTERNAL_BUNX_HAS_COPY", {});

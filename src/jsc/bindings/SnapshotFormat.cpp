@@ -367,7 +367,16 @@ extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t le
     return false;
 }
 
-// The entries of a Headers or the href of a URL, as deepEquals reads them: no toJSON is called. Undefined if there are none.
+// deepEquals compares the entries of a Headers and the href of a URL before the own properties.
+// It does the same for a URLSearchParams, which is not a DOM wrapper cell and prints as JSON.
+extern "C" bool SnapshotFormat__isHeadersOrURL(EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    return dynamicDowncast<WebCore::JSFetchHeaders>(value) || dynamicDowncast<WebCore::JSDOMURL>(value);
+}
+
+// Those entries as an object, or that href as a string, read from the native object: no toJSON is called.
+// Undefined for a Headers with no entries.
 extern "C" EncodedJSValue SnapshotFormat__nativeStateOf(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     auto& vm = getVM(globalObject);
@@ -380,10 +389,7 @@ extern "C" EncodedJSValue SnapshotFormat__nativeStateOf(JSGlobalObject* globalOb
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(entries);
     }
-    if (auto* url = dynamicDowncast<WebCore::JSDOMURL>(value)) {
-        JSObject* state = constructEmptyObject(globalObject);
-        Bun::putDirectNamed(vm, state, "href"_s, jsString(vm, url->wrapped().href().string()));
-        return JSValue::encode(state);
-    }
+    if (auto* url = dynamicDowncast<WebCore::JSDOMURL>(value))
+        return JSValue::encode(jsString(vm, url->wrapped().href().string()));
     return JSValue::encode(jsUndefined());
 }

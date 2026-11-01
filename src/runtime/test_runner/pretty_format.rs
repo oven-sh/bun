@@ -391,7 +391,7 @@ impl<'a> Formatter<'a> {
         self.estimated_line_length = self.estimated_line_length.saturating_add(len);
     }
 
-    /// A snapshot of a value keeps `Headers {}` and `URL {}`, which older versions stored. A failure message prints what `deepEquals` compares.
+    /// A snapshot of a value keeps `Headers {}` and `URL {}`, which older versions stored. A failure message prints the entries and the href.
     fn is_failure_message(&self) -> bool {
         self.output_length.is_some()
     }
@@ -942,6 +942,44 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         Ok(())
     }
 
+    /// The href of a `URL` prints like a property. The entries of a `Headers` print like the entries of a `Map`:
+    /// `deepEquals` compares them apart from the own properties, so a header and an own property with one name must differ.
+    fn print_native_state(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+        let state = native_state_of(global_this, self.parent)?;
+        if state.is_string() {
+            let mut key = EncodedSlice::latin1(b"href");
+            Self::for_each(global_this, (&raw mut *self).cast::<c_void>(), &raw mut key, state, false, false);
+            return Ok(());
+        }
+        if !state.is_object() {
+            return Ok(());
+        }
+        let format = self.formatter.snapshot_format;
+        for_each_sorted_property(global_this, state, format, &mut |name, value| self.print_entry(global_this, name, value))
+    }
+
+    fn print_entry(&mut self, global_this: &JSGlobalObject, name: JSValue, value: JSValue) -> JsResult<()> {
+        if self.formatter.failed {
+            return Ok(());
+        }
+        if self.i == 0 {
+            let parent = self.parent;
+            self.handle_first_property(global_this, parent)?;
+        } else {
+            let _ = self.formatter.print_comma::<W, ENABLE_ANSI_COLORS>(&mut *self.writer);
+            let _ = self.writer.write_all(b"\n");
+            let _ = self.formatter.write_indent(&mut *self.writer);
+            self.formatter.reset_line();
+        }
+        self.i += 1;
+        let global = self.formatter.global_this;
+        let name_tag = Tag::get(name, global)?;
+        self.formatter.format::<W, ENABLE_ANSI_COLORS>(name_tag, &mut *self.writer, name, global)?;
+        let _ = self.writer.write_all(b" => ");
+        let value_tag = Tag::get(value, global)?;
+        self.formatter.format::<W, ENABLE_ANSI_COLORS>(value_tag, &mut *self.writer, value, global)
+    }
+
     extern "C" fn for_each(
         global_this: &JSGlobalObject,
         ctx_ptr: *mut c_void,
@@ -1087,16 +1125,16 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         js_type: JSType,
     ) -> JsResult<()> {
-        self.print_as_with_native_state::<W, FORMAT, ENABLE_ANSI_COLORS>(writer_, value, js_type, None)
+        self.print_as_with_native_state::<W, FORMAT, ENABLE_ANSI_COLORS>(writer_, value, js_type, false)
     }
 
-    /// An object prints the properties of `native_state` before its own.
+    /// With `has_native_state`, an object prints the entries of a `Headers` or the href of a `URL` before its own properties.
     fn print_as_with_native_state<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
         value: JSValue,
         js_type: JSType,
-        native_state: Option<JSValue>,
+        has_native_state: bool,
     ) -> JsResult<()> {
         if self.failed {
             return Ok(());
@@ -1740,10 +1778,9 @@ impl<'a> Formatter<'a> {
                             writer.ctx, value, js_type,
                         );
                     }
-                    let native_state =
-                        if self.is_failure_message() { native_state_of(self.global_this, value)? } else { None };
+                    let has_native_state = self.is_failure_message() && is_headers_or_url(value);
                     return self.print_as_with_native_state::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                        writer.ctx, value, JSType::Event, native_state,
+                        writer.ctx, value, JSType::Event, has_native_state,
                     );
                 }
                 Tag::NativeCode => {
@@ -2392,7 +2429,7 @@ impl<'a> Formatter<'a> {
                         i: 0,
                         always_newline,
                         parent: value,
-                        has_native_state: native_state.is_some(),
+                        has_native_state,
                     };
 
                     let each = PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each;
@@ -2401,13 +2438,10 @@ impl<'a> Formatter<'a> {
                             .for_each_property_ordered_with_non_enumerable(global, (&raw mut iter).cast::<c_void>(), each)
                             .map(|()| true)
                     } else {
-                        native_state
-                            .map_or(Ok(true), |state| {
-                                state.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
-                            })
-                            .and_then(|_| {
-                                value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
-                            })
+                        let native_state = if has_native_state { iter.print_native_state(global) } else { Ok(()) };
+                        native_state.and_then(|()| {
+                            value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
+                        })
                     };
 
                     let iter_i = iter.i;
@@ -3194,13 +3228,20 @@ fn has_member(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JsResult
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasByValue(global, value, key))
 }
 
-/// The entries of a `Headers` or the href of a `URL` as an object. `deepEquals` compares them, then the own properties.
-fn native_state_of(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSValue>> {
+/// `deepEquals` compares the entries of a `Headers` and the href of a `URL`, then the own properties.
+fn is_headers_or_url(value: JSValue) -> bool {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__isHeadersOrURL(value: JSValue) -> bool;
+    }
+    SnapshotFormat__isHeadersOrURL(value)
+}
+
+/// Those entries as an object, or that href as a string. Undefined for a `Headers` with no entries.
+fn native_state_of(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
     unsafe extern "C" {
         safe fn SnapshotFormat__nativeStateOf(global: &JSGlobalObject, value: JSValue) -> JSValue;
     }
-    let state = jsc::host_fn::from_js_host_call(global, || SnapshotFormat__nativeStateOf(global, value))?;
-    Ok(state.is_object().then_some(state))
+    jsc::host_fn::from_js_host_call(global, || SnapshotFormat__nativeStateOf(global, value))
 }
 
 /// putDirect, so only for objects the printer itself created.

@@ -61,13 +61,14 @@ pub(crate) struct Result<'a> {
 /// Filter `test_files` in place to only the entries whose module graph
 /// reaches a changed file. On success, `test_files` is compacted (preserving
 /// order) and the new length is returned via `Result.test_files`.
+#[optimize(size)]
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
     vm: &mut VirtualMachine,
     test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, crate::Error> {
-    let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
     // If this process was restarted by the --watch file watcher, it
     // recorded exactly which files changed in this env var before
@@ -568,6 +569,7 @@ pub(crate) enum GitResult {
     },
 }
 
+#[optimize(size)]
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
     argv.push(git_path);

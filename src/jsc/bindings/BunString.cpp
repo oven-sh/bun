@@ -5,6 +5,9 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/PutPropertySlot.h"
@@ -89,10 +92,23 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         if (length > WTF::String::MaxLength) [[unlikely]] {
             return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
         }
-        return JSValue::encode(jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length))));
+        // WTF::String(span) crashes if the allocation fails, and the caller controls the length.
+        std::span<Latin1Character> characters;
+        auto impl = WTF::StringImpl::tryCreateUninitialized(length, characters);
+        if (!impl) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        memcpy(characters.data(), ptr, length);
+        return JSValue::encode(jsString(vm, WTF::String(impl.releaseNonNull())));
     }
 
-    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(ptr), length });
+    std::span bytes { reinterpret_cast<const unsigned char*>(ptr), length };
+    // convertUTF8ToString crashes if the allocation fails, so only use it for small or invalid input.
+    constexpr size_t minFallibleLength = 64 * 1024;
+    auto str = length >= minFallibleLength && simdutf::validate_utf8(ptr, length)
+        ? Zig::tryConvertValidUTF8ToString(bytes)
+        : Zig::convertUTF8ToString(bytes);
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -107,7 +123,7 @@ static void assertStaticStringIsNotCommon(EncodedSlice slice)
 {
     if (Zig::isTaggedUTF16Ptr(slice.ptr))
         return;
-    std::span<const Latin1Character> literal { Zig::untag(slice.ptr), slice.len };
+    std::span<const Latin1Character> literal { byteCast<Latin1Character>(Zig::untag(slice.ptr)), slice.len };
     ASSERT_WITH_MESSAGE(!CommonStrings::isCommonStringLiteral(literal),
         "\"%.*s\" is in BunCommonStrings.h: use global.common_strings() instead of String::static_(..).to_js()",
         static_cast<int>(literal.size()), reinterpret_cast<const char*>(literal.data()));
@@ -136,7 +152,7 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
     }
 
     if (this->tag == BunStringTag::WTFStringImpl) [[likely]] {
-        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
+        ASSERT((this->impl.wtf->isStatic() || this->impl.wtf->refCount() > 0) && !this->impl.wtf->isEmpty());
         auto str = WTF::String(adoptRef(*this->impl.wtf));
         *this = { .tag = BunStringTag::Dead };
         return jsString(vm, WTF::move(str));
@@ -167,10 +183,9 @@ static WTF::String errorMessage(const BunString* str)
 extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, JSC::JSGlobalObject* globalObject, BunErrorKind kind)
 {
     WTF::String message = errorMessage(str);
-    if (message.isNull() && !str->isEmpty()) [[unlikely]] {
-        // Allocation failed or the message exceeds the maximum string length.
-        return {};
-    }
+    // Callers throw, reject with, or set properties on the result, so always return an error object.
+    if (message.isNull() && (str->tag == BunStringTag::Dead || !str->isEmpty())) [[unlikely]]
+        message = "The error message exceeds the maximum string length"_s;
     JSC::ErrorType type = JSC::ErrorType::Error;
     switch (kind) {
     case BunErrorKind::Error:
@@ -193,6 +208,13 @@ extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, 
 }
 
 namespace Bun {
+
+static UniquedStringImpl* nameOfProgram(JSC::VM& vm, const EncodedSlice& text)
+{
+    if (!text.ptr || Zig::isTaggedUTF16Ptr(text.ptr) || Zig::isTaggedUTF8Ptr(text.ptr))
+        return nullptr;
+    return JSC::AOT::PropertyWalk::tryFindName(vm, { byteCast<Latin1Character>(Zig::untag(text.ptr)), text.len });
+}
 
 JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
@@ -222,6 +244,8 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 
     if (bunString.tag == BunStringTag::StaticEncodedSlice) {
         assertStaticStringIsNotCommon(bunString.impl.encoded);
+        if (auto* name = nameOfProgram(globalObject->vm(), bunString.impl.encoded))
+            return JSC::jsString(globalObject->vm(), String(*name));
         return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.encoded));
     }
 
@@ -230,6 +254,20 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     }
 
     UNREACHABLE();
+}
+
+JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)
+{
+    ASSERT(!bunString.isDead());
+    if (bunString.isEmpty()) {
+        return vm.propertyNames->emptyIdentifier;
+    }
+    if (bunString.tag == BunStringTag::StaticEncodedSlice) {
+        if (auto* name = nameOfProgram(vm, bunString.impl.encoded))
+            return JSC::Identifier::fromUid(vm, name);
+        return JSC::Identifier::fromString(vm, Zig::toStringStatic(bunString.impl.encoded));
+    }
+    return JSC::Identifier::fromString(vm, bunString.toWTFString());
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__threadIsolatedCopy(const BunString* str)
@@ -773,7 +811,7 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     } else if (this->tag == BunStringTag::StaticEncodedSlice) {
         return Zig::toStringStatic(this->impl.encoded);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
-        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
+        ASSERT((this->impl.wtf->isStatic() || this->impl.wtf->refCount() > 0) && !this->impl.wtf->isEmpty());
         return WTF::String(this->impl.wtf);
     }
 
@@ -808,7 +846,7 @@ WTF::String BunString::transferToWTFString()
         *this = Zig::BunStringEmpty;
         return str;
     } else if (this->tag == BunStringTag::WTFStringImpl) {
-        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
+        ASSERT((this->impl.wtf->isStatic() || this->impl.wtf->refCount() > 0) && !this->impl.wtf->isEmpty());
 
         auto str = WTF::String(adoptRef(*this->impl.wtf));
         *this = Zig::BunStringEmpty;
@@ -879,8 +917,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
     }
     JSC::JSValue newValue = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
-    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
-    Identifier id = Identifier::fromString(vm, str);
+    Identifier id = Bun::toIdentifier(vm, *key);
     auto existingValue = target->getIfPropertyExists(global, id);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -896,11 +933,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
             array->putDirectIndex(global, 0, existingValue);
             RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(global, 1, newValue);
-            target->putDirect(vm, id, array, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            target->putDirectMayBeIndex(global, id, array);
         }
     } else {
         // No existing value, just put the new value directly
-        target->putDirect(vm, id, newValue, 0);
+        target->putDirectMayBeIndex(global, id, newValue);
     }
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -916,8 +954,7 @@ extern "C" void JSC__JSValue__putBunString(
     JSC::JSObject* target = JSC::JSValue::decode(encodedTarget).getObject();
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
-    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
-    Identifier id = Identifier::fromString(vm, str);
+    Identifier id = Bun::toIdentifier(vm, *key);
     target->putDirect(vm, id, value, 0);
 }
 

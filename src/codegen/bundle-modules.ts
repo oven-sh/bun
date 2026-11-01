@@ -12,24 +12,55 @@ import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
+import { readBuiltinUses } from "../../scripts/build/trim/builtin-uses.ts";
+import { featureNamed } from "../../scripts/build/trim/features.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
+import { locate, nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
+import { Guards } from "./builtins/guards.ts";
+import { listBundledNamesOfModule } from "./bundled-names";
+import {
+  encodeBundledPositions,
+  encodeBundledPositionsOfSecondText,
+  findModuleHeldInPart,
+  formatBundledPositions,
+  listPlacesInOtherFiles,
+  readFileOfFunctions,
+  readModule,
+  type Reading,
+} from "./bundled-positions";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, checkAscii, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
-import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
-import { define } from "./replacements";
+import { getJS2NativeCPP } from "./generate-js2native";
+import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
+import { createInternalModuleRegistry, idToEnumName } from "./internal-module-registry-scanner";
+import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
+import { recordedPointer, removableFeatures } from "./removable-entry-points.ts";
+import { assertNoDestructuredGlobalThis, define } from "./replacements";
+
+const builtinUsesFlag = "--builtin-uses=";
+const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
+  ? process.argv.pop()!.slice(builtinUsesFlag.length)
+  : undefined;
+const guards = new Guards(builtinUses === undefined ? { entries: [] } : readBuiltinUses(builtinUses));
+const features = removableFeatures();
+const featureOfId = (id: string, n: number) => {
+  const specifier = n < nativeStartIndex ? specifierOf(id) : id;
+  return specifier === undefined ? undefined : guards.ofModule(specifier)?.feature;
+};
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 const TYPES_DIR = process.argv[4];
+const WEBKIT_VERSION = process.argv.find(arg => arg.startsWith("--webkit-version="))?.slice("--webkit-version=".length);
 
 const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "production");
 console.time(timeString);
 
-if (!CMAKE_BUILD_ROOT || !TYPES_DIR) {
-  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR>");
+if (!CMAKE_BUILD_ROOT || !TYPES_DIR || !WEBKIT_VERSION) {
+  console.error(
+    "Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR> --webkit-version=<version>",
+  );
   process.exit(1);
 }
 
@@ -227,6 +258,7 @@ const config_cli = [
   `IS_BUN_DEVELOPMENT=${String(!!debug)}`,
   "--define",
   `__intrinsic__debug=${debug ? "$debug_log_enabled" : "false"}`,
+  "--sourcemap=external",
   "--outdir",
   path.join(TMP_DIR, "modules_out"),
 ];
@@ -245,10 +277,20 @@ if (out.exitCode !== 0) {
 mark("Bundle modules");
 
 const outputs = new Map();
+const bundledNames: string[] = [];
+/** By the name of the module: the module as it is written, what the bundler made of it with its map, and what `bun run` evaluates. */
+const textsOfModules = new Map<string, Parameters<typeof readModule>>();
 
-for (const entrypoint of bundledEntryPoints) {
+for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  const output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8");
+  const output = fs
+    .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
+    .replace(/\n\/\/# debugId=\w+\n$/, "");
+  // Checks the input, since --minify-syntax turns `var a = globalThis.a; var b = globalThis.b;` into a destructuring.
+  assertNoDestructuredGlobalThis(fs.readFileSync(entrypoint, "utf8"), file_path);
+  const sourceMap = JSON.parse(fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path + ".map"), "utf8"));
+  const written = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
+  bundledNames.push(...listBundledNamesOfModule(moduleList[i], written, output, sourceMap));
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
@@ -279,10 +321,29 @@ for (const entrypoint of bundledEntryPoints) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
   }
 
+  textsOfModules.set(moduleList[i], [written, output, sourceMap, captured]);
+
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, captured);
   outputs.set(file_path.replace(".js", ""), captured);
+}
+
+for (const [file, texts] of textsOfModules) {
+  const readByCompiler = fs.readFileSync(locate(file), "utf8");
+  // What holds a part of a module is a second text of that module, which leaves the rest out.
+  const whole = findModuleHeldInPart(readByCompiler);
+  if (whole !== undefined && !textsOfModules.has(whole))
+    throw new Error(`${file} holds a part of ${whole}: no such module`);
+  if (whole !== undefined) bundledNames.push(`part\t${file}\t${whole}`);
+  bundledNames.push(
+    formatBundledPositions(
+      file,
+      whole === undefined && locate(file) === path.join(BASE, file)
+        ? encodeBundledPositions(...texts)
+        : encodeBundledPositionsOfSecondText(readByCompiler, ...textsOfModules.get(whole ?? file)!),
+    ),
+  );
 }
 
 mark("Postprocesss modules");
@@ -344,15 +405,6 @@ function layoutOrder(modules: string[], outputs: Map<string, string>): string[] 
   return order;
 }
 
-function idToEnumName(id: string) {
-  return id
-    .replace(/\.[mc]?[tj]s$/, "")
-    .replace(/[^a-zA-Z0-9]+/g, " ")
-    .split(" ")
-    .map(x => (["jsc", "ffi", "vm", "tls", "os", "ws", "fs", "dns"].includes(x) ? x.toUpperCase() : cap(x)))
-    .join("");
-}
-
 function idToPublicSpecifierOrEnumName(id: string) {
   if (id === "internal-for-testing.ts") return "bun:internal-for-testing"; // not in the `bun/` folder because it's added conditionally
   id = id.replace(/\.[mc]?[tj]s$/, "");
@@ -368,12 +420,56 @@ function idToPublicSpecifierOrEnumName(id: string) {
   return idToEnumName(id);
 }
 
-const { combinedSourceCode: functionsSource } = await bundleBuiltinFunctions({
+const {
+  combinedSourceCode: functionsSource,
+  privateNames,
+  files: filesOfFunctions,
+} = await bundleBuiltinFunctions({
   typesDir: TYPES_DIR,
   requireTransformer,
 });
 
 mark("Bundle Functions");
+
+{
+  const readings = new Map<string, Reading>();
+  for (const { basename, functions } of filesOfFunctions) {
+    const file = `builtins/${basename}.ts`;
+    // Nobody has written a second text of such a file yet.
+    if (locate(file) !== path.join(BASE, file)) continue;
+    const inOrder = functions.toSorted((a, b) => a.numberInFile - b.numberInFile);
+    const reading = readFileOfFunctions(
+      fs.readFileSync(path.join(BASE, file), "utf8"),
+      inOrder.map(fn => ({ name: fn.name, output: fn.output, map: fn.sourceMap, evaluated: fn.source })),
+    );
+    readings.set(file, reading);
+    // Where what `bun run` evaluates for each function starts and ends in the text of all of them.
+    const ranges = inOrder.flatMap(fn => [fn.sourceOffset, fn.sourceOffset + fn.source.length]);
+    bundledNames.push(
+      `evaluated-functions\t${file}\t${ranges.join(" ")}`,
+      formatBundledPositions(file, reading.corrections),
+    );
+  }
+  const read = (file: string) => {
+    const known = readings.get(file);
+    if (known) return known;
+    const texts = textsOfModules.get(file);
+    if (!texts) throw new Error(`${file} is no module and no file of functions`);
+    const reading = readModule(...texts);
+    readings.set(file, reading);
+    return reading;
+  };
+  for (const file of [...textsOfModules.keys(), ...readings.keys()]) {
+    bundledNames.push(...listPlacesInOtherFiles(file, fs.readFileSync(locate(file), "utf8"), read));
+  }
+}
+
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "bundled_names_of_modules.txt"),
+  bundledNames.map(line => line + "\n").join(""),
+);
+
+nativeCalls(typesOnlySchemas(process.argv));
 
 // This is a file with a single macro that is used in defining InternalModuleRegistry.h
 writeIfNotChanged(
@@ -397,6 +493,12 @@ writeIfNotChanged(
 `,
 );
 
+// The ids replacements.ts compiles `$inherits*()` calls to, inlined into an enum in ZigGlobalObject.cpp.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "JSClasses+enum.h"),
+  jsclasses.map((name, id) => `${name} = ${id},\n`).join(""),
+);
+
 // The bundled JS sources (builtin functions + internal modules) are linked into
 // the executable as one contiguous read-only blob via `.incbin` in the generated
 // `.S` below and addressed by {offset, length}. Emitting them as C++
@@ -413,7 +515,7 @@ writeIfNotChanged(
 //
 // Layout (little-endian u32 unless noted; offsets in the index are relative to `data`):
 //   header:  magic[8] "BUNBLTNS", version, sourceStamp, moduleCount, modulesOffset,
-//            depOffsetsOffset, depsOffset, dataOffset, dataLength, 0, 0
+//            depOffsetsOffset, depsOffset, dataOffset, dataLength, engineStamp, 0
 //   modules: moduleCount × { nameOffset, nameLength, urlOffset, urlLength, codeOffset, codeLength }
 //   depOffsets: u16[moduleCount + 1], deps: u16[]  (see internalModuleDependencyTable)
 //   data:    [builtin functions combined source][\0][module 0][\0][module 1][\0]...[name\0url\0]...
@@ -421,7 +523,8 @@ writeIfNotChanged(
 //
 // A debug build's runtime reads the module sources from disk instead (BUN_DYNAMIC_JS_LOAD_PATH), but they are still
 // here so that a debug bun works as a `--compile` target like any other.
-const BUILTINS_FORMAT_VERSION = 1;
+// Bumped to 2 because bun 1.4.1 to 1.4.3 compile any version 1 section without checking engineStamp.
+const BUILTINS_FORMAT_VERSION = 2;
 const BUILTINS_HEADER_SIZE = 48;
 
 // Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for
@@ -504,7 +607,7 @@ let blobDataOffset: number;
     depsOffset,
     blobDataOffset,
     data.length,
-    0,
+    engineStamp(WEBKIT_VERSION, privateNames),
     0,
   ].forEach((v, i) => blob.writeUInt32LE(v >>> 0, 8 + i * 4));
   records.forEach((v, i) => blob.writeUInt32LE(v, modulesOffset + i * 4));
@@ -514,6 +617,20 @@ let blobDataOffset: number;
 }
 
 writeIfNotChangedBinary(path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.bin"), blob);
+
+const lazyFunctionTable: number[] = [];
+const lazyFunctionTableOffsets = [0];
+for (const id of moduleList.slice(0, nativeStartIndex)) {
+  const source = outputs.get(id.slice(0, -3).replaceAll("/", path.sep))!;
+  if (!source.startsWith('(function (){"use strict";') || !source.endsWith("})\n"))
+    throw new Error(`${id}: InternalModuleRegistry.cpp expects (function (){"use strict"; ... })`);
+  try {
+    lazyFunctionTable.push(...encodeLazyFunctionTable(debug ? null : findLazyFunctions(source)));
+  } catch (error) {
+    console.warn(`${id}: every function body will be parsed when the module loads: ${error}`);
+  }
+  lazyFunctionTableOffsets.push(lazyFunctionTable.length);
+}
 
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.S"),
@@ -541,13 +658,14 @@ BUN_SYM(bun_internal_modules_data):
 `,
 );
 
-// The C++ view of the section header/index above. Included only by InternalModuleRegistry.cpp.
+// The C++ view of the section header/index above. Included by InternalModuleRegistry.cpp and ModuleLoader.cpp.
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
   `// clang-format off
 // Generated by src/codegen/bundle-modules.ts
 #pragma once
 #include <cstdint>
+#include <optional>
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
@@ -562,7 +680,8 @@ struct Header {
   uint32_t depsOffset;
   uint32_t dataOffset;
   uint32_t dataLength;
-  uint32_t reserved[2];
+  uint32_t engineStamp;
+  uint32_t reserved;
 };
 static_assert(sizeof(Header) == ${BUILTINS_HEADER_SIZE});
 
@@ -577,6 +696,23 @@ struct ModuleRecord {
 };
 
 static constexpr uint32_t moduleCount = ${nativeStartIndex};
+
+static constexpr std::optional<JSC::RemovableFeature> moduleFeatures[${moduleList.length}] = {
+  ${moduleList
+    .map(featureOfId)
+    .map(feature => (feature ? `Bun::Feature::${feature}` : "std::nullopt"))
+    .join(",\n  ")}
+};
+
+static constexpr char publicModuleNames[] =
+  ${moduleList
+    .slice(0, nativeStartIndex)
+    .map(id => idToPublicSpecifierOrEnumName(id))
+    .map(name => JSON.stringify(name.startsWith("internal:") ? "" : name).slice(0, -1) + '\\0"')
+    .join("\n  ")};
+
+static constexpr uint32_t lazyFunctionTableOffsets[moduleCount + 1] = { ${lazyFunctionTableOffsets.join(",")} };
+static constexpr uint8_t lazyFunctionTable[] = { ${lazyFunctionTable.concat(0).join(",")} };
 
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
 static constexpr const char* fileNames[moduleCount] = {
@@ -611,11 +747,19 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     ${moduleList
       .map((id, n) => [id, n] as const)
       .filter(([, n]) => n >= nativeStartIndex)
-      .map(
-        ([id]) => `case Field::${idToEnumName(id)}: {
-      return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});
-    }`,
-      )
+      .map(([id, n]) => {
+        const feature = featureOfId(id, n);
+        const generator = `generateNativeModule_${nativeModuleEnums[id]}`;
+        return feature
+          ? `case Field::${idToEnumName(id)}: {
+      if (Bun__throwIfModuleIsRemoved(globalObject, static_cast<uint16_t>(Bun::Feature::${feature}), ${JSON.stringify(id)}, ${id.length})) [[unlikely]]
+        return {};
+      return generateNativeModule(globalObject, vm, ${recordedPointer(features, feature, "Abort", generator)});
+    }`
+          : `case Field::${idToEnumName(id)}: {
+      return generateNativeModule(globalObject, vm, ${generator});
+    }`;
+      })
       .join("\n    ")}
     default: {
       __builtin_unreachable();
@@ -655,6 +799,15 @@ ${Object.entries(nativeModuleEnumToId)
   .join("\n")}
 };
 }
+#[allow(dead_code, unreachable_pub, unused)]
+pub static INTERNAL_MODULE_FEATURE: [Option<bun_removable_features::Feature>; ${moduleList.length}] = [
+${moduleList
+  .map(featureOfId)
+  .map(feature =>
+    feature ? `    Some(bun_removable_features::Feature::${featureNamed(features, feature).rustName}),` : "    None,",
+  )
+  .join("\n")}
+];
 `,
 );
 
@@ -666,7 +819,7 @@ const registryModuleKeys = [
 ];
 const builtinModuleKeyList = [
   ...registryModuleKeys,
-  ...["bun", "bun:main", "bun:wrap", "bun:test", "bun:app", "node:buffer"].filter(k => !registryModuleKeys.includes(k)),
+  ...["bun", "bun:main", "bun:wrap", "bun:test", "node:buffer"].filter(k => !registryModuleKeys.includes(k)),
 ];
 
 // C++: canonical key string per InternalModuleRegistry id (+ extras), for handing JSC an Identifier without a round
@@ -712,6 +865,7 @@ writeIfNotChanged(
     ExportsObject = 8,
     ExportDefaultObject = 9,
     CommonJSCustomExtension = 10,
+    ExportDefaultOnly = 11,
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,
@@ -736,10 +890,7 @@ writeIfNotChanged(
     .join("\n") + "\n",
 );
 
-writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCPP());
-
-// Rust sibling: include!()'d by src/runtime/generated_js2native.rs
-writeIfNotChanged(path.join(CODEGEN_DIR, "generated_js2native.rs"), getJS2NativeRust());
+writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCPP(guards));
 
 const generatedDTSPath = path.join(TYPES_DIR, "generated.d.ts");
 writeIfNotChanged(
@@ -788,7 +939,7 @@ declare module "module" {
 }
 `;
 
-    for (const [name] of jsclasses) {
+    for (const name of jsclasses) {
       dts += `\ndeclare function $inherits${name}(value: any): value is ${name};`;
     }
 

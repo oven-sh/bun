@@ -4,11 +4,11 @@ use smallvec::SmallVec;
 /// Disallow the use of `eval()`-like methods.
 pub struct NoImpliedEval;
 
-const IMPLIED_EVAL: Message = Message::new(
+const IMPLIED_EVAL: &Message = &Message::new(
     "impliedEval",
     "Implied eval. Consider passing a function instead of a string.",
 );
-const EXEC_SCRIPT: Message = Message::new("execScript", "Implied eval. Do not use execScript().");
+const EXEC_SCRIPT: &Message = &Message::new("execScript", "Implied eval. Do not use execScript().");
 
 const GLOBAL_CANDIDATES: [&str; 4] = ["global", "window", "globalThis", "self"];
 
@@ -31,7 +31,7 @@ fn is_evaluated_string(e: Expr<'_>) -> bool {
     false
 }
 
-/// Whether `object` is a global object: `window`, `window.window`, `window["window"].window`, ..
+/// True if `object` is a global object: `window`, `window.window`, `window["window"].window`, ..
 fn is_global_object(object: Expr<'_>) -> bool {
     let mut root = object;
     while let Some(inner) = ast_utils::member_object(root) {
@@ -53,7 +53,7 @@ fn is_global_object(object: Expr<'_>) -> bool {
 impl Rule for NoImpliedEval {
     const META: Meta = Meta::eslint("no-implied-eval", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().calls_named(&["setInterval", "setTimeout", "execScript"]);
-    /// `execScript`, and the other names for which [`is_eval_like`] holds.
+    /// `execScript`, and the other names that [`is_eval_like`] accepts.
     type State<'a> = [Name<'a>; 3];
 
     fn new(_: &Options) -> Self {
@@ -99,7 +99,7 @@ impl Rule for NoImpliedEval {
                 Some(eslint_utils::StaticValue::String(_))
             );
         if is_string {
-            cx.report(e, if is_exec_script { EXEC_SCRIPT } else { IMPLIED_EVAL });
+            cx.report(e, if is_exec_script { EXEC_SCRIPT } else { IMPLIED_EVAL }).unless_claimed(e);
         }
     }
 }

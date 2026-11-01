@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow the use of `process.env`.
 pub struct NoProcessEnv;
 
-const UNEXPECTED_PROCESS_ENV: Message =
-    Message::new("unexpectedProcessEnv", "Unexpected use of process.env.");
+const UNEXPECTED_PROCESS_ENV: &Message =
+    &Message::new("unexpectedProcessEnv", "Unexpected use of process.env.");
 
 impl Rule for NoProcessEnv {
     const META: Meta = Meta::eslint("no-process-env", Kind::Suggestion).deprecated();
@@ -23,7 +23,7 @@ impl Rule for NoProcessEnv {
         let Some((obj, name, _)) = e.as_dot() else {
             return;
         };
-        // The `name` of ESLint's `PrivateIdentifier` is without the `#`.
+        // ESLint's `PrivateIdentifier` has a `name` without the `#`.
         if name.name().is_any(&["env", "#env"])
             && obj.is_ident("process")
             && !e.is_jsx_tag_name()

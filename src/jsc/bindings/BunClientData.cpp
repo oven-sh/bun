@@ -31,6 +31,7 @@
 #include "NativePromiseContext.h"
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
+#include "IsolatedModuleCache.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -41,7 +42,7 @@ JSHeapData::JSHeapData(Heap& heap)
     : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Zig::GlobalObject>())
     , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
     , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
-    , m_heapCellTypeForNapiHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::NapiHandleScopeImpl>())
+    , m_heapCellTypeForHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::HandleScopeImpl>())
     , m_heapCellTypeForNativePromiseContext(JSC::IsoHeapCellType::Args<Bun::NativePromiseContext>())
     , m_heapCellTypeForJSModuleGraph(JSC::IsoHeapCellType::Args<Bun::JSModuleGraph>())
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
@@ -57,6 +58,7 @@ JSHeapData::~JSHeapData() = default;
 
 JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
     : commonStrings(vm)
+    , schemaStrings(vm)
     , m_builtinNames(vm)
     , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
@@ -105,6 +107,7 @@ JSVMClientData::~JSVMClientData()
         client->remove();
         client->willDestroyVM();
     }
+    ASSERT(m_sqliteDatabases.isEmpty());
 
     m_normalWorld = nullptr;
     if (vmHandle)
@@ -183,6 +186,7 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
             JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
             clientData->commonStrings.visit(visitor);
+            clientData->schemaStrings.visit(visitor);
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
 

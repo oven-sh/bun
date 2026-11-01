@@ -1,18 +1,18 @@
 use crate::rules::no_wrapper_object_types::GlobalFunctions;
 use bun_lint::prelude::*;
-use bun_lint::types::SymbolFlags;
+use bun_lint::types::{SymbolFlags, TypeFlags};
 use bun_lint::types::utils::is_builtin_symbol_like;
 use bun_lint::utils::ts_scope::is_reference_to_global_function;
 
 /// Disallow the use of `eval()`-like functions.
 pub struct NoImpliedEval;
 
-const NO_FUNCTION_CONSTRUCTOR: Message = Message::new(
+const NO_FUNCTION_CONSTRUCTOR: &Message = &Message::new(
     "noFunctionConstructor",
     "Implied eval. Do not use the Function constructor to create functions.",
 );
-const NO_IMPLIED_EVAL_ERROR: Message =
-    Message::new("noImpliedEvalError", "Implied eval. Consider passing a function.");
+const NO_IMPLIED_EVAL_ERROR: &Message =
+    &Message::new("noImpliedEvalError", "Implied eval. Consider passing a function.");
 
 const FUNCTION_CONSTRUCTOR: &str = "Function";
 const GLOBAL_CANDIDATES: [&str; 3] = ["global", "globalThis", "window"];
@@ -22,7 +22,8 @@ fn is_global_candidate(object: Expr) -> bool {
     object.as_ident().is_some_and(|name| name.is_any(&GLOBAL_CANDIDATES))
 }
 
-fn get_callee_name(node: Expr<'_>) -> Option<Name<'_>> {
+fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
+    let node = node.with_jsdoc_cast();
     match node.kind() {
         ExprKind::Ident(name) => Some(name),
         // A `ChainExpression` for ESLint.
@@ -31,7 +32,9 @@ fn get_callee_name(node: Expr<'_>) -> Option<Name<'_>> {
             Some(name.name())
         }
         ExprKind::Index { obj, index, .. } if is_global_candidate(obj) => match index.kind() {
-            ExprKind::Ident(name) | ExprKind::String(name) => Some(name),
+            ExprKind::String(name) => Some(name),
+            // tsgolint only takes a computed member's name from a string literal.
+            ExprKind::Ident(name) if !is_oxlint => Some(name),
             _ => None,
         },
         _ => None,
@@ -41,22 +44,27 @@ fn get_callee_name(node: Expr<'_>) -> Option<Name<'_>> {
 fn is_function_type(node: Expr) -> bool {
     let ty = node.ty();
     ty.is_unresolved()
+        // An `any` could be anything. Upstream treats it as a string.
+        || node.file().language().has_no_foreign_config && ty.has_flags(TypeFlags::ANY)
         || ty.get_symbol().is_some_and(|symbol| symbol.has_flags(SymbolFlags::FUNCTION | SymbolFlags::METHOD))
         || is_builtin_symbol_like(ty, FUNCTION_CONSTRUCTOR)
         || !ty.get_call_signatures().is_empty()
 }
 
-fn is_bind(node: Expr) -> bool {
+// tsgolint has no `ChainExpression`, and it only looks at an identifier or a `PropertyAccessExpression`'s name.
+fn is_bind(node: Expr, is_oxlint: bool) -> bool {
     match node.kind() {
         ExprKind::Ident(name) => name.is("bind"),
-        _ if node.is_chain_root() => false,
-        ExprKind::Dot { name, .. } => name.name().is("bind"),
-        ExprKind::Index { index, .. } => is_bind(index),
+        ExprKind::Dot { name, .. } if !node.is_chain_root() || (is_oxlint && !node.is_parenthesized()) => {
+            name.name().is("bind")
+        }
+        ExprKind::Index { index, .. } if !is_oxlint && !node.is_chain_root() => is_bind(index, is_oxlint),
         _ => false,
     }
 }
 
-fn is_function(node: Expr) -> bool {
+fn is_function(node: Expr, is_oxlint: bool) -> bool {
+    let node = node.with_jsdoc_cast();
     match node.kind() {
         ExprKind::Fn(_) => true,
         ExprKind::String(_)
@@ -67,7 +75,9 @@ fn is_function(node: Expr) -> bool {
         | ExprKind::Null
         | ExprKind::Regex(_)
         | ExprKind::Template(_) => false,
-        ExprKind::Call(call) if !node.is_chain_root() => is_bind(call.callee()) || is_function_type(node),
+        ExprKind::Call(call) if is_oxlint || !node.is_chain_root() => {
+            is_bind(call.callee(), is_oxlint) || is_function_type(node)
+        }
         _ => is_function_type(node),
     }
 }
@@ -88,7 +98,8 @@ impl Rule for NoImpliedEval {
         Some(GlobalFunctions::default())
     }
 
-    // The outer one first, as upstream: `Function()` as an argument of `setTimeout` is reported twice at one place.
+    // Outer node first, as upstream: `Function()` as an argument of `setTimeout` is reported twice at the same
+    // location.
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Expr(node) = node else {
             return;
@@ -96,7 +107,8 @@ impl Rule for NoImpliedEval {
         let (ExprKind::Call(call) | ExprKind::New(call)) = node.kind() else {
             return;
         };
-        let Some(callee_name) = get_callee_name(call.callee()) else {
+        let is_oxlint = cx.language().is_oxlint;
+        let Some(callee_name) = get_callee_name(call.callee(), is_oxlint) else {
             return;
         };
         if callee_name.is(FUNCTION_CONSTRUCTOR) {
@@ -111,12 +123,28 @@ impl Rule for NoImpliedEval {
         let Some(handler) = call.args().first() else {
             return;
         };
-        if callee_name.is_any(&EVAL_LIKE_FUNCTIONS)
-            && !is_function(handler)
-            && *cx
-                .state
-                .entry((Node::Expr(node).scope(), callee_name))
-                .or_insert_with(|| is_reference_to_global_function(callee_name, node))
+        if !callee_name.is_any(&EVAL_LIKE_FUNCTIONS) || is_function(handler, is_oxlint) {
+            return;
+        }
+        if is_oxlint {
+            // tsgolint asks the checker for the callee's symbol. One that's declared in this file isn't the global.
+            let is_declared_in_file = call
+                .callee()
+                .ts_symbol()
+                .is_some_and(|symbol| symbol.declarations().any(|declaration| declaration.is_in_linted_file()));
+            if !is_declared_in_file {
+                let report = match handler.is_parenthesized() {
+                    true => cx.report(handler.outer_span(), NO_IMPLIED_EVAL_ERROR),
+                    false => cx.report(handler, NO_IMPLIED_EVAL_ERROR),
+                };
+                report.claims(node);
+            }
+            return;
+        }
+        if *cx
+            .state
+            .entry((Node::Expr(node).scope(), callee_name))
+            .or_insert_with(|| is_reference_to_global_function(callee_name, node))
         {
             cx.report(handler, NO_IMPLIED_EVAL_ERROR);
         }

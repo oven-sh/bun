@@ -1,17 +1,16 @@
 use bun_lint_oxlint::ast_util::parent_node;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use rustc_hash::FxHashMap;
-use std::collections::hash_map::Entry;
+use bun_lint::types::IdMap;
 use smallvec::SmallVec;
 
 /// Prefer `import.meta.{dirname,filename}` over legacy techniques for getting file paths.
 pub struct PreferImportMetaProperties;
 
-const DIRNAME: Message = Message::new("", "Do not construct dirname.");
-const FILENAME: Message = Message::new("", "Do not construct filename using `fileURLToPath()`.");
+const DIRNAME: &Message = &Message::new("", "Do not construct dirname.");
+const FILENAME: &Message = &Message::new("", "Do not construct filename using `fileURLToPath()`.");
 
-/// A function of a module of Node.js.
+/// A function of a Node.js module.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Function {
     /// `path.dirname`
@@ -36,10 +35,10 @@ impl Function {
     }
 }
 
-/// Whether a variable is the function (`false`) or its module (`true`).
-type Known<'a> = FxHashMap<(Symbol<'a>, Function, bool), bool>;
+/// Caches whether a variable is the function (`[_][0]`) or its module (`[_][1]`). The first index is the [`Function`].
+type Known<'a> = [[IdMap<Symbol<'a>, bool>; 2]; 2];
 
-/// The call that `e` is directly the first argument of.
+/// The call whose first argument is directly `e`.
 fn call_with_first_argument(e: Expr<'_>) -> Option<Expr<'_>> {
     parent_node(e)?.as_expr().filter(|it| it.as_call().is_some_and(|it| it.args().first() == Some(e)))
 }
@@ -60,7 +59,7 @@ fn is_process_get_builtin_module_call(call: Call, modules: &[&str]) -> bool {
             .is_some_and(|it| it.is_any(modules))
 }
 
-/// `function(a)`, where the callee is the function of the module of Node.js, through imports and constants.
+/// `function(a)`, where the callee resolves to the Node.js module's function through imports and constants.
 fn is_node_builtin_module_function_call<'a>(call: Expr<'a>, function: Function, known: &mut Known<'a>) -> bool {
     let Some(call) = call.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
         return false;
@@ -68,8 +67,9 @@ fn is_node_builtin_module_function_call<'a>(call: Expr<'a>, function: Function, 
     if call.args().first().is_some_and(|it| it.tag() == ExprTag::Spread) {
         return false;
     }
-    // The variables that stand for the same as the callee.
-    let mut visited: SmallVec<[(Symbol<'a>, Function, bool); 4]> = SmallVec::new();
+    // The variables that resolve to the same thing as the callee.
+    let known = &mut known[function as usize];
+    let mut visited: SmallVec<[(Symbol<'a>, bool); 4]> = SmallVec::new();
     let (mut node, mut is_module) = (call.callee(), false);
     let answer = loop {
         if node.is_parenthesized() || node.is_chain_root() {
@@ -84,15 +84,16 @@ fn is_node_builtin_module_function_call<'a>(call: Expr<'a>, function: Function, 
                 let Some(symbol) = node.symbol() else {
                     break false;
                 };
-                let key = (symbol, function, is_module);
-                // While it is being looked at it is not the function: `const path = path`.
-                match known.entry(key) {
-                    Entry::Occupied(answer) => break *answer.get(),
-                    Entry::Vacant(entry) => {
-                        entry.insert(false);
-                        visited.push(key);
-                    }
+                // A variable that's still being resolved counts as not the function: `const path = path`.
+                let mut is_new = false;
+                let answer = *known[is_module as usize].get_or_insert_with(symbol, || {
+                    is_new = true;
+                    false
+                });
+                if !is_new {
+                    break answer;
                 }
+                visited.push((symbol, is_module));
                 match symbol.declarations().next() {
                     Some(Declaration::ImportSpec(specifier)) => {
                         break !is_module
@@ -114,14 +115,14 @@ fn is_node_builtin_module_function_call<'a>(call: Expr<'a>, function: Function, 
             _ => break false,
         }
     };
-    for key in visited {
-        known.insert(key, answer);
+    for (symbol, visited_as_module) in visited {
+        known[visited_as_module as usize].insert(symbol, answer);
     }
     answer
 }
 
-/// For `const symbol = init` the `init`, which is what `symbol` is. For `const { function: symbol } = init` the `init`,
-/// which is the module.
+/// For `const symbol = init`, returns `init`, which has the same value as `symbol`. For
+/// `const { function: symbol } = init`, returns `init`, which is the module.
 fn initializer_of_constant<'a>(
     declaration: Declaration<'a>,
     symbol: Symbol<'a>,
@@ -163,7 +164,7 @@ fn report_dirname_call_with<'a>(node: Expr<'a>, cx: Context<'_, 'a>) -> bool {
     call.is_some()
 }
 
-/// `node`: the name of the file.
+/// `node` is the file name.
 fn iterate_problems_from_filename<'a>(node: Expr<'a>, report_filename_node: bool, cx: Context<'_, 'a>) {
     if report_dirname_call_with(node, cx) {
         return;

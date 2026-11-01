@@ -5,7 +5,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// This rule applies when the comparison operator is applied two or more times in a row.
 pub struct BadComparisonSequence;
 
-const BAD_COMPARISON_SEQUENCE: Message = Message::new("", "Bad comparison sequence");
+const BAD_COMPARISON_SEQUENCE: &Message = &Message::new("", "Bad comparison sequence");
 
 impl Rule for BadComparisonSequence {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-comparison-sequence", Kind::Problem);
@@ -35,7 +35,8 @@ impl Rule for BadComparisonSequence {
     }
 }
 
-/// Of `a === b === c === d` only the whole is reported. Parentheses, statements and declarations are where that ends.
+/// In `a === b === c === d` only the whole expression is reported. The search stops at parentheses, statements and
+/// declarations.
 fn has_no_bad_comparison_in_parent<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> {
     if matches!(child, Node::Expr(e) if e.is_parenthesized()) {
         return Some(true);
@@ -66,7 +67,7 @@ fn comparison_kind(e: Expr) -> Option<Comparison> {
     }
 }
 
-/// The comparison on the left whose result is compared.
+/// Returns the comparison on the left whose result is compared again.
 fn bad_comparison_sequence(e: Expr<'_>) -> Option<Expr<'_>> {
     let kind = comparison_kind(e)?;
     e.left().filter(|left| comparison_kind(*left) == Some(kind) && !left.is_parenthesized())

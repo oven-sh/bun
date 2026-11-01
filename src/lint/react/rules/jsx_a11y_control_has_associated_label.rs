@@ -14,15 +14,15 @@ use bun_lint::rule::Plugin;
 /// Enforce that a control (an interactive element) has a text label.
 pub struct ControlHasAssociatedLabel {
     depth: u8,
-    /// Besides `alt`, `aria-label` and `aria-labelledby`.
+    /// In addition to `alt`, `aria-label` and `aria-labelledby`.
     label_attributes: Vec<String>,
     control_components: Vec<String>,
-    /// Besides `link`.
+    /// In addition to `link`.
     ignore_elements: Vec<String>,
     ignore_roles: Vec<String>,
 }
 
-const CONTROL_HAS_ASSOCIATED_LABEL: Message = Message::new("", "A control must be associated with a text label.");
+const CONTROL_HAS_ASSOCIATED_LABEL: &Message = &Message::new("", "A control must be associated with a text label.");
 
 impl Rule for ControlHasAssociatedLabel {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "control-has-associated-label", Kind::Problem);

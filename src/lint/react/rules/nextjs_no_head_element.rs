@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prevents the usage of the native `<head>` element inside a Next.js application.
 pub struct NoHeadElement;
 
-const NO_HEAD_ELEMENT: Message = Message::new("", "Do not use `<head>` element. Use `<Head />` from `next/head` instead.");
+const NO_HEAD_ELEMENT: &Message = &Message::new("", "Do not use `<head>` element. Use `<Head />` from `next/head` instead.");
 
 impl Rule for NoHeadElement {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-head-element", Kind::Problem);

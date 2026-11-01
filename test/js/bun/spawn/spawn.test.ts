@@ -11,6 +11,7 @@ import {
   isDebug,
   isLinux,
   isPosix,
+  isRoot,
   isWindows,
   shellExe,
   tempDir,
@@ -1383,6 +1384,19 @@ describe("close handling", () => {
   });
 });
 
+it("resourceUsage has records with no prototype", () => {
+  const usage = spawnSync({ cmd: [bunExe(), "-e", "1"], env: bunEnv }).resourceUsage;
+  const shape = (record: object) => [
+    Object.getPrototypeOf(record),
+    Object.entries(record).map(([name, value]) => `${name}: ${typeof value}`),
+  ];
+  expect(shape(usage.contextSwitches)).toEqual([null, ["voluntary: number", "involuntary: number"]]);
+  expect(shape(usage.cpuTime)).toEqual([null, ["user: bigint", "system: bigint", "total: bigint"]]);
+  expect(shape(usage.messages)).toEqual([null, ["sent: number", "received: number"]]);
+  expect(shape(usage.ops)).toEqual([null, ["in: number", "out: number"]]);
+  expect(usage.cpuTime.total).toBe(usage.cpuTime.user + usage.cpuTime.system);
+});
+
 it("dispose keyword works", async () => {
   let captured;
   {
@@ -1851,8 +1865,6 @@ describe("option combinations", () => {
 });
 
 describe("uid/gid", () => {
-  const isRoot = process.getuid?.() === 0;
-
   it.if(isPosix && isRoot)("applies uid and gid to the child", async () => {
     await using proc = spawn({ cmd: ["id", "-u"], uid: 65534, gid: 65534, stdout: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
@@ -2367,4 +2379,108 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
       expect(result).toEqual({ report: { stdin: "hi", stdoutIsDevNull: true }, exitCode: 0 });
     });
   });
+});
+
+// At startup, bun opens /dev/null on fd 0, 1 or 2 if it's closed. Like node, it doesn't replace an O_PATH descriptor.
+describe.skipIf(!isPosix)("startup with a closed or an O_PATH stdio fd", () => {
+  const O_PATH = 0o10000000;
+  // Writes a report to fd 3: what fds 0-2 point to after startup, and the result of writing to fds 1 and 2.
+  const script = `
+    const fs = require("node:fs");
+    const devNull = fs.statSync("/dev/null").rdev;
+    const at = fd => {
+      const stat = fs.fstatSync(fd);
+      if (stat.isCharacterDevice() && stat.rdev === devNull) return "/dev/null";
+      if (stat.isDirectory()) return "directory";
+      return stat.isFIFO() || stat.isSocket() ? "pipe" : "other";
+    };
+    const write = fd => {
+      try {
+        return fs.writeSync(fd, "x");
+      } catch (e) {
+        return e.code;
+      }
+    };
+    console.log("out");
+    console.error("err");
+    fs.writeSync(3, JSON.stringify({ fds: [at(0), at(1), at(2)], writes: [write(1), write(2)] }));
+  `;
+  const after = { opath: "directory", closed: "/dev/null", pipe: "pipe" };
+  type Slot = keyof typeof after;
+  const closed: Slot[][] = [["closed", "closed", "closed"]];
+  const opath: Slot[][] = [
+    ["pipe", "opath", "pipe"],
+    ["opath", "closed", "closed"],
+  ];
+
+  it.concurrent.each<Slot[]>([...closed, ...(isLinux ? opath : [])])("fd 0 %s, fd 1 %s, fd 2 %s", async (...slots) => {
+    const directory = slots.includes("opath") ? openSync("/", O_PATH) : undefined;
+    let reportFd: number | undefined;
+    try {
+      // Bun.spawn can't leave a stdio fd closed, so sh closes it and then execs bun.
+      const closes = slots.flatMap((slot, fd) => (slot === "closed" ? [`${fd}>&-`] : [])).join(" ");
+      await using proc = spawn({
+        cmd: closes ? ["sh", "-c", `exec "$0" "$@" ${closes}`, bunExe(), "-e", script] : [bunExe(), "-e", script],
+        env: bunEnv,
+        stdio: [...slots.map(slot => (slot === "opath" ? directory! : "pipe")), "pipe"],
+      });
+      reportFd = proc.stdio[3] as number;
+      const exitCode = await proc.exited;
+      const buf = Buffer.alloc(256);
+      const report = buf.toString("utf8", 0, readSync(reportFd, buf));
+      expect({ report: report ? JSON.parse(report) : null, exitCode, signalCode: proc.signalCode }).toEqual({
+        report: {
+          fds: slots.map(slot => after[slot]),
+          writes: slots.slice(1).map(slot => (slot === "opath" ? "EBADF" : 1)),
+        },
+        exitCode: 0,
+        signalCode: null,
+      });
+    } finally {
+      if (directory !== undefined) closeSync(directory);
+      if (reportFd !== undefined) closeSync(reportFd);
+    }
+  });
+});
+
+it("doesn't crash when a subprocess pipe is canceled and the event loop runs inside its read callback", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response("ok"),
+  });
+  // The second chunk arrives while the stream's read is pending.
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", `process.stderr.write("ready\\n"); setInterval(() => process.stderr.write("tick\\n"), 1);`],
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  let stderr = "";
+  let chunks = 0;
+  for await (const chunk of proc.stderr) {
+    stderr += decoder.decode(chunk, { stream: true });
+    if (++chunks >= 2 && stderr.includes("tick")) break;
+  }
+  expect(stderr).toStartWith("ready\n");
+
+  // Bun.build() runs the event loop synchronously until an async plugin setup() settles.
+  let body: string | undefined;
+  const build = Bun.build({
+    entrypoints: ["/turn.js"],
+    files: { "/turn.js": "" },
+    plugins: [
+      {
+        name: "turn",
+        async setup() {
+          await Bun.sleep(1);
+          body = await (await fetch(server.url)).text();
+        },
+      },
+    ],
+  });
+  expect(body).toBe("ok");
+  await build;
 });

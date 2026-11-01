@@ -1,0 +1,25 @@
+// Loads one program after another. Each imports a package of its own in one way.
+console.log("## require-esm.plain_mjs.cjs");
+await import("./require-esm.plain_mjs.cjs");
+console.log("## require-esm.dflt_mjs.cjs");
+await import("./require-esm.dflt_mjs.cjs");
+console.log("## require-esm.only_default_mjs.cjs");
+await import("./require-esm.only_default_mjs.cjs");
+console.log("## require-esm.me_mjs.cjs");
+await import("./require-esm.me_mjs.cjs");
+console.log("## require-esm.tla_mjs.cjs");
+await import("./require-esm.tla_mjs.cjs");
+console.log("## require-esm.tla_dep_mjs.cjs");
+await import("./require-esm.tla_dep_mjs.cjs");
+console.log("## require-esm.flagged_mjs.cjs");
+await import("./require-esm.flagged_mjs.cjs");
+console.log("## require-esm.empty_mjs.cjs");
+await import("./require-esm.empty_mjs.cjs");
+console.log("## require-esm.js_esm_x_js.cjs");
+await import("./require-esm.js_esm_x_js.cjs");
+console.log("## require-esm.star_mjs.cjs");
+await import("./require-esm.star_mjs.cjs");
+console.log("## require-esm.live.cjs");
+await import("./require-esm.live.cjs");
+console.log("## require-esm.effects.cjs");
+await import("./require-esm.effects.cjs");

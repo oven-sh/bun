@@ -38,6 +38,7 @@ const repo = resolve(import.meta.dirname, "..");
 // the long poles immediately; everything after bun_hash takes seconds.
 const MIRI_CRATES = [
   "bun_collections",
+  "bun_sema",
   "bun_ast",
   "bun_paths",
   "bun_hash",
@@ -48,13 +49,21 @@ const MIRI_CRATES = [
   "bun_errno",
   "bun_http_types",
   "bun_md",
+  "bun_pod",
   "bun_ptr",
   "bun_resolve_builtins",
+  "bun_semver",
   "bun_shell_parser",
   "bun_threading",
   "bun_url",
   "bun_wyhash",
 ];
+
+// Crates of which Miri runs only the unit tests under these paths. The rest of
+// their tests start other programs, or would take hours to interpret.
+const MIRI_UNIT_TESTS: Record<string, string[]> = {
+  bun_aot: ["ir::waiting_lists"],
+};
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {
   return spawnSync(cmd, args, { stdio: "inherit", cwd: repo, ...opts });
@@ -109,6 +118,10 @@ if (extraArgs.length > 0) {
 const allCrates = MIRI_CRATES.flatMap(c => ["-p", c]);
 console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${allCrates.join(" ")}`);
 if (run("cargo", ["miri", "test", "--no-run", ...allCrates], { env }).status !== 0) process.exit(1);
+for (const crate of Object.keys(MIRI_UNIT_TESTS)) {
+  console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run -p ${crate} --lib`);
+  if (run("cargo", ["miri", "test", "--no-run", "-p", crate, "--lib"], { env }).status !== 0) process.exit(1);
+}
 
 type Result = { crate: string; ok: boolean; seconds: number; output: string };
 
@@ -116,18 +129,23 @@ function testCrate(crate: string): Promise<Result> {
   return new Promise(done => {
     const started = Date.now();
     const chunks: Buffer[] = [];
-    const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always"], { cwd: repo, env });
+    const paths = MIRI_UNIT_TESTS[crate];
+    const only = paths ? ["--lib", "--", ...paths] : [];
+    const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always", ...only], { cwd: repo, env });
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.stderr.on("data", chunk => chunks.push(chunk));
-    child.on("close", code =>
-      done({ crate, ok: code === 0, seconds: (Date.now() - started) / 1000, output: Buffer.concat(chunks).toString() }),
-    );
+    child.on("close", code => {
+      const output = Buffer.concat(chunks).toString();
+      // A path that names no test any more passes with "0 passed".
+      const ranSome = !paths || /test result: ok\. [1-9]/.test(output.replace(/\x1b\[[0-9;]*m/g, ""));
+      done({ crate, ok: code === 0 && ranSome, seconds: (Date.now() - started) / 1000, output });
+    });
   });
 }
 
-const width = Math.max(1, Math.min(availableParallelism(), MIRI_CRATES.length));
-console.log(`\x1b[36m[miri]\x1b[0m ${MIRI_CRATES.length} crates, ${width} at a time`);
-const queue = [...MIRI_CRATES];
+const queue = [...MIRI_CRATES, ...Object.keys(MIRI_UNIT_TESTS)];
+const width = Math.max(1, Math.min(availableParallelism(), queue.length));
+console.log(`\x1b[36m[miri]\x1b[0m ${queue.length} crates, ${width} at a time`);
 const results: Result[] = [];
 const inActions = !!process.env.GITHUB_ACTIONS;
 

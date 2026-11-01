@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow labels that share a name with a variable.
 pub struct NoLabelVar;
 
-const IDENTIFIER_CLASH_WITH_LABEL: Message = Message::new(
+const IDENTIFIER_CLASH_WITH_LABEL: &Message = &Message::new(
     "identifierClashWithLabel",
     "Found identifier with same name as label.",
 );
@@ -22,9 +22,9 @@ impl Rule for NoLabelVar {
             return;
         };
         let variable = Node::Stmt(stmt).scope().resolve_name(label);
-        // oxlint knows only what the file declares.
+        // oxlint only knows what the file declares.
         if variable.is_some() || !cx.language().is_oxlint && cx.file().global(label.bytes()).is_some() {
-            // oxlint points at where the variable is declared.
+            // oxlint reports at the variable's declaration.
             let declared = (variable.filter(|_| cx.language().is_oxlint))
                 .and_then(|it| it.declarations().next()?.name_span());
             let start = stmt.span().start;

@@ -8,12 +8,12 @@ pub struct NoAssign<const IS_NATIVE_REASSIGN: bool> {
 pub type NoGlobalAssign = NoAssign<false>;
 
 impl<const IS_NATIVE_REASSIGN: bool> NoAssign<IS_NATIVE_REASSIGN> {
-    const MESSAGE: Message = match IS_NATIVE_REASSIGN {
-        true => Message::new(
+    const MESSAGE: &Message = match IS_NATIVE_REASSIGN {
+        true => &Message::new(
             "nativeReassign",
             "Read-only global '{{name}}' should not be modified.",
         ),
-        false => Message::new(
+        false => &Message::new(
             "globalShouldNotBeModified",
             "Read-only global '{{name}}' should not be modified.",
         ),
@@ -49,7 +49,7 @@ impl<const IS_NATIVE_REASSIGN: bool> Rule for NoAssign<IS_NATIVE_REASSIGN> {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         self.check(file.unresolved_references().filter(|it| it.is_write()), cx);
-        // What a script declares at its top level is the global variable of that name.
+        // A top-level declaration in a script is the global variable of that name.
         for symbol in file.scope().symbols().filter(|it| it.has_modifying_references()) {
             self.check(symbol.references(), cx);
         }

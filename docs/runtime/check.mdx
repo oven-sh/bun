@@ -436,9 +436,24 @@ for (const log of result.logs) {
 /app/src/index.ts:3: TS2322: Type 'string' is not assignable to type 'number'.
 ```
 
+### `bun compile`
+
+[`bun compile`](/compiler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. Like the build, it takes entry points.
+
+`bun check --aot` takes `--define k=v`, like `bun compile`. A define decides which code the build removes, and the build reports no errors in code that it removes. Pass both commands the same defines, so that they see the same program.
+
+```bash terminal icon="terminal"
+bun check --aot --define 'process.env.NODE_ENV="production"' ./server.ts
+bun compile --define 'process.env.NODE_ENV="production"' ./server.ts
+```
+
+It checks each file with the `tsconfig.json` that the build uses for it, so it takes neither `-b` nor [compiler options as flags](#compiler-options-as-flags). `-p` is the build's `--tsconfig-override`.
+
+With `--explain`, it also lists [the code that compiled to a slow path](/compiler/explain), worst first, with a fix for each. `--explain=guards` lists [every type guard that can fail at run time](/compiler/debugging#find-the-guards-that-fail).
+
 ## If `package.json` has a `check` script
 
-Your script wins. `bun check` runs it, like `bun run check`. To run the type checker in that project, use `bun --check`.
+Your script wins. `bun check` runs it, like `bun run check`, and passes it your flags. To run the type checker in that project, pass `--no-script`.
 
 ```json package.json icon="file-json"
 {
@@ -449,8 +464,10 @@ Your script wins. `bun check` runs it, like `bun run check`. To run the type che
 ```
 
 ```bash terminal icon="terminal"
-bun check   # runs "biome check"
-bun --check # type checks the project
+bun check                # runs "biome check"
+bun check --no-script    # type checks the project
+bun check --no-script -b # with any other flag or path
+bun --check              # type checks the project too
 ```
 
 Pass checker options before the file or script name:
@@ -465,6 +482,8 @@ bun test --check --threads 2 --no-pretty
 `bun build --check` supports `--threads` and `--project`; it uses the build's error format.
 Use the long `--project` name here: `-p` still means `--print`. With `bun run`, options after a file or script name belong to that program.
 
+Writing a tool or a CI step that runs in projects you don't control? `bun check --no-script` is always the type checker.
+
 Inside the `check` script, and in any script it starts, `bun check` is the type checker. That makes `"check": "bun check"` work.
 
 <Warning>
@@ -473,7 +492,7 @@ Inside the `check` script, and in any script it starts, `bun check` is the type 
   script `typecheck`.
 </Warning>
 
-With `--filter` or `--workspaces`, `check` always means the `check` script of each package.
+With `--filter` or `--workspaces`, `check` means the `check` script of each package.
 
 ```bash terminal icon="terminal"
 bun --filter '*' check # runs the "check" script of every package
@@ -612,7 +631,7 @@ declare module "*.module.css" {
 
 ### `bun check` runs a script instead of the type checker
 
-Your `package.json` has a `check` script. Use `bun --check`. See [If `package.json` has a `check` script](#if-packagejson-has-a-check-script).
+Your `package.json` has a `check` script. Use `bun check --no-script`. See [If `package.json` has a `check` script](#if-packagejson-has-a-check-script).
 
 ### `bun check` and my editor disagree
 
@@ -664,7 +683,7 @@ These differences are intentional:
 - **A `tsconfig.json` with nothing but `references` is followed.** `tsc` without `-b` [checks nothing](#a-tsconfigjson-with-nothing-but-references) there.
 - **Paths work next to a `tsconfig.json`.** `tsc src/index.ts` reports TS5112 if there is a `tsconfig.json`. `bun check src/index.ts` [checks the file with it](#some-files-or-directories).
 - **There is no `bun check --watch`.** To check again on every change, use [`bun --watch --check`](#watch-mode).
-- **The order of files does not change the errors.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
+- **An error that one file raises in another file is reported.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
 - **A file that is too long affects no other file.** After TS2563 for the top-level code of one file, `tsc` stops following the types of variables and parameters in the files it checks next, so it drops errors there and reports false ones. `bun check` starts every file afresh.
 - **The order of projects does not change their options.** If configuration files extend each other in a circle, both tools report TS18000. `tsc` prints `{0}` where the files belong, and `bun check` lists them. What `tsc -b` then makes of those files for one project depends on which project it loaded first, and it can hang. `bun check -b` gives each project the options it has when you check it alone.
 - **The `lib.*.d.ts` files are built in.** An error or a declaration in one of them has a path such as `bundled:///libs/lib.dom.d.ts`, which is not a file on your disk.
@@ -691,5 +710,9 @@ bun check [flags] [...files or directories]
 | `--threads <n>`          | Number of threads. Default: one per CPU core                        |
 | `--timing`               | Print how long loading and checking took                            |
 | `--cwd <path>`           | Set the working directory                                           |
+| `--no-script`            | Run the type checker even if the project has a `check` script       |
+| `--aot`                  | Check entry points the way [`bun compile`](/compiler/aot) does      |
+| `--explain`              | With `--aot`: list the code that compiled to a slow path            |
+| `--define <k=v>`         | With `--aot`: replace `k` with `v`, like `bun compile --define`     |
 | `--strict`, `--target`…  | Any compiler option, as for `tsc`. Overrides `tsconfig.json`        |
 | `-h`, `--help`           | Print the help menu                                                 |

@@ -22,7 +22,7 @@ Bun statically links these libraries:
 |---------|---------|
 | [`boringssl`](https://boringssl.googlesource.com/boringssl/) | [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE) |
 | [`brotli`](https://github.com/google/brotli) | MIT |
-| [`libarchive`](https://github.com/libarchive/libarchive) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
+| [`libarchive`](https://github.com/libarchive/libarchive) (not linked: `src/tar` is derived from parts of it) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
 | [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) | MIT |
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
@@ -40,7 +40,8 @@ Bun statically links these libraries:
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
-| [`libspng`](https://github.com/randy408/libspng) | BSD 2-Clause |
+| [`libspng`](https://github.com/randy408/libspng) (not linked: `src/png` is derived from parts of it) | BSD 2-Clause |
+| [`stb_image`](https://github.com/nothings/stb) (not linked: the PNG codec finds the Paeth predictor its way) | MIT or public domain |
 | [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |
@@ -72,6 +73,8 @@ Bun statically links these libraries:
 | Import sorting in `bun fmt` has ports of [`@trivago/prettier-plugin-sort-imports`](https://github.com/trivago/prettier-plugin-sort-imports) and [`@ianvs/prettier-plugin-sort-imports`](https://github.com/ianvs/prettier-plugin-sort-imports), and of `organizeImports.ts` in [TypeScript](https://github.com/microsoft/TypeScript) | Apache 2.0 |
 | `bun fmt` has ports of [`jest-docblock`](https://github.com/jestjs/jest/tree/main/packages/jest-docblock) and the crates [`sort-package-json`](https://crates.io/crates/sort-package-json) and [`oxc-toml`](https://crates.io/crates/oxc-toml) (a fork of taplo), and of parts of [`@babel/generator`](https://github.com/babel/babel), [`micromark`](https://github.com/micromark/micromark) and [`editorconfig-without-wasm`](https://github.com/fisker/editorconfig-core-js-without-wasm). Its character width tables are generated from [`emoji-regex`](https://github.com/mathiasbynens/emoji-regex), [`get-east-asian-width`](https://github.com/sindresorhus/get-east-asian-width) and [`narrow-emojis`](https://npmjs.com/package/narrow-emojis) | MIT |
 | Tailwind class sorting in `bun fmt` is a port of parts of [`prettier-plugin-tailwindcss`](https://github.com/tailwindlabs/prettier-plugin-tailwindcss) | MIT |
+| Svelte formatting in `bun fmt` is a port of [`prettier-plugin-svelte`](https://github.com/sveltejs/prettier-plugin-svelte) and of the template parser of [Svelte](https://github.com/sveltejs/svelte) | MIT |
+| With `prettier-plugin-packagejson` in a Prettier config, `bun fmt` sorts `package.json` with a port of the npm package [`sort-package-json`](https://github.com/keithamus/sort-package-json) and the list in [`git-hooks-list`](https://github.com/fisker/git-hooks-list) | MIT |
 
 The tests in `test/cli/lint/conformance` and `test/cli/format` include test cases from ESLint, typescript-eslint, the ESLint plugins above, oxc, tsgolint, Prettier and the two import sorting plugins. They are not part of the `bun` binary. Their licenses are next to them.
 
@@ -104,6 +107,17 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 | [`url`](https://npmjs.com/package/url) | MIT |
 | [`util`](https://npmjs.com/package/util) | MIT |
 | [`vm-browserify`](https://npmjs.com/package/vm-browserify) | MIT |
+
+## Type declarations
+
+The type declarations of these packages are embedded into Bun's binary. `bun build --compile --aot` reads them in a project that hasn't installed `@types/bun`. They're embedded without their comments, except for copyright notices. The `LICENSE` files of `@types/node` and `undici-types` are embedded next to them.
+
+| Package | License |
+|---------|---------|
+| [`@types/node`](https://npmjs.com/package/@types/node) | MIT |
+| [`undici-types`](https://npmjs.com/package/undici-types) | MIT |
+| [`expect-type`](https://npmjs.com/package/expect-type), which `bun-types` includes | Apache 2.0 |
+| Types from [`jest-mock`](https://npmjs.com/package/jest-mock), which `bun-types` includes | MIT |
 
 ## Additional credits
 

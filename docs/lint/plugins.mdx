@@ -34,7 +34,33 @@ export default {
 };
 ```
 
-Load it from an ESLint config or an oxlint config:
+Load it in `bunfig.toml`. Bun's default rules stay on, and the plugin's rules are added to them.
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["./lint/plugin.js"]
+
+[lint.rules]
+"local/no-todo" = "warn"
+```
+
+```bash terminal icon="terminal"
+bun lint
+```
+
+```txt
+1 | // TODO: handle errors
+    ^
+warn: Open an issue instead of leaving a TODO.  local/no-todo
+   at src/index.js:1:1
+
+1 problem (0 errors, 1 warning)
+Linted 3 files [15.40ms]
+```
+
+You don't need the `eslint` package. To learn the API, read ESLint's guide to [plugins](https://eslint.org/docs/latest/extend/plugins).
+
+If you have an ESLint config or an oxlint config, load it there as usual:
 
 <CodeGroup>
 
@@ -58,42 +84,45 @@ export default [
 
 </CodeGroup>
 
-```bash terminal icon="terminal"
-bun lint
-```
-
-```txt
-/app/src/index.js
-  1:1  warning  Open an issue instead of leaving a TODO  local/no-todo
-
-✖ 1 problem (0 errors, 1 warning)
-
-Linted 3 files [73.16ms]
-```
-
-You don't need the `eslint` package. To learn the API, read ESLint's guide to [plugins](https://eslint.org/docs/latest/extend/plugins).
-
-<Note>
-  `bunfig.toml` can't load plugins. Once you add an `eslint.config.js` or `.oxlintrc.json`, that file decides which
-  rules are on, and Bun's defaults no longer apply.
-</Note>
+`plugins` in `bunfig.toml` works next to those files too, and next to an `.eslintrc.*`. A plugin can only be loaded once under a name, so load it in one place.
 
 ## Plugins from npm
 
-Install and import them as usual.
+Install the package and name it. ESLint's short names work, so `"perfectionist"` is `eslint-plugin-perfectionist`.
 
-```js eslint.config.js icon="/icons/javascript.svg"
-import perfectionist from "eslint-plugin-perfectionist";
-
-export default [
-  {
-    plugins: { perfectionist },
-    rules: { "perfectionist/sort-imports": "error" },
-  },
-];
+```bash terminal icon="terminal"
+bun add -d eslint-plugin-perfectionist
 ```
 
-With an ESLint config, six plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, and `prettier`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["perfectionist"]
+
+[lint.rules]
+"perfectionist/sort-imports" = "error"
+```
+
+A path is relative to `bunfig.toml`. A rule's prefix is the plugin's own name, `meta.name`, without `eslint-plugin-`. To use another prefix:
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = [{ name = "sort", specifier = "eslint-plugin-perfectionist" }]
+
+[lint.rules]
+"sort/sort-imports" = "error"
+```
+
+You don't load the plugins that are built in, such as `react`, `import`, or `unicorn`. Their [rules](/lint/rules) work without it. Next to an ESLint or oxlint config, naming one turns it on, as `plugins` in that file does.
+
+A config file can't use the processors or languages of a plugin that is loaded this way. For those, import the plugin in the config file.
+
+For one run, use `--plugin`. Next to an ESLint config its prefix is the name you give the flag, as in ESLint:
+
+```bash terminal icon="terminal"
+bun lint --plugin perfectionist --rule 'perfectionist/sort-imports: error'
+```
+
+With an ESLint config, eight plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, `prettier`, `json`, and `markdown`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
 
 `bun lint --doctor` shows which of your rules run natively and which run in JavaScript.
 
@@ -120,6 +149,8 @@ nativePluginRules = ["@typescript-eslint", "import"]
 
 ESLint's core rules are always native. Keep `@typescript-eslint` native if you use type-aware rules, because JavaScript rules don't get types.
 
+`nativePluginRules` picks which version of a plugin runs. It doesn't turn rules on or off. To do that, see [`lint.rules`](/runtime/bunfig#lint-rules).
+
 ## `prettier/prettier`
 
 `prettier/prettier` from [eslint-plugin-prettier](https://github.com/prettier/eslint-plugin-prettier) is native. It compares each file with the output of [`bun fmt`](/format) and never starts Prettier.
@@ -134,13 +165,54 @@ Without Prettier, use [`bun/format`](/lint/rules/bun/format). It checks files ag
 
 ## Other languages
 
-Bun parses JavaScript and TypeScript. It hands other files to the `eslint` package in your project, so keep `eslint` 8.57 or later installed if you use:
+In an ESLint config, a file can have a `language` from a plugin. Bun supports the languages of two plugins natively:
 
-- A plugin language, such as `json/json` from `@eslint/json`, `markdown/gfm`, or `css/css`.
+- `@eslint/json`: `json/json`, `json/jsonc`, and `json/json5`, with its [rules](/lint/rules#json).
+- `@eslint/markdown`: `markdown/commonmark` and `markdown/gfm`, with its [rules](/lint/rules#markdown).
+
+Bun parses these files with its own parsers and runs its own versions of the rules, so `eslint` doesn't have to be installed.
+
+```js eslint.config.js icon="/icons/javascript.svg"
+import json from "@eslint/json";
+
+export default [
+  {
+    files: ["**/*.json"],
+    plugins: { json },
+    language: "json/json",
+    rules: { "json/no-duplicate-keys": "error" },
+  },
+];
+```
+
+Comments such as `// eslint-disable-next-line` work in JSONC and JSON5, as they do in ESLint. A file with a syntax error gets a single error and no rules run. ESLint does the same, but the wording of the error is Bun's.
+
+```js eslint.config.js icon="/icons/javascript.svg"
+import markdown from "@eslint/markdown";
+
+export default [
+  {
+    files: ["**/*.md"],
+    plugins: { markdown },
+    language: "markdown/gfm",
+    languageOptions: { frontmatter: "yaml" },
+    rules: { "markdown/no-missing-label-refs": "error" },
+  },
+];
+```
+
+`markdown.configs.recommended` works too, and so do `languageOptions.frontmatter`, `languageOptions.math`, and comments such as `<!-- eslint-disable-next-line markdown/no-html -->`.
+
+The plugin parses Markdown with micromark. Bun uses the parser behind [`Bun.markdown`](/runtime/markdown). The two agree on almost every document. In the few places where micromark deviates from the CommonMark and GFM specs, Bun follows the specs. For example, `<a href=b/c>` is an HTML tag to Bun and plain text to the plugin.
+
+Bun hands every other file to the `eslint` package in your project, so keep `eslint` 8.57 or later installed if you use:
+
+- A language from another plugin, such as `css/css`.
+- A JSON or Markdown rule that isn't built in, such as one of your own. The whole file then goes to `eslint`.
 - A parser for another file type, such as `vue-eslint-parser`, `svelte-eslint-parser`, or `yaml-eslint-parser`.
 - `eslint-plugin-html`.
 
-You still run `bun lint`, and these files show up in the same report.
+You still run `bun lint`, and these files show up in the same report. `bun lint --doctor` shows how many files go to `eslint`.
 
 ## Processors
 
@@ -161,4 +233,6 @@ export default [
 - **Plugins run on several threads.** Each thread imports the plugin, so module-level state is per thread, not per run.
 - **A renamed built-in plugin runs in JavaScript.** For example, `@antfu/eslint-config` registers `@typescript-eslint` as `ts`.
 - **A rule that throws ends the run** with exit code `2`. With an oxlint config, Bun reports the error for that file and continues.
+- **A report at `loc: { line: 0, column: 0 }` is at `1:1`.** `/* eslint-disable */` at the start of the file disables it, except with an ESLint or oxlint config, where neither tool lets a comment disable it. With an ESLint config, the `stylish`, `json`, and `unix` formats print `0:1`, like ESLint. With an oxlint config, a `loc` outside the file that oxlint rejects makes the rule throw, as it does in oxlint.
+- **Every node has `start` and `end` with `bunfig.toml` alone.** With an ESLint config, a JavaScript file has espree's nodes and tokens, and a TypeScript file has typescript-estree's, which have `range` and `loc` but no `start` and `end`. With an oxlint config, every file has oxlint's. Without either config, a TypeScript file has typescript-estree's nodes, tokens, and comments with `start` and `end` added, so a rule that reads them finds them in every file. Everything else stays typescript-estree's: an absent field is `undefined`, not `null` as in oxlint.
 - **Type-aware rules skip files that have a processor.**

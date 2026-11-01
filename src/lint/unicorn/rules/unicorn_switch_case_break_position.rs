@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Enforce consistent `break`/`return`/`continue`/`throw` position in `case` clauses.
 pub struct SwitchCaseBreakPosition;
 
-const SWITCH_CASE_BREAK_POSITION: Message = Message::new("", "Move `{{keyword}}` inside the block statement.");
+const SWITCH_CASE_BREAK_POSITION: &Message = &Message::new("", "Move `{{keyword}}` inside the block statement.");
 
 impl Rule for SwitchCaseBreakPosition {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "switch-case-break-position", Kind::Suggestion);

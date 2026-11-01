@@ -27,7 +27,8 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
-    InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
+    CancelHotRunTimers, InitOptions, MainEntryPoint, RuntimeHooks,
+    RuntimeState as OpaqueRuntimeState, SweepResult, TimersLeft, VirtualMachine,
     WorkerExecArgvFlags,
 };
 use bun_jsc::{
@@ -84,6 +85,8 @@ pub(crate) struct RuntimeState {
     /// leaked per-VM (PORTING.md §Forbidden: leaking only for true
     /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
     pub(crate) transpiler_arena: Box<bun_alloc::Arena>,
+    /// Moved from `InitOptions::owned_env_loader`. `vm.transpiler` points to it.
+    pub(crate) owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
     /// (`Request.body` payloads).
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
@@ -101,8 +104,14 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    /// Innermost entered `Pass`, borrowed from a caller's stack frame; `EnteredPass::drop` pops it.
+    pub(crate) matcher_pass: Cell<*const crate::test_runner::expect::expect_deferred::Pass>,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
+    /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
+    /// keep its address for as long as the VM lives.
+    #[cfg(unix)]
+    pub(crate) uv_loop: crate::napi::uv_posix::UvLoop,
 }
 
 thread_local! {
@@ -131,7 +140,7 @@ pub(crate) fn runtime_state() -> *mut RuntimeState {
 /// Note: `bun_jsc::VirtualMachine.timer` is a `()` placeholder;
 /// the real `All` lives in [`RuntimeState::timer`] until that slot widens.
 /// Null only before [`init_runtime_state`] has run (e.g. `bun_jsc` unit tests
-/// with no high tier, or `Bun__Timer__getNextID` racing init).
+/// with no high tier).
 ///
 /// Returns `*mut` (NOT `&mut`) so callers that are themselves fields of `All`
 /// (`DateHeaderTimer`, `EventLoopDelayMonitor`, `FakeTimers`) can dereference
@@ -276,15 +285,25 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         .cast()
 }
 
+/// The `RuntimeHooks` slot, which the WebSocket client alone calls.
+#[inline(never)]
+fn default_client_ssl_ctx_for_websocket(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
+    bun_removable_features::removable_definition!(WebSocket, default_client_ssl_ctx_for_websocket);
+    default_client_ssl_ctx(vm)
+}
+
 /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — RuntimeHooks slot
 /// body. Per-VM digest-keyed weak `SSL_CTX*` cache; returns +1 ref or `None`
 /// on BoringSSL rejection (`err` populated).
 ///
+#[inline(never)]
 fn ssl_ctx_cache_get_or_create(
     _vm: &VirtualMachine,
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
 ) -> Option<bun_boringssl::c::OwnedSslCtx> {
+    // The WebSocket client alone calls it.
+    bun_removable_features::removable_definition!(WebSocket, ssl_ctx_cache_get_or_create);
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
@@ -351,6 +370,7 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
+        owned_env_loader: opts.owned_env_loader.take(),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
             // ~100 KB pool in a stack temporary before moving it into the box (see
@@ -371,12 +391,20 @@ unsafe fn init_runtime_state(
         },
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        matcher_pass: Cell::new(ptr::null()),
         lint: core::cell::OnceCell::new(),
+        // SAFETY: `vm` is the live VM being initialized. `VirtualMachine::init`
+        // wrote `handle` before calling this hook (the wake context below reads
+        // it the same way).
+        #[cfg(unix)]
+        uv_loop: unsafe {
+            crate::napi::uv_posix::UvLoop::new(ptr::NonNull::new_unchecked(vm), (*vm).handle())
+        },
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
     // `Timespec::now_allow_mocked_time` reads `bun_core::mock_time` directly;
-    // `FakeTimers::CurrentTime::{set,clear}` write that storage so timers
+    // `FakeTimers::{set_now,clear_now}` write that storage so timers
     // scheduled under `jest.useFakeTimers()` use the mocked epoch.
 
     // ── vm.transpiler ────────────────────────────────────────────────────
@@ -421,7 +449,14 @@ unsafe fn init_runtime_state(
         // Forward `opts.env_loader` so the VM
         // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
         // `NODE_ENV=test` into it after init).
-        match bun_bundler::Transpiler::init(arena, log, args, opts.env_loader.map(|p| p.as_ptr())) {
+        // SAFETY: same as the arena above.
+        let env_loader: Option<*mut bun_dotenv::Loader> = unsafe {
+            match (*state).owned_env_loader.as_deref_mut() {
+                Some(owned) => Some(ptr::from_mut(owned)),
+                None => opts.env_loader.map(|p| p.as_ptr()),
+            }
+        };
+        match bun_bundler::Transpiler::init(arena, log, args, env_loader) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
                 // field is zero-init'd uninhabited memory (never dropped).
@@ -436,49 +471,39 @@ unsafe fn init_runtime_state(
                 unsafe {
                     let t = &mut (*vm).transpiler;
                     t.options.emit_dce_annotations = false;
+                    t.options.global_cache = opts.global_cache;
+                    t.resolver.opts.global_cache = opts.global_cache;
                     t.resolver.prefer_module_field = false;
                     // Propagate `--preserve-symlinks`
                     // from CLI args to the resolver so symlinked node_modules
                     // entries resolve via their link path (peer deps stay reachable).
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
-                    let wake_ctx: *mut bun_jsc::async_module::WakeContext = &raw mut **(*state)
+                    let wake_ctx: &mut bun_jsc::async_module::WakeContext = &mut **(*state)
                         .wake_ctx
                         .insert(Box::new(bun_jsc::async_module::WakeContext {
                             queue: &raw mut (*vm).modules,
                             handle: (*vm).handle(),
                             kind: (*vm).current_loop_kind(),
                         }));
-                    t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
-                        context: core::ptr::NonNull::new(wake_ctx.cast()),
-                        handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
-                        on_dependency_error: Some({
-                            unsafe fn adapter(
-                                ctx: *mut core::ffi::c_void,
-                                dep: &bun_resolver::install_types::Dependency,
-                                id: bun_resolver::install_types::DependencyID,
-                                err: &'static str,
-                            ) {
-                                // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
-                                unsafe {
-                                    bun_jsc::async_module::Queue::on_dependency_error(
-                                        bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
-                                            .cast(),
-                                        dep,
-                                        id,
-                                        err,
-                                    )
-                                }
-                            }
-                            adapter
+                    t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler(
+                        Some(bun_resolver::install_types::WakeTarget {
+                            context: core::ptr::NonNull::from(wake_ctx).cast(),
+                            handler: bun_jsc::async_module::Queue::on_wake_handler,
                         }),
-                    };
+                    );
                     // Branch on `opts.graph` here — with a module graph,
                     // auto_jsx=true would
                     // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
                     // `apply_standalone_runtime_flags` can set
                     // `resolver.opts.load_tsconfig_json = false`, defeating
                     // `compile.autoloadTsconfig: false`.
-                    if opts.graph.is_some() {
+                    // Code from disk is transpiled by the tsconfig.json that lies there, as under `bun run`.
+                    let reads_tsconfig = opts.graph.is_none_or(|graph| {
+                        graph
+                            .compiled_program()
+                            .is_some_and(|program| program.allows_code_from_disk)
+                    });
+                    if !reads_tsconfig {
                         t.configure_linker_with_auto_jsx(false);
                     } else {
                         t.configure_linker();
@@ -608,12 +633,39 @@ unsafe fn configure_debugger(
     };
 
     let Some(debugger) = debugger else { return };
+    let flag = match cli_flag {
+        CliDebugger::Enable(enable) if enable.set_breakpoint_on_first_line => Some("--inspect-brk"),
+        CliDebugger::Enable(enable) if enable.wait_for_connection => Some("--inspect-wait"),
+        CliDebugger::Enable(_) => Some("--inspect"),
+        CliDebugger::Unspecified => None,
+    };
+    let asked_by = flag.unwrap_or("BUN_INSPECT");
+    if !crate::cli::startup_options::is_debugger_admitted() {
+        // `BUN_INSPECT_CONNECT_TO` does not say that anybody asked to debug this process: see below.
+        if debugger.mode != Mode::Connect {
+            crate::cli::startup_options::exit_for_unadmitted_debugger(flag);
+        }
+        return;
+    }
+    if bun_removable_features::is_removed(bun_removable_features::Feature::Inspector) {
+        if debugger.mode != Mode::Connect {
+            bun_core::warn!(
+                "{} is ignored, because --trim removed the debugger from this executable",
+                asked_by
+            );
+        }
+        return;
+    }
     // The debugger evaluates what its client sends, whatever the engine's eval setting.
-    if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Disallowed {
+    if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
         const STRICT: &str = "--disallow-code-generation-from-strings=strict";
+        let is_trimmed = bun_core::is_code_generation_disallowed_by_trimming();
         // Editors set this one for every process started from their terminals (Bun's VS Code
         // extension does by default), so it does not say that anybody asked to debug this one.
         if debugger.mode == Mode::Connect {
+            if is_trimmed {
+                return;
+            }
             bun_core::warn!(
                 "BUN_INSPECT_CONNECT_TO is ignored with {}: the inspector evaluates code from strings",
                 STRICT
@@ -621,21 +673,18 @@ unsafe fn configure_debugger(
             bun_core::Output::flush();
             return;
         }
+        if is_trimmed {
+            bun_core::Output::err_generic(
+                "{} can't be used with an executable built with --trim, because the debugger runs code from strings\n",
+                (asked_by,),
+            );
+            bun_core::Global::exit(1);
+        }
         // Asking for both is an error, so that the process never runs without something its
         // operator asked for.
         bun_core::Output::err_generic(
             "{} cannot be used with {}: the inspector evaluates code from strings\n",
-            (
-                match cli_flag {
-                    CliDebugger::Enable(enable) if enable.set_breakpoint_on_first_line => {
-                        "--inspect-brk"
-                    }
-                    CliDebugger::Enable(enable) if enable.wait_for_connection => "--inspect-wait",
-                    CliDebugger::Enable(_) => "--inspect",
-                    CliDebugger::Unspecified => "BUN_INSPECT",
-                },
-                STRICT,
-            ),
+            (asked_by, STRICT),
         );
         bun_core::Global::exit(1);
     }
@@ -718,7 +767,7 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 ///
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `Pending`/`NotFound` returns `error.ModuleNotFound`,
-/// `JSModuleLoader.import` throwing returns `error.JSError`.
+/// `JSModuleLoader.import` throwing returns a rejected promise.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -740,15 +789,31 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: per fn contract.
         unsafe { (*vm_for_guard).is_in_preload = false };
     }
+    // SAFETY: per fn contract.
+    let kept_for_this_run = core::mem::take(unsafe { &mut (*vm).preloads_kept_for_reload });
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let global: *mut JSGlobalObject = unsafe { &*vm }.global;
-    // `vm.transpiler` (hence `transpiler.fs`) is always initialized here:
+    // SAFETY: per fn contract; `global` is the live global of `vm`.
+    unsafe {
+        if (*vm).transpiler.options.rewrite_jest_for_tests
+            && (*vm).transpiler.options.vitest_globals
+        {
+            bun_removable_features::call_removable!(
+                Test,
+                Abort,
+                crate::test_runner::jest::Jest::define_vitest_globals,
+                &*global
+            )
+            .map_err(|_| bun_jsc::CrateError::JSError)?;
+        }
+    }
+    // `vm.transpiler` (hence the `FileSystem` singleton) is always initialized here:
     // `init_runtime_state` returns `Err` on `Transpiler::init`
     // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
     // failed to build its transpiler never reaches `load_preloads` (this hook
     // only runs via `reload_entry_point*`, which operate on an already-`Ok` VM).
-    let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir;
+    let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir();
     // SAFETY: per fn contract.
     let global_cache = if unsafe { &*vm }.standalone_module_graph.is_none() {
         GlobalCache::read_only
@@ -774,7 +839,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // node: builtin specifiers bypass the file resolver — JSModuleLoader
         // resolves them internally, so `bun --import node:*` works like Node's.
         let module_name = if normalized.starts_with(b"node:") {
-            bun_core::String::from_bytes(normalized)
+            bun_core::StringView::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────
             // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
@@ -827,7 +892,12 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 .path()
                 .expect("resolver Success result has a primary path")
                 .text;
-            bun_core::String::from_bytes(path_text)
+            // SAFETY: per fn contract.
+            unsafe {
+                (*vm).preload_hash = bun_watcher::Watcher::get_hash(path_text);
+                (*vm).transpiler.options.test_file_imports_vitest = false;
+            }
+            bun_core::StringView::from_bytes(path_text)
         };
         // Note: use `import_ptr` (not `import`) so the `*mut` we store in
         // `pending_internal_promise` keeps the FFI's mutable provenance instead
@@ -836,11 +906,15 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         let promise: *mut JSInternalPromise = match JSModuleLoader::import_ptr(global, &module_name)
         {
             Ok(p) => p.as_ptr(),
-            Err(_) => {
-                // The exception is
-                // already pending on `global`; bubble the tag so
-                // `reload_entry_point` forwards it.
-                return Err(bun_jsc::CrateError::JSError);
+            // Report a preload that fails to resolve the same way as one that fails to load.
+            Err(err) => {
+                let rejected = JSInternalPromise::rejected_promise_with_caught_exception(
+                    JSGlobalObject::opaque_ref(global),
+                    err,
+                )?;
+                // The caller reports the error, so don't also report it as an unhandled rejection.
+                rejected.set_handled();
+                return Ok(ptr::from_mut(rejected));
             }
         };
 
@@ -849,46 +923,23 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
-        // HMR `pending_internal_promise` swap loop; non-watcher path uses
-        // `wait_for_promise` directly.
+        // SAFETY: per fn contract.
+        if unsafe { &*vm }.is_main_thread && crate::test_runner::jest::Jest::runner_ptr().is_some()
         {
-            // SAFETY: per fn contract.
-            if unsafe { &*vm }.is_watcher_enabled() {
-                // pending_internal_promise can change if hot module reloading is
-                // enabled.
-                // SAFETY: `el` is the live per-thread event loop.
-                let el = unsafe { &*vm }.event_loop();
-                loop {
-                    // SAFETY: `pending_internal_promise` was set just above (or
-                    // swapped by HMR to another live cell); `status()` is a
-                    // read-only FFI call on a live JSC heap cell.
-                    let pip = unsafe { &*vm }
-                        .pending_internal_promise()
-                        .unwrap_or(promise);
-                    // SAFETY: `pip` is a live JSC heap cell (set just above or
-                    // the protected `promise` fallback).
-                    if unsafe { &*pip }.status() != PromiseStatus::Pending {
-                        break;
-                    }
-                    // SAFETY: `el` is the live per-thread event loop.
-                    unsafe { (*el).tick() };
-                    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-                    let pip = unsafe { &*vm }
-                        .pending_internal_promise()
-                        .unwrap_or(promise);
-                    // SAFETY: `pip` is a live JSC heap cell (see above).
-                    if unsafe { &*pip }.status() == PromiseStatus::Pending {
-                        // SAFETY: per fn contract — short-lived `&mut *vm` for the
-                        // dispatched `auto_tick` hook (same shape as the
-                        // non-watcher `wait_for_promise` arm).
-                        unsafe { (*vm).auto_tick() };
-                    }
-                }
-            } else {
-                // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
-                // live protected JSC heap cell.
-                let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+            // SAFETY: per fn contract — short-lived `&mut *vm`.
+            let never_loads = unsafe {
+                (*vm).wait_for_test_runner_load(format_args!(
+                    "preload {}",
+                    bun_core::fmt::format_json_string_latin1(preload_slice),
+                ))
+            };
+            if let Some(rejected) = never_loads {
+                return Ok(rejected);
             }
+        } else {
+            // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a live
+            // protected JSC heap cell.
+            let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
         }
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
@@ -907,12 +958,25 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // Under --isolate each test file gets
     // a fresh global, so preloads must re-execute for every file. Otherwise,
     // only load preloads once.
-    // SAFETY: per fn contract.
-    if !unsafe { &*vm }.test_isolation_enabled {
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    let vm = unsafe { &mut *vm };
+    // If another reload was deferred while this reload's preloads ran, keep the list once so it can rerun them.
+    vm.preloads_kept_for_reload =
+        vm.hot_reload_deferred && vm.hot_reload_counter != 0 && !kept_for_this_run;
+    if !vm.test_isolation_enabled && !vm.preloads_kept_for_reload {
         // `Vec::clear` drops the `Box<[u8]>`
         // payloads but keeps capacity.
-        // SAFETY: per fn contract — `vm` is the live per-thread VM.
-        unsafe { (*vm).preload.clear() };
+        vm.preload.clear();
+    }
+
+    // SAFETY: per fn contract; `global` is the live global of `vm`.
+    unsafe {
+        (*vm).transpiler.options.test_file_imports_vitest = false;
+        if (*vm).transpiler.options.rewrite_jest_for_tests {
+            (*vm).transpiler.options.own_test_globals =
+                crate::test_runner::jest::Jest::own_globals(&*global)
+                    .map_err(|_| bun_jsc::CrateError::JSError)?;
+        }
     }
 
     Ok(ptr::null_mut())
@@ -965,8 +1029,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
-    // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
-    let loop_ = unsafe { (*el).usockets_loop() };
+    // SAFETY: `el` is the live per-thread event loop (field of `*vm`). Nothing frees its uws loop
+    // during a tick.
+    let loop_ = unsafe { &*(*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
@@ -992,23 +1057,21 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            loop_.unref_count(pending_unref);
         }
     }
 
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
     let state = runtime_state();
     if !state.is_null() {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; `loop_` is the
-        // live per-thread uws loop; `vm` per fn contract. The re-entrant
+        // SAFETY: `state` is the live per-thread `RuntimeState`; `vm` per fn contract. The re-entrant
         // `All::insert`/`update` inside `DateHeaderTimer::enable` touches only
         // fields disjoint from `date_header_timer` (raw-ptr-per-field pattern,
         // same as `Bun__internal_ensureDateHeaderTimerIsEnabled`).
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, vm)
         };
     }
     // SAFETY: `el` is the live per-thread event loop.
@@ -1020,8 +1083,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // poll. The uws loop must always be polled
         // (`tick_with_timeout`/`tick_without_idle`); `EventLoop::tick()` would only
         // drain JS tasks and never touch kqueue/epoll.
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
+        loop_.tick_without_idle();
         // Still run the post-poll hooks.
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
@@ -1029,6 +1091,16 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
         return;
     }
+
+    // ── addons' uv_idle_t / uv_prepare_t ────────────────────────────────
+    // Run them before reading `has_pending_immediate` because their callbacks can queue work.
+    // SAFETY: `state` is the live per-thread `RuntimeState`. This only borrows
+    // the `uv_loop` field, so it doesn't alias the `timer` accesses that
+    // callbacks make through `runtime_state()`.
+    #[cfg(unix)]
+    let uv_idle_started = unsafe { (*state).uv_loop.before_poll() };
+    #[cfg(not(unix))]
+    let uv_idle_started = false;
 
     // Call `ctx.timer.getTimeout(..)` ONLY inside
     // `if (loop.isActive())` — `get_timeout` has side effects (pops + fires
@@ -1038,24 +1110,16 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // Read `immediate_tasks` AFTER
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
-        // SAFETY: `el` is the live per-thread event loop.
+        // A started idle handle keeps the poll from blocking, like in libuv.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
+            || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        let quic_next_tick_us = unsafe {
-            let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
-                None
-            } else {
-                Some(ild.quic_next_tick_us)
-            }
-        };
+        let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        if unsafe { (*loop_).is_active() } {
+        if loop_.is_active() {
             // Before `get_timeout`: the first call arms the idle GC timer, and a
             // timer armed after the poll deadline is computed is not in that deadline.
             // SAFETY: `el` is the live per-thread event loop.
@@ -1086,19 +1150,17 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_)
-                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
-            };
+            loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            loop_.tick_without_idle();
         }
     }
 
     #[cfg(unix)]
     {
+        // ── addons' uv_check_t (libuv runs them right after its poll) ────
+        // SAFETY: same as `before_poll` above.
+        unsafe { (*state).uv_loop.after_poll() };
         // Note (§Forbidden aliased-&mut): `drain_timers` fires user
         // `setTimeout` callbacks which may re-enter `timer::All::insert`/
         // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
@@ -1115,6 +1177,18 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn run_pending_test_step(vm: *mut VirtualMachine) {
+    bun_removable_features::call_removable!(
+        Test,
+        Abort,
+        crate::test_runner::bun_test::BunTest::run_pending_step,
+        // SAFETY: per fn contract.
+        unsafe { &*vm }.global()
+    );
+}
+
 /// `eventLoop().autoTickActive()`. Same shape as
 /// [`auto_tick`] but: no `runImminentGCTimer`, no `handleRejectedPromises` at
 /// the tail, and no debug sleep-timer logging. Used by `bun_main` /
@@ -1127,8 +1201,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
-    // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
-    let loop_ = unsafe { (*el).usockets_loop() };
+    // SAFETY: `el` is the live per-thread event loop (field of `*vm`). Nothing frees its uws loop
+    // during a tick.
+    let loop_ = unsafe { &*(*el).usockets_loop() };
 
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
@@ -1150,8 +1225,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            loop_.unref_count(pending_unref);
         }
     }
 
@@ -1161,36 +1235,32 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, vm)
         };
     }
 
     if state.is_null() {
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
+        loop_.tick_without_idle();
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
         return;
     }
 
+    // SAFETY: see the matching call in `auto_tick`.
+    #[cfg(unix)]
+    let uv_idle_started = unsafe { (*state).uv_loop.before_poll() };
+    #[cfg(not(unix))]
+    let uv_idle_started = false;
+
     {
         // SAFETY: `el` is the live per-thread event loop.
-        // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
+            || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        let quic_next_tick_us = unsafe {
-            let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
-                None
-            } else {
-                Some(ild.quic_next_tick_us)
-            }
-        };
+        let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        if unsafe { (*loop_).is_active() } {
+        if loop_.is_active() {
             // Before `get_timeout` — see the matching call in `auto_tick`.
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
@@ -1211,19 +1281,16 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_)
-                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
-            };
+            loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            loop_.tick_without_idle();
         }
     }
 
     #[cfg(unix)]
     {
+        // SAFETY: see the matching calls in `auto_tick`.
+        unsafe { (*state).uv_loop.after_poll() };
         // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
         // on `auto_tick` re: aliased-&mut across `fire()`.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
@@ -1318,6 +1385,32 @@ fn timer_min_delay_ms() -> u32 {
     unsafe { (*all).fake_timers.min_delay_ms() }
 }
 
+/// For `AbortSignal::Timeout`, like `timer_min_delay_ms`.
+fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+    let all = timer_all();
+    if all.is_null() {
+        return bun_core::TimespecMockMode::ForceRealTime;
+    }
+    // SAFETY: `all` is the live per-thread `All`; leaf hook, field read only.
+    match unsafe { (*all).fake_timers.abort_signal_timeout_clock() } {
+        crate::timer::Clock::Fake => bun_core::TimespecMockMode::AllowMockedTime,
+        crate::timer::Clock::Real => bun_core::TimespecMockMode::ForceRealTime,
+    }
+}
+
+fn timers_left() -> TimersLeft {
+    let all = timer_all();
+    if all.is_null() {
+        return TimersLeft::default();
+    }
+    // SAFETY: `all` is the live per-thread `All`; leaf hook, reads only.
+    let all = unsafe { &*all };
+    TimersLeft {
+        armed: all.timers.has_program_timer(),
+        holds_loop_ref: all.active_timer_count > 0,
+    }
+}
+
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
 ///
@@ -1346,6 +1439,15 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
+fn name_text_of_blob_url(blob_id: &[u8], vm: &VirtualMachine) -> Option<Vec<u8>> {
+    let registry = crate::webcore::object_url_registry::ObjectURLRegistry::singleton();
+    let mut blob = registry.resolve_and_dupe(blob_id, vm.global())?;
+    let loader = blob.get_loader(vm).filter(|_| !blob.needs_to_read_file());
+    let name = loader.map(|it| bun_aot::module_keys::name_of_text(it, blob.shared_view()));
+    blob.deinit();
+    name
+}
+
 /// `Response::get_blob_without_call_frame` /
 /// `Request::get_blob_without_call_frame`. Downcasts
 /// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
@@ -1357,18 +1459,11 @@ fn body_mixin_get_blob(
     global: &JSGlobalObject,
 ) -> bun_jsc::JsResult<Option<JSValue>> {
     use crate::webcore::body::BodyMixin as _;
-    if let Some(resp) = value.as_::<crate::webcore::Response>() {
-        // SAFETY: `as_` returned the live `m_ctx` payload of a JS-heap
-        // `Response` cell pinned by `value` for the duration of this call.
-        return Ok(Some(
-            unsafe { &mut *resp }.get_blob_without_call_frame(global)?,
-        ));
+    if let Some(resp) = value.as_class_ref::<crate::webcore::Response>() {
+        return Ok(Some(resp.get_blob_without_call_frame(global)?));
     }
-    if let Some(req) = value.as_::<crate::webcore::Request>() {
-        // SAFETY: see above.
-        return Ok(Some(
-            unsafe { &mut *req }.get_blob_without_call_frame(global)?,
-        ));
+    if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
+        return Ok(Some(req.get_blob_without_call_frame(global)?));
     }
     Ok(None)
 }
@@ -1466,7 +1561,7 @@ mod vm_loader_ctx {
                 .eval_source
                 .as_deref()
                 .map(core::ptr::from_ref::<bun_ast::Source>),
-            main() => &*core::ptr::from_ref::<[u8]>((*this).main()),
+            main() => (*this).main().map(|main| &*core::ptr::from_ref::<[u8]>(main)),
             read_dir_info_package_json(dir) => {
                 // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
                 // the call — narrows the borrow re-entrant JS could alias.
@@ -1516,14 +1611,18 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     ensure_debugger,
     auto_tick,
     auto_tick_active,
+    run_pending_test_step,
     print_exception,
     timer_insert,
     timer_remove,
     timer_min_delay_ms,
-    default_client_ssl_ctx,
+    abort_signal_timeout_clock,
+    timers_left,
+    default_client_ssl_ctx: default_client_ssl_ctx_for_websocket,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
     has_blob_url,
+    name_text_of_blob_url,
     body_mixin_get_blob,
     process_exit,
     console_on_before_print,
@@ -1535,6 +1634,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
     cancel_timers,
+    end_hot_run_timers,
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
@@ -1584,6 +1684,16 @@ unsafe fn parse_worker_exec_argv_flags(
         allow_ffi_cc: true,
         invalid: None,
     };
+    if crate::cli::startup_options::may_refuse_options() {
+        // SAFETY: per fn contract: each entry that is not null is a live `WTFStringImpl*`.
+        let words = exec_argv
+            .iter()
+            .filter(|arg| !arg.is_null())
+            .map(|&arg| unsafe { &*arg }.to_owned_slice_z());
+        let words: Vec<_> = words.collect();
+        let words: Vec<&[u8]> = words.iter().map(|word| word.as_bytes()).collect();
+        crate::cli::startup_options::warn_of_ignored_options(&words);
+    }
     for (index, &arg) in exec_argv.iter().enumerate() {
         if arg.is_null() {
             continue;
@@ -1629,6 +1739,15 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
     CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
 }
 
+pub(crate) fn hot_reload_generation() -> f64 {
+    let vm = VirtualMachine::get();
+    if vm.hot_reload == bun_jsc::virtual_machine::HotReload::Hot {
+        f64::from(vm.hot_reload_counter)
+    } else {
+        -1.0
+    }
+}
+
 /// `RuntimeHooks::cancel_timers` — cancel every `TimeoutObject` /
 /// `ImmediateObject` still linked in the current thread's timer heap so the
 /// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`; or, for
@@ -1655,6 +1774,10 @@ unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId
         unsafe {
             crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
         }
+        // The realm is going (the VM's end, or the end of a test file under `--isolate`), and its
+        // connections are closed.
+        // SAFETY: `state` is the live boxed per-thread `RuntimeState`.
+        unsafe { (*state).sql_rare.forget_callbacks() };
     }
     if let Some(context) = only {
         // A graph's context keeps the set of its own live timers.
@@ -1679,10 +1802,35 @@ unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId
         }
         return;
     }
+    // Fake-timer state lives in the per-thread `timer::All`, so it would outlive this global.
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
+        (*state).timer.fake_timers.forget_realm((*vm).global());
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+    }
+}
+
+/// `RuntimeHooks::end_hot_run_timers`.
+///
+/// # Safety
+/// `vm` is the live per-thread VM, on the JS thread.
+unsafe fn end_hot_run_timers(vm: *mut VirtualMachine, cancel: CancelHotRunTimers) {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn contract.
+    unsafe {
+        let timer = ptr::addr_of_mut!((*state).timer);
+        if cancel != CancelHotRunTimers::None {
+            let hot_run = crate::timer::HotRun {
+                counter: (*vm).hot_reload_counter,
+                only_intervals: cancel == CancelHotRunTimers::Intervals,
+            };
+            crate::timer::All::cancel_timeout_objects(timer, vm, Some(&hot_run));
+        }
+        (*timer).first_id_of_hot_run = (*timer).last_id;
     }
 }
 
@@ -1764,27 +1912,11 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
 /// [`bun_jsc::AbortHandle`] (Node's `HandleWrap` list) is closed natively now,
 /// while the VM is alive, rather than by a GC finalizer during `~VM`.
 fn stop_active_handles(vm: &mut VirtualMachine, reason: bun_jsc::StopReason) -> SweepResult {
-    // Fake-timer state lives in the per-thread `timer::All`, not the JS
-    // global, so a file that leaves it active routes every later file's
-    // `setTimeout` into the never-driven fake heap. Leave the heap itself
-    // intact: `swap_global_for_test_isolation` runs `cancel_all_timeout_objects`
-    // next, which walks both heaps and releases `TimeoutObject` pins and
-    // discards `AbortSignalTimeout` timers at a point where no user JS can
-    // touch the outgoing signals.
-    {
-        let all = timer_all();
-        // SAFETY: single JS thread, no re-entry while we hold the field borrow.
-        if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
-            let global = vm.global();
-            // SAFETY: as above; only touches `fake_timers.active` and the
-            // `CURRENT_TIME` static.
-            unsafe { (*all).fake_timers.reset_for_isolation(global) };
-        }
-        if !all.is_null() {
-            // SAFETY: as above; `disable` borrows only `event_loop_delay` and
-            // reaches the heap through `timer_all()` (disjoint-field access).
-            unsafe { (*all).event_loop_delay.disable() };
-        }
+    let all = timer_all();
+    if !all.is_null() {
+        // SAFETY: single JS thread; `disable_all` borrows only `event_loop_delay` and
+        // reaches the heap through `timer_all()` (disjoint-field access).
+        unsafe { (*all).event_loop_delay.disable_all() };
     }
     vm.stop_context_handles(reason)
 }
@@ -1804,9 +1936,9 @@ unsafe fn retroactively_report_discovered_tests(
     agent: *mut bun_jsc::debugger::TestReporterHandle,
     next_test_id: i32,
 ) -> i32 {
-    use crate::test_runner::bun_test::{DescribeScope, Phase, TestScheduleEntry};
+    use crate::test_runner::bun_test::{Phase, TestScheduleEntry};
     use crate::test_runner::jest::Jest;
-    use bun_jsc::debugger::{TestReporterHandle, TestType};
+    use bun_jsc::debugger::TestType;
 
     let Some(runner) = Jest::runner() else {
         return next_test_id;
@@ -1829,81 +1961,62 @@ unsafe fn retroactively_report_discovered_tests(
     let file_path = runner.files.items_source()[active_file.file_id as usize]
         .path
         .text();
-    let source_url = bun_core::String::from_bytes(file_path);
+    let source_url = bun_core::StringView::from_bytes(file_path);
 
     let mut max_id: i32 = next_test_id;
 
-    // Recursively report all discovered tests starting from root scope.
-    retroactively_report_scope(
-        agent,
-        &mut active_file.collection.root_scope,
-        -1,
-        &mut max_id,
-        &source_url,
-    );
-
-    return max_id;
-
-    fn retroactively_report_scope(
-        agent: *mut TestReporterHandle,
-        scope: &mut DescribeScope,
-        parent_id: i32,
-        max_id: &mut i32,
-        source_url: &bun_core::String,
-    ) {
-        for entry in scope.entries.iter_mut() {
-            match entry {
-                TestScheduleEntry::Describe(describe) => {
-                    if describe.base.test_id_for_debugger == 0 {
-                        *max_id += 1;
-                        let test_id = *max_id;
-                        // Assign the ID so start/end events will fire during
-                        // execution.
-                        describe.base.test_id_for_debugger = test_id;
-                        let name = bun_core::String::from_bytes(
-                            describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
-                        );
-                        // SAFETY: `agent` is a live C++ handle (fn contract).
-                        unsafe { &mut *agent }.report_test_found_with_location(
-                            test_id,
-                            &name,
-                            TestType::Describe,
-                            parent_id,
-                            source_url,
-                            describe.base.line_no as i32,
-                        );
-                        // Recursively report children with this describe as
-                        // parent.
-                        retroactively_report_scope(agent, describe, test_id, max_id, source_url);
-                    } else {
-                        // Already has ID, just recurse with existing ID as
-                        // parent.
-                        let existing = describe.base.test_id_for_debugger;
-                        retroactively_report_scope(agent, describe, existing, max_id, source_url);
-                    }
+    // Use an explicit stack because describe() can nest to any depth.
+    let mut open: Vec<(core::slice::IterMut<'_, TestScheduleEntry>, i32)> =
+        vec![(active_file.collection.root_scope.entries.iter_mut(), -1)];
+    while let Some((children, parent_id)) = open.last_mut() {
+        let parent_id = *parent_id;
+        let Some(entry) = children.next() else {
+            open.pop();
+            continue;
+        };
+        match entry {
+            TestScheduleEntry::Describe(describe) => {
+                if describe.base.test_id_for_debugger == 0 {
+                    max_id += 1;
+                    // Assign the ID so start/end events will fire during execution.
+                    describe.base.test_id_for_debugger = max_id;
+                    let name = bun_core::StringView::from_bytes(
+                        describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
+                    );
+                    // SAFETY: `agent` is a live C++ handle (fn contract).
+                    unsafe { &mut *agent }.report_test_found_with_location(
+                        max_id,
+                        &name,
+                        TestType::Describe,
+                        parent_id,
+                        &source_url,
+                        describe.base.line_no as i32,
+                    );
                 }
-                TestScheduleEntry::TestCallback(test_entry) => {
-                    if test_entry.base.test_id_for_debugger == 0 {
-                        *max_id += 1;
-                        let test_id = *max_id;
-                        test_entry.base.test_id_for_debugger = test_id;
-                        let name = bun_core::String::from_bytes(
-                            test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
-                        );
-                        // SAFETY: `agent` is a live C++ handle (fn contract).
-                        unsafe { &mut *agent }.report_test_found_with_location(
-                            test_id,
-                            &name,
-                            TestType::Test,
-                            parent_id,
-                            source_url,
-                            test_entry.base.line_no as i32,
-                        );
-                    }
+                let describe_id = describe.base.test_id_for_debugger;
+                open.push((describe.entries.iter_mut(), describe_id));
+            }
+            TestScheduleEntry::TestCallback(test_entry) => {
+                if test_entry.base.test_id_for_debugger == 0 {
+                    max_id += 1;
+                    test_entry.base.test_id_for_debugger = max_id;
+                    let name = bun_core::StringView::from_bytes(
+                        test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
+                    );
+                    // SAFETY: `agent` is a live C++ handle (fn contract).
+                    unsafe { &mut *agent }.report_test_found_with_location(
+                        max_id,
+                        &name,
+                        TestType::Test,
+                        parent_id,
+                        &source_url,
+                        test_entry.base.line_no as i32,
+                    );
                 }
             }
         }
     }
+    max_id
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1956,46 +2069,44 @@ fn console_print_runtime_object_inner<const C: bool>(
         };
     }
 
-    // SAFETY: `as_` returns a non-null `*mut T` only when `value` wraps a
-    // live `T` cell; conservative stack scan keeps `value` alive for the
-    // duration of each branch.
-    if let Some(response) = value.as_::<Response>() {
-        let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Response` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let _ = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
-        return Ok(true);
+    // When JS throws, `write_format` returns a plain error and the exception is still pending.
+    fn rethrow_pending(global: &JSGlobalObject, write_format_failed: bool) -> JsResult<bool> {
+        if write_format_failed && global.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
+        Ok(true)
     }
-    if let Some(request) = value.as_::<Request>() {
+    let global = formatter.global_this;
+
+    if let Some(response) = value.as_class_ref::<Response>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Request` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let _ = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
-        return Ok(true);
+        let result = response.write_format::<_, _, C>(formatter, &mut w);
+        return rethrow_pending(global, result.is_err());
     }
-    if let Some(build) = value.as_::<BuildArtifact>() {
+    if let Some(request) = value.as_class_ref::<Request>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
-        // native wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
-        return Ok(true);
+        let result = request.write_format::<_, _, C>(value, formatter, &mut w);
+        return rethrow_pending(global, result.is_err());
     }
-    if let Some(blob) = value.as_::<Blob>() {
+    if let Some(build) = value.as_class_ref::<BuildArtifact>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Blob` to the live native
-        // wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
-        return Ok(true);
+        let result = build.write_format::<_, _, C>(value, formatter, &mut w);
+        return rethrow_pending(global, result.is_err());
+    }
+    if let Some(blob) = value.as_class_ref::<Blob>() {
+        let mut w = AsFmt::new(writer_);
+        let result = blob.write_format::<_, _, C>(formatter, &mut w);
+        return rethrow_pending(global, result.is_err());
     }
     if let Some(s3client) = value.as_class_ref::<S3Client>() {
         let mut w = AsFmt::new(writer_);
-        let _ = s3client.write_format::<_, _, C>(formatter, &mut w);
-        return Ok(true);
+        let result = s3client.write_format::<_, _, C>(formatter, &mut w);
+        return rethrow_pending(global, result.is_err());
     }
     if let Some(archive) = value.as_class_ref::<Archive>() {
         let mut w = AsFmt::new(writer_);
-        let _ = archive.write_format::<_, _, C>(formatter, &mut w);
-        return Ok(true);
+        let result = archive.write_format::<_, _, C>(formatter, &mut w);
+        return rethrow_pending(global, result.is_err());
     }
     if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
         if let Some(to_json_function) = value.get(formatter.global_this, "toJSON")? {
@@ -2024,10 +2135,10 @@ fn console_print_runtime_object_inner<const C: bool>(
     if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
         let internals = &timer.internals;
         let id = internals.id;
-        formatter.add_for_new_line("Timeout(# ) ".len() + bun_core::fmt::digit_count(id.max(0)));
+        formatter.add_for_new_line("Timeout(# ) ".len() + bun_core::fmt::digit_count(id));
         let mut w = AsFmt::new(writer_);
         if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
-            formatter.add_for_new_line("repeats ".len() + bun_core::fmt::digit_count(id.max(0)));
+            formatter.add_for_new_line("repeats ".len() + bun_core::fmt::digit_count(id));
             let _ = write!(
                 w,
                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -2058,7 +2169,7 @@ fn console_print_runtime_object_inner<const C: bool>(
     }
     if let Some(immediate) = value.as_class_ref::<crate::timer::ImmediateObject>() {
         let id = immediate.internals.id;
-        formatter.add_for_new_line("Immediate(# ) ".len() + bun_core::fmt::digit_count(id.max(0)));
+        formatter.add_for_new_line("Immediate(# ) ".len() + bun_core::fmt::digit_count(id));
         let mut w = AsFmt::new(writer_);
         let _ = write!(
             w,
@@ -2084,19 +2195,30 @@ fn console_print_runtime_object_inner<const C: bool>(
         let _ = resolve_log.msg.write_format::<C>(&mut w);
         return Ok(true);
     }
-    {
-        use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
-        // `writer_` is `&mut dyn bun_io::Write`; wrap once more so the
-        // (sized) `&mut dyn bun_io::Write` satisfies `WrappedWriter<W>`'s
-        // `W: bun_io::Write` bound via the blanket `impl Write for &mut W`.
-        let mut sink: &mut dyn bun_io::Write = &mut *writer_;
-        let mut wrapped = WrappedWriter::new(&mut sink);
-        if JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(formatter, &mut wrapped, value)? {
-            return Ok(true);
-        }
-    }
+    bun_removable_features::call_removable_or!(
+        Test,
+        ReturnDefault,
+        { Ok(false) },
+        console_print_asymmetric_matcher::<C>,
+        formatter,
+        writer_,
+        value
+    )
+}
 
-    Ok(false)
+#[inline(never)] // --trim cuts the test runner at the call.
+fn console_print_asymmetric_matcher<const C: bool>(
+    formatter: &mut bun_jsc::Formatter<'_>,
+    writer_: &mut dyn bun_io::Write,
+    value: JSValue,
+) -> JsResult<bool> {
+    use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
+    // `writer_` is `&mut dyn bun_io::Write`; wrap once more so the
+    // (sized) `&mut dyn bun_io::Write` satisfies `WrappedWriter<W>`'s
+    // `W: bun_io::Write` bound via the blanket `impl Write for &mut W`.
+    let mut sink: &mut dyn bun_io::Write = &mut *writer_;
+    let mut wrapped = WrappedWriter::new(&mut sink);
+    JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(formatter, &mut wrapped, value)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2148,7 +2270,7 @@ unsafe fn __bun_transpile_source_code(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> Result<ResolvedSource, bun_jsc::CrateError> {
-    transpile_source_code_inner(jsc_vm, args).map_err(|e| to_jsc_fetch_error(&e))
+    transpile_source_code_inner::<false>(jsc_vm, args).map_err(|e| to_jsc_fetch_error(&e))
 }
 
 /// Inner body of [`__bun_transpile_source_code`] — split for `?`-on-`Result`
@@ -2158,7 +2280,40 @@ unsafe fn __bun_transpile_source_code(
 /// `vm.transpiler` while also touching `vm.module_loader` / `vm.bun_watcher`,
 /// which would alias under `&mut` (PORTING.md §Forbidden). Per-field deref via
 /// the raw ptr, mirroring `auto_tick` above.
-fn transpile_source_code_inner(
+fn transpile_source_code_inner<const DATA_ONLY: bool>(
+    jsc_vm: *mut VirtualMachine,
+    args: &TranspileArgs<'_>,
+) -> crate::Result<ResolvedSource> {
+    let mut resolved_source = transpile_source_code_of_any_provenance::<DATA_ONLY>(jsc_vm, args)?;
+    resolved_source.is_static |= is_input_static(jsc_vm, args);
+    Ok(resolved_source)
+}
+
+#[inline(never)]
+fn create_html_bundle(global_object: &JSGlobalObject, path: &[u8]) -> JSValue {
+    let html_bundle = crate::api::HTMLBundle::init(global_object, path);
+    crate::api::HTMLBundle::to_js(html_bundle, global_object)
+}
+
+/// Whether what is transpiled is static code (`ResolvedSource::is_static`), so that what is made of it is.
+fn is_input_static(jsc_vm: *mut VirtualMachine, args: &TranspileArgs<'_>) -> bool {
+    // SAFETY: as for `transpile_source_code_inner` — `jsc_vm` is the live per-thread VM and `extra` is live for the call.
+    let (vm, path) = unsafe { (&*jsc_vm, &(*args.extra).path) };
+    match args.virtual_source {
+        // The program itself, from `-e` or stdin. Any other is a plugin's text or a blob.
+        Some(source) => vm
+            .module_loader
+            .eval_source
+            .as_deref()
+            .is_some_and(|eval_source| core::ptr::eq(eval_source, source)),
+        None => {
+            VirtualMachine::is_file_on_disk_static(vm.standalone_module_graph.is_some(), path.text)
+        }
+    }
+}
+
+/// The body of [`transpile_source_code_inner`], which says whether the result is static code.
+fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> crate::Result<ResolvedSource> {
@@ -2166,8 +2321,6 @@ fn transpile_source_code_inner(
     let extra = args.extra;
 
     // SAFETY: per fn contract — `extra` is a live `TranspileExtra` for the call.
-    // Note: raw-ptr (not `&mut`) so the recursive `.wasm` arm can mutate
-    // `extra.loader` and re-enter without borrowck seeing aliased `&mut`.
     let path: &Fs::Path = unsafe { &(*extra).path };
     // SAFETY: per fn contract — `extra` is live for the call (see above).
     let (loader, module_type): (Loader, ModuleType) =
@@ -2222,7 +2375,11 @@ fn transpile_source_code_inner(
             let hash = bun_watcher::Watcher::get_hash(path.text);
             // SAFETY: per fn contract.
             let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
-            let is_main = main.len() == path.text.len() && main_hash == hash && main == path.text;
+            let is_main = main.is_some_and(|main| {
+                main.len() == path.text.len() && main_hash == hash && main == path.text
+            });
+            // SAFETY: per fn contract.
+            let is_preload = unsafe { (*jsc_vm).is_in_preload && (*jsc_vm).preload_hash == hash };
 
             // ── Arena take/give-back ────────────────────────────────────────
             // Reuse the per-VM arena when free; allocate a
@@ -2385,11 +2542,15 @@ fn transpile_source_code_inner(
                 }
             });
 
-            let is_node_override = specifier.starts_with(node_fallbacks::IMPORT_PATH);
+            let is_node_override = !DATA_ONLY && specifier.starts_with(node_fallbacks::IMPORT_PATH);
 
             // SAFETY: per fn contract.
-            let (macro_mode, has_any_macro_remappings) =
-                unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
+            let (macro_mode, has_any_macro_remappings) = unsafe {
+                (
+                    (*jsc_vm).macro_mode,
+                    !DATA_ONLY && (*jsc_vm).has_any_macro_remappings,
+                )
+            };
             let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
                 bun_resolver::package_json::MacroMap::default()
             } else {
@@ -2469,17 +2630,8 @@ fn transpile_source_code_inner(
             if is_node_override {
                 if let Some(code) = node_fallbacks::contents_from_path(specifier) {
                     {
-                        // `bun_ast::Source::path` is the logger-local
-                        // `fs::Path` (NOT `bun_resolver::fs::Path`). `specifier`
-                        // here is a `node_fallbacks` key — a `&'static [u8]`
-                        // literal — so no lifetime erasure needed.
-                        // SAFETY: `node_fallbacks::contents_from_path` only
-                        // matches `'static` literal keys.
-                        let spec_static: &'static [u8] = unsafe {
-                            core::slice::from_raw_parts(specifier.as_ptr(), specifier.len())
-                        };
                         let fallback_path =
-                            bun_paths::fs::Path::init_with_namespace(spec_static, b"node");
+                            bun_paths::fs::Path::init_with_namespace(specifier, b"node");
                         fallback_source = bun_ast::Source {
                             path: fallback_path,
                             contents: std::borrow::Cow::Borrowed(code),
@@ -2512,68 +2664,11 @@ fn transpile_source_code_inner(
                         .unwrap_or(false)
                     && bun_jsc::runtime_transpiler_store::set_break_point_on_first_line();
 
-                // `ParseOptions::path` is `bun_paths::fs::Path<'static>`
-                // (the `'static`-slice flavour used by `bun_ast::Source`), but
-                // `path` here is `bun_resolver::fs::Path<'_>`. The two structs
-                // are field-identical (they could be collapsed into one type).
-                // The resolver entry path interns into
-                // `'static` BSSStringList stores, but the `Bun__transpileFile`
-                // entry path borrows a heap `Utf8Bytes` that drops at frame
-                // exit — so re-intern into the same `FilenameStore` here
-                // instead of transmuting the lifetime (PORTING.md §Forbidden).
-                //
-                // When `disable_transpilying` is true the
-                // `parse_result` is consumed *within this frame* (the
-                // `.print_source` / `.print_source_and_clone` early-return
-                // below reads only `source.contents` then drops it), so the
-                // re-intern is unnecessary and — because `BSSStringList::append`
-                // does not deduplicate — leaks one path-len buffer per
-                // `Bun.inspect(new Error)` (inspect-error-leak.test.js). The
-                // borrowed path bytes outlive `parse_result` in that branch,
-                // so reuse them directly. The intern is a
-                // workaround for the async-module queue path only.
-                let parse_path = if disable_transpilying {
-                    bun_paths::fs::Path {
-                        pretty: path.pretty,
-                        text: path.text,
-                        namespace: path.namespace,
-                        is_disabled: path.is_disabled,
-                        is_symlink: path.is_symlink,
-                    }
-                } else {
-                    // Note: route through `intern_transpile_path` (dedup)
-                    // instead of `FilenameStore::append_slice` directly — see
-                    // that fn's doc for the leak this closes
-                    // (require-cache.test.ts "don't leak file paths").
-                    let text: &'static [u8] = intern_transpile_path(path.text);
-                    let pretty: &'static [u8] =
-                        if core::ptr::eq(path.pretty.as_ptr(), path.text.as_ptr())
-                            && path.pretty.len() == path.text.len()
-                        {
-                            text
-                        } else {
-                            intern_transpile_path(path.pretty)
-                        };
-                    // `Fs::Path::init` always sets namespace to the `b"file"`
-                    // literal; only intern if a caller overrode it.
-                    let namespace: &'static [u8] = if path.namespace == b"file" {
-                        b"file"
-                    } else {
-                        intern_transpile_path(path.namespace)
-                    };
-                    bun_paths::fs::Path {
-                        pretty,
-                        text,
-                        namespace,
-                        is_disabled: path.is_disabled,
-                        is_symlink: path.is_symlink,
-                    }
-                };
-                let parse_options = ParseOptions {
+                let mut parse_options = ParseOptions {
                     // SAFETY: `arena_ptr` points at the `Box<Arena>` interior
                     // held by `arena_guard`; the guard outlives `parse_result`.
                     arena: unsafe { &*arena_ptr },
-                    path: parse_path,
+                    path: *path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: None,
@@ -2605,10 +2700,14 @@ fn transpile_source_code_inner(
                     inject_jest_globals: unsafe {
                         (*jsc_vm).transpiler.options.rewrite_jest_for_tests
                     },
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    is_test_entry_point: (is_main || is_preload)
+                        && unsafe { (*jsc_vm).transpiler.options.rewrite_jest_for_tests },
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
-                    runtime_transpiler_cache: if !disable_transpilying
+                    runtime_transpiler_cache: if !DATA_ONLY
+                        && !disable_transpilying
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                     {
                         Some(&mut cache)
@@ -2623,12 +2722,26 @@ fn transpile_source_code_inner(
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     replace_exports: Default::default(),
                 };
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let own = unsafe { &mut (*jsc_vm).transpiler }
+                    .find_aot_package_config(parse_options.path.text, loader);
+                if let Some(own) = own {
+                    parse_options.apply_aot_package_config(&own);
+                }
 
                 // Both the file-only and transpiled arms hit the same
                 // `parse_maybe_return_file_only_allow_shared_buffer` body, so
                 // dispatch at runtime via the const-generic bool.
                 let return_file_only = disable_transpilying || loader == L::Json;
-                let parse_result: Option<ParseResult> = if return_file_only {
+                let parse_result: Option<ParseResult> = if DATA_ONLY {
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    let transpiler = unsafe { &mut (*jsc_vm).transpiler };
+                    if return_file_only {
+                        transpiler.parse_data_file::<true>(parse_options)
+                    } else {
+                        transpiler.parse_data_file::<false>(parse_options)
+                    }
+                } else if return_file_only {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe {
                         (*jsc_vm)
@@ -2662,21 +2775,27 @@ fn transpile_source_code_inner(
                     arena_guard.2 = false; // give_back_arena = false
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
-                    note_compile_cache_parse_failure(path, loader, module_type);
+                    if !DATA_ONLY {
+                        note_compile_cache_parse_failure(path, loader, module_type);
+                    }
                     return Err(crate::Error::ParseError);
                 };
 
                 // `.wasm` discovered post-parse: recurse with
                 // the parsed source as virtual.
                 if parse_result.loader == L::Wasm {
-                    // SAFETY: per fn contract — `extra` is live for the call;
-                    // sole writer on this thread before the recursive re-entry.
-                    unsafe {
-                        (*extra).loader = L::Wasm;
-                        (*extra).module_type = ModuleType::Unknown;
-                    }
+                    // SAFETY: per fn contract — `extra` is live for the call.
+                    let mut wasm_extra = unsafe {
+                        TranspileExtra {
+                            path: *path,
+                            loader: L::Wasm,
+                            module_type: ModuleType::Unknown,
+                            source_code_printer: (*extra).source_code_printer,
+                            promise_ptr: (*extra).promise_ptr,
+                        }
+                    };
                     // Re-enter with `&parse_result.source` as `virtual_source`.
-                    return transpile_source_code_inner(
+                    return transpile_source_code_inner::<DATA_ONLY>(
                         jsc_vm,
                         &TranspileArgs {
                             specifier: args.specifier,
@@ -2686,7 +2805,7 @@ fn transpile_source_code_inner(
                             virtual_source: Some(&parse_result.source),
                             global_object: args.global_object,
                             flags: args.flags,
-                            extra: args.extra,
+                            extra: &raw mut wasm_extra,
                         },
                     );
                 }
@@ -2712,7 +2831,9 @@ fn transpile_source_code_inner(
                     arena_guard.2 = false;
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
-                    note_compile_cache_parse_failure(path, loader, module_type);
+                    if !DATA_ONLY {
+                        note_compile_cache_parse_failure(path, loader, module_type);
+                    }
                     return Err(crate::Error::ParseError);
                 }
 
@@ -2721,6 +2842,21 @@ fn transpile_source_code_inner(
                 if is_main && !disable_transpilying {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe { (*jsc_vm).has_loaded = true };
+                }
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let is_bun_test = unsafe { (*jsc_vm).transpiler.options.rewrite_jest_for_tests };
+                if (is_main || is_preload) && !disable_transpilying && is_bun_test {
+                    let imports_vitest = cache.imports_vitest
+                        || parse_result
+                            .ast
+                            .import_records
+                            .as_slice()
+                            .iter()
+                            .any(|record| record.path.text == b"vitest");
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    unsafe {
+                        (*jsc_vm).transpiler.options.test_file_imports_vitest = imports_vitest;
+                    }
                 }
 
                 let source = &parse_result.source;
@@ -2750,6 +2886,23 @@ fn transpile_source_code_inner(
                     return Ok(ResolvedSource {
                         source_code,
                         source_url: input_specifier.create_if_different(path.text),
+                        ..Default::default()
+                    });
+                }
+
+                if matches!(loader, L::Text)
+                    && (DATA_ONLY || bun_jsc::compiled_program::compiled_program().is_some())
+                {
+                    let Ok(jsvalue_for_export) =
+                        bun_core::String::clone_utf8(&parse_result.source.contents)
+                            .into_js(global_object)
+                    else {
+                        return Err(bun_jsc::JsError::Thrown.into());
+                    };
+                    return Ok(ResolvedSource {
+                        source_url: input_specifier.create_if_different(path.text),
+                        jsvalue_for_export,
+                        tag: ResolvedSourceTag::ExportDefaultOnly,
                         ..Default::default()
                     });
                 }
@@ -2799,6 +2952,10 @@ fn transpile_source_code_inner(
                         tag: ResolvedSourceTag::ExportsObject,
                         ..Default::default()
                     });
+                }
+
+                if DATA_ONLY {
+                    return Err(crate::Error::ModuleNotFound);
                 }
 
                 // already-bundled (bytecode cache hit).
@@ -2967,7 +3124,8 @@ fn transpile_source_code_inner(
                 if parse_result.pending_imports.len() > 0 {
                     // SAFETY: per fn contract — `extra` is live for the call.
                     let promise_ptr = unsafe { &*extra }.promise_ptr;
-                    if promise_ptr.is_null() {
+                    // The queue outlives this call, and a virtual source's bytes do not.
+                    if promise_ptr.is_null() || virtual_source.is_some() {
                         return Err(crate::Error::UnexpectedPendingResolution);
                     }
 
@@ -2987,6 +3145,19 @@ fn transpile_source_code_inner(
                     // Hand the `AstAlloc` state to the queue too: the queued
                     // AST's small `AstVec`s live in its inline bump chunk.
                     let ast_alloc_state = ast_alloc_scope.take_state();
+                    parse_result.source.path = bun_paths::fs::Path {
+                        pretty: intern_transpile_path(path.pretty),
+                        text: intern_transpile_path(path.text),
+                        namespace: intern_transpile_path(path.namespace),
+                        ..*path
+                    };
+                    // SAFETY: the `AsyncModule` gets all that a file's result borrows: the
+                    // AST is in `arena` and `ast_alloc_state`, the contents are in `arena`,
+                    // the detached shared buffer or the result's own backing, and the path
+                    // was interned above.
+                    let parse_result = unsafe {
+                        core::mem::transmute::<ParseResult<'_>, ParseResult<'static>>(parse_result)
+                    };
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe {
                         (*jsc_vm).modules.enqueue(
@@ -2999,14 +3170,15 @@ fn transpile_source_code_inner(
                                 referrer,
                                 arena,
                                 ast_alloc_state,
+                                is_static: is_input_static(jsc_vm, args),
                             },
                         );
                     }
                     return Err(crate::Error::AsyncModule);
                 }
 
-                let is_commonjs_module = parse_result.ast.has_commonjs_export_names
-                    || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+                let printed_ast = bun_jsc::resolved_source::PrintedAst::new(&parse_result.ast);
+                let is_commonjs_module = printed_ast.is_commonjs_module;
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3128,13 +3300,14 @@ fn transpile_source_code_inner(
                     // VM; `printer.ctx.get_written()` borrows thread-local data.
                     let mut resolved_source = unsafe {
                         (*jsc_vm).ref_counted_resolved_source(
+                            printed_ast,
                             written,
                             input_specifier,
                             path.text,
                             None,
                         )
-                    };
-                    resolved_source.is_commonjs_module = is_commonjs_module;
+                    }
+                    .map_err(|_| global_object.throw_string_too_long())?;
                     resolved_source.module_info = module_info;
                     resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
                     return Ok(resolved_source);
@@ -3228,13 +3401,11 @@ fn transpile_source_code_inner(
                 // :251-256 `defer` fires on every exit path.)
 
                 return Ok(ResolvedSource {
-                    source_code,
                     source_url: input_specifier.create_if_different(path.text),
-                    is_commonjs_module,
                     module_info,
                     tag,
                     bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
-                    ..Default::default()
+                    ..ResolvedSource::printed(printed_ast, source_code)
                 });
             }
         }
@@ -3254,7 +3425,7 @@ fn transpile_source_code_inner(
         L::Wasm => {
             // SAFETY: per fn contract.
             let main = unsafe { &*jsc_vm }.main();
-            if referrer == b"undefined" && main == path.text {
+            if referrer == b"undefined" && main == Some(path.text) {
                 // Stash the WASM bytes on
                 // `globalThis.wasmSourceBytes` so the wasi runner avoids
                 // reading the file twice.
@@ -3283,6 +3454,7 @@ fn transpile_source_code_inner(
                         )),
                         source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::Esm,
+                        is_static: true,
                         ..Default::default()
                     });
                 }
@@ -3293,7 +3465,7 @@ fn transpile_source_code_inner(
                 (*extra).loader = L::File;
                 (*extra).module_type = ModuleType::Unknown;
             }
-            transpile_source_code_inner(jsc_vm, args)
+            transpile_source_code_inner::<DATA_ONLY>(jsc_vm, args)
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -3312,6 +3484,7 @@ fn transpile_source_code_inner(
                 source_code: bun_core::String::clone_utf8(sqlite_module_source_code_string),
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::Esm,
+                is_static: true,
                 ..Default::default()
             })
         }
@@ -3328,10 +3501,23 @@ fn transpile_source_code_inner(
                     ..Default::default()
                 });
             }
-            let html_bundle = crate::api::HTMLBundle::init(global_object, path.text);
+            let html_bundle = bun_removable_features::call_removable_or!(
+                Bundler,
+                Throw,
+                {
+                    return Err(crate::removed_feature::throw_for_removed_feature(
+                        global_object,
+                        bun_removable_features::Feature::Bundler,
+                    )
+                    .into());
+                },
+                create_html_bundle,
+                global_object,
+                path.text
+            );
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
-                jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle, global_object),
+                jsvalue_for_export: html_bundle,
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()
@@ -3351,61 +3537,42 @@ fn transpile_source_code_inner(
                 });
             }
 
-            // auto-watch for non-virtual absolute paths.
-            'auto_watch: {
-                if args.virtual_source.is_some() {
-                    break 'auto_watch;
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                if !unsafe { &*jsc_vm }.is_watcher_enabled() {
-                    break 'auto_watch;
-                }
-                if !bun_paths::is_absolute(path.text)
-                    || bun_core::strings::contains(path.text, b"node_modules")
-                {
-                    break 'auto_watch;
-                }
-                // kqueue watchers need a file descriptor to receive event
-                // notifications on it; inotify/win32 watch by path.
-                let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    if path.text.len() >= buf.len() {
-                        break 'auto_watch;
-                    }
-                    let z = bun_paths::resolve_path::z(path.text, &mut buf);
-                    match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
-                        Ok(fd) => fd,
-                        Err(_) => break 'auto_watch,
-                    }
-                } else {
-                    bun_sys::Fd::INVALID
-                };
-                let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set when `is_watcher_enabled()`; cast recovers the concrete
-                // type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                let added =
-                    watcher.add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
-                if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                    // Not adopted (already watched, or add failed); close the
-                    // fd this arm opened.
-                    if input_fd.is_valid() {
-                        use bun_sys::FdExt as _;
-                        input_fd.close();
-                    }
-                }
+            if args.virtual_source.is_none() {
+                auto_watch_file(jsc_vm, path.text);
             }
 
             // `export default <path string>`.
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-            // The bundler emits `{}` as the JS stub for a plain CSS import
-            // (esbuild parity); match that here instead of leaking the file path
-            // as the default export. `.module.css` still diverges: the bundler
-            // emits a class-name map there, runtime CSS-module scoping is not
-            // implemented.
             if matches!(loader, L::Css) {
+                if bun_css::css_modules::is_module_path(path.text) {
+                    let exports = bun_removable_features::call_removable_or!(
+                        Bundler,
+                        Throw,
+                        {
+                            return Err(crate::removed_feature::throw_for_removed_feature(
+                                global_object,
+                                bun_removable_features::Feature::Bundler,
+                            )
+                            .into());
+                        },
+                        css_module_exports,
+                        jsc_vm,
+                        global_object,
+                        path.text,
+                        args.virtual_source,
+                        // SAFETY: `args.log` is the caller's live `Log`; nothing else borrows it in this arm.
+                        unsafe { &mut *args.log }
+                    )?;
+                    return Ok(ResolvedSource {
+                        jsvalue_for_export: exports,
+                        source_url: input_specifier.create_if_different(path.text),
+                        tag: ResolvedSourceTag::ExportsObject,
+                        ..Default::default()
+                    });
+                }
+                // The bundler emits `{}` as the JS stub for a plain CSS import
+                // (esbuild parity); match that here instead of leaking the file path
+                // as the default export.
                 return Ok(ResolvedSource {
                     jsvalue_for_export: JSValue::create_empty_object(global_object, 0),
                     source_url: input_specifier.create_if_different(path.text),
@@ -3425,7 +3592,7 @@ fn transpile_source_code_inner(
                 // need to copy the ~12 borrowed slices out (perf: was a
                 // per-asset-import `url::URL::clone`).
                 let origin = unsafe { &(*jsc_vm).origin };
-                let top_level_dir = Fs::FileSystem::get().top_level_dir;
+                let top_level_dir = Fs::FileSystem::get().top_level_dir();
                 crate::api::bun_object::get_public_path_with_asset_prefix(
                     specifier,
                     top_level_dir,
@@ -3491,6 +3658,327 @@ fn maybe_watch_file(
     ) {
         *should_close_input_file_fd = false;
     }
+}
+
+/// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
+fn auto_watch_file(jsc_vm: *mut VirtualMachine, path_text: &[u8]) {
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+        return;
+    }
+    if !bun_paths::is_absolute(path_text) || bun_core::strings::contains(path_text, b"node_modules")
+    {
+        return;
+    }
+    // kqueue watchers need a file descriptor to receive event notifications on it; inotify/win32 watch by path.
+    let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path_text.len() >= buf.len() {
+            return;
+        }
+        let z = bun_paths::resolve_path::z(path_text, &mut buf);
+        match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
+            Ok(fd) => fd,
+            Err(_) => return,
+        }
+    } else {
+        bun_sys::Fd::INVALID
+    };
+    let hash = bun_watcher::Watcher::get_hash(path_text);
+    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
+    // `is_watcher_enabled()`; cast recovers the concrete type.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    let added = watcher.add_file::<true>(input_fd, path_text, hash, bun_sys::Fd::INVALID, None);
+    if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+        // Not adopted (already watched, or add failed); close the fd opened above.
+        if input_fd.is_valid() {
+            use bun_sys::FdExt as _;
+            input_fd.close();
+        }
+    }
+}
+
+struct CssModuleFile {
+    source: bun_ast::Source<'static>,
+    /// `None` when the file's loader is not CSS.
+    sheet: Option<bun_css::BundlerStyleSheet>,
+    symbols: Vec<bun_ast::Symbol>,
+    import_records: Vec<bun_ast::ImportRecord<'static>>,
+}
+
+impl CssModuleFile {
+    fn read(
+        bump: &'static bun_alloc::Arena,
+        path_text: &[u8],
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<&'static [u8]> {
+        match bun_sys::File::read_from(bun_sys::Fd::cwd(), path_text) {
+            Ok(contents) => {
+                let contents = match bun_core::strings::BOM::detect(&contents) {
+                    Some(bom) => bom.remove_and_convert_to_utf8_and_free(contents),
+                    None => contents,
+                };
+                Ok(bump.alloc_slice_copy(&contents))
+            }
+            Err(err) => {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} reading \"{}\"",
+                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(path_text),
+                    ),
+                );
+                Err(crate::Error::ParseError)
+            }
+        }
+    }
+
+    /// Parses like the bundler, but skips invalid CSS the way a browser does instead of failing the import.
+    fn parse(
+        jsc_vm: *mut VirtualMachine,
+        global: &JSGlobalObject,
+        bump: &'static bun_alloc::Arena,
+        source_index: usize,
+        path_text: &[u8],
+        contents: Option<&'static [u8]>,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<CssModuleFile> {
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        let mut path = Fs::Path::init(intern_transpile_path(path_text));
+        // The pretty path must fit a path buffer. Worst case is "../" per `top_level_dir` component plus `path_text`.
+        if path_text.len() + 2 * top_level_dir.len() < bun_paths::MAX_PATH_BYTES {
+            path = bun_bundler::generic_path_with_pretty_initialized(
+                &path,
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                unsafe { &*jsc_vm }.transpiler.options.target,
+                top_level_dir,
+                bump,
+            )?;
+        }
+        let mut file = CssModuleFile {
+            source: bun_ast::Source {
+                path,
+                ..Default::default()
+            },
+            sheet: None,
+            symbols: Vec::new(),
+            import_records: Vec::new(),
+        };
+        let Some(contents) = contents else {
+            return Ok(file);
+        };
+        file.source.contents = std::borrow::Cow::Borrowed(contents);
+
+        let mut options = bun_css::ParserOptions::default(Some(log));
+        options.error_recovery = true;
+        if bun_css::css_modules::is_module_path(path.pretty) {
+            options.filename = path.pretty;
+            options.css_modules = Some(bun_css::css_modules::Config::default());
+        }
+        match bun_css::BundlerStyleSheet::parse_bundler(
+            bump,
+            contents,
+            options,
+            &mut file.import_records,
+            bun_ast::Index::init(source_index),
+        ) {
+            Ok((sheet, extra)) => {
+                file.sheet = Some(sheet);
+                file.symbols = extra.symbols;
+                Ok(file)
+            }
+            // With `error_recovery` on, the parser only fails when it runs out of stack.
+            Err(_) => Err(global.throw_stack_overflow().into()),
+        }
+    }
+}
+
+struct CssModuleGraph(Vec<CssModuleFile>);
+
+impl bun_css::css_modules::ComposesGraph for CssModuleGraph {
+    fn stylesheet(&self, source_index: u32) -> Option<&bun_css::BundlerStyleSheet> {
+        self.0[source_index as usize].sheet.as_ref()
+    }
+
+    fn source(&self, source_index: u32) -> &bun_ast::Source<'_> {
+        &self.0[source_index as usize].source
+    }
+
+    fn import_record(
+        &self,
+        source_index: u32,
+        import_record_index: u32,
+    ) -> &bun_ast::ImportRecord<'_> {
+        &self.0[source_index as usize].import_records[import_record_index as usize]
+    }
+}
+
+impl CssModuleGraph {
+    fn load(
+        &mut self,
+        jsc_vm: *mut VirtualMachine,
+        global: &JSGlobalObject,
+        bump: &'static bun_alloc::Arena,
+        path_text: &[u8],
+        contents: &'static [u8],
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<()> {
+        self.0.push(CssModuleFile::parse(
+            jsc_vm,
+            global,
+            bump,
+            0,
+            path_text,
+            Some(contents),
+            log,
+        )?);
+
+        let mut source_index = 0;
+        while source_index < self.0.len() {
+            for record_index in 0..self.0[source_index].import_records.len() {
+                let file = &self.0[source_index];
+                let record = &file.import_records[record_index];
+                if record.kind != ImportKind::Composes {
+                    continue;
+                }
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let resolver = unsafe { &mut (*jsc_vm).transpiler.resolver };
+                let vm_log =
+                    core::mem::replace(&mut resolver.log, core::ptr::NonNull::from(&mut *log));
+                let resolved =
+                    resolver.resolve(file.source.path.source_dir(), record.path.text, record.kind);
+                resolver.log = vm_log;
+                let mut resolved = match resolved {
+                    Ok(resolved) => resolved,
+                    Err(_) => continue,
+                };
+                if resolved.flags.is_external() {
+                    continue;
+                }
+                let Some(path) = resolved.path().map(|path| *path) else {
+                    continue;
+                };
+                let composed_index = match self
+                    .0
+                    .iter()
+                    .position(|file| file.source.path.text == path.text)
+                {
+                    Some(index) => index,
+                    None => {
+                        auto_watch_file(jsc_vm, path.text);
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        let loaders = unsafe { &(*jsc_vm).transpiler.options.loaders };
+                        let contents = if loader_for_path(&path, loaders) == Some(Loader::Css) {
+                            match CssModuleFile::read(bump, path.text, log) {
+                                Ok(contents) => Some(contents),
+                                Err(_) => continue,
+                            }
+                        } else {
+                            None
+                        };
+                        let index = self.0.len();
+                        self.0.push(CssModuleFile::parse(
+                            jsc_vm, global, bump, index, path.text, contents, log,
+                        )?);
+                        index
+                    }
+                };
+                self.0[source_index].import_records[record_index].source_index =
+                    bun_ast::Index::init(composed_index);
+            }
+            source_index += 1;
+        }
+        Ok(())
+    }
+
+    /// Pairs each local name in the first file with the space-separated class names it exports.
+    fn exports(
+        &self,
+        global: &JSGlobalObject,
+        scratch: &bun_alloc::Arena,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<Vec<(&[u8], Vec<u8>)>> {
+        use bun_css::css_modules::{ComposesVisitor, ExportedName, scoped_name};
+
+        let Some(sheet) = self.0.first().and_then(|file| file.sheet.as_ref()) else {
+            return Ok(Vec::new());
+        };
+        let mut visitor = ComposesVisitor::new(self);
+        let mut exports = Vec::with_capacity(sheet.local_scope.count());
+        for (local_name, local) in sheet.local_scope.iter() {
+            let mut value = Vec::new();
+            for name in visitor.exported_names(sheet, local.ref_, 0, log) {
+                if !value.is_empty() {
+                    value.push(b' ');
+                }
+                match *name {
+                    ExportedName::Local(ref_) => {
+                        let file = &self.0[ref_.source_index() as usize];
+                        value.extend_from_slice(&scoped_name(
+                            scratch,
+                            file.source.path.pretty,
+                            file.symbols[ref_.inner_index() as usize]
+                                .original_name
+                                .slice(),
+                        ));
+                    }
+                    ExportedName::Global(name) => value.extend_from_slice(name),
+                }
+            }
+            if visitor.out_of_stack {
+                return Err(global.throw_stack_overflow().into());
+            }
+            exports.push((&**local_name, value));
+        }
+        Ok(exports)
+    }
+}
+
+bun_core::declare_scope!(CssModule, hidden);
+
+/// Builds the same object `Bun.build` emits as the CSS module's default export.
+#[cold]
+#[inline(never)]
+#[optimize(size)]
+fn css_module_exports(
+    jsc_vm: *mut VirtualMachine,
+    global: &JSGlobalObject,
+    path_text: &[u8],
+    virtual_source: Option<&bun_ast::Source<'_>>,
+    log: &mut bun_ast::Log,
+) -> crate::Result<JSValue> {
+    let arena = bun_alloc::Arena::new();
+    // SAFETY: only `graph` and `skipped` borrow from `arena`; they're declared after it, so they drop first.
+    let bump: &'static bun_alloc::Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+    let mut graph = CssModuleGraph(Vec::new());
+    let mut skipped = bun_ast::Log::init();
+
+    let contents = match virtual_source {
+        Some(source) => &*bump.alloc_slice_copy(&source.contents),
+        None => CssModuleFile::read(bump, path_text, log)?,
+    };
+    graph.load(jsc_vm, global, bump, path_text, contents, &mut skipped)?;
+    let exports = graph.exports(global, bump, &mut skipped)?;
+    for msg in &skipped.msgs {
+        bun_core::scoped_log!(
+            CssModule,
+            "{}: skipped: {}",
+            bstr::BStr::new(path_text),
+            bstr::BStr::new(&msg.data.text),
+        );
+    }
+
+    let object = JSValue::create_empty_object(global, exports.len());
+    for (name, value) in &exports {
+        object.put_may_be_index(
+            global,
+            &bun_core::String::clone_utf8(name),
+            bun_string_jsc::create_utf8_for_js(global, value)?,
+        )?;
+    }
+    Ok(object)
 }
 
 // Generated `bun:sqlite` import shims.
@@ -3565,7 +4053,9 @@ fn get_hardcoded_module(
             // SAFETY: `state` is the live per-thread `RuntimeState` boxed in
             // `init_runtime_state`; no other `&mut` to `entry_point` is held.
             let ep = unsafe { &(*state).entry_point };
-            if !ep.generated {
+            // A compiled entry point runs without the wrapper: the text is empty.
+            let is_compiled = VirtualMachine::get().main_entry_point == MainEntryPoint::Compiled;
+            if !ep.generated && !is_compiled {
                 return None;
             }
             use bun_jsc::resolved_source::Tag;
@@ -3573,6 +4063,7 @@ fn get_hardcoded_module(
                 source_code: bun_core::String::clone_utf8(&ep.contents),
                 source_url: specifier.clone(),
                 tag: Tag::Esm,
+                is_static: true,
                 ..ResolvedSource::default()
             })
         }
@@ -3604,6 +4095,13 @@ fn get_hardcoded_module(
             if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis() {
                 return None;
             }
+            // A compiled program gets the module for Bun's own tests where its build compiled it in. Text beside one has no build.
+            if (!matches!(hardcoded, HardcodedModule::BunInternalForTesting)
+                || bun_core::runs_no_compiled_program())
+                && bun_resolve_builtins::are_internals_sealed()
+            {
+                return None;
+            }
             let name: &'static str = hardcoded.into();
             Some(js_synthetic_module(name.as_bytes()))
         }
@@ -3612,17 +4110,30 @@ fn get_hardcoded_module(
             // same as `bun:internal-for-testing`. The tag key uses the
             // generated `internal:`-prefixed canonical specifier (see
             // `generated_resolved_source_tag.rs`).
-            if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis() {
+            if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
+                || (bun_core::runs_no_compiled_program()
+                    && bun_resolve_builtins::are_internals_sealed())
+            {
                 return None;
             }
             Some(js_synthetic_module(b"internal:test/binding"))
+        }
+        HardcodedModule::BunBake => {
+            // Only where `bun bake` is: canary and debug builds, or the Bake feature flag.
+            if !bun_core::FeatureFlags::bake() {
+                return None;
+            }
+            Some(js_synthetic_module(b"bun:bake"))
         }
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
             return Some(ResolvedSource {
-                source_code: bun_core::String::from_bytes(bun_ast::runtime::Runtime::source_code()),
+                source_code: bun_core::String::from_static_bytes(
+                    bun_ast::runtime::Runtime::source_code(),
+                ),
                 source_url: specifier.clone(),
+                is_static: true,
                 ..ResolvedSource::default()
             });
         }
@@ -3673,7 +4184,7 @@ fn __bun_fetch_builtin_module(
             // SAFETY: `entry` is the `heap::alloc`d `MacroEntryPoint`
             // inserted by `load_macro_entry_point`; map ownership keeps it
             // alive for the VM lifetime.
-            let contents = unsafe { &(*entry).source.contents };
+            let contents = unsafe { &*entry }.code();
             return Some(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(contents),
                 source_url: specifier.clone(),
@@ -3685,9 +4196,15 @@ fn __bun_fetch_builtin_module(
 
     // ── Standalone-module-graph probe ───────────────────────────────────
     // `files.get` (no virtual-root prefix check), not `find_ref`.
-    if let Some(file) =
-        bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.files.get(spec))
-    {
+    // The loader of its extension reads an asset of a compiled program: `Graph::find_at_source_path`, `Graph::find_asset_under_root`.
+    // Of an entry point of a compiled program the graph holds the name and no text. The engine answers for it, and leaves it to this loader once a test has taken it out of `require.cache`: then it is read from disk.
+    if let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
+        graph
+            .files
+            .get(spec)
+            .filter(|file| !graph.is_asset_of_compiled_program(spec, file))
+            .filter(|_| !bun_jsc::compiled_program::is_compiled_module(spec))
+    }) {
         use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
         if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
@@ -3707,6 +4224,7 @@ export default db;
             return Some(ResolvedSource {
                 source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
                 source_url: specifier.clone(),
+                is_static: true,
                 ..ResolvedSource::default()
             });
         }
@@ -3733,12 +4251,13 @@ export default db;
         return Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
+            is_static: true,
             // An embedded file is served through the builtin-module path but is a file: its origin is its own path
             // (or, with --bytecode, the path the cache was generated under, which must match exactly).
             origin_path: if file.bytecode_origin_path.is_empty() {
                 specifier.clone()
             } else {
-                bun_core::String::from_bytes(file.bytecode_origin_path)
+                bun_core::String::from_static_bytes(file.bytecode_origin_path)
             },
             bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
             source_code_hash: file.source_hash,
@@ -3884,9 +4403,11 @@ unsafe fn normalize_specifier_for_loader<'a>(
 /// `options.LoaderResult`.
 struct LoaderResult<'a> {
     loader: Option<Loader>,
-    virtual_source: Option<&'a bun_ast::Source>,
+    virtual_source: Option<&'a bun_ast::Source<'a>>,
     path: Fs::Path<'a>,
     is_main: bool,
+    /// The specifier is an object URL.
+    is_blob: bool,
     specifier: &'a [u8],
     /// Always `None` for non-JS-like loaders (not needed there).
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
@@ -3896,12 +4417,12 @@ struct LoaderResult<'a> {
 ///
 /// # Safety
 /// `jsc_vm` is the live per-thread VM; the returned borrows live as long as
-/// the input `specifier_str` / the VM's resolver caches.
+/// the input `specifier_str` / the VM's resolver caches / its `module_loader.eval_source`.
 unsafe fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: *mut VirtualMachine,
-    virtual_source_to_use: &'a mut Option<bun_ast::Source>,
-    blob_to_deinit: &mut Option<crate::webcore::Blob>,
+    virtual_source_to_use: &'a mut Option<bun_ast::Source<'a>>,
+    blob_to_deinit: &'a mut Option<crate::webcore::Blob>,
     type_attribute_str: Option<&[u8]>,
 ) -> crate::Result<LoaderResult<'a>> {
     let (normalized_file_path_from_specifier, specifier, query) =
@@ -3909,10 +4430,19 @@ unsafe fn get_loader_and_virtual_source<'a>(
         unsafe { normalize_specifier_for_loader(jsc_vm, specifier_str) };
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
-    // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
-    let mut loader: Option<Loader> =
-        loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
-    let mut virtual_source: Option<&'a bun_ast::Source> = None;
+    // A `data:` URL has no file name. What follows its last "." is part of the module's text.
+    let mut loader: Option<Loader> = if path.text.starts_with(b"data:") {
+        None
+    } else {
+        // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
+        loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders })
+    };
+    let mut virtual_source: Option<&'a bun_ast::Source<'a>> = None;
+    let attribute_loader = type_attribute_str.and_then(Loader::from_string);
+    let suffix = match attribute_loader {
+        Some(_) => None,
+        None => options::ImportSuffix::find(query, loader),
+    };
 
     // Synthetic `[eval]`/`[stdin]` source.
     // SAFETY: per fn contract.
@@ -3928,26 +4458,21 @@ unsafe fn get_loader_and_virtual_source<'a>(
             && specifier.ends_with(STDIN)
             && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
         if is_eval || is_stdin {
-            // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
-            // outlives the synchronous transpile this borrow feeds into.
-            virtual_source = Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(eval_source) });
+            virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
     }
 
     // `blob:` ObjectURL → in-memory virtual source.
-    if crate::webcore::object_url_registry::is_blob_url(specifier) {
+    let is_blob = crate::webcore::object_url_registry::is_blob_url(specifier);
+    if is_blob {
         match crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             .resolve_and_dupe(&specifier[b"blob:".len()..], unsafe { &*jsc_vm }.global())
         {
             Some(blob) => {
-                *blob_to_deinit = Some(blob);
-                // SAFETY: `blob_to_deinit` is `Some` (just written); we hold
-                // `&mut` for the duration of this body, so `as_mut().unwrap()`
-                // is sound and the `&'a` reborrow points at storage owned by
-                // the *caller's* `Option<Blob>` slot (outlives `LoaderResult`).
-                let blob = blob_to_deinit.as_mut().unwrap();
+                // The caller's slot keeps the blob alive for `'a`.
+                let blob: &'a crate::webcore::Blob = blob_to_deinit.insert(blob);
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 loader = blob.get_loader(unsafe { &*jsc_vm });
 
@@ -3955,70 +4480,58 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 if let Some(filename) = blob.store_path() {
                     // Only treat it as a file if it is a `Bun.file()`.
                     if blob.needs_to_read_file() {
-                        // Note: borrowck — `Fs::Path<'a>` borrows
-                        // `filename`, which borrows `*blob_to_deinit`. The
-                        // caller owns that slot for `'a`, so erase via raw ptr.
-                        // SAFETY: `filename` borrows the blob's backing store,
-                        // which the caller's `blob_to_deinit` slot keeps alive
-                        // for `'a`; reconstructing the slice preserves provenance.
-                        path = Fs::Path::init(unsafe {
-                            core::slice::from_raw_parts(filename.as_ptr(), filename.len())
-                        });
+                        path = Fs::Path::init(filename);
                     }
                 }
 
                 if !blob.needs_to_read_file() {
-                    // SAFETY: same lifetime erasure as above — `shared_view()`
-                    // borrows the blob's backing store (held in the caller's
-                    // `blob_to_deinit` slot for the synchronous transpile).
-                    // `bun_ast::Source` stores `&'static [u8]` (see
-                    // logger/lib.rs §`type Str`), so erase to
-                    // `'static`; sound because the blob outlives the
-                    // synchronous `transpile_source_code_inner` call.
-                    let (contents, path_text): (&'static [u8], &'static [u8]) = unsafe {
-                        let v = blob.shared_view();
-                        (
-                            core::slice::from_raw_parts(v.as_ptr(), v.len()),
-                            core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()),
-                        )
-                    };
-                    *virtual_source_to_use = Some(bun_ast::Source {
-                        // Note: `bun_ast::Source::path` is the
-                        // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
-                        // — see logger/lib.rs:32-). Re-init from `path.text`.
-                        path: bun_paths::fs::Path::init(path_text),
-                        contents: std::borrow::Cow::Borrowed(contents),
-                        ..Default::default()
-                    });
-                    virtual_source = virtual_source_to_use.as_ref();
+                    virtual_source = Some(virtual_source_to_use.insert(
+                        bun_ast::Source::init_path_string(path.text, blob.shared_view()),
+                    ));
                 }
             }
             None => return Err(crate::Error::BlobNotFound),
         }
+    } else if let Some(module) = suffix.and_then(|suffix| suffix.module(path.text, specifier)) {
+        *virtual_source_to_use = Some(module);
+        virtual_source = virtual_source_to_use.as_ref();
+        path = Fs::Path::init(specifier);
+    } else if virtual_source.is_none()
+        && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
+            graph
+                .find_at_source_path(path.text)
+                .or_else(|| graph.find_asset_under_root(path.text))
+        })
+    {
+        // An executable compiled in place serves an embedded file that is no longer on disk, on every load of the module.
+        // Any other compiled program serves what is embedded under its own root.
+        // SAFETY: the specifier outlives the synchronous transpile that this feeds, as for a blob above.
+        let path_text: &'static [u8] =
+            unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
+        *virtual_source_to_use = Some(bun_ast::Source {
+            path: bun_paths::fs::Path::init(path_text),
+            contents: std::borrow::Cow::Borrowed(file.utf8_contents()),
+            ..Default::default()
+        });
+        virtual_source = virtual_source_to_use.as_ref();
     }
 
-    if query == b"?raw" {
-        loader = Some(Loader::Text);
-    }
-    if let Some(attr_str) = type_attribute_str {
-        if let Some(attr_loader) = Loader::from_string(attr_str) {
-            loader = Some(attr_loader);
-        }
-    }
+    loader = attribute_loader
+        .or_else(|| suffix.map(options::ImportSuffix::loader))
+        .or(loader);
 
     // SAFETY: per fn contract.
-    let is_main = specifier == unsafe { &*jsc_vm }.main();
+    let is_main = unsafe { &*jsc_vm }.main() == Some(specifier)
+        || unsafe {
+            (*jsc_vm).is_in_preload
+                && (*jsc_vm).preload_hash == bun_watcher::Watcher::get_hash(specifier)
+        };
 
     // package.json sniff for `.js`/`.ts` module-type.
-    let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
-    let package_json = if is_js_like && bun_paths::is_absolute(dir) {
-        // SAFETY: per fn contract — `transpiler.resolver` is a value field of
-        // the VM; `read_dir_info` is re-entrant on the JS thread.
-        match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-            Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
-            _ => None,
-        }
+    let package_json = if is_js_like {
+        // SAFETY: per fn contract.
+        unsafe { package_json_of(jsc_vm, &path) }
     } else {
         None
     };
@@ -4028,9 +4541,75 @@ unsafe fn get_loader_and_virtual_source<'a>(
         virtual_source,
         path,
         is_main,
+        is_blob,
         specifier,
         package_json,
     })
+}
+
+/// # Safety
+/// `jsc_vm` is the live per-thread VM; the returned borrow lives as long as its resolver caches.
+unsafe fn package_json_of<'a>(
+    jsc_vm: *mut VirtualMachine,
+    path: &Fs::Path<'_>,
+) -> Option<&'a bun_resolver::package_json::PackageJSON> {
+    let dir = path.name().dir;
+    if !bun_paths::is_absolute(dir) {
+        return None;
+    }
+    // SAFETY: per fn contract — `transpiler.resolver` is a value field of
+    // the VM; `read_dir_info` is re-entrant on the JS thread.
+    match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
+        Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+        _ => None,
+    }
+}
+
+fn module_type_of(
+    path: &Fs::Path<'_>,
+    package_json: Option<&bun_resolver::package_json::PackageJSON>,
+) -> ModuleType {
+    if path.text.starts_with(b"data:") {
+        return ModuleType::Unknown;
+    }
+    let ext = path.name().ext;
+    // regex /\.[cm][jt]s$/
+    if ext.len() == b".cjs".len() {
+        if ext == b".cjs" {
+            return ModuleType::Cjs;
+        }
+        if ext == b".mjs" {
+            return ModuleType::Esm;
+        }
+        if ext == b".cts" {
+            return ModuleType::Cjs;
+        }
+        if ext == b".mts" {
+            return ModuleType::Esm;
+        }
+    }
+    // regex /\.[jt]s$/
+    if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
+        // Use the package.json module type if it exists.
+        return package_json
+            .map(|pkg| pkg.module_type)
+            .unwrap_or(ModuleType::Unknown);
+    }
+    // For JSX/TSX and other extensions, let the file contents decide.
+    ModuleType::Unknown
+}
+
+/// C++ entry point: whether the extension, or else `"type"` in package.json, makes the file an ES module.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__isESModuleByExtensionOrPackageType(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let path = path.to_utf8();
+    let path = Fs::Path::init(path.slice());
+    // SAFETY: `bun_vm_ptr()` is the live per-thread VM.
+    let package_json = unsafe { package_json_of(global.bun_vm_ptr(), &path) };
+    module_type_of(&path, package_json) == ModuleType::Esm
 }
 
 thread_local! {
@@ -4040,7 +4619,7 @@ thread_local! {
     static TRANSPILE_PRINTER: Cell<*mut bun_js_printer::BufferPrinter> =
         const { Cell::new(ptr::null_mut()) };
 
-    /// Dedup cache for [`intern_transpile_path`] — see that fn's Note.
+    /// Dedup cache for [`intern_transpile_path`].
     /// `&'static [u8]` keys point into the `FilenameStore` BSS singleton, so
     /// the set itself owns nothing beyond its bucket array.
     static TRANSPILE_PATH_INTERN: core::cell::RefCell<
@@ -4048,32 +4627,7 @@ thread_local! {
     > = core::cell::RefCell::new(bun_collections::HashMap::new());
 }
 
-/// Intern `value` into the process-lifetime `FilenameStore`, returning a
-/// `&'static` view — but **deduplicated** by content so repeated calls with
-/// equal bytes return the same backing slice instead of appending a fresh
-/// copy each time.
-///
-/// Note: the
-/// `bun_paths::fs::Path<'static><'static>` shape forces a re-intern on
-/// every call. `BSSStringList::append` does not dedupe, so a `require()`
-/// loop that busts `require.cache` (test/cli/run/require-cache.test.ts —
-/// "files transpiled and loaded don't leak file paths") leaked one path-len
-/// buffer per iteration into the never-freed BSS store, eventually pushing
-/// RSS over the test's threshold on busy CI hosts. The thread-local
-/// `HashSet<&'static [u8]>` makes the intern idempotent: each distinct path
-/// is appended exactly once (matching the resolver's own per-file semantics),
-/// and the 10⁴–10⁵-iteration leak tests pay zero growth after the first call.
-///
-/// PERF: most callers already hand us a slice that lives inside the
-/// `FilenameStore` BSS arena — the resolver interns every resolved module path
-/// before this point, and a re-entrant transpile of an arena-resident path
-/// just round-trips its own prior result. For those, skip the content hash and
-/// `HashSet` probe/insert entirely: a pointer-range compare against the store's
-/// backing buffer (`FilenameStore::exists`) proves
-/// the bytes are already `'static`, so we can widen and return them directly.
-/// Only genuinely-foreign slices (heap-backed `bun.String::to_utf8` views, the
-/// rare overflow-block case) fall back to the dedup map. This is ~0.7%
-/// self-time on `bun --bun eslint .` (hundreds of `require()`d CJS modules).
+/// Interns `value` into the process-lifetime `FilenameStore`, once per distinct content.
 fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
     // Fast path: `value` already lives in the process-lifetime `FilenameStore`
     // backing arena (resolver-interned, or a prior `intern_transpile_path`
@@ -4095,6 +4649,130 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
         set.insert(interned, ());
         interned
     })
+}
+
+/// What loading a file with a loader gives.
+#[derive(Copy, Clone, PartialEq)]
+enum Loaded {
+    /// The file runs code of its own.
+    Code,
+    /// An object of Bun's with methods: a database, a page.
+    HostObject,
+    /// Strings, numbers, plain objects and arrays.
+    Data,
+}
+
+fn what_loading_gives(loader: Loader) -> Loaded {
+    match loader {
+        Loader::Jsx
+        | Loader::Js
+        | Loader::Ts
+        | Loader::Tsx
+        | Loader::Wasm
+        | Loader::Napi
+        | Loader::Bunsh
+        | Loader::Md => Loaded::Code,
+        Loader::Sqlite | Loader::SqliteEmbedded | Loader::Html => Loaded::HostObject,
+        Loader::Css
+        | Loader::File
+        | Loader::Json
+        | Loader::Jsonc
+        | Loader::Toml
+        | Loader::Base64
+        | Loader::Dataurl
+        | Loader::Text
+        | Loader::Yaml
+        | Loader::Json5
+        | Loader::Xml => Loaded::Data,
+    }
+}
+
+/// What reading `path` answers where no file can be read there.
+fn unreadable_file_error(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
+    log: &mut bun_ast::Log,
+    path: &[u8],
+) -> Option<JSValue> {
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    if path.len() >= buffer.len() {
+        return None;
+    }
+    let error = bun_sys::access(
+        bun_paths::resolve_path::z(path, &mut buffer),
+        bun_sys::posix::R_OK,
+    )
+    .err()?;
+    let _ = log.add_error_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!(
+            "{} reading \"{}\"",
+            bstr::BStr::new(error.name()),
+            bstr::BStr::new(path),
+        ),
+    );
+    Some(bun_jsc::virtual_machine::process_fetch_log(
+        global,
+        specifier,
+        referrer,
+        log,
+        bun_jsc::CrateError::ModuleNotFound,
+    ))
+}
+
+fn loader_refusal_error<const DATA_ONLY: bool>(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
+    is_commonjs_require: bool,
+    loader: Loader,
+    lr: &LoaderResult<'_>,
+    log: &mut bun_ast::Log,
+) -> Option<JSValue> {
+    let refusal =
+        refusal_of_what_loading_gives::<DATA_ONLY>(global, specifier, is_commonjs_require, loader)?;
+    let is_read_from_disk = loader.is_java_script_like()
+        && lr.virtual_source.is_none()
+        && !lr.path.text.starts_with(b"data:")
+        && !bun_jsc::compiled_program::is_compiled_module(lr.path.text);
+    if is_read_from_disk
+        && let Some(error) = unreadable_file_error(global, specifier, referrer, log, lr.path.text)
+    {
+        return Some(error);
+    }
+    Some(refusal)
+}
+
+fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    is_commonjs_require: bool,
+    loader: Loader,
+) -> Option<JSValue> {
+    let loaded = what_loading_gives(loader);
+    if loaded == Loaded::Data {
+        return None;
+    }
+    let code = if is_commonjs_require {
+        bun_jsc::ErrCode::MODULE_NOT_FOUND
+    } else {
+        bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
+    };
+    let refusal = if loaded == Loaded::Code {
+        bun_jsc::compiled_program::error_if_code_outside_image_is_refused(global, code, specifier)
+    } else {
+        bun_jsc::compiled_program::error_if_host_object_outside_image_is_refused(
+            global, code, specifier,
+        )
+    };
+    if DATA_ONLY && refusal.is_none() {
+        return Some(bun_jsc::module_loader::module_not_compiled_in_error(
+            global, code, specifier,
+        ));
+    }
+    refusal
 }
 
 /// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
@@ -4122,9 +4800,73 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
 ) -> *mut c_void {
+    bun_jsc::mark_binding();
+    // SAFETY: the caller's contract is `transpile_file`'s.
+    unsafe {
+        bun_removable_features::call_removable_or!(
+            RuntimeTranspiler,
+            Throw,
+            {
+                bun_removable_features::call_removable_or!(
+                    DataFileLoaders,
+                    Throw,
+                    {
+                        let code = if is_commonjs_require {
+                            bun_jsc::ErrCode::MODULE_NOT_FOUND
+                        } else {
+                            bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
+                        };
+                        *ret = ErrorableResolvedSource::err(
+                            bun_jsc::module_loader::module_not_compiled_in_error(
+                                global, code, specifier,
+                            ),
+                        );
+                        ptr::null_mut()
+                    },
+                    transpile_file::<true>,
+                    jsc_vm,
+                    global,
+                    specifier,
+                    referrer,
+                    type_attribute,
+                    ret,
+                    allow_promise,
+                    is_commonjs_require,
+                    force_loader,
+                    module_loader
+                )
+            },
+            transpile_file::<false>,
+            jsc_vm,
+            global,
+            specifier,
+            referrer,
+            type_attribute,
+            ret,
+            allow_promise,
+            is_commonjs_require,
+            force_loader,
+            module_loader
+        )
+    }
+}
+
+/// SAFETY: `jsc_vm` is the live per-thread VM.
+#[inline(never)]
+unsafe fn transpile_file<const DATA_ONLY: bool>(
+    jsc_vm: *mut VirtualMachine,
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
+    type_attribute: Option<&bun_core::String>,
+    ret: &mut ErrorableResolvedSource,
+    allow_promise: bool,
+    is_commonjs_require: bool,
+    force_loader: u8,
+    module_loader: JSValue,
+) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
-    bun_jsc::mark_binding();
     let force_loader_type: Option<Loader> = force_loader_from_api_u8(force_loader);
 
     // Create a fresh parse log.
@@ -4140,7 +4882,12 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     let type_attribute_str: Option<&[u8]> = type_attribute.and_then(|s| s.as_utf8());
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
-    let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
+    // Deinit the blob (if any) on scope exit.
+    let mut blob_to_deinit = scopeguard::guard(None::<crate::webcore::Blob>, |mut slot| {
+        if let Some(mut blob) = slot.take() {
+            blob.deinit();
+        }
+    });
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     let mut lr = match unsafe {
         get_loader_and_virtual_source(
@@ -4163,16 +4910,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             return ptr::null_mut();
         }
     };
-    // Deinit the blob (if any) on scope exit.
-    // Note: reshaped for borrowck — capture the `is_some()` flag *before*
-    // moving the option into the scopeguard so the `transpile_async` predicate
-    // can still read it without aliasing the guard's `&mut`.
-    let had_blob = blob_to_deinit.is_some();
-    let _blob_guard = scopeguard::guard(blob_to_deinit, |mut slot| {
-        if let Some(mut blob) = slot.take() {
-            blob.deinit();
-        }
-    });
+    let had_blob = lr.is_blob;
 
     // ── force_loader / require.extensions override ──────────────────────────
     if let Some(loader_type) = force_loader_type {
@@ -4202,35 +4940,22 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         }
     }
 
-    // ── module_type sniff from extension / package.json ─────────────────────
-    let module_type: ModuleType = 'brk: {
-        let ext = lr.path.name().ext;
-        // regex /\.[cm][jt]s$/
-        if ext.len() == b".cjs".len() {
-            if ext == b".cjs" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mjs" {
-                break 'brk ModuleType::Esm;
-            }
-            if ext == b".cts" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mts" {
-                break 'brk ModuleType::Esm;
-            }
-        }
-        // regex /\.[jt]s$/
-        if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
-            // Use the package.json module type if it exists.
-            break 'brk lr
-                .package_json
-                .map(|pkg| pkg.module_type)
-                .unwrap_or(ModuleType::Unknown);
-        }
-        // For JSX/TSX and other extensions, let the file contents decide.
-        ModuleType::Unknown
-    };
+    if let Some(loader) = lr.loader
+        && let Some(error) = loader_refusal_error::<DATA_ONLY>(
+            global,
+            specifier,
+            referrer,
+            is_commonjs_require,
+            loader,
+            &lr,
+            &mut log,
+        )
+    {
+        *ret = ErrorableResolvedSource::err(error);
+        return ptr::null_mut();
+    }
+
+    let module_type = module_type_of(&lr.path, lr.package_json);
     let pkg_name: Option<&[u8]> = lr
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
@@ -4238,27 +4963,29 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
     // We only run the transpiler concurrently when we can — today that's import statements and
     // import expressions. Node compile cache: lazily initialize from env on the first fetch.
-    bun_jsc::node_compile_cache::init_from_env_once();
+    if !DATA_ONLY {
+        bun_jsc::node_compile_cache::init_from_env_once();
+    }
 
     'transpile_async: {
+        if DATA_ONLY {
+            break 'transpile_async;
+        }
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        let (has_loaded, is_in_preload, has_plugins, store_enabled) = unsafe {
+        let (has_loaded, is_in_preload, store_enabled) = unsafe {
             (
                 (*jsc_vm).has_loaded,
                 (*jsc_vm).is_in_preload,
-                (*jsc_vm).global().has_plugins(),
                 (*jsc_vm).transpiler_store.enabled,
             )
         };
         if !had_blob
+            && lr.virtual_source.is_none()
             && allow_promise
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()
             && !lr.is_main
-            // Plugins make this complicated.
-            // TODO: allow running concurrently when no onLoad handlers match a plugin.
-            && !has_plugins
             && store_enabled
             // With the Node compile cache enabled, transpile on-thread so the
             // fetch hook sees every module.
@@ -4279,6 +5006,9 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             // `lr.path` borrows `_specifier`, which the store immediately
             // heap-duplicates inside `transpile()`.
             return unsafe {
+                let aot_package_config = (*jsc_vm)
+                    .transpiler
+                    .find_aot_package_config(lr.path.text, concurrent_loader);
                 (*jsc_vm).transpiler_store.transpile(
                     jsc_vm,
                     global,
@@ -4287,6 +5017,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     referrer.clone(),
                     concurrent_loader,
                     lr.package_json,
+                    aot_package_config,
                     module_loader,
                 )
             };
@@ -4306,7 +5037,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             unsafe { ((*jsc_vm).has_loaded, (*jsc_vm).is_in_preload) };
         if has_loaded || is_in_preload {
             // Extensionless files in this context are treated as the JS loader.
-            if lr.path.name().ext.is_empty() {
+            if lr.path.name().ext.is_empty() || lr.path.text.starts_with(b"data:") {
                 break 'loader Loader::Tsx;
             }
             // Unknown extensions are to be treated as file loader.
@@ -4350,6 +5081,21 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         }
     };
 
+    if lr.loader.is_none()
+        && let Some(error) = loader_refusal_error::<DATA_ONLY>(
+            global,
+            specifier,
+            referrer,
+            is_commonjs_require,
+            synchronous_loader,
+            &lr,
+            &mut log,
+        )
+    {
+        *ret = ErrorableResolvedSource::err(error);
+        return ptr::null_mut();
+    }
+
     // Reset the module loader's arena on scope exit.
     // `jsc_vm` is the live per-thread VM (BackRef invariant).
     let _reset_arena = ArenaResetGuard::new(jsc_vm);
@@ -4371,12 +5117,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
     let mut promise: *mut JSInternalPromise = ptr::null_mut();
     let mut extra = TranspileExtra {
-        // SAFETY: `TranspileExtra::path` is typed `'static` (cross-crate
-        // struct); the borrow actually lives only for this synchronous call
-        // (the `extra` struct is consumed by `transpile_source_code_inner`
-        // before `_specifier` / `virtual_source_to_use` drop). Same erasure as
-        // `Bun__transpileVirtualModule` below.
-        path: unsafe { lr.path.into_static() },
+        path: lr.path,
         loader: synchronous_loader,
         module_type,
         source_code_printer: printer_ptr,
@@ -4398,7 +5139,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         extra: &raw mut extra,
     };
 
-    match transpile_source_code_inner(jsc_vm, &args) {
+    match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             promise.cast::<c_void>()
@@ -4446,6 +5187,63 @@ fn transpile_error_value(
     }
 }
 
+/// What `bun test --coverage` runs of the file at `path` with the text `source`: what the transpiler prints. Its source map is saved as for a
+/// file that is loaded.
+pub(crate) fn transpile_as_loaded(
+    global: &JSGlobalObject,
+    path: &[u8],
+    source: &[u8],
+) -> Option<ResolvedSource> {
+    let jsc_vm: *mut VirtualMachine = global.bun_vm_ptr();
+    let virtual_source = bun_ast::Source::init_path_string(path, source);
+    let mut log = bun_ast::Log::init();
+    let fs_path = Fs::Path::init(path);
+    // SAFETY: `jsc_vm` is the live per-thread VM.
+    let loaders = unsafe { &(*jsc_vm).transpiler.options.loaders };
+    let loader = loaders.get(fs_path.name().ext).copied()?;
+    if !loader.is_java_script_like() {
+        return None;
+    }
+    let _reset_arena = ArenaResetGuard::new(jsc_vm);
+    let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
+        let mut p = cell.get();
+        if p.is_null() {
+            let writer = bun_js_printer::BufferWriter::init();
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
+            p = bun_core::heap::into_raw(bp);
+            cell.set(p);
+        }
+        p
+    });
+    let mut extra = TranspileExtra {
+        path: fs_path,
+        loader,
+        module_type: ModuleType::Unknown,
+        source_code_printer: printer_ptr,
+        promise_ptr: ptr::null_mut(),
+    };
+    let specifier = bun_core::StringView::from_bytes(path);
+    let args = TranspileArgs {
+        specifier: path,
+        referrer: b"",
+        input_specifier: &specifier,
+        log: &raw mut log,
+        virtual_source: Some(&virtual_source),
+        global_object: global,
+        flags: FetchFlags::Transpile,
+        extra: &raw mut extra,
+    };
+    transpile_source_code_inner::<false>(jsc_vm, &args).ok()
+}
+
+/// BunCompiledModules.cpp. The executable of a compiled program holds the file as it is, so the loader of its kind can read it.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__compiledProgramHoldsFileAsItIs(path: &bun_core::String) -> bool {
+    let path = path.to_utf8();
+    bun_standalone_graph::Graph::get_ref()
+        .is_some_and(|graph| graph.find_asset_under_root(path.slice()).is_some())
+}
+
 /// Transpiles plugin-provided source through the per-thread
 /// `TRANSPILE_PRINTER`, writing the result into `ret`.
 #[unsafe(no_mangle)]
@@ -4473,11 +5271,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 
     let virtual_source = bun_ast::Source::init_path_string(specifier, source_code_slice.slice());
     let mut log = bun_ast::Log::init();
-    // SAFETY: `TranspileExtra::path` is typed `'static` (cross-crate struct);
-    // the borrow actually lives only for this call (the `extra`
-    // struct is consumed by `transpile_source_code_inner` before
-    // `specifier_slice` drops). Same erasure as `Bun__transpileFile` above.
-    let path: Fs::Path<'static> = unsafe { Fs::Path::init(specifier).into_static() };
+    let path = Fs::Path::init(specifier);
 
     // Pick the loader: the explicit API loader if given, else by file
     // extension, else `.js` for the main module / `.file` otherwise.
@@ -4493,7 +5287,8 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
             .copied();
         opt.unwrap_or_else(|| {
             // SAFETY: `jsc_vm` is the live per-thread VM.
-            if bun_core::strings::eql_long(specifier, unsafe { &*jsc_vm }.main(), true) {
+            let main = unsafe { &*jsc_vm }.main();
+            if main.is_some_and(|main| bun_core::strings::eql_long(specifier, main, true)) {
                 Loader::Js
             } else {
                 Loader::File
@@ -4517,11 +5312,18 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         p
     });
 
+    let module_type = if loader.is_java_script_like() {
+        // SAFETY: `jsc_vm` is the live per-thread VM.
+        module_type_of(&path, unsafe { package_json_of(jsc_vm, &path) })
+    } else {
+        ModuleType::Unknown
+    };
+
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
     let mut extra = TranspileExtra {
         path,
         loader,
-        module_type: ModuleType::Unknown,
+        module_type,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
     };
@@ -4536,7 +5338,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         extra: &raw mut extra,
     };
 
-    match transpile_source_code_inner(jsc_vm, &args) {
+    match transpile_source_code_inner::<false>(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             bun_analytics::features::virtual_modules
@@ -4557,7 +5359,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 /// Materialise an embedded file (`.node`/`.so`/`.dylib`/`.dll` from
 /// `bun build --compile`) to an on-disk path `dlopen(2)` can open. Called
 /// from `resolve_embedded_node_file_hook` (`process.dlopen()`) and
-/// `ffi_body::FFI::open` (`bun:ffi`).
+/// `ffi_body::FFI::dlopen` (`bun:ffi`).
 ///
 /// The filename is a hash of the contents, so every `dlopen()` of the same
 /// embedded library — across calls, Worker VMs, and restarts — shares one
@@ -4594,7 +5396,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // Reuse the canonical file from a previous run if it is still ours with
     // the right size. `lstatat` so a planted symlink fails the ISREG check
     // instead of being followed.
-    let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
+    let tmpdir = Fs::FileSystem::get().tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();
@@ -4663,6 +5465,109 @@ fn extract_owner_uid() -> u32 {
     bun_sys::windows::user_unique_id()
 }
 
+/// Creates `path` if nothing is there. Returns whether `path` is a directory that this user owns and nobody else can access.
+#[cfg(unix)]
+fn make_or_find_private_folder(path: &[u8], uid: u32) -> bool {
+    let path = bun_core::ZBox::from_bytes(path);
+    let _ = bun_sys::mkdir(&path, 0o700);
+    // `lstat`: a planted link is not followed.
+    bun_sys::lstat(&path).is_ok_and(|it| {
+        bun_sys::S::ISDIR(it.st_mode as u32) && it.st_uid == uid && it.st_mode & 0o077 == 0
+    })
+}
+
+#[cfg(windows)]
+fn make_or_find_private_folder(path: &[u8], _uid: u32) -> bool {
+    bun_sys::windows::private_folder::make_or_find(path)
+}
+
+/// An addon may load libraries by a path relative to itself (`$ORIGIN/../lib`, `@loader_path/../lib`).
+fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
+    use bun_sys::O;
+
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    let addon = graph.find_ref(addon_path)?;
+    let mut files: Vec<(&[u8], &[u8])> = graph.preserved_shared_libraries().collect();
+    if files.is_empty() {
+        return None;
+    }
+    let mut hash = bun_wyhash::hash(addon.contents.as_bytes());
+    for (path, contents) in &files {
+        hash = hash.rotate_left(7) ^ bun_wyhash::hash(path) ^ bun_wyhash::hash(contents);
+    }
+    files.push((addon.name, addon.contents.as_bytes()));
+
+    let uid = extract_owner_uid();
+    let mut persistent_folder = [
+        Fs::RealFS::tmpdir_path(),
+        bun_paths::SEP_STR.as_bytes(),
+        format!(".bun-{uid}-{hash:x}").as_bytes(),
+    ]
+    .concat();
+    if cfg!(windows) {
+        bun_paths::resolve_path::slashes_to_windows_in_place(&mut persistent_folder);
+    }
+    let per_process_folder = [
+        &persistent_folder[..],
+        format!("-{:x}", bun_core::fast_random()).as_bytes(),
+    ]
+    .concat();
+    let folder = [persistent_folder, per_process_folder]
+        .into_iter()
+        .find(|folder| make_or_find_private_folder(folder, uid))?;
+    let written_path = |path: &[u8]| -> Vec<u8> {
+        if cfg!(unix) {
+            return [&folder[..], path].concat();
+        }
+        let under_folder = path
+            .iter()
+            .filter(|&&c| c != b':')
+            .map(|&c| if c == b'/' { b'\\' } else { c });
+        folder
+            .iter()
+            .copied()
+            .chain(std::iter::once(b'\\'))
+            .chain(under_folder)
+            .collect()
+    };
+    for (path, contents) in files {
+        let to = bun_core::ZBox::from_vec(written_path(path));
+        let is_written = || {
+            bun_sys::lstat(&to).is_ok_and(|it| {
+                bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len()
+            })
+        };
+        if is_written() {
+            continue;
+        }
+        bun_sys::mkdir_recursive_at_mode(
+            bun_sys::Fd::cwd(),
+            bun_paths::dirname(to.as_bytes())?,
+            0o700,
+        )
+        .ok()?;
+        let scratch = bun_core::ZBox::from_vec(
+            [
+                to.as_bytes(),
+                format!(".{:x}", bun_core::fast_random()).as_bytes(),
+            ]
+            .concat(),
+        );
+        let is_complete = {
+            let file = bun_sys::open(&scratch, O::WRONLY | O::CREAT | O::EXCL, 0o600).ok()?;
+            let _close = bun_sys::CloseOnDrop::new(file);
+            bun_sys::File::borrow(&file).write_all(contents).is_ok()
+        };
+        if !is_complete || bun_sys::rename(&scratch, &to).is_err() {
+            let _ = bun_sys::unlink(&scratch);
+            if !is_written() {
+                return None;
+            }
+        }
+    }
+    Some(written_path(addon.name))
+}
+
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
@@ -4671,6 +5576,9 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
         return bun_core::String::DEAD;
     }
     let input_path = path.to_utf8();
+    if let Some(path) = write_next_to_libraries(input_path.slice()) {
+        return bun_core::String::clone_utf8(&path);
+    }
     let mut path_buf = bun_paths::path_buffer_pool::get();
     match resolve_embedded_file_to_buf(input_path.slice(), b"node", &mut path_buf[..]) {
         Some(len) => bun_core::String::clone_utf8(&path_buf[..len]),
@@ -4765,7 +5673,7 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
     // the VM; `parse_http_date` is only reachable from a `Bun.serve` request
     // callback (JS thread, VM live).
     let global = unsafe { &*(*vm).global };
-    let string = bun_core::String::from_bytes(value);
+    let string = bun_core::StringView::from_bytes(value);
     // The only callers — FileRoute / static
     // routes — treat a throw the same as "header absent / unparsable", so
     // swallow `JsError` here and surface `None`.

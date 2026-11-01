@@ -124,7 +124,7 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
     off += 12 + len;
   }
   const raw = zlib.inflateSync(Buffer.concat(idats));
-  // Undo per-row filter. libspng may pick filter ≠ 0; handle 0–4.
+  // Undo per-row filter. The encoder may pick filter ≠ 0; handle 0–4.
   const stride = w * 4;
   const out = new Uint8Array(w * h * 4);
   let p = 0;
@@ -577,7 +577,7 @@ describe("Bun.Image", () => {
       return null;
     }
 
-    // Distinctive binary payload that round-trips through libspng's
+    // Distinctive binary payload that round-trips through the PNG codec's
     // deflate/inflate and libjpeg-turbo's APP2 chunking without
     // modification. Neither library validates ICC internals. The wide byte
     // range (0-255, prime-step LCG) exercises binary-safe transport so a
@@ -1329,6 +1329,11 @@ describe("Bun.Image", () => {
   });
 });
 
+test("a subclass inherits Bun.Image.backend", () => {
+  class Subclass extends Bun.Image {}
+  expect(Subclass.backend).toBe(Bun.Image.backend);
+});
+
 describe("decode-only formats (BMP / TIFF / GIF)", () => {
   // Several tests here flip the process-global backend; restore after the
   // describe so leaks can't reach the suites below regardless of throw paths.
@@ -1724,7 +1729,7 @@ describe("Bun.Image.backend", () => {
 
   // Same input → both backends → both must round-trip pixels exactly. The
   // system path goes through ImageIO/WIC + vImage; the bun path is
-  // spng/libwebp + Highway. Reflect/rotate are pure permutations so byte
+  // bun_png/libwebp + Highway. Reflect/rotate are pure permutations so byte
   // equality holds; resize uses lanczos3 (the only filter the system path
   // accepts) so we just check dimensions and that it's not all-black.
   test.each(["bun", "system"] as const)("backend=%s pipeline parity", async backend => {

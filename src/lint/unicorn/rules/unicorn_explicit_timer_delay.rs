@@ -8,8 +8,8 @@ pub struct ExplicitTimerDelay {
     is_never: bool,
 }
 
-const MISSING_DELAY: Message = Message::new("", "`{{name}}` should have an explicit delay argument.");
-const REDUNDANT_DELAY: Message = Message::new("", "`{{name}}` should not have an explicit delay of `0`.");
+const MISSING_DELAY: &Message = &Message::new("", "`{{name}}` should have an explicit delay argument.");
+const REDUNDANT_DELAY: &Message = &Message::new("", "`{{name}}` should not have an explicit delay of `0`.");
 
 const TIMER_FUNCTION_NAMES: [&str; 2] = ["setTimeout", "setInterval"];
 
@@ -57,7 +57,7 @@ impl Rule for ExplicitTimerDelay {
     }
 }
 
-/// `setTimeout`, `window.setTimeout`, where the first name is that of a global variable.
+/// `setTimeout` or `window.setTimeout`, where the first name is a global variable.
 fn timer_name(call_expr: Call<'_>) -> Option<Name<'_>> {
     let callee = get_inner_expression(call_expr.callee());
     let (name, global) = match callee.kind() {

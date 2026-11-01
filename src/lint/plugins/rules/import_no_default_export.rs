@@ -5,10 +5,10 @@ use bun_lint::rule::Plugin;
 /// Forbid default exports.
 pub struct NoDefaultExport;
 
-const PREFER_NAMED: Message = Message::new("", "Prefer named exports.");
-const NO_ALIAS_DEFAULT: Message =
-    Message::new("", "Do not alias `{{local}}` as `default`. Just export `{{local}}` itself instead.");
-const OXLINT: Message = Message::new("", "Prefer named exports");
+const PREFER_NAMED: &Message = &Message::new("", "Prefer named exports.");
+const NO_ALIAS_DEFAULT: &Message =
+    &Message::new("", "Do not alias `{{local}}` as `default`. Just export `{{local}}` itself instead.");
+const OXLINT: &Message = &Message::new("", "Prefer named exports");
 
 const EXPORTS: [StmtTag; 5] =
     [StmtTag::Fn, StmtTag::Class, StmtTag::Interface, StmtTag::ExportNamed, StmtTag::ExportDefault];
@@ -23,13 +23,13 @@ impl Rule for NoDefaultExport {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        // oxlint asks its record of the module, which keeps one default export.
+        // oxlint uses its module record, which keeps a single default export.
         if file.language().is_oxlint { On::new().finish() } else { On::new().stmts(&EXPORTS) }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let language = file.language();
-        // oxlint does not ask what the file is configured to be.
+        // oxlint ignores the configured source type.
         let source_type = language.parser_source_type.unwrap_or(language.source_type);
         (language.is_oxlint || source_type == SourceType::Module).then_some(())
     }
@@ -46,7 +46,7 @@ impl Rule for NoDefaultExport {
             let start = skip_trivia(cx.text(), stmt.span().start + "export".len() as u32);
             let len = if export.is_type_only() { "type".len() } else { "{".len() };
             let local = specifier.local();
-            // A name in quotes has no `name`.
+            // A quoted name has no `name`.
             let local = if local.is_string() { &b"undefined"[..] } else { local.bytes() };
             cx.report(Span::new(start, start + len as u32), NO_ALIAS_DEFAULT).data("local", local);
         }

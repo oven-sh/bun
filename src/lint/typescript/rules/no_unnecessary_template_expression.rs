@@ -1,7 +1,7 @@
 use bun_core::strings;
 use bun_lint::ast::Regex as RegexLiteral;
 use bun_lint::prelude::*;
-use bun_lint::types::tsutils::type_constituents;
+use bun_lint::types::tsutils::{is_union_or_intersection_type, type_constituents};
 use bun_lint::types::utils::{get_constraint_info, is_string_like};
 use bun_lint::types::{SyntaxKind, Type};
 use bun_lint::utils::text::number_to_string;
@@ -13,18 +13,22 @@ use smallvec::SmallVec;
 /// Disallow unnecessary template expressions.
 pub struct NoUnnecessaryTemplateExpression;
 
-const NO_UNNECESSARY_TEMPLATE_EXPRESSION: Message = Message::new(
+const NO_UNNECESSARY_TEMPLATE_EXPRESSION: &Message = &Message::new(
     "noUnnecessaryTemplateExpression",
     "Template literal expression is unnecessary and can be simplified.",
 );
 
 /// A `TemplateLiteral` or a `TSTemplateLiteralType`.
 trait TemplateLiteralTypeOrValue<'a>: Copy {
+    fn cooked_of_quasi(self, i: usize) -> Option<Name<'a>>;
     fn raw_of_quasi(self, i: usize) -> &'a [u8];
     fn span_of_quasi(self, i: usize) -> Span;
 }
 
 impl<'a> TemplateLiteralTypeOrValue<'a> for Template<'a> {
+    fn cooked_of_quasi(self, i: usize) -> Option<Name<'a>> {
+        self.cooked(i)
+    }
     fn raw_of_quasi(self, i: usize) -> &'a [u8] {
         self.raw(i)
     }
@@ -34,6 +38,9 @@ impl<'a> TemplateLiteralTypeOrValue<'a> for Template<'a> {
 }
 
 impl<'a> TemplateLiteralTypeOrValue<'a> for TypeTemplate<'a> {
+    fn cooked_of_quasi(self, i: usize) -> Option<Name<'a>> {
+        self.cooked(i)
+    }
     fn raw_of_quasi(self, i: usize) -> &'a [u8] {
         self.raw(i)
     }
@@ -42,7 +49,7 @@ impl<'a> TemplateLiteralTypeOrValue<'a> for TypeTemplate<'a> {
     }
 }
 
-/// What can be written in the text of the template as well as between `${` and `}`.
+/// Something that could be written directly in the template's text instead of between `${` and `}`.
 #[derive(Copy, Clone)]
 enum Interpolation<'a> {
     /// `undefined`, `Infinity`, `NaN`, and the types `null` and `undefined`.
@@ -59,6 +66,8 @@ enum Interpolation<'a> {
         quasi_count: usize,
         first_raw: &'a [u8],
         last_raw: &'a [u8],
+        /// Its value, if it has no substitutions.
+        value: Option<Name<'a>>,
     },
 }
 
@@ -85,6 +94,7 @@ fn interpolation_of_expression(node: Expr<'_>) -> Option<Interpolation<'_>> {
             quasi_count: template.quasi_count(),
             first_raw: template.raw(0),
             last_raw: template.raw(template.quasi_count() - 1),
+            value: template.as_static(),
         },
         _ => return None,
     })
@@ -95,12 +105,13 @@ fn interpolation_of_type(node: TypeNode<'_>) -> Option<Interpolation<'_>> {
     let is_negative = || node.text().starts_with(b"-");
     Some(match node.kind() {
         TypeKind::Keyword(Keyword::Null | Keyword::Undefined) => Interpolation::Name,
-        TypeKind::StringLit(_) if node.text().starts_with(b"`") => {
+        TypeKind::StringLit(value) if node.text().starts_with(b"`") => {
             let raw = node.file().slice(node.span().shrink(1, 1));
             Interpolation::Template {
                 quasi_count: 1,
                 first_raw: raw,
                 last_raw: raw,
+                value: Some(value),
             }
         }
         TypeKind::StringLit(value) => Interpolation::String(value),
@@ -120,10 +131,14 @@ fn starts_with_new_line(x: &[u8], is_oxlint: bool) -> bool {
     }
 }
 
-/// Whitespace before the end of a line is clearer in `${' '}`.
+/// Whitespace at the end of a line is clearer as `${' '}`.
 fn is_trailing_whitespace(kind: Interpolation, next_raw: &[u8], is_oxlint: bool) -> bool {
     let is_whitespace = match kind {
         Interpolation::String(value) => strings::is_all_js_whitespace(value.bytes()),
+        // tsgolint tests the value of a template without substitutions.
+        Interpolation::Template { value, .. } if is_oxlint => {
+            value.is_some_and(|it| strings::is_all_js_whitespace(it.bytes()))
+        }
         Interpolation::Template { quasi_count, first_raw, .. } => {
             quasi_count == 1 && strings::is_all_js_whitespace(first_raw)
         }
@@ -155,7 +170,7 @@ fn regex_text(regex: RegexLiteral) -> Vec<u8> {
     text
 }
 
-/// With a backslash before each `` ` `` and `${` that is not escaped.
+/// Adds a backslash before each unescaped `` ` `` and `${`.
 fn escape_template_syntax(value: &[u8]) -> Vec<u8> {
     let mut escaped = Vec::with_capacity(value.len() + 2);
     let mut backslashes = 0;
@@ -177,8 +192,12 @@ fn remove(span: Span) -> Fix {
     }
 }
 
-fn is_enum_member_type(ty: Type) -> bool {
+fn is_enum_member_type(ty: Type, is_oxlint: bool) -> bool {
     type_constituents(ty).iter().any(|t| {
+        // tsgolint's `TypeRecurser` descends into nested unions and intersections.
+        if is_oxlint && is_union_or_intersection_type(t) {
+            return is_enum_member_type(t, is_oxlint);
+        }
         t.get_symbol()
             .and_then(|symbol| symbol.value_declaration())
             .is_some_and(|declaration| declaration.kind() == SyntaxKind::EnumMember)
@@ -187,53 +206,180 @@ fn is_enum_member_type(ty: Type) -> bool {
 
 type Context<'a> = Cx<'a, NoUnnecessaryTemplateExpression>;
 
-/// `${a}`, without a comment.
+/// `${a}`, without a comment. `first` is the interpolation including its parentheses.
 fn is_trivial_interpolation<'a>(
     template: impl TemplateLiteralTypeOrValue<'a>,
     interpolations: usize,
+    first: Span,
     cx: &Context<'a>,
 ) -> bool {
-    interpolations == 1
-        && template.raw_of_quasi(0).is_empty()
+    if interpolations != 1 {
+        return false;
+    }
+    let (head, tail) = (template.span_of_quasi(0), template.span_of_quasi(1));
+    // tsgolint compares the cooked texts, and looks for comments before and after the interpolation, not inside it.
+    if cx.language().is_oxlint {
+        let is_empty = |i: usize| template.cooked_of_quasi(i).is_some_and(|it| it.bytes().is_empty());
+        return is_empty(0)
+            && is_empty(1)
+            && !cx.file().comments_exist_between(head, first)
+            && !cx.file().comments_exist_between(first, tail);
+    }
+    template.raw_of_quasi(0).is_empty()
         && template.raw_of_quasi(1).is_empty()
-        && !cx.file().comments_exist_between(template.span_of_quasi(0), template.span_of_quasi(1))
+        && !cx.file().comments_exist_between(head, tail)
 }
 
-/// Whether tsgolint puts parentheses around `moved` where `template` was: unless it binds more tightly than what the
-/// template is in. For typescript-go a call binds like a member access, and an arrow function like an assignment.
+/// typescript-go's `GetExpressionPrecedence` for an unparenthesized expression, where it differs from
+/// typescript-eslint's `getOperatorPrecedence`: a call binds like a member access, `??` like `||`, and `=` and
+/// `satisfies` aren't `Invalid`. Its `OptionalChain`, between `LeftHandSide` and `Member`, is `LeftHandSide` here.
+fn get_expression_precedence(node: Expr) -> OperatorPrecedence {
+    use OperatorPrecedence as P;
+    if node.chain() != Chain::No {
+        return P::LeftHandSide;
+    }
+    match node.kind() {
+        ExprKind::Call(_) | ExprKind::ImportCall { .. } | ExprKind::Instantiation { .. } => P::Member,
+        ExprKind::Binary { op: BinOp::Nullish, .. } => P::LogicalOR,
+        ExprKind::Binary { op: BinOp::EqEq, .. } => P::Equality,
+        ExprKind::Assign { .. } => P::Assignment,
+        ExprKind::Satisfies { .. } => P::Relational,
+        ExprKind::Fn(func) if func.is_arrow() => P::Assignment,
+        _ => get_operator_precedence_for_node(node),
+    }
+}
+
+/// True if tsgolint parenthesizes `moved` when it replaces `template`. It does if the template's parent is an
+/// expression, unless `moved` binds more tightly than that parent. A `ParenthesizedExpression` binds the most tightly.
 fn is_wrapped_by_tsgolint(template: Expr, moved: Expr) -> bool {
     use OperatorPrecedence as P;
-    let like_member = |it: P| if it == P::LeftHandSide { P::Member } else { it };
-    let around = match template.parent() {
-        _ if template.is_parenthesized() => P::Primary,
+    if template.is_parenthesized() {
+        return true;
+    }
+    if moved.is_parenthesized() {
+        return false;
+    }
+    let parent_precedence = match template.parent() {
         Node::Func(func) if func.is_arrow() => P::Assignment,
-        // `a || b ?? c` is a syntax error.
-        Node::Expr(parent)
-            if parent.binary_op() == Some(BinOp::Nullish)
-                && matches!(moved.binary_op(), Some(BinOp::And | BinOp::Or)) =>
-        {
-            P::Primary
-        }
-        _ => like_member(get_operator_precedence_of_ts_parent(template)),
+        Node::Expr(parent) => match get_operator_precedence_of_ts_parent(template) {
+            // For TypeScript the parent isn't an expression: a `TemplateSpan`, a `JsxExpression`.
+            P::Invalid => return false,
+            _ if parent.chain() != Chain::No => P::LeftHandSide,
+            P::LeftHandSide if parent.tag() != ExprTag::New => P::Member,
+            // `a || b ?? c` is a syntax error.
+            _ if parent.binary_op() == Some(BinOp::Nullish) => match moved.binary_op() {
+                Some(BinOp::And | BinOp::Or) => return true,
+                _ => P::LogicalOR,
+            },
+            parent_precedence => parent_precedence,
+        },
+        _ => return false,
     };
-    !moved.is_parenthesized() && like_member(get_operator_precedence_for_node(moved)) <= around
+    get_expression_precedence(moved) <= parent_precedence
 }
 
-fn report_single_interpolation<'a>(node: Node<'a>, interpolation: Node<'a>, cx: &Context<'a>) {
-    // For tsgolint parentheses are a part of what is in them.
-    if let (Node::Expr(template), Node::Expr(moved), true) = (node, interpolation, cx.language().is_oxlint) {
-        let span = moved.outer_span();
-        // From the `${`, which is all that is before it, whatever space follows.
-        cx.report(Span::new(template.span().start + 1, span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-            .fix(|fixer| match is_wrapped_by_tsgolint(template, moved) {
-                true => fixer.replace(node, [&b"("[..], moved.text(), b")"].concat()),
-                false => fixer.replace(node, cx.slice(span)),
-            });
+/// True if the `TemplateLiteralType`'s parent is an expression for typescript-go, which includes the
+/// `ExpressionWithTypeArguments` after `extends` or `implements`. tsgolint then parenthesizes the type.
+fn is_type_of_expression(template: TypeNode) -> bool {
+    match template.parent() {
+        // The type arguments of `<a<T>></a>` belong to the `JsxOpeningElement`, which isn't an expression.
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::Jsx(jsx) => jsx.is_self_closing(),
+            _ => true,
+        },
+        Node::Func(func) => matches!(func.kind(), FnKind::Arrow | FnKind::Expr),
+        // `extends B<Args>`
+        Node::Class(_) => true,
+        Node::Type(heritage) => match heritage.parent() {
+            Node::Class(class) => class.implements().iter().any(|it| it.span() == heritage.span()),
+            Node::Stmt(statement) => statement.as_interface().is_some(),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Returns the lowest precedence a type can have to replace `ty` without parentheses, or 0 if any type works there. A
+/// conditional or function type has precedence 0, a union 1, an intersection 2, `keyof T` 3.
+pub(crate) fn min_precedence_at(ty: TypeNode) -> u8 {
+    let is_ty = |it: TypeNode| it.span() == ty.span();
+    match ty.parent() {
+        Node::TupleElem(element) if element.is_optional() && element.name().is_none() => 4,
+        Node::Type(parent) => match parent.kind() {
+            TypeKind::Array(_) => 4,
+            TypeKind::IndexedAccess { obj, .. } if is_ty(obj) => 4,
+            TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) => 3,
+            TypeKind::Intersection(_) => 2,
+            TypeKind::Union(_) => 1,
+            TypeKind::Cond { check, extends, .. } if is_ty(check) || is_ty(extends) => 1,
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
+/// True if the type around `template` would split `moved` apart: `A | B` in `T[]`, `T[K]`, `keyof T`, `T & C` or
+/// `[T?]`, or a conditional type in a union or before another conditional's `?`. tsgolint adds no parentheses there.
+fn moved_type_needs_parentheses(template: TypeNode, moved: TypeNode) -> bool {
+    let binding = match moved.kind() {
+        TypeKind::Cond { .. } | TypeKind::Fn(_) => 0,
+        TypeKind::Union(_) => 1,
+        TypeKind::Intersection(_) => 2,
+        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) | TypeKind::Infer(_) => 3,
+        _ => return false,
+    };
+    binding < min_precedence_at(template)
+}
+
+/// True if `` `${interpolation}` `` is probably there to convert whatever a caller passes to a string. The declared
+/// type is what the author promises, not what arrives at run time. This covers parameters and `` a = `${a}` ``.
+fn is_coercion<'a>(template: Node<'a>, interpolation: Node<'a>) -> bool {
+    let (Node::Expr(template), Node::Expr(interpolation)) = (template, interpolation) else {
+        return false;
+    };
+    let Some(symbol) = interpolation.symbol() else {
+        return false;
+    };
+    let is_assigned_back = matches!(template.parent(), Node::Expr(parent)
+        if parent.tag() == ExprTag::Assign && parent.left().and_then(Expr::symbol) == Some(symbol));
+    is_assigned_back || matches!(symbol.declarations().next(), Some(Declaration::Param(_)))
+}
+
+/// `head` is the text before the interpolation, `outer` the interpolation including its parentheses.
+fn report_single_interpolation<'a>(
+    node: Node<'a>,
+    interpolation: Node<'a>,
+    head: Span,
+    outer: Span,
+    cx: &Context<'a>,
+) {
+    if !cx.language().is_oxlint {
+        let span = interpolation.span();
+        cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+            .fix_where_safe(
+                || !is_coercion(node, interpolation),
+                |fixer| fixer.replace(node, get_moved_node_code(node, interpolation)),
+            );
         return;
     }
-    let span = interpolation.span();
-    cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-        .fix(|fixer| fixer.replace(node, get_moved_node_code(node, interpolation)));
+    // tsgolint reports from the `${`, whatever whitespace follows it, to the character after the interpolation. For
+    // tsgolint the interpolation includes its parentheses.
+    cx.report(Span::new(head.end - 2, outer.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+        .fix_where_safe(|| !is_coercion(node, interpolation), |fixer| {
+            let is_wrapped = match (node, interpolation) {
+                (Node::Expr(template), Node::Expr(moved)) => is_wrapped_by_tsgolint(template, moved),
+                (Node::Type(template), Node::Type(moved)) => {
+                    !template.is_parenthesized()
+                        && (is_type_of_expression(template)
+                            || !moved.is_parenthesized() && moved_type_needs_parentheses(template, moved))
+                }
+                _ => false,
+            };
+            match is_wrapped {
+                true => fixer.replace(node, [&b"("[..], cx.slice(outer), b")"].concat()),
+                false => fixer.replace(node, cx.slice(outer)),
+            }
+        });
 }
 
 fn report_interpolations<'a>(
@@ -251,7 +397,15 @@ fn report_interpolations<'a>(
             continue;
         }
         let (prev_quasi, next_quasi) = (template.span_of_quasi(index), template.span_of_quasi(index + 1));
-        if cx.file().comments_exist_between(prev_quasi, next_quasi) {
+        // tsgolint looks for comments before and after the interpolation, not inside it.
+        let has_comments = match cx.language().is_oxlint {
+            true => {
+                cx.file().comments_exist_between(prev_quasi, interpolation)
+                    || cx.file().comments_exist_between(interpolation, next_quasi)
+            }
+            false => cx.file().comments_exist_between(prev_quasi, next_quasi),
+        };
+        if has_comments {
             continue;
         }
         infos.push(InterpolationInfo {
@@ -287,15 +441,16 @@ fn report_infos<'a>(infos: &[InterpolationInfo<'a>], cx: &Context<'a>) {
                 next_character_is_opening_curly_brace = false;
                 None
             }
-            Interpolation::Template { quasi_count, first_raw, last_raw } => {
-                // The `$` at its end and the `{` after it would be a `${`.
+            Interpolation::Template { quasi_count, first_raw, last_raw, .. } => {
+                // The `$` at its end and the `{` after it would form a `${`.
                 if next_character_is_opening_curly_brace && ends_with_unescaped_dollar_sign(last_raw) {
                     fixes.push(Fix {
                         span: Span::empty(interpolation.end - 2),
                         text: b"\\".to_vec(),
                     });
                 }
-                if quasi_count == 1 && !first_raw.is_empty() {
+                // tsgolint also looks at the head of a template with substitutions.
+                if (quasi_count == 1 || cx.language().is_oxlint) && !first_raw.is_empty() {
                     next_character_is_opening_curly_brace = first_raw.starts_with(b"{");
                 }
                 fixes.push(remove(Span::new(interpolation.start, interpolation.start + 1)));
@@ -322,7 +477,7 @@ fn report_infos<'a>(infos: &[InterpolationInfo<'a>], cx: &Context<'a>) {
             });
         }
 
-        // The `$` before the `${` and the `{` that follows it now.
+        // The `$` before the `${` and the `{` that now follows it would form a `${`.
         if next_character_is_opening_curly_brace && ends_with_unescaped_dollar_sign(info.prev_raw) {
             fixes.push(Fix {
                 span: Span::new(info.prev_quasi.end - 3, info.prev_quasi.end - 2),
@@ -347,10 +502,11 @@ impl NoUnnecessaryTemplateExpression {
         if matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate) {
             return;
         }
-        if is_trivial_interpolation(template, expressions.len(), cx)
+        let outer = first.outer_span();
+        if is_trivial_interpolation(template, expressions.len(), outer, cx)
             && get_constraint_info(first.ty()).constraint_type.is_some_and(is_string_like)
         {
-            report_single_interpolation(node.into(), first.into(), cx);
+            report_single_interpolation(node.into(), first.into(), template.quasi_span(0), outer, cx);
             return;
         }
         let interpolations = expressions.iter().map(|it| (it.span(), interpolation_of_expression(it)));
@@ -365,12 +521,14 @@ impl NoUnnecessaryTemplateExpression {
         let Some(first) = types.first() else {
             return;
         };
-        if is_trivial_interpolation(template, types.len(), cx) {
+        let is_oxlint = cx.language().is_oxlint;
+        let outer = first.outer_span();
+        if is_trivial_interpolation(template, types.len(), outer, cx) {
             let info = get_constraint_info(first.ty());
             if !info.is_type_parameter
-                && info.constraint_type.is_some_and(|it| is_string_like(it) && !is_enum_member_type(it))
+                && info.constraint_type.is_some_and(|it| is_string_like(it) && !is_enum_member_type(it, is_oxlint))
             {
-                report_single_interpolation(node.into(), first.into(), cx);
+                report_single_interpolation(node.into(), first.into(), template.quasi_span(0), outer, cx);
                 return;
             }
         }

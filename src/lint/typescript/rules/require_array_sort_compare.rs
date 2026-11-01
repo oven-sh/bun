@@ -9,9 +9,9 @@ pub struct RequireArraySortCompare {
     ignore_string_arrays: bool,
 }
 
-const REQUIRE_COMPARE: Message = Message::new("requireCompare", "Require 'compare' argument.");
+const REQUIRE_COMPARE: &Message = &Message::new("requireCompare", "Require 'compare' argument.");
 
-/// Whether `node` is an array of which all elements are strings.
+/// True if `node` is an array whose elements are all strings.
 fn is_string_array_node(node: Expr) -> bool {
     let ty = get_constrained_type_at_location(node);
     (ty.is_array_type() || ty.is_tuple_type())
@@ -29,11 +29,17 @@ impl RequireArraySortCompare {
             return;
         }
         let callee = call.callee();
-        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
+        let is_oxlint = cx.language().is_oxlint;
+        let Some(obj) = callee.object() else {
             return;
         };
         // `(a?.sort)()` calls a `ChainExpression`.
-        if callee.is_chain_root() || !is_static_member_access_of_value(callee, &["sort", "toSorted"]) {
+        let is_sort = !callee.is_chain_root()
+            && match is_oxlint {
+                true => matches!(callee.file().type_checker().get_accessed_property_name(callee), Some(b"sort" | b"toSorted")),
+                false => is_static_member_access_of_value(callee, &["sort", "toSorted"]),
+            };
+        if !is_sort {
             return;
         }
         if self.ignore_string_arrays && is_string_array_node(obj) {

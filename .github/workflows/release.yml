@@ -56,6 +56,7 @@ jobs:
   sign:
     name: Sign Release
     runs-on: ubuntu-latest
+    environment: release
     if: ${{ github.repository_owner == 'oven-sh' }}
     permissions:
       contents: write
@@ -75,7 +76,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
@@ -87,10 +88,12 @@ jobs:
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
     permissions:
       contents: read
+      id-token: write
     defaults:
       run:
         working-directory: packages/bun-release
@@ -101,24 +104,30 @@ jobs:
           persist-credentials: false
           # To workaround issue
           ref: main
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: latest
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Install Dependencies
         run: bun install
       - name: Release
         run: bun upload-npm -- "$BUN_VERSION" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "false"
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
     permissions:
       contents: read
+      id-token: write
     defaults:
       run:
         working-directory: packages/bun-types
@@ -135,7 +144,7 @@ jobs:
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -157,11 +166,9 @@ jobs:
       - name: Release
         if: ${{ env.BUN_VERSION == 'canary' || env.BUN_LATEST == 'true' }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
           NPM_TAG: ${{ env.BUN_VERSION == 'canary' && 'canary' || 'latest' }}
+          NPM_CONFIG_PROVENANCE: "false"
         run: |
-          echo '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
           VERSION=$(node -p 'require("./package.json").version')
           if [ "$(npm view bun-types@"$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
             echo "bun-types@$VERSION already published, skipping"
@@ -171,6 +178,7 @@ jobs:
   definitelytyped:
     name: Make pr to DefinitelyTyped to update `bun-types` version
     runs-on: ubuntu-latest
+    environment: release
     needs: npm-types
     if: ${{ github.event_name == 'release' || github.event.inputs.use-definitelytyped == 'true' }}
     permissions:
@@ -189,7 +197,7 @@ jobs:
       - name: Setup Bun
         uses: ./bun/.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - id: bun-version
         run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Update bun-types version in package.json
@@ -219,6 +227,7 @@ jobs:
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker == 'true' }}
     permissions:
@@ -282,6 +291,7 @@ jobs:
   homebrew:
     name: Release to Homebrew
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     permissions:
       contents: read
@@ -304,7 +314,7 @@ jobs:
       - name: Setup Ruby
         uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
         with:
-          ruby-version: "2.6"
+          ruby-version: "3.4"
       - name: Update Tap
         run: ruby scripts/release.rb "$BUN_VERSION"
       - name: Commit Tap
@@ -318,6 +328,7 @@ jobs:
   s3:
     name: Upload to S3
     runs-on: ubuntu-latest
+    environment: release
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-s3 == 'true' }}
     permissions:
@@ -333,7 +344,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -348,6 +359,7 @@ jobs:
   notify-sentry:
     name: Notify Sentry
     runs-on: ubuntu-latest
+    environment: release
     needs: s3
     steps:
       - name: Notify Sentry

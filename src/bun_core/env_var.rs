@@ -34,11 +34,16 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
+/// Parses the value of a boolean variable that can also be set in a `.env` file. The accessors
+/// below only read the process environment.
+pub use kind::boolean::string_is_truthy;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Declarations
 // ──────────────────────────────────────────────────────────────────────────────
 
 new!(pub AGENT: string, "AGENT", {});
+new!(pub ANDROID_ROOT: string, "ANDROID_ROOT", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });
 // A compiled executable decodes ALL of its embedded bytecode at exit and writes one digest line per module here: for
 // comparing two builds of the same sources whose bytecode payloads are laid out differently.
@@ -49,6 +54,8 @@ new!(pub BUN_BYTECODE_ORDER_NAMES_OUT: string, "BUN_BYTECODE_ORDER_NAMES_OUT", {
 // A compiled executable writes the payload order file of this run here at exit; `%p` in the path becomes the pid.
 new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
+// JavaScriptCore's option of that name: the engine logs the phases of an AOT build. The front end logs its stages beside them.
+new!(pub BUN_JSC_logAOTPhaseTimes: boolean, "BUN_JSC_logAOTPhaseTimes", { default: false });
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });
 // TODO(markovejnovic): Legacy usage had the default at 30, even though a the attached comment
@@ -69,6 +76,19 @@ new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIM
 // Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
 new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
+// Canary builds only: an executable built with `--aot` starts with this entry point, given as its path below the root of the
+// build, in place of the first.
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_START_AT: string, "BUN_AOT_START_AT", {});
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", {});
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
+// A trial: `bun test --aot` compiles what the test files import and runs the test files themselves from disk.
+new!(pub BUN_AOT_TEST_FILES_FROM_DISK: boolean, "BUN_AOT_TEST_FILES_FROM_DISK", { default: false });
+new!(pub BUN_AOT_TESTS_NAME_WHAT_THEY_USE: boolean, "BUN_AOT_TESTS_NAME_WHAT_THEY_USE", { default: false });
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });
@@ -85,9 +105,17 @@ new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 // size limit of the embedded module graph (`StandaloneModuleGraph::to_bytes`)
 // so a test can reach it without a 4 GiB input.
 new!(pub BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: unsigned, "BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES", {});
+// Testing hook for `bun build --compile --aot --trim`: the build also writes, under this name, the executable that the
+// same command line makes without `--trim`, so a test that holds the two against each other compiles its program once.
+new!(pub BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: string, "BUN_DEBUG_TEST_UNTRIMMED_OUTFILE", {});
+// Testing hook for `bun test --aot`, which takes no developer flags: words of the compiler, split at commas, as `bun build` takes them.
+// `disable=flow-results` builds tests as a program that is too large to analyze is built.
+new!(pub BUN_DEBUG_TEST_AOT_WORDS: string, "BUN_DEBUG_TEST_AOT_WORDS", {});
+// Testing hook for `bun run --aot` and `bun test --aot`: `shared-memory` or `deleted` is the first kind of file they try for the
+// compiled program, as where the kinds before it do not work.
+new!(pub BUN_DEBUG_TEST_AOT_PROGRAM_FILE: string, "BUN_DEBUG_TEST_AOT_PROGRAM_FILE", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
-new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before
 // renaming (`src/js_printer/renamer.rs`). Presence-checked, value ignored.
@@ -114,7 +142,7 @@ new!(pub BUN_INSTALL: string, "BUN_INSTALL", {});
 new!(pub BUN_INSTALL_BIN: string, "BUN_INSTALL_BIN", {});
 new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
 // Minimum response `Content-Length` (in bytes) for `bun install` to
-// stream a tarball directly into libarchive instead of buffering the
+// stream a tarball directly into the extractor instead of buffering the
 // whole body first. Smaller tarballs stay on the buffered path where
 // the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
@@ -122,6 +150,8 @@ new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SI
 // thread schedules a drain; collapses the per-chunk thread-pool futex wake
 // into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
+// How long `bun install` retries a rename Windows refuses while a scanner holds a file open.
+new!(pub BUN_INSTALL_WINDOWS_RENAME_RETRY_MS: unsigned, "BUN_INSTALL_WINDOWS_RENAME_RETRY_MS", { default: 5_000 });
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});
 new!(pub BUN_POSTGRES_SOCKET_MONITOR: string, "BUN_POSTGRES_SOCKET_MONITOR", {});
@@ -172,6 +202,7 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
+new!(pub NODE_CHANNEL_SERIALIZATION_MODE: string, "NODE_CHANNEL_SERIALIZATION_MODE", {});
 // A string, not a boolean: node suppresses warnings only when the value is
 // exactly "1" (lib/internal/process/pre_execution.js).
 new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
@@ -179,6 +210,9 @@ new!(pub NODE_COMPILE_CACHE: string, "NODE_COMPILE_CACHE", {});
 new!(pub NODE_COMPILE_CACHE_PORTABLE: string, "NODE_COMPILE_CACHE_PORTABLE", {});
 new!(pub NODE_DEBUG_NATIVE: string, "NODE_DEBUG_NATIVE", {});
 new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
+// Set by `bunx` for the `bun add` it spawns, to the directory that `bun add` installs into.
+// A command that inherits it but runs in any other directory ignores it.
+new!(pub BUN_INTERNAL_BUNX_INSTALL: string, "BUN_INTERNAL_BUNX_INSTALL", {});
 // Set by `bun run` for a script named `check`, `lint` or `format`: the packages whose script of that
 // name is running. In those, `bun check` is the type checker and not the script again.
 new!(pub BUN_INTERNAL_SCRIPTS_OF_COMMANDS: string, "BUN_INTERNAL_SCRIPTS_OF_COMMANDS", {});
@@ -194,6 +228,7 @@ new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
 new!(pub npm_package_json: string, "npm_package_json", {});
 new!(pub PATH: string, "PATH", {});
+platform_specific_new!(pub PWD: string, posix = "PWD", windows = None, {});
 new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
@@ -268,6 +303,8 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_MEMFD, "BUN_FEATURE_FLAG_DISABLE_MEMFD", {});
     // The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", {});
+    // No `openat2` or `O_RESOLVE_BENEATH`, as on a kernel without them. For seccomp policies that kill on `openat2`.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH, "BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK, "BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", {});
     // Fall back to the scalar byte-at-a-time VLQ decode in
     // bun_sourcemap::mapping::parse (skips the Highway-dispatched path).
@@ -297,7 +334,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_IO_POOL, "BUN_FEATURE_FLAG_FORCE_IO_POOL", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});
-    new_feature_flag!(pub BUN_INTERNAL_BUNX_INSTALL, "BUN_INTERNAL_BUNX_INSTALL", {});
+    new_feature_flag!(pub BUN_INTERNAL_BUNX_HAS_COPY, "BUN_INTERNAL_BUNX_HAS_COPY", {});
     // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts.
     new_feature_flag!(pub BUN_INTERNAL_FAIL_PIPE_READER_START, "BUN_INTERNAL_FAIL_PIPE_READER_START", {});
     // Test-only: bypass the stdin isatty gate in `bun update --interactive` so
@@ -425,7 +462,7 @@ pub(crate) mod kind {
         pub(crate) type ValueType = bool;
         pub(crate) type Output = CacheOutput<ValueType>;
 
-        pub(crate) fn string_is_truthy(s: &[u8]) -> bool {
+        pub fn string_is_truthy(s: &[u8]) -> bool {
             // Most values are considered truthy, except for "", "0", "false", "no", and "off".
             !crate::strings::eql_any_case_insensitive_ascii(
                 s,

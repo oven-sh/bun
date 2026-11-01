@@ -8,10 +8,10 @@ pub struct NoArrayReduce {
     allow_simple_operations: bool,
 }
 
-const NO_ARRAY_REDUCE: Message =
-    Message::new("", "Don't use `Array#reduce()` and `Array#reduceRight()`, use `for` loops instead.");
+const NO_ARRAY_REDUCE: &Message =
+    &Message::new("", "Don't use `Array#reduce()` and `Array#reduceRight()`, use `for` loops instead.");
 
-/// `a + b`, `a < b`, not `a && b` and not in parentheses.
+/// `a + b` or `a < b`, but not `a && b` and not parenthesized.
 fn is_binary_expression(e: Expr) -> bool {
     !e.is_parenthesized()
         && matches!(e.kind(), ExprKind::Binary { op, left, .. }

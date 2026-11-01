@@ -180,13 +180,18 @@ impl ErrorLocation {
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
         let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
-            .map(|lines| Box::from(bun_core::strings::trim(lines.as_slice()[0], b"\r\n")));
+            .map(|lines| bun_core::strings::trim(lines.as_slice()[0], b"\r\n"));
+        let column = i32::try_from(self.column).expect("int cast");
+        let (line_text, line_text_start_column) = line_text
+            .map(|line| bun_ast::Location::line_excerpt(line, column))
+            .unzip();
         Ok(bun_ast::Location {
             file: Box::from(source.path.text),
             namespace: Box::from(source.path.namespace),
             line: i32::try_from(self.line + 1).expect("int cast"),
-            column: i32::try_from(self.column).expect("int cast"),
-            line_text,
+            column,
+            line_text: line_text.map(Box::from),
+            line_text_start_column: line_text_start_column.unwrap_or(0),
             ..Default::default()
         })
     }

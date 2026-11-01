@@ -126,6 +126,34 @@ impl Loader {
         )
     }
 
+    /// The bytes are copied, hashed or encoded as they are, never parsed as text.
+    pub fn is_binary(self) -> bool {
+        match self {
+            Loader::File
+            | Loader::Wasm
+            | Loader::Napi
+            | Loader::Sqlite
+            | Loader::SqliteEmbedded
+            | Loader::Base64
+            | Loader::Dataurl => true,
+            Loader::Jsx
+            | Loader::Js
+            | Loader::Ts
+            | Loader::Tsx
+            | Loader::Css
+            | Loader::Json
+            | Loader::Jsonc
+            | Loader::Toml
+            | Loader::Yaml
+            | Loader::Json5
+            | Loader::Xml
+            | Loader::Html
+            | Loader::Md
+            | Loader::Text
+            | Loader::Bunsh => false,
+        }
+    }
+
     pub fn handles_empty_file(self) -> bool {
         matches!(self, Loader::Wasm | Loader::File | Loader::Text)
     }

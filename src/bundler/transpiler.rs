@@ -1385,6 +1385,7 @@ impl<'a> Transpiler<'a> {
                 USE_SHARED_BUFFER,
                 file_descriptor,
                 if USE_SHARED_BUFFER { None } else { Some(arena) },
+                Fs::BomHandling::for_loader(loader),
             ) {
                 Ok(e) => e,
                 Err(err) => {
@@ -3082,6 +3083,7 @@ impl<'a> Transpiler<'a> {
             false,
             None,
             None,
+            Fs::BomHandling::Convert,
         ) {
             Ok(e) => e,
             Err(err) => {

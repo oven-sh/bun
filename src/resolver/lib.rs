@@ -1606,7 +1606,7 @@ pub mod fs {
     /// `bun_bundler::cache`) routes through ONE body instead of inlining a
     /// subset of `readFileWithHandleAndAllocator`.
     pub use super::fs_full::{
-        BOM, PathContentsPair, read_file_contents, read_file_contents_in_arena,
+        BOM, BomHandling, PathContentsPair, read_file_contents, read_file_contents_in_arena,
         read_file_with_handle_impl,
     };
 
@@ -2060,6 +2060,58 @@ pub mod cache {
                 },
             }
         }
+
+        /// The bytes as text. Borrowed bytes (`SharedBuffer`, `External`) stay as they are.
+        #[inline]
+        pub fn convert_bom(self, arena: Option<&bun_alloc::Arena>) -> Contents {
+            match fs_mod::BOM::detect(self.as_slice()) {
+                Some(bom) => self.convert_detected_bom(bom, arena),
+                None => self,
+            }
+        }
+
+        #[cold]
+        fn convert_detected_bom(
+            self,
+            bom: fs_mod::BOM,
+            arena: Option<&bun_alloc::Arena>,
+        ) -> Contents {
+            bun_core::scoped_log!(CacheFs, "Convert {} BOM", bom.tag_name());
+            match (self, arena) {
+                (Contents::Owned(bytes), _) => {
+                    Contents::from(bom.remove_and_convert_to_utf8_and_free(bytes))
+                }
+                (Contents::Arena { ptr, len }, Some(arena)) => {
+                    let mark = bom.length();
+                    match bom {
+                        fs_mod::BOM::Utf8 if len == mark => Contents::Empty,
+                        fs_mod::BOM::Utf8 => Contents::Arena {
+                            // SAFETY: `mark < len`, so `ptr + mark` is inside the
+                            // read. The NUL at `ptr[len]` still follows the text.
+                            ptr: unsafe { ptr.add(mark) },
+                            len: len - mark,
+                        },
+                        fs_mod::BOM::Utf16Le => {
+                            // SAFETY: ARENA: `ptr[..len]` is the file the read
+                            // put in `arena`.
+                            let file = unsafe { core::slice::from_raw_parts(ptr.as_ptr(), len) };
+                            let text =
+                                bun_core::strings::to_utf8_alloc_from_le_bytes(&file[mark..]);
+                            if text.is_empty() {
+                                return Contents::Empty;
+                            }
+                            let copy = arena.alloc_slice_fill_copy::<u8>(text.len() + 1, 0);
+                            copy[..text.len()].copy_from_slice(&text);
+                            Contents::Arena {
+                                ptr: core::ptr::NonNull::from_mut(copy).cast(),
+                                len: text.len(),
+                            }
+                        }
+                    }
+                }
+                (other, _) => other,
+            }
+        }
     }
 
     impl From<Vec<u8>> for Contents {
@@ -2195,6 +2247,7 @@ pub mod cache {
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
+            bom_handling: fs_mod::BomHandling,
         ) -> crate::CrateResult<Entry> {
             let will_close =
                 fs_mod::FileSystem::get().fs.need_to_close_files() && _file_handle.is_none();
@@ -2290,6 +2343,10 @@ pub mod cache {
                         }
                     }
                 }
+            };
+            let contents = match bom_handling {
+                fs_mod::BomHandling::Convert => contents.convert_bom(arena),
+                fs_mod::BomHandling::Keep => contents,
             };
 
             let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;

@@ -73,6 +73,9 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/BunSignalActions.cpp",
   "src/jsc/bindings/RemovedFeature.cpp",
 
+  // Includes <elf.h> and <link.h>; standalone, so that it moves no other file into another bundle.
+  "src/jsc/bindings/NodeAddonImportsPosix.cpp",
+
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
   // both end up in the same bundle. TODO: extract helpers to a shared header.
   "src/jsc/bindings/webcore/JSMIMEType.cpp",

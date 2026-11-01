@@ -6,6 +6,7 @@
 #include "BunSignalActions.h"
 #include "ObjectBindings.h"
 #include "DLHandleMap.h"
+#include "NodeAddonImportsPosix.h"
 #include "WebCoreJSBuiltins.h"
 #include "v8/node.h"
 
@@ -756,24 +757,36 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #define dlsym GetProcAddress
 #endif
 
-    // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
-    // and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
     auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
+
+    // Node prefers node_register_module_v<ABI> to napi_register_module_v1. Here an addon with both keeps using Node-API.
+    if (!napi_register_module_v1) {
+        if (auto initializer = reinterpret_cast<node::addon_initializer_func>(dlsym(handle, "node_register_module_v" STRINGIZE_VALUE_OF(REPORTED_NODEJS_ABI_VERSION)))) {
+#if (OS(LINUX) && !OS(ANDROID)) || OS(FREEBSD)
+            // The addon is opened with RTLD_LAZY, so a call of an import that nothing defines would end the process.
+            if (WTF::String unresolved = Bun::unresolvedAddonImport(handle); !unresolved.isNull()) {
+                closeDLHandle(handle);
+                return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": it imports '"_s, unresolved, "', which Bun does not provide"_s));
+            }
+#endif
+            node::executeV8Initializer(globalObject, initializer, strongModule.get());
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(jsUndefined());
+        }
+
+        closeDLHandle(handle);
+
+        if (!scope.exception()) [[likely]] {
+            throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Module did not self-register: '"_s, filename, "'."_s));
+        }
+        return {};
+    }
 
     auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
 
 #if OS(WINDOWS)
 #undef dlsym
 #endif
-
-    if (!napi_register_module_v1) {
-        closeDLHandle(handle);
-
-        if (!scope.exception()) [[likely]] {
-            JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
-        }
-        return {};
-    }
 
     // TODO(@heimskr): get the API version without node_api_module_get_api_version_v1 a different way
     int module_version = 8;

@@ -59,6 +59,11 @@ typedef void (*addon_context_register_func)(
     v8::Local<v8::Context> context,
     void* priv);
 
+typedef void (*addon_initializer_func)(
+    v8::Local<v8::Object> exports,
+    v8::Local<v8::Value> module,
+    v8::Local<v8::Context> context);
+
 struct node_module {
     int nm_version;
     unsigned int nm_flags;
@@ -75,5 +80,8 @@ extern "C" BUN_EXPORT void node_module_register(void* mod);
 
 // Runs the entry point of a module queued by node_module_register, with moduleObject as `module`. Throws on failure.
 void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSC::JSObject* moduleObject);
+
+// Runs an addon's node_register_module_v<ABI> function, with moduleObject as `module`. Throws on failure.
+void executeV8Initializer(Zig::GlobalObject* globalObject, addon_initializer_func initializer, JSC::JSObject* moduleObject);
 
 } // namespace node

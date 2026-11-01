@@ -114,6 +114,34 @@ void node_module_register(void* opaque_mod)
     globalObject->napiModuleRegisterCallCount++;
 }
 
+// Calls entryPoint(exports, module, context): module is `object`, and exports is its `exports` property as an object.
+template<typename EntryPoint>
+static void callEntryPoint(Zig::GlobalObject* globalObject, JSObject* object, const EntryPoint& entryPoint)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue exportsValue = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
+    RETURN_IF_EXCEPTION(scope, void());
+
+    // Like Node, convert exports to an object. null and undefined throw, and a primitive gets a wrapper object.
+    JSObject* exportsObject = exportsValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    ASSERT(exportsObject);
+    JSC::Strong<JSC::JSObject> strongExportsObject = { vm, exportsObject };
+
+    auto* isolate = globalObject->V8GlobalInternals()->isolate();
+    HandleScope hs(isolate);
+
+    // exports, module
+    Local<Object> exports = hs.createLocal<Object>(vm, *strongExportsObject);
+    Local<Value> module = hs.createLocal<Value>(vm, object);
+    Local<Context> context = isolate->GetCurrentContext();
+    entryPoint(exports, module, context);
+    RETURN_IF_EXCEPTION(scope, void());
+}
+
 void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSObject* object)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -133,34 +161,22 @@ void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, J
         return;
     }
 
-    JSValue exportsValue = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
+    callEntryPoint(globalObject, object, [&](Local<Object> exports, Local<Value> module, Local<Context> context) {
+        if (mod->nm_context_register_func) {
+            mod->nm_context_register_func(exports, module, context, mod->nm_priv);
+        } else if (mod->nm_register_func) {
+            mod->nm_register_func(exports, module, mod->nm_priv);
+        } else {
+            auto* error = JSC::createError(globalObject, WTF::makeString("The module '"_s, keyStr, "' has no declared entry point."_s));
+            JSC::throwException(globalObject, scope, error);
+        }
+    });
     RETURN_IF_EXCEPTION(scope, void());
+}
 
-    // Like Node, convert exports to an object. null and undefined throw, and a primitive gets a wrapper object.
-    JSObject* exportsObject = exportsValue.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-
-    ASSERT(exportsObject);
-    JSC::Strong<JSC::JSObject> strongExportsObject = { vm, exportsObject };
-
-    auto* isolate = globalObject->V8GlobalInternals()->isolate();
-    HandleScope hs(isolate);
-
-    // exports, module
-    Local<Object> exports = hs.createLocal<Object>(vm, *strongExportsObject);
-    Local<Value> module = hs.createLocal<Value>(vm, object);
-    Local<Context> context = isolate->GetCurrentContext();
-    if (mod->nm_context_register_func) {
-        mod->nm_context_register_func(exports, module, context, mod->nm_priv);
-    } else if (mod->nm_register_func) {
-        mod->nm_register_func(exports, module, mod->nm_priv);
-    } else {
-        auto* error = JSC::createError(globalObject, WTF::makeString("The module '"_s, keyStr, "' has no declared entry point."_s));
-        JSC::throwException(globalObject, scope, error);
-        return;
-    }
-
-    RETURN_IF_EXCEPTION(scope, void());
+void executeV8Initializer(Zig::GlobalObject* globalObject, addon_initializer_func initializer, JSObject* moduleObject)
+{
+    callEntryPoint(globalObject, moduleObject, initializer);
 }
 
 } // namespace node

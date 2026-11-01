@@ -30,7 +30,9 @@ export const unlessLeftOut = <T extends object>(declares: T): T =>
       if (isThisFileLeftOut()) return declaresNothing;
       const value = Reflect.get(declares, name);
       // `each` and the likes of `skipIf` ask for the object that they were read from.
-      return typeof value === "function" && /^(?:each|\w*[iI]f)$/.test(String(name)) ? value.bind(declares) : value;
+      return typeof value === "function" && /^(?:each|\w*[iI]f)$/.test(String(name))
+        ? Function.prototype.bind.call(value, declares)
+        : value;
     },
   });
 

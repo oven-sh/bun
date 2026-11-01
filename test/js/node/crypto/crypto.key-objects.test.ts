@@ -32,8 +32,11 @@ import { totalmem } from "node:os";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 import {
+  ED25519_HONEST_POINT,
+  ED25519_HONEST_SEED,
   ED25519_IDENTITY,
   ED25519_SMALL_ORDER_POINTS,
+  forgeryWithHonestR,
   hexBytes,
   identityRSignature,
   zeroSignatureWithR,
@@ -1908,6 +1911,27 @@ describe("Ed25519 verify rejects small-order points", () => {
     expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
   });
 
+  // R is an honest point here, so the check on R cannot be what rejects the signature.
+  test("a small-order public key is rejected when R is not a small-order point", () => {
+    // The R of these signatures is the public key of the seed whose scalar is their S.
+    const seedKey = createPrivateKey({
+      key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), hexBytes(ED25519_HONEST_SEED)]),
+      format: "der",
+      type: "pkcs8",
+    });
+    expect(Buffer.from(createPublicKey(seedKey).export({ format: "jwk" }).x!, "base64url").toString("hex")).toBe(
+      ED25519_HONEST_POINT,
+    );
+
+    const results: Record<string, boolean> = {};
+    for (const { name, hex } of ED25519_SMALL_ORDER_POINTS) {
+      const { message, signature } = forgeryWithHonestR(hex);
+      expect(Buffer.from(signature.subarray(0, 32)).toString("hex")).toBe(ED25519_HONEST_POINT);
+      results[name] = verify(null, message, jwkKey(hex), signature);
+    }
+    expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
+  });
+
   test("a small-order R is rejected", () => {
     const results: Record<string, boolean> = {};
     for (const { name, hex, messageAsR } of ED25519_SMALL_ORDER_POINTS) {
@@ -1956,7 +1980,10 @@ describe("Ed25519 verify rejects small-order points", () => {
     const tampered = Buffer.from(signature);
     tampered[0] ^= 1;
     expect(verify(null, message, publicKey, tampered)).toBeFalse();
-    expect(() => verify("sha256", message, publicKey, signature)).toThrow();
+    // BoringSSL signs Ed25519 over the message only. It refuses a digest.
+    expect(() => verify("sha256", message, publicKey, signature)).toThrow(
+      expect.objectContaining({ name: "Error", code: "ERR_OSSL_EVP_COMMAND_NOT_SUPPORTED" }),
+    );
   });
 });
 

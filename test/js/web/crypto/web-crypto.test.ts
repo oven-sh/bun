@@ -5,6 +5,7 @@ import { createCipheriv, createPublicKey, createSecretKey, KeyObject, type webcr
 import {
   ED25519_IDENTITY,
   ED25519_SMALL_ORDER_POINTS,
+  forgeryWithHonestR,
   hexBytes,
   identityRSignature,
   zeroSignatureWithR,
@@ -595,6 +596,17 @@ describe("Ed25519", () => {
           zeroSignatureWithR(ED25519_IDENTITY),
           encoder.encode(message),
         );
+      }
+      expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
+    });
+
+    // R is an honest point here, so the check on R cannot be what rejects the signature.
+    it("rejects a small-order public key when R is not a small-order point", async () => {
+      const results: Record<string, boolean> = {};
+      for (const { name, hex } of ED25519_SMALL_ORDER_POINTS) {
+        const key = await crypto.subtle.importKey("raw", hexBytes(hex), "Ed25519", false, ["verify"]);
+        const { message, signature } = forgeryWithHonestR(hex);
+        results[name] = await crypto.subtle.verify("Ed25519", key, signature, message);
       }
       expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
     });

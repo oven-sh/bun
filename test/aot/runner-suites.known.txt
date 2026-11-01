@@ -76,14 +76,7 @@ test/js/bun/test/mock/mock-module.test.ts: a factory that never settles doesn't 
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
 test/js/bun/test/mock/mock-module.test.ts: a factory that returns a module namespace object > of a module that re-exports the mocked module fails
 test/js/bun/test/mock/mock-module.test.ts: a failing factory that import()s its own module, whose original imports itself, is only called once
-test/js/bun/test/mock/mock-module.test.ts: a mock behind a barrel > a name from a mock and from another export * isn't ambiguous, with a sync factory
-test/js/bun/test/mock/mock-module.test.ts: a mock behind a barrel > a name from a mock and from another export * isn't ambiguous, with an async factory
 test/js/bun/test/mock/mock-module.test.ts: a mock behind a barrel > a name from a mock and from another export * isn't ambiguous, with importOriginal
-test/js/bun/test/mock/mock-module.test.ts: a mock behind a barrel > a name the factory didn't return can be imported from a barrel, with a sync factory
-test/js/bun/test/mock/mock-module.test.ts: a mock behind a barrel > a name the factory didn't return can be imported from a barrel, with an async factory
-test/js/bun/test/mock/mock-module.test.ts: a mock behind a barrel > a name the factory didn't return can be imported from a barrel, with importOriginal
-test/js/bun/test/mock/mock-module.test.ts: a mock behind a barrel > a name the factory didn't return is undefined through a re-export
-test/js/bun/test/mock/mock-module.test.ts: a mocked module that exports then > exposes it as a plain export to import statements and require()
 test/js/bun/test/mock/mock-module.test.ts: a mocked module's exports are read from the object the factory returned > in hot code, before and after the module is mocked
 test/js/bun/test/mock/mock-module.test.ts: a mocked module's exports are read from the object the factory returned > mocking the module again updates every binding linked to it
 test/js/bun/test/mock/mock-module.test.ts: a mocked module's exports are read from the object the factory returned > spyOn() on the namespace object spies on the object the factory returned
@@ -96,7 +89,6 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > vi.mock() leaves it real for them, as in Vitest ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > vi.mock() leaves it real for them, as in Vitest ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > vi.mock() leaves it real for them, as in Vitest []
-test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > has mocks of the original's exports
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > is the file in __mocks__
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > only vi.importActual() of the mocked module itself loads the original
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > vi.importMock, jest.requireMock and jest.createMockFromModule do not mock the module
@@ -164,7 +156,6 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > modules a preload loaded see the preload's mock again after a file replaced it: 
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > modules a preload loaded see the preload's mock again after a file replaced it: jest.resetModules();
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > modules a preload loaded see the preload's mock again after a file replaced it: vi.resetModules();
-test/js/bun/test/mock/mock-module.test.ts: an automock is built from the copy of its original module that a running factory was given
 test/js/bun/test/mock/mock-module.test.ts: an import() gets the exports of the mock it started under, however late the factory settles
 test/js/bun/test/mock/mock-module.test.ts: concurrent import()s of a mocked module don't leak the global object under --isolate
 test/js/bun/test/mock/mock-module.test.ts: factories that import each other's modules > a factory that the other one started gets the original
@@ -184,7 +175,6 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > of 20 modules: helper
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > of 20 modules: importOriginal
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > of 4 modules
-test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > require() of a module that imports the mock
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the cycle is first loaded by vi.importActual() of the mocked module
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the mock's exports are ready when the importer's top-level code uses them
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original re-exports a module that is not evaluated yet

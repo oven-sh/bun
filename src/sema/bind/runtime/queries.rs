@@ -4,8 +4,8 @@ use super::storage::RuntimeDeclarationsIn;
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
-    StoreKind, SymbolStore, has_mapped_arguments, stability,
+    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName, PrivateNameId,
+    RuntimeBindings, RuntimeBindingsIn, StoreKind, SymbolStore, has_mapped_arguments, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{

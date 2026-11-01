@@ -50,7 +50,8 @@ pub(crate) fn find_manual_mocks(
             continue;
         }
         let written = file.atoms.bytes(written);
-        let beside = |path: &[u8]| [dirname::<Posix>(path), b"/__mocks__/", basename(path)].concat();
+        let beside =
+            |path: &[u8]| [dirname::<Posix>(path), b"/__mocks__/", basename(path)].concat();
         let candidate = match *resolution {
             SiteResolution::Constant(CodeResolution::File(module))
                 if module.host_module.is_none() && !is_in_node_modules(module.path) =>
@@ -61,7 +62,10 @@ pub(crate) fn find_manual_mocks(
             SiteResolution::Constant(CodeResolution::External {
                 specifier: [b'.' | b'/', ..],
                 kind: ExternalKind::UncompiledCode,
-            }) => beside(&bun_sema::resolve::join(dirname::<Posix>(file.path), written)),
+            }) => beside(&bun_sema::resolve::join(
+                dirname::<Posix>(file.path),
+                written,
+            )),
             _ if !written.starts_with(b".") && !written.starts_with(b"/") => {
                 let name = written.strip_prefix(b"node:").unwrap_or(written);
                 [working_directory, b"/__mocks__/", name].concat()

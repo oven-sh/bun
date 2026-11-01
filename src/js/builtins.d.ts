@@ -694,6 +694,7 @@ declare function $getByIdDirectPrivate<T = any, K extends string = string>(
   key: K,
 ): K extends keyof T ? T[`$${K}`] : T extends { [P in `$${K}`]: infer V } ? V : never;
 
+declare var $Map: MapConstructor;
 declare var $Promise: PromiseConstructor;
 
 declare function $isPromise<T>(value: unknown): value is Promise<T>;

@@ -631,9 +631,12 @@ test.concurrent(
 // npm copies the root's name into `packages[""]` and regenerates it on every save, so a stale copy is
 // not a change of the project. The migrated bun.lock takes the name from package.json, as the pnpm
 // and yarn migrations do.
-test.concurrent('the root\'s name comes from package.json, not from a stale packages[""].name', async () => {
+test.concurrent.each([
+  { manifest: "a new name", name: "new-name" },
+  { manifest: "no name", name: undefined },
+])('the root\'s name comes from package.json ($manifest), not from a stale packages[""].name', async ({ name }) => {
   await using testDir = tempDir("migrate-stale-root-name", {
-    "package.json": JSON.stringify({ name: "new-name", dependencies: { a: "file:./vendor/a" } }),
+    "package.json": JSON.stringify({ name, dependencies: { a: "file:./vendor/a" } }),
     "vendor/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
     "package-lock.json": JSON.stringify({
       name: "old-name",
@@ -656,7 +659,7 @@ test.concurrent('the root\'s name comes from package.json, not from a stale pack
   expect(stderr).toContain("migrated lockfile from package-lock.json");
   expect(exitCode).toBe(0);
   const { lock } = await readLock(testDir);
-  expect(lock.workspaces[""].name).toBe("new-name");
+  expect(lock.workspaces[""].name).toBe(name);
 });
 
 // The bun.lock parser fails closed on a tarball URL outside the configured registry that has no `integrity`.

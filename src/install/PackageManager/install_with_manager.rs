@@ -1641,8 +1641,6 @@ fn frozen_changed_section(
         Some("the catalog")
     } else if manager.summary.package_extensions_changed {
         Some("packageExtensions")
-    } else if manager.summary.root_renamed {
-        Some("name")
     } else {
         None
     }

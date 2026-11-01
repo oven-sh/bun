@@ -5027,7 +5027,8 @@ describe("links of a renamed or removed workspace", () => {
 
 // https://github.com/oven-sh/bun/issues/47656
 // bun.lock records the root's name under `workspaces[""]`. A rename of the root used to leave that
-// entry (and the `<name>@root:` key of a member that depends on the root) at the old name.
+// entry (and the `<name>@root:` key of a member that depends on the root) at the old name. Nothing
+// installed changes with it, so a frozen install accepts the rename, as it does a workspace's version.
 describe("a renamed root package", () => {
   async function install(ctx: TestCtx, ...args: string[]) {
     await using proc = spawn({
@@ -5061,7 +5062,7 @@ describe("a renamed root package", () => {
     { lockfile: "bun.lock", saveTextLockfile: true },
     { lockfile: "bun.lockb", saveTextLockfile: false },
   ])(
-    "$lockfile takes the new name, and a frozen install fails until it does",
+    "$lockfile takes the new name, and a frozen install accepts the rename",
     async ({ lockfile, saveTextLockfile }) => {
       using ctx = await setupTest();
       const { packageDir } = ctx;
@@ -5075,11 +5076,9 @@ describe("a renamed root package", () => {
       expect(await lockText()).toContain("root-before");
 
       await writeProject(packageDir, { name: "root-after" }, { member: { name: "member" } });
-      const frozen = await install(ctx, "--frozen-lockfile");
-      expect(frozen.err).toContain("lockfile had changes, but lockfile is frozen");
-      expect(frozen.err).toContain(`name in package.json changed since ${lockfile} was saved`);
-      expect(frozen.exitCode).toBe(1);
-      expect(await lockText()).toContain("root-before");
+      const before = await file(lockPath).bytes();
+      expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+      expect(await file(lockPath).bytes()).toEqual(before);
 
       expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
       const lock = await lockText();
@@ -5098,8 +5097,7 @@ describe("a renamed root package", () => {
     },
   );
 
-  // Bun 1.1.42 and older wrote no root name. Such a lockfile takes the name from package.json
-  // without failing a frozen install: it recorded nothing that could have changed.
+  // Bun 1.1.42 and older wrote no root name. Such a lockfile takes the name from package.json.
   test.concurrent("a lockfile without a root name takes it", async () => {
     using ctx = await setupTest();
     const { packageDir } = ctx;
@@ -5146,9 +5144,7 @@ describe("a renamed root package", () => {
     const named = await file(lockPath).text();
 
     await writeProject(packageDir, {}, { member: { name: "member" } });
-    const frozen = await install(ctx, "--frozen-lockfile");
-    expect(frozen.err).toContain("name in package.json changed since bun.lock was saved");
-    expect(frozen.exitCode).toBe(1);
+    expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
     expect(await file(lockPath).text()).toBe(named);
 
     expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
@@ -5156,7 +5152,6 @@ describe("a renamed root package", () => {
     expect(nameless).not.toContain('"name": "root-before"');
     expect(nameless).toContain('"": {');
 
-    // The lockfile recorded no name, so the new one is not a change a frozen install refuses.
     await writeProject(packageDir, { name: "root-again" }, { member: { name: "member" } });
     expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
     expect(await file(lockPath).text()).toBe(nameless);

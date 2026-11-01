@@ -145,7 +145,8 @@ struct Migrator<'a> {
     manager: &'a mut PackageManager,
     entries: &'a [E::PropertyJSON],
     workspace_map: Option<&'a WorkspaceMap>,
-    /// The root's name in package.json. `packages[""].name` is used when there is none.
+    /// The root's name in package.json, empty when it has none. `None` when package.json cannot
+    /// be read: then `packages[""].name` is used.
     root_name: Option<&'a [u8]>,
     index: StringHashMap<u32>,
     link_entries: DynamicBitSet,
@@ -381,7 +382,12 @@ impl<'a> Migrator<'a> {
         } else {
             package_name_from_path(key)
         };
-        let name_hash = string_hash(name);
+        // A nameless root has hash 0, as `Package::parse` leaves it.
+        let name_hash = if j == 0 && name.is_empty() {
+            0
+        } else {
+            string_hash(name)
+        };
         let name_string = self.this.string_buf().append_with_hash(name, name_hash)?;
 
         if !self.silent

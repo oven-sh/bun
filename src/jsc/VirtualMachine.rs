@@ -149,6 +149,46 @@ pub enum MainEntryPoint {
     Bake,
 }
 
+/// Main modules that `Module.runMain()` starts: an ES module is one by its registry key, a CommonJS module by its load.
+#[derive(Default)]
+pub struct RunMainModules {
+    keys: bun_collections::StringSet,
+    /// The keys that `Module.runMain()` is loading now. A call inside a call is last.
+    loading: Vec<Box<[u8]>>,
+    /// A preload started a script: the load of the entry module makes it the main module again, as in Node.
+    entry_takes_back: bool,
+}
+
+impl RunMainModules {
+    pub fn begin_load(&mut self, key: &[u8], in_preload: bool) {
+        bun_core::handle_oom(self.keys.insert(key));
+        self.loading.push(Box::from(key));
+        self.entry_takes_back |= in_preload;
+    }
+
+    pub fn end_load(&mut self) {
+        self.loading.pop();
+    }
+
+    #[inline]
+    pub fn is_loading(&self, key: &[u8]) -> bool {
+        self.loading.last().is_some_and(|loading| **loading == *key)
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    pub fn contains(&self, key: &[u8]) -> bool {
+        self.keys.contains(key)
+    }
+
+    pub fn take_entry_takes_back(&mut self) -> bool {
+        core::mem::take(&mut self.entry_takes_back)
+    }
+}
+
 /// The built-in module that `Bun__loadBuiltinEntryPoint` runs. Mirrors
 /// `Bun::BuiltinEntryPoint` in `BuiltinEntryPoint.cpp`.
 #[repr(u8)]
@@ -188,6 +228,7 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
+    pub run_main_modules: RunMainModules,
     /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
     /// `[serve.static] plugins` of bunfig.toml.
     pub bake_config_plugins: crate::strong::Optional,
@@ -3478,6 +3519,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
+            addr_of_mut!((*vm).run_main_modules).write(RunMainModules::default());
             addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
             addr_of_mut!((*vm).bake_pages).write(false);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -3684,6 +3726,15 @@ impl VirtualMachine {
                 && crate::compiled_program::entry_point_is_commonjs(self.global()))
     }
 
+    /// A new entry load starts: what `Module.runMain()` started before is not a main module of this run.
+    fn forget_run_main_modules(&mut self) {
+        if self.run_main_modules.is_empty() {
+            return;
+        }
+        self.run_main_modules = RunMainModules::default();
+        crate::cpp::Bun__forgetMainModuleOfNewRequireFunctions(self.global());
+    }
+
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
@@ -3735,6 +3786,7 @@ impl VirtualMachine {
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.overridden_main.deinit();
+        self.forget_run_main_modules();
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
@@ -6108,6 +6160,7 @@ impl VirtualMachine {
         drop(self.sampling_profiler_directory.take());
 
         self.overridden_main.deinit();
+        drop(core::mem::take(&mut self.run_main_modules));
         self.bake_config_plugins.deinit();
         drop(core::mem::take(&mut self.bake_config_plugin_names));
         self.bake_framework.deinit();
@@ -6198,6 +6251,7 @@ impl VirtualMachine {
         self.set_main(Some(entry_path));
         self.main_resolved_path = bun_core::String::EMPTY;
         self.overridden_main.deinit();
+        self.forget_run_main_modules();
         if self.test_isolation_state.shares_global {
             Bun__Process__resetArgv(self.global());
         }
@@ -6515,6 +6569,7 @@ impl VirtualMachine {
         }
 
         self.overridden_main.deinit();
+        self.forget_run_main_modules();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
         self.entry_point_result.evaluated_as_cjs = false;

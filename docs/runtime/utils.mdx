@@ -46,6 +46,8 @@ if (import.meta.path === Bun.main) {
 
 This check is analogous to the [`require.main = module` trick](https://stackoverflow.com/questions/6398196/detect-if-called-through-require-or-directly-by-command-line) in Node.js.
 
+`Bun.main` stays the file you executed when a launcher starts another script with `Module.runMain()` from `node:module`. In that script, `import.meta.main` and `require.main === module` are `true`.
+
 ## `Bun.sleep()`
 
 `Bun.sleep(ms: number)`

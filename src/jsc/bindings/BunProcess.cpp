@@ -5648,6 +5648,8 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalG
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (JSValue started = Bun::mainModuleOfNewRequireFunctions(globalObject))
+        return JSValue::encode(started);
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
@@ -5660,6 +5662,31 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessMainModuleOfTestFile, (JSGlobalObject * globa
         return false;
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(value), 0));
+}
+
+// A CommonJS script that Module.runMain() started is the main module until the next entry load.
+JSC_DEFINE_CUSTOM_GETTER(processMainModuleAfterRunMain, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (JSValue started = Bun::mainModuleOfNewRequireFunctions(globalObject))
+        return JSValue::encode(started);
+    return JSValue::encode(constructMainModuleProperty(JSC::getVM(globalObject), globalObject->processObject()));
+}
+
+void Process::setMainModuleOfRunMain(JSGlobalObject* globalObject, JSValue module)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto mainModule = Identifier::fromString(vm, "mainModule"_s);
+    JSValue own = getDirect(vm, mainModule);
+    // The two accessors above give `module`. Compiled code reads the property as the table of built-ins describes it.
+    if (own ? own.isCustomGetterSetter() : !Bun::hasCompiledModules()) {
+        if (!own)
+            putDirectCustomAccessor(vm, mainModule, CustomGetterSetter::create(vm, processMainModuleAfterRunMain, setProcessMainModuleOfTestFile), PropertyAttribute::CustomAccessor | 0);
+        return;
+    }
+    // Node assigns the property, so a value that code put there is replaced.
+    PropertyDescriptor descriptor(module, 0);
+    JSObject::defineOwnProperty(this, globalObject, mainModule, descriptor, false);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickInDefaultRealm, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

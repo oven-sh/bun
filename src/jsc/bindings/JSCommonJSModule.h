@@ -86,6 +86,8 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // The module becomes the main module when it starts to run (Module.runMain).
+    bool loadedAsMain { false };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };
@@ -199,6 +201,12 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 {
     return createCommonJSModule(globalObject, graph, specifierValue, source, false);
 }
+
+// The CommonJS module that Module.runMain() made the main module, until the next entry load. Empty if there is none.
+JSC::JSValue mainModuleOfNewRequireFunctions(Zig::GlobalObject*);
+
+// `import.meta.main` is true in a module that Module.runMain() started. `key` is the registry key of the module.
+void putImportMetaMainOfRunMainModule(Zig::GlobalObject*, JSC::JSObject* importMeta, JSC::JSValue key);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

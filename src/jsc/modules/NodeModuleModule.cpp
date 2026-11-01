@@ -813,6 +813,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" void Bun__VM__beginRunMainLoad(void* bunVM, const BunString* key);
+extern "C" void Bun__VM__endRunMainLoad(void* bunVM);
+
+// The module that this load creates is a main module, as with Node's Module._load(request, null, true). A Bun.ModuleGraph has its own.
+static JSC::JSPromise* loadAndEvaluateMainModule(JSGlobalObject* lexicalGlobalObject, const Identifier& key)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (Bun::currentModuleGraph(globalObject))
+        return JSC::loadAndEvaluateModule(lexicalGlobalObject, key.string(), nullptr, nullptr);
+
+    void* bunVM = globalObject->bunVM();
+    BunString keyString = Bun::toString(key.string());
+    Bun__VM__beginRunMainLoad(bunVM, &keyString);
+    auto* promise = JSC::loadAndEvaluateModule(lexicalGlobalObject, key.string(), nullptr, nullptr);
+    Bun__VM__endRunMainLoad(bunVM);
+    return promise;
+}
+
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -825,7 +843,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), {}, nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    auto* promise = loadAndEvaluateMainModule(globalObject, key);
     RETURN_IF_EXCEPTION(scope, {});
     Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
 

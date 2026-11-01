@@ -157,6 +157,40 @@ pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSV
     }
 }
 
+// HOST_EXPORT(Bun__VM__beginRunMainLoad, c)
+pub(crate) fn begin_run_main_load(this: &mut VirtualMachine, key: &bun_core::String) {
+    let in_preload = this.is_in_preload;
+    this.run_main_modules
+        .begin_load(key.to_utf8().slice(), in_preload);
+}
+
+// HOST_EXPORT(Bun__VM__endRunMainLoad, c)
+pub(crate) fn end_run_main_load(this: &mut VirtualMachine) {
+    this.run_main_modules.end_load();
+}
+
+// HOST_EXPORT(Bun__VM__isRunMainModule, c)
+pub(crate) fn is_run_main_module(this: &mut VirtualMachine, key: &bun_core::String) -> bool {
+    this.run_main_modules.contains(key.to_utf8().slice())
+}
+
+// HOST_EXPORT(Bun__VM__isMainModuleLoad, c)
+pub(crate) fn is_main_module_load(
+    this: &mut VirtualMachine,
+    key: &bun_core::String,
+    started_script_is_main: bool,
+) -> bool {
+    let key = key.to_utf8();
+    if this.run_main_modules.is_loading(key.slice()) {
+        return true;
+    }
+    if this.is_in_preload || this.main() != Some(key.slice()) {
+        return false;
+    }
+    // The load of the entry module: a later load of the same file makes an ordinary module.
+    this.run_main_modules.take_entry_takes_back() && started_script_is_main
+}
+
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to
 /// the next tick on the event loop.
 // HOST_EXPORT(Bun__closeChildIPC, c)

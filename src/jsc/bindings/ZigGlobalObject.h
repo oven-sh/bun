@@ -261,6 +261,9 @@ public:
     JSC::JSFunction* wasmStreamingConsumeStreamFunction() const { return m_wasmStreamingConsumeStreamFunction.getInitializedOnMainThread(this); }
 
     JSObject* requireFunctionUnbound() const { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
+    bool hasRequireFunctionUnbound() const { return m_requireFunctionUnbound.isInitialized(); }
+    // The target of the require functions that are made from now on (Bun::becomeMainModule).
+    void setRequireFunctionUnbound(JSC::VM& vm, JSObject* function) { m_requireFunctionUnbound.set(vm, this, function); }
     JSObject* requireResolveFunctionUnbound() const { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
     Bun::InternalModuleRegistry* internalModuleRegistry() const { return m_internalModuleRegistry.getInitializedOnMainThread(this); }
 

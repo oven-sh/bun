@@ -310,6 +310,7 @@ describe("Bun.Transpiler", () => {
           attempt(() => { "use strict"; label.length = 1; }),
           attempt(() => { "use strict"; return delete label.length; }),
           attempt(() => { "use strict"; return delete label[0]; }),
+          attempt(() => { "use strict"; label.length++; }),
         );
       `;
       await using proc = Bun.spawn({
@@ -320,7 +321,7 @@ describe("Bun.Transpiler", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "ready TypeError TypeError TypeError\n",
+        stdout: "ready TypeError TypeError TypeError TypeError\n",
         stderr: "",
         exitCode: 0,
       });

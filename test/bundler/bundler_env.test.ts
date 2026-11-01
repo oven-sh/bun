@@ -226,9 +226,12 @@ test("bun build --env folds values that are not UTF-8 as process.env reads them"
       ]));
     `,
   });
+  // A value that the test process inherits would win over the one in `.env`.
+  const env: Record<string, string | undefined> = { ...bunEnv };
+  for (const name of ["PUB_A", "PUB_B", "PUB_X", "PUB_Y", "PUB_C", "PUB_N"]) delete env[name];
   await using build = Bun.spawn({
     cmd: [bunExe(), "build", "--env", "PUB_*", "--minify-syntax", "entry.mjs", "--outfile", "out/out.mjs"],
-    env: bunEnv,
+    env,
     cwd: String(dir),
     stdout: "ignore",
     stderr: "pipe",
@@ -239,7 +242,7 @@ test("bun build --env folds values that are not UTF-8 as process.env reads them"
 
   // The source reads `.env` at run time. The bundle runs in a folder that has none.
   const run = async (cwd: string, file: string) => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({ cmd: [bunExe(), file], env, cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trim(), stderr, exitCode };
   };

@@ -269,8 +269,8 @@ describe("bundler", () => {
       validate(ctx) {},
     },
   });
+  // #2701: the bare name of a Node builtin in `external` covers its `node:` spelling too.
   itBundled("browser/NodePolyfillExternal", {
-    todo: true,
     skipOnEsbuild: true,
     files: {
       "/entry.js": NodePolyfills.options.files["/entry.js"],
@@ -289,6 +289,181 @@ describe("bundler", () => {
     },
   });
 
+  // The same entry file, with the externals spelled the way the imports are.
+  itBundled("browser/NodePolyfillExternalExactSpelling", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": NodePolyfills.options.files["/entry.js"],
+    },
+    target: "browser",
+    external: Object.keys(nodePolyfillList).map(x => "node:" + x),
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual(
+        Object.keys(nodePolyfillList).map(x => ({
+          kind: "import-statement",
+          path: "node:" + x,
+        })),
+      );
+    },
+  });
+  // #13941: `external` for a Node builtin wins over the polyfill, whichever way it is spelled.
+  for (const [label, external, imported] of [
+    ["NodePrefix", "node:stream", "node:stream"],
+    ["Bare", "stream", "stream"],
+    ["BareForNodePrefix", "stream", "node:stream"],
+    ["Wildcard", "stream*", "stream"],
+  ] as const) {
+    itBundled(`browser/NodeBuiltinExternal${label}#13941`, {
+      skipOnEsbuild: true,
+      files: {
+        "/entry.js": `import { Readable } from ${JSON.stringify(imported)};\nconsole.log(Readable);\n`,
+      },
+      target: "browser",
+      external: [external],
+      onAfterBundle(api) {
+        const file = api.readFile("/out.js");
+        const imports = new Bun.Transpiler().scanImports(file);
+        expect(imports).toEqual([{ kind: "import-statement", path: imported }]);
+        api.expectFile("/out.js").not.toInclude("bun-vfs$$");
+      },
+    });
+  }
+  // Pin: the `node:` spelling names the builtin alone. A bare import of that name can be an npm
+  // package, and it still gets the polyfill.
+  itBundled("browser/NodePrefixedExternalLeavesBareImport", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `import { Readable } from "stream";\nconsole.log(typeof Readable);\n`,
+    },
+    target: "browser",
+    external: ["node:stream"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      expect(new Bun.Transpiler().scanImports(file)).toEqual([]);
+    },
+    run: { stdout: "function" },
+  });
+  // A polyfill that Bun bundles requires other builtins by their bare names. `external` names the
+  // imports of the program. It does not cut the polyfill off from the polyfills it needs.
+  itBundled("browser/NodeBuiltinExternalLeavesPolyfillInternals", {
+    skipOnEsbuild: true,
+    files: {
+      // The polyfill of "node:domain" requires "events".
+      "/entry.js": `import { create } from "node:domain";\nimport { EventEmitter } from "events";\nconsole.log(typeof create, EventEmitter);\n`,
+    },
+    target: "browser",
+    external: ["events"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      expect(new Bun.Transpiler().scanImports(file)).toEqual([{ kind: "import-statement", path: "events" }]);
+      expect(file.match(/__require\("[^"]+"\)/g)).toBeNull();
+    },
+  });
+  // #35210: the same for a dynamic import in a minified build.
+  itBundled("browser/NodePolyfillExternalNodePrefix#35210", {
+    files: {
+      "/entry.js": /* js */ `
+        export async function go(data) {
+          const { deflateSync } = await import("node:zlib");
+          return new Uint8Array(deflateSync(data));
+        }
+      `,
+    },
+    target: "browser",
+    external: ["node:zlib"],
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([{ kind: "dynamic-import", path: "node:zlib" }]);
+    },
+  });
+  // #13941: a builtin with no polyfill stays an import too, not the `(() => ({}))` stub.
+  itBundled("browser/NodeBuiltinExternalNoOp#13941", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `import fs from "node:fs";\nimport cp from "node:child_process";\nconsole.log(fs, cp);\n`,
+    },
+    target: "browser",
+    external: ["node:fs", "node:child_process"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([
+        { kind: "import-statement", path: "node:fs" },
+        { kind: "import-statement", path: "node:child_process" },
+      ]);
+      api.expectFile("/out.js").not.toInclude("() => ({})");
+    },
+  });
+  // A `node:` name must not capture a bare import of an npm package of that name, and a bare
+  // name must not capture a package whose name starts with it.
+  itBundled("browser/NodeBuiltinExternalDoesNotCaptureNpmPackage", {
+    files: {
+      "/entry.js": `import { x } from "ws";\nimport { y } from "fs-extra";\nimport fs from "fs";\nconsole.log(x, y, fs);\n`,
+      "/node_modules/ws/package.json": `{ "name": "ws", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/ws/index.js": `export const x = "npm-ws";`,
+      "/node_modules/fs-extra/package.json": `{ "name": "fs-extra", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/fs-extra/index.js": `export const y = "npm-fs-extra";`,
+    },
+    target: "browser",
+    external: ["node:ws", "fs"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([{ kind: "import-statement", path: "fs" }]);
+      api.expectFile("/out.js").toInclude("npm-ws");
+      api.expectFile("/out.js").toInclude("npm-fs-extra");
+    },
+  });
+  // A path into a builtin follows the builtin, like "foo/bar" with `external: ["foo"]`.
+  itBundled("browser/NodeBuiltinExternalSubpath#13941", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `import { pipeline } from "node:stream/promises";\nimport { readFile } from "fs/promises";\nconsole.log(pipeline, readFile);\n`,
+    },
+    target: "browser",
+    external: ["node:stream", "fs"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([
+        { kind: "import-statement", path: "node:stream/promises" },
+        { kind: "import-statement", path: "fs/promises" },
+      ]);
+    },
+  });
+  // A `node:` name that is no builtin is a build error. Named in `external`, it stays an import.
+  itBundled("browser/UnknownNodePrefixedExternal", {
+    files: {
+      "/entry.js": `import nope from "node:nope";\nconsole.log(nope);\n`,
+    },
+    target: "browser",
+    external: ["node:nope"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([{ kind: "import-statement", path: "node:nope" }]);
+    },
+  });
+  // The "browser" map of the importing package disables the builtin. `external` names the import
+  // as it is spelled, and that wins.
+  itBundled("browser/NodeBuiltinExternalBeatsBrowserField", {
+    files: {
+      "/entry.js": `import pkg from "pkg";\nconsole.log(pkg);\n`,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "./index.js", "browser": { "crypto": false } }`,
+      "/node_modules/pkg/index.js": `module.exports = require("node:crypto");`,
+    },
+    target: "browser",
+    external: ["node:crypto"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([{ kind: "import-statement", path: "node:crypto" }]);
+    },
+  });
   // #4928: a package.json "browser": {"<builtin>": false} must win over the
   // builtin polyfill for --target browser. Packages set this to keep their
   // node-only code paths from dragging crypto/stream/buffer into browser bundles.

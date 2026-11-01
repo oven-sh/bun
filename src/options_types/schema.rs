@@ -83,6 +83,8 @@ pub mod api {
         pub output_dir: Option<Box<[u8]>>,
         /// external
         pub external: Vec<Box<[u8]>>,
+        /// The dependencies of a `bun compile --library` package, which stay imports.
+        pub library_externals: Vec<Box<[u8]>>,
         /// loaders
         pub loaders: Option<LoaderMap>,
         /// main_fields

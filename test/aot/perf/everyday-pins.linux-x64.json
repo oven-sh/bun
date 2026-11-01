@@ -739,6 +739,10 @@
     "typed": 1922.7,
     "untyped": 1966.1
   },
+  "everyday-code-out-of-run-time-text/a-method-called-on-an-object-that-the-text-made": {
+    "typed": 197,
+    "untyped": 197
+  },
   "everyday-code-out-of-run-time-text/a-path-cut-out-of-a-url-as-a-composed-handler-writes-it": {
     "typed": 1067.5,
     "untyped": 1085.5
@@ -751,6 +755,14 @@
     "typed": 478.7,
     "untyped": 478.8
   },
+  "everyday-code-out-of-run-time-text/get-time-called-on-a-date-that-the-text-made": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-code-out-of-run-time-text/get-time-called-on-an-object-that-the-text-made": {
+    "typed": 256,
+    "untyped": 254
+  },
   "everyday-code-out-of-run-time-text/integers-validated-as-a-schema-compiler-writes-it": {
     "typed": 1534,
     "untyped": 1534
@@ -762,6 +774,18 @@
   "everyday-code-out-of-run-time-text/names-stored-on-an-object-of-a-constructor-of-the-program": {
     "typed": 508.1,
     "untyped": 508.1
+  },
+  "everyday-code-out-of-run-time-text/now-called-on-an-object-that-the-text-made": {
+    "typed": 197,
+    "untyped": 197
+  },
+  "everyday-code-out-of-run-time-text/now-called-on-the-performance-object-that-the-text-handed-over": {
+    "typed": 267,
+    "untyped": 267
+  },
+  "everyday-code-out-of-run-time-text/send-called-on-an-object-that-the-text-made": {
+    "typed": 255,
+    "untyped": 254
   },
   "everyday-code-out-of-run-time-text/the-names-of-a-parsed-object-walked-as-a-schema-compiler-writes-it": {
     "typed": 924,

@@ -270,11 +270,11 @@ async function measureForm(
   const measured = new Map<number, Measured & { output: string | undefined }>();
   const measureExecutable = async (taken: number[]) => {
     // The build compiles the programs that ask the same of Bun's library together, one such group behind the other, and numbers its maps as it goes. So the number of a map
-    // does not say which entry point it is of: a map is that of the case whose starter its image begins at.
+    // does not say which entry point it is of: a map is that of the case whose starter its image begins at. A map writes each backslash of a path twice.
     const sizesIn = new Map<string, Omit<Measured, "runtimeOperations">>();
     for (let number = 0; existsSync(number ? `${map}.${number}` : map); number++) {
       const { entryPoints, ...sizes } = readMap(number ? `${map}.${number}` : map);
-      const path = entryPoints.length === 1 ? entryPoints[0].split(/[\\/]/) : [];
+      const path = entryPoints.length === 1 ? entryPoints[0].split(/[\\/]+/) : [];
       if (path.at(-1) === starter) sizesIn.set(path.at(-2)!, sizes);
     }
     const running = taken.filter(index => cases[index].runs !== false);

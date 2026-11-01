@@ -58,10 +58,7 @@ impl Expect {
                 value.to_fmt(&mut fmt),
             )));
         } else if actual_length.is_nan() {
-            return Err(global.throw(format_args!(
-                "Received value has non-number length property: {}",
-                actual_length,
-            )));
+            return Err(Expect::throw_nan_length(global, value));
         }
 
         if actual_length == expected_length {

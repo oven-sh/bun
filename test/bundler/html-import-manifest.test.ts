@@ -727,4 +727,91 @@ console.log("✓ Both import types work correctly");
       expect(entryCode).toContain('\\\"files\\\":[');
     },
   });
+
+  // The browser chunk of an HTML import is built by a client transpiler cloned
+  // from the server one. Its define table must be the browser table:
+  // `process.browser` is true and `import.meta.env.*` folds to constants.
+  itBundled("html-import/client-chunk-gets-browser-defines", {
+    outdir: "out/",
+    files: {
+      "/server.js": `
+import html from "./index.html";
+console.log(html.files.find(f => f.loader === "js").path);
+`,
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <script type="module" src="./app.ts"></script>
+  </body>
+</html>`,
+      "/app.ts": `
+console.log(import.meta.env.DEV, import.meta.env.PROD, import.meta.env.MODE, process.browser);
+`,
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+    env: {
+      NODE_ENV: "production",
+    },
+
+    run: {
+      validate({ stdout }) {
+        expect(stdout).toMatch(/^\.\/index-[a-z0-9]+\.js\n$/);
+      },
+    },
+
+    onAfterBundle(api) {
+      const [manifest] = readManifests(api, "out/server.js");
+      const chunk = manifest.files.find(file => file.loader === "js")!;
+      const js = api.readFile(join("out", chunk.path));
+      expect(js).not.toContain("import.meta.env");
+      expect(js).toContain('console.log(false, true, "production", true);');
+    },
+  });
+
+  // The rebuilt client table follows the same user `process.env.NODE_ENV`
+  // define as the server table, so both chunks carry one mode.
+  itBundled("html-import/client-chunk-follows-node-env-define", {
+    outdir: "out/",
+    files: {
+      "/server.js": `
+import html from "./index.html";
+console.log(process.env.NODE_ENV, process.env.BUN_ENV, html.files.find(f => f.loader === "js").path);
+`,
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <script type="module" src="./app.ts"></script>
+  </body>
+</html>`,
+      "/app.ts": `
+console.log(process.env.NODE_ENV, process.env.BUN_ENV, import.meta.env.DEV, import.meta.env.PROD, import.meta.env.MODE);
+`,
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    env: {
+      NODE_ENV: undefined,
+    },
+
+    run: {
+      validate({ stdout }) {
+        expect(stdout).toMatch(/^production production \.\/index-[a-z0-9]+\.js\n$/);
+      },
+    },
+
+    onAfterBundle(api) {
+      const [manifest] = readManifests(api, "out/server.js");
+      const chunk = manifest.files.find(file => file.loader === "js")!;
+      expect(api.readFile("out/server.js")).toContain('console.log("production", "production", ');
+      expect(api.readFile(join("out", chunk.path))).toContain(
+        'console.log("production", "production", false, true, "production");',
+      );
+    },
+  });
 });

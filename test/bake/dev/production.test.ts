@@ -136,6 +136,57 @@ export default function TestPage() {
     expect(hasApiPath).toBe(true);
   });
 
+  test("import.meta.env is inlined per graph in a static build", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-import-meta-env", {
+      "src/index.tsx": `export default {
+        app: {
+          framework: "react",
+        }
+      };`,
+      "pages/index.tsx": `
+import ClientEnv from "../components/ClientEnv";
+export default function IndexPage() {
+  const env = [
+    "DEV=" + import.meta.env.DEV,
+    "PROD=" + import.meta.env.PROD,
+    "MODE=" + import.meta.env.MODE,
+    "SSR=" + import.meta.env.SSR,
+    "STATIC=" + import.meta.env.STATIC,
+  ];
+  return <div><pre id="env">{env.join("|")}</pre><ClientEnv /></div>;
+}
+`,
+      "components/ClientEnv.tsx": `"use client";
+export default function ClientEnv() {
+  console.log("client env", {
+    DEV: import.meta.env.DEV,
+    PROD: import.meta.env.PROD,
+    MODE: import.meta.env.MODE,
+    SSR: import.meta.env.SSR,
+    STATIC: import.meta.env.STATIC,
+  });
+  return null;
+}
+`,
+    });
+
+    const buildProc = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(buildProc.exitCode).toBe(0);
+
+    // The server graph renders the page at build time with SSR and STATIC true.
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(indexHtml).toContain("DEV=false|PROD=true|MODE=production|SSR=true|STATIC=true");
+
+    // The client graph gets SSR false and no `import.meta.env` access.
+    const chunks = Array.from(new Bun.Glob("_bun/**/*.js").scanSync({ cwd: path.join(dir, "dist") }));
+    const clientJs = (await Promise.all(chunks.map(f => Bun.file(path.join(dir, "dist", f)).text()))).join("\n");
+    expect(clientJs).toContain('{DEV:!1,PROD:!0,MODE:"production",SSR:!1,STATIC:!0}');
+    expect(clientJs).not.toContain("import.meta.env");
+  });
+
   test("import.meta properties are inlined in catch-all routes during production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-catch-all", {
       "src/index.tsx": `export default { 

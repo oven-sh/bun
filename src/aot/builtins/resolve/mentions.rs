@@ -35,10 +35,7 @@ pub(super) fn mentioned_id(state: ExprState) -> Option<BuiltinId> {
         | ExprState::Unresolved | ExprState::DynamicGlobal(_) => return None,
     };
     match intrinsic {
-        Intrinsic::Builtin(id)
-        | Intrinsic::Construct(id)
-        | Intrinsic::NativeBinding(id)
-        | Intrinsic::NativeProperty(id) => Some(id),
+        Intrinsic::Builtin(id) | Intrinsic::Construct(id) | Intrinsic::NativeBinding(id) => Some(id),
         _ => None,
     }
 }

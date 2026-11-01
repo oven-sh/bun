@@ -110,7 +110,8 @@ test("a class that a test puts in the place of a global one is made by the proje
   expect(layers).toEqual(plain);
 }, 240_000);
 
-// The table has no object for `crypto`, which is made when it is first read: Bun's own code reads it off `@natives`, as plain Bun does.
+// The table has no object for `crypto`, which is made when it is first read. node:crypto takes it when it is loaded, ahead of the stub.
+// Read off `@natives` it was an object that nobody knew: ./parallel/host-objects/webcrypto-is-the-global-crypto.cjs.
 const stubbed = {
   "package.json": `{ "name": "p", "type": "module" }`,
   "a.test.js": `import { test, vi } from "bun:test";

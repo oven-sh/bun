@@ -74,8 +74,6 @@ pub enum Intrinsic {
     Builtin(BuiltinId),
     Construct(BuiltinId),
     NativeBinding(BuiltinId),
-    /// A property of the global object that is read off `@natives`, where script stores nothing: `find_native`.
-    NativeProperty(BuiltinId),
     LinkTimeConstant(LinkTimeConstant),
     NativeCall(NativeCallKind),
     IsNullish,

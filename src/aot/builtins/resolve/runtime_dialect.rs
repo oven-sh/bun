@@ -39,12 +39,10 @@ impl Resolver<'_, '_> {
     pub(super) fn find_native(&self, name: Atom, is_member: bool) -> Option<Intrinsic> {
         let global = table::global(self.input.names.get(name)?)?;
         let &(_, is_also_member) = NATIVES.get()?.iter().find(|native| native.0 == global)?;
-        // `crypto` is made when it is first read, so the table has a property there and no object.
+        // `crypto` is made when it is first read, so the table has a property there and no object: it is read off the global object, as a program reads it.
         let is_one_object = table::entry(global).mutability != Mutability::ChangesOnItsOwn;
-        (is_also_member || !is_member).then(|| match is_one_object {
-            true => Intrinsic::Builtin(table::canonical_id(global)),
-            false => Intrinsic::NativeProperty(global),
-        })
+        (is_one_object && (is_also_member || !is_member))
+            .then(|| Intrinsic::Builtin(table::canonical_id(global)))
     }
 
     pub(super) fn find_runtime_member(&self, name: Atom) -> Option<Intrinsic> {

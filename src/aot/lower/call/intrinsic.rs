@@ -136,12 +136,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Intrinsic::Builtin(id) => Ok(self.emit_builtin_itself(id)),
             Intrinsic::LinkTimeConstant(constant) => Ok(self.builder.link_time_constant(constant)),
             Intrinsic::NativeBinding(id) => Ok(self.builder.native_binding(id)),
-            Intrinsic::NativeProperty(id) => {
-                let natives = self.emit_private_global_get(b"natives");
-                let name = self.file.intern_bytes(table::text_of(id).as_bytes());
-                let key = self.file.text_key(name);
-                Ok(self.builder.prop_get(natives, key, false, false))
-            }
             Intrinsic::Undefined | Intrinsic::Directive(_) | Intrinsic::Erased => {
                 Ok(self.builder.undefined())
             }

@@ -404,7 +404,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             return false;
         };
         let api = match dot.name.slice() {
-            b"toMatchInlineSnapshot" | b"toThrowErrorMatchingInlineSnapshot" => return true,
+            // Any receiver matches, so the name doesn't take the file off the cache key it shares with `bun run`.
+            // `uses_test_api()` only turns true during the visit, so a file that passes here gets a key of its own.
+            b"toMatchInlineSnapshot" | b"toThrowErrorMatchingInlineSnapshot" => {
+                return self.options.features.is_test_entry_point || self.uses_test_api();
+            }
             b"mock" | b"doMock" | b"unmock" => None,
             b"doUnmock" | b"importActual" | b"importMock" => Some(MockApi::Vi),
             b"dontMock" | b"requireActual" | b"requireMock" | b"createMockFromModule" => {

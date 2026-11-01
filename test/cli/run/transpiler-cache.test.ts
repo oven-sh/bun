@@ -989,6 +989,49 @@ describe.concurrent("`bun test` and `bun run`", () => {
       `import { a } from "./dep.js"; const vi = { mock() {}, hoisted() {}, doMock() {} }; vi.mock("./dep.js"); vi.hoisted(() => 1); vi.doMock(import("./dep.js")); export function f() { return a(); }`,
       false,
     ],
+
+    // `bun test` keeps the frame of an inline snapshot matcher that ends a function. The matcher is known by its name alone.
+    "returned inline snapshot matcher": [
+      "js",
+      `export function f(e, x) { return e(x).toMatchInlineSnapshot(); }`,
+      false,
+    ],
+    "returned inline snapshot matcher, ts": [
+      "ts",
+      `export function f(e: any, x: unknown) { return e(x).toMatchInlineSnapshot(); }`,
+      false,
+    ],
+    "arrow that ends in an inline snapshot matcher": [
+      "js",
+      `export const f = (e, x) => e(x).toThrowErrorMatchingInlineSnapshot();`,
+      false,
+    ],
+    "inline snapshot matcher in CommonJS": ["cjs", `module.exports = (e, x) => e(x).toMatchInlineSnapshot();`, false],
+    "inline snapshot matcher in a variable that is used once": [
+      "js",
+      `export function f(e, x) { const r = e(x).toMatchInlineSnapshot(); return [r]; }`,
+      false,
+    ],
+    "returned inline snapshot matcher of an expect of another module": [
+      "js",
+      `import { a as expect } from "./dep.js"; export function f(x) { return expect(x).toMatchInlineSnapshot(); }`,
+      false,
+    ],
+    "returned inline snapshot matcher of an imported expect": [
+      "js",
+      `import { expect } from "bun:test"; export function f(x) { return expect(x).toMatchInlineSnapshot(); }`,
+      true,
+    ],
+    "returned inline snapshot matcher of the global expect": [
+      "js",
+      `export function f(x) { return expect(x).toMatchInlineSnapshot(); }`,
+      true,
+    ],
+    "returned inline snapshot matcher before a global": [
+      "js",
+      `export function f(e, x) { return e(x).toMatchInlineSnapshot(); } export function g() { return describe; }`,
+      true,
+    ],
   };
 
   test.each(["import", "require"] as const)(
@@ -1045,6 +1088,7 @@ describe.concurrent("`bun test` and `bun run`", () => {
       expect(differs).toContain("import vitest");
       expect(differs).toContain("vi.doMock(import()), imported");
       expect(differs).toContain("vi.mock(import()) that is pure");
+      expect(differs).toContain("returned inline snapshot matcher of an imported expect");
 
       for (const { first, second, afterFirst, afterSecond } of pairs) {
         const differ = (entries: typeof afterFirst, mode: Mode) =>

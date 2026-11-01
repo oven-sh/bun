@@ -1051,6 +1051,9 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
                 StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>
             )
         }
+        poll_tag::CAPTURED_CHILD_STATIC_PIPE_WRITER => {
+            poll_arm!(StaticPipeWriterPoll<crate::cli::captured_child::CapturedChild>)
+        }
         // `bun.shell.Interpreter.IOWriter.Poll`
         poll_tag::SHELL_BUFFERED_WRITER => in_features!(
             [Shell],

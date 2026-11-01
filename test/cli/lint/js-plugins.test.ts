@@ -62,6 +62,32 @@ const oxlintrc = (config: object) =>
 // Each thread that lints a file starts a VM, which takes seconds in a debug build.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
+// The thread that lints a.js has a VM, and it's the first to need the Prettier config, which a child process evaluates.
+test.concurrent(
+  "a config file that is a program is read on a thread that has a VM",
+  async () => {
+    const files = {
+      "plugin.mjs": `const create = context => ({ Program: node => context.report({ node, message: "seen" }) });
+        export default { meta: { name: "demo" }, rules: { seen: { create } } };`,
+      ".oxlintrc.json": oxlintrc({
+        jsPlugins: ["./plugin.mjs"],
+        rules: { "bun/format": "error", "demo/seen": "error" },
+      }),
+      "prettier.config.mjs": "export default { semi: false };\n",
+      "a.js": "a;\n",
+    };
+    const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.startsWith("a.js"))
+        .sort(),
+    ).toEqual(["a.js:1:1: seen [Error/demo(seen)]", "a.js:1:2: Delete `;` [Error/bun(format)]"]);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
 // Same as under ESLint 10.12.0.
 test.concurrent(
   "a plugin's `process.env` has the inherited variables but not the project's .env",

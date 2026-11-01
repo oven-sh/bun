@@ -189,6 +189,7 @@ pub enum PollTag {
     StaticPipeWriter,
     ShellStaticPipeWriter,
     SecurityScanStaticPipeWriter,
+    CapturedChildStaticPipeWriter,
     BufferedReader,
     DnsResolver,
     GetAddrInfoRequest,
@@ -211,6 +212,7 @@ pub mod poll_tag {
     pub const STATIC_PIPE_WRITER: PollTag = PollTag::StaticPipeWriter;
     pub const SHELL_STATIC_PIPE_WRITER: PollTag = PollTag::ShellStaticPipeWriter;
     pub const SECURITY_SCAN_STATIC_PIPE_WRITER: PollTag = PollTag::SecurityScanStaticPipeWriter;
+    pub const CAPTURED_CHILD_STATIC_PIPE_WRITER: PollTag = PollTag::CapturedChildStaticPipeWriter;
     pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
     pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
     pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;

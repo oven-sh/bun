@@ -1770,19 +1770,28 @@ impl BlobExt for Blob {
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
-        let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
-
-        // If the optional start parameter is not used as a parameter, let relativeStart be 0.
-        let mut relative_start: i64 = 0;
-        // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = size_i64;
-
         // A string in place of `start` or `end` is the content type.
         let (start, end, content_type) = match (start.to_js(), end.to_js(), content_type.to_js()) {
             (start, _, _) if start.is_string() => (JSValue::UNDEFINED, JSValue::UNDEFINED, start),
             (start, end, _) if end.is_string() => (start, JSValue::UNDEFINED, end),
             args => args,
         };
+
+        // A negative `start` or `end` counts from the end, so a file whose size is not known yet
+        // has to be stat()ed first (otherwise it would count from `MAX_SIZE`).
+        if self.size.get() == MAX_SIZE
+            && ((start.is_number() && start.to_int64() < 0)
+                || (end.is_number() && end.to_int64() < 0))
+        {
+            self.resolve_size();
+        }
+
+        let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
+
+        // If the optional start parameter is not used as a parameter, let relativeStart be 0.
+        let mut relative_start: i64 = 0;
+        // If the optional end parameter is not used, let relativeEnd be size.
+        let mut relative_end: i64 = size_i64;
 
         if start.is_number() {
             let start = start.to_int64();

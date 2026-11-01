@@ -1171,6 +1171,41 @@ describe("os and cpu of file: dependencies", () => {
     },
   );
 
+  // The layout of esbuild and swc: a wrapper package lists one platform package per platform.
+  it("the file: tarballs of a wrapper package install only for the target platform", async () => {
+    using dir = tempDir("file-wrapper-platform", {
+      ...fixture,
+      "pkgs/wrapper/package.json": JSON.stringify({
+        name: "wrapper",
+        version: "1.0.0",
+        optionalDependencies: Object.fromEntries(
+          names.map(name => [`@repro/${name}`, `file:./repro-${name}-1.0.0.tgz`]),
+        ),
+      }),
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { wrapper: "file:../pkgs/wrapper" } }),
+    });
+    for (const name of names) {
+      await pack(join(String(dir), "pkgs", name), bunEnv, "--destination", join(String(dir), "pkgs", "wrapper"));
+    }
+    const app = join(String(dir), "app");
+
+    const { warnings, stdout } = await install(app);
+    expect(warnings).toEqual([]);
+    expect(stdout).not.toContain("p-win32");
+    expect(await installed(app)).toEqual(["p-linux-x64"]);
+    expect(await lockLines(app)).toEqual([
+      expect.stringContaining(
+        '"@repro/p-linux-x64": ["@repro/p-linux-x64@./repro-p-linux-x64-1.0.0.tgz", { "os": "linux", "cpu": "x64" }, ',
+      ),
+      expect.stringContaining(
+        '"@repro/p-win32-arm64": ["@repro/p-win32-arm64@./repro-p-win32-arm64-1.0.0.tgz", { "os": "win32", "cpu": "arm64" }, ',
+      ),
+      expect.stringContaining(
+        '"@repro/p-win32-x64": ["@repro/p-win32-x64@./repro-p-win32-x64-1.0.0.tgz", { "os": "win32", "cpu": "x64" }, ',
+      ),
+    ]);
+  });
+
   it("file: folder dependencies install only for the target platform, and a required one warns", async () => {
     using dir = tempDir("file-folder-platform", {
       ...fixture,

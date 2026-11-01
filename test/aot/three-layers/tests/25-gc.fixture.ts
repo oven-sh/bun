@@ -1,0 +1,12 @@
+import { check } from "../src/show";
+import { holdAndCall, holdAcrossYields, holdAcrossAwaits, deep } from "fake-shapes/more";
+import { throughSrc, deepThroughSrc } from "../src/middle";
+import { later, Vec2, walk, tree } from "fake-typed";
+const F = "25";
+const churn = () => { const junk: unknown[] = []; for (let i = 0; i < 2000; i++) junk.push({ i, s: "j" + i, a: [i] }, new Vec2(i, i)); Bun.gc(true); return junk.length; };
+check(F, "frames of three layers over a collection", () => throughSrc(seed => { const local = { seed, v: new Vec2(seed, 1) }; churn(); return [local.seed, local.v.parts(), holdAndCall(() => churn(), seed + 1)]; }, 3));
+check(F, "deep stacks", () => [deep(30, () => churn()), deepThroughSrc(25, () => (churn(), 1))]);
+check(F, "generators suspended over collections", () => { const g = holdAcrossYields(5), h = holdAcrossYields(6); const out = [g.next().value, h.next().value]; churn(); out.push(g.next({ sent: 1 }).value, h.next("s").value); churn(); return [out, g.next("last").value, h.next([1]).value]; });
+check(F, "async frames suspended over collections", async () => { const p = holdAcrossAwaits(async n => { await later(n); churn(); return { n }; }, 7), q = holdAcrossAwaits(n => (churn(), n), 8); churn(); return [await p, await q]; });
+check(F, "typed generator over collections", () => { const out: string[] = []; for (const each of walk(tree("a", tree("b", tree("c")), tree("d")))) { churn(); out.push(each); } return out; });
+check(F, "weak references across layers", () => { const strong = holdAndCall(() => 0, 1); const ref = new WeakRef(strong); churn(); return [ref.deref() === strong, strong.length]; });

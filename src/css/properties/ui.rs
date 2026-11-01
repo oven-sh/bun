@@ -18,13 +18,15 @@ bitflags::bitflags! {
         const DARK  = 1 << 1;
         /// Forbids the user agent from overriding the color scheme for the element.
         const ONLY  = 1 << 2;
+        /// `dark light`: the order is the author's preference.
+        const DARK_FIRST = 1 << 3;
     }
 }
 
 impl ColorScheme {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
         let mut res = ColorScheme::empty();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         if let Some(value) = color_scheme_map_get(ident) {
             match value {
@@ -35,7 +37,7 @@ impl ColorScheme {
             }
         }
 
-        while let Ok(i) = input.try_parse(|p| p.expect_ident_cloned()) {
+        while let Ok(i) = input.try_parse(|p| p.expect_ident()) {
             if let Some(value) = color_scheme_map_get(i) {
                 match value {
                     ColorSchemeKeyword::Normal => {
@@ -49,10 +51,20 @@ impl ColorScheme {
                         res.insert(ColorScheme::ONLY);
                         return Ok(res);
                     }
-                    ColorSchemeKeyword::Light => res.insert(ColorScheme::LIGHT),
+                    ColorSchemeKeyword::Light => {
+                        if res.contains(ColorScheme::DARK) && !res.contains(ColorScheme::LIGHT) {
+                            res.insert(ColorScheme::DARK_FIRST);
+                        }
+                        res.insert(ColorScheme::LIGHT);
+                    }
                     ColorSchemeKeyword::Dark => res.insert(ColorScheme::DARK),
                 }
             }
+        }
+
+        // `inherit` or `auto`: without a scheme we know, the value is not `normal`.
+        if res.is_empty() {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
         Ok(res)
@@ -63,14 +75,19 @@ impl ColorScheme {
             return dest.write_str("normal");
         }
 
+        let dark_first = self.contains(ColorScheme::DARK_FIRST);
+        if dark_first {
+            dest.write_str("dark ")?;
+        }
+
         if self.contains(ColorScheme::LIGHT) {
             dest.write_str("light")?;
-            if self.contains(ColorScheme::DARK) {
+            if self.contains(ColorScheme::DARK) && !dark_first {
                 dest.write_char(b' ')?;
             }
         }
 
-        if self.contains(ColorScheme::DARK) {
+        if self.contains(ColorScheme::DARK) && !dark_first {
             dest.write_str("dark")?;
         }
 
@@ -115,9 +132,9 @@ impl ColorSchemeHandler {
         match property {
             Property::ColorScheme(color_scheme_) => {
                 let color_scheme: ColorScheme = *color_scheme_;
-                if !context
+                if context
                     .targets
-                    .is_compatible(css::compat::Feature::LightDark)
+                    .should_compile_same(css::compat::Feature::LightDark)
                 {
                     if color_scheme.contains(ColorScheme::LIGHT) {
                         dest.push(define_var(b"--buncss-light", css::Token::Ident(b"initial")));

@@ -7,8 +7,8 @@ pub struct NoCondAssign {
     is_always: bool,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected assignment within {{type}}.");
-const MISSING: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected assignment within {{type}}.");
+const MISSING: &Message = &Message::new(
     "missing",
     "Expected a conditional expression and instead saw an assignment.",
 );
@@ -42,9 +42,9 @@ fn report_span<'a>(assignment: Expr<'a>, cx: &Cx<'a, NoCondAssign>) -> Span {
 fn hint(assignment: Expr<'_>, can_stay: bool) -> &'static str {
     let is_plain = matches!(assignment.kind(), ExprKind::Assign { op: None, .. });
     match (is_plain, can_stay) {
-        (true, true) => "Did you mean ===? To keep the assignment, wrap it in another pair of parentheses.",
+        (true, true) => "Did you mean ===? To keep the assignment, wrap it in parentheses.",
         (true, false) => "Did you mean ===?",
-        (false, true) => "To keep the assignment, wrap it in another pair of parentheses.",
+        (false, true) => "To keep the assignment, wrap it in parentheses.",
         (false, false) => "",
     }
 }

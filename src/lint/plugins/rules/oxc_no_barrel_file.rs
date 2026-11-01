@@ -9,8 +9,8 @@ pub struct NoBarrelFile {
     threshold: u32,
 }
 
-const NO_BARREL_FILE: Message =
-    Message::new("", "Barrel file detected, {{total}} modules are loaded which exceeds the threshold of {{threshold}}.");
+const NO_BARREL_FILE: &Message =
+    &Message::new("", "Barrel file detected, {{total}} modules are loaded which exceeds the threshold of {{threshold}}.");
 
 impl Rule for NoBarrelFile {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-barrel-file", Kind::Suggestion).needs_modules();

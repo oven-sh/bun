@@ -13,8 +13,8 @@ use std::borrow::Cow;
 /// Enforce `RegExp#exec` over `String#match` if no global flag is provided.
 pub struct PreferRegexpExec;
 
-const REG_EXP_EXEC_OVER_STRING_MATCH: Message =
-    Message::new("regExpExecOverStringMatch", "Use the `RegExp#exec()` method instead.");
+const REG_EXP_EXEC_OVER_STRING_MATCH: &Message =
+    &Message::new("regExpExecOverStringMatch", "Use the `RegExp#exec()` method instead.");
 
 enum ArgumentType {
     Other,

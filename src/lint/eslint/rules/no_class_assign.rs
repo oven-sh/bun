@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow reassigning class members.
 pub struct NoClassAssign;
 
-const CLASS: Message = Message::new("class", "'{{name}}' is a class.");
+const CLASS: &Message = &Message::new("class", "'{{name}}' is a class.");
 
 impl Rule for NoClassAssign {
     const META: Meta = Meta::eslint("no-class-assign", Kind::Problem).recommended().hints();
@@ -24,7 +24,7 @@ impl Rule for NoClassAssign {
             let report = cx.report(declared.unwrap_or_else(|| reference.span()), CLASS).data("name", reference.name());
             let report = report.hint_with(|| {
                 let line = cx.line_of(class.name()?.span().start);
-                Some(format!("This assignment replaces the class declared on line {line}."))
+                Some(format!("Replaces the class declared on line {line}."))
             });
             report.labels_with(|labels| {
                 let name = bstr::BStr::new(reference.name().bytes());

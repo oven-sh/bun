@@ -134,7 +134,7 @@ fn resolve_patchfile_path<'a>(
 /// Returns `None` after logging a parse error. `log` copies the lines it quotes from `source`, so
 /// `log` may outlive `source`.
 pub(crate) fn parse_patch_source<'a>(
-    source: &'a Source,
+    source: &'a Source<'a>,
     log: &mut Log,
 ) -> Option<bun_patch::PatchFile<'a>> {
     let at = |offset: usize| Range {
@@ -728,7 +728,7 @@ impl PatchTask {
                 logger: Log::init(),
             }),
             manager: bun_ptr::BackRef::new_mut(manager),
-            project_dir: FileSystem::instance().top_level_dir(),
+            project_dir: FileSystem::get().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,
@@ -805,7 +805,7 @@ impl PatchTask {
                 install_context: None,
             }),
             manager: bun_ptr::BackRef::new_mut(pkg_manager),
-            project_dir: FileSystem::instance().top_level_dir(),
+            project_dir: FileSystem::get().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,

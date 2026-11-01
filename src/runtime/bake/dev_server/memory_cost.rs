@@ -297,8 +297,6 @@ impl DevServer {
 }
 
 impl DevServer {
-    pub(crate) fn emit_visualizer_message_if_needed(&mut self) {}
-
     #[inline]
     pub(super) fn timer_heap(&self) -> &mut crate::timer::All {
         crate::jsc_hooks::timer_all_mut()
@@ -313,8 +311,6 @@ impl DevServer {
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
         dev.timer_heap().update(timer, &next);
     }
-
-    pub(crate) fn emit_memory_visualizer_message_if_needed(&mut self) {}
 
     pub(crate) fn emit_memory_visualizer_message(&mut self) {
         debug_assert!(self.emit_memory_visualizer_events > 0);
@@ -333,8 +329,7 @@ impl DevServer {
     ) -> crate::Result<()> {
         let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
-        // Wire format: 10 contiguous native-endian u32s. `[u32; 10]` has no
-        // padding and is `bytemuck::Pod`, so the byte view is safe.
+        // Wire format: 10 contiguous native-endian u32s.
         let fields: [u32; 10] = [
             /* incremental_graph_client */ cost.incremental_graph_client as u32,
             /* incremental_graph_server */ cost.incremental_graph_server as u32,
@@ -349,7 +344,7 @@ impl DevServer {
             /* system_used */ system_total.saturating_sub(crate::node::os::freemem()) as u32,
             /* system_total */ system_total as u32,
         ];
-        payload.extend_from_slice(bytemuck::bytes_of(&fields));
+        payload.extend_from_slice(bun_core::bytes_of(&fields));
 
         // SourceMapStore is easy to leak refs in.
         {

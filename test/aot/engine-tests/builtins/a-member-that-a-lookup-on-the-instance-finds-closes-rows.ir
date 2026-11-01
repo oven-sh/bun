@@ -1,0 +1,19 @@
+# The twin of a-member-that-the-chain-of-the-class-hides-closes-no-row: a test replaces Object.prototype.valueOf. Array.prototype has no `valueOf`, so a lookup on an array finds the replaced one,
+# and a general row that takes an operand by every protocol reads it: only the general rows say what the three do now
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# CHECK: v4: string = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/1
+# CHECK: v6: anything = CallBuiltin v0 overload=ArrayPrototypeToString/1
+# CHECK: v8: object = CallBuiltin v0, v2, v2 overload=ArrayPrototypeSlice/1
+
+module m0 path="main.js" displayPath="main.js"
+replaceablebuiltin member=ObjectPrototypeValueOf
+function f0 name="holdsNoObject" parameters=[{type=Array<undefined|number|string, proven, pristine[Storage, Names]>}, {type=string}, {type=number}] results=[{type=undefined}] {
+    v3 = Builtin builtin=ArrayPrototypeJoin
+    v4 = Call v3, v0, v1
+    v5 = Builtin builtin=ArrayPrototypeToString
+    v6 = Call v5, v0
+    v7 = Builtin builtin=ArrayPrototypeSlice
+    v8 = Call v7, v0, v2, v2
+    Return
+}

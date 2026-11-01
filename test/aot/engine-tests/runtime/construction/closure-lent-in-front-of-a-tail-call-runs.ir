@@ -1,0 +1,53 @@
+# function dispatch(handler, then, c) { const answer = handler(c, () => c.n + 1); return then(answer); }
+# The closure is lent to a handler that nobody knows, and the function ends in a tail call on the answer. One handler has no parameter for the closure, one calls it, one gives it back, one keeps it. What was given back or kept is called when the frame of dispatch() is gone and other calls have run over it.
+# FORM: AsRead
+# OPTIONS: references=narrow heat=EverythingIsHot
+# STATISTIC: ClosuresLent >= 1
+# RUN: run-in-shell const functions = []; globalThis.register = value => { functions.push(value); if (functions.length < 6) return; const dispatch = functions[0], ignores = functions[1], calls = functions[2], givesBack = functions[3], keeps = functions[4], kept = functions[5]; const finish = answer => typeof answer === "function" ? answer() : answer; let sum = 0; for (let turn = 0; turn < 2000; turn++) { const c = { n: turn }; sum += dispatch(ignores, finish, c) + dispatch(calls, finish, c) + dispatch(givesBack, finish, c); dispatch(keeps, finish, c); if (!(turn & 63)) gc(); sum += kept()(); } print(sum); };
+# CHECK: 8002000
+# CHECK: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="held" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+# REPEAT: i = 1..6
+    v%(i*2) = NewClosure function=f%(i)
+    v%(i*2+1) = Call v1, -, v%(i*2)
+# END REPEAT
+    Return
+}
+function f1 name="dispatch" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewClosure v2 function=f7
+    v4 = Call v0, -, v2, v3
+    v5 = Call v1, -, v4
+    ReturnCall v5
+}
+function f2 name="ignores" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="n"
+    Return v1
+}
+function f3 name="calls" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -
+    Return v2
+}
+function f4 name="givesBack" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f5 name="keeps" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PutModuleVariable v1 variable=g0
+    Return v0
+}
+function f6 name="kept" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f7 name="next" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="n"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}

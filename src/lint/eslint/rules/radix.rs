@@ -7,14 +7,14 @@ pub struct Radix {
     is_as_needed: bool,
 }
 
-const MISSING_PARAMETERS: Message = Message::new("missingParameters", "Missing parameters.");
-const MISSING_RADIX: Message = Message::new("missingRadix", "Missing radix parameter.");
-const INVALID_RADIX: Message = Message::new(
+const MISSING_PARAMETERS: &Message = &Message::new("missingParameters", "Missing parameters.");
+const MISSING_RADIX: &Message = &Message::new("missingRadix", "Missing radix parameter.");
+const INVALID_RADIX: &Message = &Message::new(
     "invalidRadix",
     "Invalid radix parameter, must be an integer between 2 and 36.",
 );
-const REDUNDANT_RADIX: Message = Message::new("redundantRadix", "Redundant radix parameter.");
-const ADD_RADIX_PARAMETER_10: Message = Message::new(
+const REDUNDANT_RADIX: &Message = &Message::new("redundantRadix", "Redundant radix parameter.");
+const ADD_RADIX_PARAMETER_10: &Message = &Message::new(
     "addRadixParameter10",
     "Add radix parameter `10` for parsing decimal numbers.",
 );

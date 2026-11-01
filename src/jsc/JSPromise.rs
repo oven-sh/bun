@@ -19,15 +19,6 @@ pub enum Status {
     Rejected = 2,
 }
 
-/// What [`JSPromise::awaitable`] does with an object that is not a promise and has a callable `then`.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Thenables {
-    /// Wait on it through its `then()`, as `await` does. It can stay pending forever: not for a blocking wait.
-    Adopt,
-    /// It is a plain value.
-    Ignore,
-}
-
 // `JSPromise` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles
 // (so `&T` is ABI-identical to non-null `*const T` and C++ mutating through
 // the pointer is interior mutation invisible to Rust). The shims that take
@@ -256,24 +247,6 @@ impl JSPromise {
 
     pub fn set_handled(&mut self) {
         JSC__JSPromise__setHandled(self)
-    }
-
-    /// Spec `PromiseResolve(%Promise%, value)`: what `await value` waits on. `None`: nothing to wait on.
-    #[inline]
-    pub fn awaitable(
-        global: &JSGlobalObject,
-        value: JSValue,
-        thenables: Thenables,
-    ) -> JsResult<Option<&mut JSPromise>> {
-        // Inline, so that a value that is not an object costs no call.
-        if !value.is_object() {
-            return Ok(None);
-        }
-        let promise =
-            crate::cpp::JSC__JSPromise__awaitable(global, value, thenables == Thenables::Adopt)?;
-        // `undefined` or a `JSPromise` cell, whose `JSValue` is its pointer.
-        Ok((!promise.is_undefined())
-            .then(|| JSPromise::opaque_mut(promise.encoded() as *mut JSPromise)))
     }
 
     /// Create a new resolved promise resolving to a given value.

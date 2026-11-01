@@ -281,12 +281,12 @@ bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 impl Timeout {
     fn init(vm: *mut VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
         let milliseconds = milliseconds.max(u64::from(VirtualMachine::timer_min_delay_ms()));
-        let deadline = bun_core::Timespec::now_allow_mocked_time()
+        let deadline = bun_core::Timespec::now(VirtualMachine::abort_signal_timeout_clock())
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
         let jsc_vm = VirtualMachine::get();
         // `AbortSignal.timeout()`, a C++ host function, calls this.
-        let context = jsc_vm.context_of_caller_no_frame();
+        let context = jsc_vm.context_of_caller();
         let graph_context = jsc_vm.as_graph_context(context);
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
@@ -298,6 +298,7 @@ impl Timeout {
                 state: TimerState::CANCELLED,
                 heap: IntrusiveField::default(),
                 in_heap: InHeap::default(),
+                is_due_when_idle: false,
             },
             signal: signal_,
             flags: TimerFlags::default(),

@@ -12,10 +12,10 @@ pub struct Camelcase {
     checks_properties: bool,
 }
 
-const NOT_CAMEL_CASE: Message =
-    Message::new("notCamelCase", "Identifier '{{name}}' is not in camel case.");
-const NOT_CAMEL_CASE_PRIVATE: Message =
-    Message::new("notCamelCasePrivate", "#{{name}} is not in camel case.");
+const NOT_CAMEL_CASE: &Message =
+    &Message::new("notCamelCase", "Identifier '{{name}}' is not in camel case.");
+const NOT_CAMEL_CASE_PRIVATE: &Message =
+    &Message::new("notCamelCasePrivate", "#{{name}} is not in camel case.");
 
 #[derive(Default)]
 pub struct State {
@@ -77,7 +77,7 @@ fn binding_equals_to_original_name(pat: Pat<'_>) -> bool {
     )
 }
 
-fn report<'a>(cx: &mut Cx<'a, Camelcase>, at: Span, name: &'a [u8], message: Message) {
+fn report<'a>(cx: &mut Cx<'a, Camelcase>, at: Span, name: &'a [u8], message: &'static Message) {
     if cx.state.reported.insert(at.start) {
         cx.report(at, message).data("name", name);
     }

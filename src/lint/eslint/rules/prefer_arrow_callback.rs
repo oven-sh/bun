@@ -9,8 +9,8 @@ pub struct PreferArrowCallback {
     allow_unbound_this: bool,
 }
 
-const PREFER_ARROW_CALLBACK: Message =
-    Message::new("preferArrowCallback", "Unexpected function expression.");
+const PREFER_ARROW_CALLBACK: &Message =
+    &Message::new("preferArrowCallback", "Unexpected function expression.");
 
 /// Maps an operand of a logical or conditional expression to the outermost such expression that can evaluate to it.
 type Values<'a> = AncestorMemo<'a, Node<'a>>;

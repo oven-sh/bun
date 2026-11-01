@@ -499,7 +499,7 @@ fn read_package_json(
             return Err(Error::InstallFailed);
         }
     };
-    let path = bun_resolver::fs::FileSystem::instance()
+    let path = bun_resolver::fs::FileSystem::get()
         .dirname_store()
         .append(json_path);
     package_dir.close();
@@ -1371,7 +1371,9 @@ impl GitSubprocess {
     }
 
     /// May free `this`.
+    #[inline(never)]
     fn maybe_finished(this: ThisPtr<Self>) {
+        bun_removable_features::removable_definition!(Install, Self::maybe_finished);
         if this.remaining_fds.get() != 0 {
             return;
         }

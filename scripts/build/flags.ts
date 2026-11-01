@@ -15,10 +15,18 @@ import { join } from "node:path";
 import { bunExeName, linksWithLld, type Config } from "./config.ts";
 import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
+import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies = ["brotli", "libjpeg-turbo", "libspng", "libwebp", "lshpack", "zlib", "zstd"];
+export const safeStackDependencies: readonly DepName[] = [
+  "brotli",
+  "libjpeg-turbo",
+  "libwebp",
+  "lshpack",
+  "zlib",
+  "zstd",
+];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -34,7 +42,7 @@ export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fu
   ];
 }
 
-export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: string): string[] {
+export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: DepName): string[] {
   return usesSafeStack(c) && safeStackDependencies.includes(dependency) ? ["-fsanitize=safe-stack"] : [];
 }
 
@@ -1051,6 +1059,15 @@ export const linkerFlags: Flag[] = [
     desc: "LTO level: IR pipeline and code generation (lld)",
   },
   {
+    // By default the inliner still takes a callee of up to 45 cost units at a call site it knows is cold: behind
+    // [[unlikely]], or on the way to a crash. Across the whole program that copies out-of-line slow paths into every
+    // caller: VM::hasExceptionsAfterHandlingTraps() alone was 0.8 MB behind RETURN_IF_EXCEPTION. At 0 a cold call
+    // site takes only what is cheaper than the call. -0.9 MB on linux-x64, no instructions more.
+    flag: "-Wl,-mllvm,-inline-cold-callsite-threshold=0",
+    when: c => c.unix && linkRunsLto(c) && linksWithLld(c),
+    desc: "LTO: inline at a cold call site only what is cheaper than the call (lld)",
+  },
+  {
     flag: "-Os",
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
@@ -1075,6 +1092,11 @@ export const linkerFlags: Flag[] = [
     flag: c => [`/opt:lldlto=${ltoLevel(c)}`, `/opt:lldltocgo=${ltoLevel(c)}`],
     when: c => c.windows && linkRunsLto(c),
     desc: "LTO level: IR pipeline and code generation (lld-link)",
+  },
+  {
+    flag: "/mllvm:-inline-cold-callsite-threshold=0",
+    when: c => c.windows && linkRunsLto(c),
+    desc: "LTO: inline at a cold call site only what is cheaper than the call (lld-link)",
   },
 
   // ─── PGO (link-side) ───
@@ -1954,6 +1976,12 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: "/EHsc",
     when: c => c.windows,
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
+  },
+  {
+    file: "src/jsc/bindings/highway_png.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
   },
   {
     file: "src/jsc/bindings/highway_xml.cpp",

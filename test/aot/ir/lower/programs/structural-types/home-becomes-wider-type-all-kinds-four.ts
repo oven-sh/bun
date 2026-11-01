@@ -771,7 +771,7 @@ export {};
 // CHECK-NEXT: Throw v23
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="held"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_35]] site=[[w_36]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] site=[[w_37]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_35]] site=[[w_36]] flags=[OmitsNull, OmitsUndefined] variableName="s"}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] site=[[w_37]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_35]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

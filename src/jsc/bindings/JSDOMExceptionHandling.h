@@ -63,6 +63,8 @@ WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::Exception*, Cache
 
 JSC::JSValue createDOMException(JSC::JSGlobalObject&, Exception&&);
 JSC::JSValue createDOMException(JSC::JSGlobalObject*, ExceptionCode, const String& = emptyString(), const String& extra = String());
+// Always a DOMException: createDOMException() turns ExceptionCode::SyntaxError into JavaScript's own SyntaxError.
+JSC::JSValue createDOMExceptionObject(JSC::JSGlobalObject*, ExceptionCode, const String& message);
 
 // Convert a DOM implementation exception into a JavaScript exception in the execution lexicalGlobalObject.
 WEBCORE_EXPORT void propagateExceptionSlowPath(JSC::JSGlobalObject&, JSC::ThrowScope&, Exception&&);

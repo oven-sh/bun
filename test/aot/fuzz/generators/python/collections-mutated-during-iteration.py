@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""collections-mutated-during-iteration.py <seed> [<functions>]: typed Maps and Sets of every kind of key (strings made at run time that equal each other, whole numbers and doubles that equal each other, -0 and 0, NaN, records, null | undefined, mixed) under random sequences of set | add | get | has | delete | clear | size, with ITERATIONS THAT ARE CHANGED WHILE THEY RUN: for-of over entries | keys | values | the table itself and forEach, in whose bodies the current entry is deleted, a later one deleted, one added, a deleted one added again, all cleared; iterators held by hand across changes and asked again after their end; nested iterations over one table; growth to hundreds and deletion down to none, so that the table grows, compacts and is made anew under a running iteration. Everything seen is written down in order. Every line as plain Bun's."""
+"""collections-mutated-during-iteration.py <seed> [<functions>]: Typed Maps and Sets with every kind of key (equal
+run-time strings, equal integers and doubles, -0 and 0, NaN, records, null, undefined), mutated while they are
+iterated.
+"""
 import random, sys
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 60
 R = random.Random(seed)

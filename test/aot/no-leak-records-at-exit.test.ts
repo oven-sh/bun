@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
@@ -7,6 +8,11 @@ import { test } from "./supported";
 // Under LeakSanitizer, and without a list of suppressions, the build ends without a leak record, and the executable ends with
 // none that `bun run` of the same program does not end with too. Each runs twice: as built, and with Malloc=1, which sends WTF's
 // allocations to the allocator that LeakSanitizer tracks.
+
+// A record is known by the names on its stack, and a symbolizer takes them from the debug information: inlined functions have no
+// other name. CI starts this file with a copy of Bun without it. For that copy the symbolizer reads the debug information of the
+// whole Bun, which has the same build ID. An executable has a build ID of its own, so what it is a copy of has to hold it.
+const bun = [bunExe().replace(/-stripped$/, ""), bunExe()].find(path => existsSync(path))!;
 
 const programs: Record<string, Record<string, string>> = {
   "a line of output": {
@@ -48,6 +54,25 @@ console.log(length);
 await server.stop(true);
 `,
   },
+  "workers that serve their default export": {
+    "entry.ts": `const url = new URL("./child.ts", import.meta.url).href;
+for (let i = 0; i < 2; i++) {
+  const worker = new Worker(url);
+  const closed = new Promise<void>(resolve => worker.addEventListener("close", () => resolve(), { once: true }));
+  console.log(await new Promise(resolve => worker.addEventListener("message", event => resolve(event.data), { once: true })));
+  await worker.terminate();
+  await closed;
+}
+`,
+    "child.ts": `export default {
+  port: 0,
+  fetch() {
+    return new Response("served");
+  },
+};
+setTimeout(() => postMessage("serves"), 20);
+`,
+  },
   "objects, timers and the platform's library": {
     "entry.ts": `class Point {
   constructor(
@@ -69,6 +94,7 @@ const expected: Record<string, string> = {
   "a line of output": "hello 3\n",
   "workers that end": "0\n2\n4\n6\n",
   "a server that answers and stops": "90\n",
+  "workers that serve their default export": "serves\nserves\n",
   "objects, timers and the platform's library": "61 0 12,345.5 36\n2 é\n",
 };
 
@@ -80,6 +106,9 @@ const env = {
   LSAN_OPTIONS: "malloc_context_size=30",
 };
 const envWithSystemMalloc = { ...env, Malloc: "1", LSAN_OPTIONS: "malloc_context_size=30:use_unaligned=1" };
+
+/** Without the line that names the port of a default export that is served. */
+const getLines = (stdout: string) => stdout.replace(/^Started (development )?server: .*\n/gm, "");
 
 function getFunctionName(frame: string): string {
   if (frame.startsWith("<")) return frame;
@@ -126,7 +155,7 @@ test.skipIf(!isASAN).each(Object.keys(programs))(
     using dir = tempDir("no-leak-records", programs[name]);
     const executable = join(String(dir), "program");
     const { stderr: buildErrors, exitCode: buildExitCode } = await runCommand(
-      [bunExe(), "build", "--compile", "--aot", ...Object.keys(programs[name]), "--outfile", executable],
+      [bun, "build", "--compile", "--aot", ...Object.keys(programs[name]), "--outfile", executable],
       String(dir),
       env,
     );
@@ -134,7 +163,7 @@ test.skipIf(!isASAN).each(Object.keys(programs))(
     expect(buildExitCode).toBe(0);
 
     const withSystemMalloc = await runCommand(
-      [bunExe(), "build", "--compile", "--aot", ...Object.keys(programs[name]), "--outfile", executable + "-2"],
+      [bun, "build", "--compile", "--aot", ...Object.keys(programs[name]), "--outfile", executable + "-2"],
       String(dir),
       envWithSystemMalloc,
     );
@@ -143,20 +172,51 @@ test.skipIf(!isASAN).each(Object.keys(programs))(
 
     for (const runEnv of [env, envWithSystemMalloc]) {
       const compiled = await runCommand([executable], String(dir), runEnv);
-      expect(compiled.stdout).toBe(expected[name]);
+      expect(getLines(compiled.stdout)).toBe(expected[name]);
       const records = getLeakRecords(compiled.stderr);
       if (records.size === 0) {
         expect(compiled.exitCode).toBe(0);
         continue;
       }
-      const plain = await runCommand([bunExe(), "run", "entry.ts"], String(dir), runEnv);
-      expect(plain.stdout).toBe(expected[name]);
+      const plain = await runCommand([bun, "run", "entry.ts"], String(dir), runEnv);
+      expect(getLines(plain.stdout)).toBe(expected[name]);
       const plainRecords = getLeakRecords(plain.stderr);
       expect(
         [...records].filter(([allocatedBy]) => !plainRecords.has(allocatedBy)).map(([, record]) => record),
       ).toEqual([]);
       expect(compiled.exitCode).toBe(plain.exitCode);
     }
+  },
+  240_000,
+);
+
+// Plain Bun serves the default export of an entry point from the evaluation of a module, an executable from a function of its own. The list names both.
+test.skipIf(!isASAN)(
+  "the list of suppressions hides for an executable what it hides for plain Bun",
+  async () => {
+    const name = "workers that serve their default export";
+    using dir = tempDir("no-leak-records", programs[name]);
+    const executable = join(String(dir), "program");
+    const withList = {
+      ...env,
+      LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "..", "leaksan.supp")}`,
+    };
+    const build = await runCommand(
+      [bun, "build", "--compile", "--aot", ...Object.keys(programs[name]), "--outfile", executable],
+      String(dir),
+      env,
+    );
+    expect(build.exitCode).toBe(0);
+    const plain = await runCommand([bun, "run", "entry.ts"], String(dir), withList);
+    const compiled = await runCommand([executable], String(dir), withList);
+    expect(getLines(compiled.stdout)).toBe(expected[name]);
+    const plainRecords = getLeakRecords(plain.stderr);
+    expect(
+      [...getLeakRecords(compiled.stderr)]
+        .filter(([allocatedBy]) => !plainRecords.has(allocatedBy))
+        .map(([, record]) => record),
+    ).toEqual([]);
+    expect(compiled.exitCode).toBe(plain.exitCode);
   },
   240_000,
 );

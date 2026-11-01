@@ -12,7 +12,7 @@ struct Restriction {
     message: Box<[u8]>,
 }
 
-const RESTRICTED_SYNTAX: Message = Message::new("restrictedSyntax", "{{message}}");
+const RESTRICTED_SYNTAX: &Message = &Message::new("restrictedSyntax", "{{message}}");
 
 fn selector_of(option: &Json) -> Option<&[u8]> {
     option.as_str().or_else(|| option.get(b"selector")?.as_str())

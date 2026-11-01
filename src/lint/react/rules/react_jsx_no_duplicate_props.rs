@@ -11,9 +11,9 @@ pub struct JsxNoDuplicateProps {
     ignore_case: bool,
 }
 
-const NO_DUPLICATE_PROPS: Message = Message::new("noDuplicateProps", "No duplicate props allowed");
-const JSX_NO_DUPLICATE_PROPS: Message =
-    Message::new("", "No duplicate props allowed. The prop \"{{prop_name}}\" is duplicated.");
+const NO_DUPLICATE_PROPS: &Message = &Message::new("noDuplicateProps", "No duplicate props allowed");
+const JSX_NO_DUPLICATE_PROPS: &Message =
+    &Message::new("", "No duplicate props allowed. The prop \"{{prop_name}}\" is duplicated.");
 
 /// With more attributes than this, the names go into a hash set.
 const FEW: usize = 8;

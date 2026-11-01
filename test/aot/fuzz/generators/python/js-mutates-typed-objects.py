@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""what-javascript-does-to-an-object-it-was-handed.py <n>: what untyped code does to an object of typed code that it was handed is not refused.
-The n-th of 681 programs: (door) x (kind of typed object) x (what a JavaScript file does to it). state.ts makes the object and reads it again; view.js alters it in between: a store of another kind, undefined, an object, a getter for a
-while; a delete and a store again; another prototype; extra names; a freeze .. What it leaves behind fits the type again. The doors: view.js imports what makes the object | typed code hands the object over as an argument and reads
-what comes back | typed code keeps its own reference and reads through that. Three files: main.ts, and behind a line `//// <name>` each, state.ts and view.js. `names` lists the programs; a name does in place of the number.
-As plain Bun, line by line."""
+"""js-mutates-typed-objects.py <n>: The n-th of 681 programs: (entry path) x (kind of typed object) x (what a JavaScript
+file does to it). Whatever untyped code does to a typed object it received must work as in plain Bun.
+"""
 import sys
 KINDS = {
  'record': ('export interface T { count: number; label: string }', '{ count: 1, label: "one" }', 'o.label + " " + o.count'),

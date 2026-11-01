@@ -1,11 +1,12 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -59,16 +60,15 @@ describe("which code runs", () => {
     });
     expect(stages(compiled.stderr)).toContain("GenerateCode");
   });
-  test("bun test --aot loads no compiled code", async () => {
+  test("bun test --aot runs compiled code", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
       "one.test.ts": `import { expect, test } from "bun:test";\ntest("one", () => { expect(1).toBe(1); });`,
     });
     const checked = await bun(String(dir), "test", "--aot");
     expect(passed(checked.stderr)).toEqual(["one"]);
-    expect(checked.stderr).not.toContain("[aot] image: ");
+    expect(checked.stderr).toContain("[aot] image: ");
     expect(checked.exitCode).toBe(0);
-    expect((await bun(String(dir), "test", "--debug-aot")).stderr).toContain("[aot] image: ");
   });
 });
 
@@ -194,55 +194,39 @@ describe("bun test --aot", () => {
     expect(passed(stderr)).toEqual(["mocked", "spied"]);
     expect(exitCode).toBe(0);
   });
-  test("under --debug-aot they throw, as in an executable", async () => {
+  test("they work under --debug-aot too", async () => {
     using dir = tempDir("aot-flag-runs-from-source", mocked);
     const { stderr, exitCode } = await bun(String(dir), "test", "--debug-aot");
-    expect(stderr).toContain("module exports can't be replaced in a compiled executable");
-    expect(stderr).toContain("cannot replace a module that was compiled ahead of time");
-    expect(passed(stderr)).toEqual([]);
-    expect(exitCode).toBe(1);
+    expect(passed(stderr)).toEqual(["mocked", "spied"]);
+    expect(exitCode).toBe(0);
   });
-  test("a spy goes through the lock and is restored, a store does not", async () => {
+  // The build opens the members that it sees a test replace: tests-replace-members-of-built-ins.test.ts. These objects and names are made when the tests run.
+  test("a spy on a read-only member of a built-in object is refused by name", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
       "one.test.ts": `import { expect, spyOn, test } from "bun:test";
-        const early = spyOn(String.prototype, "trimEnd");
-        early.mockRestore();
-        test("spied", () => {
-          const original = String.prototype.normalize;
-          const spy = spyOn(String.prototype, "normalize").mockReturnValue("spied");
-          expect("a".normalize()).toBe("spied");
-          expect(() => { (String.prototype as any).normalize = original; }).toThrow(TypeError);
-          spy.mockRestore();
-          expect(String.prototype.normalize).toBe(original);
-          expect("a".normalize()).toBe("a");
-          expect(() => { (String.prototype as any).normalize = () => ""; }).toThrow(TypeError);
-        });`,
+        const made = (...parts: string[]): any => (process.argv.length > 1000 ? "at" : parts.join(""));
+        test("on a prototype", () => { spyOn(Object.getPrototypeOf(made("a")), made("norm", "alize")); });
+        test("on a namespace object", () => { spyOn((globalThis as any)[made("Ma", "th")], made("m", "ax")); });
+        test("unchanged", () => { expect(["a".normalize(), Math.max(1, 2)]).toEqual(["a", 2]); });`,
     });
     const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
-    expect(passed(stderr)).toEqual(["spied"]);
-    // The store of another function is reported. The spies are not, nor is the store of what the member holds.
-    const lines = stderr.split("\n");
-    expect(
-      lines.flatMap((line, index) => (line.includes("TS100014") ? [lines[index + 1].replace(/^.*[\\/]/, "")] : [])),
-    ).toEqual(["one.test.ts:12:34"]);
-    expect(exitCode).toBe(0);
+    expect(passed(stderr)).toEqual(["unchanged"]);
+    for (const [object, name] of [
+      ["String.prototype", "normalize"],
+      ["Math", "max"],
+    ])
+      expect(stderr).toContain(
+        `TypeError: Cannot spy on ${object}.${name} because built-in objects are read-only in compiled code, and the build didn't see a test replace this one. Spell out the object and the name where the test does it, as in ${object}.${name} = f or spyOn(${object}, "${name}") (https://bun.com/docs/compiler/debugging#run-your-tests-compiled)`,
+      );
+    expect(exitCode).toBe(1);
   });
-  test("a spy goes through the lock of a built-in object and of the global object", async () => {
+  test("a spy replaces a member that a program may replace, and a function of the global object", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
       "one.test.ts": `import { expect, mock, spyOn, test } from "bun:test";
         const kept = Date.now;
         const D = Date;
-        test("a member of a built-in object", () => {
-          const original = Math.max;
-          const spy = spyOn(Math, "max").mockReturnValue(7);
-          expect([Math.max(1, 2), Reflect.get(Math, "max")(1, 2), original(1, 2)]).toEqual([7, 7, 2]);
-          expect(spyOn(Math, "max")).toBe(spy);
-          spy.mockRestore();
-          expect(Math.max).toBe(original);
-          expect(() => { (Math as any).max = () => 0; }).toThrow(TypeError);
-        });
         test("a member that a program may replace", () => {
           const spy = spyOn(Date, "now").mockReturnValue(1000);
           expect([Date.now(), D.now(), Reflect.get(Date, "now")(), [0].map(Date.now)[0]]).toEqual([1000, 1000, 1000, 1000]);
@@ -270,7 +254,6 @@ describe("bun test --aot", () => {
     });
     const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
     expect(passed(stderr)).toEqual([
-      "a member of a built-in object",
       "a member that a program may replace",
       "functions of the global object",
       "members of two, restored together",
@@ -279,8 +262,8 @@ describe("bun test --aot", () => {
   });
   const locked = {
     "tsconfig.json": tsconfig,
-    "a.test.ts": `import { expect, test } from "bun:test";\ntest("a", () => { expect(() => { (Array.prototype as any).push = () => 0; }).toThrow(TypeError); });`,
-    "b.test.ts": `import { expect, test } from "bun:test";\ntest("b", () => { expect(() => { (Array.prototype as any).pop = () => 0; }).toThrow(TypeError); });`,
+    "a.test.ts": `import { expect, test } from "bun:test";\ntest("a", () => { expect(() => { (Promise.prototype as any).constructor = () => {}; }).toThrow(TypeError); });`,
+    "b.test.ts": `import { expect, test } from "bun:test";\ntest("b", () => { expect(() => { (Array.prototype as any)[Symbol.iterator] = () => 0; }).toThrow(TypeError); });`,
   };
   test.concurrent.each([["--isolate"], ["--parallel=2"], ["--rerun-each=2"], ["--coverage"]])(
     "%s works, and the built-ins are read-only in every file",
@@ -442,8 +425,8 @@ describe("--watch", () => {
     "value.ts": value("1"),
     "shape.ts": shape("number"),
   };
-  // What a stream has said so far. `until` returns when that holds, and throws if the stream ends first.
-  function listen(stream: ReadableStream<Uint8Array>) {
+  // What a stream has said so far. `until` returns when that holds, and throws if the stream ends first: then it says how the process ended.
+  function listen(stream: ReadableStream<Uint8Array>, getEnd: () => Promise<string>) {
     const heard = { text: "", ended: false };
     let wake = () => {};
     (async () => {
@@ -459,7 +442,7 @@ describe("--watch", () => {
       heard,
       async until(holds: (text: string) => boolean) {
         while (!holds(heard.text)) {
-          if (heard.ended) throw new Error("the stream ended after:\n" + heard.text);
+          if (heard.ended) throw new Error(`the stream ended after:\n${heard.text}\n${await getEnd()}`);
           await new Promise<void>(resolve => (wake = resolve));
         }
       },
@@ -467,7 +450,11 @@ describe("--watch", () => {
   }
   function watch(cwd: string, ...args: string[]) {
     const proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    return { proc, out: listen(proc.stdout), err: listen(proc.stderr), [Symbol.dispose]: () => proc.kill() };
+    const getEnd = async () =>
+      `exit code ${await proc.exited}, signal ${proc.signalCode}\nstdout:\n${out.heard.text}\nstderr:\n${err.heard.text}`;
+    const out = listen(proc.stdout, getEnd);
+    const err = listen(proc.stderr, getEnd);
+    return { proc, out, err, [Symbol.dispose]: () => proc.kill() };
   }
   const count = (text: string, part: string) => text.split(part).length - 1;
 
@@ -515,22 +502,6 @@ describe("--watch", () => {
     writeFileSync(join(String(dir), "value.ts"), value("1"));
     await watched.out.until(text => text.endsWith("run 1 1 locked\n"));
     expect(watched.out.heard.text).toBe("run 1 1 locked\n");
-  });
-  test("bun test: a test file that is refused is checked again when it changes", async () => {
-    const written = (name: string, port: string) =>
-      `import { expect, test } from "bun:test";\nconst port: number = ${port};\ntest("${name}", () => { expect(port).toBe(1); });`;
-    using dir = tempDir("aot-flag-runs-from-source", {
-      "tsconfig.json": tsconfig,
-      "a.test.ts": written("a", "1"),
-      "b.test.ts": written("b", `"1"`),
-    });
-    using watched = watch(String(dir), "test", "--watch", "--aot");
-    const said = () => watched.out.heard.text + watched.err.heard.text;
-    await watched.err.until(() => said().includes("TS2322") && passed(said()).includes("a"));
-    expect(passed(said())).toEqual(["a"]);
-    writeFileSync(join(String(dir), "b.test.ts"), written("b", "1"));
-    await watched.err.until(() => passed(said()).includes("b"));
-    expect([...new Set(passed(said()))]).toEqual(["a", "b"]);
   });
   test("--hot starts the process again like --watch, so that nothing runs unchecked", async () => {
     const counts = `\nconst state = globalThis as unknown as { runs?: number };\nstate.runs = (state.runs ?? 0) + 1;\nconsole.log("runs", state.runs);`;

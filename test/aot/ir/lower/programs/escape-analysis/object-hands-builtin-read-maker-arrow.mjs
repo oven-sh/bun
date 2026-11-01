@@ -2997,7 +2997,7 @@ for (const report of reports) report();
 
 // GENERATED: start steps method [Symbol.asyncIterator]
 // CHECK-LABEL: function {{*}}name="start"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=undefined|null|[[f_1]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=undefined|null|[[f_1]] flags=[IsExpected] variableName="v"}] thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_1]], v1: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -3063,7 +3063,7 @@ for (const report of reports) report();
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="method"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=undefined|null|[[f_11]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=undefined|null|[[f_11]] flags=[IsExpected] variableName="v"}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_11]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -3075,7 +3075,7 @@ for (const report of reports) report();
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.asyncIterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=undefined|null|[[f_13]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_14]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=undefined|null|[[f_13]] flags=[IsExpected] variableName="v"}] thisType={type=anything} results=[{type=undefined|null|[[L_14]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_13]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

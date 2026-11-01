@@ -6,7 +6,7 @@ pub struct MaxClassesPerFile {
     max: usize,
 }
 
-const MAXIMUM_EXCEEDED: Message = Message::new(
+const MAXIMUM_EXCEEDED: &Message = &Message::new(
     "maximumExceeded",
     "File has too many classes ({{ classCount }}). Maximum allowed is {{ max }}.",
 );

@@ -233,9 +233,9 @@ function f4 name="Body" module=m0 position=149 kind=BaseConstructor flags=[HasNe
 # -- generated: advance energy
 # CHECK-LABEL: function {{*}}name="advance"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 13, patchpoints: 1, rare instructions: 44
+# CHECK-NEXT: instructions: 13, patchpoints: 1, rare instructions: 56
 # CHECK-NEXT: end of function f9
 # CHECK-LABEL: function {{*}}name="energy"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 22, patchpoints: 1, rare instructions: 17, polls: 1
+# CHECK-NEXT: instructions: 23, patchpoints: 1, rare instructions: 22, polls: 1
 # CHECK-NEXT: end of function f3

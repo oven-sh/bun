@@ -187,7 +187,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 find
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 175, patchpoints: 25, rare instructions: 33, polls: 1
+# CHECK-NEXT: instructions: 173, patchpoints: 25, rare instructions: 31, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="find"
 # CHECK: role=EntryChecks

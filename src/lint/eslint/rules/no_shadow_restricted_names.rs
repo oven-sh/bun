@@ -9,8 +9,8 @@ pub struct NoShadowRestrictedNames {
     report_global_this: Option<bool>,
 }
 
-const SHADOWING_RESTRICTED_NAME: Message =
-    Message::new("shadowingRestrictedName", "Shadowing of global property '{{name}}'.");
+const SHADOWING_RESTRICTED_NAME: &Message =
+    &Message::new("shadowingRestrictedName", "Shadowing of global property '{{name}}'.");
 
 /// A variable named `undefined` that's never assigned behaves like the global.
 fn safely_shadows_undefined(symbol: Symbol) -> bool {

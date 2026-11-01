@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow `let` or `var` variables that are read but never assigned.
 pub struct NoUnassignedVars;
 
-const UNASSIGNED: Message = Message::new(
+const UNASSIGNED: &Message = &Message::new(
     "unassigned",
     "'{{name}}' is always 'undefined' because it's never assigned.",
 );

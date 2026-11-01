@@ -4,12 +4,12 @@ use bun_lint_oxlint::ast_util::{could_be_asi_hazard, is_global_reference_name};
 /// Disallow `Array` constructors.
 pub struct NoArrayConstructor;
 
-const PREFER_LITERAL: Message = Message::new(
+const PREFER_LITERAL: &Message = &Message::new(
     "preferLiteral",
     "The array literal notation [] is preferable.",
 );
-const USE_LITERAL: Message = Message::new("useLiteral", "Replace with an array literal.");
-const USE_LITERAL_AFTER_SEMICOLON: Message = Message::new(
+const USE_LITERAL: &Message = &Message::new("useLiteral", "Replace with an array literal.");
+const USE_LITERAL_AFTER_SEMICOLON: &Message = &Message::new(
     "useLiteralAfterSemicolon",
     "Replace with an array literal, add preceding semicolon.",
 );

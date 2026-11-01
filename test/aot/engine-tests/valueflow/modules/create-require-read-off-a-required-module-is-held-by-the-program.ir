@@ -1,0 +1,24 @@
+# globalThis.other(require("module").createRequire); globalThis.other("/app/main.js")(globalThis.name)
+# The program has taken createRequire off what require() answers, and it escapes. A call of an unknown value may be a call of it,
+# and the call of what that returns may load a module by name.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsModuleByName ModuleRequire
+# CHECK: modules-by-name yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = RequireModule module=m1 referrer=m0 specifier="module"
+    v3 = PropGet v2 key="createRequire"
+    v4 = PropGet v0 key="other" [isFreeName]
+    v5 = Call v4, -, v3
+    v6 = PropGet v0 key="other" [isFreeName]
+    v7 = String string="/app/main.js"
+    v8 = Call v6, -, v7
+    v9 = Call v8, -, v1
+    Return v9
+}

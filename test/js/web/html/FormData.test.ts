@@ -44,6 +44,47 @@ describe("FormData", () => {
     expect(formData.get("foo2").name).toBe("foo.txt");
   });
 
+  // Same as Node and browsers.
+  describe("reading a file entry", () => {
+    it("returns the same File that was appended or set", () => {
+      const file = new File(["a"], "a.txt");
+      const form = new FormData();
+      form.append("appended", file);
+      form.set("set", file);
+      expect(form.get("appended")).toBe(file);
+      expect(form.get("set")).toBe(file);
+      expect(form.getAll("appended")).toEqual([file]);
+      expect(form.getAll("appended")[0]).toBe(file);
+      expect([...form.values()].every(value => value === file)).toBe(true);
+      expect([...form.entries()].every(([, value]) => value === file)).toBe(true);
+      const seen: unknown[] = [];
+      form.forEach(value => seen.push(value));
+      expect(seen.every(value => value === file)).toBe(true);
+    });
+
+    it("returns the same new File every time for a Blob", () => {
+      const blob = new Blob(["a"]);
+      const form = new FormData();
+      form.append("blob", blob);
+      const entry = form.get("blob");
+      expect(entry).toBeInstanceOf(File);
+      expect(entry).not.toBe(blob);
+      expect(form.get("blob")).toBe(entry);
+      expect(form.getAll("blob")[0]).toBe(entry);
+    });
+
+    it("returns the same new File every time when a filename is given", async () => {
+      const file = new File(["a"], "a.txt", { type: "text/plain" });
+      const form = new FormData();
+      form.append("renamed", file, "other.txt");
+      const entry = form.get("renamed") as File;
+      expect(entry).not.toBe(file);
+      expect(form.get("renamed")).toBe(entry);
+      expect([entry.name, entry.type, await entry.text()]).toEqual(["other.txt", "text/plain", "a"]);
+      expect(file.name).toBe("a.txt");
+    });
+  });
+
   it("should use the correct filenames", async () => {
     const blob = new Blob(["bar"]) as any;
     const form = new FormData();

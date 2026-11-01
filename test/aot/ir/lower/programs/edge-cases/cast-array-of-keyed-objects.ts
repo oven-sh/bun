@@ -53,18 +53,19 @@ for (const { a } of rows({ a: [1, 2] as const })) console.log(a);
 // CHECK-NEXT: Jump -> next b9()
 // CHECK-NEXT: b9() handler=b10():
 // CHECK-NEXT: v21 = PropGet v2 key="push"
-// CHECK-NEXT: v22 = NewDictionary
-// CHECK-NEXT: v23 = ToPropertyKey v13
-// CHECK-NEXT: ElemDefine v22, v23, v20
-// CHECK-NEXT: v25 = Call v21, v2, v22 calleeKey="push" calleeName="out.push"
-// CHECK-NEXT: v26 = Convert v25 declared={type=number site=[[w_10]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v22 = ToPropertyKey v13
+// CHECK-NEXT: v23 = NewObject layout=[[L_10]]
+// CHECK-NEXT: ElemDefine v23, v22, v20
+// CHECK-NEXT: v25 = FinishObject v23
+// CHECK-NEXT: v26 = Call v21, v2, v25 calleeKey="push" calleeName="out.push"
+// CHECK-NEXT: v27 = Convert v26 declared={type=number site=[[w_11]]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: Jump -> next b6()
 // CHECK-NEXT: b10() role=IterationCleanup subject=v16 handler=b11():
-// CHECK-NEXT: v27 = CatchException
+// CHECK-NEXT: v28 = CatchException
 // CHECK-NEXT: IteratorClose v16 completion=Throw
-// CHECK-NEXT: Rethrow v27
+// CHECK-NEXT: Rethrow v28
 // CHECK-NEXT: b11() role=IterationCleanup subject=v7:
-// CHECK-NEXT: v29 = CatchException
+// CHECK-NEXT: v30 = CatchException
 // CHECK-NEXT: IteratorClose v7 completion=Throw
-// CHECK-NEXT: Rethrow v29
+// CHECK-NEXT: Rethrow v30
 // CHECK-NEXT: }

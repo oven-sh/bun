@@ -95,6 +95,11 @@ function textsOfIdentifier(text: string, variable: string): string[] {
   return [...(listed?.[1] ?? "").matchAll(/"([^"]+)"_s/g)].map(([, literal]) => literal);
 }
 
+// WebCore::builtinNames(vm).somePrivateName(), written there or kept in a variable: no program can spell it.
+const isPrivateName = (text: string, variable: string) =>
+  variable === "WebCore" ||
+  new RegExp(`\\b${variable} = WebCore::builtinNames\\(vm\\)\\.\\w+PrivateName\\(\\)`).test(text);
+
 test("the list of process has every name that native code looks up on the object", async () => {
   registerLibraryModule();
   const file = join(root, "src/codegen/builtins/host/process.builtins.ts");
@@ -107,6 +112,7 @@ test("the list of process has every name that native code looks up on the object
     const text = readFileSync(path, "utf8");
     for (const [, literal, variable] of text.matchAll(lookupOnProcess)) {
       const names = literal === undefined ? textsOfIdentifier(text, variable) : [literal];
+      if (names.length === 0 && isPrivateName(text, variable)) continue;
       expect(names, `${path}: the name in ${variable}`).not.toBeEmpty();
       for (const name of names) found.add(name);
     }

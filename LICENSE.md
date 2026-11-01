@@ -40,7 +40,8 @@ Bun statically links these libraries:
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) (not linked: `src/libdeflate` is a port of it) | MIT |
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
-| [`libspng`](https://github.com/randy408/libspng) | BSD 2-Clause |
+| [`libspng`](https://github.com/randy408/libspng) (not linked: `src/png` is derived from parts of it) | BSD 2-Clause |
+| [`stb_image`](https://github.com/nothings/stb) (not linked: the PNG codec finds the Paeth predictor its way) | MIT or public domain |
 | [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |

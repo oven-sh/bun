@@ -415,14 +415,59 @@ pub(crate) mod js_bundler {
         Ok(())
     }
 
+    /// A member of `compile` that holds a string or an array of strings.
+    fn read_names(
+        global_this: &JSGlobalObject,
+        compile: JSValue,
+        key: &str,
+    ) -> JsResult<Vec<Vec<u8>>> {
+        let mut list = Vec::new();
+        let Some(value) = compile.get(global_this, key)? else {
+            return Ok(list);
+        };
+        if value.is_undefined_or_null() {
+            return Ok(list);
+        }
+        let mut push = |names: JSValue| -> JsResult<()> {
+            if !names.is_string() {
+                return Err(global_this.throw_invalid_property_type_value(
+                    format!("compile.{key}").as_bytes(),
+                    b"string or array of strings",
+                    names,
+                ));
+            }
+            list.push(names.to_utf8(global_this)?.slice().to_vec());
+            Ok(())
+        };
+        if value.is_array() {
+            let mut iter = value.array_iterator(global_this)?;
+            while let Some(names) = iter.next()? {
+                push(names)?;
+            }
+        } else {
+            push(value)?;
+        }
+        Ok(list)
+    }
+
+    fn with_key<'a>(
+        key: &'static str,
+        list: &'a [Vec<u8>],
+    ) -> impl Iterator<Item = (&'static str, Option<&'a [u8]>)> {
+        list.iter().map(move |names| (key, Some(names.as_slice())))
+    }
+
     /// The members of `compile` whose meaning `compile_options::resolve` owns, as written.
     #[derive(Default)]
     struct RawCompileFlags {
         aot: bool,
         logs_type_mismatches: bool,
         explain: Vec<Vec<u8>>,
+        validates: bool,
+        check: Vec<Vec<u8>>,
         disable: Vec<Vec<u8>>,
         heat: Option<Vec<u8>>,
+        testing: Vec<Vec<u8>>,
         omits_function_source: bool,
         obfuscates: bool,
         admits_inspector: bool,
@@ -482,30 +527,12 @@ pub(crate) mod js_bundler {
             global_this: &JSGlobalObject,
             compile: JSValue,
         ) -> JsResult<()> {
-            if let Some(disable) = compile.get(global_this, "aotDisable")?
-                && !disable.is_undefined_or_null()
-            {
-                let mut push = |names: JSValue| -> JsResult<()> {
-                    if !names.is_string() {
-                        return Err(global_this.throw_invalid_property_type_value(
-                            b"compile.aotDisable",
-                            b"string or array of strings",
-                            names,
-                        ));
-                    }
-                    self.disable
-                        .push(names.to_utf8(global_this)?.slice().to_vec());
-                    Ok(())
-                };
-                if disable.is_array() {
-                    let mut iter = disable.array_iterator(global_this)?;
-                    while let Some(names) = iter.next()? {
-                        push(names)?;
-                    }
-                } else {
-                    push(disable)?;
-                }
-            }
+            self.validates = compile
+                .get_boolean_loose(global_this, "aotValidate")?
+                .unwrap_or(false);
+            self.check = read_names(global_this, compile, "aotCheck")?;
+            self.disable = read_names(global_this, compile, "aotDisable")?;
+            self.testing = read_names(global_this, compile, "aotTesting")?;
 
             if let Some(heat) = compile.get(global_this, "aotHeat")?
                 && !heat.is_undefined_or_null()
@@ -581,11 +608,12 @@ pub(crate) mod js_bundler {
                     logs: self.logs,
                     is_template: false,
                 },
-                developer_words: self
-                    .disable
-                    .iter()
-                    .map(|names| ("disable", Some(names.as_slice())))
+                // In the order of the command line's flags.
+                developer_words: (self.validates.then_some(("validate", None)).into_iter())
+                    .chain(with_key("check", &self.check))
+                    .chain(with_key("disable", &self.disable))
                     .chain(self.heat.iter().map(|word| ("heat", Some(word.as_slice()))))
+                    .chain(with_key("testing", &self.testing))
                     .collect(),
                 is_cross_compile: !compile.compile_target.is_this_bun(),
                 exec_argv: &compile.exec_argv.list,
@@ -1527,11 +1555,9 @@ pub(crate) mod js_bundler {
             }
 
             if let Some(define) = config.get_own_object(global_this, "define")? {
-                // SAFETY: `get_own_object` only returns non-null live JSObject*.
-                let define_ref = unsafe { &*define };
                 let define_iter = jsc::JSPropertyIterator::init(
                     global_this,
-                    define_ref,
+                    define,
                     jsc::JSPropertyIteratorOptions {
                         skip_empty_name: true,
                         include_value: true,
@@ -1566,11 +1592,9 @@ pub(crate) mod js_bundler {
             }
 
             if let Some(loaders) = config.get_own_object(global_this, "loader")? {
-                // SAFETY: `get_own_object` only returns non-null live JSObject*.
-                let loaders_ref = unsafe { &*loaders };
                 let loader_iter = jsc::JSPropertyIterator::init(
                     global_this,
-                    loaders_ref,
+                    loaders,
                     jsc::JSPropertyIteratorOptions {
                         skip_empty_name: true,
                         include_value: true,
@@ -1696,6 +1720,13 @@ pub(crate) mod js_bundler {
                     let define_keys = compile.compile_target.define_keys();
                     let define_values = compile.compile_target.define_values();
                     debug_assert_eq!(define_keys.len(), define_values.len());
+                    if let Some(aot) = compile.aot.as_mut() {
+                        let names = this.define.keys().iter();
+                        aot.user_defined_names = names
+                            .filter(|name| !define_keys.contains(&&***name))
+                            .cloned()
+                            .collect();
+                    }
                     for (key, value) in define_keys.iter().zip(define_values) {
                         this.define.insert(key, value)?;
                     }
@@ -2069,17 +2100,10 @@ pub(crate) mod js_bundler {
         BundleV2::on_notify_defer(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 
-    /// # Safety
-    /// `load` must be the live `*mut Load` previously handed to C++ via
-    /// `Load::dispatch`, and `global` must be the plugin's owning
-    /// `JSGlobalObject`; both valid and exclusively accessed on the JS thread.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn JSBundlerPlugin__onDefer(
-        load: *mut Load,
-        global: *mut JSGlobalObject,
-    ) -> JSValue {
-        // SAFETY: called from C++ with valid pointers
-        unsafe { jsc::to_js_host_call(&*global, || (&mut *load).on_defer(&*global)) }
+    extern "C" fn JSBundlerPlugin__onDefer(load: &mut Load, global: &JSGlobalObject) -> JSValue {
+        // C++ calls this only for a request the plugin object still holds (BundlerPlugin::holdsRequest).
+        jsc::to_js_host_call(global, || load.on_defer(global))
     }
 
     #[unsafe(no_mangle)]
@@ -2364,12 +2388,10 @@ pub(crate) mod js_bundler {
     #[unsafe(no_mangle)]
     unsafe extern "C" fn JSBundlerPlugin__addError(
         ctx: *mut c_void,
-        plugin: *mut Plugin,
+        plugin: &mut Plugin,
         exception: JSValue,
         kind: u8,
     ) {
-        // SAFETY: per fn contract.
-        let plugin = unsafe { &mut *plugin };
         match kind {
             0 => {
                 // SAFETY: per fn contract; the request's one answer.
@@ -2623,14 +2645,10 @@ impl BuildArtifact {
                 )?;
 
                 let sourcemap_value = js::sourcemap_get_cached(this_value);
-                if let Some((sm_value, sm_ptr)) =
-                    sourcemap_value.and_then(|v| v.as_::<BuildArtifact>().map(|p| (v, p)))
+                if let Some((sm_value, sm)) =
+                    sourcemap_value.and_then(|v| v.as_class_ref::<BuildArtifact>().map(|p| (v, p)))
                 {
-                    // SAFETY: `as_` returned a non-null wrapper-owned pointer;
-                    // `write_format` is `&self` so a shared borrow of `sm_ptr`
-                    // is sound even if it aliases `self`.
-                    unsafe { &*sm_ptr }
-                        .write_format::<F, W, ENABLE_ANSI_COLORS>(sm_value, formatter, writer)?;
+                    sm.write_format::<F, W, ENABLE_ANSI_COLORS>(sm_value, formatter, writer)?;
                 } else {
                     write!(
                         writer,

@@ -14,7 +14,7 @@ pub struct NoNoninteractiveTabindex {
     allow_expression_values: bool,
 }
 
-const NO_NONINTERACTIVE_TABINDEX: Message = Message::new("", "`tabIndex` should only be declared on interactive elements.");
+const NO_NONINTERACTIVE_TABINDEX: &Message = &Message::new("", "`tabIndex` should only be declared on interactive elements.");
 
 impl Rule for NoNoninteractiveTabindex {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-noninteractive-tabindex", Kind::Problem);

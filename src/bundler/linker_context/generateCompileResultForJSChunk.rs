@@ -19,7 +19,7 @@ use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_j
 // (atomic RMW). Reads `c.graph`/`c.parse_graph` SoA columns shared. Never
 // forms `&mut LinkerContext` or `&mut Chunk`.
 // `PendingPartRange` is `Send` because its only non-auto-`Send` field is
-// `&GenerateChunkCtx` whose pointee is `unsafe impl Send + Sync`.
+// `&GenerateChunkCtx` whose pointee is `Send + Sync`.
 //
 /// # Safety
 ///

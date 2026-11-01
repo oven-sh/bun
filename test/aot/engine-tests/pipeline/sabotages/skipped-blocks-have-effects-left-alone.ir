@@ -19,7 +19,7 @@ variable g5 name="box" module=m0 declared={type=undefined|null|absent|L2 flags=[
 data d0 root=Array{contents=anything} module=m0
 data d1 root=Object{layout=L2 members=[{key="value" value=Number{}}]} module=m0
 data d2 root=Array{contents=number elements=[Number{value=3}, Number{value=4}]} module=m0
-runtimefunction id=44 function=f25
+runtimefunction id=ArrayPrototypeForEach function=f25
 
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -379,7 +379,7 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f24 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 
-function f25 name="forEach" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=44 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f25 name="forEach" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():

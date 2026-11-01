@@ -1,20 +1,13 @@
 // A call of a generator function makes the generator and saves the frame of its body for the first time. From the second call of a function object on, neither enters the runtime, however the
 // function is written and whatever it takes. The generator inherits from what the function's `prototype` holds at that moment: another object, an object of another realm, or, for null, 1 and
 // any other primitive, the realm's own generator prototype. That holds after every way to store to `prototype`, for generator functions of another realm and for 48 closures called in turn.
-// The program counts the entries of the two operations, which only the jsc shell can.
-// Env: JSC_aotCountsPath=/dev/null
-declare const aotOperationCount: undefined | ((name: string) => number);
+// The run counts the entries of the two operations. Below "== counts" 28 kinds of function are called 4,000 times each: a kind that enters at every call adds 3,000 or more.
+// COUNT: operation:operationAOTNewGenerator <= 22000
+// COUNT: operation:operationAOTSaveFrameAndYield <= 1500
 declare const gc: undefined | (() => void);
 declare const createGlobalObject: undefined | (() => any);
-const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
 const collect: () => void = typeof gc === "function" ? gc : () => Bun.gc(true);
 const otherRealm: any = typeof createGlobalObject === "function" ? createGlobalObject() : require("node:vm").runInNewContext("globalThis");
-function entered(): number {
-  return counted ? counted("operationAOTNewGenerator") + counted("operationAOTSaveFrameAndYield") : 0;
-}
-function few(entries: number, calls: number): string {
-  return entries * 20 < calls ? "few entries" : entries + " ENTRIES FOR " + calls + " CALLS";
-}
 const lines: string[] = [];
 let finished = 0;
 type Numbers = Generator<number, void, unknown>;
@@ -126,7 +119,6 @@ async function* awaitsFirst(n: number): NumbersLater {
 const calls = 4000;
 function measure(label: string, make: (i: number) => Numbers): void {
   make(0).next();
-  const before = entered();
   let sum = 0;
   const kept: Numbers[] = [];
   for (let i = 0; i < calls; i++) {
@@ -135,23 +127,20 @@ function measure(label: string, make: (i: number) => Numbers): void {
     if (i % 500 === 0) kept.push(generator);
     if (i % 2000 === 1999) collect();
   }
-  const entries = entered() - before;
   for (const generator of kept) sum += (generator.next().value as number) + (generator.return().done ? 1 : 0);
-  lines.push(label + ": " + sum + ", " + few(entries, calls));
+  lines.push(label + ": " + sum);
 }
 async function measureLater(label: string, make: (i: number) => NumbersLater): Promise<void> {
   await make(0).next();
-  const before = entered();
   const steps: Promise<IteratorResult<number, void>>[] = [];
   for (let i = 0; i < calls; i++) {
     const generator = make(i);
     if (i % 4 === 1) steps.push(generator.next());
     if (i % 2000 === 1999) collect();
   }
-  const entries = entered() - before;
   let sum = 0;
   for (const step of await Promise.all(steps)) sum += step.value as number;
-  lines.push(label + ": " + sum + ", " + few(entries, calls));
+  lines.push(label + ": " + sum);
 }
 
 const theirs: any = otherRealm.Function("return function* (n) { yield n; yield 'theirs'; }")();

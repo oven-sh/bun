@@ -6,6 +6,7 @@ use bun_core::{Global, Output};
 use bun_options_types::aot_options::AotOptions;
 use bun_options_types::context::ContextData;
 use bun_options_types::schema::api;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::format::{self, Layout};
 use bun_sema_driver::{CommandLine, CompilerOption};
 
@@ -112,9 +113,8 @@ fn set_compile_context(ctx: &mut ContextData, options: &Options, cwd: &[u8]) {
         thread_count: NonZeroU32::new(u32::try_from(options.threads).unwrap_or(u32::MAX)),
         ..Default::default()
     };
-    aot.forbids_text_evaluation = compile_options::disallows_code_generation_from_strings(
-        exec_argv.as_deref().unwrap_or_default(),
-    );
+    aot.code_generation_from_strings =
+        compile_options::code_generation_from_strings(exec_argv.as_deref().unwrap_or_default());
     aot.trim.removes_unused = options.trim;
     set_build_report(&mut aot, options);
     bundler_options.compile_exec_argv = exec_argv;
@@ -206,7 +206,7 @@ fn errors_line(log: &bun_ast::Log, files_checked: u32) -> Vec<u8> {
         .filter_map(|message| message.data.location.as_ref())
         .map(|location| &location.file[..])
         .collect();
-    files.sort_unstable();
+    files.shared_sort_unstable();
     files.dedup();
 
     let mut line = b"Found ".to_vec();

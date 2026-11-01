@@ -436,6 +436,23 @@ pub enum HotReload {
     Watch,
 }
 
+/// Which files `bun test` compiles with the React Compiler. Test files, preloads and `node_modules` are never compiled.
+#[derive(Default)]
+pub struct ReactCompilerScope {
+    /// Folders or globs, relative to the working directory. Empty means every file.
+    pub include: Vec<Box<[u8]>>,
+    pub exclude: Vec<Box<[u8]>>,
+}
+
+/// `[test]` and `vi.setConfig()` options, in the order Vitest applies them before each test.
+pub const RESETS_BEFORE_EACH_TEST: [&str; 5] = [
+    "restoreMocks",
+    "mockReset",
+    "clearMocks",
+    "unstubEnvs",
+    "unstubGlobals",
+];
+
 pub struct TestOptions {
     pub default_timeout_ms: u32,
     pub update_snapshots: bool,
@@ -461,9 +478,14 @@ pub struct TestOptions {
     // responsible for freeing any previous value.
     pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
     pub max_concurrency: u32,
+    pub resets_before_each_test: [Option<bool>; RESETS_BEFORE_EACH_TEST.len()],
+    /// The absolute path of the file that `--config` names. The workers of `--parallel` read it instead of `./bunfig.toml`.
+    pub config_file: Option<Box<[u8]>>,
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
     pub isolate: bool,
+    /// `--isolate=modules`: all files share one global object, and each gets its own `Bun.ModuleGraph`.
+    pub isolate_modules: bool,
     /// `bun test --parallel[=N]`: run test files across N worker
     /// processes. 0 means not requested. Implies `isolate` in workers.
     pub parallel: u32,
@@ -487,6 +509,13 @@ pub struct TestOptions {
     pub timings_files: Vec<Box<[u8]>>,
     /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
     pub update_timings: bool,
+    /// `--environment` or `[test] environment`. A file's `@vitest-environment` / `@jest-environment` comment overrides it.
+    pub environment: Option<TestEnvironment>,
+    pub globals: Option<TestGlobals>,
+    /// `--react-compiler` or `[test] reactCompiler`.
+    pub react_compiler: Option<ReactCompilerScope>,
+    /// `bun test --aot --aot-memory-limit=<size>`, in bytes.
+    pub aot_memory_limit: Option<u64>,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -498,11 +527,82 @@ pub struct Shard {
     pub count: u32,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum TestEnvironment {
+    Node,
+    Jsdom,
+    HappyDom,
+}
+
+impl TestEnvironment {
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"node" => Some(Self::Node),
+            b"jsdom" => Some(Self::Jsdom),
+            b"happy-dom" => Some(Self::HappyDom),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::Jsdom => "jsdom",
+            Self::HappyDom => "happy-dom",
+        }
+    }
+}
+
+/// The module a file's `test`, `expect` and other globals come from.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum TestGlobals {
+    /// "bun:test", except in a file that imports "vitest".
+    Bun,
+    Vitest,
+}
+
+impl TestGlobals {
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"bun" => Some(Self::Bun),
+            b"vitest" => Some(Self::Vitest),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Bun => "bun",
+            Self::Vitest => "vitest",
+        }
+    }
+}
+
 #[derive(Default, Copy, Clone)]
 pub struct Reporters {
     pub dots: bool,
     pub only_failures: bool,
     pub junit: bool,
+    pub junit_suites: Option<JunitSuites>,
+}
+
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+pub enum JunitSuites {
+    /// A `describe` block is a `<testsuite>` inside the file's `<testsuite>`.
+    #[default]
+    Nested,
+    /// A `describe` block is a prefix on its `<testcase>` names.
+    Flat,
+}
+
+impl JunitSuites {
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"nested" => Some(Self::Nested),
+            b"flat" => Some(Self::Flat),
+            _ => None,
+        }
+    }
 }
 
 impl TestOptions {
@@ -545,14 +645,21 @@ impl Default for TestOptions {
             // Cap the default to 5 there; the `--max-concurrency` flag still
             // overrides explicitly.
             max_concurrency: if bun_core::env::ENABLE_ASAN { 5 } else { 20 },
+            resets_before_each_test: [None; RESETS_BEFORE_EACH_TEST.len()],
+            config_file: None,
             isolate: false,
+            isolate_modules: false,
             parallel: 0,
             parallel_delay_ms: None,
             test_worker: false,
             changed: None,
             shard: None,
             timings_files: Vec::new(),
+            aot_memory_limit: None,
             update_timings: false,
+            environment: None,
+            globals: None,
+            react_compiler: None,
             reporters: Reporters::default(),
             reporter_outfile: None,
         }
@@ -587,7 +694,7 @@ pub struct RuntimeOptions {
     pub redis_preconnect: bool,
     pub sql_preconnect: bool,
     pub eval: Eval,
-    pub preconnect: Vec<Box<[u8]>>,
+    pub preconnect: Vec<&'static [u8]>,
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
     pub dns_result_order: Box<[u8]>,
@@ -607,20 +714,20 @@ pub struct RuntimeOptions {
 
 #[derive(Default)]
 pub struct Eval {
-    pub script: Box<[u8]>,
+    pub script: &'static [u8],
     pub eval_and_print: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.
-    pub interactive_script: Option<Box<[u8]>>,
+    pub interactive_script: Option<&'static [u8]>,
     /// `bun lint` or `bun fmt` started this process to read a configuration that its own tool reads in Node.js.
     pub reads_configuration: bool,
 }
 
 pub struct CpuProf {
     pub enabled: bool,
-    pub name: Box<[u8]>,
-    pub dir: Box<[u8]>,
+    pub name: &'static [u8],
+    pub dir: &'static [u8],
     pub interval: u32,
     pub md_format: bool,
     pub json_format: bool,
@@ -632,8 +739,8 @@ impl Default for CpuProf {
     fn default() -> Self {
         Self {
             enabled: false,
-            name: Box::default(),
-            dir: Box::default(),
+            name: b"",
+            dir: b"",
             interval: 1000,
             md_format: false,
             json_format: false,
@@ -645,8 +752,8 @@ impl Default for CpuProf {
 pub struct HeapProf {
     pub enabled: bool,
     pub text_format: bool,
-    pub name: Box<[u8]>,
-    pub dir: Box<[u8]>,
+    pub name: &'static [u8],
+    pub dir: &'static [u8],
 }
 
 impl Default for RuntimeOptions {

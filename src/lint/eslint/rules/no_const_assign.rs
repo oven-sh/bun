@@ -4,7 +4,7 @@ use bun_lint::utils::ast_utils::get_modifying_references;
 /// Disallow reassigning `const`, `using`, and `await using` variables.
 pub struct NoConstAssign;
 
-const CONST: Message = Message::new("const", "'{{name}}' is constant.");
+const CONST: &Message = &Message::new("const", "'{{name}}' is constant.");
 
 impl Rule for NoConstAssign {
     const META: Meta = Meta::eslint("no-const-assign", Kind::Problem).recommended().hints();

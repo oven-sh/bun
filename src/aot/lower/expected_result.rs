@@ -122,7 +122,7 @@ impl FileLowering<'_, '_, '_, '_> {
     // The signature is the same whatever holds the function: `sql` of "bun", what `new SQL(..)` made, a parameter of that type.
     fn find_builtin_of_signature(&self, target: &CallTarget) -> Option<BuiltinId> {
         let types = self.inputs.builtin_types;
-        let index = types.value_of_call_signature(target.declaration?)?;
+        let index = types.value_of_call_signature(self.queries.files(), target.declaration?)?;
         builtin_value_of(index).map(table::canonical_id)
     }
 

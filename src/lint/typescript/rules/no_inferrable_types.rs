@@ -7,7 +7,7 @@ pub struct NoInferrableTypes {
     ignore_properties: bool,
 }
 
-const NO_INFERRABLE_TYPE: Message = Message::new(
+const NO_INFERRABLE_TYPE: &Message = &Message::new(
     "noInferrableType",
     "Type {{type}} trivially inferred from a {{type}} literal, remove type annotation.",
 );

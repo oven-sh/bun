@@ -197,7 +197,7 @@ console.log("async closures:", makeLater().prototype !== makeLater().prototype)
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inner"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=undefined|null|Generator flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything variableName="n"}] thisType={type=anything} results=[{type=undefined|null|Generator flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

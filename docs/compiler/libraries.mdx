@@ -23,7 +23,6 @@ Most of these [change a built-in object](/compiler/compatibility#built-in-object
 | `sugar`               | `Sugar.Array.sum(list)`, not `Sugar.extend()` |
 | `ses`                 | Freeze the prototypes with `Object.freeze()`  |
 | `private`             | `recast` 0.20.4 or Babel 7, which dropped it  |
-| `async-listener`      | `AsyncLocalStorage` from `node:async_hooks`   |
 
 - The `/auto` and `shim()` entry points of `array.prototype.map`, `set.prototype.union`, `string.prototype.matchall` and similar packages replace a method. Call what the package exports instead, as in `map(list, f)`.
 - Remove `es5-shim`, `es6-shim`, `url-polyfill`, `harmony-reflect` and `promise/polyfill`. Bun has what they add.
@@ -33,12 +32,13 @@ Most of these [change a built-in object](/compiler/compatibility#built-in-object
 
 These [hook the module loader](/compiler/compatibility#loader-hooks-and-the-module-cache):
 
-| Package                          | Use instead                                    |
-| -------------------------------- | ---------------------------------------------- |
-| `module-alias`, `tsconfig-paths` | `paths` in `tsconfig.json`                     |
-| `pirates`, `@babel/register`     | Nothing. The build compiles TypeScript and JSX |
-| `require-in-the-middle`          | Build with `--no-aot`                          |
-| `clear-module`                   | Nothing. A module runs once                    |
+| Package                          | Use instead                 |
+| -------------------------------- | --------------------------- |
+| `module-alias`, `tsconfig-paths` | `paths` in `tsconfig.json`  |
+| `require-in-the-middle`          | Build with `--no-aot`       |
+| `clear-module`                   | Nothing. A module runs once |
+
+`pirates`, `@babel/register` and `sucrase/register` start and do nothing: their hook isn't called for a compiled file, and the build has already compiled TypeScript and JSX.
 
 Plenty of packages change built-in objects in ways that are allowed. `core-js` 3, `reflect-metadata`, `regenerator-runtime`, `colors`, `mockdate` and `sinon` with its fake timers all work.
 

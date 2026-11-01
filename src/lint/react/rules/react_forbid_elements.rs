@@ -14,10 +14,10 @@ pub struct ForbidElements {
     forbid: Vec<(Box<[u8]>, Option<String>)>,
 }
 
-const FORBIDDEN_ELEMENT: Message = Message::new("forbiddenElement", "<{{element}}> is forbidden");
-const FORBIDDEN_ELEMENT_MESSAGE: Message =
-    Message::new("forbiddenElement_message", "<{{element}}> is forbidden, {{message}}");
-const FORBID_ELEMENTS: Message = Message::new("", "<{{element}}> is forbidden.");
+const FORBIDDEN_ELEMENT: &Message = &Message::new("forbiddenElement", "<{{element}}> is forbidden");
+const FORBIDDEN_ELEMENT_MESSAGE: &Message =
+    &Message::new("forbiddenElement_message", "<{{element}}> is forbidden, {{message}}");
+const FORBID_ELEMENTS: &Message = &Message::new("", "<{{element}}> is forbidden.");
 
 /// True if the file can contain a `createElement` call. For upstream `a.#createElement()` is one.
 fn mentions_create_element(file: &File) -> bool {

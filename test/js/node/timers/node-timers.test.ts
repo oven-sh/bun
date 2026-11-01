@@ -1,6 +1,7 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -413,4 +414,87 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
+});
+
+it("a promise assigned to _onTimeout resolves to undefined, not the timer's arguments", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const results = [];
+        const thenable = { get then() { results.push("then was read"); } };
+        for (const args of [[], [1], [thenable], [1, 2], [1, 2, 3]]) {
+          const { promise } = Promise.withResolvers();
+          setTimeout(() => {}, 1, ...args)._onTimeout = promise;
+          const value = await promise;
+          results.push(Object.prototype.toString.call(value));
+        }
+        console.log(results.join());
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: Array(5).fill("[object Undefined]").join() + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it("_onTimeout is the callback inside AsyncLocalStorage.run()", () => {
+  const callback = () => {};
+  const timer = new AsyncLocalStorage().run(1, () => setTimeout(callback, 100_000, 1, 2));
+  try {
+    expect((timer as any)._onTimeout).toBe(callback);
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+it("timers/promises clears its timers with the globals that were there when it set them", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const live = new Set();
+        const set = () => {
+          const timer = { ref: () => timer, unref: () => timer, hasRef: () => true };
+          live.add(timer);
+          return timer;
+        };
+        const clear = timer => void live.delete(timer);
+        Object.assign(globalThis, { setTimeout: set, setInterval: set, setImmediate: set });
+        Object.assign(globalThis, { clearTimeout: clear, clearInterval: clear, clearImmediate: clear });
+
+        const promises = require("node:timers/promises");
+        const counts = [];
+        for (const start of [promises.setTimeout, promises.setImmediate]) {
+          const controller = new AbortController();
+          const options = { signal: controller.signal };
+          const aborted = (start === promises.setTimeout ? start(1000, null, options) : start(null, options)).catch(() => {});
+          counts.push(live.size);
+          controller.abort();
+          await aborted;
+          counts.push(live.size);
+        }
+        const iterator = promises.setInterval(1000)[Symbol.asyncIterator]();
+        iterator.next();
+        counts.push(live.size);
+        await iterator.return();
+        counts.push(live.size);
+        console.log(counts.join());
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1,0,1,0,1,0\n", stderr: "", exitCode: 0 });
 });

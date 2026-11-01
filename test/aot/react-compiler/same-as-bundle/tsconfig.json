@@ -1,0 +1,11 @@
+{
+  "extends": "../../parallel/tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "react": ["./react-stand-in/react"],
+      "react/jsx-runtime": ["../react-stand-in/jsx-runtime"],
+      "react/jsx-dev-runtime": ["../react-stand-in/jsx-runtime"],
+      "react/compiler-runtime": ["./react-stand-in/compiler-runtime.js"]
+    }
+  }
+}

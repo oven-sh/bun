@@ -4,7 +4,7 @@
  * Order matters for two reasons:
  *   1. `fetchDeps` relationships — a dep with fetchDeps must come AFTER the
  *      deps it references, so the referenced .ref stamp node exists in ninja
- *      when we add order-only edges to it. (zlib before libspng.)
+ *      when we add order-only edges to it. (zlib before lsquic.)
  *   2. Link order — when these libs hit the final link line, static linking
  *      resolves left-to-right. Deps that PROVIDE symbols should come after
  *      deps that USE them. This list becomes the link order.
@@ -16,7 +16,6 @@ import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
-import { libspng } from "./libspng.ts";
 import { libuv } from "./libuv.ts";
 import { libwebp } from "./libwebp.ts";
 import { lolhtml } from "./lolhtml.ts";
@@ -36,7 +35,7 @@ import { zstd } from "./zstd.ts";
 /**
  * All deps in dependency-resolution + link order.
  *
- * zlib FIRST — libspng's and lsquic's fetchDeps reference it.
+ * zlib FIRST — lsquic's fetchDeps reference it.
  * brotli libs in internal dep order (common last on link line).
  * boringssl near the end — many things depend on crypto/ssl symbols.
  */
@@ -48,9 +47,8 @@ export const allDeps: readonly Dependency[] = [
   zlib,
   zstd,
   brotli,
-  // Image codecs — libspng has fetchDeps:["zlib"], so after zlib.
+  // Image codecs.
   libjpegTurbo,
-  libspng,
   libwebp,
   cares,
   highway,
@@ -79,7 +77,6 @@ export {
   cares,
   highway,
   libjpegTurbo,
-  libspng,
   libuv,
   libwebp,
   lolhtml,

@@ -118,6 +118,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
+    // Not `false`: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_spkac.cc#L26
+    if (buffer.empty()) {
+        return JSValue::encode(jsEmptyString(vm));
+    }
+
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     bool result = ncrypto::VerifySpkac(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     return JSValue::encode(JSC::jsBoolean(result));
 }
@@ -137,6 +143,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto bio = ncrypto::ExportPublicKey(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     if (!bio) {
         return JSValue::encode(jsEmptyString(vm));
@@ -148,7 +155,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    return JSValue::encode(jsString(vm, String::fromUTF8({ data, static_cast<size_t>(len) })));
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(len))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -166,20 +173,14 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    auto cert = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-    if (!cert.data || cert.len == 0) {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+    auto exported = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    ncrypto::DataPointer challenge(exported.data, exported.len);
+    if (!challenge) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto result = JSC::ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(cert.data), cert.len });
-    if (!result) {
-        return JSValue::encode(jsEmptyString(vm));
-    }
-
-    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(result), 0, cert.len);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(bufferResult);
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, challenge.span())));
 }
 
 // From node.js
@@ -202,8 +203,8 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
 
     JSValue options = callFrame->argument(1);
 
-    std::optional<int32_t> keyLengthOpt = std::nullopt;
-    std::optional<int32_t> ivLengthOpt = std::nullopt;
+    std::optional<uint32_t> keyLengthOpt = std::nullopt;
+    std::optional<uint32_t> ivLengthOpt = std::nullopt;
     if (!options.isUndefined()) {
         V::validateObject(scope, lexicalGlobalObject, options, "options"_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -214,14 +215,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         JSValue ivLengthValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "ivLength"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!keyLengthValue.isUndefined()) {
-            int32_t length = 0;
-            V::validateInt32(scope, lexicalGlobalObject, keyLengthValue, "keyLength"_s, jsUndefined(), jsUndefined(), &length);
+            uint32_t length = 0;
+            V::validateUint32(scope, lexicalGlobalObject, keyLengthValue, "options.keyLength"_s, jsUndefined(), &length);
             RETURN_IF_EXCEPTION(scope, {});
             keyLengthOpt = length;
         }
         if (!ivLengthValue.isUndefined()) {
-            int32_t length = 0;
-            V::validateInt32(scope, lexicalGlobalObject, ivLengthValue, "ivLength"_s, jsUndefined(), jsUndefined(), &length);
+            uint32_t length = 0;
+            V::validateUint32(scope, lexicalGlobalObject, ivLengthValue, "options.ivLength"_s, jsUndefined(), &length);
             RETURN_IF_EXCEPTION(scope, {});
             ivLengthOpt = length;
         }
@@ -243,13 +244,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         return JSValue::encode(jsUndefined());
     }
 
-    int32_t keyLength = cipher.getKeyLength();
-    int32_t ivLength = cipher.getIvLength();
+    uint32_t keyLength = cipher.getKeyLength();
+    uint32_t ivLength = cipher.getIvLength();
     int32_t blockSize = cipher.getBlockSize();
     ASCIILiteral modeLabel = cipher.getModeLabel();
     String name = cipher.getName();
 
     if (keyLengthOpt.has_value() || ivLengthOpt.has_value()) {
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         auto ctx = ncrypto::CipherCtxPointer::New();
         if (!ctx.init(cipher, true)) {
             return JSValue::encode(jsUndefined());
@@ -263,7 +265,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         }
 
         if (ivLengthOpt.has_value()) {
-            int32_t length = ivLengthOpt.value();
+            uint32_t length = ivLengthOpt.value();
             if (cipher.isCcmMode()) {
                 if (length < 7 || length > 13) {
                     return JSValue::encode(jsUndefined());

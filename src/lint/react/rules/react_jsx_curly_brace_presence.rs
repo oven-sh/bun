@@ -23,10 +23,10 @@ pub struct JsxCurlyBracePresence {
     is_single_string: bool,
 }
 
-const UNNECESSARY_CURLY: Message = Message::new("unnecessaryCurly", "Curly braces are unnecessary here.");
-const MISSING_CURLY: Message = Message::new("missingCurly", "Need to wrap this literal in a JSX expression.");
-const UNNECESSARY: Message = Message::new("", "Curly braces are unnecessary here.");
-const NECESSARY: Message = Message::new("", "Curly braces are required here.");
+const UNNECESSARY_CURLY: &Message = &Message::new("unnecessaryCurly", "Curly braces are unnecessary here.");
+const MISSING_CURLY: &Message = &Message::new("missingCurly", "Need to wrap this literal in a JSX expression.");
+const UNNECESSARY: &Message = &Message::new("", "Curly braces are unnecessary here.");
+const NECESSARY: &Message = &Message::new("", "Curly braces are required here.");
 
 /// The kind of string that's in braces, or could be.
 #[derive(Copy, Clone, PartialEq, Eq)]

@@ -87,7 +87,7 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#g"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything}] thisType={type=function flags=[IsExpected]} results=[{type=undefined|null|Generator flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] captures=[{type=anything variableName="n"}] thisType={type=function flags=[IsExpected]} results=[{type=undefined|null|Generator flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything, v1: function, v2: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -117,7 +117,7 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="t"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 captures=[{type=anything variableName="label"}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: undefined|null|function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -129,7 +129,7 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: ReturnCall v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=env [[L_3]] flags=[IsFromCompiler]}, {type=[[f_4]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=env [[L_3]] flags=[IsFromCompiler]}, {type=[[f_4]] flags=[IsFromCompiler] variableName="C"}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: env [[L_3]], v1: [[f_4]], v2: function, v3: anything, v4: undefined|null|string|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -151,6 +151,12 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: v16 = Add v13, v15
 // CHECK-NEXT: Return v16
 // CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v17 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v17
+// CHECK-NEXT: v17 = TypeTest v1 testedType=undefined|null
+// CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b6(v18):
+// CHECK-NEXT: v19 = PropGet v18 key="#o"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b7(v20):
+// CHECK-NEXT: v21 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v21
 // CHECK-NEXT: }

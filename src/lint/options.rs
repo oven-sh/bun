@@ -30,29 +30,30 @@ impl<'o> Options<'o> {
     }
 
     /// The option at `i`, if it's a string.
-    #[inline]
+    #[inline(never)]
     pub fn str(&self, i: usize) -> Option<&'o str> {
         as_str(self.get(i)?)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn bool(&self, i: usize) -> Option<bool> {
         self.get(i)?.as_bool()
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn number(&self, i: usize) -> Option<f64> {
         as_number(self.get(i)?)
     }
 
     /// The option at `i` as an object. Empty if it's missing or not an object, so that every lookup returns the
     /// default.
-    #[inline]
+    #[inline(never)]
     pub fn object(&self, i: usize) -> Object<'o> {
         Object::of(self.get(i))
     }
 
     /// The first option that's an object.
+    #[inline(never)]
     pub fn first_object(&self) -> Object<'o> {
         Object::of(self.values.iter().find(|it| it.as_object().is_some()))
     }
@@ -88,53 +89,56 @@ impl<'o> Object<'o> {
         self.entries
     }
 
+    #[inline(never)]
     pub fn get(&self, key: &str) -> Option<&'o Json> {
         let mut entries = self.entries.iter();
         entries.find(|it| it.0 == key.as_bytes()).map(|it| &it.1)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn has(&self, key: &str) -> bool {
         self.get(key).is_some()
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn bool(&self, key: &str) -> Option<bool> {
         self.get(key)?.as_bool()
     }
 
     /// Returns `default` if the key is missing.
-    #[inline]
+    #[inline(never)]
     pub fn bool_or(&self, key: &str, default: bool) -> bool {
         self.bool(key).unwrap_or(default)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn str(&self, key: &str) -> Option<&'o str> {
         as_str(self.get(key)?)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn number(&self, key: &str) -> Option<f64> {
         as_number(self.get(key)?)
     }
 
+    #[inline(never)]
     pub fn usize(&self, key: &str) -> Option<usize> {
         self.number(key).filter(|n| *n >= 0.0).map(|n| n as usize)
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn array(&self, key: &str) -> &'o [Json] {
         self.get(key).and_then(Json::as_array).unwrap_or_default()
     }
 
     /// The strings in the array at `key`.
+    #[inline(never)]
     pub fn strings(&self, key: &str) -> Vec<&'o str> {
         self.array(key).iter().filter_map(as_str).collect()
     }
 
     /// Empty if the key is missing.
-    #[inline]
+    #[inline(never)]
     pub fn object(&self, key: &str) -> Object<'o> {
         Object::of(self.get(key))
     }

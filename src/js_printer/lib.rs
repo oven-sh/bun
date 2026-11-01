@@ -2081,8 +2081,29 @@ pub(crate) mod __gated_printer {
 
         #[inline]
         pub(crate) fn print_space_before_identifier(&mut self) {
+            let prev_char = self.writer.prev_char();
+            // `prev_char` is a byte, so it does not recognize the final byte of
+            // a raw UTF-8 identifier. ASCII-only output can also represent the
+            // final codepoint as `\\u{...}`, whose closing brace is not itself
+            // an identifier character. Both forms still need a token separator.
+            let prev_is_unicode_escape = prev_char == b'}' && {
+                let output = self.writer.slice();
+                let end = output.len() - 1;
+                (end.saturating_sub(9)..end).any(|start| {
+                    if !output[start..end].starts_with(b"\\u{") {
+                        return false;
+                    }
+                    let digits = &output[start + 3..end];
+                    !digits.is_empty()
+                        && digits.len() <= 6
+                        && digits.iter().all(|byte| byte.is_ascii_hexdigit())
+                })
+            };
+
             if self.writer.written() > 0
-                && (lexer::is_identifier_continue(self.writer.prev_char() as i32)
+                && (lexer::is_identifier_continue(prev_char as i32)
+                    || prev_char >= 0x80
+                    || prev_is_unicode_escape
                     || self.writer.written() == self.prev_reg_exp_end)
             {
                 self.print(b" ");

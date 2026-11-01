@@ -3976,6 +3976,67 @@ describe("expect()", () => {
       expect({ ...received, point: { ...received.point } }).toEqual(before);
       expect(Object.keys(received.point)).toEqual(["x"]);
     });
+    test("leaves the expected object as it is when the matcher is on the received side", () => {
+      const matcher = expect.any(String);
+      const received = { a: matcher };
+      const expected = { a: "hello" };
+      expect(received).toMatchObject(expected);
+      expect(received.a).toBe(matcher);
+      expect(expected.a).toBe("hello");
+    });
+    test_skipIf(!isBun)("leaves what is not a plain object or array as it is", () => {
+      class List extends Array {}
+      List.prototype[5] = "inherited";
+      function fn() {}
+      const bytes = new Uint8Array([1, 2]);
+      const bigints = new BigInt64Array([1n, 2n]);
+      const array = [1, 2];
+      const list = List.of(1);
+      const event = new Event("x");
+      const error = new TypeError("boom");
+      for (const missing of [{}, { missing: 1 }]) {
+        const matches = !("missing" in missing);
+        for (const [received, expected] of [
+          [bytes, { 0: expect.any(Number) }],
+          [bigints, { 0: expect.any(BigInt) }],
+          [array, { length: expect.any(Number) }],
+          [list, { 5: expect.any(String) }],
+          [event, { isTrusted: expect.any(Boolean), timeStamp: expect.any(Number) }],
+          [fn, { name: expect.any(String) }],
+          [error, { message: expect.any(String) }],
+        ]) {
+          if (matches) expect(received).toMatchObject(expected);
+          else expect(() => expect(received).toMatchObject({ ...expected, ...missing })).toThrow("toMatchObject");
+          expect(() => expect(received).not.toMatchObject(expected)).toThrow("toMatchObject");
+        }
+        expect(bytes[0]).toBe(1);
+        expect(bigints[0]).toBe(1n);
+        expect(Object.keys(array)).toEqual(["0", "1"]);
+        expect(list.length).toBe(1);
+        expect(event.isTrusted).toBe(false);
+        expect(Object.keys(event)).toEqual(["isTrusted"]);
+        expect(Object.getOwnPropertyDescriptor(fn, "name")).toEqual({
+          value: "fn",
+          writable: false,
+          enumerable: false,
+          configurable: true,
+        });
+        expect(error.message).toBe("boom");
+      }
+    });
+    test_skipIf(!isBun)("the diff prints the message of an Error, not the matcher it matched", () => {
+      const error = Object.assign(new TypeError("boom: no such file"), { code: "ENOENT" });
+      let message = "";
+      try {
+        expect({ error, n: 1 }).toMatchObject({ error: { message: expect.any(String) }, n: 2 });
+      } catch (thrown) {
+        message = Bun.stripANSI(ANY(thrown).message);
+      }
+      expect(message.split("\n").filter(line => /^\+ {3}/.test(line))).toEqual([
+        '+   "error": [TypeError: boom: no such file],',
+        '+   "n": 1,',
+      ]);
+    });
     test("with expect matcher", () => {
       const f = Symbol.for("foo");
       const b = Symbol.for("bar");

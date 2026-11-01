@@ -88,6 +88,34 @@ function withExtraProperty<T extends object>(value: T): T {
   return Object.assign(value, { extra: 1 });
 }
 
+/** The `stack` that the engine makes is not enumerable. This one is. */
+function withEnumerableStack<T extends object>(error: T, value: unknown): T {
+  return Object.defineProperty(error, "stack", { value, enumerable: true, writable: true, configurable: true });
+}
+
+function withEnumerableStackGetter<T extends object>(error: T, value: unknown): T {
+  return Object.defineProperty(error, "stack", { get: () => value, enumerable: true, configurable: true });
+}
+
+function withoutOwnStack<T extends object>(error: T): T {
+  Reflect.deleteProperty(error, "stack");
+  return error;
+}
+
+/** Its instances inherit an enumerable `stack` and own a hidden one. */
+class EnumerableStackOnPrototype extends Error {}
+withEnumerableStack(EnumerableStackOnPrototype.prototype, "one");
+
+function framelessErrorWithStack(stack: string) {
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  try {
+    return Object.assign(new Error("x"), { stack });
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+}
+
 function selfReferencingObject() {
   const object: Record<string, unknown> = {};
   object.self = object;
@@ -696,6 +724,133 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  // Node has no rule for `stack`. It is a key like any other when an error owns it as an enumerable property.
+  {
+    name: "errors with the same enumerable stack",
+    a: () => withEnumerableStack(new Error("x"), "one"),
+    b: () => withEnumerableStack(new Error("x"), "one"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with different enumerable stacks",
+    a: () => withEnumerableStack(new Error("x"), "one"),
+    b: () => withEnumerableStack(new Error("x"), "two"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with an enumerable stack and an error with another enumerable property",
+    a: () => withEnumerableStack(new Error("x"), "one"),
+    b: () => withExtraProperty(new Error("x")),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with another enumerable property and an error with an enumerable stack",
+    a: () => withExtraProperty(new Error("x")),
+    b: () => withEnumerableStack(new Error("x"), "one"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error with an enumerable stack and a plain error",
+    a: () => withEnumerableStack(new Error("x"), "one"),
+    b: () => new Error("x"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with an enumerable stack and an error with the same stack hidden plus an enumerable property",
+    a: () => withEnumerableStack(new Error("x"), "one"),
+    b: () => withExtraProperty(withHiddenProperty(new Error("x"), "stack", "one")),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with an enumerable property and an error with the same property hidden plus an enumerable stack",
+    a: () => withExtraProperty(new Error("x")),
+    b: () => withEnumerableStack(withHiddenProperty(new Error("x"), "extra", 1), "one"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "errors with different hidden stacks that inherit an enumerable stack",
+    a: () => withHiddenProperty(new EnumerableStackOnPrototype("x"), "stack", "two"),
+    b: () => withHiddenProperty(new EnumerableStackOnPrototype("x"), "stack", "three"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "an error that inherits an enumerable stack and an error that owns the same enumerable stack",
+    a: () => withoutOwnStack(new EnumerableStackOnPrototype("x")),
+    b: () => withEnumerableStack(new EnumerableStackOnPrototype("x"), "one"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error that owns an enumerable stack and an error that inherits the same enumerable stack",
+    a: () => withEnumerableStack(new EnumerableStackOnPrototype("x"), "one"),
+    b: () => withoutOwnStack(new EnumerableStackOnPrototype("x")),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with a hidden stack under an inherited enumerable one and an error that owns the same enumerable stack",
+    a: () => withHiddenProperty(new EnumerableStackOnPrototype("x"), "stack", "one"),
+    b: () => withEnumerableStack(new EnumerableStackOnPrototype("x"), "one"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "errors with enumerable stack getters that return the same value",
+    a: () => withEnumerableStackGetter(new Error("x"), "one"),
+    b: () => withEnumerableStackGetter(new Error("x"), "one"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with enumerable stack getters that return different values",
+    a: () => withEnumerableStackGetter(new Error("x"), "one"),
+    b: () => withEnumerableStackGetter(new Error("x"), "two"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "errors whose causes have different enumerable stacks",
+    a: () => new Error("x", { cause: withEnumerableStack(new Error("y"), "one") }),
+    b: () => new Error("x", { cause: withEnumerableStack(new Error("y"), "two") }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  // JSC gives an error without captured frames no own `stack`, so the assignment makes an enumerable one. V8 keeps it hidden.
+  {
+    name: "errors without captured frames and with different assigned stacks",
+    a: () => framelessErrorWithStack("one"),
+    b: () => framelessErrorWithStack("two"),
+    strict: true,
+    loose: true,
+    strictBug: "reports not equal",
+  },
+  // V8 holds `stack` as an accessor, so a data descriptor without a value leaves `undefined`. JSC keeps the string.
+  {
+    name: "errors whose stack becomes an enumerable data property without a value",
+    a: () => Object.defineProperty(new Error("x"), "stack", { enumerable: true, writable: true }),
+    b: () => Object.defineProperty(new Error("x"), "stack", { enumerable: true, writable: true }),
+    strict: true,
+    loose: true,
+    strictBug: "reports not equal",
+  },
   {
     name: "errors with different causes",
     a: () => new Error("x", { cause: 1 }),
@@ -1135,6 +1290,84 @@ function describeMatrix(
 describeMatrix("assert.deepStrictEqual", "strict", "strictBug", assert.deepStrictEqual, assert.notDeepStrictEqual);
 describeMatrix("assert.deepEqual", "loose", "looseBug", assert.deepEqual, assert.notDeepEqual);
 
+describe("an own enumerable stack of an Error", () => {
+  test("is read once per side when both errors own it", () => {
+    const reads: string[] = [];
+    const withGetter = (side: string, enumerable: boolean) =>
+      Object.defineProperty(new Error("x"), "stack", {
+        get: () => (reads.push(side), "s"),
+        enumerable,
+        configurable: true,
+      });
+    expect(util.isDeepStrictEqual(withGetter("actual", true), withGetter("expected", true))).toBe(true);
+    expect(reads).toEqual(["actual", "expected"]);
+
+    reads.length = 0;
+    expect({
+      bothHidden: util.isDeepStrictEqual(withGetter("actual", false), withGetter("expected", false)),
+      onlyActualOwnsIt: util.isDeepStrictEqual(withGetter("actual", true), withExtraProperty(new Error("x"))),
+      onlyExpectedOwnsIt: util.isDeepStrictEqual(withExtraProperty(new Error("x")), withGetter("expected", true)),
+      reads,
+    }).toEqual({ bothHidden: true, onlyActualOwnsIt: false, onlyExpectedOwnsIt: false, reads: [] });
+  });
+
+  test("propagates an error that its getter throws", () => {
+    const throwing = () =>
+      Object.defineProperty(new Error("x"), "stack", {
+        get() {
+          throw new RangeError("from the getter");
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    expect(() => util.isDeepStrictEqual(throwing(), throwing())).toThrow(new RangeError("from the getter"));
+    expect(() => assert.deepStrictEqual(throwing(), throwing())).toThrow(new RangeError("from the getter"));
+  });
+
+  test("is compared when util.isDeepStrictEqual skips the prototypes", () => {
+    class Subclass extends Error {}
+    const compare = (a: unknown, b: unknown) => util.isDeepStrictEqual(a, b, true as any);
+    expect({
+      same: compare(withEnumerableStack(new Subclass("x"), "one"), withEnumerableStack(new Error("x"), "one")),
+      different: compare(withEnumerableStack(new Subclass("x"), "one"), withEnumerableStack(new Error("x"), "two")),
+    }).toEqual({ same: true, different: false });
+  });
+
+  test("is compared inside the validation object of assert.throws and assert.rejects", async () => {
+    const thrown = () => {
+      throw Object.assign(new Error("x"), { info: withEnumerableStack(new Error("y"), "one") });
+    };
+    const same = { info: withEnumerableStack(new Error("y"), "one") };
+    const different = { info: withEnumerableStack(new Error("y"), "two") };
+    assert.throws(thrown, same);
+    expect(caught(() => assert.throws(thrown, different))?.code).toBe("ERR_ASSERTION");
+    await assert.rejects(async () => thrown(), same);
+    await expect(assert.rejects(async () => thrown(), different)).rejects.toMatchObject({ code: "ERR_ASSERTION" });
+  });
+
+  // Jest compares two errors by their message only.
+  test("is not compared or read by Bun.deepEquals, toEqual and toStrictEqual", () => {
+    let reads = 0;
+    const withGetter = (value: string) =>
+      Object.defineProperty(new Error("x"), "stack", {
+        get: () => (reads++, value),
+        enumerable: true,
+        configurable: true,
+      });
+    // The fourth argument is not in the public types.
+    const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+    expect({
+      loose: deepEquals(withGetter("one"), withGetter("two")),
+      strict: deepEquals(withGetter("one"), withGetter("two"), true),
+      strictSkipPrototype: deepEquals(withGetter("one"), withGetter("two"), true, true),
+    }).toEqual({ loose: true, strict: true, strictSkipPrototype: true });
+    expect(withGetter("one")).toEqual(withGetter("two"));
+    expect(withGetter("one")).toStrictEqual(withGetter("two"));
+    expect(withEnumerableStack(new Error("x"), "one")).toStrictEqual(withEnumerableStack(new Error("x"), "two"));
+    expect(reads).toBe(0);
+  });
+});
+
 describe("util.isDeepStrictEqual", () => {
   for (const testCase of cases) {
     const label = `${testCase.name} is ${testCase.strict ? "" : "not "}deep-strict-equal`;
@@ -1192,6 +1425,11 @@ describe("util.isDeepStrictEqual", () => {
       ["Map value", () => new Map([["k", new Foo(1)]]), () => new Map([["k", new Bar(1)]])],
       ["Set element", () => new Set([new Foo(1)]), () => new Set([new Bar(1)])],
       ["Error cause", () => new Error("e", { cause: new Foo(1) }), () => new Error("e", { cause: new Bar(1) })],
+      [
+        "Error enumerable stack",
+        () => withEnumerableStack(new Error("e"), new Foo(1)),
+        () => withEnumerableStack(new Error("e"), new Bar(1)),
+      ],
     ])("propagates through %s", (_name, makeA, makeB) => {
       expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
       expect(util.isDeepStrictEqual(makeA(), makeB(), true as any)).toBe(true);

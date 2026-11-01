@@ -1641,6 +1641,11 @@ static constexpr DeepEqualsMode deepEqualsMode {
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
 
+static bool getOwnEnumerablePropertySlot(JSC::JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, PropertySlot& slot)
+{
+    return object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot) && !(slot.attributes() & PropertyAttribute::DontEnum);
+}
+
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
 // and take the mode at runtime; only the dispatch and the plain-object tail in
 // `specialObjectsDequal` below stay specialised per mode.
@@ -1850,7 +1855,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 }
             }
 
-            // check arbitrary enumerable properties. `.stack` is not checked.
+            // check arbitrary enumerable properties. The walk skips the name `stack` in every mode.
             left->materializeErrorInfoIfNeeded(vm);
             RETURN_IF_EXCEPTION(scope, {});
             right->materializeErrorInfoIfNeeded(vm);
@@ -1867,6 +1872,31 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             if (mode.isStrict) {
                 if (propertyArrayLength1 != propertyArrayLength2) {
                     return false;
+                }
+            }
+
+            // node has no rule for `stack`. It is a key like any other when an error owns it as an enumerable property: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L470-L521
+            if (mode.checkPrototypes && (a1.data()->propertyNameVector().contains(vm.propertyNames->stack) || a2.data()->propertyNameVector().contains(vm.propertyNames->stack))) {
+                const PropertyName stackName(vm.propertyNames->stack);
+                PropertySlot leftSlot(left, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool leftOwnsStack = getOwnEnumerablePropertySlot(globalObject, left, stackName, leftSlot);
+                RETURN_IF_EXCEPTION(scope, {});
+                PropertySlot rightSlot(right, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool rightOwnsStack = getOwnEnumerablePropertySlot(globalObject, right, stackName, rightSlot);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (leftOwnsStack != rightOwnsStack) {
+                    return false;
+                }
+                if (leftOwnsStack) {
+                    JSValue leftStack = left->get(globalObject, stackName);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    JSValue rightStack = right->get(globalObject, stackName);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    bool stacksEqual = mode.deepEquals(globalObject, leftStack, rightStack, gcBuffer, stack, scope, true);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!stacksEqual) {
+                        return false;
+                    }
                 }
             }
 

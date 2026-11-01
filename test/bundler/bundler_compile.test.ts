@@ -1398,6 +1398,34 @@ error: Hello World`,
       },
     },
   });
+  // JavaScriptCore's parser is the one that rejects second.ts: the bundler passes a regular expression literal through.
+  // The source map names second.ts, which is not the embedded module that is loaded.
+  itBundled("compile/SourceMapParserSyntaxErrorLocation", {
+    backend: "cli",
+    target: "bun",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const specifier = "./second" + ".js";
+        try {
+          require(specifier);
+        } catch (e) {
+          // The stack names a file too, in its "at <parse>" line.
+          const stack = e.stack.split("\\n")[1].trim().replace(e.sourceURL, "<sourceURL>");
+          console.log(JSON.stringify({ sourceURL: require("node:path").basename(e.sourceURL), line: e.line, stack }));
+        }
+      `,
+      "/second.ts": "export const a = 1;\nexport const b = 2;\nexport const re = /(/;\n",
+    },
+    entryPointsRaw: ["./entry.ts", "./second.ts"],
+    sourceMap: "external",
+    outfile: "dist/out",
+    run: {
+      stdout: JSON.stringify({ sourceURL: "second.ts", line: 3, stack: "at <parse> (<sourceURL>:3)" }),
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   itBundled("compile/BunBeBunEnvVar", {
     compile: true,
     files: {

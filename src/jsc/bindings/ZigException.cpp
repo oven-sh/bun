@@ -800,18 +800,8 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
             }
             if (line) {
                 if (line.isNumber()) {
+                    // Not marked as remapped, even with an `originalLine`: the printer reads the file that a remapped frame names.
                     except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(JSC::toInt32(line.asNumber())).zeroBasedInt();
-
-                    // TODO: don't sourcemap it twice
-                    auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName());
-                    if (scope.exception()) [[unlikely]] {
-                        scope.clearExceptionExceptTermination();
-                    }
-                    if (originalLine) {
-                        if (originalLine.isNumber()) {
-                            except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(JSC::toInt32(originalLine.asNumber())).zeroBasedInt();
-                        }
-                    }
                     except.stack.frames_len = 1;
                 }
             }

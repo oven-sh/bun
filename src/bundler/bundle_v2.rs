@@ -3356,6 +3356,7 @@ pub mod bv2_impl {
             );
             this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
+            this.linker.options.is_library = this.transpiler.options.is_library;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.public_path =

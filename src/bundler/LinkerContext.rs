@@ -1288,6 +1288,12 @@ impl<'a> LinkerContext<'a> {
         j.push_static(b"],\n  \"sourcesContent\": [");
 
         let source_indices_for_contents = source_id_map.keys();
+        // A library's typed files take the source of each entry from this list. They do not resolve `sources`.
+        let source_indices_for_typed_files: Box<[u32]> = if self.options.is_library {
+            source_indices_for_contents.into()
+        } else {
+            Box::default()
+        };
         if !source_indices_for_contents.is_empty() {
             j.push_static(b"\n    ");
             j.push_static(
@@ -1368,6 +1374,7 @@ impl<'a> LinkerContext<'a> {
         debug_assert!(done[0] == b'{');
 
         let mut pieces = SourceMapPieces::init();
+        pieces.source_indices = source_indices_for_typed_files;
         if can_have_shifts {
             pieces.prefix.extend_from_slice(&done[0..mapping_start]);
             pieces
@@ -1446,6 +1453,8 @@ pub struct LinkerOptions {
     pub(crate) entry_naming_has_hash: bool,
     pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
+    /// `BundleOptions::is_library`.
+    pub(crate) is_library: bool,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
@@ -1507,6 +1516,7 @@ impl Default for LinkerOptions {
             entry_naming_has_hash: false,
             module_preload: true,
             source_maps: SourceMapOption::None,
+            is_library: false,
             target: Target::Browser,
             compile_mode: CompileMode::None,
             metafile: false,

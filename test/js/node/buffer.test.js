@@ -5275,6 +5275,65 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
   },
 );
 
+// A byteOffset past 2**31 - 1 on a buffer over 2 GiB is honoured (#46940),
+// as %TypedArray%.prototype.indexOf does. Node v26.3.0 clamps the offset to
+// int32 in lib/buffer.js and returns -2147483548 / true / 50 for number,
+// includes and last here (nodejs/node#67008). Bun diverges on purpose. Only a
+// few bytes of the buffer are written, so its zero pages stay uncommitted.
+it.skipIf(os.totalmem() < 4 * 1024 ** 3)(
+  "indexOf/lastIndexOf/includes honour a byteOffset beyond 2**31 - 1",
+  async () => {
+    const script = `
+      const N = 2 ** 31 + 1024;
+      const buf = Buffer.alloc(N);
+      const early = 50, a = 2 ** 31 + 100, b = 2 ** 31 + 600;
+      buf[early] = 0x0a; buf[a] = 0x0a; buf[b] = 0x0a;
+      const from = 2 ** 31 + 300;
+      console.log(JSON.stringify({
+        typedArray: Uint8Array.prototype.indexOf.call(buf, 0x0a, from),
+        number: buf.indexOf(0x0a, from),
+        string: buf.indexOf("\\n", from),
+        buffer: buf.indexOf(Buffer.from("\\n"), from),
+        includes: buf.includes(0x0a, 2 ** 31 + 700),
+        last: buf.lastIndexOf(0x0a, from),
+        lastString: buf.lastIndexOf("\\n", from),
+        negative: buf.indexOf(0x0a, -(2 ** 31 + 1000)),
+        lastNegative: buf.lastIndexOf(0x0a, -(2 ** 31 + 1000)),
+        inf: buf.indexOf(0x0a, Infinity),
+        negInf: buf.indexOf(0x0a, -Infinity),
+        lastInf: buf.lastIndexOf(0x0a, Infinity),
+        lastNegInf: buf.lastIndexOf(0x0a, -Infinity),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        typedArray: 2 ** 31 + 600,
+        number: 2 ** 31 + 600,
+        string: 2 ** 31 + 600,
+        buffer: 2 ** 31 + 600,
+        includes: false,
+        last: 2 ** 31 + 100,
+        lastString: 2 ** 31 + 100,
+        negative: 50,
+        lastNegative: -1,
+        inf: -1,
+        negInf: 50,
+        lastInf: 2 ** 31 + 600,
+        lastNegInf: -1,
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 // A latin1 or ascii target gets one byte for each code point: '?' when the target cannot encode it,
 // and one '?' for a surrogate pair. The lengths sit on both sides of the simdutf block sizes and of
 // the 1000 bytes above which a typed array is allocated with malloc.

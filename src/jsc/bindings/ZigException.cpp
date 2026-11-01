@@ -800,18 +800,9 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
             }
             if (line) {
                 if (line.isNumber()) {
+                    // The position is what the object says. It has no column, so a source map that is already parsed does not map it again.
+                    // It is not marked as remapped: the printer reads the file of a remapped frame, and an object that is not an Error can name any file.
                     except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(JSC::toInt32(line.asNumber())).zeroBasedInt();
-
-                    // TODO: don't sourcemap it twice
-                    auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName());
-                    if (scope.exception()) [[unlikely]] {
-                        scope.clearExceptionExceptTermination();
-                    }
-                    if (originalLine) {
-                        if (originalLine.isNumber()) {
-                            except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(JSC::toInt32(originalLine.asNumber())).zeroBasedInt();
-                        }
-                    }
                     except.stack.frames_len = 1;
                 }
             }

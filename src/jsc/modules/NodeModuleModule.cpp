@@ -984,20 +984,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFlushCompileCache,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-// Node returns one frozen object until the next setSourceMapsSupport(). The flags live on the VM, so each call builds its own.
+// As in Node.js, the answer is one frozen object until the switch is set again. The switch is the VM's, and `bun test` puts it back between files without a call here, so the object is kept with the switch it was made from.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionGetSourceMapsSupport,
-    (JSGlobalObject * globalObject,
+    (JSGlobalObject * lexicalGlobalObject,
         JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     BunSourceMapsSupport support = Bun__VM__sourceMapsSupport(bunVM(globalObject));
+    uint8_t bits = support.enabled | support.nodeModules << 1 | support.generatedCode << 2;
+    if (auto* cached = globalObject->m_sourceMapsSupportObject.get(); cached && globalObject->m_sourceMapsSupportObjectBits == bits)
+        return JSC::JSValue::encode(cached);
+
     auto* result = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     Bun::putDirectNamed(vm, result, "enabled"_s, JSC::jsBoolean(support.enabled));
     Bun::putDirectNamed(vm, result, "nodeModules"_s, JSC::jsBoolean(support.nodeModules));
     Bun::putDirectNamed(vm, result, "generatedCode"_s, JSC::jsBoolean(support.generatedCode));
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::objectConstructorFreeze(globalObject, result)));
+    JSC::objectConstructorFreeze(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, {});
+    globalObject->m_sourceMapsSupportObject.set(vm, globalObject, result);
+    globalObject->m_sourceMapsSupportObjectBits = bits;
+    return JSC::JSValue::encode(result);
 }
 
 // https://github.com/nodejs/node/blob/v26.13.0/lib/internal/source_map/source_map_cache.js#L72-L96
@@ -1035,6 +1044,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetSourceMapsSupport,
     }
 
     Bun__VM__setSourceMapsSupport(bunVM(globalObject), support);
+    defaultGlobalObject(globalObject)->m_sourceMapsSupportObject.clear();
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

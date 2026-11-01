@@ -783,11 +783,11 @@ describe.concurrent("a loaded file with its own source map", () => {
       ).toEqual({ stdout: "", stderr: atOriginal, exitCode: 1 });
     });
 
-    // Node prints the line of the loaded file too, under the name of the loaded file.
-    test("is previewed from the loaded file when nothing has the original text", async () => {
+    // Node.js prints the line of the loaded file then, under the name of the loaded file.
+    test("has no source lines when nothing has the original text", async () => {
       expect(await printedError(external, ["--enable-source-maps"])).toEqual({
         stdout: "",
-        stderr: [...atLoaded.slice(0, -1), atOriginal.at(-1)],
+        stderr: atOriginal.slice(-2),
         exitCode: 1,
       });
     });
@@ -1450,6 +1450,30 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
+  // With an `Error.prepareStackTrace`, a read of the stack is in the loaded file: the function gets call sites. The
+  // text that a collection makes for a stack nothing read stands in for that read.
+  test("with an Error.prepareStackTrace, a stack that a collection formats is in the loaded file", async () => {
+    using dir = tempDir("own-source-map-collection-formatter", {
+      ...madeUnread,
+      "main.cjs": `
+        Error.prepareStackTrace = (error, sites) => "prepared: " + sites[0].getFileName() + ":" + sites[0].getLineNumber();
+        const { make } = require("./make.js");
+        const errors = Array.from({ length: 8 }, () => make());
+        const atOnce = make().stack;
+        setImmediate(() => {
+          Bun.gc(true);
+          const files = new Set([atOnce, ...errors.map(error => error.stack)].map(stack => stack.match(/make\\.\\w+:\\d+/)?.[0]));
+          console.log(JSON.stringify([...files]));
+        });
+      `,
+    });
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: ["make.js:2"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // `--smol` collects while the loader turns the parsed `.jsonc` file into values, and that collection is the first
   // reader of the map. The parser of the map must leave the loader's syntax tree alone.
   test("a collection that reads a source map during the load of a .jsonc file leaves that file whole", async () => {
@@ -1480,33 +1504,75 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
-  // The map is read once more for the text of a source, by the first error that shows that source. The file is gone
-  // before the second error is printed.
-  test("a second printed error has the source lines of the first, without a read of the map", async () => {
-    using dir = tempDir("own-source-map-printed-twice", {
-      "lib.js": `${transpiled.cjs.code}//# sourceMappingURL=lib.js.map\n`,
-      "lib.js.map": mapOf("cjs", "lib.ts", { sourcesContent: [original] }),
+  // A frame that a read of `.stack` or a collection put in the original file no longer says which module it is
+  // from. The source lines of the error are found again by the name of the source.
+  test("a printed error has the same source lines when its stack was read or formatted before", async () => {
+    const twice = [
+      `exports.make = function () {`,
+      `  function thrower() { try { return new Error("made"); } finally {} }`,
+      `  try { return thrower(); } finally {}`,
+      `};`,
+      ``,
+    ].join("\n");
+    const madeIn = (name: string) =>
+      JSON.stringify({ version: 3, sources: [`${name}.ts`], names: [], mappings: lineMappings([1, 2, 3, 4]) });
+    const text = (name: string) => `// ${name}\n  here(); // ${name}\n`;
+    using dir = tempDir("own-source-map-printed-after", {
+      // The text is in the map.
+      "in-map.js": `${twice}//# sourceMappingURL=in-map.js.map\n`,
+      "in-map.js.map": JSON.stringify({ ...JSON.parse(madeIn("in-map")), sourcesContent: [text("in the map")] }),
+      // The text is in the file that the map names.
+      "on-disk.js": `${twice}//# sourceMappingURL=on-disk.js.map\n`,
+      "on-disk.js.map": madeIn("on-disk"),
+      "on-disk.ts": text("on the disk"),
+      // The map has one text and the file another: the map's is the one.
+      "both.js": `${twice}//# sourceMappingURL=both.js.map\n`,
+      "both.js.map": JSON.stringify({ ...JSON.parse(madeIn("both")), sourcesContent: [text("in the map")] }),
+      "both.ts": text("on the disk"),
+      // Nothing has the text.
+      "nowhere.js": `${twice}//# sourceMappingURL=nowhere.js.map\n`,
+      "nowhere.js.map": madeIn("nowhere"),
       "main.cjs": `
-        const { boom } = require("./lib.js");
-        const caught = () => { try { boom(); } catch (error) { return error; } };
-        const [first, second] = [caught(), caught()];
-        console.error(first);
-        require("node:fs").rmSync("./lib.js.map");
-        console.error("--");
-        console.error(second);
+        const name = process.argv[2];
+        const { make } = require("./" + name + ".js");
+        const [atOnce, read, collected] = [make(), make(), make()];
+        void read.stack;
+        setImmediate(() => {
+          Bun.gc(true);
+          for (const error of [atOnce, read, collected]) {
+            console.error(error);
+            console.error("--");
+          }
+        });
       `,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), ["--enable-source-maps", "main.cjs"]);
-    const shown = [
-      ...preview(original, inOriginal.boom).split("\n"),
-      "error: kaboom",
-      `      at boom (<dir>/lib.ts:${inOriginal.boom})`,
-    ];
+    const shown = async (name: string) => {
+      const { stderr, exitCode } = await run(String(dir), ["--enable-source-maps", "main.cjs", name]);
+      // What is above the message of each error.
+      const lines = stderr
+        .split("--\n")
+        .slice(0, 3)
+        .map(error => error.split("\n").slice(0, error.split("\n").indexOf("error: made")));
+      return { "at once": lines[0], "after a read of .stack": lines[1], "after a collection": lines[2], exitCode };
+    };
+    const everyOrder = (lines: string[]) => ({
+      "at once": lines,
+      "after a read of .stack": lines,
+      "after a collection": lines,
+      exitCode: 0,
+    });
+    const previewOf = (name: string) => preview(text(name), "2:1").split("\n");
     expect({
-      stdout,
-      stderr: stderr.split("--\n").map(error => error.split("\n").slice(0, shown.length)),
-      exitCode,
-    }).toEqual({ stdout: "", stderr: [shown, shown], exitCode: 0 });
+      "in-map": await shown("in-map"),
+      "on-disk": await shown("on-disk"),
+      "both": await shown("both"),
+      "nowhere": await shown("nowhere"),
+    }).toEqual({
+      "in-map": everyOrder(previewOf("in the map")),
+      "on-disk": everyOrder(previewOf("on the disk")),
+      "both": everyOrder(previewOf("in the map")),
+      "nowhere": everyOrder([]),
+    });
   });
 
   // `%00` in a URL is a NUL in the path that the URL names.
@@ -1529,16 +1595,10 @@ describe.concurrent("a loaded file with its own source map", () => {
       stderr: "",
       exitCode: 0,
     });
-    // The frame is in the source, whose name has the NUL. The lines are the loaded file's, as for any source that
-    // nothing has the text of.
-    const code = transpiled.cjs.code + "boom();\n";
-    expect({ ...printedError, stderr: printedError.stderr.split("\n").slice(0, 9) }).toEqual({
+    // The frame is in the source, whose name has the NUL. Nothing is read for its text.
+    expect({ ...printedError, stderr: printedError.stderr.split("\n").slice(0, 2) }).toEqual({
       stdout: "",
-      stderr: [
-        ...preview(code, transpiled.cjs.boom).split("\n"),
-        "error: kaboom",
-        `      at boom (<dir>/a\0b.ts:${inOriginal.boom})`,
-      ],
+      stderr: ["error: kaboom", `      at boom (<dir>/a\0b.ts:${inOriginal.boom})`],
       exitCode: 1,
     });
   });

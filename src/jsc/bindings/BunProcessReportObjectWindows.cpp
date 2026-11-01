@@ -262,7 +262,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         WTF::String stackProperty = Bun::formatStackTrace(
             vm, globalObject, globalObject, name, message,
             line, column,
-            sourceURL, stackFrames, nullptr);
+            sourceURL, stackFrames, nullptr, BunPositionSpace::Original);
         RETURN_IF_EXCEPTION(scope, {});
 
         WTF::String stack;

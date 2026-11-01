@@ -2888,7 +2888,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
             WTF::String stackProperty = Bun::formatStackTrace(
                 vm, globalObject, globalObject, name, message,
                 line, column,
-                sourceURL, stackFrames, nullptr);
+                sourceURL, stackFrames, nullptr, BunPositionSpace::Original);
             RETURN_IF_EXCEPTION(scope, {});
 
             WTF::String stack;
@@ -5463,6 +5463,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
     // nodeModules and generatedCode follow enabled, as in process.setSourceMapsEnabled() of Node.js (lib/internal/bootstrap/node.js).
     bool enabled = arg0.asBoolean();
     Bun__VM__setSourceMapsSupport(globalObject->bunVM(), { enabled, enabled, enabled });
+    globalObject->m_sourceMapsSupportObject.clear();
     return JSValue::encode(jsUndefined());
 }
 

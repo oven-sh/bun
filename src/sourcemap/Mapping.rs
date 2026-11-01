@@ -303,8 +303,6 @@ pub struct Lookup {
     /// Owned by default_allocator always
     /// use `get_source_code` to access this as a Slice
     pub prefetched_source_code: Option<Box<[u8]>>,
-    /// Where the position is in the file that was loaded, when `mapping` is from that file's own source map and so is a position in what the file was made from.
-    pub loaded: Option<LineColumnOffset>,
 }
 
 impl Lookup {
@@ -360,13 +358,10 @@ impl Lookup {
             if source_map.has_resolved_source_names {
                 // As in Node.js, only a source that resolved to a file is read. A `webpack://` one is not.
                 let name: &[u8] = source_map.external_source_names.get(index)?;
-                if !bun_paths::is_absolute(name) || bun_core::strings::contains_char(name, 0) {
+                if !bun_paths::is_absolute(name) {
                     return None;
                 }
-                match bun_sys::File::read_from(bun_sys::Fd::cwd(), name) {
-                    Ok(r) => break 'bytes r,
-                    Err(_) => return None,
-                }
+                break 'bytes crate::read_file_that_a_map_names(name)?;
             }
 
             let provider = source_map.underlying_provider.provider()?;
@@ -412,10 +407,7 @@ impl Lookup {
             let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
             >(dir, &mut buf[..], &[name])?;
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
-                Ok(r) => break 'bytes r,
-                Err(_) => return None,
-            }
+            crate::read_file_that_a_map_names(path)?
         };
 
         Some(Utf8Bytes::Owned(bytes))

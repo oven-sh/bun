@@ -1242,6 +1242,32 @@ console.log("survived", require("./late.js"));`,
       });
     });
 
+    test("getSourceMapsSupport() gives one object until the switch is set again", async () => {
+      const script = `
+        const { getSourceMapsSupport, setSourceMapsSupport } = require("node:module");
+        const first = getSourceMapsSupport();
+        const again = getSourceMapsSupport() === first;
+        try { setSourceMapsSupport("no"); } catch {}
+        const afterARefusedSet = getSourceMapsSupport() === first;
+        setSourceMapsSupport(false);
+        const afterASetToTheSameValues = getSourceMapsSupport() === first;
+        const second = getSourceMapsSupport();
+        process.setSourceMapsEnabled(false);
+        const afterProcessSetSourceMapsEnabled = getSourceMapsSupport() === second;
+        console.log(JSON.stringify({ again, afterARefusedSet, afterASetToTheSameValues, afterProcessSetSourceMapsEnabled }));
+      `;
+      expect(await run([], script)).toEqual({
+        stdout: JSON.stringify({
+          again: true,
+          afterARefusedSet: true,
+          afterASetToTheSameValues: false,
+          afterProcessSetSourceMapsEnabled: false,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test("setSourceMapsSupport() refuses what Node refuses and leaves the switch as it was", async () => {
       const enabled = received => `The "enabled" argument must be of type boolean. Received ${received}`;
       const options = received => `The "options" argument must be of type object. Received ${received}`;

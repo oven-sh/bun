@@ -11,7 +11,7 @@ use bun_core::StringView;
 use bun_ptr::tagged_pointer::TagType;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
-use bun_threading::{Guarded, Mutex};
+use bun_threading::Mutex;
 use bun_wyhash::hash;
 
 #[derive(Default)]
@@ -92,9 +92,9 @@ impl SourceMapsSupport {
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PositionSpace {
-    /// The file that was loaded. A `CallSite`, coverage, an inline snapshot and a profile are about that file.
+    /// Through the maps that Bun wrote and no further: the file that was loaded, or what the sidecar map of a `// @bun` file names. A `CallSite`, coverage, an inline snapshot and a profile read this one.
     Loaded = 0,
-    /// What the loaded file was made from, for a module that [`SavedSourceMap::put_mappings`] kept the own source map of, while `process.sourceMapsEnabled` is on. Otherwise the same as `Loaded`. `Error.stack` and a printed error read this one.
+    /// On through the own source map of a module that [`SavedSourceMap::put_mappings`] kept the URL of, while `process.sourceMapsEnabled` is on. Otherwise the same as `Loaded`. `Error.stack` and a printed error read this one.
     Original = 1,
 }
 
@@ -140,21 +140,25 @@ impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ChainedSourceMap {
     const TAG: TagType = 1021;
 }
 
-/// A runtime-transpiled module whose source names a source map of its own, put in the table while `process.sourceMapsEnabled` was on: `loaded` goes from what runs to the file that was loaded, and the map at `url` goes on to what that file was made from.
+/// A runtime-transpiled module whose source names a source map of its own, put in the table while `process.sourceMapsEnabled` was on.
 pub(crate) struct ChainedSourceMap {
-    /// The printer's blob in the shell that `get_with_content` hands out.
+    /// The printer's blob in the shell that `get_with_content` hands out: from what runs to the file that was loaded.
     loaded: Arc<ParsedSourceMap>,
-    /// The URL of the module's `sourceMappingURL` comment.
+    /// From the file that was loaded to what that file was made from.
+    own: OwnSourceMap,
+}
+
+/// The source map that a module's `sourceMappingURL` comment names.
+pub(crate) struct OwnSourceMap {
+    /// The URL of the comment.
     url: Box<[u8]>,
     /// The path of the module, which a relative `url` is beside.
     module: Box<[u8]>,
-    /// The map at `url`, read and parsed by the first reader that asks for an original position, which is when Node.js reads it. `None`: there is no usable map.
-    original: OnceLock<Option<Arc<ParsedSourceMap>>>,
-    /// The `sourcesContent` entry of each source that a printed error showed, by the index of the source.
-    source_contents: Guarded<Vec<(u32, Option<Box<[u8]>>)>>,
+    /// The map, read and parsed by the first reader that asks for a position in it, which is when Node.js reads it. `None`: there is no usable map.
+    parsed: OnceLock<Option<Arc<ParsedSourceMap>>>,
 }
 
-impl ChainedSourceMap {
+impl OwnSourceMap {
     /// Reads the map as Node.js does: `url` is a `data:` URL, or a path, which is a URL relative to the module. A `file:`, `http:` or other URL with a scheme names nothing, and nothing is reported.
     fn parse(&self, hint: SourceMap::ParseUrlResultHint) -> Option<SourceMap::ParseUrl> {
         let module_url = bun_url::file_url_from_string(&StringView::from_bytes(&self.module));
@@ -180,7 +184,7 @@ impl ChainedSourceMap {
         if map_path.is_dead() || map_path.is_empty() {
             return None;
         }
-        let json = read_source_map_file(map_path.to_utf8().slice())?;
+        let json = SourceMap::read_file_that_a_map_names(map_path.to_utf8().slice())?;
         // A relative `sources` entry is beside the map file.
         let resolve_source = |source: &[u8]| shown_source_name(&map_url, source);
         let policy = SourceMap::ParsePolicy::Node {
@@ -189,29 +193,79 @@ impl ChainedSourceMap {
         SourceMap::parse_json(&json, hint, policy).ok()
     }
 
-    /// This reads a file and parses JSON, and a collection can be what calls it, on the collector thread or on the JS thread.
-    fn original(&self) -> Option<&Arc<ParsedSourceMap>> {
-        self.original
+    /// Where `line` and `column` of the module's file are in what that file was made from, with the text of that source if `source_handling` asks for it. `None`: the map has nothing there. The first call reads a file and parses JSON, and a collection can be what calls it, on the collector thread or on the JS thread.
+    fn lookup(
+        &self,
+        line: Ordinal,
+        column: Ordinal,
+        source_handling: SourceMap::SourceContentHandling,
+    ) -> Option<SourceMap::mapping::Lookup> {
+        // The parse that reads the map for a printed error gives the text of the source as well.
+        let mut text_of_first_parse: Option<(i32, Option<Box<[u8]>>)> = None;
+        let parsed = self
+            .parsed
             .get_or_init(|| {
-                self.parse(SourceMap::ParseUrlResultHint::MappingsOnly)
-                    .and_then(|parsed| parsed.map)
+                let parse = self.parse(match source_handling {
+                    SourceMap::SourceContentHandling::NoSourceContents => {
+                        SourceMap::ParseUrlResultHint::MappingsOnly
+                    }
+                    SourceMap::SourceContentHandling::SourceContents => {
+                        SourceMap::ParseUrlResultHint::All {
+                            line: line.zero_based().max(0),
+                            column: column.zero_based().max(0),
+                            include_names: false,
+                        }
+                    }
+                })?;
+                if let Some(mapping) = &parse.mapping {
+                    text_of_first_parse = Some((mapping.source_index, parse.source_contents));
+                }
+                parse.map
             })
-            .as_ref()
-    }
-
-    /// The `sourcesContent` entry of the source at `index`. The map is read again for the first error that shows that source.
-    fn source_content(&self, index: u32) -> Option<Box<[u8]>> {
-        let mut contents = self.source_contents.lock();
-        if let Some((_, content)) = contents.iter().find(|(at, _)| *at == index) {
-            return content.clone();
+            .as_ref()?;
+        let mapping = parsed.find_mapping(line, column)?;
+        let name = usize::try_from(mapping.source_index)
+            .ok()
+            .and_then(|index| parsed.external_source_names.get(index))?;
+        if name.is_empty() {
+            return None;
         }
-        let content = self
-            .parse(SourceMap::ParseUrlResultHint::SourceOnly(index))
-            .and_then(|parsed| parsed.source_contents);
-        contents.push((index, content.clone()));
-        content
+        let text = match (source_handling, text_of_first_parse) {
+            (SourceMap::SourceContentHandling::NoSourceContents, _) => None,
+            (_, Some((index, text))) if index == mapping.source_index => text,
+            _ => self.source_text(mapping.source_index),
+        };
+        Some(SourceMap::mapping::Lookup {
+            mapping,
+            source_map: Some(Arc::clone(parsed)),
+            prefetched_source_code: text,
+        })
     }
 
+    /// The `sourcesContent` entry of the source at `index`. The map is read again: as for every map, a printed error does not keep the text.
+    fn source_text(&self, index: i32) -> Option<Box<[u8]>> {
+        self.parse(SourceMap::ParseUrlResultHint::SourceOnly(
+            u32::try_from(index).ok()?,
+        ))?
+        .source_contents
+    }
+}
+
+/// Whose text a printed error shows for a top frame that was renamed before, see [`SavedSourceMap::shown_source`].
+pub(crate) enum ShownSource {
+    /// No own source map that was read shows a source under the name.
+    Unclaimed,
+    /// More than one does and their texts differ, or the name is a module of the table too.
+    Ambiguous,
+    /// `map` shows its source at `source_index` under the name, and `text` is the `sourcesContent` entry.
+    Claimed {
+        map: Arc<ParsedSourceMap>,
+        source_index: i32,
+        text: Option<Box<[u8]>>,
+    },
+}
+
+impl ChainedSourceMap {
     /// `line` and `column` are a position in what runs. `None`: the printer mapped nothing there.
     fn resolve(
         &self,
@@ -220,35 +274,20 @@ impl ChainedSourceMap {
         source_handling: SourceMap::SourceContentHandling,
     ) -> Option<SourceMap::mapping::Lookup> {
         let loaded = self.loaded.find_mapping(line, column)?;
-        let moved = self.original().and_then(|original| {
-            let mapping = original.find_mapping(loaded.original.lines, loaded.original.columns)?;
-            let name = usize::try_from(mapping.source_index)
-                .ok()
-                .and_then(|index| original.external_source_names.get(index))?;
-            (!name.is_empty()).then_some((original, mapping))
-        });
         // Where the module's own map has nothing, the position stays in the file that was loaded.
-        let Some((original, mapping)) = moved else {
-            return Some(SourceMap::mapping::Lookup {
-                mapping: loaded,
-                source_map: Some(Arc::clone(&self.loaded)),
-                prefetched_source_code: None,
-                loaded: None,
-            });
-        };
-        Some(SourceMap::mapping::Lookup {
-            mapping,
-            source_map: Some(Arc::clone(original)),
-            prefetched_source_code: match source_handling {
-                SourceMap::SourceContentHandling::NoSourceContents => None,
-                SourceMap::SourceContentHandling::SourceContents => {
-                    u32::try_from(mapping.source_index)
-                        .ok()
-                        .and_then(|index| self.source_content(index))
-                }
-            },
-            loaded: Some(loaded.original),
-        })
+        self.own
+            .lookup(
+                loaded.original.lines,
+                loaded.original.columns,
+                source_handling,
+            )
+            .or_else(|| {
+                Some(SourceMap::mapping::Lookup {
+                    mapping: loaded,
+                    source_map: Some(Arc::clone(&self.loaded)),
+                    prefetched_source_code: None,
+                })
+            })
     }
 }
 
@@ -271,24 +310,6 @@ fn shown_source_name(base: &bun_core::String, source: &[u8]) -> Box<[u8]> {
         return Box::default();
     }
     Box::from(shown.to_utf8().slice())
-}
-
-/// What the file at `path` has in it, if it is a regular file: a `sourceMappingURL` comment can name anything.
-fn read_source_map_file(path: &[u8]) -> Option<Vec<u8>> {
-    // `%00` in the URL is a NUL here, and no path has one.
-    if bun_core::strings::contains_char(path, 0) {
-        return None;
-    }
-    // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
-    #[cfg(unix)]
-    let flags = bun_sys::O::RDONLY | bun_sys::O::NONBLOCK;
-    #[cfg(not(unix))]
-    let flags = bun_sys::O::RDONLY;
-    let file = bun_sys::File::openat(bun_sys::Fd::cwd(), path, flags, 0).ok()?;
-    if file.kind().ok()? != bun_sys::FileKind::File {
-        return None;
-    }
-    file.read_to_end().ok()
 }
 
 /// The URL of the `sourceMappingURL` comment at `url` in `source`, if `support` asks for the own source map of that module.
@@ -472,10 +493,11 @@ impl SavedSourceMap {
                 loaded: Arc::new(ParsedSourceMap::from_internal(InternalSourceMap {
                     data: blob_ptr.cast::<u8>(),
                 })),
-                url: Box::from(url),
-                module: Box::from(source.path.text),
-                original: OnceLock::new(),
-                source_contents: Guarded::new(Vec::new()),
+                own: OwnSourceMap {
+                    url: Box::from(url),
+                    module: Box::from(source.path.text),
+                    parsed: OnceLock::new(),
+                },
             }))),
         };
         // errdefer: on error, release what the table did not take.
@@ -616,6 +638,50 @@ impl SavedSourceMap {
         }
     }
 
+    /// The own source map that shows a source as `name`. A printed error asks for a top frame that a read of `.stack` or a collection renamed: such a frame no longer says which module it is from.
+    pub(crate) fn shown_source(&mut self, name: &[u8]) -> ShownSource {
+        let mut claimants: Vec<(Arc<ChainedSourceMap>, i32)> = Vec::new();
+        self.lock();
+        let is_module = self.map.contains_key(&hash(name));
+        for &value in self.map.values() {
+            let Some(chained) = Value::from(Some(value)).get::<ChainedSourceMap>() else {
+                continue;
+            };
+            // SAFETY: `put_mappings` stored it with `Arc::into_raw`, and it is live while locked. The count goes up for the handle that leaves the lock.
+            let chained = unsafe {
+                Arc::increment_strong_count(chained.cast_const());
+                Arc::from_raw(chained.cast_const())
+            };
+            let index = match chained.own.parsed.get() {
+                Some(Some(parsed)) => parsed
+                    .external_source_names
+                    .iter()
+                    .position(|source| **source == *name),
+                _ => None,
+            };
+            if let Some(index) = index.and_then(|index| i32::try_from(index).ok()) {
+                claimants.push((chained, index));
+            }
+        }
+        self.unlock();
+
+        let Some((first, source_index)) = claimants.first() else {
+            return ShownSource::Unclaimed;
+        };
+        let text = first.own.source_text(*source_index);
+        let same_text = claimants[1..]
+            .iter()
+            .all(|(other, index)| other.own.source_text(*index) == text);
+        match first.own.parsed.get() {
+            Some(Some(map)) if !is_module && same_text => ShownSource::Claimed {
+                map: Arc::clone(map),
+                source_index: *source_index,
+                text,
+            },
+            _ => ShownSource::Ambiguous,
+        }
+    }
+
     /// You must `deref()` the returned value or you will leak memory
     pub fn get(&mut self, path: &[u8]) -> Option<std::sync::Arc<ParsedSourceMap>> {
         self.get_with_content(path, SourceMap::ParseUrlResultHint::MappingsOnly)
@@ -695,7 +761,6 @@ impl SavedSourceMap {
             mapping,
             source_map: Some(map),
             prefetched_source_code: parse.source_contents,
-            loaded: None,
         })
     }
 }

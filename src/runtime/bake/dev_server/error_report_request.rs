@@ -312,7 +312,6 @@ impl ErrorReportRequest {
             system_code: BunString::EMPTY,
             path: BunString::EMPTY,
             fd: -1,
-            source_lines_column: bun_core::Ordinal::INVALID,
         };
 
         {

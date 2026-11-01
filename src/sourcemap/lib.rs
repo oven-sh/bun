@@ -539,11 +539,8 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let load_path =
                     bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
 
-                // `bun_sys::File::read_from` returns an owned `Vec<u8>`,
-                // freed on scope exit by `Vec`'s Drop.
-                let data = match bun_sys::File::read_from(bun_core::Fd::cwd(), load_path) {
-                    Ok(data) => data,
-                    Err(_) => break 'try_external,
+                let Some(data) = read_file_that_a_map_names(load_path.as_bytes()) else {
+                    break 'try_external;
                 };
 
                 match parse_json(&data, result, ParsePolicy::Bun) {
@@ -880,6 +877,23 @@ pub fn parse_url(
     };
 
     parse_json(json_bytes, hint, policy)
+}
+
+/// What the regular file at `path` has in it. A source map names the file, so it can be a FIFO, a device, or a path with a NUL from a `%00`.
+pub fn read_file_that_a_map_names(path: &[u8]) -> Option<Vec<u8>> {
+    if bun_core::strings::contains_char(path, 0) {
+        return None;
+    }
+    // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
+    #[cfg(unix)]
+    let flags = bun_sys::O::RDONLY | bun_sys::O::NONBLOCK;
+    #[cfg(not(unix))]
+    let flags = bun_sys::O::RDONLY;
+    let file = bun_sys::File::openat(bun_sys::Fd::cwd(), path, flags, 0).ok()?;
+    if file.kind().ok()? != bun_sys::FileKind::File {
+        return None;
+    }
+    file.read_to_end().ok()
 }
 
 /// The JSON of a `data:` URL as Node.js takes it (`sourceMapFromDataUrl`): the media type is `application/json` in those letters, the data is base64 if the last parameter says so, and it ends at a second comma, so JSON with a comma in it is cut there.

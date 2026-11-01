@@ -425,6 +425,8 @@ public:
                                                                                                              \
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
+    /* What module.getSourceMapsSupport() answered last. */                                                  \
+    V(public, WriteBarrier<JSObject>, m_sourceMapsSupportObject)                                             \
                                                                                                              \
     /* The innermost open handle scope (Node-API or V8), where new napi_values and V8 handles are */         \
     /* created. You must not pass any napi_values back to a NAPI function without putting them in the */     \
@@ -601,6 +603,8 @@ public:
     // Ensure that everything below here has a consistent visibility instead of taking the
     // visibility of the last thing declared with FOR_EACH_GLOBALOBJECT_GC_MEMBER
 public:
+    // The switch that m_sourceMapsSupportObject was made from, as its three bits.
+    uint8_t m_sourceMapsSupportObjectBits = 0;
     WTF::String m_moduleWrapperStart;
     WTF::String m_moduleWrapperEnd;
 

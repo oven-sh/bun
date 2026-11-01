@@ -499,9 +499,9 @@ bool Bun__deepMatch(
 
 // Mirrors `PositionSpace` in bun_jsc: the file that a reader of a stack position wants the position in.
 enum class BunPositionSpace : uint8_t {
-    // The file that was loaded.
+    // Through the maps that Bun wrote and no further.
     Loaded = 0,
-    // What the loaded file was made from, for a runtime-transpiled module with a source map of its own, while process.sourceMapsEnabled is on. Otherwise the same as Loaded. `Error.stack` and a printed error read this one.
+    // On through the own source map of a runtime-transpiled module, while process.sourceMapsEnabled is on. Otherwise the same as Loaded. `Error.stack` and a printed error read this one.
     Original = 1,
 };
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t, BunPositionSpace);

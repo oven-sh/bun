@@ -222,7 +222,8 @@ WTF::String formatStackTrace(
     OrdinalNumber& column,
     WTF::String& sourceURL,
     Vector<JSC::StackFrame>& stackTrace,
-    JSC::JSObject* errorInstance)
+    JSC::JSObject* errorInstance,
+    BunPositionSpace space)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The message and each frame's source URL come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
@@ -384,7 +385,7 @@ WTF::String formatStackTrace(
     }
 
     if (anyRemap) {
-        remappedFrames.remap(getBunVM(), BunPositionSpace::Original);
+        remappedFrames.remap(getBunVM(), space);
     }
 
     // Pass 2: format. Everything except (display line/col, source_url) is
@@ -505,7 +506,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance));
+    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance, BunPositionSpace::Original));
 }
 
 static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
@@ -575,7 +576,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     if (anyRemap) {
-        // A CallSite answers for the file that was loaded, as in V8: a prepareStackTrace that maps them itself goes on from there.
+        // A CallSite is not mapped through a module's own source map, as in V8: a prepareStackTrace that maps call sites itself goes on from the loaded file.
         remappedFrames.remap(globalObject->bunVM(), BunPositionSpace::Loaded);
     }
 
@@ -677,8 +678,11 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // With an Error.prepareStackTrace installed, a read of the stack gives it call sites, which are in the loaded file. This text stands in for that read.
+    JSValue prepareStackTrace = defaultGlobalObject(vm)->m_errorConstructorPrepareStackTraceValue.get();
+    auto space = prepareStackTrace && prepareStackTrace.isCallable() ? BunPositionSpace::Loaded : BunPositionSpace::Original;
     // The frames only: JavaScriptCore prepends the error's name and message when the stack is read.
-    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
+    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr, space);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();

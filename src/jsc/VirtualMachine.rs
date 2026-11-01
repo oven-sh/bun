@@ -16,7 +16,7 @@ use crate::counters::Counters;
 use crate::event_loop::EventLoop;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
-use crate::saved_source_map::{PositionSpace, SavedSourceMap, SourceMapsSupport};
+use crate::saved_source_map::{PositionSpace, SavedSourceMap, ShownSource, SourceMapsSupport};
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
     PlatformEventLoop, ResolvedSource, VM, ZigException,
@@ -7234,9 +7234,27 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
+        // The frame no longer says which module it is from. With source maps on, its name can be a source of a module's own source map.
+        let shown_source = if already_remapped && self.source_mappings.source_maps_support().enabled
+        {
+            self.source_mappings
+                .shown_source(frames[top].source_url.to_utf8().slice())
+        } else {
+            ShownSource::Unclaimed
+        };
+        // It is not known whose text an ambiguous name stands for.
+        let has_ambiguous_source = matches!(shown_source, ShownSource::Ambiguous);
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
             let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
+                let (source_map, source_index, prefetched_source_code) = match shown_source {
+                    ShownSource::Claimed {
+                        map,
+                        source_index,
+                        text,
+                    } => (Some(map), source_index, text),
+                    ShownSource::Unclaimed | ShownSource::Ambiguous => (None, 0, None),
+                };
                 Some(bun_sourcemap::mapping::Lookup {
                     mapping: bun_sourcemap::mapping::Mapping {
                         generated: bun_sourcemap::LineColumnOffset::default(),
@@ -7248,37 +7266,36 @@ impl VirtualMachine {
                                 frames[top].position.column.zero_based().max(0),
                             ),
                         },
-                        source_index: 0,
+                        source_index,
                         name_index: -1,
                     },
-                    source_map: None,
-                    prefetched_source_code: None,
-                    loaded: None,
+                    source_map,
+                    prefetched_source_code,
                 })
             } else {
                 self.resolve_source_mapping(
                     top_source_url.slice(),
                     frames[top].position.line,
                     frames[top].position.column,
-                    if enable_source_code_preview.get() {
-                        bun_sourcemap::SourceContentHandling::SourceContents
-                    } else {
-                        bun_sourcemap::SourceContentHandling::NoSourceContents
-                    },
+                    bun_sourcemap::SourceContentHandling::SourceContents,
                     PositionSpace::Original,
                 )
             };
 
             maybe_lookup.map(|lookup| {
                 let mapping = lookup.mapping;
-                let loaded = lookup.loaded;
                 let display_url = if !already_remapped {
                     lookup.display_source_url_if_needed(top_source_url.slice())
                 } else {
                     None
                 };
+                // The text of a source of a module's own source map is in the map or in the file that the map names, and nowhere else.
+                let only_external_code = has_ambiguous_source
+                    || lookup
+                        .source_map
+                        .as_deref()
+                        .is_some_and(|m| m.has_resolved_source_names);
                 let external_code = if enable_source_code_preview.get()
-                    && !already_remapped
                     && lookup
                         .source_map
                         .as_deref()
@@ -7288,26 +7305,14 @@ impl VirtualMachine {
                 } else {
                     None
                 };
-                // Nothing has the text of what the loaded file was made from: the lines to show are the loaded file's.
-                let loaded = if enable_source_code_preview.get() && external_code.is_none() {
-                    loaded
-                } else {
-                    None
-                };
-                (mapping, display_url, external_code, loaded)
+                (mapping, display_url, external_code, only_external_code)
             })
         };
 
-        if let Some((mapping, display_url, external_code, mut loaded)) = resolved {
-            let mut loaded_url: Option<bun_core::StringOrView<'a>> = None;
+        if let Some((mapping, display_url, external_code, only_external_code)) = resolved {
             if let Some(src) = display_url {
-                let before = core::mem::replace(&mut frames[top].source_url, src.into());
-                if loaded.is_some() {
-                    loaded_url = Some(before);
-                }
+                frames[top].source_url = src.into();
             }
-            let code_url: &bun_core::String =
-                loaded_url.as_deref().unwrap_or(&frames[top].source_url);
 
             let code: bun_core::Utf8Bytes<'static> = 'code: {
                 if !enable_source_code_preview.get() {
@@ -7320,8 +7325,11 @@ impl VirtualMachine {
                     // Avoid printing "export default 'native'"
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
+                if only_external_code {
+                    break 'code bun_core::Utf8Bytes::EMPTY;
+                }
+                let top_path = frames[top].source_url.to_utf8();
                 // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
-                let top_path = code_url.to_utf8();
                 if crate::compiled_program::is_compiled_module(top_path.slice()) {
                     if !crate::compiled_program::runs_in_place() {
                         break 'code bun_core::Utf8Bytes::EMPTY;
@@ -7337,7 +7345,7 @@ impl VirtualMachine {
                     VirtualMachine::fetch_without_on_load_plugins,
                     self,
                     global,
-                    code_url,
+                    &frames[top].source_url,
                     &bun_core::String::EMPTY,
                     None,
                     &mut log,
@@ -7352,9 +7360,8 @@ impl VirtualMachine {
             *source_code = code;
             let code: &'a [u8] = source_code.slice();
 
-            if enable_source_code_preview.get() && code.is_empty() {
+            if enable_source_code_preview.get() && code.is_empty() && !only_external_code {
                 exception.collect_source_lines(error_instance, global);
-                loaded = None;
             }
 
             // Direct copy; both sides are `bun_core::Ordinal`.
@@ -7362,13 +7369,8 @@ impl VirtualMachine {
             frames[top].position.column = mapping.original.columns;
             exception.remapped = true;
             frames[top].remapped = true;
-            exception.source_lines_column =
-                loaded.map_or(bun_core::Ordinal::INVALID, |position| position.columns);
 
-            let last_line = loaded
-                .map_or(frames[top].position.line, |position| position.lines)
-                .zero_based()
-                .max(0);
+            let last_line = frames[top].position.line.zero_based().max(0);
             if let Some(lines_buf) = bun_core::strings::get_lines_in_text::<
                 { crate::zig_exception::SOURCE_LINES_COUNT },
             >(code, last_line as u32)
@@ -7834,11 +7836,7 @@ impl VirtualMachine {
                     } else {
                         pretty_write!(writer, "<r><b>{} |<r> {}\n", display_line, hl)?;
 
-                        let col = if exception.source_lines_column.is_valid() {
-                            exception.source_lines_column.zero_based()
-                        } else {
-                            top.position.column.zero_based()
-                        };
+                        let col = top.position.column.zero_based();
                         if clamped.len() < MAX_LINE_LENGTH_WITH_DIVOT
                             || (col as usize) > MAX_LINE_LENGTH_WITH_DIVOT
                         {
@@ -8380,7 +8378,6 @@ impl VirtualMachine {
             mapping,
             source_map: Some(map),
             prefetched_source_code: None,
-            loaded: None,
         })
     }
 

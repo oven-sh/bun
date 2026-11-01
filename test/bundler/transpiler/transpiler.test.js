@@ -3986,6 +3986,14 @@ console.log(resolve.length)
         expect(parsed("123", true, false, transpilerNoDCE)).toBe("123");
         expect(parsed("[1, 2n, null]", true, false, transpilerNoDCE)).toBe("[1, 2n, null]");
         expect(parsed("true", true, false, transpilerNoDCE)).toBe("true");
+        // minify.syntax alone does not turn the simplifier back on.
+        const transpilerNoDCEMinifySyntax = new Bun.Transpiler({
+          deadCodeElimination: false,
+          minify: { syntax: true },
+        });
+        expect(parsed("123", true, false, transpilerNoDCEMinifySyntax)).toBe("123");
+        expect(parsed("[1, 2n, null]", true, false, transpilerNoDCEMinifySyntax)).toBe("[1, 2n, null]");
+        expect(parsed("true", true, false, transpilerNoDCEMinifySyntax)).toBe("!0");
         expect(parsed("!0", true, false, transpilerNoDCE)).toBe("!0");
         expect(parsed('if (!1) "dead";', true, false, transpilerNoDCE)).toBe('if (!1)\n  "dead"');
         expect(parsed("if (!1) var x = 2;", true, false, transpilerNoDCE)).toBe("if (!1)\n  var x = 2");

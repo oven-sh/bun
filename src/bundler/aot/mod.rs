@@ -11,7 +11,7 @@ mod native_plugins;
 mod options;
 mod output;
 mod page_bundles;
-mod paths;
+pub(crate) mod paths;
 mod services;
 #[cfg(feature = "test_support")]
 pub mod testing;

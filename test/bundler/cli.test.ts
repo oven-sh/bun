@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  unprivilegedSpawnOptions,
+} from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -485,6 +493,185 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(a).toContain('"A"');
   expect(b).toContain('"B"');
 });
+
+describe.concurrent("the default root of a multi-entry build", () => {
+  const files = {
+    "src/main.ts": `console.log("main");`,
+    "src/w/worker.ts": `console.log("worker");`,
+  };
+
+  async function outputs(dir: string, entryPoints: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...entryPoints, "--outdir", "dist"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return Array.from(new Bun.Glob("**/*.js").scanSync({ cwd: path.join(dir, "dist") }))
+      .map(file => file.replaceAll("\\", "/"))
+      .sort();
+  }
+
+  test("does not depend on how the entry points are spelled", async () => {
+    using dir = tempDir("build-root-spelling", files);
+    expect(await outputs(String(dir), ["src/main.ts", "./src/w/worker.ts"])).toEqual(["main.js", "w/worker.js"]);
+  });
+
+  test("is the same for `./src/a.ts` and `src/a.ts`", async () => {
+    using dir = tempDir("build-root-dot-slash", files);
+    expect(await outputs(String(dir), ["./src/main.ts", "src/w/worker.ts"])).toEqual(["main.js", "w/worker.js"]);
+  });
+
+  test("is the same for an absolute and a relative entry point", async () => {
+    using dir = tempDir("build-root-absolute", files);
+    const main = path.join(String(dir), "src", "main.ts");
+    expect(await outputs(String(dir), [main, "src/w/worker.ts"])).toEqual(["main.js", "w/worker.js"]);
+  });
+
+  test("stays the working directory when an entry point lies above it", async () => {
+    using dir = tempDir("build-root-above", {
+      "app/index.ts": `console.log("index");`,
+      "worker.ts": `console.log("worker");`,
+    });
+    expect(await outputs(path.join(String(dir), "app"), ["./index.ts", "../worker.ts"])).toEqual([
+      "_.._/worker.js",
+      "index.js",
+    ]);
+  });
+
+  test("is the shared directory when every entry point lies above the working directory", async () => {
+    using dir = tempDir("build-root-all-above", {
+      "scripts/.keep": "",
+      "a.ts": `console.log("a");`,
+      "b.ts": `console.log("b");`,
+    });
+    expect(await outputs(path.join(String(dir), "scripts"), ["../a.ts", "../b.ts"])).toEqual(["a.js", "b.js"]);
+  });
+
+  test("is the directory that holds nine or more entry points", async () => {
+    const names = Array.from({ length: 9 }, (_, i) => `pages/page${i}.ts`);
+    using dir = tempDir(
+      "build-root-nine-entries",
+      Object.fromEntries(names.map((name, i) => [name, `console.log(${i});`])),
+    );
+    expect(await outputs(String(dir), names)).toEqual(names.map(name => name.slice("pages/".length, -3) + ".js"));
+  });
+
+  // `ab` does not hold `abc/y.ts`, and `cli` does not hold `cli.ts`.
+  test.each([
+    [
+      ["./ab/x.ts", "./abc/y.ts"],
+      ["ab/x.js", "abc/y.js"],
+    ],
+    [
+      ["./x/y/a.ts", "./x/yy/b.ts"],
+      ["y/a.js", "yy/b.js"],
+    ],
+    [
+      ["./cli.ts", "./cli/worker.ts"],
+      ["cli.js", "cli/worker.js"],
+    ],
+  ])("ends at a path separator, not inside a name: %j", async (entryPoints, expected) => {
+    using dir = tempDir(
+      "build-root-name-prefix",
+      Object.fromEntries(
+        entryPoints.map(entry => [entry.slice("./".length), `console.log(${JSON.stringify(entry)});`]),
+      ),
+    );
+    expect(await outputs(String(dir), entryPoints)).toEqual(expected);
+  });
+
+  // No directory holds names that a package resolves.
+  describe("is the working directory for names that a package resolves", () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `madeup/e${i}.js`);
+    const packageFiles = {
+      "node_modules/madeup/package.json": JSON.stringify({ name: "madeup", version: "1.0.0", main: "./m.js" }),
+      ...Object.fromEntries(
+        ["madeup/m.js", "madeup/a.js", "madeup/b.js", ...nine].map(name => [
+          `node_modules/${name}`,
+          `console.log(${JSON.stringify(name)});`,
+        ]),
+      ),
+      "src/a.ts": `console.log("a");`,
+    };
+    const inPackage = (...names: string[]) => names.map(name => `node_modules/${name}`);
+
+    test.each([
+      ["a package and one of its files", ["madeup", "madeup/a.js"], inPackage("madeup/a.js", "madeup/m.js")],
+      ["two files of a package", ["madeup/a.js", "madeup/b.js"], inPackage("madeup/a.js", "madeup/b.js")],
+      ["nine files of a package", nine, inPackage(...nine)],
+      ["a file of a package and a file", ["madeup/a.js", "src/a.ts"], ["node_modules/madeup/a.js", "src/a.js"]],
+    ])("%s", async (_, entryPoints, expected) => {
+      using dir = tempDir("build-root-package-names", packageFiles);
+      expect(await outputs(String(dir), entryPoints)).toEqual(expected);
+    });
+
+    test("beside a file with the name of the package", async () => {
+      using dir = tempDir("build-root-package-file", { ...packageFiles, "madeup": "not a directory" });
+      expect(await outputs(String(dir), nine)).toEqual(inPackage(...nine));
+    });
+
+    test.skipIf(isWindows)("beside a link with the name of the package that leads to itself", async () => {
+      using dir = tempDir("build-root-package-loop", packageFiles);
+      fs.symlinkSync("madeup", path.join(String(dir), "madeup"));
+      expect(await outputs(String(dir), nine)).toEqual(inPackage(...nine));
+    });
+  });
+});
+
+// Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+test.skipIf(isWindows)(
+  "the default root is the working directory when the shared directory does not open",
+  async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `../${i % 2 ? "x" : "y"}/e${i}.ts`);
+    using dir = tempDir("build-root-unlistable", {
+      "shared/app/index.ts": `console.log("index");`,
+      "shared/app/src/x/a.ts": `console.log("a");`,
+      "shared/app/src/y/b.ts": `console.log("b");`,
+      ...Object.fromEntries(
+        nine.map(name => [path.posix.join("shared/app", name), `console.log(${JSON.stringify(name)});`]),
+      ),
+    });
+    const shared = path.join(String(dir), "shared");
+    const cwd = path.join(shared, "app");
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+    // The user may enter each folder and may not list it.
+    const builds = [
+      { unlistable: shared, outdir: "mixed", entryPoints: ["./index.ts", "../x/e1.ts"] },
+      { unlistable: shared, outdir: "nine", entryPoints: nine },
+      { unlistable: path.join(cwd, "src"), outdir: "inside", entryPoints: ["src/x/a.ts", "./src/y/b.ts"] },
+    ];
+    const built: string[][] = [];
+    for (const { unlistable, outdir, entryPoints } of builds) {
+      fs.chmodSync(unlistable, 0o311);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", ...entryPoints, "--outdir", outdir],
+          env: bunEnv,
+          cwd,
+          stdout: "ignore",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      } finally {
+        fs.chmodSync(unlistable, 0o755);
+      }
+      built.push(Array.from(new Bun.Glob("**/*.js").scanSync({ cwd: path.join(cwd, outdir) })).sort());
+    }
+    expect(built).toEqual([
+      ["_.._/x/e1.js", "index.js"],
+      [1, 3, 5, 7].map(i => `_.._/x/e${i}.js`).concat([0, 2, 4, 6, 8].map(i => `_.._/y/e${i}.js`)),
+      ["src/x/a.js", "src/y/b.js"],
+    ]);
+  },
+);
 
 // macOS and Windows read files on the IO pool by default.
 test("exits with the build error when a build fails while the IO pool is still reading entry points", async () => {

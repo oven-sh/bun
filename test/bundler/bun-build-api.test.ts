@@ -1,6 +1,6 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -12,6 +12,7 @@ import {
   tempDir,
   tempDirWithFiles,
   tempDirWithFilesAnon,
+  unprivilegedSpawnOptions,
 } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
@@ -781,6 +782,156 @@ describe("Bun.build", () => {
     expect(await x.outputs.values().next().value?.text()).toMatchSnapshot();
     Bun.gc(true);
   });
+
+  test.concurrent("the default root does not depend on how the entry points are spelled", async () => {
+    using dir = tempDir("build-root-spelling", {
+      "src/main.ts": `console.log("main");`,
+      "src/w/worker.ts": `console.log("worker");`,
+      "build.ts": `
+        const spellings = [
+          ["src/main.ts", "./src/w/worker.ts"],
+          ["./src/main.ts", "src/w/worker.ts"],
+          ["src/main.ts", "src/w/worker.ts"],
+        ];
+        for (const entrypoints of spellings) {
+          const outdir = "dist" + spellings.indexOf(entrypoints);
+          const result = await Bun.build({ entrypoints, outdir });
+          const names = result.outputs.map(output => output.path.slice(output.path.indexOf(outdir) + outdir.length + 1));
+          console.log(JSON.stringify(names.map(name => name.replaceAll("\\\\", "/")).sort()));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('["main.js","w/worker.js"]\n'.repeat(3));
+    expect(exitCode).toBe(0);
+  });
+
+  // `ab` does not hold `abc/y.ts`, and `cli` does not hold `cli.ts`.
+  test.concurrent("the default root ends at a path separator, not inside a name", async () => {
+    using dir = tempDir("build-root-name-prefix", {
+      "ab/x.ts": `console.log("x");`,
+      "abc/y.ts": `console.log("y");`,
+      "x/y/a.ts": `console.log("a");`,
+      "x/yy/b.ts": `console.log("b");`,
+      "cli.ts": `console.log("cli");`,
+      "cli/worker.ts": `console.log("worker");`,
+    });
+    const names = async (outdir: string, entrypoints: string[]) => {
+      const result = await Bun.build({
+        entrypoints: entrypoints.map(entry => join(String(dir), entry)),
+        outdir: join(String(dir), outdir),
+      });
+      return result.outputs
+        .map(output => path.relative(join(String(dir), outdir), output.path).replaceAll("\\", "/"))
+        .sort();
+    };
+    expect({
+      siblings: await names("dist1", ["ab/x.ts", "abc/y.ts"]),
+      nestedSiblings: await names("dist2", ["x/y/a.ts", "x/yy/b.ts"]),
+      fileBesideDirectory: await names("dist3", ["cli.ts", "cli/worker.ts"]),
+    }).toEqual({
+      siblings: ["ab/x.js", "abc/y.js"],
+      nestedSiblings: ["y/a.js", "yy/b.js"],
+      fileBesideDirectory: ["cli.js", "cli/worker.js"],
+    });
+  });
+
+  // No directory holds names that a plugin resolves.
+  test.concurrent("the default root is the working directory for names that a plugin resolves", async () => {
+    using dir = tempDir("build-root-plugin-names", {
+      "src/a.ts": `console.log("a");`,
+      "build.ts": `
+        import { relative, resolve } from "node:path";
+        const routes = {
+          name: "routes",
+          setup(build) {
+            build.onResolve({ filter: /^(\\.\\/)?routes\\// }, args => ({
+              path: args.path.replace("./", ""),
+              namespace: "routes",
+            }));
+            build.onLoad({ filter: /.*/, namespace: "routes" }, args => ({
+              contents: "console.log(" + JSON.stringify(args.path) + ")",
+              loader: "js",
+            }));
+          },
+        };
+        const nine = Array.from({ length: 9 }, (_, i) => "routes/e" + i + ".js");
+        const builds = [["routes/a.js", "./routes/b.js"], ["routes/a.js", "routes/b.js"], nine, ["routes/a.js", "src/a.ts"]];
+        for (const [index, entrypoints] of builds.entries()) {
+          const outdir = "dist" + index;
+          const result = await Bun.build({ entrypoints, outdir, plugins: [routes] });
+          const names = result.outputs.map(output => relative(resolve(outdir), output.path));
+          console.log(JSON.stringify(names.map(name => name.replaceAll("\\\\", "/")).sort()));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual([
+      '["routes/a.js","routes/b.js"]',
+      '["routes/a.js","routes/b.js"]',
+      JSON.stringify(Array.from({ length: 9 }, (_, i) => `routes/e${i}.js`)),
+      '["routes/a.js","src/a.js"]',
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.skipIf(isWindows)(
+    "the default root is the working directory when the shared directory does not open",
+    async () => {
+      using dir = tempDir("build-root-unlistable", {
+        "src/x/a.ts": `console.log("a");`,
+        "src/y/b.ts": `console.log("b");`,
+        "build.ts": `
+        import { relative, resolve } from "node:path";
+        const builds = [["mixed", ["src/x/a.ts", "./src/y/b.ts"]], ["plain", ["src/x/a.ts", "src/y/b.ts"]]];
+        for (const [outdir, entrypoints] of builds) {
+          const result = await Bun.build({ entrypoints, outdir });
+          console.log(JSON.stringify(result.outputs.map(output => relative(resolve(outdir), output.path)).sort()));
+        }
+      `,
+      });
+      const shared = join(String(dir), "src");
+      using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+      // The user may enter the folder and may not list it.
+      chmodSync(shared, 0o311);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+          stdout: ['["src/x/a.js","src/y/b.js"]', '["src/x/a.js","src/y/b.js"]'],
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        chmodSync(shared, 0o755);
+      }
+    },
+  );
 
   test("BuildArtifact properties", async () => {
     Bun.gc(true);

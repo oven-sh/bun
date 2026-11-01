@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isLinux, isMacOS, isWindows, readElf64ProgramHeaders } from "harness";
+import { bunEnv, bunExe, isASAN, isArm64, isCI, isLinux, isMacOS, isWindows, readElf64ProgramHeaders } from "harness";
 import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
@@ -16,6 +16,7 @@ const { folder, build } = sharedBuilds("compile-trim-runtime", {
     console.log("hello world");
     if (process.argv[2] === "deep") console.log({ a: { b: { c: 1 } } });
   `,
+  "embedded.plist": `<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>sh.bun.test.trimmed</string></dict></plist>`,
   "helper.ts": `export function double(x: number): number { return x * 2; }`,
   "entry.ts": `import { double } from "./helper"; console.log(double(21));`,
   "on-disk.ts": `export const fromDisk: string = [1, 2, 3].map((x: number) => x * 2).join(",");`,
@@ -248,6 +249,24 @@ test.concurrent("--trim requires --compile", async () => {
         });
       },
     );
+
+    // The load commands of the cuts and the Info.plist share the room behind the load commands, and __TEXT is cut in pieces.
+    test.skipIf(!isMacOS || (isAot && !!unsupported))(`${how}: codesign finds the embedded Info.plist`, async () => {
+      const hello = await build("hello.ts", ...flags, "--trim", "--macos-info-plist=embedded.plist");
+      expect(await run([hello.executable], folder)).toEqual(saysHello);
+      if (isArm64) {
+        expect(await run(["codesign", "--verify", hello.file])).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+        expect((await run(["codesign", "--display", "--verbose=2", hello.file])).stderr).toContain(
+          "Info.plist entries=1",
+        );
+      }
+      // On x64 this adds a load command.
+      expect(await run(["codesign", "--force", "--sign", "-", hello.file])).toMatchObject({ exitCode: 0 });
+      const signed = await run(["codesign", "--display", "--verbose=2", hello.file]);
+      expect(signed.stderr).toContain("Identifier=sh.bun.test.trimmed");
+      expect(signed.stderr).toContain("Info.plist entries=1");
+      expect(await run([hello.executable], folder)).toEqual(saysHello);
+    });
 
     test.skipIf(!isLinux || (isAot && !!unsupported))(
       `${how}: the program is mapped past the end of Bun's image, never where a feature was removed, and the zeros of .bss are not in the file`,

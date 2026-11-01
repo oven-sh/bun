@@ -24,6 +24,24 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  compile: { target: "bun-darwin-arm64", macos: { infoPlist: "./Info.plist" } },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: {
+    macos: process.platform === "darwin" && { infoPlist: process.env.INFO_PLIST !== undefined && "./Info.plist" },
+  },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error - infoPlist is the path of a file
+  compile: { macos: { infoPlist: { CFBundleIdentifier: "com.example.app" } } },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   compile: { aot: true, aotLogTypeMismatches: true, aotExplain: ["guards", "guards-json"] },
 });
 

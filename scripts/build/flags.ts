@@ -1227,6 +1227,17 @@ export const linkerFlags: Flag[] = [
     desc: "18MB stack, skip compact unwind",
   },
   {
+    // `bun build --compile` edits a copy of this executable, where load
+    // commands can only grow into the padding behind them: --trim adds a
+    // segment and a section per cut (exe_format/macho_ranges.rs), and
+    // --macos-info-plist adds a section whose contents also go here, because
+    // it has to be in __TEXT and __TEXT cannot grow
+    // (exe_format/macho_info_plist.rs).
+    flag: "-Wl,-headerpad,0x2000",
+    when: c => c.darwin,
+    desc: "Room behind the load commands for what `bun build --compile` adds",
+  },
+  {
     // Force the linker to reserve + emit LC_CODE_SIGNATURE on arm64 cross
     // links so the post-link fixup (shims/macho-postlink.c) has a signature
     // to replace after patching the stack size — arm64 macOS refuses to exec

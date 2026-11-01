@@ -125,6 +125,14 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(computeFlags(resolveDarwin({ arch: "x64" })).ldflags).not.toContain("-Wl,-adhoc_codesign");
   });
 
+  test("links leave room behind the load commands for `bun build --compile`", () => {
+    // --trim and --macos-info-plist add load commands to a copy of the
+    // executable, and the Info.plist itself goes into the same padding.
+    for (const partial of [{}, { arch: "x64" }, { buildType: "Debug", assertions: true }] as const) {
+      expect(computeFlags(resolveDarwin(partial)).ldflags).toContain("-Wl,-headerpad,0x2000");
+    }
+  });
+
   test("cross release links get safe ICF backed by the address-significance table", () => {
     // Apple's ld has no ICF, so this is an lld-only win. `safe` needs the
     // __llvm_addrsig section from -faddrsig (off by default for Mach-O,

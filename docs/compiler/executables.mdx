@@ -1177,6 +1177,64 @@ Available Windows options:
 
 ---
 
+## Embed an Info.plist on macOS
+
+An executable that is not inside an `.app` bundle has no `Info.plist` file next to it. macOS reads one from the `__TEXT,__info_plist` section of the executable instead. Use `--macos-info-plist` to fill that section:
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile --macos-info-plist=./Info.plist ./app.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./app.ts"],
+      compile: {
+        outfile: "./myapp",
+        macos: {
+          infoPlist: "./Info.plist",
+        },
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+```xml icon="xml" title="Info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.example.myapp</string>
+    <key>CFBundleName</key>
+    <string>myapp</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+</dict>
+</plist>
+```
+
+Bun copies the file into the executable without parsing it. The result is the same as linking a native program with `-sectcreate __TEXT __info_plist Info.plist`.
+
+- CoreFoundation's `CFBundleGetMainBundle()` returns a bundle that has the keys of the embedded file. A file named `Info.plist` next to the executable can take its place: CoreFoundation uses that file when its `CFBundleExecutable` is the name of the executable.
+- On arm64, the ad-hoc signature that Bun writes covers the embedded file. `codesign --display --verbose=2 ./myapp` prints `Info.plist entries=3` for the file above.
+- When you [sign the executable](#code-signing-on-macos) yourself, `codesign` uses `CFBundleIdentifier` as the signing identifier.
+
+The flag works when cross-compiling to `bun-darwin-arm64` or `bun-darwin-x64` from any platform. With `Bun.build`, targets other than macOS ignore `compile.macos`.
+
+The embedded file is not inherited. When a compiled executable calls `Bun.build` with `compile`, or is passed as `--compile-executable-path`, the result does not have its `Info.plist`.
+
+<Note>
+  The file has to fit in the padding after the executable's Mach-O load commands, which is about 8 KB. The build fails
+  with an error if the file is too large. `--trim` uses the same padding, so a larger file leaves `--trim` fewer places
+  to cut the executable.
+</Note>
+
+---
+
 ## Code signing on macOS
 
 To codesign a standalone executable on macOS (which fixes Gatekeeper warnings), use the `codesign` command.
@@ -1368,6 +1426,9 @@ interface CompileBuildOptions {
     version?: string; // Version string
     description?: string; // Description
     copyright?: string; // Copyright notice
+  };
+  macos?: {
+    infoPlist?: string; // Path to an Info.plist file to embed
   };
 }
 ```

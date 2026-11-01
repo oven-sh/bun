@@ -81,6 +81,7 @@ pub(crate) struct ExecutableSettings<'r> {
     pub(crate) root_dir: Fd,
     pub(crate) env: &'r mut bun_dotenv::Loader,
     pub(crate) windows: &'r WindowsOptions,
+    pub(crate) info_plist: Option<&'r [u8]>,
     pub(crate) exec_argv: &'r [u8],
     pub(crate) flags: Flags,
     pub(crate) runtime_options: RuntimeOptions,

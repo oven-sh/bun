@@ -3,6 +3,7 @@ use core::mem::size_of;
 // `std.macho` types ported locally (see macho_types.rs).
 use crate::align_up as align_size;
 use crate::image::KnownSection;
+use crate::macho_info_plist;
 use crate::macho_types as macho;
 use crate::macho_types::{BlobIndex, CodeDirectory, CommandKind, SuperBlob, command_kind};
 use crate::mapped_file::{Blocks, FileBytes, ReadOnce};
@@ -58,6 +59,8 @@ pub enum MachoError {
     ExecutableTooLarge,
     #[error("cannot move the file offsets of unknown Mach-O load command {0:#x}")]
     UnknownLoadCommand(u32),
+    #[error("{size} bytes do not fit in the {room} bytes of padding behind the load commands")]
+    InfoPlistTooLarge { size: usize, room: usize },
 }
 bun_core::oom_from_alloc!(MachoError);
 
@@ -114,7 +117,8 @@ impl MachoFile {
 
         let size_with_blob = obj_file.len() + blob_to_embed_length;
         let signature_capacity =
-            MachoSigner::compute_signature_size(size_with_blob as u64) + (1 << 16);
+            MachoSigner::compute_signature_size(size_with_blob as u64, MAX_SPECIAL_SLOTS)
+                + (1 << 16);
         let mut data: Vec<u8> = Vec::with_capacity(size_with_blob + signature_capacity);
         // SAFETY: the capacity holds `obj_file.len()` bytes, all of which are written before the length says so.
         unsafe {
@@ -128,7 +132,8 @@ impl MachoFile {
     /// How many bytes a payload, the symbols of its code and a signature add to a template at the most.
     pub fn room_for(template_size: usize, payload_size: usize, symbols_size: usize) -> usize {
         let size = template_size + payload_size + 2 * symbols_size + (1 << 16);
-        size - template_size + MachoSigner::compute_signature_size(size as u64) + (1 << 16)
+        let signature_size = MachoSigner::compute_signature_size(size as u64, MAX_SPECIAL_SLOTS);
+        size - template_size + signature_size + (1 << 16)
     }
 
     pub fn over(data: FileBytes) -> Result<Box<MachoFile>, MachoError> {
@@ -373,7 +378,9 @@ impl MachoFile {
 
                 let mut cs: macho::linkedit_data_command = read_struct(&self.data[idx..][..cs_sz]);
                 let new_sig_dataoff: u64 = cs.dataoff as u64 + size_diff;
-                let new_sig_size = MachoSigner::compute_signature_size(new_sig_dataoff);
+                let special_slots = MachoSigner::count_special_slots(&self.data);
+                let new_sig_size =
+                    MachoSigner::compute_signature_size(new_sig_dataoff, special_slots);
 
                 let mut seg: macho::segment_command_64 =
                     read_struct(&self.data[linkedit_seg_idx..][..seg_sz]);
@@ -774,18 +781,24 @@ impl MachoSigner {
     const SIGNATURE_PAGE_SIZE: usize = 1 << 12;
     const SIGNATURE_HASH_SIZE: usize = 32; // SHA256 = 32 bytes
 
+    /// How many special slots `sign()` writes for `macho`: one for an Info.plist.
+    pub(crate) fn count_special_slots(macho: &[u8]) -> usize {
+        usize::from(macho_info_plist::find(macho).is_some())
+    }
+
     /// Compute the exact number of bytes that `sign()` will write at `sig_off`
-    /// (the `SuperBlob` + `BlobIndex` + `CodeDirectory` + identifier + page
-    /// hashes). `writeSection` uses this to size `linkedit_seg.filesize` and
-    /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
-    /// inside __LINKEDIT.
-    pub(crate) fn compute_signature_size(sig_off: u64) -> usize {
+    /// (the `SuperBlob` + `BlobIndex` + `CodeDirectory` + identifier + special
+    /// slot hashes + page hashes). `writeSection` uses this to size
+    /// `linkedit_seg.filesize` and the `LC_CODE_SIGNATURE.datasize` so the
+    /// signer's output fits exactly inside __LINKEDIT.
+    pub(crate) fn compute_signature_size(sig_off: u64, special_slots: usize) -> usize {
         let total_pages: usize =
             usize::try_from(sig_off.div_ceil(Self::SIGNATURE_PAGE_SIZE as u64)).unwrap();
         let super_blob_header_size = size_of::<SuperBlob>();
         let blob_index_size = size_of::<BlobIndex>();
         let code_dir_header_size = size_of::<CodeDirectory>();
-        let hash_offset = code_dir_header_size + Self::IDENTIFIER.len();
+        let special_hashes_size = special_slots * Self::SIGNATURE_HASH_SIZE;
+        let hash_offset = code_dir_header_size + Self::IDENTIFIER.len() + special_hashes_size;
         let hashes_size = total_pages * Self::SIGNATURE_HASH_SIZE;
         let code_dir_length = hash_offset + hashes_size;
         super_blob_header_size + blob_index_size + code_dir_length
@@ -807,7 +820,14 @@ impl MachoSigner {
         let blob_index_size = size_of::<BlobIndex>();
         let code_dir_header_size = size_of::<CodeDirectory>();
         let id_offset = code_dir_header_size;
-        let hash_offset = id_offset + id.len();
+        // Special slots count down from the first page hash, and the Info.plist has slot -1.
+        let info_plist_hash = macho_info_plist::find(&self.data).map(|range| {
+            let mut hash = [0u8; HASH_SIZE];
+            bun_sha_hmac::sha::SHA256::hash(&self.data[range], &mut hash);
+            hash
+        });
+        let special_hashes = info_plist_hash.as_ref().map_or(&[][..], |hash| &hash[..]);
+        let hash_offset = id_offset + id.len() + special_hashes.len();
 
         // Calculate hash sizes
         let hashes_size = total_pages * HASH_SIZE;
@@ -815,7 +835,10 @@ impl MachoSigner {
 
         // Calculate total signature size
         let sig_structure_size = super_blob_header_size + blob_index_size + code_dir_length;
-        debug_assert!(sig_structure_size == Self::compute_signature_size(self.sig_off as u64));
+        let special_slots = special_hashes.len() / HASH_SIZE;
+        debug_assert!(
+            sig_structure_size == Self::compute_signature_size(self.sig_off as u64, special_slots)
+        );
         let total_sig_size = align_size(sig_structure_size as u64, PAGE_SIZE as u64) as usize;
 
         // Setup SuperBlob
@@ -839,7 +862,7 @@ impl MachoSigner {
         code_dir.flags = 0x20002u32.swap_bytes();
         code_dir.hash_offset = (hash_offset as u32).swap_bytes();
         code_dir.ident_offset = (id_offset as u32).swap_bytes();
-        code_dir.n_special_slots = 0;
+        code_dir.n_special_slots = (special_slots as u32).swap_bytes();
         code_dir.n_code_slots = (total_pages as u32).swap_bytes();
         code_dir.code_limit = (self.sig_off as u32).swap_bytes();
         code_dir.hash_size = HASH_SIZE as u8;
@@ -865,6 +888,7 @@ impl MachoSigner {
         self.data.extend_from_slice(bun_core::bytes_of(&blob_index));
         self.data.extend_from_slice(bun_core::bytes_of(&code_dir));
         self.data.extend_from_slice(id);
+        self.data.extend_from_slice(special_hashes);
 
         // Hash and write pages
         let hashes_start = self.data.len();
@@ -920,6 +944,7 @@ const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
 const CSSLOT_CODEDIRECTORY: u32 = 0;
 const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
+const MAX_SPECIAL_SLOTS: usize = 1;
 
 #[cfg(test)]
 mod tests {

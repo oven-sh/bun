@@ -2608,7 +2608,8 @@ pub(crate) fn inject<'a>(
                     }
                 },
             };
-            if !additions.edit_template(&mut template) {
+            if !additions.edit_info_plist(&mut template) || !additions.edit_template(&mut template)
+            {
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
@@ -2628,7 +2629,8 @@ pub(crate) fn inject<'a>(
             }
 
             let file = bun_sys::File::borrow(&cloned_executable_fd);
-            let holds_template = !additions.has_code && !additions.trims();
+            let holds_template =
+                !additions.has_code && !additions.trims() && !additions.has_edited_info_plist;
             let written = match macho_file.build_and_sign_into(file, holds_template) {
                 Ok(n) => n,
                 Err(e) => {
@@ -3215,6 +3217,37 @@ pub fn target_builtins(
     }
 }
 
+/// What `ExecutableAdditions::info_plist` takes, from the path that the user gave.
+pub fn read_info_plist(path: &[u8]) -> Result<Vec<u8>, CompileError> {
+    /// `macho_info_plist::write` says what fits. This only keeps a file that cannot fit out of memory.
+    const MAX_SIZE: i64 = 1 << 20;
+    let fail = |problem: core::fmt::Arguments<'_>| {
+        let path = bun_core::fmt::quote(path);
+        CompileError::fmt(format_args!("the Info.plist {path} {problem}"))
+    };
+    if strings::contains_char(path, 0) {
+        return Err(fail(format_args!("has a NUL byte in its path")));
+    }
+    let stat = Syscall::stat(&bun_core::ZBox::from_bytes(path))
+        .map_err(|e| fail(format_args!("cannot be read: {e}")))?;
+    // A device or a pipe has no end to read to.
+    if !bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) {
+        return Err(fail(format_args!("is not a regular file")));
+    }
+    if stat.st_size as i64 > MAX_SIZE {
+        let size = stat.st_size;
+        return Err(fail(format_args!(
+            "is {size} bytes, which is too large to embed"
+        )));
+    }
+    let plist = bun_sys::File::read_from(Fd::cwd(), path)
+        .map_err(|e| fail(format_args!("cannot be read: {e}")))?;
+    if plist.is_empty() {
+        return Err(fail(format_args!("is empty")));
+    }
+    Ok(plist)
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -3284,6 +3317,9 @@ pub fn to_executable(
         &mut temp_path_buf,
         &mut injection,
     ) else {
+        if let Some(failure) = injection.failure {
+            return Ok(CompileResult::Err(failure));
+        }
         // inject() has already printed the specific error.
         return Ok(CompileResult::fail_fmt(format_args!(
             "failed to write compiled executable {}",

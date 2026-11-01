@@ -254,6 +254,8 @@ pub(crate) mod js_bundler {
         pub(crate) windows_version: OwnedString,
         pub(crate) windows_description: OwnedString,
         pub(crate) windows_copyright: OwnedString,
+        /// `compile.macos.infoPlist`: the contents of the file.
+        pub(crate) macos_info_plist: Option<Vec<u8>>,
         pub(crate) outfile: OwnedString,
         pub(crate) assets: Vec<Box<[u8]>>,
         pub(crate) autoload_dotenv: bool,
@@ -283,6 +285,7 @@ pub(crate) mod js_bundler {
                 windows_version: OwnedString::default(),
                 windows_description: OwnedString::default(),
                 windows_copyright: OwnedString::default(),
+                macos_info_plist: None,
                 outfile: OwnedString::default(),
                 assets: Vec::new(),
                 autoload_dotenv: true,
@@ -755,6 +758,41 @@ pub(crate) mod js_bundler {
                 {
                     let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
+                }
+            }
+
+            // `false` is "none", as in `compile: { macos: { infoPlist: havePlist && path } }`.
+            let is_given =
+                |value: &JSValue| !value.is_undefined_or_null() && *value != JSValue::FALSE;
+            let macos = object.get_own_truthy(global_this, "macos")?;
+            if let Some(macos) = macos.filter(is_given) {
+                if !macos.is_object() {
+                    return Err(global_this
+                        .throw_invalid_arguments(format_args!("macos must be an object")));
+                }
+
+                let info_plist = macos.get_own_truthy(global_this, "infoPlist")?;
+                if let Some(info_plist) = info_plist.filter(is_given) {
+                    if !info_plist.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.macos.infoPlist",
+                            b"string",
+                            info_plist,
+                        ));
+                    }
+                    // A script that builds for several targets need not have the file for the others.
+                    if this.compile_target.os == bun_core::env::OperatingSystem::Mac {
+                        let path = info_plist.to_utf8(global_this)?;
+                        match StandaloneModuleGraph::read_info_plist(path.slice()) {
+                            Ok(plist) => this.macos_info_plist = Some(plist),
+                            Err(error) => {
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "{}",
+                                    bstr::BStr::new(error.slice())
+                                )));
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1843,6 +1881,13 @@ pub(crate) mod js_bundler {
                 if has_all_html && this.compile.as_ref().is_some_and(|c| !c.assets.is_empty()) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Cannot use compile.assets with target 'browser' for standalone HTML"
+                    )));
+                }
+                if has_all_html
+                    && (this.compile.as_ref()).is_some_and(|c| c.macos_info_plist.is_some())
+                {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Cannot use compile.macos.infoPlist with target 'browser' for standalone HTML"
                     )));
                 }
             }

@@ -491,6 +491,7 @@ pub(super) fn request_from_context<'r>(
             root_dir,
             env,
             windows: &ctx.bundler_options.windows,
+            info_plist: ctx.bundler_options.macos_info_plist.as_deref(),
             exec_argv: ctx
                 .bundler_options
                 .compile_exec_argv

@@ -3,7 +3,8 @@ use bun_core::slice_to_nul;
 use super::*;
 use crate::cut_model::RemovableBytes;
 use crate::image::{ImageEditor, KnownSection, SectionLocation};
-use crate::macho::MachoFile;
+use crate::macho::{MachoError, MachoFile};
+use crate::macho_info_plist;
 use crate::macho_types::dyld_chained_fixups_header;
 
 mod toy;
@@ -224,7 +225,8 @@ fn assert_signature_room(trimmed: &[u8]) {
     else {
         return;
     };
-    let size = MachoSigner::compute_signature_size(u64::from(command.dataoff));
+    let special_slots = MachoSigner::count_special_slots(trimmed);
+    let size = MachoSigner::compute_signature_size(u64::from(command.dataoff), special_slots);
     assert_eq!(command.datasize as usize, size);
     assert_eq!(command.dataoff as usize + size, trimmed.len());
     assert!(
@@ -414,6 +416,92 @@ fn code_is_found_in_every_piece() {
         }
     }
     assert_eq!(offset_in_code(&trimmed, IMAGE_BASE - 1), None);
+}
+
+#[test]
+fn info_plist_stays_in_first_piece() {
+    let plist = [b'x'; 0x1000];
+    for architecture in [Architecture::X86_64, Architecture::Aarch64] {
+        let mut original = toy_macho(architecture);
+        macho_info_plist::write(&mut original, &plist).unwrap();
+        let room = HEADER_PAD - SECTION_SIZE - plist.len();
+        assert_eq!(cut_model(&original).max_cuts(), room / BYTES_PER_CUT);
+        let spans_without = cut_model(&toy_macho(architecture)).cuttable_spans;
+        assert_eq!(cut_model(&original).cuttable_spans, spans_without);
+        let trimmed = remove_and_verify(&original, &[cut(2, 4), cut(86, 90), cut(99, 101)]);
+        assert_eq!(trimmed[macho_info_plist::find(&trimmed).unwrap()], plist);
+    }
+}
+
+#[test]
+fn info_plist_needs_room_for_its_section() {
+    let original = create_toy(ToyOptions {
+        header_pad: SECTION_SIZE - 1,
+        ..LINKED_TOY
+    });
+    for size in [0, 1] {
+        let mut bytes = original.clone();
+        let error = MachoError::InfoPlistTooLarge { size, room: 0 };
+        let written = macho_info_plist::write(&mut bytes, &vec![b'x'; size]);
+        assert_eq!(written, Err(error));
+        assert!(bytes == original);
+    }
+}
+
+#[test]
+fn info_plist_needs_a_free_ordinal() {
+    let with_free_ordinals = |count: usize| {
+        create_toy(ToyOptions {
+            filler_section_count: (MAX_SECTIONS - TOY_SECTION_COUNT - count) as u64,
+            ..LINKED_TOY
+        })
+    };
+    let mut last = with_free_ordinals(1);
+    macho_info_plist::write(&mut last, b"x").unwrap();
+    assert_eq!(count_sections(&last), MAX_SECTIONS);
+
+    let original = with_free_ordinals(0);
+    let mut full = original.clone();
+    let written = macho_info_plist::write(&mut full, b"x");
+    assert_eq!(written, Err(MachoError::InvalidObject));
+    assert!(full == original);
+}
+
+#[test]
+fn room_stays_for_signature_command() {
+    let unsigned = create_toy(ToyOptions {
+        architecture: Architecture::X86_64,
+        header_pad: 6 * BYTES_PER_CUT,
+        has_signature: false,
+        ..LINKED_TOY
+    });
+    let free_room = |bytes: &[u8]| {
+        let parsed = parse(bytes).unwrap();
+        parsed.header_room_end - HEADER_SIZE - parsed.header.sizeofcmds as usize
+    };
+    for plist_size in 1..=BYTES_PER_CUT {
+        let mut original = unsigned.clone();
+        macho_info_plist::write(&mut original, &vec![b'x'; plist_size]).unwrap();
+        let max_cuts = cut_model(&original).max_cuts() as u64;
+        assert!(max_cuts >= 4);
+        let cuts: Vec<AddressRange> = (1..=max_cuts)
+            .map(|pair| cut(2 * pair, 2 * pair + 1))
+            .collect();
+        let trimmed = remove_and_verify(&original, &cuts);
+        assert!(free_room(&trimmed) >= size_of::<linkedit_data_command>());
+    }
+    let mut full = unsigned.clone();
+    let room = free_room(&unsigned) - SECTION_SIZE - size_of::<linkedit_data_command>();
+    macho_info_plist::write(&mut full, &vec![b'x'; room]).unwrap();
+    assert_eq!(free_room(&full), size_of::<linkedit_data_command>());
+    let error = MachoError::InfoPlistTooLarge {
+        size: room + 1,
+        room,
+    };
+    let mut overfull = unsigned;
+    let written = macho_info_plist::write(&mut overfull, &vec![b'x'; room + 1]);
+    assert_eq!(written, Err(error));
+    assert_no_cuts(&full, NoCutReason::HeaderRoomExhausted);
 }
 
 #[test]

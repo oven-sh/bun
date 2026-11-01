@@ -35,9 +35,60 @@ function assert_buildkite_agent() {
 
 function assert_github() {
   assert_command "gh" "gh" "https://github.com/cli/cli#installation"
-  assert_buildkite_secret "GITHUB_TOKEN"
-  # gh expects the token in $GH_TOKEN
-  export GH_TOKEN="$GITHUB_TOKEN"
+  assert_buildkite_secret "GITHUB_APP_BUN_RELEASE_UPLOAD_PRIVATE_KEY_BASE64"
+  local pem
+  pem="$(openssl base64 -d -A <<< "$GITHUB_APP_BUN_RELEASE_UPLOAD_PRIVATE_KEY_BASE64")"
+  unset GITHUB_APP_BUN_RELEASE_UPLOAD_PRIVATE_KEY_BASE64
+  # The bun-release-upload app's client ID, and the ID of its installation on oven-sh.
+  create_github_app_token "Iv23li0GlmKSYj59x7e3" "177437987" "$pem"
+  buildkite-agent redactor add <<< "$GH_TOKEN"
+}
+
+# Exports an installation access token as $GH_TOKEN, where gh expects it. The JWT is GitHub's example:
+# https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app#example-using-bash-to-generate-a-jwt
+function create_github_app_token() {
+  local client_id="$1"
+  local installation_id="$2"
+  local pem="$3"
+
+  local now=$(date +%s)
+  local iat=$((${now} - 60)) # Issues 60 seconds in the past
+  local exp=$((${now} + 300)) # Expires 5 minutes in the future
+
+  function b64enc() { openssl base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n'; }
+
+  local header_json='{
+    "typ":"JWT",
+    "alg":"RS256"
+}'
+  local payload_json="{
+    \"iat\":${iat},
+    \"exp\":${exp},
+    \"iss\":\"${client_id}\"
+}"
+  local header payload signature
+  header=$( echo -n "${header_json}" | b64enc )
+  payload=$( echo -n "${payload_json}" | b64enc )
+  local header_payload="${header}"."${payload}"
+  signature=$(
+    openssl dgst -sha256 -sign <(echo -n "${pem}") \
+    <(echo -n "${header_payload}") | b64enc
+  )
+  local jwt="${header_payload}"."${signature}"
+
+  local response
+  if ! response="$(curl --silent --show-error --fail-with-body --request POST \
+    --url "https://api.github.com/app/installations/${installation_id}/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer ${jwt}" \
+    --header "X-GitHub-Api-Version: 2026-03-10")"; then
+    echo "error: Cannot create a GitHub App installation access token"
+    echo ""
+    echo "$response"
+    exit 1
+  fi
+  GH_TOKEN="$(jq --raw-output ".token" <<< "$response")"
+  export GH_TOKEN
 }
 
 function assert_aws() {
@@ -101,7 +152,7 @@ function install_gh_linux() {
     *) echo "error: Unsupported architecture: $(uname -m)"; exit 1 ;;
   esac
   # Resolve the version from the releases/latest redirect, not the REST API: the API is rate
-  # limited to 60 req/hour per IP (GITHUB_TOKEN is not exported yet), and piping curl into a
+  # limited to 60 req/hour per IP (GH_TOKEN is not exported yet), and piping curl into a
   # short-circuiting reader such as `grep -m1` makes curl exit 23 (EPIPE) under pipefail.
   local url version
   url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/cli/cli/releases/latest")"

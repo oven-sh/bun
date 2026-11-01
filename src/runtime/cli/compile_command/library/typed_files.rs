@@ -3,7 +3,7 @@ use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
 use bun_core::ZBox;
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::{join_abs_string, platform_to_posix_in_place, relative_platform};
-use bun_sema_driver::typed_files::javascript_path_beside;
+use bun_sema_driver::typed_files::{javascript_path_beside, typed_path_beside};
 
 use crate::cli::check_command::{
     CheckedBuild, CompilerOptions, TypedFilesRequest, WrittenJavaScript, take_checked_build,
@@ -75,6 +75,9 @@ pub(crate) fn add_typed_files(
         log,
     );
     drop(javascript);
+    if typed_files.files.is_empty() {
+        remove_typed_files_of_an_earlier_build(&outdir, output_files);
+    }
     if request.drops_source_maps {
         drop_source_maps(&outdir, output_files);
     }
@@ -98,6 +101,20 @@ pub(crate) fn add_typed_files(
         });
     }
     typed_files.compiler_options
+}
+
+/// What an earlier build wrote beside `index.js` has the types of another `index.js`.
+fn remove_typed_files_of_an_earlier_build(outdir: &[u8], output_files: &[OutputFile]) {
+    for file in output_files {
+        let is_code = matches!(file.output_kind, OutputKind::EntryPoint | OutputKind::Chunk);
+        if !is_code || !matches!(file.value, OutputFileValue::Saved(_)) {
+            continue;
+        }
+        let path = join_abs_string::<Auto>(outdir, &[&file.dest_path]);
+        if let Some(typed) = typed_path_beside(path) {
+            let _ = bun_sys::unlink(&ZBox::from_bytes(&typed));
+        }
+    }
 }
 
 fn without_debug_id(text: &[u8]) -> Option<&[u8]> {

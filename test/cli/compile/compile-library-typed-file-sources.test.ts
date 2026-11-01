@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { raiseDefaultTimeout } from "../../aot/harness/default-timeout";
@@ -160,6 +160,18 @@ s: Reading,
     expect(built.stderr).toBe(`warn: ${LEFT_OUT}index.js: the JavaScript is not UTF-8\n`);
     expect(existsSync(join(String(dir), "dist/index.aot.ts"))).toBe(false);
     expect(built.exitCode).toBe(0);
+  });
+
+  test("bun build --dts: a build that leaves the file out removes the one of the build before", async () => {
+    using dir = tempDir("build-dts-not-utf8-again", library({ "src/index.ts": reading }));
+    const first = await bun(String(dir), "build", "./src/index.ts", "--dts", "--outdir", "out");
+    expect(first.stderr).toBe("");
+    expect(typedFile(dir, "out")).toBe(typedReading);
+    writeFileSync(join(String(dir), "src/index.ts"), latin1(`export type Drink = "caf\xE9";\n` + reading));
+    const second = await bun(String(dir), "build", "./src/index.ts", "--dts", "--outdir", "out");
+    expect(second.stderr).toMatch(leftOutFor(".*/src/index\\.ts is not UTF-8\n"));
+    expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["index.d.ts", "index.js"]);
+    expect(second.exitCode).toBe(0);
   });
 
   test("bun build --dts: the file that a comment in ASCII gives", async () => {

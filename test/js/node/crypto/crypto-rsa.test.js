@@ -341,6 +341,8 @@ test("RSA-OAEP with an mgf1Hash other than oaepHash", () => {
 test("the OAEP options under another padding", () => {
   const options = { oaepHash: "sha256", mgf1Hash: "sha256", oaepLabel: Buffer.from("label") };
   const block = Buffer.alloc(rsaKeySize / 8, 1);
+  const signed = crypto.privateEncrypt(rsaKeyPem, block.subarray(0, 32));
+  expect(crypto.publicDecrypt(rsaPubPem, signed)).toEqual(block.subarray(0, 32));
   for (const [name, value] of Object.entries(options)) {
     // Encryption and decryption ignore them.
     const noPadding = { padding: constants.RSA_NO_PADDING, [name]: value };
@@ -356,7 +358,7 @@ test("the OAEP options under another padding", () => {
     expect(() => crypto.privateEncrypt({ key: rsaKeyPem, [name]: value }, block.subarray(0, 32))).toThrow(
       expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
     );
-    expect(() => crypto.publicDecrypt({ key: rsaPubPem, [name]: value }, block)).toThrow(
+    expect(() => crypto.publicDecrypt({ key: rsaPubPem, [name]: value }, signed)).toThrow(
       expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
     );
   }

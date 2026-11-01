@@ -109,7 +109,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return {};
     }
 
-    // EVP_CIPHER_CTX_max_next_update() is an upper bound. The result's ArrayBuffer is as long as what was written, like Node's.
+    // The result's ArrayBuffer is as long as what was written, like Node's. BoringSSL documents
+    // EVP_CIPHER_CTX_max_next_update() as an upper bound, but it is exact today, so nothing is copied.
     if (outLen != outBuf->byteLength())
         outBuf = ArrayBuffer::tryCreate(outBuf->span().first(outLen));
     if (!outBuf) {

@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { slot } from "./harness/commands";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -78,7 +79,10 @@ async function ran(files: Record<string, string>, flags: string[], words?: strin
     ...files,
   });
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], String(dir), env);
+  // No more runs at once than the machine has processors, however many tests are under way.
+  const { stdout, stderr, exitCode } = await slot(() =>
+    run([bunExe(), "test", "--isolate", ...flags], String(dir), env),
+  );
   const printed: Record<string, string[]> = {};
   let about = (printed["above the files"] = [] as string[]);
   for (const whole of stderr.replaceAll(String(dir), "DIR").replaceAll("\\", "/").split("\n")) {
@@ -116,7 +120,8 @@ function wanted(files: Record<string, string>, exitCode: number, words?: string)
 }
 
 // A debug build of Bun takes three minutes to build a lowest layer, and up to seven where five such runs are under way: more than a test gets there.
-const limitOverLayers = isASAN || isDebug ? 900_000 : undefined;
+// No lane of CI tests a debug build, so there a run that hangs still fails its one test at the runner's limit.
+const limitOverLayers = isDebug ? 900_000 : undefined;
 
 function ends(exitCode: number, title: string, files: Record<string, string>, flags: string[], words?: string) {
   test.concurrent(

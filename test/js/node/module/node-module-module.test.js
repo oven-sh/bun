@@ -1484,6 +1484,7 @@ console.log("survived", require("./late.js"));`,
   describe("Module._initPaths()", () => {
     const packages = {
       "lib-start/pkg-start/index.js": `module.exports = "start";`,
+      "lib-start/pkg-start-only/index.js": `module.exports = "start only";`,
       "lib-a/pkg-a/index.js": `module.exports = "a";`,
       "lib-a/pkg-both/index.js": `module.exports = "both, of lib-a";`,
       "lib-b/pkg-b/index.js": `module.exports = "b";`,
@@ -1571,6 +1572,7 @@ console.log(logger, require('./deep/er/user'));
             process.env.NODE_PATH = [lib("lib-b"), lib("lib-a"), lib("lib-start")].join(path.delimiter);
             Module._initPaths();
             out.secondCall = [require("pkg-b"), below([require.resolve("pkg-a"), require.resolve("pkg-start")])];
+            out.importAfterTheSecondCall = await importOf("pkg-start-only");
 
             delete process.env.NODE_PATH;
             const { _initPaths } = Module;
@@ -1603,6 +1605,7 @@ console.log(logger, require('./deep/er/user'));
         },
         arrayChanged: "MODULE_NOT_FOUND",
         secondCall: ["b", ["lib-a/pkg-a/index.js", "lib-start/pkg-start/index.js"]],
+        importAfterTheSecondCall: "start only",
         withoutNodePath: ["MODULE_NOT_FOUND", ["home/.node_modules", "home/.node_libraries"]],
         dot: "MODULE_NOT_FOUND",
       });

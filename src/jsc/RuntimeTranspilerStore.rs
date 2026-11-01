@@ -738,7 +738,7 @@ impl TranspilerJob {
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // `addr_of!` (no `&VirtualMachine` formed); every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
-        // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
+        // outlives this stack frame. The JS thread can replace `resolver.opts.extra_cjs_global_folders` during a job, so the copy drops it below, unread.
         // The by-value copy must not be deinitialized; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =

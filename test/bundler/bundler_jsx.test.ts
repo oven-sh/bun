@@ -831,6 +831,12 @@ describe("bundler", () => {
               }
             : {},
           onAfterBundle(api) {
+            const warnings = api.warnings["/in.jsx"]?.map(({ error }) => error);
+            expect(warnings).toEqual(
+              warns
+                ? ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.']
+                : undefined,
+            );
             const out = api.readFile("/out.js");
             if (pragma === "preserve") {
               expect(out).toContain('<div {...first} key="k" {...last} />');

@@ -436,12 +436,6 @@ impl Macro {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
-            let mut transform_options = transform_options.clone();
-            // Build-only flags about the output bundle. The macro module's own
-            // imports must still resolve.
-            transform_options.external = Vec::new();
-            transform_options.packages = None;
-
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
@@ -455,7 +449,7 @@ impl Macro {
             };
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
-                transform_options,
+                transform_options: transform_options.clone(),
                 log: Some(NonNull::from(&mut *log)),
                 owned_env_loader,
                 is_main_thread: false,

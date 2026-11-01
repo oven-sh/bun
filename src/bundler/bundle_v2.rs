@@ -4442,6 +4442,7 @@ pub mod bv2_impl {
                     match crate::linker_context::metafile_builder::generate(
                         &mut this.linker,
                         &mut chunks,
+                        &output_files,
                     ) {
                         Ok(m) => Some(m),
                         Err(err) => {
@@ -5635,6 +5636,7 @@ pub mod bv2_impl {
                 match crate::linker_context::metafile_builder::generate(
                     &mut self.linker,
                     &mut chunks,
+                    &output_files,
                 ) {
                     Ok(m) => Some(m),
                     Err(err) => {

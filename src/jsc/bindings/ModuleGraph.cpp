@@ -6,6 +6,7 @@
 #include "BunProcess.h"
 #include "ErrorCode.h"
 #include "isBuiltinModule.h"
+#include "IsolatedModuleCache.h"
 #include "JSCommonJSModule.h"
 #include "JSDOMExceptionHandling.h"
 #include "NodeValidator.h"
@@ -821,6 +822,7 @@ extern "C" __attribute__((minsize)) void Bun__TestFile__leaveModuleGraph(Zig::Gl
     globalObject->onResolvePlugins.clear();
     // The runner restores the working directory.
     globalObject->processObject()->clearCachedCwd();
+    Bun::IsolatedModuleCache::evictPathsOfFinishedTestFile(vm);
 }
 
 // ─── Bun.ModuleGraph ──────────────────────────────────────────────────────────

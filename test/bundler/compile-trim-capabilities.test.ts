@@ -74,6 +74,16 @@ async function build(without: string[]) {
 }
 
 const namesOf = (places: { name: string }[]) => [...new Set(places.map(place => place.name))].sort();
+
+// What every executable calls, whatever --trim removed. A scan that finds neither has not read the code of the file.
+const alwaysCalled = ["mmap", "write"];
+
+function placesLeftThatCall(trimmed: Uint8Array, names: readonly string[]) {
+  const places = placesThatCall(trimmed, [...names, ...alwaysCalled]);
+  expect(namesOf(places.filter(place => alwaysCalled.includes(place.name)))).toEqual(alwaysCalled);
+  return places.filter(place => !alwaysCalled.includes(place.name));
+}
+
 const numbersOf = (places: { number: number }[]) =>
   [...new Set(places.map(place => place.number))].sort((a, b) => a - b);
 
@@ -93,7 +103,7 @@ if (isASAN)
       if (isLinux) expect(numbersOf(placesThatMakeSystemCalls(whole.file, startsAProgram.systemCalls))).toContain(435);
 
       const cut = await build(startsAProgram.features);
-      expect(placesThatCall(cut.file, startsAProgram.functions)).toEqual([]);
+      expect(placesLeftThatCall(cut.file, startsAProgram.functions)).toEqual([]);
       expect(placesThatMakeSystemCalls(cut.file, startsAProgram.systemCalls)).toEqual([]);
       expect(await run([cut.executable], folder)).toEqual(saysHello);
     });
@@ -107,7 +117,7 @@ if (isASAN)
         });
         const file = readFileSync(join(folder, "named"));
         expect(
-          namesOf(placesThatCall(file, startsAProgram.functions)).filter(name => !sendsACrashReport.includes(name)),
+          namesOf(placesLeftThatCall(file, startsAProgram.functions)).filter(name => !sendsACrashReport.includes(name)),
         ).toEqual([]);
         expect(placesThatMakeSystemCalls(file, startsAProgram.systemCalls)).toEqual([]);
         expect(await run([join(folder, "named")], folder)).toEqual(saysHello);
@@ -125,7 +135,7 @@ if (isASAN)
 
       const cut = await build(loadsNativeCode.features);
       expect(
-        placesThatCall(cut.file, loadsNativeCode.functions).map(place => ({
+        placesLeftThatCall(cut.file, loadsNativeCode.functions).map(place => ({
           ...place,
           keptBy: featuresThatKeep(place.address, loadsNativeCode.features),
         })),
@@ -135,9 +145,9 @@ if (isASAN)
   },
 );
 
-// A Mach-O file that imports `execve`. __TEXT is its one executable segment: __text is at 0x100000400, __stubs at
-// 0x100000410 and __const, with the flags given, at 0x100000480. The sections of __DATA are the three kinds that have no
-// bytes in the file.
+// A Mach-O file that imports `execve`. __TEXT is its one executable segment: __text is at 0x100000400 (up to 16 bytes),
+// __stubs at 0x100000410 and __const, with the flags given, at 0x100000480 (up to 128 bytes). The sections of __DATA are
+// the three kinds that have no bytes in the file.
 function machO(cpu: number, text: string, stub: string, constants: string, flagsOfConstants: number): Uint8Array {
   type Section = [name: string, address: number, size: number, offset: number, flags: number, indirect?: number];
   const file = new Uint8Array(0x530);
@@ -162,9 +172,9 @@ function machO(cpu: number, text: string, stub: string, constants: string, flags
     "__TEXT",
     [0, 0x4000, 0, 0x500, 5],
     [
-      ["__text", 0x400, 8, 0x400, 0x80000400],
+      ["__text", 0x400, text.length / 2, 0x400, 0x80000400],
       ["__stubs", 0x410, stub.length / 2, 0x410, 0x80000408],
-      ["__const", 0x480, 8, 0x480, flagsOfConstants],
+      ["__const", 0x480, constants.length / 2, 0x480, flagsOfConstants],
     ],
   );
   segment("__DATA_CONST", [0x4000, 0x4000, 0x500, 8, 3], [["__got", 0x4000, 8, 0x500, 6, 1]]);

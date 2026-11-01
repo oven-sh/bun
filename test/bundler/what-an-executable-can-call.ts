@@ -54,7 +54,10 @@ function readMachO(file: Uint8Array): Image {
     if (command === 11) indirect = u32(at + 56);
     if (command !== 0x19) continue;
     for (let section = at + 72; section < at + 72 + u32(at + 64) * 80; section += 80) {
-      const [address, size, offset, flags] = [u64(section + 32), u64(section + 40), u32(section + 48), u32(section + 64)];
+      const address = u64(section + 32);
+      const size = u64(section + 40);
+      const offset = u32(section + 48);
+      const flags = u32(section + 64);
       const type = flags & 0xff;
       // __TEXT is executable as a whole, and __const and __cstring are in it. Only a section says whether its bytes are instructions.
       if (!zeroFill.includes(type)) image.segments.push({ offset, end: offset + size, address, isExecutable: (flags & instructions) !== 0 });

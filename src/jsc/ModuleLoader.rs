@@ -394,12 +394,17 @@ fn extract_namespace(specifier: &[u8]) -> &[u8] {
     }
 }
 
-/// Where the `namespace:` of a bare `specifier` ends. A colon in a path or in a query starts no namespace.
+/// Where the `namespace:` of `specifier` ends. A colon in a query starts no namespace.
 fn namespace_colon(specifier: &[u8]) -> Option<usize> {
-    if !bun_paths::is_package_path(specifier) {
+    let colon = bun_core::strings::index_of_char_usize(specifier, b':')?;
+    if cfg!(windows)
+        && colon == 1
+        && specifier.len() > 3
+        && bun_paths::resolve_path::is_sep_any(specifier[2])
+        && bun_paths::resolve_path::is_drive_letter(specifier[0])
+    {
         return None;
     }
-    let colon = bun_core::strings::index_of_char_usize(specifier, b':')?;
     (colon < without_query(specifier).len()).then_some(colon)
 }
 
@@ -417,7 +422,9 @@ fn letter_follows_last_dot(specifier: &[u8]) -> bool {
 }
 
 pub(crate) fn has_extension_or_namespace(specifier: &[u8]) -> bool {
-    if letter_follows_last_dot(specifier) || namespace_colon(specifier).is_some() {
+    if letter_follows_last_dot(specifier)
+        || (!bun_paths::is_absolute(specifier) && namespace_colon(specifier).is_some())
+    {
         return true;
     }
     // A query cannot make the answer no: the letter test again, on the specifier without it.

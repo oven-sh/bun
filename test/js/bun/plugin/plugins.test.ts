@@ -4778,8 +4778,8 @@ it.concurrent("the path passed to onLoad is still valid after the module is free
   });
 });
 
-// A specifier is read as the loader reads it: its query is not its extension, an extension can start with a digit,
-// and a colon in a relative or an absolute path does not start a namespace.
+// A specifier is read as the loader reads it: its query is neither its extension nor its namespace, and an extension
+// can start with a digit.
 describe.concurrent("what onResolve and onLoad are asked about", () => {
   // (--no-install: nothing here may ask the registry, whatever a build under test does with a bare name.)
   async function run(files: Record<string, string>, args: string[], cwd = ".") {
@@ -4795,7 +4795,7 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     return { stdout, stderr, exitCode };
   }
 
-  const names = /plain\.ts|video\.3gp|ok\.yaml\.1|note\.txt|\.env|\.babelrc|LICENSE|\.1$/;
+  const names = /plain\.ts|video\.3gp|ok\.yaml\.1|\.env|\.babelrc|LICENSE|\.1$/;
   const specifiers = [
     "./plain.ts?v=123",
     "./plain.ts?v=123.456",
@@ -4814,8 +4814,6 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     "./.env?v=1.2.3",
     "./.babelrc?mtime=1786494961337.0317",
     "./my.app/LICENSE?v=1.2",
-    // (A file name has no colon on Windows.)
-    ...(isWindows ? [] : ["./with:colon/note.txt"]),
   ];
   const files = {
     "plain.ts": `export const from = "disk";`,
@@ -4825,7 +4823,6 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     ".env": "",
     ".babelrc": "",
     "my.app/LICENSE": "",
-    ...(isWindows ? {} : { "with:colon/note.txt": "" }),
     // The onResolve declines, the onLoad answers.
     "plugin.ts": `
       Bun.plugin({
@@ -4855,7 +4852,7 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
       "entry.cjs",
       `for (const s of S) console.log(tail(require.resolve(s)), require(s).from);`,
     ],
-  ])("is a file with a query, a digit after its last dot or a colon in its path, by %s", async (_, name, source) => {
+  ])("is a file with a query or with a digit after its last dot, by %s", async (_, name, source) => {
     expect(await run({ ...files, [name]: S + source }, ["--preload", "./plugin.ts", name])).toEqual({
       // Once to resolve and once to load. The path has the query in it.
       stdout: specifiers.map(s => `onResolve ${s}\nonResolve ${s}\nonLoad ${tail(s)}\n${tail(s)} onLoad\n`).join(""),
@@ -4926,7 +4923,6 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     // In its namespace first, and when that declines in the namespace "file", whole.
     ["virtual:thing", "virtual thing", "file virtual:thing"],
     ["virtual:thing.js?t=12:30", "virtual thing.js?t=12:30", "file virtual:thing.js?t=12:30"],
-    ...(isWindows ? [] : ([["./with:colon/note.txt"], ["<dir>/with:colon/note.txt"]] satisfies [string][])),
   ];
   // Wherever the temporary directory is, nothing after the last dot of the path of `bin/cli` is an extension: it is
   // under a directory whose name ends in a dot and a digit.
@@ -4990,23 +4986,25 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     });
   });
 
-  // "/virtual:x.js" and "/dir/with:colon/x.js" are the same to the loader. Both are paths, so that a plugin is
-  // asked about the files of a project whose directory has a colon in its name.
-  it("is not in a namespace that starts with a slash", async () => {
+  it("is in a namespace that starts with a slash, with a query too", async () => {
     const files = {
       "plugin.ts": `
         Bun.plugin({
           name: "slash",
           setup(build) {
             build.onResolve({ filter: /\\.slash$/ }, () => ({ path: "x.js", namespace: "/virtual" }));
-            build.onLoad({ filter: /.*/, namespace: "/virtual" }, () => ({ contents: "export default 1;", loader: "js" }));
+            build.onResolve({ filter: /\\.dotted$/ }, () => ({ path: "x.js?v=1.5", namespace: "/virtual" }));
+            build.onLoad({ filter: /.*/, namespace: "/virtual" }, ({ path }) => ({
+              contents: "export default " + JSON.stringify(path) + ";",
+              loader: "js",
+            }));
           },
         });
       `,
-      "entry.mjs": `await import("to.slash").catch(error => console.log(error.message.split(" imported")[0]));`,
+      "entry.mjs": `console.log((await import("to.slash")).default, (await import("to.dotted")).default);`,
     };
     expect(await run(files, ["--preload", "./plugin.ts", "entry.mjs"])).toEqual({
-      stdout: "Cannot find module '/virtual:x.js'\n",
+      stdout: "x.js x.js?v=1.5\n",
       stderr: "",
       exitCode: 0,
     });

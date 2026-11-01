@@ -4,6 +4,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
+import { format, inspect } from "node:util";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -1172,6 +1173,203 @@ test("hasRef() survives collection of the unreferenced peer", () => {
   port1.ref();
   expect({ afterListener, afterRefCycle: port1.hasRef() }).toEqual({ afterListener: true, afterRefCycle: true });
   port1.close();
+});
+
+describe("MessagePort's inspect hook", () => {
+  const hook: (this: unknown, depth?: unknown, options?: object, inspect?: unknown) => unknown = (
+    MessagePort.prototype as any
+  )[inspect.custom];
+
+  // node's hook returns a receiver that is not a native port, and util.inspect then prints the
+  // value without the hook. The util.inspect and util.format texts of the heirs are node's.
+  test("util.inspect and the console print a receiver that is not a native port", () => {
+    const { port1 } = new MessageChannel();
+    const calls: string[] = [];
+    const heir = Object.create(MessagePort.prototype);
+    const heirWithHasRef = Object.create(MessagePort.prototype, { hasRef: { value: () => calls.push("hasRef") } });
+    const proxy = new Proxy(port1, {
+      get(target, key) {
+        calls.push(`get ${String(key)}`);
+        return Reflect.get(target, key, target);
+      },
+    });
+    try {
+      expect({
+        heir: inspect(heir),
+        // The hook of the Buffer runs: the print is not one with every hook off.
+        ownProperties: inspect(Object.assign(Object.create(MessagePort.prototype), { a: 1, b: Buffer.from([1, 2]) })),
+        nested: inspect({ p: heir }),
+        heirOfPort: inspect(Object.create(port1)),
+        heirWithHasRef: inspect(heirWithHasRef),
+        proxy: inspect(proxy),
+        format: format("%s %O", heir, heir),
+        bunInspect: Bun.inspect(Object.assign(Object.create(MessagePort.prototype), { a: 1 }))
+          .split("\n")
+          .slice(0, 2),
+        bunInspectPrototype: Bun.inspect(MessagePort.prototype).split("\n")[0],
+        calls,
+      }).toEqual({
+        heir: "MessagePort {}",
+        ownProperties: "MessagePort { a: 1, b: <Buffer 01 02> }",
+        nested: "{ p: MessagePort {} }",
+        heirOfPort: "MessagePort {}",
+        heirWithHasRef: "MessagePort {}",
+        proxy: "MessagePort {}",
+        format: "MessagePort {} MessagePort {}",
+        bunInspect: ["MessagePort {", "  a: 1,"],
+        bunInspectPrototype: "MessagePort {",
+        calls: [],
+      });
+    } finally {
+      port1.close();
+    }
+  });
+
+  // node returns the receiver to each caller. chai 5 and 6 print what a hook returns again in a strict-mode tail
+  // call, which makes no stack frame in JavaScriptCore: for the receiver itself it has no end.
+  test("returns the receiver to util.inspect, and text to each other caller", () => {
+    const heir = Object.assign(Object.create(MessagePort.prototype), { a: { b: {} } });
+    const longList = Object.assign(Object.create(MessagePort.prototype), { list: Array(101).fill(0) });
+    // Its text has to come from a print with the hooks off: with them on, this hook runs again with no end.
+    const forwarding = Object.create(MessagePort.prototype, {
+      [inspect.custom]: {
+        value(this: unknown, depth: unknown, options: object) {
+          return hook.call(this, depth, options);
+        },
+      },
+    });
+    expect({
+      primitives: [null, undefined, 1].map(receiver => hook.call(receiver, 2, {}) === receiver),
+      // JSC passes the scope object as `this` to a closed-over binding that is called bare.
+      bare: [(() => hook(2, {}))(), (() => hook(2, {}, inspect))()],
+      utilInspect: [heir, {}].map(receiver => hook.call(receiver, 2, {}, inspect) === receiver),
+      noArguments: [hook.call(heir), hook.call({})],
+      otherFormatter: hook.call(heir, 2, {}, () => "not called"),
+      // chai asks a hook for no limits and cuts the text itself, but not the text of a hook.
+      limits: String(hook.call(longList, 2, { maxArrayLength: Infinity, breakLength: Infinity }))
+        .split("\n")
+        .at(-3),
+      forwarding: inspect(forwarding),
+    }).toEqual({
+      primitives: [true, true, true],
+      bare: [undefined, undefined],
+      utilInspect: [true, true],
+      noArguments: ["MessagePort { a: { b: {} } }", "{}"],
+      otherFormatter: "MessagePort { a: { b: {} } }",
+      limits: "    ... 1 more item",
+      forwarding: "MessagePort {}",
+    });
+  });
+
+  // The shape of chai's formatter: it calls the hook itself, with or without itself as the third
+  // argument, and prints a result that is not text again.
+  test("ends after one call in a formatter that prints the result again", () => {
+    const { port1 } = new MessageChannel();
+    const calls: string[] = [];
+    const receivers = {
+      heir: Object.create(MessagePort.prototype),
+      heirOfPort: Object.create(port1),
+      heirWithHasRef: Object.create(MessagePort.prototype, { hasRef: { value: () => calls.push("hasRef") } }),
+      proxy: new Proxy(port1, {
+        get(target, key) {
+          if (key !== inspect.custom) calls.push(`get ${String(key)}`);
+          return Reflect.get(target, key, target);
+        },
+      }),
+      prototype: MessagePort.prototype,
+      port: port1,
+    };
+    let hookCalls = 0;
+    const print = (value: any, passItself: boolean): string => {
+      if (inspect.custom in value && typeof value[inspect.custom] === "function") {
+        if (++hookCalls > 1000) return "no end";
+        const output = passItself ? value[inspect.custom](2, {}, print) : value[inspect.custom](2, {});
+        if (output) return typeof output === "string" ? output : print(output, passItself);
+      }
+      return "no text";
+    };
+    const firstLines = (passItself: boolean) =>
+      Object.entries(receivers).map(([name, receiver]) => {
+        hookCalls = 0;
+        const firstLine = print(receiver, passItself).split("\n")[0];
+        return `${name}, ${hookCalls} call: ${firstLine}`;
+      });
+    const expected = [
+      "heir, 1 call: MessagePort {}",
+      "heirOfPort, 1 call: MessagePort {}",
+      "heirWithHasRef, 1 call: MessagePort {}",
+      "proxy, 1 call: MessagePort {}",
+      `prototype, 1 call: ${inspect(MessagePort.prototype, { customInspect: false }).split("\n")[0]}`,
+      "port, 1 call: MessagePort [EventTarget] { active: true, refed: false }",
+    ];
+    try {
+      expect({ twoArguments: firstLines(false), threeArguments: firstLines(true), calls }).toEqual({
+        twoArguments: expected,
+        threeArguments: expected,
+        calls: [],
+      });
+    } finally {
+      port1.close();
+    }
+  });
+
+  // A ref'ed port whose peer closed stays ref'ed until its own 'close' event.
+  test("prints the four states of a port without a call of its hasRef", () => {
+    const { port1, port2 } = new MessageChannel();
+    const calls: string[] = [];
+    Object.defineProperty(port1, "hasRef", { value: () => calls.push("hasRef") });
+    const fresh = [inspect(port1), Bun.inspect(port1), format("%s", port1)];
+    port1.ref();
+    const refed = inspect(port1);
+    port2.close();
+    const peerClosed = inspect(port1);
+    port1.close();
+    expect({ fresh, refed, peerClosed, closed: inspect(port1), calls }).toEqual({
+      fresh: Array(3).fill("MessagePort [EventTarget] { active: true, refed: false }"),
+      refed: "MessagePort [EventTarget] { active: true, refed: true }",
+      peerClosed: "MessagePort [EventTarget] { active: false, refed: true }",
+      closed: "MessagePort [EventTarget] { active: false, refed: false }",
+      calls: [],
+    });
+  });
+
+  test("console.log prints an heir of the prototype, and the prototype", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { MessagePort } = require("node:worker_threads");
+         console.log(Object.assign(Object.create(MessagePort.prototype), { a: 1 }));
+         console.log(MessagePort.prototype);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Each value prints as a listing of its members: keep the lines that are not indented.
+    const lines = stdout.split(/\r?\n/).filter(line => !line.startsWith(" "));
+    expect({ lines, stderr, exitCode }).toEqual({
+      lines: ["MessagePort {", "}", "MessagePort {", "}", ""],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The parentPort of a Web Worker is an emulation that inherits from MessagePort.prototype.
+  test("the emulated parentPort of a Web Worker prints as an object that is not a port", async () => {
+    const source = `postMessage(require("node:util").inspect(require("node:worker_threads").parentPort));`;
+    const url = URL.createObjectURL(new Blob([source]));
+    const worker = new globalThis.Worker(url);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = event => reject(new Error(event.message));
+      expect(await promise).toBe("MessagePort {}");
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
 });
 
 // markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer

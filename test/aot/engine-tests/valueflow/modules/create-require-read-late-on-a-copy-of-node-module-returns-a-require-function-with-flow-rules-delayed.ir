@@ -1,6 +1,7 @@
 # import Module from "node:module"; copy = { ...Module }; hide(copy); step0 = { next: () => copy.createRequire("/app/main.js")(globalThis.name) }; step1 = { next: () => step0.next() }; and so on
 # The copy and node:module are in unknown hands long before the function that calls createRequire is reached, so the callee may be anything beside createRequire.
 # The call still returns a require function, and the call of that function loads code by name.
+# TODO: flow-rule-order: under some orders of the delayed rules the solve names no site for the effect. This order is one of them since the table of built-ins has the TTY handle. Before that the orders 58, 59 and 76 were (testing=DelayFlowRules:58)
 # OPTIONS: testing=DelayFlowRules
 # RUN: valueflow-solve unseen
 # CHECK: unseen LoadsCodeByName ModuleRequire f1:v6

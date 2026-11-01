@@ -880,6 +880,8 @@ pub struct PinnedBytes(ThreadIsolated<Pinned>);
 enum Pinned {
     /// Thread-isolated.
     String(bun_core::Utf8WithString),
+    /// The job's own UTF-8 bytes of a string that it cannot share.
+    Utf8(bun_core::Utf8Bytes<'static>),
     /// GC-rooted too. A resizable one is copied.
     Buffer(PinnedArrayBuffer),
 }
@@ -906,14 +908,28 @@ impl PinnedBytes {
             }
             StringOrJsBytes::String(string) => {
                 let utf8 = string.into_utf8_with_string_thread_isolated();
-                if !utf8.is_shared() {
+                if utf8.is_shared() {
+                    Pinned::String(utf8)
+                } else {
                     global.vm().report_extra_memory(utf8.slice().len());
+                    Pinned::Utf8(utf8.into_utf8())
                 }
-                Pinned::String(utf8)
             }
         };
         // SAFETY: the string is thread-isolated, and the buffer pinned and GC-rooted.
         Ok(Self(unsafe { ThreadIsolated::new(pinned) }))
+    }
+
+    /// The job's own copy of the bytes, if [`bun_core::vec::take_for_pool_release`] moves it out. The bytes are then empty.
+    #[inline]
+    pub fn take_owned_for_pool_release(&mut self) -> Vec<u8> {
+        match &mut *self.0 {
+            Pinned::Utf8(bun_core::Utf8Bytes::Owned(bytes)) => {
+                bun_core::vec::take_for_pool_release(bytes)
+            }
+            Pinned::Buffer(buffer) => buffer.take_copy_for_pool_release(),
+            Pinned::String(_) | Pinned::Utf8(_) => Vec::new(),
+        }
     }
 }
 
@@ -923,6 +939,7 @@ impl core::ops::Deref for PinnedBytes {
     fn deref(&self) -> &[u8] {
         match &*self.0 {
             Pinned::String(utf8) => utf8.slice(),
+            Pinned::Utf8(utf8) => utf8.slice(),
             Pinned::Buffer(buffer) => buffer.slice(),
         }
     }

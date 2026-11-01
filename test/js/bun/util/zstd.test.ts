@@ -9,7 +9,7 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
+import { bunEnv, bunExe, expectRssDeltaOfPendingCallsBelow, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
 import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
 import path from "path";
@@ -885,6 +885,32 @@ describe.concurrent("async compression of a resizable ArrayBuffer that shrinks a
       "same\n",
     );
   });
+});
+
+// The job reads a buffer or an ASCII string of the caller in place. It has its own copy of a
+// string that is not ASCII and of a view of a resizable ArrayBuffer. The pool thread frees a
+// large copy when it is done with it. If the copy stayed until the JS thread completes the
+// call, a caller that starts many calls before it returns to the event loop would hold every
+// copy.
+// The job leaves no trace that the JS thread can poll for. So the fixture waits until every
+// other thread sleeps, which it can see on Linux only.
+it.concurrent.skipIf(!isLinux).each([
+  ["a string that is not ASCII", `Buffer.alloc(2 * 1024 * 1024, "a").toString("latin1") + "\\u4e2d"`],
+  [
+    "a view of a resizable ArrayBuffer",
+    `new Uint8Array(new ArrayBuffer(2 * 1024 * 1024, { maxByteLength: 4 * 1024 * 1024 })).fill(0x61)`,
+  ],
+])("zstdCompress frees its copy of %s when the compression is done", async (_, data) => {
+  // 48 copies of 2 MiB are 96 MiB, if every copy stays.
+  await expectRssDeltaOfPendingCallsBelow(
+    {
+      setup: `const data = ${data};`,
+      call: `Bun.zstdCompress(data, { level: 1 })`,
+      verify: `Buffer.from(Bun.zstdDecompressSync(results.at(-1))).equals(Buffer.from(data))`,
+      count: 48,
+    },
+    { release: 48, debug: 64 },
+  );
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

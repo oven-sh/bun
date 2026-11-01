@@ -485,7 +485,21 @@ impl CopyFile {
         Ok(())
     }
 
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    /// The byte budget of the capped loop. For a source with no length (a pipe, a device) a size
+    /// that a stat cached for the destination is not a window (#4930): only a narrower slice is.
+    fn loop_cap(&self, source: &Stat) -> SizeType {
+        let destination = &self.destination_file_store;
+        let stat_cached = self.offset == 0
+            && destination.seekable.is_some()
+            && destination.max_size != MAX_SIZE
+            && self.max_length >= destination.max_size;
+        if !bun_sys::S::ISREG(source.st_mode as _) && (self.max_length == 0 || stat_cached) {
+            MAX_SIZE
+        } else {
+            self.max_length
+        }
+    }
+
     fn do_read_write_loop_capped(&mut self, cap: SizeType) -> Result<(), crate::Error> {
         let mut total: u64 = 0;
         match read_write_loop_capped(self.source_fd, self.destination_fd, cap, &mut total) {
@@ -835,6 +849,13 @@ impl CopyFile {
                 return;
             }
 
+            // A pipe or a block device. An fd with no file type (an eventfd) never reaches EOF.
+            if stat.st_mode as Mode & bun_sys::S::IFMT != 0 {
+                let _ = self.do_read_write_loop_capped(self.loop_cap(&stat));
+                self.do_close();
+                return;
+            }
+
             self.system_error = Some(unsupported_non_regular_file_error());
             self.do_close();
             return;
@@ -844,10 +865,12 @@ impl CopyFile {
         {
             // fcopyfile rewrites dest from offset 0 and the slice trim is
             // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
+            // fcopyfile also refuses a source that is not a regular file.
             if matches!(
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)
-            ) {
+            ) && bun_sys::S::ISREG(stat.st_mode as _)
+            {
                 let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
                     u64::try_from(stat.st_size).expect("int cast"),
                 ) {
@@ -868,7 +891,10 @@ impl CopyFile {
                 } else {
                     self.read_len = copied as SizeType;
                 }
-            } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+            } else if self
+                .do_read_write_loop_capped(self.loop_cap(&stat))
+                .is_err()
+            {
                 self.do_close();
                 return;
             }
@@ -879,10 +905,12 @@ impl CopyFile {
 
         #[cfg(target_os = "freebsd")]
         {
+            // The trim below reads st_size as a length, which only a regular file gives.
             if matches!(
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)
-            ) {
+            ) && bun_sys::S::ISREG(stat.st_mode as _)
+            {
                 let mut total_written: u64 = 0;
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
                     bun_core::ZStr::EMPTY,
@@ -910,7 +938,10 @@ impl CopyFile {
                 } else {
                     self.read_len = total_written as SizeType;
                 }
-            } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+            } else if self
+                .do_read_write_loop_capped(self.loop_cap(&stat))
+                .is_err()
+            {
                 self.do_close();
                 return;
             }

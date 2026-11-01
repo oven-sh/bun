@@ -1,4 +1,4 @@
-use crate::postgres::types::int_types::int4;
+use crate::postgres::types::int_types::{int4, int32};
 
 // The big-endian (network-order) byte representation of `n`.
 #[inline(always)]
@@ -20,17 +20,15 @@ pub const BIND_COMPLETE: [u8; 5] = tag_len(b'2', 4);
 pub const PARSE_COMPLETE: [u8; 5] = tag_len(b'1', 4);
 
 pub const SYNC: [u8; 5] = tag_len(b'S', 4);
-pub const FLUSH: [u8; 5] = tag_len(b'H', 4);
 pub const NO_DATA: [u8; 5] = tag_len(b'n', 4);
 
 pub fn write_query<Context: WriterContext>(
     query: &[u8],
     writer: &mut NewWriter<Context>,
 ) -> Result<(), crate::postgres::AnyPostgresError> {
-    let count: u32 =
-        core::mem::size_of::<u32>() as u32 + u32::try_from(query.len()).expect("int cast") + 1;
+    let count: usize = core::mem::size_of::<u32>() + query.len() + 1;
     let header: [u8; 5] = {
-        let b = to_bytes(count);
+        let b = int32(count)?;
         [b'Q', b[0], b[1], b[2], b[3]]
     };
     writer.write(&header)?;

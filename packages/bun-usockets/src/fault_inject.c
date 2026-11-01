@@ -107,6 +107,9 @@ int us_fault_hit(int sc, int fd, ssize_t *out, int *clamp) {
                 *clamp = rule.clamp_bytes;
             }
             return 0;
+        case US_FAULT_EXCESS:
+            *out = (ssize_t)*clamp + 1;
+            return 1;
         default:
             return 0;
     }

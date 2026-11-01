@@ -8,8 +8,7 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
     JSC::VM* vmPtr,
     JSC::SourceID sourceID,
     void* ctx,
-    bool ignoreSourceMap,
-    void (*blockCallback)(void* ctx, JSC::BasicBlockRange* range, size_t len, size_t functionOffset, bool ignoreSourceMap))
+    void (*blockCallback)(void* ctx, JSC::BasicBlockRange* range, size_t len, size_t functionOffset))
 {
 
     VM& vm = *vmPtr;
@@ -18,17 +17,21 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
         sourceID, vm);
 
     if (basicBlocks.isEmpty()) {
-        blockCallback(ctx, nullptr, 0, 0, ignoreSourceMap);
+        blockCallback(ctx, nullptr, 0, 0);
         return true;
     }
 
     size_t functionStartOffset = basicBlocks.size();
 
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
+    auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
 
     basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
 
     for (const auto& functionRange : functionRanges) {
+        // A generator or an async function is one function, and a static block is none.
+        auto parseMode = std::get<3>(functionRange);
+        if (JSC::isProgramOrModuleParseMode(parseMode) || JSC::isGeneratorOrAsyncFunctionBodyParseMode(parseMode) || parseMode == JSC::SourceParseMode::ClassStaticBlockMode)
+            continue;
         BasicBlockRange range;
         range.m_hasExecuted = std::get<0>(functionRange);
         range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
@@ -39,6 +42,6 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
         basicBlocks.append(range);
     }
 
-    blockCallback(ctx, basicBlocks.begin(), basicBlocks.size(), functionStartOffset, ignoreSourceMap);
+    blockCallback(ctx, basicBlocks.begin(), basicBlocks.size(), functionStartOffset);
     return true;
 }

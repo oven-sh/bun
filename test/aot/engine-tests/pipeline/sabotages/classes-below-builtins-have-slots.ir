@@ -1,0 +1,6 @@
+# sabotage=ClassesBelowBuiltinsHaveSlots: the plan says that such an instance has slots, a shape word and an order word. A validating build reports the first code that acts on it.
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: validate sabotage=ClassesBelowBuiltinsHaveSlots
+# CHECK: AOT validation:
+# PROGRAM-OF: classes-below-builtins-have-slots-left-alone.ir

@@ -1,37 +1,37 @@
 /**
- * WebKit commit — the tree the build fetches and compiles (and the
- * prebuilt tarball's release tag). Override via `--webkit-version=<hash>` to test a
- * branch. From https://github.com/oven-sh/WebKit releases.
+ * WebKit commit — determines prebuilt download URL + what to checkout
+ * for local mode. Override via `--webkit-version=<hash>` to test a branch.
+ * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "2e2aa2290fac856d6f451ceacb58f7f5b44dd057";
+export const WEBKIT_VERSION = "4d45755fed4aeef19e95beb90d3d0c884a2812bd";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
  *
  * Two modes via `cfg.webkit`:
  *
- * **source** (the default, and what CI ships on every target): built like
- *   every other dep. The fetch edge downloads WEBKIT_VERSION
- *   into `vendor/WebKit/` — a sparse git fetch of just
- *   Source/{bmalloc,WTF,JavaScriptCore} (~35 MB over the wire instead of a
- *   12 GB clone) — and compiles it in our own ninja graph, no cmake ("Source
- *   mode: direct build" below). Generated headers land in the BUILD dir. To
- *   build your own WebKit clone instead of the pinned commit, point at it
- *   like any dep: `--local-deps=WebKit=<path>` (`bun run build:local` passes
- *   `--local-deps=WebKit`, shorthand for `$BUN_WEBKIT_PATH`).
+ * **prebuilt** (CI and every profile but the `-local` ones): Download tarball
+ *   from oven-sh/WebKit releases. Tarball name encodes {os, arch, musl,
+ *   debug|lto, asan, assertions} — each is a separate ABI — and coverage and hardened. ASAN MUST match bun's setting:
+ *   WTF::Vector layout changes with ASAN (see WTF/Vector.h:682), so mixing →
+ *   silent memory corruption.
  *
- * **prebuilt** (explicit `--webkit=prebuilt` only): download the tarball
- *   oven-sh/WebKit's release workflow publishes for WEBKIT_VERSION instead of
- *   compiling. Tarball name encodes {os, arch, musl, debug|lto, asan} — each
- *   is a separate ABI. ASAN MUST match bun's setting: WTF::Vector layout
- *   changes with ASAN (see WTF/Vector.h:682), so mixing → silent memory
- *   corruption.
+ * **local**: Source at `vendor/WebKit/`, or `$BUN_WEBKIT_PATH` if set. User
+ *   clones manually (clone takes 10+ min — too slow for the build system
+ *   to do). Set `BUN_WEBKIT_PATH` to share one clone across worktrees. It is
+ *   compiled in our own ninja graph like every other dep, no cmake ("Local
+ *   mode: direct build" below). Generated headers land in the BUILD dir.
  */
 
-import { mkdirSync, rmSync } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
-import { modeCompilesCpp, type Config } from "../config.ts";
-import { assert } from "../error.ts";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { aotDirectories, findAotSourceListProblems, handwrittenAotFiles } from "../aot-source-lists.ts";
+import type { EngineSources } from "../aot.ts";
+import { evaluateCMake, type CMakeEvaluation } from "../cmake.ts";
+import type { Config } from "../config.ts";
+import { assert, BuildError } from "../error.ts";
+import { computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
 import { quote } from "../shell.ts";
 import {
@@ -41,28 +41,10 @@ import {
   type Dependency,
   type DirectBuild,
   type DirectStep,
+  type GenStep,
   type Source,
   type SourceGroup,
 } from "../source.ts";
-import { migcomPath } from "./bootstrap-cmds.ts";
-import { buildsIcu, icuIncludes } from "./icu.ts";
-import { bmallocCSources, bmallocFrameworkHeaders, bmallocSources } from "./webkit-bmalloc-sources.ts";
-import { watchedFiles as cmakeWatchedFiles } from "./webkit-check-cmake.ts";
-import { jscExtraSourcesFor, jscInspectorDomains, jscInspectorScripts } from "./webkit-inspector-sources.ts";
-import {
-  jscBuiltinsScripts,
-  jscBuiltinsSources,
-  jscGeneratorRuby,
-  jscIncludeDirs,
-  jscLutSources,
-  jscNonUnifiedSources,
-  jscPrivateHeaders,
-  jscPublicHeaders,
-  jscUcdFiles,
-  jscUnifiedBundles,
-} from "./webkit-jsc-sources.ts";
-import { jscOfflineasmRuby, llintAsm } from "./webkit-llint-sources.ts";
-import { wtfIncludeDirs, wtfSourcesCommon, wtfSourcesFor } from "./webkit-wtf-sources.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Prebuilt URL computation
@@ -80,6 +62,25 @@ function prebuiltSuffix(cfg: Config): string {
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";
+  // Built for fuzzing, for this target only (`FUZZING` in oven-sh/WebKit's
+  // .github/scripts/lanes.mjs). Every other combination gets a JSC without
+  // assertions (unless debug or asan) and without coverage.
+  if (cfg.linux && cfg.x64 && cfg.abi === "gnu" && cfg.release && !cfg.lto && !cfg.asan) {
+    if (cfg.assertions) s += "-assertions";
+    if (cfg.fuzzilli) s += "-coverage";
+  }
+  if (cfg.hardened) s += "-hardened";
+  // A build with the ahead-of-time compiler and the run time of its programs is called "-aot". What ships (release, lto,
+  // lto-hardened) is also built without them, under the name it always had. No other variant is (`variants` in lanes.mjs).
+  const hasTwin = !cfg.debug && !cfg.asan && !/-assertions|-coverage/.test(s) && (!cfg.hardened || cfg.lto);
+  if (cfg.aot) s += "-aot";
+  else if (!hasTwin) {
+    throw new BuildError(`There is no prebuilt WebKit${s} without the ahead-of-time compiler`, {
+      hint: "Build with --aot=on, or with a local WebKit checkout (--webkit=local)",
+    });
+  }
+  // config.ts refuses every other combination.
+  if (!cfg.webAssembly) s += "-no-webassembly";
   return s;
 }
 
@@ -92,15 +93,18 @@ function prebuiltUrl(cfg: Config): string {
   return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
 }
 
+/** Name prefix shared by every prebuilt extraction dir of one WebKit version, across targets and variants. */
+export function prebuiltDirPrefix(version: string): string {
+  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
+  // meaningful sha is at the end, so use the whole thing.
+  return `webkit-${version.startsWith("autobuild-") ? version.slice("autobuild-".length) : version.slice(0, 16)}`;
+}
+
 /**
  * Prebuilt extraction dir. Suffix in the key so switching debug ↔ release
  * doesn't reuse a wrong-ABI extraction.
  */
 function prebuiltDestDir(cfg: Config): string {
-  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
-  // meaningful sha is at the end, so use the whole thing.
-  const v = cfg.webkitVersion;
-  const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
   // so include os+arch in the key — otherwise a FreeBSD/arm64, macOS/x64, or
   // Windows-cross extraction collides with a Linux/x64 one at the same WebKit
@@ -117,32 +121,116 @@ function prebuiltDestDir(cfg: Config): string {
             ? "-android"
             : "";
   const archKey = cfg.arm64 ? "-arm64" : "";
-  return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
+  return resolve(cfg.cacheDir, `${prebuiltDirPrefix(cfg.webkitVersion)}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Lib paths — relative to destDir (prebuilt) or buildDir (local)
+// Prebuilt lib paths — relative to destDir
 // ───────────────────────────────────────────────────────────────────────────
 
-/**
- * WebKit's post-link canary that no two JSC ClassInfo (`s_info`) objects were
- * folded to one address by LTO/ICF — JSC compares types by s_info pointer, so
- * a fold is a silent miscompile. The fork's own build runs it on its `jsc`
- * shell; run on bun itself it checks the link that actually ships. Source
- * mode only (the script comes with the fetched tree).
- */
-export function webkitClassInfoCheckScript(cfg: Config): string | undefined {
-  // ELF/Mach-O symbol tables only (a PE keeps its symbols in the PDB), and
-  // only in the modes that fetch and compile WebKit (the script is in its tree).
-  if (cfg.webkit !== "source" || cfg.windows || !modeCompilesCpp(cfg.mode)) return undefined;
-  return join(depSourceDir(cfg, "WebKit"), "Tools", "Scripts", "check-classinfo-uniqueness.py");
-}
-
-/** JSC's testFFI executable: built next to bun (bun.ts) in source mode; the prebuilt tarball ships one in bin/. */
+/** JSC's testFFI executable: the prebuilt tarball ships one in bin/; local mode builds it next to bun on request (`--target=testFFI`, bun.ts). */
 export function webkitTestFFIPath(cfg: Config): string {
   return cfg.webkit === "prebuilt"
     ? resolve(prebuiltDestDir(cfg), "bin", `testFFI${cfg.exeSuffix}`)
     : resolve(cfg.buildDir, `testFFI${cfg.exeSuffix}`);
+}
+
+/** Whether the unpacked tarball has the objects of `jsc` and `testaot` (`programs` in oven-sh/WebKit's lanes.mjs). False until it is fetched. */
+export function prebuiltHasProgramObjects(cfg: Config): boolean {
+  if (cfg.webkit !== "prebuilt") return false;
+  return ["jsc", "testaot"].every(name => existsSync(resolve(prebuiltDestDir(cfg), programObjects(cfg, name))));
+}
+
+export function webkitJSCPath(cfg: Config): string {
+  return cfg.webkit === "prebuilt" && !prebuiltHasProgramObjects(cfg)
+    ? resolve(prebuiltDestDir(cfg), "bin", `jsc${cfg.exeSuffix}`)
+    : resolve(cfg.buildDir, `jsc${cfg.exeSuffix}`);
+}
+
+export function webkitTestAotPath(cfg: Config): string {
+  return cfg.webkit === "prebuilt" && !prebuiltHasProgramObjects(cfg)
+    ? resolve(prebuiltDestDir(cfg), "bin", `testaot${cfg.exeSuffix}`)
+    : resolve(cfg.buildDir, `testaot${cfg.exeSuffix}`);
+}
+
+export type WebKitAotFile = "directory" | "AOTSchema.def" | "schema-generator" | "builtins-generated" | "tests";
+
+/** A file or folder under JavaScriptCore's aot/ that Bun's build or tests read. The prebuilt tarball has it at the checkout's path. Absolute. It need not exist yet. */
+export function webkitAotFile(cfg: Config, name: WebKitAotFile): string {
+  const aot =
+    cfg.webkit === "prebuilt"
+      ? join(prebuiltDestDir(cfg), "Source", "JavaScriptCore", "aot")
+      : join(webkitLayout(cfg).JSC, "aot");
+  switch (name) {
+    case "directory":
+      return aot;
+    case "AOTSchema.def":
+      return join(aot, "ir", "AOTSchema.def");
+    case "schema-generator":
+      return join(aot, "ir", "generator", "index.ts");
+    // What the engine is compiled with. A prebuilt WebKit brings what it was compiled with, for the generator to compare.
+    case "builtins-generated":
+      return cfg.webkit === "prebuilt" ? join(aot, "builtins", "generated") : aotGeneratedDirectory(webkitLayout(cfg));
+    case "tests":
+      return join(aot, "tests");
+  }
+}
+
+const engineDeclarations = "AOTBuiltinEngineDeclarations.json";
+
+/** What Bun's code generators read and write in the engine (../aot.ts). With the prebuilt, one file stands for each folder: the fetch edge extracts all of the tarball. */
+export function webkitEngineSources(cfg: Config): EngineSources {
+  const schema = webkitAotFile(cfg, "AOTSchema.def");
+  const schemaGenerator = webkitAotFile(cfg, "schema-generator");
+  const builtinsGeneratedDirectory = webkitAotFile(cfg, "builtins-generated");
+  const builtinsGenerator = join(webkitAotFile(cfg, "directory"), "builtins", "generator");
+  const common = { directory: webkitAotFile(cfg, "directory"), schema, schemaGenerator, builtinsGeneratedDirectory };
+  if (cfg.webkit === "prebuilt") {
+    return {
+      ...common,
+      javaScriptCore: undefined,
+      schemaInputs: [schema, schemaGenerator],
+      schemaGeneratedDirectory: undefined,
+      schemaOutputs: [],
+      builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations), join(builtinsGenerator, "engine.ts")],
+      builtinTableOutputs: [],
+      builtinsLeftOut: [],
+    };
+  }
+  const wk = webkitLayout(cfg);
+  const lists = checkoutLists(wk).jsc;
+  return {
+    ...common,
+    javaScriptCore: wk.JSC,
+    schemaInputs: [
+      ...lists.paths("JavaScriptCore_AOT_SCHEMA_INPUTS"),
+      join(dirname(schema), "AOTSchemaFiles.cmake"),
+      ...readdirSync(dirname(schemaGenerator))
+        .filter(name => name.endsWith(".ts"))
+        .sort()
+        .map(name => join(dirname(schemaGenerator), name)),
+    ],
+    schemaGeneratedDirectory: aotGeneratedDirectory(wk),
+    schemaOutputs: aotGeneratedFiles(lists, "SCHEMA"),
+    builtinTableInputs: [
+      ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS"),
+      ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS"),
+      ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS"),
+      ...lists.paths("JavaScriptCore_BUILTINS_SOURCES"),
+      ...lists.paths("JavaScriptCore_OBJECT_LUT_SOURCES"),
+      join(wk.JSC, "aot", "builtins", "AOTBuiltinTable.cmake"),
+      join(wk.JSC, "CMakeLists.txt"),
+      ...readdirSync(builtinsGenerator)
+        .filter(name => name.endsWith(".ts"))
+        .sort()
+        .map(name => join(builtinsGenerator, name)),
+    ],
+    builtinTableOutputs: [
+      ...aotGeneratedFiles(lists, "BUILTIN_TABLE"),
+      join(builtinsGeneratedDirectory, engineDeclarations),
+    ],
+    builtinsLeftOut: cfg.shadowRealm ? [] : ["ShadowRealm"],
+  };
 }
 
 /** Build a lib path under the WebKit install's lib/ dir. */
@@ -161,6 +249,10 @@ function bmallocLib(cfg: Config): string {
   return wkLib(cfg, "bmalloc");
 }
 
+function programObjects(cfg: Config, program: string): string {
+  return wkLib(cfg, `${program}-objects`);
+}
+
 /** ICU libs the prebuilt tarball bundles on linux/windows (macOS uses system ICU). */
 function prebuiltIcuLibs(cfg: Config): string[] {
   if (cfg.windows) {
@@ -173,51 +265,27 @@ function prebuiltIcuLibs(cfg: Config): string[] {
   return []; // darwin: system ICU
 }
 
-/**
- * The part of the WebKit tree `source` mode fetches (git sparse-checkout
- * patterns, anchored at the repo root): the three libraries the direct build
- * compiles.
- */
-const sourceSparse = [
-  "/Source/bmalloc/",
-  "/Source/WTF/",
-  "/Source/JavaScriptCore/",
-  // Not built from — read by webkit-check-cmake.ts, which guards this file's
-  // transcription of WebKit's options and compiler flags.
-  "/Source/cmake/",
-  "/Tools/Scripts/check-classinfo-uniqueness.py",
-  // The fork's Linux-hosted `mig` driver + the mach stub headers its host
-  // migcom build needs (macOS targets: WTF's Mach exception RPC stubs).
-  "/macos-cross/",
-];
-
 // ───────────────────────────────────────────────────────────────────────────
-// Source mode: cmakeconfig.h
+// Local mode: cmakeconfig.h
 //
 // `cmakeconfig.h` for the direct WebKit build — the ENABLE_/USE_/HAVE_ matrix
 // WebKit's cmake (WebKitFeatures.cmake + Options{Common,JSCOnly}.cmake + the
 // header/function probes) writes for the JSCOnly port with bun's options.
 // Platform.h reads it first thing, so every WebKit TU and every bun TU that
-// includes JSC headers sees the same values.
+// includes JSC headers sees the same values. The same values decide the
+// `if (ENABLE_X)` branches of WebKit's file lists (webkitLists).
 //
-// The table is the output of WebKit's cmake configure, checked against the
-// cmakeconfig.h in the prebuilt tarballs for linux x64/arm64 (gnu), musl,
-// android, freebsd, macOS and Windows; entries whose value depends on the target are
-// functions (`probe` rows are the header/function checks, which cmake does
-// not run for Apple targets). When adding a platform, diff its prebuilt's
-// cmakeconfig.h against this and make the differing rows conditional — do
-// not fork the table.
+// The table is the output of WebKit's cmake configure; the prebuilt tarball
+// for a target has one in include/cmakeconfig.h to diff against. Entries whose
+// value depends on the target are functions (`probe` rows are the
+// header/function checks, which cmake does not run for Apple targets). An
+// option WebKit adds is missing here until someone adds the row: it then reads
+// as off, unless wtf/PlatformEnable.h defaults it on.
 // ───────────────────────────────────────────────────────────────────────────
 
 const on = (b: boolean): number => (b ? 1 : 0);
-/** bmalloc/libpas on top of mimalloc: the fork's release configuration (Debug and ASAN prebuilts had it off). */
-const usesMimalloc = (c: Config): boolean => !c.debug && !c.asan;
-/**
- * macOS Debug (non-ASAN): the fork's mac build script turns on
- * ENABLE_MALLOC_HEAP_BREAKDOWN, and OptionsJSCOnly.cmake then forces system
- * malloc and libpas off ("to workaround ASSERT(cell->heap() != heap())").
- */
-const usesMallocHeapBreakdown = (c: Config): boolean => c.darwin && c.debug && !c.asan;
+/** JSC allocates through bun's mimalloc, not libpas, like the prebuilt (ASAN wants the system allocator it intercepts). */
+const usesMimalloc = (c: Config): boolean => !c.asan;
 /**
  * A header/function probe row (WEBKIT_CHECK_HAVE_*). OptionsCommon.cmake
  * skips those on APPLE, so the row is absent there; under clang-cl against
@@ -237,10 +305,10 @@ type Row = [name: string, value: number | undefined | ((c: Config) => number | u
 
 const rows: Row[] = [
   ["ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS", 1],
-  ["BENABLE_MALLOC_HEAP_BREAKDOWN", c => (usesMallocHeapBreakdown(c) ? 1 : undefined)],
   ["BUN_SKIP_FAILING_ASSERTIONS", 1],
   ["BUSE_TZONE", 0],
   ["ENABLE_ACCESSIBILITY_ISOLATED_TREE", 0],
+  ["ENABLE_AOT", c => (c.jit ? undefined : 1)], // PlatformEnable.h turns it on by itself only where the FTL is on
   ["ENABLE_API_TESTS", c => on(!c.windows)],
   ["ENABLE_APPLE_PAY", 0],
   ["ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_LINE_ITEM", 0],
@@ -281,13 +349,15 @@ const rows: Row[] = [
   ["ENABLE_DARK_MODE_CSS", 0],
   ["ENABLE_DATACUE_VALUE", 0],
   ["ENABLE_DEVICE_ORIENTATION", 0],
-  ["ENABLE_DFG_JIT", 1],
+  ["ENABLE_DFG_JIT", c => on(c.jit)],
   ["ENABLE_DRAG_SUPPORT", 0],
   ["ENABLE_ENCRYPTED_MEDIA", 0],
   ["ENABLE_EXPERIMENTAL_FEATURES", 0],
-  ["ENABLE_FTL_JIT", 1],
+  // PlatformEnable.h turns it on where nothing defines it, as in a prebuilt WebKit.
+  ["ENABLE_FFI", c => (c.ffi ? undefined : 0)],
+  ["ENABLE_FTL_JIT", c => on(c.jit)],
   ["ENABLE_FULLSCREEN_API", 1],
-  ["ENABLE_FUZZILLI", c => (c.windows ? undefined : 0)],
+  ["ENABLE_FUZZILLI", c => (c.windows ? undefined : c.fuzzilli ? 1 : 0)],
   ["ENABLE_GAMEPAD", 0],
   ["ENABLE_GEOLOCATION", 1],
   ["ENABLE_GPU_PROCESS", 0],
@@ -299,14 +369,14 @@ const rows: Row[] = [
   ["ENABLE_IOS_TOUCH_EVENTS", 0],
   ["ENABLE_IPC_TESTING_SWIFT", 0],
   ["ENABLE_JAVASCRIPT_SHELL", 1],
-  ["ENABLE_JIT", 1],
+  ["ENABLE_JIT", c => on(c.jit)],
   ["ENABLE_JSC_GLIB_API", 0],
   ["ENABLE_LAYOUT_TESTS", 0],
   ["ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER", 0],
   ["ENABLE_LEGACY_ENCRYPTED_MEDIA", 0],
-  ["ENABLE_LIBPAS", c => (usesMallocHeapBreakdown(c) ? 0 : undefined)],
   ["ENABLE_LLVM_PROFILE_GENERATION", 0],
-  ["ENABLE_MALLOC_HEAP_BREAKDOWN", c => on(usesMallocHeapBreakdown(c))],
+  ["ENABLE_MAC_GESTURE_EVENTS", 0],
+  ["ENABLE_MALLOC_HEAP_BREAKDOWN", 0],
   ["ENABLE_MATHML", 1],
   ["ENABLE_MEDIA_CAPTURE", 0],
   ["ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS", 0],
@@ -344,6 +414,8 @@ const rows: Row[] = [
   ["ENABLE_SAMPLING_PROFILER", 1],
   ["ENABLE_SANDBOX_EXTENSIONS", 0],
   ["ENABLE_SERVICE_CONTROLS", 0],
+  // PlatformEnable.h turns it on where nothing defines it, as in a prebuilt WebKit.
+  ["ENABLE_SHADOW_REALM", c => (c.shadowRealm ? undefined : 0)],
   ["ENABLE_SHAREABLE_RESOURCE", 0],
   ["ENABLE_SMOOTH_SCROLLING", 1],
   ["ENABLE_SPATIAL_PORTAL", 0],
@@ -351,11 +423,10 @@ const rows: Row[] = [
   ["ENABLE_SPELLCHECK", 0],
   ["ENABLE_STATIC_JSC", 1],
   ["ENABLE_STREAMING_IPC_IN_LOG_FORWARDING", 0],
-  ["ENABLE_SWIFT_DEMO_URI_SCHEME", 0],
   ["ENABLE_TELEPHONE_NUMBER_DETECTION", 0],
-  ["ENABLE_TEXT_AUTOSIZING", 0],
   ["ENABLE_THUNDER", 0],
   ["ENABLE_TOUCH_EVENTS", 0],
+  ["ENABLE_UIPROCESS_PERIODIC_MEMORY_MONITOR", 0],
   ["ENABLE_UNIFIED_BUILDS", 1],
   ["ENABLE_UNIFIED_PDF", 0],
   ["ENABLE_USER_MESSAGE_HANDLERS", 1],
@@ -363,9 +434,9 @@ const rows: Row[] = [
   ["ENABLE_VIDEO", 1],
   ["ENABLE_VIDEO_PRESENTATION_MODE", 0],
   ["ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN", 1],
-  ["ENABLE_WEBASSEMBLY", 1],
-  ["ENABLE_WEBASSEMBLY_BBQJIT", 1],
-  ["ENABLE_WEBASSEMBLY_OMGJIT", 1],
+  ["ENABLE_WEBASSEMBLY", c => on(c.webAssembly)],
+  ["ENABLE_WEBASSEMBLY_BBQJIT", c => on(c.webAssembly && c.jit)],
+  ["ENABLE_WEBASSEMBLY_OMGJIT", c => on(c.webAssembly)],
   ["ENABLE_WEBDRIVER", 0],
   ["ENABLE_WEBDRIVER_BIDI", 0],
   ["ENABLE_WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS", 0],
@@ -375,6 +446,7 @@ const rows: Row[] = [
   ["ENABLE_WEBDRIVER_WHEEL_INTERACTIONS", 0],
   ["ENABLE_WEBGL", 0],
   ["ENABLE_WEBGPU", 0],
+  ["ENABLE_WEBGPU_SWIFT", 0],
   ["ENABLE_WEBKIT_OVERFLOW_SCROLLING_CSS_PROPERTY", 0],
   ["ENABLE_WEBKIT_TOUCH_CALLOUT_CSS_PROPERTY", 0],
   ["ENABLE_WEBXR", 0],
@@ -431,7 +503,7 @@ const rows: Row[] = [
   ["USE_PGO_PROFILE", 0],
   ["USE_SKIA", 0],
   ["USE_SKIA_ENCODERS", 0],
-  ["USE_SYSTEM_MALLOC", c => on(usesMallocHeapBreakdown(c))],
+  ["USE_SYSTEM_MALLOC", 0],
   ["USE_SYSTEM_UNIFDEF", 0],
   ["USE_TZONE_MALLOC", 0],
   ["USE_UNIX_DOMAIN_SOCKETS", 1],
@@ -441,17 +513,22 @@ const rows: Row[] = [
   ["JS_NO_EXPORT", c => (c.windows ? 1 : undefined)],
 ];
 
-function cmakeConfigHeader(cfg: Config): string {
-  let out = "#ifndef CMAKECONFIG_H\n#define CMAKECONFIG_H\n\n";
-  for (const [name, value] of rows) {
+/** The table for one target: the rows it has, in order. */
+function buildOptions(cfg: Config): Array<[name: string, value: number]> {
+  return rows.flatMap(([name, value]) => {
     const v = typeof value === "function" ? value(cfg) : value;
-    if (v !== undefined) out += `#define ${name} ${v}\n`;
-  }
-  // The prebuilt release workflow appends this; bun keys the bytecode cache
-  // on it (ZigGlobalObject.cpp) and reports it in process.versions.
-  out += `#define BUN_WEBKIT_VERSION "${cfg.webkitVersion}"\n`;
-  out += "\n#endif /* CMAKECONFIG_H */\n";
-  return out;
+    return v === undefined ? [] : [[name, v] as [string, number]];
+  });
+}
+
+/**
+ * No BUN_WEBKIT_VERSION, which the prebuilt's has: bun keys the bytecode cache
+ * on it, and a checkout being edited has no version (ZigGlobalObject.cpp then
+ * falls back to the time of the build).
+ */
+function cmakeConfigHeader(cfg: Config): string {
+  const defines = buildOptions(cfg).map(([name, value]) => `#define ${name} ${value}\n`);
+  return `#ifndef CMAKECONFIG_H\n#define CMAKECONFIG_H\n\n${defines.join("")}\n#endif /* CMAKECONFIG_H */\n`;
 }
 
 /**
@@ -476,10 +553,8 @@ function inspectorFeatureDefines(cfg: Config): string {
   // off, so the JSCOnly protocol has always carried the WebGL-conditioned
   // Canvas commands; keep it that way.
   const names: string[] = ["ENABLE_WEBGL"];
-  for (const [name, value] of rows) {
-    if (name.startsWith("HAVE_") || notOptions.has(name)) continue;
-    const v = typeof value === "function" ? value(cfg) : value;
-    if (v !== undefined && v !== 0) names.push(name);
+  for (const [name, value] of buildOptions(cfg)) {
+    if (!name.startsWith("HAVE_") && !notOptions.has(name) && value !== 0) names.push(name);
   }
   // cmake builds the string as `"${list} ${name}"` starting from empty, so it
   // carries a leading space; CombinedDomains.json records it verbatim.
@@ -490,44 +565,32 @@ function inspectorFeatureDefines(cfg: Config): string {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Source mode: direct build
+// Local mode: direct build
 //
 // WebKit (bmalloc + WTF + JavaScriptCore, JSCOnly port) built directly in our
-// ninja graph — no cmake. The default; `--webkit=prebuilt` skips it.
+// ninja graph — no cmake.
 //
 // What WebKit's cmake does, and where it lives here:
 //
-//   source lists            webkit-{bmalloc,wtf,jsc,llint,inspector}-sources.ts:
-//                           sources, include dirs, framework header names,
-//                           JSC's unified bundles and @no-unify TUs, codegen
-//                           and generator-script inputs — kept by hand
+//   file lists              read from the checkout at configure (webkitLists):
+//                           sources, include dirs, framework headers, codegen
+//                           and generator-script inputs out of its CMake files,
+//                           JSC's TUs out of Sources.txt. A file added to
+//                           WebKit needs no change here.
 //   cmakeconfig.h           cmakeConfigHeader table, a `headers` entry
 //   framework headers       forwarding stubs as `headers` entries:
 //                           <bmalloc/X.h>, <JavaScriptCore/X.h> flattened dirs
-//   unified bundles         `headers` entries too: each bundle file is the
-//                           #include list webkit-jsc-sources.ts records
-//   DerivedSources codegen  ~17 ruby/python/perl steps + one per .lut.h
+//   unified bundles         WebKit's generate-unified-source-bundles.py, run at
+//                           configure like cmake does (it only writes #include
+//                           lists, and only the ones that changed)
+//   DerivedSources codegen  ~17 ruby/python/perl steps + one per .lut.h; each
+//                           gen() restates an add_custom_command
 //   LLInt                   settings extractor exe → offsets extractor exe →
 //                           LLIntAssembly.h, each parsed by offlineasm (ruby)
 //   compile                 source groups with dep flags, so target/cpu/lto/
 //                           asan come from flags.ts like every dep; the objects
-//                           go straight onto bun's link line
-//
-// Nothing here reads the WebKit tree: it is fetched by its ninja edge like
-// every other dep's.
-// ───────────────────────────────────────────────────────────────────────────
-
-// ───────────────────────────────────────────────────────────────────────────
-// Platform description → the variables WebKit's CMakeLists branch on
-// ───────────────────────────────────────────────────────────────────────────
-
-function offlineAsmBackend(cfg: Config): string {
-  return cfg.x64 ? "X86_64" : "ARM64";
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// The build: one DirectBuild spec — configure-time headers, the generator
-// chain, the three libraries as source groups, WebKit's own executables.
+//                           go straight onto bun's link line. webkitFlags()
+//                           restates WebKitCompilerFlags / Options*.cmake.
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -538,7 +601,7 @@ function offlineAsmBackend(cfg: Config): string {
 interface WebKitBuild {
   cfg: Config;
   q: (p: string) => string;
-  /** The WebKit tree (vendor/WebKit or a --local-deps clone) and its Source/{JavaScriptCore,WTF,bmalloc}. */
+  /** The WebKit checkout and its Source/{JavaScriptCore,WTF,bmalloc}. */
   W: string;
   JSC: string;
   WTF: string;
@@ -554,6 +617,8 @@ interface WebKitBuild {
   python: string;
   /** The spec's generator and executable steps, accumulated by the functions below. */
   steps: DirectStep[];
+  /** Directories filesIn() listed. */
+  listedDirs: string[];
 }
 
 /** WebKit-wide compile flags, derived once (WebKitCompilerFlags / Options*.cmake equivalents), on top of the dep globals the emitter puts underneath every group. */
@@ -564,34 +629,16 @@ interface WebKitFlags {
   cxx: string[];
   /** -D set every WebKit TU carries. */
   commonDefines: string[];
-  /** ICU: ours (static, -I into deps/icu) or, on macOS, the SDK's libicucore with WebKit's bundled headers. */
   icuFlags: string[];
-  appleIcuHeaders: string;
   /** <bmalloc/X.h> and the bare "X.h" siblings bmalloc's own headers include. */
   bmallocConsumerIncludes: string[];
-  useMimalloc: boolean;
-  mimallocInclude: string;
 }
 
 const ruby = "ruby";
 const perl = "perl";
 
-const inTree = (base: string, rel: readonly string[]): string[] => rel.map(p => join(base, p));
-
 /** One generator step; cwd defaults to DerivedSources (several generators write there implicitly). */
-function gen(
-  wk: WebKitBuild,
-  opts: {
-    outputs: string[];
-    cmd: string[];
-    inputs: string[];
-    desc: string;
-    cwd?: string;
-    env?: Record<string, string>;
-    implicitOutputs?: string[];
-    stdout?: boolean;
-  },
-): void {
+function gen(wk: WebKitBuild, opts: Omit<GenStep, "cwd"> & { cwd?: string }): void {
   wk.steps.push({ cwd: wk.DS, ...opts });
 }
 /** A generator that prints its output. */
@@ -619,47 +666,161 @@ function webkitLayout(cfg: Config): WebKitBuild {
     bmallocHeaders: join(B, "bmalloc", "Headers"),
     python: hostWin ? "python" : "python3",
     steps: [],
+    listedDirs: [],
   };
 }
 
+/**
+ * The files directly in `dir` with one of the extensions: a generator's own
+ * modules and data, inputs of its step. (cmake names them in a flattened copy
+ * of the scripts it makes; the steps here run them in place.)
+ */
+function filesIn(wk: WebKitBuild, dir: string, ...exts: string[]): string[] {
+  wk.listedDirs.push(dir);
+  return readdirSync(dir)
+    .filter(f => exts.length === 0 || exts.some(e => f.endsWith(e)))
+    .sort()
+    .map(f => join(dir, f));
+}
+
+// ─── File lists ───
+
+/** One library's CMake variables, its relative entries resolved against the directory of its CMakeLists.txt. */
+interface LibraryLists {
+  paths(variable: string): string[];
+  /** The list as written, nothing resolved. */
+  values(variable: string): string[];
+  files: string[];
+}
+
+interface WebKitLists {
+  bmalloc: LibraryLists;
+  wtf: LibraryLists;
+  jsc: LibraryLists;
+}
+
+/**
+ * The lists WebKit's own CMake files hold, for this target: each library's
+ * CMakeLists.txt and the PlatformJSCOnly.cmake it includes, evaluated
+ * (../cmake.ts) with the variables the rest of WebKit's cmake would have set.
+ * Those are the platform switches, the build options (the cmakeconfig.h table)
+ * and the directories, which point into the layout above.
+ */
+function webkitLists(wk: WebKitBuild): WebKitLists {
+  const { cfg } = wk;
+  const flag = (name: string, set: boolean): Record<string, string> => (set ? { [name]: "ON" } : {});
+  const variables: Record<string, string> = {
+    PORT: "JSCOnly",
+    CMAKE_SYSTEM_NAME: cfg.windows ? "Windows" : cfg.darwin ? "Darwin" : cfg.freebsd ? "FreeBSD" : "Linux",
+    CMAKE_BUILD_TYPE: cfg.buildType,
+    ...flag("WIN32", cfg.windows),
+    ...flag("MSVC", cfg.windows),
+    ...flag("UNIX", cfg.unix),
+    ...flag("APPLE", cfg.darwin),
+    ...flag("ANDROID", cfg.abi === "android"),
+    ...flag("WTF_CPU_X86_64", cfg.x64),
+    ...flag("WTF_CPU_ARM64", cfg.arm64),
+    COMPILER_IS_GCC_OR_CLANG: "ON",
+    LOWERCASE_EVENT_LOOP_TYPE: "bun",
+    ...Object.fromEntries(buildOptions(cfg).map(([name, value]) => [name, String(value)])),
+    CMAKE_BINARY_DIR: wk.B,
+    BMALLOC_DIR: wk.BM,
+    WTF_DIR: wk.WTF,
+    WTF_DERIVED_SOURCES_DIR: wk.WTF_DS,
+    JAVASCRIPTCORE_DIR: wk.JSC,
+    JavaScriptCore_LIBRARY_TYPE: "STATIC",
+    JavaScriptCore_DERIVED_SOURCES_DIR: wk.DS,
+    JavaScriptCore_FRAMEWORK_HEADERS_DIR: wk.jscHeaders,
+    JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR: wk.jscPrivateHeaders,
+  };
+  const library = (dir: string): LibraryLists => {
+    const evaluated: CMakeEvaluation = evaluateCMake(join(dir, "CMakeLists.txt"), {
+      variables: { ...variables, CMAKE_CURRENT_SOURCE_DIR: dir },
+      includeMacros: { webkit_include_config_files_if_exists: "PlatformJSCOnly.cmake" },
+    });
+    // A set: cmake takes a file a list names twice (bmalloc's TZoneLog.cpp on macOS) once.
+    return {
+      paths: variable => [...new Set(evaluated.list(variable).map(p => resolve(dir, p)))],
+      values: variable => evaluated.list(variable),
+      files: evaluated.files,
+    };
+  };
+  return { bmalloc: library(wk.BM), wtf: library(join(wk.WTF, "wtf")), jsc: library(wk.JSC) };
+}
+
+/** `webkitLists` of a checkout that exists and has the AoT compiler. */
+function checkoutLists(wk: WebKitBuild): WebKitLists {
+  assert(existsSync(join(wk.JSC, "Sources.txt")), `local WebKit checkout not found at ${wk.W}`, {
+    hint: process.env.BUN_WEBKIT_PATH
+      ? `$BUN_WEBKIT_PATH is set to '${process.env.BUN_WEBKIT_PATH}' but that path does not contain a WebKit checkout`
+      : "Clone oven-sh/WebKit to vendor/WebKit/, or set $BUN_WEBKIT_PATH to an existing clone (useful for worktrees)",
+  });
+  const lists = webkitLists(wk);
+  assert(lists.jsc.values("JavaScriptCore_AOT_SCHEMA_INPUTS").length > 0, "this WebKit checkout has no aot/AOT.cmake", {
+    hint: "Bun needs a checkout whose JavaScriptCore has the AoT compiler: update $BUN_WEBKIT_PATH or vendor/WebKit",
+  });
+  return lists;
+}
+
+// ─── The spec ───
+
 function webkitBuildSpec(cfg: Config): DirectBuild {
   const wk = webkitLayout(cfg);
+  const lists = checkoutLists(wk);
+  checkAotSourceLists(wk);
   const flags = webkitFlags(wk);
-  const codegen = jscCodegenSteps(wk);
+  const icu = icuBuild(wk);
+  const codegen = jscCodegenSteps(wk, lists.jsc);
+  // Written in this graph: the first by a step of this spec, the others by the steps of ../aot.ts.
+  const aotGenerated = [
+    ...aotRuntimeFactsStep(wk, lists.jsc),
+    ...aotVectorStep(wk, lists.jsc),
+    ...aotGeneratedFiles(lists.jsc, "SCHEMA"),
+    ...aotGeneratedFiles(lists.jsc, "BUILTIN_TABLE"),
+  ];
   // All codegen must exist before any JSC TU compiles; after that the
   // depfiles know exactly which TU reads which header.
-  const codegenReady = [...codegen.headers, ...codegen.sources];
-  const jsc = jscCompileFlags(wk, flags);
-  const wtf = wtfGroup(wk, flags);
-  const llint = llintSteps(wk, jsc, codegenReady);
-  const jscSources = jscSourceList(wk);
+  const codegenReady = [...codegen.headers, ...codegen.sources, ...aotGenerated, ...icu.outputs];
+  const jsc = jscCompileFlags(wk, flags, lists.jsc);
+  const wtf = wtfGroup(wk, flags, lists.wtf, icu.outputs);
+  const llint = llintSteps(wk, jsc, lists.jsc, codegenReady);
+  const jscSources = jscSourceList(wk, lists.jsc);
 
   return {
     kind: "direct",
     sources: [],
-    headers: { "cmakeconfig.h": cmakeConfigHeader(cfg), ...frameworkHeaders(wk, flags), ...jscSources.bundles },
+    headers: { "cmakeconfig.h": cmakeConfigHeader(cfg), ...frameworkHeaders(wk, lists) },
     groups: [
-      bmallocGroup(wk, flags),
+      bmallocGroup(wk, flags, lists.bmalloc),
       wtf.group,
       ...llint.groups,
-      jscGroup(wk, jsc, jscSources.sources, [...codegenReady, ...jscSources.checked], llint.assembly),
+      jscGroup(wk, jsc, jscSources, codegenReady, llint.assembly),
     ],
     steps: wk.steps,
+    libs: icu.libs,
     // What a consumer's compile waits for: JSC's generated headers (bun
-    // includes them through the PrivateHeaders stubs) and WTF's MIG stubs.
-    consumerOutputs: [...codegen.headers, ...wtf.migHeaders],
-    // Read straight out of the source tree by edges bun.ts emits: the
-    // ClassInfo check script and the standalone programs' sources (testFFI,
-    // the jsc shell) — declared fetch outputs so ninja knows their producer.
-    treeFiles: [
-      "Tools/Scripts/check-classinfo-uniqueness.py",
-      ...[...jscTestFFISources, ...jscShellSources].map(f => `Source/JavaScriptCore/${f}`),
+    // includes them through the PrivateHeaders stubs), WTF's MIG stubs, and
+    // ICU's headers where a step produces them.
+    consumerOutputs: [
+      ...codegen.headers,
+      ...aotGenerated.filter(file => !file.endsWith(".cpp")),
+      ...wtf.migHeaders,
+      ...icu.outputs,
+    ],
+    // A directory's mtime moves when a file is added to or removed from it.
+    configureInputs: [
+      ...lists.bmalloc.files,
+      ...lists.wtf.files,
+      ...lists.jsc.files,
+      ...jscSources.listFiles,
+      ...wk.listedDirs,
+      testb3Dir(wk),
     ],
   };
 }
 
 /** Include dirs bun compiles against — the same set the prebuilt's include/ flattens together. */
-function webkitSourceIncludes(cfg: Config): string[] {
+function webkitLocalIncludes(cfg: Config): string[] {
   const wk = webkitLayout(cfg);
   return [
     wk.B,
@@ -670,9 +831,103 @@ function webkitSourceIncludes(cfg: Config): string[] {
     wk.bmallocHeaders,
     join(wk.bmallocHeaders, "bmalloc"),
     wk.WTF,
-    // macOS: WebKit's copy of the ICU headers Apple does not ship (see webkitFlags).
-    ...(cfg.darwin ? [join(wk.WTF, "icu")] : []),
+    ...icuIncludes(wk),
   ];
+}
+
+// ─── ICU ───
+//
+// Not built here. Linux uses the system's (headers on the default search
+// path, -licu* in bun.ts), or the static one $BUN_ICU_ROOT names, such as the
+// include/ and lib/ of a prebuilt WebKit. macOS links the SDK's libicucore, whose
+// headers Apple does not ship: WebKit carries a matching set in Source/WTF/icu,
+// used with symbol renaming off (OptionsJSCOnly.cmake / FindICU.cmake). Android
+// has none: $BUN_ANDROID_ICU_ROOT names a static cross-built one (the NDK
+// sysroot's unicode/ headers are __INTRODUCED_IN(31)-gated and unusable at API
+// 28). Windows has none either: WebKit's build-icu.ps1 downloads ICU's source
+// and runs msbuild, into the per-profile build dir.
+
+const androidIcuRoot = (): string => process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
+const windowsIcuDir = (wk: WebKitBuild): string => join(wk.B, "icu");
+export const linuxIcuRoot = (cfg: Config): string | undefined =>
+  cfg.linux && cfg.abi !== "android" ? process.env.BUN_ICU_ROOT || undefined : undefined;
+const staticIcuLibs = (root: string): string[] =>
+  ["libicui18n.a", "libicuuc.a", "libicudata.a"].map(lib => join(root, "lib", lib));
+
+function icuIncludes(wk: WebKitBuild): string[] {
+  const { cfg } = wk;
+  if (cfg.darwin) return [join(wk.WTF, "icu")];
+  if (cfg.windows) return [join(windowsIcuDir(wk), "include")];
+  if (cfg.abi === "android") return [join(androidIcuRoot(), "include")];
+  const root = linuxIcuRoot(cfg);
+  return root === undefined ? [] : [join(root, "include")];
+}
+
+/** `libs` join bun's link; `outputs` are the ones a step of this graph produces, with ICU's headers as a side effect. */
+function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
+  const { cfg } = wk;
+  if (cfg.abi === "android") {
+    return { libs: staticIcuLibs(androidIcuRoot()), outputs: [] };
+  }
+  const root = linuxIcuRoot(cfg);
+  if (cfg.hardened) {
+    if (root === undefined) {
+      throw new BuildError("hardened needs ICU's headers and data", {
+        hint: "Name the include/ and lib/ of a prebuilt WebKit in BUN_ICU_ROOT",
+      });
+    }
+    const dir = join(wk.B, "icu");
+    const script = join(cfg.cwd, "scripts", "build", "hardened-icu.sh");
+    const libs = ["libicui18n.a", "libicuuc.a"].map(lib => join(dir, "lib", lib));
+    gen(wk, {
+      outputs: libs,
+      inputs: [script, join(wk.W, "icu", "source.json"), join(wk.W, "icu", "udata-decompress-hook.patch")],
+      cwd: wk.W,
+      cmd: [
+        "bash",
+        script,
+        join(wk.W, "icu"),
+        dir,
+        cfg.cc,
+        cfg.cxx,
+        cfg.ar,
+        ...(cfg.crossTarget !== undefined ? [`--target=${cfg.crossTarget}`] : []),
+        ...(cfg.sysroot !== undefined ? [`--sysroot=${cfg.sysroot}`] : []),
+        ...computeCpuTargetFlags(cfg),
+        ...computeHardeningFlags(cfg),
+      ],
+      desc: "ICU (hardened-icu.sh)",
+    });
+    return { libs: [...libs, join(root, "lib", "libicudata.a")], outputs: [] };
+  }
+  if (root !== undefined) return { libs: staticIcuLibs(root), outputs: [] };
+  if (!cfg.windows) return { libs: [], outputs: [] };
+  const dir = windowsIcuDir(wk);
+  const script = join(wk.W, "build-icu.ps1");
+  const libs = ["sicudt.lib", "icuin.lib", "icuuc.lib"].map(l => join(dir, "lib", l));
+  gen(wk, {
+    outputs: libs,
+    inputs: [script],
+    cwd: wk.W,
+    cmd: [
+      // pwsh, which build.ts already runs under on Windows: Windows PowerShell
+      // started from it inherits its PSModulePath and cannot load its own modules.
+      "pwsh",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      script,
+      "-Platform",
+      cfg.x64 ? "x64" : "ARM64",
+      "-BuildType",
+      cfg.debug ? "Debug" : "Release",
+      "-OutputDir",
+      dir,
+    ],
+    desc: "ICU (build-icu.ps1)",
+  });
+  return { libs, outputs: libs };
 }
 
 // ─── Flags ───
@@ -714,6 +969,7 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
       // helpers (/Gw /Gy /GF come with the dep flags), inline dllexport off.
       [
         "-fno-strict-aliasing",
+        "/clang:-fwrapv",
         "/clang:-masm=att",
         "/Zc:dllexportInlines-",
         "/GS",
@@ -743,6 +999,7 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
       ]
     : [
         "-fno-strict-aliasing",
+        "-fwrapv",
         // WebKitCompilerFlags.cmake's diagnostics for gcc/clang (-Wall -Wextra
         // first: enables precede the -Wno-* that trim them).
         "-Wall",
@@ -765,17 +1022,10 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
   const bannedIncludes = cfg.debug ? [] : [`-I${q(join(WTF, "wtf", "bun", "BannedIncludes"))}`];
   // -Wno-noexcept-type: WebKitCompilerFlags.cmake, C++ only.
   const cxx = [...bannedIncludes, cfg.windows ? "/clang:-std=c++23" : "-std=c++23", "-Wno-noexcept-type"];
-  // ICU: ours (deps/icu.ts) everywhere but macOS; static, so consumers
-  // define U_STATIC_IMPLEMENTATION like the prebuilt build does. macOS links
-  // the SDK's libicucore, whose headers Apple does not ship: WebKit carries a
-  // matching set in Source/WTF/icu, used with symbol renaming off
-  // (OptionsJSCOnly.cmake / FindICU.cmake).
-  const appleIcuHeaders = join(WTF, "icu");
-  const icuFlags = buildsIcu(cfg)
-    ? ["-DU_STATIC_IMPLEMENTATION=1", ...icuIncludes(cfg).map(i => `-I${q(i)}`)]
-    : cfg.darwin
-      ? ["-DU_DISABLE_RENAMING=1", `-I${q(appleIcuHeaders)}`]
-      : [];
+  const icuFlags = [
+    ...(cfg.darwin ? ["-DU_DISABLE_RENAMING=1"] : cfg.windows ? ["-DU_STATIC_IMPLEMENTATION=1"] : []),
+    ...icuIncludes(wk).map(i => `-I${q(i)}`),
+  ];
   const commonDefines = [
     "-DBUILDING_JSCONLY__",
     "-DBUILDING_WEBKIT",
@@ -816,24 +1066,11 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
       : []),
     ...(cfg.assertions ? ["-DASSERT_ENABLED=1"] : []),
   ];
-  // bmalloc.h includes "mimalloc.h" as a flattened sibling; cmake copies it in
-  // from WebKit's vendored mimalloc, here it is the mimalloc bun links.
-  const useMimalloc = usesMimalloc(cfg);
-  const mimallocInclude = join(depSourceDir(cfg, "mimalloc"), "include");
   // Consumers see both <bmalloc/X.h> and the bare "X.h" siblings bmalloc's
   // own headers include (libpas headers, mimalloc.h) — cmake gets the latter
   // from physically flattening copies into one dir.
   const bmallocConsumerIncludes = [wk.bmallocHeaders, join(wk.bmallocHeaders, "bmalloc")];
-  return {
-    common,
-    cxx,
-    commonDefines,
-    icuFlags,
-    appleIcuHeaders,
-    bmallocConsumerIncludes,
-    useMimalloc,
-    mimallocInclude,
-  };
+  return { common, cxx, commonDefines, icuFlags, bmallocConsumerIncludes };
 }
 
 // ─── Framework headers ───
@@ -849,61 +1086,55 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
  * relative to the dep build dir); the compiler's depfile then names the real
  * header too.
  */
-function frameworkHeaders(wk: WebKitBuild, flags: WebKitFlags): Record<string, string> {
-  const { JSC, BM, DS, B } = wk;
+function frameworkHeaders(wk: WebKitBuild, lists: WebKitLists): Record<string, string> {
   const entries: Record<string, string> = {};
   const forward = (dir: string, headers: string[]): void => {
-    for (const h of headers) entries[relative(B, join(dir, basename(h)))] = `#include "${h.replaceAll("\\", "/")}"\n`;
+    for (const h of headers) {
+      entries[relative(wk.B, join(dir, basename(h)))] = `#include "${h.replaceAll("\\", "/")}"\n`;
+    }
   };
-  forward(join(wk.bmallocHeaders, "bmalloc"), [
-    ...inTree(BM, bmallocFrameworkHeaders),
-    ...(flags.useMimalloc ? [join(flags.mimallocInclude, "mimalloc.h")] : []),
-  ]);
-  forward(join(wk.jscHeaders, "JavaScriptCore"), inTree(JSC, jscPublicHeaders));
-  forward(join(wk.jscPrivateHeaders, "JavaScriptCore"), [
-    ...inTree(JSC, jscPrivateHeaders),
-    join(DS, "Bytecodes.h"),
-    join(DS, "JSCBuiltins.h"),
-    join(DS, "JSCWebPreferenceOptions.h"),
-    join(DS, "WasmOps.h"),
-    join(DS, "inspector", "InspectorAlternateBackendDispatchers.h"),
-    join(DS, "inspector", "InspectorBackendDispatchers.h"),
-    join(DS, "inspector", "InspectorFrontendDispatchers.h"),
-    join(DS, "inspector", "InspectorProtocolObjects.h"),
-  ]);
+  forward(
+    join(wk.bmallocHeaders, "bmalloc"),
+    [...lists.bmalloc.paths("bmalloc_PUBLIC_HEADERS"), ...lists.bmalloc.paths("bmalloc_PRIVATE_HEADERS")].map(h =>
+      bunMimalloc(wk, h),
+    ),
+  );
+  forward(join(wk.jscHeaders, "JavaScriptCore"), lists.jsc.paths("JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS"));
+  forward(join(wk.jscPrivateHeaders, "JavaScriptCore"), lists.jsc.paths("JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS"));
+  // The stub of a header that is exported no longer would still be found by its name, and may include a file that is gone.
+  for (const dir of new Set(Object.keys(entries).map(entry => dirname(join(wk.B, entry))))) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) if (!(relative(wk.B, join(dir, name)) in entries)) rmSync(join(dir, name));
+  }
   return entries;
 }
 
 // ─── bmalloc ───
 
-function bmallocGroup(wk: WebKitBuild, flags: WebKitFlags): SourceGroup {
-  const { cfg, B, BM } = wk;
+/** bmalloc's lists name WebKit's vendored copy of mimalloc; JSC is linked with bun's (USE_EXTERNAL_MIMALLOC), so that one's headers stand in. */
+function bunMimalloc(wk: WebKitBuild, path: string): string {
+  const vendored = join(wk.BM, "mimalloc", "mimalloc");
+  return path.startsWith(vendored) ? join(depSourceDir(wk.cfg, "mimalloc"), relative(vendored, path)) : path;
+}
+
+function bmallocGroup(wk: WebKitBuild, flags: WebKitFlags, lists: LibraryLists): SourceGroup {
+  const { cfg, B } = wk;
   return {
     name: "bmalloc",
     // bmalloc_SOURCES lists a few libpas .c files that cmake compiles as C++;
     // the rest of libpas is C.
     sources: [
-      ...inTree(BM, bmallocSources).map(path => (path.endsWith(".c") ? { path, lang: "cxx" as const } : path)),
-      ...inTree(BM, bmallocCSources),
+      ...lists.paths("bmalloc_SOURCES").map(path => (path.endsWith(".c") ? { path, lang: "cxx" as const } : path)),
+      ...lists.paths("bmalloc_C_SOURCES"),
     ],
-    includes: [
-      B,
-      BM,
-      join(BM, "bmalloc"),
-      join(BM, "libpas", "src", "libpas"),
-      ...(flags.useMimalloc ? [flags.mimallocInclude] : []),
-    ],
+    includes: [B, ...lists.paths("bmalloc_PRIVATE_INCLUDE_DIRECTORIES").map(dir => bunMimalloc(wk, dir))],
     cflags: [
       ...flags.common,
       ...flags.commonDefines,
       "-DBUILDING_bmalloc",
       "-D_GNU_SOURCE",
-      ...(flags.useMimalloc ? ["-DUSE_MIMALLOC=1"] : []),
-      // bmalloc's own TUs never see cmakeconfig.h (BPlatform.h reads -D's), so
-      // what cmakeconfig.h tells every consumer — heap breakdown means system
-      // malloc, no libpas — has to be said here too (bmalloc/CMakeLists.txt's
-      // `if (USE_SYSTEM_MALLOC) add_definitions(-DUSE_SYSTEM_MALLOC=1)`).
-      ...(usesMallocHeapBreakdown(cfg) ? ["-DBENABLE_MALLOC_HEAP_BREAKDOWN=1", "-DUSE_SYSTEM_MALLOC=1"] : []),
+      // bmalloc's own TUs never see cmakeconfig.h (BPlatform.h reads -D's).
+      ...(usesMimalloc(cfg) ? ["-DUSE_MIMALLOC=1", "-DUSE_EXTERNAL_MIMALLOC=1"] : []),
       "-Wno-cast-align",
       "-Wno-missing-field-initializers",
       // libpas' 16-byte CAS on x64 (bmalloc/CMakeLists.txt, MSVC branch; the
@@ -916,16 +1147,17 @@ function bmallocGroup(wk: WebKitBuild, flags: WebKitFlags): SourceGroup {
 
 // ─── WTF ───
 
-function wtfGroup(wk: WebKitBuild, flags: WebKitFlags): { group: SourceGroup; migHeaders: string[] } {
-  const { cfg, W, B, WTF, WTF_DS } = wk;
+function wtfGroup(
+  wk: WebKitBuild,
+  flags: WebKitFlags,
+  lists: LibraryLists,
+  icuOutputs: string[],
+): { group: SourceGroup; migHeaders: string[] } {
+  const { cfg, WTF, WTF_DS } = wk;
   // macOS: WTF's signal handling (wasm fault trapping, VM traps) speaks Mach
   // exceptions through MIG-generated RPC stubs (PlatformJSCOnly.cmake's APPLE
-  // branch). On a Mac that is Xcode's `mig`; cross-compiling from Linux it is
-  // the fork's macos-cross/mig driver around Apple's migcom built for the
-  // host (deps/bootstrap-cmds.ts), preprocessing with the target compiler
-  // against the SDK — what Dockerfile.macos does.
+  // branch, which also puts the two .c files in WTF_SOURCES).
   const migOutputs: string[] = [];
-  const migSources: string[] = [];
   if (cfg.darwin) {
     assert(cfg.osxSysroot !== undefined, "darwin target without a macOS SDK path");
     const defs = join(WTF, "wtf", "mac", "MachExceptions.defs");
@@ -935,55 +1167,38 @@ function wtfGroup(wk: WebKitBuild, flags: WebKitFlags): { group: SourceGroup; mi
       join(WTF_DS, "mach_excServer.c"),
       join(WTF_DS, "mach_excUser.c"),
     );
-    migSources.push(join(WTF_DS, "mach_excServer.c"), join(WTF_DS, "mach_excUser.c"));
-    const migArgs = [
-      "-header",
-      "mach_exc.h",
-      "-user",
-      "mach_excUser.c",
-      "-sheader",
-      "MachExceptionsServer.h",
-      "-server",
-      "mach_excServer.c",
-      "-DMACH_EXC_SERVER_TASKIDTOKEN_STATE",
-      "-isysroot",
-      cfg.osxSysroot,
-      defs,
-    ];
-    if (cfg.host.os === "darwin") {
-      gen(wk, {
-        outputs: migOutputs,
-        inputs: [defs],
-        cwd: WTF_DS,
-        cmd: ["xcrun", "mig", ...migArgs],
-        desc: "mig MachExceptions.defs",
-      });
-    } else {
-      const migDriver = join(W, "macos-cross", "mig");
-      const migcom = migcomPath(cfg);
-      gen(wk, {
-        outputs: migOutputs,
-        inputs: [defs, migcom, migDriver],
-        cwd: WTF_DS,
-        env: {
-          MIGCC: [cfg.cc, "-E", `--target=${cfg.crossTarget}`, "-isysroot", cfg.osxSysroot].join(" "),
-          MIGCOM: migcom,
-        },
-        cmd: ["bash", migDriver, ...migArgs],
-        desc: "mig MachExceptions.defs",
-      });
-    }
+    gen(wk, {
+      outputs: migOutputs,
+      inputs: [defs],
+      cwd: WTF_DS,
+      cmd: [
+        "xcrun",
+        "mig",
+        "-header",
+        "mach_exc.h",
+        "-user",
+        "mach_excUser.c",
+        "-sheader",
+        "MachExceptionsServer.h",
+        "-server",
+        "mach_excServer.c",
+        "-DMACH_EXC_SERVER_TASKIDTOKEN_STATE",
+        "-isysroot",
+        cfg.osxSysroot,
+        defs,
+      ],
+      desc: "mig MachExceptions.defs",
+    });
   }
   return {
     group: {
       name: "WTF",
-      sources: [...inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]), ...migSources],
-      includes: [
-        B,
-        ...(cfg.darwin ? [WTF_DS] : []),
-        ...inTree(join(WTF, "wtf"), wtfIncludeDirs),
-        ...flags.bmallocConsumerIncludes,
-      ],
+      // Without the Objective-C++ (darwin/OSLogPrintStream.mm): only code under
+      // PLATFORM(COCOA) refers to it, never the JSCOnly port. In libWTF.a it is a
+      // member nothing pulls in; a native macOS link takes every object, and this
+      // one is ARC, so it would need the Objective-C runtime for nothing.
+      sources: lists.paths("WTF_SOURCES").filter(s => !s.endsWith(".mm")),
+      includes: [...lists.paths("WTF_PRIVATE_INCLUDE_DIRECTORIES"), ...flags.bmallocConsumerIncludes],
       cflags: [
         ...flags.common,
         ...flags.commonDefines,
@@ -992,7 +1207,7 @@ function wtfGroup(wk: WebKitBuild, flags: WebKitFlags): { group: SourceGroup; mi
         ...flags.icuFlags,
       ],
       cxxflags: flags.cxx,
-      orderOnly: migOutputs,
+      orderOnly: [...migOutputs, ...icuOutputs],
     },
     migHeaders: migOutputs.filter(f => f.endsWith(".h")),
   };
@@ -1006,14 +1221,14 @@ function wtfGroup(wk: WebKitBuild, flags: WebKitFlags): { group: SourceGroup; mi
  * include — generated .cpp files are #included from unified bundles too —
  * so both gate the JSC compiles.
  */
-function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[] } {
+function jscCodegenSteps(wk: WebKitBuild, lists: LibraryLists): { headers: string[]; sources: string[] } {
   const { cfg, JSC, WTF, DS, python } = wk;
   const headers: string[] = [];
   const sources: string[] = [];
 
   // LUT tables (create_hash_table, perl).
   const hashLut = join(JSC, "create_hash_table");
-  for (const src of inTree(JSC, jscLutSources)) {
+  for (const src of lists.paths("JavaScriptCore_OBJECT_LUT_SOURCES")) {
     const out = join(DS, `${basename(src).replace(/\.[^.]+$/, "")}.lut.h`);
     genStdout(wk, out, [perl, hashLut, src], [hashLut, src], `lut ${basename(out)}`);
     headers.push(out);
@@ -1051,11 +1266,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
       "--bytecode_dumper",
       join(DS, "BytecodeDumperGenerated.cpp"),
     ],
-    inputs: [
-      join(JSC, "bytecode", "BytecodeList.rb"),
-      join(JSC, "wasm", "wasm.json"),
-      ...inTree(JSC, jscGeneratorRuby),
-    ],
+    inputs: [join(JSC, "bytecode", "BytecodeList.rb"), join(JSC, "wasm", "wasm.json"), ...lists.paths("GENERATOR")],
     desc: "Bytecodes",
   });
   headers.push(join(DS, "Bytecodes.h"), join(DS, "BytecodeStructs.h"), join(DS, "BytecodeIndices.h"));
@@ -1104,7 +1315,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
     gen(wk, {
       outputs: [out],
       cmd: [python, script, ucd, out],
-      inputs: [script, join(JSC, "yarr", "hasher.py"), ...inTree(JSC, jscUcdFiles)],
+      inputs: [script, join(JSC, "yarr", "hasher.py"), ...filesIn(wk, ucd)],
       desc: "UnicodePatternTables.h",
     });
     headers.push(out);
@@ -1140,7 +1351,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
   // JS builtins.
   {
     const scriptsDir = join(JSC, "Scripts");
-    const builtins = inTree(JSC, jscBuiltinsSources);
+    const builtins = lists.paths("JavaScriptCore_BUILTINS_SOURCES");
     gen(wk, {
       outputs: [join(DS, "JSCBuiltins.cpp"), join(DS, "JSCBuiltins.h")],
       cmd: [
@@ -1153,7 +1364,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
         "--combined",
         ...builtins,
       ],
-      inputs: [...builtins, ...inTree(JSC, jscBuiltinsScripts)],
+      inputs: [...builtins, ...filesIn(wk, scriptsDir, ".py"), ...filesIn(wk, join(scriptsDir, "wkbuiltins"), ".py")],
       desc: "JSCBuiltins",
     });
     headers.push(join(DS, "JSCBuiltins.h"));
@@ -1165,7 +1376,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
   {
     const scriptsDir = join(JSC, "Scripts");
     const combined = join(DS, "CombinedDomains.json");
-    const domains = inTree(JSC, jscInspectorDomains);
+    const domains = lists.paths("JavaScriptCore_INSPECTOR_DOMAINS");
     gen(wk, {
       outputs: [combined],
       cmd: [
@@ -1201,7 +1412,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
         "JavaScriptCore",
         combined,
       ],
-      inputs: [combined, ...inTree(JSC, jscInspectorScripts)],
+      inputs: [combined, ...lists.paths("JavaScriptCore_INSPECTOR_PROTOCOL_SCRIPTS")],
       desc: "InspectorProtocolBindings",
     });
     headers.push(...outputs.filter(f => f.endsWith(".h")));
@@ -1226,6 +1437,62 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
   return { headers, sources };
 }
 
+// ─── JavaScriptCore: AoT ───
+//
+// aot/AOT.cmake is data first: what JSC's cmake build and this one both need
+// to know about aot/ is written there as plain lists, outside any function.
+
+/** The files of one generated folder that are compiled or included, from the list file beside them. */
+/** `JavaScriptCore_AOT_GENERATED_DIR` of aot/AOT.cmake. */
+function aotGeneratedDirectory(wk: WebKitBuild): string {
+  return join(wk.DS, "aot");
+}
+
+function aotGeneratedFiles(lists: LibraryLists, generator: "SCHEMA" | "BUILTIN_TABLE"): string[] {
+  return [
+    ...lists.paths(`JavaScriptCore_AOT_${generator}_GENERATED_HEADERS`),
+    ...lists.paths(`JavaScriptCore_AOT_${generator}_GENERATED_SOURCES`),
+    ...lists.paths(`JavaScriptCore_AOT_${generator}_GENERATED_TEST_SOURCES`),
+  ];
+}
+
+/** AOT_GENERATE_RUNTIME_FACTS of aot/AOT.cmake. */
+function aotRuntimeFactsStep(wk: WebKitBuild, lists: LibraryLists): string[] {
+  const script = join(wk.JSC, "aot", "image", "generator", "runtime-facts.ts");
+  const outputs = lists.paths("JavaScriptCore_AOT_RUNTIME_FACTS_GENERATED_HEADERS");
+  gen(wk, {
+    outputs,
+    cmd: [wk.cfg.bun, script, "--javascriptcore", wk.JSC, "--out", aotGeneratedDirectory(wk)],
+    inputs: [script, join(wk.JSC, "aot", "image", "AOTRuntimeFactsLeftOut.txt"), ...handwrittenAotFiles(wk.JSC)],
+    desc: "AOTRuntimeFactsOfLayouts.def",
+  });
+  return outputs;
+}
+
+/** AOT_GENERATE_VECTOR of aot/AOT.cmake. */
+function aotVectorStep(wk: WebKitBuild, lists: LibraryLists): string[] {
+  const script = join(wk.JSC, "aot", "support", "generator", "vector.ts");
+  const outputs = lists.paths("JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS");
+  gen(wk, {
+    outputs,
+    cmd: [wk.cfg.bun, script, "--wtf", wk.WTF, "--out", aotGeneratedDirectory(wk)],
+    inputs: [script, join(wk.WTF, "wtf", "Vector.h")],
+    desc: "AOTVector.h",
+  });
+  return outputs;
+}
+
+/** AOT_CHECK_SOURCE_LISTS and AOT_CHECK_EXPORTED_HEADERS of aot/AOT.cmake. */
+function checkAotSourceLists(wk: WebKitBuild): void {
+  wk.listedDirs.push(...aotDirectories(wk.JSC));
+  const problems = findAotSourceListProblems(wk.JSC);
+  if (problems.length > 0) {
+    throw new BuildError(problems.sort().join("\n"), {
+      hint: "bun scripts/build/aot-source-lists.ts writes the lists of aot/ for the tree as it is",
+    });
+  }
+}
+
 // ─── JavaScriptCore: compile flags ───
 
 interface JSCCompileFlags {
@@ -1235,25 +1502,16 @@ interface JSCCompileFlags {
   cxx: string[];
 }
 
-function jscCompileFlags(wk: WebKitBuild, flags: WebKitFlags): JSCCompileFlags {
-  const { cfg, B, JSC, WTF, DS } = wk;
+function jscCompileFlags(wk: WebKitBuild, flags: WebKitFlags, lists: LibraryLists): JSCCompileFlags {
+  const { cfg, WTF } = wk;
   // clang-cl only maps a subset of GNU -f options; the rest go through /clang:.
   const clangOpt = (f: string) => (cfg.windows ? `/clang:${f}` : f);
   return {
     includes: [
-      ...new Set([
-        wk.jscHeaders,
-        wk.jscPrivateHeaders,
-        B,
-        join(wk.jscPrivateHeaders, "JavaScriptCore"),
-        ...inTree(JSC, jscIncludeDirs),
-        DS,
-        join(DS, "inspector"),
-        join(DS, "runtime"),
-        join(DS, "yarr"),
-        WTF, // <wtf/X.h> straight from the source tree (cmake copies to WTF/Headers)
-        ...flags.bmallocConsumerIncludes,
-      ]),
+      ...lists.paths("JavaScriptCore_INCLUDE_DIRECTORIES"),
+      ...lists.paths("JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES"),
+      WTF, // <wtf/X.h> straight from the source tree (cmake copies to WTF/Headers)
+      ...flags.bmallocConsumerIncludes,
     ],
     // What JSC's CMakeLists adds for every TU of the JavaScriptCore target,
     // C and C++ alike: no FP contraction (a*b+c must round twice, as the JIT
@@ -1277,8 +1535,7 @@ function jscCompileFlags(wk: WebKitBuild, flags: WebKitFlags): JSCCompileFlags {
 
 /** ld flags for WebKit's own executables that reference bun-provided hooks. */
 function standaloneExeLinkFlags(cfg: Config): string[] {
-  // Hooks bun's runtime provides to WTF/JSC (RunLoopBun.cpp, ErrorInstance,
-  // JSMicrotask). WebKit's own executables leave them undefined: ld64 needs
+  // Hooks bun's runtime provides to WTF/JSC. WebKit's own executables leave them undefined: ld64 needs
   // that spelled out per symbol (WebKitCompilerFlags.cmake, USE_BUN_EVENT_LOOP).
   const bunHooks = [
     "WTFTimer__create",
@@ -1287,7 +1544,7 @@ function standaloneExeLinkFlags(cfg: Config): string[] {
     "WTFTimer__isActive",
     "WTFTimer__secondsUntilTimer",
     "WTFTimer__cancel",
-    "Bun__errorInstance__finalize",
+    "Bun__thisThreadHasVM",
     "Bun__reportUnhandledError",
   ];
   // Windows: WTF's registry/shell/token calls (LanguageWin, FileSystemWin,
@@ -1314,14 +1571,15 @@ function standaloneExeLinkFlags(cfg: Config): string[] {
 function llintSteps(
   wk: WebKitBuild,
   jsc: JSCCompileFlags,
+  lists: LibraryLists,
   codegenReady: string[],
 ): { groups: SourceGroup[]; assembly: string } {
   const { cfg, JSC, DS, binDir } = wk;
   const offlineasm = join(JSC, "offlineasm");
-  const llintAsmFiles = inTree(JSC, llintAsm);
-  const offlineAsmRb = inTree(JSC, jscOfflineasmRuby);
+  const llintAsmFiles = lists.paths("LLINT_ASM");
+  const offlineAsmRb = lists.paths("OFFLINE_ASM");
   const lowLevelInterpreterAsm = join(JSC, "llint", "LowLevelInterpreter.asm");
-  const backend = offlineAsmBackend(cfg);
+  const backend = cfg.x64 ? "X86_64" : "ARM64";
   // asm.rb only (OFFLINE_ASM_FORMAT_ARGS); the two extractor generators take
   // just the backend. --binary-format=ELF makes asm.rb emit .type/.size for
   // each opcode label; those pair with the plain (non-.L) debug labels
@@ -1392,28 +1650,18 @@ function llintSteps(
   });
 
   const llintAssembly = join(DS, "LLIntAssembly.h");
-  // asm.rb leaves an existing output untouched when the "input hash" trailer
-  // matches, and that hash covers the .asm inputs, the offsets and
-  // --platform but not --binary-format. Reusing one build dir for another
-  // --os (ELF directives on/off) would keep a stale header, so a change in
-  // the invocation discards it here.
-  const llintAssemblyCmd = [
-    ruby,
-    join(offlineasm, "asm.rb"),
-    `-I${DS}/`,
-    lowLevelInterpreterAsm,
-    offsetsExe,
-    llintAssembly,
-    buildVariants,
-    ...offlineAsmFormatArgs,
-  ];
-  mkdirSync(DS, { recursive: true });
-  if (writeIfChanged(join(DS, "LLIntAssembly.h.cmd"), llintAssemblyCmd.join("\n") + "\n")) {
-    rmSync(llintAssembly, { force: true });
-  }
   gen(wk, {
     outputs: [llintAssembly],
-    cmd: llintAssemblyCmd,
+    cmd: [
+      ruby,
+      join(offlineasm, "asm.rb"),
+      `-I${DS}/`,
+      lowLevelInterpreterAsm,
+      offsetsExe,
+      llintAssembly,
+      buildVariants,
+      ...offlineAsmFormatArgs,
+    ],
     inputs: [offsetsExe, ...llintAsmFiles, ...offlineAsmRb, join(DS, "InitBytecodes.asm")],
     env: { CMAKE_CXX_COMPILER_ID: "Clang", GCC_OFFLINEASM_SOURCE_MAP: "OFF" },
     desc: "LLIntAssembly.h",
@@ -1429,73 +1677,163 @@ function llintSteps(
 
 // ─── JavaScriptCore: sources ───
 
-/**
- * JSC's translation units: the unified bundles (each a generated file that
- * #includes up to eight Sources.txt entries — webkit-jsc-sources.ts lists
- * them), the @no-unify entries, and
- * JavaScriptCore_SOURCES. The bundle files themselves are `headers` entries
- * written at configure.
- */
-function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<string, string>; checked: string[] } {
-  const { cfg, JSC, DS, B } = wk;
-  // The bundle and @no-unify lists are kept by hand; this step fails the
-  // build, before any JSC compile, if a fetched Sources.txt names a file they
-  // don't (or vice versa) — a WebKit bump that moved a TU.
-  const checked = join(B, ".jsc-sources-checked");
-  const checkScript = join(import.meta.dirname, "webkit-check-sources.ts");
-  gen(wk, {
-    outputs: [checked],
-    cmd: [...cfg.jsRuntimeArgv, checkScript, JSC, checked],
-    inputs: [
-      join(JSC, "Sources.txt"),
-      join(JSC, "inspector", "remote", "SourcesSocket.txt"),
-      checkScript,
-      join(import.meta.dirname, "webkit-jsc-sources.ts"),
+const unifiedSourceBundler = (wk: WebKitBuild): string => join(wk.WTF, "Scripts", "generate-unified-source-bundles.py");
+
+/** What WebKit's unified-source bundler makes of lists of sources (WEBKIT_COMPUTE_SOURCES): the files to compile. */
+function unifiedSources(wk: WebKitBuild, listFiles: string[], options: string[]): string[] {
+  const { JSC, DS, python } = wk;
+  const bundler = unifiedSourceBundler(wk);
+  mkdirSync(DS, { recursive: true });
+  const bundled = spawnSync(
+    python,
+    [
+      bundler,
+      "--derived-sources-path",
+      DS,
+      "--source-tree-path",
+      JSC,
+      "--ignore-header-groups",
+      ...options,
+      ...listFiles,
     ],
-    desc: "check Sources.txt against webkit-jsc-sources.ts",
-  });
-  // Same idea for the generators: every gen() in this file transcribes an
-  // add_custom_command from WebKit's CMake. webkit-check-cmake.ts renders
-  // those statements (and the variables feeding them) from the fetched tree
-  // and compares them with webkit-cmake.snapshot; a bump that changes one
-  // fails here with the diff until webkit.ts and the snapshot are updated.
-  const cmakeChecked = join(B, ".cmake-checked");
-  const cmakeCheckScript = join(import.meta.dirname, "webkit-check-cmake.ts");
-  gen(wk, {
-    outputs: [cmakeChecked],
-    cmd: [...cfg.jsRuntimeArgv, cmakeCheckScript, wk.W, cmakeChecked],
-    inputs: [
-      ...cmakeWatchedFiles.map(f => join(wk.W, f)),
-      cmakeCheckScript,
-      join(import.meta.dirname, "..", "cmake.ts"),
-      join(import.meta.dirname, "webkit-cmake.snapshot"),
-    ],
-    desc: "check WebKit's CMake against webkit-cmake.snapshot",
-  });
-  const bundleDir = join(DS, "unified-sources");
-  const bundles: Record<string, string> = {};
-  for (const [bundle, members] of jscUnifiedBundles) {
-    bundles[relative(B, join(bundleDir, bundle))] = members.map(m => `#include "${m}"\n`).join("");
+    { encoding: "utf8", maxBuffer: 1 << 26 },
+  );
+  if (bundled.error) {
+    throw new BuildError(`Could not run ${python} for WebKit's unified source bundling`, { cause: bundled.error });
   }
-  const sources = [
-    ...jscUnifiedBundles.map(([bundle]) => join(bundleDir, bundle)),
-    ...jscNonUnifiedSources.map(s =>
-      s.startsWith("DerivedSources/") ? join(DS, s.slice("DerivedSources/".length)) : join(JSC, s),
-    ),
-    join(DS, "JSCBuiltins.cpp"),
-    ...inTree(JSC, jscExtraSourcesFor(cfg)),
-  ];
-  return { sources, bundles, checked: [checked, cmakeChecked] };
+  if (bundled.status !== 0) {
+    throw new BuildError(`generate-unified-source-bundles.py failed:\n${bundled.stderr}`, { file: bundler });
+  }
+  // It prints a cmake list: the bundle files (absolute) and the @no-unify
+  // members, relative to the source tree or bare names of generated sources in
+  // DerivedSources. Sources.txt carries a few headers too.
+  return bundled.stdout
+    .split(";")
+    .filter(s => /\.(cpp|c)$/.test(s))
+    .map(s => (isAbsolute(s) ? s : !/[\\/]/.test(s) && !existsSync(join(JSC, s)) ? join(DS, s) : join(JSC, s)));
 }
+
+/**
+ * CMake, which builds what ships, takes 16. This graph is for work on the engine, where one source is touched far more
+ * often than all are compiled. All of aot/ at 16 jobs, each source alone | 8 | 16 in a bundle: 190 | 124 | 107 s of wall,
+ * 2,740 | 1,530 | 1,350 s of CPU. One touched source: 2.5 | 8.4 | 13.1 s.
+ */
+const aotBundleSize = 8;
+
+/** The lists of aot/ that are compiled for size, and the attribute that every function of their bundles takes. */
+const aotListsCompiledForSize = [
+  { framework: "JavaScriptCoreAOTCompiledForSize", attribute: "optsize" },
+  { framework: "JavaScriptCoreAOTCompiledForMinimumSize", attribute: "minsize" },
+] as const;
+
+interface JSCSources {
+  sources: string[];
+  /** Those of `sources` that are compiled for size, each with the attribute that its functions take. */
+  compiledForSize: Map<string, string>;
+  /** A bundle of aot/ and the sources that it includes. */
+  bundledAotSources: Map<string, string[]>;
+  listFiles: string[];
+}
+
+/**
+ * JSC's translation units: the bundles of the Sources.txt lists, plus
+ * JavaScriptCore_SOURCES. aot/ has three lists of its own (AOT_COMPUTE_SOURCES in
+ * aot/AOT.cmake), because a bundle is compiled with one set of flags.
+ * `--unified-sources=off` compiles each source of aot/ by itself.
+ * `--aot=off` compiles of the three lists only what aot/AOT.cmake names for a build without AoT.
+ */
+function jscSourceList(wk: WebKitBuild, lists: LibraryLists): JSCSources {
+  const listsOf = (framework: string): string[] => lists.paths(`${framework}_UNIFIED_SOURCE_LIST_FILES`);
+  const aotOptions = wk.cfg.unifiedSources ? ["--max-bundle-size", `${aotBundleSize}`] : ["--print-all-sources"];
+  const aot = wk.cfg.aot
+    ? unifiedSources(wk, listsOf("JavaScriptCoreAOT"), aotOptions)
+    : lists.paths("JavaScriptCore_AOT_SOURCES_WITHOUT_AOT");
+  const compiledForSize = new Map<string, string>();
+  for (const { framework, attribute } of wk.cfg.aot ? aotListsCompiledForSize : []) {
+    const options = ["--bundle-filename-prefix", ...lists.values(`${framework}_UNIFIED_SOURCE_BUNDLE_PREFIX`)];
+    for (const path of unifiedSources(wk, listsOf(framework), [...aotOptions, ...options])) {
+      compiledForSize.set(path, attribute);
+    }
+  }
+  const aotCompiledForSize = [...compiledForSize.keys()];
+  for (const path of lists.paths("JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE")) {
+    compiledForSize.set(path, "optsize");
+  }
+  const bundles = join(wk.DS, "unified-sources") + sep;
+  return {
+    sources: [
+      ...unifiedSources(wk, listsOf("JavaScriptCore"), []),
+      ...aot,
+      ...aotCompiledForSize,
+      ...lists.paths("JavaScriptCore_SOURCES"),
+    ],
+    compiledForSize,
+    bundledAotSources: new Map(
+      [...aot, ...aotCompiledForSize]
+        .filter(path => path.startsWith(bundles))
+        .map(bundle => [
+          bundle,
+          [...readFileSync(bundle, "utf8").matchAll(/^#include "(.*)"$/gm)].map(match => join(wk.JSC, match[1]!)),
+        ]),
+    ),
+    listFiles: [
+      ...listsOf("JavaScriptCore"),
+      ...listsOf("JavaScriptCoreAOT"),
+      ...aotListsCompiledForSize.flatMap(({ framework }) => listsOf(framework)),
+      unifiedSourceBundler(wk),
+    ],
+  };
+}
+
+interface AotPrefix {
+  header: string;
+  /** None: precompiled by itself, so that what it includes first stands in front of the standard library's headers. */
+  base?: string;
+  directories: string[];
+  files?: RegExp;
+}
+
+const aotPrefixes: AotPrefix[] = [
+  { header: "aot/support/AOTPrefix.h", directories: [] },
+  {
+    header: "aot/support/AOTCompilerPrefix.h",
+    base: "aot/support/AOTPrefix.h",
+    directories: ["analysis", "builtins", "ir", "passes", "pipeline", "place", "represent", "select", "valueflow"],
+  },
+  {
+    header: "aot/support/AOTCodeGeneratorPrefix.h",
+    base: "aot/support/AOTCompilerPrefix.h",
+    directories: ["codegen"],
+    files: /^(builtins\/AOT\w*Emitter\w*|image\/AOTCodeGenerationDriver|image\/AOTCompile)\.cpp$/,
+  },
+  {
+    header: "aot/support/AOTRuntimePrefix.h",
+    base: "aot/support/AOTPrefix.h",
+    directories: ["image", "object", "runtime", "stubs", "support"],
+  },
+];
 
 function jscGroup(
   wk: WebKitBuild,
   jsc: JSCCompileFlags,
-  sources: string[],
+  { sources, compiledForSize, bundledAotSources }: JSCSources,
   codegenReady: string[],
   llintAssembly: string,
 ): SourceGroup {
   const { cfg, JSC } = wk;
+  const forSize = cfg.release ? compiledForSize : new Map<string, string>();
+  const generated = aotGeneratedDirectory(wk) + sep;
+  // A bundle takes the header of its first source: whatever the others need beyond it they include themselves.
+  const aotPrefixOf = (source: string): AotPrefix | undefined => {
+    const path = bundledAotSources.get(source)?.[0] ?? source;
+    const file = path.startsWith(generated)
+      ? `ir/${basename(path)}`
+      : relative(join(JSC, "aot"), path).replaceAll(sep, "/");
+    return (
+      aotPrefixes.find(prefix => prefix.files?.test(file)) ??
+      aotPrefixes.find(prefix => prefix.directories.some(directory => file.startsWith(`${directory}/`)))
+    );
+  };
   // Windows ARM64: the alignment directives in these files' inline asm break
   // LLVM's SEH unwind-info emission (llvm.org/pr47432), so JSC's CMakeLists
   // builds them without unwind tables. (ThunkGenerators.cpp is listed there
@@ -1508,8 +1846,28 @@ function jscGroup(
   return {
     name: "JavaScriptCore",
     sources: [
-      ...sources.map(path => {
-        const extra = noUnwindTables(path);
+      // Last, so that a function several sources instantiate is linked from one that is compiled for speed.
+      ...[...sources.filter(path => !forSize.has(path)), ...sources.filter(path => forSize.has(path))].map(path => {
+        const attribute = forSize.get(path);
+        const extra = [
+          ...noUnwindTables(path),
+          ...(attribute !== undefined ? [`-mllvm=-force-attribute=${attribute}`] : []),
+        ];
+        const prefix = aotPrefixOf(path);
+        const bundled = bundledAotSources.get(path);
+        if (prefix !== undefined) {
+          // Unrolling loops whose trip count is not known adds 2% to this code and no speed. Under ThinLTO loops are
+          // unrolled in the link, so this counts where the objects are machine code.
+          if (cfg.release && attribute === undefined) extra.push("-mllvm=-unroll-runtime=false");
+          // A switch of aot/ that has no default names every enumerator, and nothing points into a temporary beyond its statement
+          // (aot/AOT.cmake has the same flags).
+          return {
+            path,
+            cflags: [...extra, "-Werror=switch", "-Werror=dangling"],
+            pch: join(JSC, prefix.header),
+            ...(bundled !== undefined && { bundled }),
+          };
+        }
         return extra.length > 0 ? { path, cflags: extra } : path;
       }),
       // LowLevelInterpreter.cpp: the inline-asm interpreter (includes
@@ -1526,57 +1884,254 @@ function jscGroup(
       },
     ],
     includes: jsc.includes,
-    cflags: [...jsc.targetFlags, "-DBUILDING_JavaScriptCore"],
+    // The coverage flags: JSC's CMakeLists, ENABLE_FUZZILLI.
+    cflags: [...jsc.targetFlags, "-DBUILDING_JavaScriptCore", ...fuzzilliCoverageFlags(cfg)],
     cxxflags: jsc.cxx,
     pch: join(JSC, "JavaScriptCorePrefix.h"),
+    chainedPch: aotPrefixes.map(({ header, base }) => ({
+      header: join(JSC, header),
+      ...(base !== undefined && { base: join(JSC, base) }),
+    })),
     orderOnly: codegenReady,
-    implicitInputs: [join(wk.B, "cmakeconfig.h")],
   };
 }
 
-// ─── testFFI ───
-
-/** Standalone JSC programs' sources (relative to Source/JavaScriptCore); also fetch outputs via treeFiles. */
-const jscTestFFISources = ["ffi/tests/testFFI.cpp"];
-const jscShellSources = ["jsc.cpp", "tools/JSDollarVMShell.cpp"];
-
-/**
- * JSC's bun:ffi C++/ABI test program (ffi/tests/testFFI.cpp), run by
- * test/js/bun/jsc-stress/testFFI.test.ts. It is one of WebKit's own
- * executables (built like jsc/testapi against JSC's private headers), but
- * bun's build links it — next to bun, from the same dep objects — so this
- * only says how: the source, the flags a JSC-family TU compiles with, and
- * the link flags a standalone JSC executable needs.
- */
-export function jscTestFFI(cfg: Config): JSCProgram {
-  return jscProgram(cfg, "testFFI", jscTestFFISources, []);
-}
-
-/**
- * JSC's `jsc` shell (shell/CMakeLists.txt: jsc.cpp + the $vm shell helpers,
- * libedit for its REPL on macOS). Not a default target: bun.ts emits it so
- * `bun run build --target=jsc` / `ninja jsc` build it on demand.
- */
-export function jscShell(cfg: Config): JSCProgram {
-  return jscProgram(cfg, "jsc", jscShellSources, cfg.darwin ? ["-ledit"] : []);
-}
+// ─── Standalone programs ───
 
 export interface JSCProgram {
+  /** The executable's name, and its ninja target. */
+  name: string;
   sources: string[];
   cxxflags: string[];
   ldflags: string[];
+  libs?: string[];
+  /** Its sources in C, and their flags. */
+  cSources?: string[];
+  cflags?: string[];
+  /** Dependencies of bun whose sources it compiles for itself. Its compiles wait until they are fetched. */
+  sourcesFrom?: Array<"zstd">;
+  /**
+   * Headers to precompile for the program's sources, with its flags, each on top of the one before. A source takes
+   * the last one whose `files` matches its path, or that has none.
+   */
+  pch?: Array<{ header: string; files?: RegExp }>;
 }
 
-/** A standalone JSC executable compiled the way shell/CMakeLists.txt compiles them: JSC's flags, statically linked with the framework. */
-function jscProgram(cfg: Config, name: string, sources: string[], ldflags: string[]): JSCProgram {
+/** jscPrograms() lists it for testb3's sources, so it is a configure input. */
+const testb3Dir = (wk: WebKitBuild): string => join(wk.JSC, "b3");
+
+/**
+ * `source` (relative to JavaScriptCore) as a TU of `program` alone: a
+ * forwarding stub, like a framework header's. For a source of several programs:
+ * an object's path follows from its source's (compile.ts objectPath), and cmake
+ * too compiles such a source once per target, with that target's flags.
+ */
+function forwardingSource(wk: WebKitBuild, program: string, source: string): string {
+  const stub = join(wk.B, "programs", program, basename(source));
+  writeIfChanged(stub, `#include "${join(wk.JSC, source).replaceAll("\\", "/")}"\n`);
+  return stub;
+}
+
+/**
+ * Where mimalloc overrides `operator new` it reports out of memory through a
+ * function bun's runtime defines (deps/mimalloc.ts, MI_NEW_OOM). These programs
+ * link the same mimalloc without that runtime.
+ */
+function outOfMemoryHook(cfg: Config, program: string): string {
+  const source = join(depBuildDir(cfg, "WebKit"), "programs", program, "OutOfMemory.cpp");
+  writeIfChanged(
+    source,
+    `#include <cstdlib>\nextern "C" [[noreturn]] void Bun__outOfMemory();\nvoid Bun__outOfMemory() { std::abort(); }\n`,
+  );
+  return source;
+}
+
+/**
+ * The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts), and that ICU calls a weak hook
+ * on each item that it loads (icu/udata-decompress-hook.patch). Bun defines the hook
+ * (src/jsc/bindings/bun_icu_decompress.cpp), and so does the shell (jsc.cpp). testaot has none of its own. Without one
+ * ICU knows no locale there, and the compiler, which asks Intl at build time how a locale writes a number or a date, is
+ * told nothing.
+ */
+function icuDataHook(cfg: Config, program: string): string {
+  const source = join(depBuildDir(cfg, "WebKit"), "programs", program, "ICUData.cpp");
+  writeIfChanged(
+    source,
+    `#define ZSTD_STATIC_LINKING_ONLY
+#include <zstd.h>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <mutex>
+#include <unordered_map>
+
+extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
+extern "C" __attribute__((weak)) const unsigned bun_icu_zstd_dict_size;
+
+extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* length)
+{
+    // An item that is not compressed has 0xda 0x27 at bytes 2 and 3, so its first word is never zstd's magic number.
+    uint32_t magic;
+    if (!item)
+        return item;
+    std::memcpy(&magic, item, sizeof(magic));
+    if (magic != ZSTD_MAGICNUMBER)
+        return item;
+
+    static std::mutex lock;
+    static auto& decompressed = *new std::unordered_map<const void*, void*>;
+    static ZSTD_DCtx* context = ZSTD_createDCtx();
+    static ZSTD_DDict* dictionary = &bun_icu_zstd_dict_size && bun_icu_zstd_dict_size
+        ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
+        : nullptr;
+
+    std::lock_guard<std::mutex> locker(lock);
+    size_t compressedSize = ZSTD_findFrameCompressedSize(item, *length > 0 ? static_cast<size_t>(*length) : 1u << 20);
+    if (ZSTD_isError(compressedSize))
+        return item;
+    unsigned long long size = ZSTD_getFrameContentSize(item, compressedSize);
+    if (size == ZSTD_CONTENTSIZE_UNKNOWN || size == ZSTD_CONTENTSIZE_ERROR)
+        return item;
+
+    void*& kept = decompressed[item];
+    if (!kept) {
+        void* buffer = std::malloc(static_cast<size_t>(size));
+        if (!buffer)
+            return item;
+        size_t result = dictionary
+            ? ZSTD_decompress_usingDDict(context, buffer, size, item, compressedSize, dictionary)
+            : ZSTD_decompressDCtx(context, buffer, size, item, compressedSize);
+        if (ZSTD_isError(result)) {
+            std::free(buffer);
+            return item;
+        }
+        kept = buffer;
+    }
+    *length = static_cast<int32_t>(size);
+    return kept;
+}
+`,
+  );
+  return source;
+}
+
+/**
+ * `program` with what reads those frames: zstd's decoder, as zstd itself puts it into one file, compiled for this program
+ * alone, as shell/CMakeLists.txt compiles it for the shell. Not the objects bun links: those carry what the build asks
+ * of bun's libraries (in a hardened bun they keep their arrays on a second stack, which bun's run time sets up), and
+ * these programs are linked without that run time.
+ */
+function withZstdDecoder(cfg: Config, program: JSCProgram): JSCProgram {
+  const zstd = join(cfg.vendorDir, "zstd");
+  const source = join(depBuildDir(cfg, "WebKit"), "programs", program.name, "ZstdDecoder.c");
+  const decoder = join(zstd, "build", "single_file_libs", "zstddeclib-in.c");
+  writeIfChanged(source, `#include "${decoder.replaceAll("\\", "/")}"\n`);
+  const include = `-I${join(zstd, "lib")}`;
+  return {
+    ...program,
+    cxxflags: [...program.cxxflags, include],
+    cSources: [source],
+    cflags: [...groupCompileFlags(cfg, cfg.buildDir, {}).c, include],
+    sourcesFrom: ["zstd"],
+  };
+}
+
+/** testaot as `program` says, reading the data of a prebuilt WebKit's ICU. */
+function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
+  return withZstdDecoder(cfg, { ...program, sources: [...program.sources, icuDataHook(cfg, program.name)] });
+}
+
+/**
+ * WebKit's own executables worth having beside a local build
+ * (shell/CMakeLists.txt): the `jsc` shell; `testFFI`, JSC's bun:ffi C++/ABI
+ * test program, which test/js/bun/jsc-stress/testFFI.test.ts runs; `testb3`,
+ * `testair`, `testmasm` and `testRegExp`, the tests of the B3 and Air
+ * compilers, the macro assembler and Yarr; and `testaot`, the tests of the AoT
+ * compiler. bun.ts links them, from the same dep objects bun gets, so this only
+ * says how: the sources, the flags a JSC-family TU compiles with, and what a
+ * standalone JSC executable needs at link. None is a default target:
+ * `bun run build:local --target=jsc`.
+ */
+export function jscPrograms(cfg: Config): JSCProgram[] {
+  if (prebuiltHasProgramObjects(cfg)) {
+    return ["jsc", "testaot"].map(name => {
+      const program: JSCProgram = {
+        name,
+        sources: [outOfMemoryHook(cfg, name)],
+        cxxflags: groupCompileFlags(cfg, cfg.buildDir, {}).cxx,
+        ldflags: [
+          ...standaloneExeLinkFlags(cfg),
+          ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),
+        ],
+        libs: [resolve(prebuiltDestDir(cfg), programObjects(cfg, name))],
+      };
+      // The objects of jsc hold the shell's own hook.
+      const hasCompressedData = cfg.windows || (cfg.linux && cfg.abi !== "android");
+      return name === "testaot" && hasCompressedData ? readingPrebuiltIcuData(cfg, program) : program;
+    });
+  }
+  if (cfg.webkit !== "local") return [];
   const wk = webkitLayout(cfg);
-  const jsc = jscCompileFlags(wk, webkitFlags(wk));
-  const { cxx } = groupCompileFlags(cfg, wk.W, {
-    includes: jsc.includes,
-    cflags: [...jsc.targetFlags, `-DBUILDING_${name}`, "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
-    cxxflags: jsc.cxx,
+  const lists = webkitLists(wk).jsc;
+  const jsc = jscCompileFlags(wk, webkitFlags(wk), lists);
+  // What a program that embeds JSC defines for the AoT run time; testaot's own sources define it.
+  const embedder = lists.values("JavaScriptCore_AOT_PROGRAM_SOURCES");
+  const shell = lists.values("JavaScriptCore_AOT_SHELL_SOURCES");
+  const shared = new Set([...embedder, ...shell]);
+  const program = (name: string, sources: string[], ldflags: string[]): JSCProgram => ({
+    name,
+    sources: [
+      ...sources.map(s => (shared.has(s) ? forwardingSource(wk, name, s) : resolve(wk.JSC, s))),
+      outOfMemoryHook(cfg, name),
+    ],
+    cxxflags: groupCompileFlags(cfg, wk.W, {
+      includes: jsc.includes,
+      cflags: [...jsc.targetFlags, `-DBUILDING_${name}`, "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
+      cxxflags: jsc.cxx,
+    }).cxx,
+    ldflags: [...standaloneExeLinkFlags(cfg), ...ldflags],
   });
-  return { sources: inTree(wk.JSC, sources), cxxflags: cxx, ldflags: [...standaloneExeLinkFlags(cfg), ...ldflags] };
+  const testb3 = readdirSync(testb3Dir(wk))
+    .filter(f => f.startsWith("testb3_") && f.endsWith(".cpp"))
+    .sort()
+    .map(f => `b3/${f}`);
+  let jscShell = program(
+    "jsc",
+    ["jsc.cpp", "tools/JSDollarVMShell.cpp", ...shell, ...embedder],
+    cfg.darwin ? ["-ledit"] : [],
+  );
+  // The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts). jsc.cpp has the hook that
+  // reads it, as shell/CMakeLists.txt builds it with BUN_ICU_ZSTD_SOURCE_DIR.
+  if (linuxIcuRoot(cfg) !== undefined) {
+    jscShell = withZstdDecoder(cfg, { ...jscShell, cxxflags: [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1"] });
+  }
+  const testaot = program(
+    "testaot",
+    [
+      ...lists.values("JavaScriptCore_AOT_TEST_SOURCES"),
+      ...lists.values("JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES"),
+    ],
+    [],
+  );
+  return [
+    jscShell,
+    program("testFFI", ["ffi/tests/testFFI.cpp", ...embedder], []),
+    program("testb3", [...testb3, ...embedder], []),
+    program("testair", ["b3/air/testair.cpp", ...embedder], []),
+    program("testmasm", ["assembler/testmasm.cpp", ...embedder], []),
+    program("testRegExp", ["testRegExp.cpp", ...embedder], []),
+    {
+      ...(linuxIcuRoot(cfg) !== undefined ? readingPrebuiltIcuData(cfg, testaot) : testaot),
+      pch: [
+        { header: join(wk.JSC, "aot", "tests", "AOTTestPrefix.h") },
+        { header: join(wk.JSC, "aot", "tests", "AOTCompilerTestPrefix.h") },
+        {
+          header: join(wk.JSC, "aot", "tests", "AOTCodeGeneratorTestPrefix.h"),
+          files: /\/aot\/(tests\/AOT(Image|Stub)\w*|codegen\/\w+)\.cpp$/,
+        },
+      ],
+    },
+  ];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1586,16 +2141,8 @@ function jscProgram(cfg: Config, name: string, sources: string[], ldflags: strin
 export const webkit: Dependency = {
   name: "WebKit",
   versionMacro: "WEBKIT",
-  // The direct build compiles against the mimalloc bun links
-  // (USE_EXTERNAL_MIMALLOC) and, off macOS, the ICU built by deps/icu.ts.
-  fetchDeps: cfg =>
-    cfg.webkit === "source"
-      ? [
-          "mimalloc",
-          ...(buildsIcu(cfg) ? ["icu"] : []),
-          ...(cfg.darwin && cfg.host.os !== "darwin" ? ["bootstrap_cmds"] : []),
-        ]
-      : [],
+  // Local mode compiles against the mimalloc bun links (USE_EXTERNAL_MIMALLOC).
+  fetchDeps: ["mimalloc"],
 
   source: cfg => {
     if (cfg.webkit === "prebuilt") {
@@ -1615,7 +2162,9 @@ export const webkit: Dependency = {
       return src;
     }
 
-    return { kind: "github", repo: "oven-sh/WebKit", commit: cfg.webkitVersion, sparse: sourceSparse };
+    // Never fetched: config.ts gives local mode a `localDeps` entry, which
+    // redirects this to the checkout like any `--local-deps` dep.
+    return { kind: "github-archive", repo: "oven-sh/WebKit", commit: cfg.webkitVersion };
   },
 
   build: cfg => (cfg.webkit === "prebuilt" ? { kind: "none" } : webkitBuildSpec(cfg)),
@@ -1637,11 +2186,20 @@ export const webkit: Dependency = {
       // postExtract.
       if (!cfg.darwin) includes.push("include/wtf/unicode");
 
-      return { libs, includes };
+      const { schemaInputs, builtinTableInputs } = webkitEngineSources(cfg);
+      const files = [...schemaInputs, ...builtinTableInputs].map(file => relative(prebuiltDestDir(cfg), file));
+      if (prebuiltHasProgramObjects(cfg)) files.push(programObjects(cfg, "jsc"), programObjects(cfg, "testaot"));
+      // `HARDENING` in lanes.mjs has grown, and the name of a tarball does not say which list it was compiled with.
+      const symbols = [
+        ...(cfg.aot && cfg.guardedPages ? ["JSC__AOT__mapsGuardedPages"] : []),
+        ...(cfg.aot && !cfg.executeOnlyStart ? ["JSC__AOT__startsOnlyWhereItsFileCanBeRead"] : []),
+      ];
+      const requireDefined = symbols.length > 0 ? { lib: wkLib(cfg, "JavaScriptCore"), symbols } : undefined;
+      return { libs, includes, files, contentsDecideGraph: true, ...(requireDefined && { requireDefined }) };
     }
 
     // The objects go straight on the link line; consumers see the framework
     // header dirs and generated headers under the dep build dir.
-    return { libs: [], includes: webkitSourceIncludes(cfg) };
+    return { libs: [], includes: webkitLocalIncludes(cfg) };
   },
 };

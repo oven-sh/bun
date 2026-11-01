@@ -6,20 +6,15 @@ libraries/headers it provides.
 
 ## Adding a dependency
 
-1. Copy `hdrhistogram.ts` (the simplest direct dep) to `<name>.ts`
+1. Copy `libdeflate.ts` (the simplest direct dep) to `<name>.ts`
 2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
-4. `bun run scripts/build/phase3-test.ts` to verify it builds
+4. Add the name to `DepName` in `../source.ts`
+5. `bun run scripts/build/phase3-test.ts` to verify it builds
 
-That's it. For most deps you're done. A dep that needs more than one source
-list says so in the same spec: `groups` (further source sets with their own
-flags/includes/PCH — cmake's "targets"), `steps` (generators run at build
-time, host tools built with the host compiler, target executables linked
-from groups), `headers` (config headers written at configure, `.h.in`
-substitution). `deps/tinycc.ts` (one host tool + one generated header),
-`deps/icu.ts` (two groups, host `icupkg`, data steps) and `deps/webkit.ts`
-(bmalloc/WTF/JSC groups, ~120 generators, the LLInt extractor executables)
-are the examples, small to large.
+That's it. For most deps you're done. A dep with several libraries, its own
+generators or helper executables adds `groups` and `steps` to the same
+`direct` spec — see `webkit.ts`.
 
 **`name` must match the directory on disk** (`vendor/<name>/`). If your repo
 is `oven-sh/WebKit`, name it `"WebKit"` — that's what `git clone` creates.
@@ -33,7 +28,7 @@ Case-sensitive filesystems enforce this.
 ## Removing a dependency
 
 1. Delete `<name>.ts`
-2. Remove from `allDeps` in `index.ts`
+2. Remove from `allDeps` in `index.ts`, and from `DepName` in `../source.ts`
 3. If any other dep has `fetchDeps: ["<name>"]`, remove that reference
 
 ## Updating a commit
@@ -63,7 +58,7 @@ git clone https://github.com/oven-sh/mimalloc ~/code/mimalloc
 bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
 ```
 
-Any `github` dep the graph compiles or includes can be redirected
+Any `github-archive` dep the graph compiles or includes can be redirected
 (so not lolhtml or rust-argon2, which cargo reads from `vendor/` via the workspace
 `Cargo.toml` — point that path at your checkout instead); several at once
 with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
@@ -73,12 +68,15 @@ applied (they target the pinned tarball), so start the clone from the pinned
 commit if you want an identical baseline. Switching a dep between pinned and
 local moves its `-I` path, so the first build after the switch recompiles
 every TU that sees the dep's headers; after that, edits are picked up
-incrementally: `direct` deps through the compiler depfiles,
-`cargo` deps by re-invoking cargo every run. The build banner shows
-`local:<name>` while this is on. Don't edit `vendor/<name>/` in place
-instead — it is wiped whenever the pin or patches change. For WebKit this is
-what `bun run build:local` does (`--local-deps=WebKit`, shorthand for
-`--local-deps=WebKit=$BUN_WEBKIT_PATH`).
+incrementally through the compiler depfiles. The
+build banner shows `local:<name>` while this is on. Don't edit
+`vendor/<name>/` in place instead — it is wiped whenever the pin or patches
+change.
+
+WebKit is prebuilt unless redirected: `--webkit=local` (the `-local`
+profiles, `bun run build:local`) is `--local-deps=WebKit=$BUN_WEBKIT_PATH`,
+or `vendor/WebKit` when that is unset, and `--local-deps=WebKit=<path>` on any
+profile means the same for one build.
 
 ## Common fields
 
@@ -86,17 +84,13 @@ what `bun run build:local` does (`--local-deps=WebKit`, shorthand for
 export const mydep: Dependency = {
   name: "mydep",
 
-  // A GitHub commit (no git history, just the files at `commit`). Fetched
-  // from GitHub's archive endpoint, or — with `sparse: ["/dir/", ...]` —
-  // as a sparse git fetch of only those paths (WebKit: GitHub won't serve
-  // archives of a repo that size, and JSC is ~3% of it).
-  // Most deps use this.
+  // Source tarball. Fetched from GitHub's archive endpoint (no git history,
+  // just the files at `commit`). Most deps use this.
   //
-  // Other kinds: `tarball` (a release tarball by URL, e.g. ICU), `prebuilt`
-  // (download pre-compiled .a, e.g. nodejs-headers or --webkit=prebuilt), `local` (any
-  // fetched dep becomes one via `--local-deps`, see below), `in-tree` (source
-  // in src/).
-  source: () => ({ kind: "github", repo: "owner/repo", commit: "..." }),
+  // Other kinds: `prebuilt` (download pre-compiled .a, e.g. WebKit default),
+  // `local` (user-managed checkout: what a github-archive dep becomes via
+  // `--local-deps`, see above), `in-tree` (source in src/).
+  source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
 
   // Optional: macro name for bun_dependency_versions.h (process.versions).
   // Omit if this dep shouldn't appear there.
@@ -107,13 +101,13 @@ export const mydep: Dependency = {
   patches: ["patches/mydep/fix-something.patch"],
 
   // Optional: deps whose SOURCE must be ready before this one builds
-  // (for -I cross-dep headers). See libarchive for an example.
+  // (for -I cross-dep headers). See lsquic for an example.
   fetchDeps: ["zlib"],
 
   // How to build. `direct` lists sources explicitly; emitDirect compiles
   // each as a first-class cc/cxx edge and the resulting .o's go straight
   // into bun's link line. See `DirectBuild` in ../source.ts for all
-  // optional fields (lang/pic/defines/headers/codegen/forbidUndefined).
+  // optional fields (lang/pic/defines/headers/codegen/groups/steps/forbidUndefined).
   build: cfg => ({
     kind: "direct",
     sources: ["src/foo.c", "src/bar.c"],
@@ -140,43 +134,34 @@ export const mydep: Dependency = {
 ## Build types
 
 - **`direct`**: Sources compiled as first-class `cc` edges in our ninja
-  graph — no sub-process; `groups` for further source sets with their own
-  flags, `steps` for generators / host tools / target executables, `headers`
-  for configure-time config headers. See `DirectBuild` in `../source.ts`.
-  Every C/C++ dep, ICU and WebKit included. No sub-process configure, and
-  LTO sees across the dep boundary into bun's call sites.
+  graph — no sub-process, no cmake configure, one job pool for everything, and
+  LTO sees across the dep boundary into bun's call sites. See `DirectBuild` in
+  `../source.ts`.
 - **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
 
 ## Worked examples
 
-- **hdrhistogram.ts** / **libdeflate.ts** — simplest direct deps
+- **libdeflate.ts** — simplest direct dep
 - **mimalloc.ts** — direct build, single unity TU compiled as C++
 - **tinycc.ts** — direct build with a build-time codegen tool
 - **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution
-- **libarchive.ts** / **cares.ts** — direct build with hand-written per-target config.h
+- **cares.ts** — direct build with hand-written per-target config.h
 - **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` (with libuv.ts) keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **icu.ts** — direct build with two source groups, a host tool (`icupkg`) and generator steps for the data object; tarball source
-- **webkit.ts** — direct build at full stretch: sparse github source, checked-in file lists (`webkit-*-sources.ts`), three groups (bmalloc/WTF/JSC) with a PCH, ~120 generator steps, target executables (the LLInt extractors), checks that the fetched tree still matches the transcription (`webkit-check-sources.ts`, `webkit-check-cmake.ts`); also the `prebuilt` opt-in. (testFFI and the jsc shell are bun.ts edges that reuse its objects.)
+- **webkit.ts** — `prebuilt`, and for a local checkout a direct build with
+  source `groups` (bmalloc, WTF, JavaScriptCore), generator and executable
+  `steps`, a per-group PCH, and file lists read from the checkout's own CMake
+  files at configure (`../cmake.ts`)
 
-## How the fetch works
+## How a dep builds
 
-Each fetched dep gets one ninja build statement with `restat = 1`:
-
-- **fetch** → `vendor/<name>/.ref` stamp
-  - Downloads the tarball (or sparse git fetch), extracts, applies patches
-  - `.ref` contains `sha256(commit + sparse + patches)[:16]`
-  - restat: if identity unchanged, no write, downstream pruned
-
-The dep's sources are declared as implicit outputs of that edge, so the
-compile edges that follow wait for it; from there they are ordinary
-`cc`/`cxx` edges with depfiles.
-
-No dep is described by reading its tree at configure time. Where upstream
-derives file sets from the tree (JSC's unified bundles from `Sources.txt`,
-its framework header directories, ICU's `sources.txt`), the lists are
-checked in — `deps/webkit-{bmalloc,wtf,jsc,llint,inspector}-sources.ts`, `deps/icu-sources.ts`
-— and updated by hand on a version bump.
+1. **fetch** → `vendor/<name>/.ref` stamp (`restat = 1`)
+   - Downloads tarball, extracts, applies patches
+   - `.ref` contains `sha256(commit + patches)[:16]`
+   - restat: if identity unchanged, no write, downstream pruned
+2. **compile** → one `cc`/`cxx`/`nasm` edge per source, after the fetch
+   (order-only) and the dep's generated headers; the objects are inputs of
+   bun's link

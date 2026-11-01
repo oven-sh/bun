@@ -160,3 +160,28 @@ test.concurrent("CLI caret stays under the token for an error at the end of a lo
   const caretLine = lines.find(l => l.trimEnd().endsWith("^"))!;
   expect({ token: textLine.indexOf("]"), caret: caretLine.indexOf("^") }).toEqual({ token: 154, caret: 154 });
 });
+
+test.concurrent("CLI caret counts a tab the same with and without non-ASCII text on the line", async () => {
+  using dir = tempDir("parse-col-caret-tabs", {
+    "ascii.js": '\t\tconst a = "e" + ;\n',
+    "accent.js": '\t\tconst a = "é" + ;\n',
+    "wide.js": '\tconst a = "名前" + ;\n',
+  });
+  const caretIn = async (file: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", file],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return stderr
+      .split("\n")
+      .find(l => l.trimEnd().endsWith("^"))!
+      .indexOf("^");
+  };
+  const [ascii, accent, wide] = await Promise.all(["ascii.js", "accent.js", "wide.js"].map(caretIn));
+  // "1 | " is 4 columns. Each of the two wide characters takes 2.
+  expect({ ascii, accent, wide }).toEqual({ ascii: 4 + 18, accent: 4 + 18, wide: 4 + 20 });
+});

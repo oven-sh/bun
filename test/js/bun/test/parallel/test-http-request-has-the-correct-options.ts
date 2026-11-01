@@ -12,7 +12,7 @@ const { port } = server.address() as AddressInfo;
 
 const { promise, resolve } = Promise.withResolvers();
 http.request(`http://localhost:${port}/`, resolve).end();
-const response = await promise;
+const response: any = await promise;
 expect(response.req.agent.defaultPort).toBe(80);
 expect(response.req.protocol).toBe("http:");
 response.resume();

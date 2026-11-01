@@ -52,22 +52,34 @@ fn error_instance(slice: &EncodedSlice<'_>, global: &JSGlobalObject, kind: Error
     bun_string_jsc::error_instance(&StringView::from_encoded(*slice), global, kind)
 }
 
+/// Whether `to_json_object` offers the text to the JSON parser of a compiled program.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CompiledJsonParser {
+    Try,
+    /// `try_parse_json_from_utf8` already declined the text.
+    Skip,
+}
+
 /// JSC conversions for `bun_core::EncodedSlice`.
 pub trait EncodedSliceJsc: Sized {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode)
     -> JSValue;
-    /// Copies into a GC-managed `JSString` (or hands over an external value
-    /// if globally allocated).
+    /// Copies into a GC-managed `JSString`.
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
     /// Transfers ownership of a globally-allocated buffer to JSC's
     /// external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    /// As `to_external_value`, `None` where that throws.
+    fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue>;
     /// `JSON.parse` over the bytes.
-    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn to_json_object(
+        &self,
+        global: &JSGlobalObject,
+        compiled_parser: CompiledJsonParser,
+    ) -> JsResult<JSValue>;
+    fn try_parse_json_from_utf8(&self, global: &JSGlobalObject) -> Option<JSValue>;
     /// Like `to_external_value` but with a caller-supplied `ctx` + finalizer
     /// callback (used to keep a `Blob::Store` ref alive).
     ///
@@ -85,14 +97,8 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         error_instance(self, global, ErrorKind::Error)
     }
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::TypeError)
-    }
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         error_instance(self, global, ErrorKind::SyntaxError)
-    }
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::RangeError)
     }
     fn to_dom_exception_instance(
         &self,
@@ -102,10 +108,13 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         EncodedSlice__toDOMExceptionInstance(self, global, code as u8)
     }
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        debug_assert!(!self.is_globally_allocated());
         EncodedSlice__toValueGC(self, global)
     }
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.try_to_external_value(global)
+            .ok_or_else(|| global.throw_string_too_long())
+    }
+    fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue> {
         if self.len > bun_core::String::max_length() {
             // SAFETY: contract — bytes were allocated by the default (global)
             // allocator. `default_alloc::free` agrees with the
@@ -118,15 +127,25 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
                         .cast::<core::ffi::c_void>(),
                 )
             };
-            return Err(global.throw_string_too_long());
+            return None;
         }
         // SAFETY: `self` is a valid `&EncodedSlice`; `JSGlobalObject` is an opaque
         // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
-        Ok(unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) })
+        Some(unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) })
     }
-    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_json_object(
+        &self,
+        global: &JSGlobalObject,
+        compiled_parser: CompiledJsonParser,
+    ) -> JsResult<JSValue> {
+        let skips_compiled_parser = compiled_parser == CompiledJsonParser::Skip;
         // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
-        unsafe { cpp::EncodedSlice__toJSONObject(self, global) }
+        unsafe { cpp::EncodedSlice__toJSONObject(self, global, skips_compiled_parser) }
+    }
+    fn try_parse_json_from_utf8(&self, global: &JSGlobalObject) -> Option<JSValue> {
+        // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
+        let parsed = unsafe { cpp::EncodedSlice__tryParseJSONFromUTF8(self, global.as_ptr()) };
+        (!parsed.is_empty()).then_some(parsed)
     }
     unsafe fn external(
         &self,

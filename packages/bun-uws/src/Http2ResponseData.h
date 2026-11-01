@@ -34,7 +34,6 @@ struct Http2ResponseData {
     /* See Http3ResponseData: the body writer (sink) and the RequestContext arm
      * onWritable and onAborted/onData concurrently with different owners. */
     void *writableUserData = nullptr;
-    void *socketData = nullptr;
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;
     OnDataCallback inStream = nullptr;
@@ -54,7 +53,6 @@ struct Http2ResponseData {
     bool endAfterDrain = false;
 
     uint64_t offset = 0;
-    uint64_t totalSize = 0;
     uint8_t state = HTTP_RESPONSE_PENDING;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {

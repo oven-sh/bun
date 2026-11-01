@@ -464,7 +464,7 @@ To track when a `TypedArray` is no longer in use from JavaScript, use a [Finaliz
 
 #### From C, Rust, Zig, etc
 
-To track when a `TypedArray` is no longer in use from C or FFI, pass a callback and an optional context pointer to `toArrayBuffer` or `toBuffer`. Bun calls the callback later, once the garbage collector frees the underlying `ArrayBuffer` JavaScript object.
+To track when a `TypedArray` is no longer in use from C or FFI, pass a callback and an optional context pointer to `toArrayBuffer` or `toBuffer`. Bun calls the callback later, once the garbage collector frees the underlying `ArrayBuffer` JavaScript object. The callback may run on a garbage-collector thread rather than the JavaScript thread, so it must not call back into JavaScript or assume thread-local state.
 
 The expected signature is the same as in [JavaScriptCore's C API](https://developer.apple.com/documentation/javascriptcore/jstypedarraybytesdeallocator?language=objc):
 

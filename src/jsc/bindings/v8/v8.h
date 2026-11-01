@@ -9,7 +9,8 @@
             WTF::ASCIILiteral::fromLiteralUnsafe(__PRETTY_FUNCTION__),                                              \
             "\" that Bun does not yet implement. Track progress at https://github.com/oven-sh/bun/issues/4290."_s); \
         auto utf8 = str.utf8();                                                                                     \
-        Bun__panic(utf8.data(), utf8.length());                                                                     \
+        auto bytes = byteCast<char>(utf8.span());                                                                   \
+        Bun__panic(bytes.data(), bytes.size());                                                                     \
     } while (0)
 
 // Use only for types and functions that are exposed in the public V8 API

@@ -14,10 +14,11 @@
 #include "root.h"
 
 // The repacked ICU data archive (and the patched udata.cpp that calls this
-// hook) come from scripts/build/deps/icu.ts (or the prebuilt WebKit tarball,
-// built the same way). On macOS ICU is the unmodified system one, so there is
+// hook) are produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl /
+// Dockerfile.windows / Dockerfile.freebsd / Dockerfile.android. On macOS ICU is the unmodified system one, so there is
 // nothing to decompress and the weak externs below would have no definer —
-// gate the implementation to the platforms that link bun's own ICU.
+// gate the implementation to the platforms whose prebuilts carry compressed
+// items.
 //
 // Windows note: COFF has no true weak-undefined symbols — clang lowers each
 // declaration to a per-TU weak external with an absolute-0 default, which is
@@ -117,6 +118,9 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
         return p;
     uint32_t magic;
     std::memcpy(&magic, p, sizeof(magic));
+    // "BUNI": the 16 bytes `--trim` leaves where it removed a language's items.
+    if (magic == 0x494E5542u && !std::memcmp(p, "BUNICUREMOVED\0\0\0", 16)) [[unlikely]]
+        Bun__abortForRemovedLocaleData();
     if (magic != ZSTD_MAGICNUMBER) [[likely]]
         return p;
     return Bun::ICUDecompressor::get().decompress(p, length);

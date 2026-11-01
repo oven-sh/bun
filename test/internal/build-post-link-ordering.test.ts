@@ -13,9 +13,10 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { emitPostLink } from "../../scripts/build/bun.ts";
+import { binaryChecksWarnOnly, emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
 
@@ -26,13 +27,14 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     cxx: "/fake/llvm/bin/clang++",
     hostCc: undefined,
     hostCxx: undefined,
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
+    clangVersion: "23.1.1",
+    clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-ar",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
-    rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
+    rustLlvmVersion: "23.1.1",
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
@@ -42,7 +44,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
-    jsRuntimeArgv: ["/fake/bin/bun"],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -101,7 +102,88 @@ describe("emitPostLink ninja ordering", () => {
     expect(buildEdge(out, "smoke_test")).toBe(
       `build bun-profile.smoke-test-passed: smoke_test bun-profile${cfg.exeSuffix} || bun${cfg.exeSuffix}`,
     );
-    expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
+    // A Windows target has nothing to strip: its `bun` is a copy.
+    const strip = cfg.windows ? "copy_exe" : "strip";
+    const scan = cfg.linux || cfg.freebsd ? " |@ bun.binary-verified" : "";
+    expect(buildEdge(out, strip)).toBe(`build bun${cfg.exeSuffix}: ${strip} bun-profile${cfg.exeSuffix}${scan}`);
+  });
+
+  describe.each([
+    ["plain", {}, { type: "EXEC", relro: false, bindNow: false }],
+    ["--hardened=on", { hardened: true, webkit: "local" }, { type: "DYN", relro: true, bindNow: true }],
+  ] as [string, PartialConfig, object][])("the stripped executable of a %s Linux build", (_name, partial, layout) => {
+    test.each([
+      ["fails the build in CI", true],
+      ["only warns elsewhere", false],
+    ])("is scanned whenever it is written, which %s", (_outcome, ci) => {
+      using dir = tempDir("build-post-link", {});
+      const buildDir = String(dir);
+      const cfg = resolveConfig(
+        {
+          os: "linux",
+          arch: "x64",
+          abi: "gnu",
+          buildType: "Release",
+          linuxSysroot: buildDir,
+          buildDir,
+          ci,
+          ...partial,
+        },
+        mockToolchain(),
+      );
+      const n = new Ninja({ buildDir });
+      const exe = resolve(buildDir, "bun-profile");
+      const { strippedExe } = emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
+      const out = n.toString().replace(/ \$\n +/g, " ");
+
+      expect(buildEdge(out, "strip")).toEndWith(" |@ bun.binary-verified");
+      expect(buildEdge(out, "stripped_verify")).toStartWith("build bun.binary-verified: stripped_verify bun | ");
+      expect(buildEdge(out, "phony")).toContain(" bun.binary-verified");
+      expect(/^rule stripped_verify\n  command = (.*)$/m.exec(out)![1]!.includes("--warn-only")).toBe(!ci);
+
+      const spec = JSON.parse(readFileSync(join(buildDir, "bun.verify.json"), "utf8"));
+      expect(spec.exe).toBe(strippedExe);
+      expect(spec.expect.elf).toEqual({ ...layout, execStack: false, rwxLoad: false, tlsSegment: true });
+      for (const needsSymbols of ["staticInitializers", "forbiddenSymbols", "debugInfo"])
+        expect(spec.expect).not.toHaveProperty(needsSymbols);
+    });
+  });
+
+  // `ci` comes from the config alone (resolveConfig never reads the
+  // environment for it), so the local rows hold on a CI agent too.
+  describe.each([
+    ["CI Release", { ci: true, buildType: "Release" }, false],
+    ["CI Release with assertions", { ci: true, buildType: "Release", assertions: true }, false],
+    // asan: false, because a Debug build defaults to ASan on some hosts and
+    // this row is the one that depends on `debug` alone.
+    ["CI Debug without ASan", { ci: true, buildType: "Debug", assertions: true, asan: false }, true],
+    ["CI ASan", { ci: true, buildType: "Release", asan: true, assertions: true }, true],
+    ["local Release", { buildType: "Release" }, true],
+    ["local Release with assertions", { buildType: "Release", assertions: true }, true],
+    ["local Debug", { buildType: "Debug", assertions: true }, true],
+    ["local ASan", { buildType: "Release", asan: true, assertions: true }, true],
+  ] as [string, PartialConfig, boolean][])("the static scans of a %s build", (_name, partial, warnOnly) => {
+    test(warnOnly ? "only warn" : "fail the build", () => {
+      using dir = tempDir("build-post-link", {});
+      const buildDir = String(dir);
+      const cfg = hostConfig(partial, buildDir);
+      const n = new Ninja({ buildDir });
+      const exe = resolve(buildDir, `bun-profile${cfg.exeSuffix}`);
+      emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
+      const out = n.toString().replace(/ \$\n +/g, " ");
+      const command = (rule: string) => new RegExp(`^rule ${rule}\\n  command = (.*)$`, "m").exec(out)![1]!;
+      const verify = command("binary_verify");
+      const duplicates = command("duplicate_symbols");
+
+      expect(binaryChecksWarnOnly(cfg)).toBe(warnOnly);
+      if (warnOnly) {
+        expect(verify).toContain("verify-binary.ts --warn-only binary ");
+        expect(duplicates).toContain("verify-binary.ts --warn-only duplicates ");
+      } else {
+        expect(verify).not.toContain("--warn-only");
+        expect(duplicates).not.toContain("--warn-only");
+      }
+    });
   });
 
   test("debug smoke_test has no strip dep (nothing to order against)", () => {
@@ -139,10 +221,10 @@ describe("emitPostLink ninja ordering", () => {
     expect(buildEdge(out, "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || bun");
     // Cross-compile: smoke_test short-circuits to a `check` phony (the
     // binary can't run on this host), so the strip race can't happen there;
-    // the static scans (ClassInfo canary, verify-binary, duplicate
+    // the static scans (verify-binary, duplicate
     // definitions) run on any host.
     expect(buildEdge(out, "phony")).toBe(
-      "build check: phony bun-profile bun-profile.classinfo-unique bun-profile.binary-verified bun-profile.duplicate-symbols-checked",
+      "build check: phony bun-profile bun-profile.binary-verified bun-profile.duplicate-symbols-checked",
     );
   });
 });

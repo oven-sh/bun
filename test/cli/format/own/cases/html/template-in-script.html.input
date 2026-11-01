@@ -1,0 +1,4 @@
+<!-- The doctype of HTML5 is in lower case in a file of HTML, in a template in a script in it too. -->
+<script>
+  const page = html`<!DOCTYPE html><title>${title}</title><script>a( )<\/script>`;
+</script>

@@ -11,8 +11,6 @@ const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = re
 
 if (process.env.NODE_DEBUG) require("node:util").debuglog("http");
 
-const { WebSocket, CloseEvent, MessageEvent } = globalThis;
-
 function createServer(options, callback) {
   return new Server(options, callback);
 }
@@ -89,7 +87,7 @@ function noopRestore() {}
 // (The fetch() global dispatcher half is not applicable here.)
 function setGlobalProxyFromEnv(env = process.env) {
   validateObject(env, "proxyEnv");
-  const { parseProxyUrl } = require("internal/http");
+  const { parseProxyUrl, redactInvalidProxyUrl } = require("internal/http");
   const httpProxy = parseProxyUrl(env, "http:");
   const httpsProxy = parseProxyUrl(env, "https:");
 
@@ -98,10 +96,10 @@ function setGlobalProxyFromEnv(env = process.env) {
   }
 
   if (httpProxy !== null && URL.canParse(httpProxy) === false) {
-    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${httpProxy}`);
+    throw $ERR_PROXY_INVALID_CONFIG(redactInvalidProxyUrl(httpProxy));
   }
   if (httpsProxy !== null && URL.canParse(httpsProxy) === false) {
-    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${httpsProxy}`);
+    throw $ERR_PROXY_INVALID_CONFIG(redactInvalidProxyUrl(httpsProxy));
   }
 
   let originalHttpsAgent, originalHttpAgent;

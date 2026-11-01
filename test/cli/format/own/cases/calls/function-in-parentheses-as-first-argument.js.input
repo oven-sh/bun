@@ -1,0 +1,3 @@
+setTimeout((()=>{p.value=!1}),o);
+setTimeout((function(){p.value=!1}),o);
+a(b,(()=>{p.value=!1}));

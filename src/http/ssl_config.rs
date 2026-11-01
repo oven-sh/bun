@@ -128,6 +128,18 @@ impl SSLConfig {
         Self::default()
     }
 
+    /// What was assigned to `tls.DEFAULT_CIPHERS`, for a config without `ciphers`. It then needs a context of its own, like one with `ciphers`.
+    pub fn set_default_ciphers(&mut self, ciphers: &[u8]) {
+        self.ssl_ciphers = bun_core::dupe_z(ciphers);
+        self.requires_custom_request_ctx = true;
+        // An empty TLS 1.2 list would leave BoringSSL's built-in one in effect.
+        if ciphers.is_empty() {
+            self.ssl_min_version = self
+                .ssl_min_version
+                .max(i32::from(bun_boringssl_sys::TLS1_3_VERSION));
+        }
+    }
+
     /// Borrow `server_name` as a `&CStr` (None if null). Convenience accessor
     /// for callers that previously pattern-matched `Option<CString>`.
     #[inline]

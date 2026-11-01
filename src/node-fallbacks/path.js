@@ -40,7 +40,7 @@ function normalizeStringPosix(path, allowAboveRoot) {
   for (var i = 0; i <= path.length; ++i) {
     if (i < path.length) code = path.charCodeAt(i);
     else if (code === 47 /*/*/) break;
-    else code = 47 /*/*/;
+    else code = 47; /*/*/
     if (code === 47 /*/*/) {
       if (lastSlash === i - 1 || dots === 1) {
         // NOOP
@@ -128,7 +128,7 @@ export function resolve() {
     }
 
     resolvedPath = path + "/" + resolvedPath;
-    resolvedAbsolute = path.charCodeAt(0) === 47 /*/*/;
+    resolvedAbsolute = path.charCodeAt(0) === 47; /*/*/
   }
 
   // At this point the path should be resolved to a full absolute path, but
@@ -167,7 +167,7 @@ export function normalize(path) {
 
 export function isAbsolute(path) {
   assertPath(path);
-  return path.length > 0 && path.charCodeAt(0) === 47 /*/*/;
+  return path.length > 0 && path.charCodeAt(0) === 47; /*/*/
 }
 
 export function join() {

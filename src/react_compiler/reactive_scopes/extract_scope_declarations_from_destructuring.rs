@@ -8,7 +8,8 @@
 //!
 //! Corresponds to `src/ReactiveScopes/ExtractScopeDeclarationsFromDestructuring.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
+use crate::collections::IdBitSet;
 
 use crate::hir::{
     DeclarationId, IdentifierId, InstructionKind, InstructionValue, LValue, Place,
@@ -31,7 +32,7 @@ pub(crate) fn extract_scope_declarations_from_destructuring(
     func: &mut ReactiveFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {
-    let mut declared: HashSet<DeclarationId> = HashSet::new();
+    let mut declared: IdBitSet<DeclarationId> = IdBitSet::new();
     for param in &func.params {
         let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
@@ -43,7 +44,7 @@ pub(crate) fn extract_scope_declarations_from_destructuring(
 }
 
 struct ExtractState {
-    declared: HashSet<DeclarationId>,
+    declared: IdBitSet<DeclarationId>,
 }
 
 struct Transform<'a> {
@@ -93,12 +94,12 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         }) = &mut instruction.value
         {
             // Check if this is a mixed destructuring (some declared, some not)
-            let mut reassigned: HashSet<IdentifierId> = HashSet::new();
+            let mut reassigned: HashSet<IdentifierId> = HashSet::default();
             let mut has_declaration = false;
 
-            for place in visitors::each_pattern_operand(&lvalue.pattern) {
+            for place in visitors::pattern_operands(&lvalue.pattern) {
                 let identifier = &self.env.identifiers[place.identifier.0 as usize];
-                if state.declared.contains(&identifier.declaration_id) {
+                if state.declared.contains(identifier.declaration_id) {
                     reassigned.insert(place.identifier);
                 } else {
                     has_declaration = true;
@@ -206,7 +207,7 @@ fn update_declared_from_instruction(
             }
             InstructionValue::Destructure { lvalue, .. } => {
                 if lvalue.kind != InstructionKind::Reassign {
-                    for place in visitors::each_pattern_operand(&lvalue.pattern) {
+                    for place in visitors::pattern_operands(&lvalue.pattern) {
                         let identifier = &env.identifiers[place.identifier.0 as usize];
                         state.declared.insert(identifier.declaration_id);
                     }

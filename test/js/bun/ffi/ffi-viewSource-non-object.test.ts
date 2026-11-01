@@ -98,7 +98,7 @@ describe("FFI JSCallback", () => {
   });
 
   test("constructs with a valid descriptor", () => {
-    using cb = new JSCallback(() => {}, { args: ["i32"], returns: "void" });
+    using cb = new JSCallback(() => {}, { args: ["i32"], returns: "void" }) as JSCallback & Disposable;
     expect(typeof cb.ptr).toBe("number");
     expect(cb.ptr).not.toBe(0);
   });

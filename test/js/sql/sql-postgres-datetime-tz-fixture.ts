@@ -12,10 +12,9 @@
 // Postgres server and asserts binary and text decode to the same instant.
 //
 // It also checks in-band that the "binary" query really received binary
-// results (the `0.1::real` sentinel), and sweeps sub-millisecond instants from
+// results (the float8 sentinel), and sweeps sub-millisecond instants from
 // 4714 BC to the JS Date limit against the server's own
-// floor(extract(epoch) * 1000), which covers the ranges where the text path
-// cannot serve as the oracle.
+// floor(extract(epoch) * 1000).
 
 import { SQL, randomUUIDv7 } from "bun";
 
@@ -30,6 +29,8 @@ await using sql = new SQL({
 // regardless of the client process TZ; the bug under test is purely client-side
 // decode of the naive wall-clock.
 await sql.unsafe("SET TIME ZONE 'UTC'");
+// For the format sentinel below.
+await sql.unsafe("SET extra_float_digits = 0");
 
 const t = "dt_tz_" + randomUUIDv7("hex").replaceAll("-", "");
 await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, ts TIMESTAMP, tstz TIMESTAMPTZ, d DATE)`;
@@ -86,11 +87,14 @@ function checkRows(protocol: string, rows: Array<Record<string, unknown>>, want:
   }
 }
 
-// `0.1::real` tells the two result formats apart in-band: the 4-byte binary
-// float4 decodes to Math.fround(0.1), the text rendering "0.1" to 0.1.
+// This sum tells the two result formats apart in-band: the binary float8 is
+// 0.30000000000000004, and with extra_float_digits = 0 its text is "0.3".
+const sentinel = "0.1::float8 + 0.2::float8 AS fmt";
+const BINARY = 0.1 + 0.2;
+const TEXT = 0.3;
 function checkFormat(protocol: string, rows: Array<{ fmt: number }>, want: number) {
   if (rows[0]?.fmt !== want) {
-    failures.push(`${protocol} query: format sentinel 0.1::real decoded to ${rows[0]?.fmt}, want ${want}`);
+    failures.push(`${protocol} query: format sentinel decoded to ${rows[0]?.fmt}, want ${want}`);
   }
 }
 
@@ -99,41 +103,37 @@ function checkFormat(protocol: string, rows: Array<{ fmt: number }>, want: numbe
 // asks for text results. With a parameter, Bind is sent after Describe and
 // requests binary for timestamp/timestamptz; the sentinel proves which one
 // each query got.
-const binaryRows = await sql`SELECT ts, tstz, d, 0.1::real AS fmt FROM ${sql(t)} WHERE id >= ${0} ORDER BY id`;
-const textRows = await sql`SELECT ts, tstz, d, 0.1::real AS fmt FROM ${sql(t)} ORDER BY id`.simple();
-checkFormat("binary", binaryRows, Math.fround(0.1));
-checkFormat("text", textRows, 0.1);
+const binaryRows = await sql`SELECT ts, tstz, d, ${sql.unsafe(sentinel)} FROM ${sql(t)} WHERE id >= ${0} ORDER BY id`;
+const textRows = await sql`SELECT ts, tstz, d, ${sql.unsafe(sentinel)} FROM ${sql(t)} ORDER BY id`.simple();
+checkFormat("binary", binaryRows, BINARY);
+checkFormat("text", textRows, TEXT);
 checkRows("binary", binaryRows, expected);
 checkRows("text", textRows, expected);
 
 // Sub-millisecond sweep, checked against the server's own arithmetic:
-// floor(extract(epoch) * 1000) is numeric (exact) on PostgreSQL 14+, and,
-// unlike the text path, is also an oracle where the text decoders are known to
-// differ and are not this decoder's business: BC dates and 5+ digit years fall
-// back to Date.parse, which yields Invalid Date for BC and reads a 5+ digit
-// year `timestamp` as local time. Those literals are checked on the binary
-// path only. Values beyond JS Date's +/-8.64e15 ms decode to Invalid Date.
-const subMsLiterals: Array<[literal: string, textToo: boolean]> = [
-  ["4714-11-24 00:00:00.000001 BC", false], // the Postgres minimum
-  ["0001-12-31 23:59:59.999999 BC", false],
+// floor(extract(epoch) * 1000) is numeric (exact) on PostgreSQL 14+.
+// Values beyond JS Date's +/-8.64e15 ms decode to Invalid Date.
+const subMsLiterals: string[] = [
+  "4714-11-24 00:00:00.000001 BC", // the Postgres minimum
+  "0001-12-31 23:59:59.999999 BC",
   // Years 1-99 used to be windowed into 19xx/20xx by the timestamptz text path.
-  ["0001-01-01 00:00:00.123456", true],
-  ["0099-12-31 23:59:59.999999", true],
-  ["0100-01-01 00:00:00.000999", true],
+  "0001-01-01 00:00:00.123456",
+  "0099-12-31 23:59:59.999999",
+  "0100-01-01 00:00:00.000999",
   // More than 2^53 µs from 2000-01-01: the old f64 conversion was lossy here
   // on top of truncating toward zero, on both sides of 1970.
-  ["1000-06-15 01:02:03.999999", true],
-  ["2300-01-01 00:00:00.000999", true],
-  ["3000-06-01 12:00:00.123999", true],
-  ["1600-02-29 12:00:00.000001", true],
-  ["1969-12-31 23:59:59.999999", true],
-  ["1969-12-31 23:59:59.000001", true],
-  ["1970-01-01 00:00:00.000001", true],
-  ["1970-01-01 00:00:00.999999", true],
-  ["1999-12-31 23:59:59.999999", true],
-  ["2000-01-01 00:00:00.000001", true],
-  ["275760-09-13 00:00:00.000999", false], // JS Date's maximum instant plus 999 µs floors onto the maximum
-  ["275760-09-14 00:00:00", false], // past the JS Date range: Invalid Date
+  "1000-06-15 01:02:03.999999",
+  "2300-01-01 00:00:00.000999",
+  "3000-06-01 12:00:00.123999",
+  "1600-02-29 12:00:00.000001",
+  "1969-12-31 23:59:59.999999",
+  "1969-12-31 23:59:59.000001",
+  "1970-01-01 00:00:00.000001",
+  "1970-01-01 00:00:00.999999",
+  "1999-12-31 23:59:59.999999",
+  "2000-01-01 00:00:00.000001",
+  "275760-09-13 00:00:00.000999", // JS Date's maximum instant plus 999 µs floors onto the maximum
+  "275760-09-14 00:00:00", // past the JS Date range: Invalid Date
 ];
 const JS_DATE_MAX_MS = 8.64e15;
 
@@ -144,29 +144,25 @@ for (const type of ["timestamp", "timestamptz"] as const) {
         (_, i) =>
           `${value(i)}::${type} AS v${i}, floor(extract(epoch FROM ${value(i)}::${type}) * 1000)::text AS ms${i}`,
       )
-      .concat("0.1::real AS fmt")
+      .concat(sentinel)
       .join(", ");
   // With parameters this is an extended query whose results arrive binary;
   // without, unsafe() sends a simple query whose results arrive as text.
-  const binaryResult = await sql.unsafe(
-    `SELECT ${columns(i => `$${i + 1}`)}`,
-    subMsLiterals.map(([literal]) => literal),
-  );
-  const textResult = await sql.unsafe(`SELECT ${columns(i => `'${subMsLiterals[i][0]}'`)}`);
-  checkFormat(`binary ${type} sweep`, binaryResult, Math.fround(0.1));
-  checkFormat(`text ${type} sweep`, textResult, 0.1);
+  const binaryResult = await sql.unsafe(`SELECT ${columns(i => `$${i + 1}`)}`, subMsLiterals);
+  const textResult = await sql.unsafe(`SELECT ${columns(i => `'${subMsLiterals[i]}'`)}`);
+  checkFormat(`binary ${type} sweep`, binaryResult, BINARY);
+  checkFormat(`text ${type} sweep`, textResult, TEXT);
   const [binary] = binaryResult;
   const [text] = textResult;
 
   for (let i = 0; i < subMsLiterals.length; i++) {
-    const [literal, textToo] = subMsLiterals[i];
+    const literal = subMsLiterals[i];
     const serverMs = Number(binary[`ms${i}`]);
     const want = Math.abs(serverMs) <= JS_DATE_MAX_MS ? serverMs : NaN;
     for (const [protocol, row] of [
       ["binary", binary],
       ["text", text],
     ] as const) {
-      if (protocol === "text" && !textToo) continue;
       const got = row[`v${i}`];
       const gotMs = got instanceof Date ? got.getTime() : undefined;
       if (!(gotMs === want || (Number.isNaN(gotMs) && Number.isNaN(want)))) {
@@ -203,15 +199,15 @@ const historicalBinary = await sql`
            ${lmt}::timestamptz AS tstz,
            ARRAY[${lmt}::timestamptz, '2024-06-15 12:00:00+00'::timestamptz] AS tstz_arr,
            ARRAY['2024-06-15 12:00:00'::timestamp] AS ts_arr,
-           0.1::real AS fmt`;
+           ${sql.unsafe(sentinel)}`;
 const historicalText = await sql.unsafe(`
     SELECT '${lmt}'::timestamptz::text AS tstz_text,
            '${lmt}'::timestamptz AS tstz,
            ARRAY['${lmt}'::timestamptz, '2024-06-15 12:00:00+00'::timestamptz] AS tstz_arr,
            ARRAY['2024-06-15 12:00:00'::timestamp] AS ts_arr,
-           0.1::real AS fmt`);
-checkFormat("binary historical", historicalBinary, Math.fround(0.1));
-checkFormat("text historical", historicalText, 0.1);
+           ${sentinel}`);
+checkFormat("binary historical", historicalBinary, BINARY);
+checkFormat("text historical", historicalText, TEXT);
 checkRows("binary historical", historicalBinary, historicalExpected);
 checkRows("text historical", historicalText, historicalExpected);
 

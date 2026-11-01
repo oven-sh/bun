@@ -1,0 +1,8 @@
+const x0 = a ? (b, c // prettier-ignore
+) : d;
+
+const x1 = a ? (b   =   c // prettier-ignore
+) : d;
+
+const x2 = (a   ,   b // prettier-ignore
+) ? c : d;

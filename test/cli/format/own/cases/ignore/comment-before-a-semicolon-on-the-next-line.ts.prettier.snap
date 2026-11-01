@@ -1,0 +1,13 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = 1; // prettier-ignore
+declare const b  :  2; // prettier-ignore
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = 1; // prettier-ignore
+declare const b  :  2; // prettier-ignore
+
+===================== End =====================

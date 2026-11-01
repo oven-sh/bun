@@ -106,6 +106,18 @@ impl UpdateRequest {
             }
     }
 
+    /// `matches` only compares hashes. This also compares the bytes, for a caller that replaces the
+    /// dependency it finds.
+    pub(crate) fn matches_exactly(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
+        self.matches(dependency, string_buf)
+            && if self.name.is_empty() {
+                self.version.literal.slice(self.version_buf())
+                    == dependency.version.literal.slice(string_buf)
+            } else {
+                self.name == dependency.name.slice(string_buf)
+            }
+    }
+
     pub(crate) fn get_name(&self) -> &[u8] {
         if self.is_aliased {
             self.name
@@ -222,26 +234,14 @@ impl UpdateRequest {
                 &SlicedString::init(input, value),
                 Some(&mut *log),
                 pm.as_deref_mut(),
-            ) else {
-                if fatal {
-                    Output::err_generic(
-                        "unrecognised dependency format: {}",
-                        format_args!("{}", bstr::BStr::new(positional)),
-                    );
-                } else {
-                    log.add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "unrecognised dependency format: {}",
-                            bstr::BStr::new(positional)
-                        ),
-                    );
-                }
-
-                return Err(crate::Error::UnrecognizedDependencyFormat);
+            )
+            .filter(|_| dependency::nameless_npm_alias(value).is_none()) else {
+                return Err(unrecognised_format(log, positional, fatal));
             };
-            if alias.is_some() && version.tag == dependency::version::Tag::Git {
+            // scp-style `user@host:path/repo`, where `user` was split off as the alias
+            if alias.is_some_and(|alias| !strings::contains_char(alias, b'/'))
+                && version.tag == dependency::version::Tag::Git
+            {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
                     None,
@@ -250,7 +250,13 @@ impl UpdateRequest {
                     &SlicedString::init(input, input),
                     Some(&mut *log),
                     pm.as_deref_mut(),
-                ) {
+                )
+                .filter(|ver| {
+                    matches!(
+                        ver.tag,
+                        dependency::version::Tag::Git | dependency::version::Tag::Github
+                    )
+                }) {
                     alias = None;
                     version = ver;
                 }
@@ -262,23 +268,7 @@ impl UpdateRequest {
                 dependency::version::Tag::Npm => version.npm().name.eql(placeholder, input, input),
                 _ => false,
             } {
-                if fatal {
-                    Output::err_generic(
-                        "unrecognised dependency format: {}",
-                        format_args!("{}", bstr::BStr::new(positional)),
-                    );
-                } else {
-                    log.add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "unrecognised dependency format: {}",
-                            bstr::BStr::new(positional)
-                        ),
-                    );
-                }
-
-                return Err(crate::Error::UnrecognizedDependencyFormat);
+                return Err(unrecognised_format(log, positional, fatal));
             }
 
             let mut request = UpdateRequest {
@@ -305,6 +295,24 @@ impl UpdateRequest {
 
         Ok(update_requests.as_mut_slice())
     }
+}
+
+#[cold]
+fn unrecognised_format(log: &mut Log, positional: &[u8], fatal: bool) -> crate::Error {
+    let positional = bun_core::fmt::for_terminal(bstr::BStr::new(positional));
+    if fatal {
+        Output::err_generic(
+            "unrecognised dependency format: {}",
+            format_args!("{}", positional),
+        );
+    } else {
+        log.add_error_fmt(
+            None,
+            Loc::EMPTY,
+            format_args!("unrecognised dependency format: {}", positional),
+        );
+    }
+    crate::Error::UnrecognizedDependencyFormat
 }
 
 impl PackageManager {
@@ -341,6 +349,25 @@ impl PackageManager {
     #[inline]
     pub(crate) fn is_update_request(&self, name_hash: PackageNameHash, name: &[u8]) -> bool {
         self.index_of_update_request(name_hash, name).is_some()
+    }
+
+    /// Named on the command line, or a direct dependency of the global package.json just installed.
+    pub(crate) fn links_bins_globally(&self, package_id: PackageID, installed: bool) -> bool {
+        self.options.global
+            && (self
+                .update_requests
+                .iter()
+                .any(|request| request.package_id == package_id)
+                || (installed
+                    && self
+                        .lockfile
+                        .packages
+                        .items_resolutions()
+                        .first()
+                        .is_some_and(|root| {
+                            root.get(self.lockfile.buffers.resolutions.as_slice())
+                                .contains(&package_id)
+                        })))
     }
 }
 

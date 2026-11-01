@@ -35,7 +35,8 @@ declare module "bun" {
     enableOfflineQueue?: boolean;
 
     /**
-     * TLS options
+     * TLS options. `serverName` sets the SNI and the name the certificate is
+     * verified against, which default to the URL host.
      */
     tls?: boolean | Bun.TLSOptions;
 

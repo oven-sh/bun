@@ -1,0 +1,20 @@
+{
+  "_id": "ships-no-deps",
+  "name": "ships-no-deps",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "ships-no-deps",
+      "version": "1.0.0",
+      "main": "index.js",
+      "_id": "ships-no-deps@1.0.0",
+      "dist": {
+        "integrity": "sha512-h40aeyQ4UjlSAJHFSvot+fxJ00t9xXKcDvsGRHvGlNUd0EsBd/GSsnlkB/QWHEDqCJvxcTdd/zfV8vXvPIjx5A==",
+        "shasum": "4b679c713c83a30d5a007b5974b1fa8904830b68",
+        "tarball": "http://localhost:4873/ships-no-deps/-/ships-no-deps-1.0.0.tgz"
+      }
+    }
+  }
+}

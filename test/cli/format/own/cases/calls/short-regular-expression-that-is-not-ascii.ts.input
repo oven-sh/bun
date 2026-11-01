@@ -1,0 +1,4 @@
+const a = text.replace(/[éé]/g, "a").replace(/\s+/g, " ").trim();
+const b = text.replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
+const c = text.replace(/[ab]/g, "a").replace(/\s+/g, " ").trim();
+const d = text.replace(/é{5}/g, "a").replace(/\s+/g, " ").trim();

@@ -1,0 +1,4 @@
+type A = {
+  [...r]: unknown;
+  [a?: string]: 1;
+};

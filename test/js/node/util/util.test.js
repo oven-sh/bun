@@ -550,6 +550,76 @@ describe("util", () => {
     assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
   });
 
+  // Expected values are from Node 26.
+  describe("diff", () => {
+    it("compares two strings by code unit", () => {
+      expect(util.diff("12345678", "12!!5!7!")).toEqual([
+        [0, "1"],
+        [0, "2"],
+        [1, "3"],
+        [1, "4"],
+        [-1, "!"],
+        [-1, "!"],
+        [0, "5"],
+        [1, "6"],
+        [-1, "!"],
+        [0, "7"],
+        [1, "8"],
+        [-1, "!"],
+      ]);
+      expect(util.diff("", "a")).toEqual([[-1, "a"]]);
+      expect(util.diff("a", "")).toEqual([[1, "a"]]);
+      expect(util.diff("😀a", "😀b")).toEqual([
+        [0, "\ud83d"],
+        [0, "\ude00"],
+        [1, "a"],
+        [-1, "b"],
+      ]);
+    });
+
+    it("compares two arrays of strings by item", () => {
+      expect(util.diff(["1", "2", "3"], ["1", "3", "4"])).toEqual([
+        [0, "1"],
+        [1, "2"],
+        [0, "3"],
+        [-1, "4"],
+      ]);
+      expect(util.diff(["ab"], "ab")).toEqual([
+        [1, "ab"],
+        [-1, "a"],
+        [-1, "b"],
+      ]);
+    });
+
+    it("returns an empty array for the same value", () => {
+      const lines = ["a"];
+      expect(util.diff("abc", "abc")).toEqual([]);
+      expect(util.diff(lines, lines)).toEqual([]);
+      expect(util.diff(1, 1)).toEqual([]);
+    });
+
+    it("throws for anything but strings", () => {
+      expect(() => util.diff(1, 2)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "actual" argument must be of type string. Received type number (1)',
+        }),
+      );
+      expect(() => util.diff("a")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "expected" argument must be of type string. Received undefined',
+        }),
+      );
+      expect(() => util.diff(["a", 1], ["a"])).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "actual[1]" argument must be of type string. Received type number (1)',
+        }),
+      );
+    });
+  });
+
   describe("getCallSites", () => {
     it("restores Error state when stackTraceLimit is non-writable", () => {
       const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
@@ -593,6 +663,18 @@ describe("util", () => {
       });
     }
 
+    it("reports a number that no int32 holds as it is", () => {
+      expect(util.getSystemErrorName(-4294967297)).toBe("Unknown system error -4294967297");
+      expect(util.getSystemErrorName(-2147483649)).toBe("Unknown system error -2147483649");
+      expect(util.getSystemErrorName(Number.MIN_SAFE_INTEGER)).toBe("Unknown system error -9007199254740991");
+    });
+
+    it("reports -0 with its sign", () => {
+      expect(() => util.getSystemErrorName(-0)).toThrow(
+        'The value of "err" is out of range. It must be a negative integer. Received -0',
+      );
+    });
+
     // Batch all node lookups into a single subprocess instead of one per code (was 74 spawns).
     const negativeSpaceCodes = [];
     for (let i = -4095; i <= -4023; i++) negativeSpaceCodes.push(i);
@@ -632,9 +714,65 @@ describe("util", () => {
   });
 });
 
+it("inspect() does not use isMapIterator and isSetIterator of the writable node:util/types", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const types = require("node:util/types");
+        const calls = { isMapIterator: 0, isSetIterator: 0 };
+        for (const name of Object.keys(calls)) {
+          const original = types[name];
+          types[name] = value => (calls[name]++, original(value));
+        }
+        // Loaded after the replacement.
+        const { inspect } = require("node:util");
+        const map = new Map([["a", 1]]);
+        const set = new Set([1]);
+        const inspected = [map.keys(), map.entries(), set.values(), set.entries(), { [Symbol.iterator]() {} }].map(v => inspect(v));
+        console.log(JSON.stringify({ inspected, calls }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: {
+      inspected: [
+        "[Map Iterator] { 'a' }",
+        "[Map Entries] { [ 'a', 1 ] }",
+        "[Set Iterator] { 1 }",
+        "[Set Entries] { [ 1, 1 ] }",
+        "{ Symbol(Symbol.iterator): [Function: [Symbol.iterator]] }",
+      ],
+      calls: { isMapIterator: 0, isSetIterator: 0 },
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("util.parseEnv", () => {
   it("accepts a String object without crashing", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
+  });
+
+  it.each([
+    [undefined, "undefined"],
+    [null, "null"],
+    [1, "type number (1)"],
+    [{}, "an instance of Object"],
+  ])("says what Node says of %p", (content, received) => {
+    expect(() => util.parseEnv(content)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "content" argument must be of type string. Received ${received}`,
+      }),
+    );
   });
 
   it("stores array-index keys as indexed properties", () => {

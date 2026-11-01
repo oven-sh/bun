@@ -1,0 +1,54 @@
+------------------
+{ printWidth: 40 }
+------------------
+<template>
+  <a
+    onclick="a(&quot;b&quot;);
+    c();"
+    onfocus="d(&quot;e&quot;);"
+    onblur="return false;"
+    onload="if (x) {
+      y();
+    }"
+  ></a>
+  <b
+    #default="{ a, b }"
+    v-slot:c="d"
+    v-for="(a, b) of c"
+    v-for="a in b"
+  ></b>
+</template>
+
+------------------
+{ printWidth: 80 }
+------------------
+<template>
+  <a
+    onclick="a(&quot;b&quot;);
+    c();"
+    onfocus="d(&quot;e&quot;);"
+    onblur="return false;"
+    onload="if (x) {
+      y();
+    }"
+  ></a>
+  <b #default="{ a, b }" v-slot:c="d" v-for="(a, b) of c" v-for="a in b"></b>
+</template>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<template>
+  <a
+    onclick="a(&quot;b&quot;);
+    c();"
+    onfocus="d(&quot;e&quot;);"
+    onblur="return false;"
+    onload="if (x) {
+      y();
+    }"
+  ></a>
+  <b #default="{ a, b }" v-slot:c="d" v-for="(a, b) of c" v-for="a in b"></b>
+</template>
+
+===================== End =====================

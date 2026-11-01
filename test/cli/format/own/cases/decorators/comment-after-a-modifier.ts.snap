@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+class A {
+  @a private readonly /* 1 */ b = 2;
+  @a static // 2
+  c() {}
+  @a static // 3
+  #d;
+  @a public async /* 4 */ e() {}
+  constructor(@a private readonly /* 5 */ f: B) {}
+}
+@a
+abstract class /* 6 */ C {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A {
+  @a private readonly /* 1 */ b = 2;
+  @a static // 2
+  c() {}
+  @a static // 3
+  #d;
+  @a public async /* 4 */ e() {}
+  constructor(@a private readonly /* 5 */ f: B) {}
+}
+@a
+abstract class /* 6 */ C {}
+
+===================== End =====================

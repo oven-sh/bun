@@ -82,3 +82,28 @@ extern "C" JSC::EncodedJSValue JSSocketAddressDTO__create(JSGlobalObject* global
 
     return JSValue::encode(thisObject);
 }
+
+// `out` is a user-provided object, so use [[Set]] for each field. Like Node's AddressToJS, ignore a store that `out` rejects.
+extern "C" [[ZIG_EXPORT(false_is_throw)]] bool JSSocketAddressDTO__assign(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedOut, JSC::EncodedJSValue address, JSC::EncodedJSValue port, bool isIPv6)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* out = asObject(JSValue::decode(encodedOut));
+    auto& commonStrings = Bun::commonStrings(vm);
+    JSValue family = isIPv6 ? commonStrings.IPv6String() : commonStrings.IPv4String();
+
+    PutPropertySlot familySlot(out, false);
+    out->methodTable()->put(out, globalObject, Identifier::fromString(vm, "family"_s), family, familySlot);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    PutPropertySlot addressSlot(out, false);
+    out->methodTable()->put(out, globalObject, Identifier::fromString(vm, "address"_s), JSValue::decode(address), addressSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    PutPropertySlot portSlot(out, false);
+    out->methodTable()->put(out, globalObject, WebCore::builtinNames(vm).portPublicName(), JSValue::decode(port), portSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    return true;
+}

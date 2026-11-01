@@ -40,7 +40,75 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
   });
 });
 
+test("dns.getCacheStats returns a new plain object of integers", () => {
+  const stats = dns.getCacheStats();
+  expect(Object.getPrototypeOf(stats)).toBe(Object.prototype);
+  expect(Object.keys(stats)).toEqual([
+    "cacheHitsCompleted",
+    "cacheHitsInflight",
+    "cacheMisses",
+    "size",
+    "errors",
+    "totalCount",
+  ]);
+  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(stats))) {
+    expect(descriptor).toEqual({ value: expect.any(Number), writable: true, enumerable: true, configurable: true });
+    expect(descriptor.value).toBeInteger();
+  }
+  expect(dns.getCacheStats()).not.toBe(stats);
+});
+
 describe("dns.prefetch", () => {
+  it("checks its arguments", () => {
+    for (const hostname of [undefined, null, 1, {}, [], Symbol(), { toString: () => "localhost" }] as any[]) {
+      expect(() => dns.prefetch(hostname)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "hostname must be a string",
+        }),
+      );
+    }
+    for (const [port, received] of [
+      ["80", "type string ('80')"],
+      [true, "type boolean (true)"],
+      [80n, "type bigint (80n)"],
+      [{ valueOf: () => 80 }, "an instance of Object"],
+    ] as any[]) {
+      expect(() => dns.prefetch("localhost", port)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "port" argument must be of type number. Received ${received}`,
+        }),
+      );
+    }
+    for (const port of [80.5, NaN, Infinity]) {
+      expect(() => dns.prefetch("localhost", port)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "port" is out of range. It must be an integer. Received ${port}`,
+        }),
+      );
+    }
+    for (const [port, received] of [
+      [-1, "-1"],
+      [65536, "65536"],
+      [2 ** 53, "9_007_199_254_740_992"],
+    ]) {
+      expect(() => dns.prefetch("localhost", port as number)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "port" is out of range. It must be >= 0 && <= 65535. Received ${received}`,
+        }),
+      );
+    }
+    // Not "localhost": the cache is keyed by the name, and the next test needs it cold.
+    for (const port of [undefined, null, 0, 65535] as any[]) expect(dns.prefetch("127.0.0.1", port)).toBeUndefined();
+  });
+
   it("should prefetch", async () => {
     // A local server keeps the test off the external network. "localhost" gets a
     // cache entry like any other name, which prefetch and fetch share.

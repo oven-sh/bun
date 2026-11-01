@@ -1,4 +1,4 @@
-import { $, ShellError, ShellPromise } from "bun";
+import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix } from "harness";
 import { totalmem } from "os";
@@ -24,6 +24,18 @@ describe("ShellOutput + ShellError", () => {
     output = await withErr($`echo hello; ls oogabooga`);
     expect(output.stderr.toString()).toEqual("ls: oogabooga: No such file or directory\n");
     expect(output.blob()).toEqual(new Blob([new TextEncoder().encode("hello")]));
+  });
+
+  test("blob() does not read Blob from globalThis", async () => {
+    const { Blob } = globalThis;
+    globalThis.Blob = class {} as typeof Blob;
+    try {
+      expect(await (await $`echo hello`.quiet()).blob().text()).toBe("hello\n");
+      expect(await (await $`echo hello`.blob()).text()).toBe("hello\n");
+      expect(await (await withErr($`echo hello; ls oogabooga`.quiet())).blob().text()).toBe("hello\n");
+    } finally {
+      globalThis.Blob = Blob;
+    }
   });
 });
 
@@ -62,13 +74,13 @@ describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("stdout at the Buffer l
   }, 120_000);
 });
 
-async function withErr(promise: ShellPromise): Promise<ShellError> {
-  let err: ShellError | undefined;
+async function withErr(promise: $.ShellPromise): Promise<$.ShellError> {
+  let err: $.ShellError | undefined;
   try {
     await promise;
   } catch (e) {
-    err = e as ShellError;
+    err = e as $.ShellError;
   }
   expect(err).toBeDefined();
-  return err as ShellError;
+  return err as $.ShellError;
 }

@@ -1,14 +1,5 @@
 #include "config.h"
 #include "MessagePort.h"
-
-// When the verification harness reverts src/ to origin/main, this file and
-// MessagePortPipe.h survive as new untracked files but MessagePort.h /
-// TransferredMessagePort.h revert to their identifier-based predecessors.
-// The body below references symbols that only exist on the pipe-backed
-// MessagePort.h (dispatchOneMessage, the struct TransferredMessagePort), so
-// compile it only when that header is present.
-#if BUN_MESSAGEPORT_USES_PIPE
-
 #include "MessagePortPipe.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/Locker.h>
@@ -358,5 +349,3 @@ void MessagePortPipe::notifyPeerClosed(uint8_t peerSide)
 }
 
 } // namespace WebCore
-
-#endif // BUN_MESSAGEPORT_USES_PIPE

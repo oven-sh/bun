@@ -3,15 +3,15 @@ use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;
 use std::collections::VecDeque;
 
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
-    Strong,
+    ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
 use bun_lsquic_sys as lsquic;
 
 use super::endpoint::alloc_exposed_array_buffer;
 use super::ffi::lsquic_callback;
-use super::session::{QuicSession, SessionEvent};
+use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
@@ -21,7 +21,7 @@ const QUIC_STREAM_HEADERS_FLAGS_TERMINAL: u32 = 1;
 /// Mirrors Node's `Stream::State` (see `node_quic_binding.rs` for the
 /// `IDX_STATE_STREAM_*` offsets the JS layer reads).
 #[repr(C)]
-pub struct StreamState {
+pub(crate) struct StreamState {
     pub(crate) id: i64,
     pub(crate) pending: u8,
     pub(crate) fin_sent: u8,
@@ -80,6 +80,11 @@ const PULL_STATUS_DATA: f64 = 1.0;
 const PULL_STATUS_BLOCKED: f64 = 2.0;
 const PULL_STATUS_ERROR: f64 = -1.0;
 
+/// Identifies a stream within its session. Keys are never reused, so unlike a pointer,
+/// a stale key can't match a newer stream.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct Key(pub(super) u64);
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum PendingEnd {
     #[default]
@@ -105,12 +110,13 @@ pub(super) struct Inbound {
 /// `#[repr(C)]` so `vtable` is at offset 0 — the C shim reads it via
 /// `*(us_nq_vtable**)stream_ctx`. Without it Rust may reorder fields.
 #[repr(C)]
-pub struct QuicStream {
+pub(crate) struct QuicStream {
     /// MUST stay the first field — see `node_quic_shim.c`.
     vtable: *const lsquic::NqVtable,
     raw: Cell<*mut lsquic::lsquic_stream>,
     /// Owning session (raw pointer; the JS-side Strong keeps it alive).
     session: Cell<*mut QuicSession>,
+    key: Key,
     session_js: JsCell<Option<Strong>>,
     this_value: JsCell<JsRef>,
     state: Cell<*mut StreamState>,
@@ -131,18 +137,30 @@ pub struct QuicStream {
     destroyed: Cell<bool>,
 }
 
+impl Drop for QuicStream {
+    fn drop(&mut self) {
+        if let Some(s) = self.ls() {
+            // SAFETY: a non-null `raw` is live (see `ls()`).
+            unsafe { s.set_ctx(null_mut()) };
+        }
+    }
+}
+
 impl QuicStream {
     pub(super) fn create(
         global: &JSGlobalObject,
         vtable: *const lsquic::NqVtable,
         session: *mut QuicSession,
+        key: Key,
         session_handle: JSValue,
         raw: *mut lsquic::lsquic_stream,
     ) -> JsResult<(*mut QuicStream, JSValue)> {
+        // `bind_raw` sets `raw` after the allocations below succeed.
         let stream = QuicStream {
             vtable,
-            raw: Cell::new(raw),
+            raw: Cell::new(null_mut()),
             session: Cell::new(session),
+            key,
             session_js: JsCell::new(Some(Strong::create(session_handle, global))),
             this_value: JsCell::new(JsRef::empty()),
             state: Cell::new(null_mut()),
@@ -161,8 +179,9 @@ impl QuicStream {
             close_reported: Cell::new(false),
             destroyed: Cell::new(false),
         };
-        let raw_ptr = bun_core::heap::into_raw(Box::new(stream));
-        let handle = crate::generated_classes::js_QuicStream::to_js(raw_ptr, global);
+        let this_value = stream.into_js_wrapper(global);
+        let handle = this_value.to_js();
+        let raw_ptr = this_value.payload_ptr().as_ptr();
 
         let state_ptr = alloc_exposed_array_buffer(
             global,
@@ -179,7 +198,7 @@ impl QuicStream {
         handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
         handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
 
-        // SAFETY: `raw_ptr` was just created and is uniquely owned.
+        // SAFETY: the payload of `handle`.
         let this = unsafe { &*raw_ptr };
         #[expect(
             clippy::cast_ptr_alignment,
@@ -232,14 +251,34 @@ impl QuicStream {
         if (urgency, incremental) != DEFAULT_PRIORITY {
             let _ = s.set_http_prio(urgency, incremental);
         }
+        // lsquic_stream_send_headers only buffers the block; the flush in
+        // drain_outbound needs a write event, which nothing else requests
+        // unless the JS side already started the writer.
+        let mut want_write = false;
         for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 && eos {
-                self.with_state(|st| {
-                    st.fin_sent = 1;
-                    st.write_ended = 1;
+            if s.send_headers(&bytes, count, eos) == 0 {
+                if eos {
+                    self.with_state(|st| {
+                        st.fin_sent = 1;
+                        st.write_ended = 1;
+                    });
+                    s.shutdown(1);
+                } else {
+                    want_write = true;
+                }
+            } else {
+                // sendHeaders() returned true when it queued this block, so
+                // `closed` is what reports the failure.
+                s.reset(H3_INTERNAL_ERROR);
+                s.stop_sending(H3_INTERNAL_ERROR);
+                self.mark_reset(H3_INTERNAL_ERROR);
+                self.with_state(|st| st.write_ended = 1);
+                self.outbound.with_mut(|o| {
+                    o.data.clear();
+                    o.end = PendingEnd::None;
                 });
-                s.shutdown(1);
+                break;
             }
         }
         if uni {
@@ -257,13 +296,13 @@ impl QuicStream {
         } else {
             s.want_read(true);
         }
-        if self.outbound.get().started {
+        if want_write || self.outbound.get().started {
             s.want_write(true);
         }
     }
 
     /// The owning session, if still attached. The `session_js` Strong keeps
-    /// the session's JS wrapper (and thus the boxed `QuicSession`) alive
+    /// the session's JS wrapper (and thus the `QuicSession` inside it) alive
     /// while this stream holds the back-pointer; `teardown()` nulls the
     /// pointer before that Strong is dropped, so a non-null pointer is
     /// always dereferenceable on the JS thread.
@@ -354,6 +393,10 @@ impl QuicStream {
             return true;
         }
         self.ls().is_some_and(|s| s.has_unacked_data())
+    }
+    /// True until lsquic opens the stream.
+    pub(super) fn is_pending(&self) -> bool {
+        self.with_state(|s| s.pending != 0)
     }
 
     pub(super) fn stream_id(&self) -> i64 {
@@ -462,9 +505,7 @@ impl QuicStream {
         if !session.is_null() {
             // SAFETY: the session outlives its streams.
             unsafe {
-                (*session).push_event(SessionEvent::StreamBlocked {
-                    stream: core::ptr::from_ref(self).cast_mut(),
-                });
+                (*session).push_event(SessionEvent::StreamBlocked { stream: self.key });
             }
         }
     }
@@ -512,9 +553,7 @@ impl QuicStream {
                 }
             } else if end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
                 if let Some(session) = self.session_ref() {
-                    session.push_event(SessionEvent::StreamWantsTrailers {
-                        stream: core::ptr::from_ref(self).cast_mut(),
-                    });
+                    session.push_event(SessionEvent::StreamWantsTrailers { stream: self.key });
                 }
             }
             s.want_write(false);
@@ -528,9 +567,7 @@ impl QuicStream {
         });
         if was_full && pending < hwm {
             if let Some(session) = self.session_ref() {
-                session.push_event(SessionEvent::StreamDrain {
-                    stream: core::ptr::from_ref(self).cast_mut(),
-                });
+                session.push_event(SessionEvent::StreamDrain { stream: self.key });
             }
         }
     }
@@ -549,8 +586,13 @@ impl QuicStream {
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref()
-                .run_callback(wakeup.get(), global, JSValue::UNDEFINED, &[]);
+            vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
+                wakeup.get(),
+                global,
+                JSValue::UNDEFINED,
+                &[],
+            );
         }
     }
 
@@ -574,7 +616,7 @@ impl QuicStream {
             // The session's `streams` Vec is the only other holder; remove
             // it before downgrading so process_events can't iterate a freed
             // stream. SAFETY: as above.
-            unsafe { (*session).remove_stream(core::ptr::from_ref(self).cast_mut()) };
+            unsafe { (*session).remove_stream(self.key) };
         }
         self.outbound.with_mut(|o| o.data.clear());
         self.inbound.with_mut(|i| {
@@ -584,38 +626,52 @@ impl QuicStream {
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref()
-                .run_callback(wakeup.get(), global, JSValue::UNDEFINED, &[]);
+            vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
+                wakeup.get(),
+                global,
+                JSValue::UNDEFINED,
+                &[],
+            );
         }
         self.wakeup.set(None);
         self.session_js.set(None);
         self.this_value.with_mut(|r| r.downgrade());
     }
 
-    pub(crate) fn get_reader(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        self.with_state(|s| s.has_reader = 1);
-        Ok(frame.this())
+    /// Replaces `on_stream_close` after `QuicEndpoint::detach_for_finalize`.
+    pub(super) unsafe extern "C" fn on_close_detached(
+        ctx: *mut c_void,
+        _s: *mut lsquic::lsquic_stream,
+    ) {
+        // SAFETY: `Drop` nulls the lsquic ctx, so a non-null ctx is live.
+        // `session` may be freed, so only touch `raw`.
+        if let Some(qs) = unsafe { super::ffi::ctx_ref::<QuicStream>(ctx) } {
+            qs.raw.set(null_mut());
+        }
     }
 
-    pub(crate) fn set_wakeup(
-        &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let cb = frame.arguments_as_array::<1>()[0];
+    pub(crate) fn get_reader<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
+        self.with_state(|s| s.has_reader = 1);
+        this_value
+    }
 
-        if cb.is_empty_or_undefined_or_null() {
+    pub(crate) fn set_wakeup(&self, cx: &mut JsScope<'_>, callback: JsLocal<'_>) {
+        let global = cx.global();
+        let cb = callback.to_js();
+
+        if cb.is_undefined_or_null() {
             self.wakeup.set(None);
         } else {
             self.wakeup.set(Some(Strong::create(cb, global)));
         }
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn pull(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let cb = frame.arguments_as_array::<1>()[0];
+    pub(crate) fn pull(&self, cx: &mut JsScope<'_>, callback: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let cb = callback.to_js();
         if !cb.is_callable() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let (status, buffer) = self.inbound.with_mut(|inbound| {
             if inbound.errored {
@@ -641,24 +697,22 @@ impl QuicStream {
         };
         let vm = global.bun_vm().as_mut();
         vm.event_loop_ref().run_callback(
+            bun_event_loop::ContextId::NONE,
             cb,
             global,
             JSValue::UNDEFINED,
             &[JSValue::js_number(status), buffer_js],
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub(crate) fn attach_source(
-        &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn attach_source(&self, cx: &mut JsScope<'_>, source: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
-        let source = frame.arguments_as_array::<1>()[0];
-        let bytes = if source.is_empty_or_undefined_or_null() {
+        let source = source.to_js();
+        let bytes = if source.is_undefined_or_null() {
             Vec::new()
         } else if let Some(buf) = source.as_array_buffer(global) {
             buf.byte_slice().to_vec()
@@ -674,30 +728,26 @@ impl QuicStream {
         });
         self.with_state(|s| s.has_outbound = 1);
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub(crate) fn init_streaming_source(
-        &self,
-        _g: &JSGlobalObject,
-        _f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn init_streaming_source(&self) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
         self.outbound.with_mut(|o| o.started = true);
         self.with_state(|s| {
             s.has_outbound = 1;
             s.write_desired_size = s.high_water_mark;
         });
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn write(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn write(&self, cx: &mut JsScope<'_>, batch: JsLocal<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        let batch = frame.arguments_as_array::<1>()[0];
+        let batch = batch.to_js();
         let mut queued: u64 = 0;
         let mut append = |bytes: &[u8]| {
             queued += bytes.len() as u64;
@@ -724,9 +774,9 @@ impl QuicStream {
         Ok(JSValue::js_number(queued as f64))
     }
 
-    pub(crate) fn end_write(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn end_write(&self, _: &mut JsScope<'_>) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
         let wants_trailers = self.with_state(|s| s.wants_trailers != 0);
         self.outbound.with_mut(|o| {
@@ -741,14 +791,14 @@ impl QuicStream {
             session.note_stream_write();
         }
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn destroy(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, error: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
-        let arg = frame.arguments_as_array::<1>()[0];
+        let arg = error.to_js();
         let cascading = arg.is_boolean() && arg.to_boolean();
         let code = if arg.is_object() {
             arg.get(global, "code")?.map(error_code_arg).unwrap_or(0)
@@ -791,14 +841,14 @@ impl QuicStream {
             // finalized between teardown and here.
             unsafe { (*session).schedule_process() };
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub(crate) fn reset_stream(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn reset_stream(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
-        let code = error_code_arg(frame.arguments_as_array::<1>()[0]);
+        let code = error_code_arg(code.to_js());
         self.with_state(|s| {
             s.write_ended = 1;
             s.reset = 1;
@@ -812,14 +862,13 @@ impl QuicStream {
             s.reset(code);
         }
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn stop_sending(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn stop_sending(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
-        let code = error_code_arg(frame.arguments_as_array::<1>()[0]);
+        let code = error_code_arg(code.to_js());
         if let Some(s) = self.ls() {
             s.stop_sending(code);
         }
@@ -832,21 +881,24 @@ impl QuicStream {
             }
         });
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
     }
 
     /// Node parity for streams created and abandoned in one turn.
     pub(crate) fn abort_for_destroy(
         &self,
-        _g: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+        _: &mut JsScope<'_>,
+        stop_sending_code: JsLocal<'_>,
+        reset_code: JsLocal<'_>,
+    ) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
-        let [stop_arg, reset_arg] = frame.arguments_as_array::<2>();
-        let stop = (!stop_arg.is_empty_or_undefined_or_null()).then(|| error_code_arg(stop_arg));
-        let reset = (!reset_arg.is_empty_or_undefined_or_null()).then(|| error_code_arg(reset_arg));
+        let stop_sending_code = stop_sending_code.to_js();
+        let reset_code = reset_code.to_js();
+        let stop = (!stop_sending_code.is_empty_or_undefined_or_null())
+            .then(|| error_code_arg(stop_sending_code));
+        let reset =
+            (!reset_code.is_empty_or_undefined_or_null()).then(|| error_code_arg(reset_code));
         if let Some(code) = stop {
             self.inbound.with_mut(|i| i.ended = true);
             self.with_state(|s| {
@@ -881,15 +933,11 @@ impl QuicStream {
             }
         }
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn set_priority(
-        &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let packed = frame.arguments_as_array::<1>()[0].coerce_to_i32(global)? as u32;
+    pub(crate) fn set_priority(&self, cx: &mut JsScope<'_>, priority: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let packed = priority.to_js().coerce_to_i32(global)? as u32;
         let (urgency, incremental) = ((packed >> 1) as u8, packed & 1 != 0);
         let previous = self.priority.replace((urgency, incremental));
         // Only an actual change goes on the wire: set_http_prio writes a
@@ -900,36 +948,38 @@ impl QuicStream {
                 let _ = s.set_http_prio(urgency, incremental);
             }
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
-    pub(crate) fn get_priority(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_priority(&self) -> u32 {
         let (urgency, incremental) = self
             .ls()
             .and_then(|s| s.get_http_prio())
             .unwrap_or_else(|| self.priority.get());
-        Ok(JSValue::js_number(f64::from(
-            (u32::from(urgency) << 1) | u32::from(incremental),
-        )))
+        (u32::from(urgency) << 1) | u32::from(incremental)
     }
     pub(crate) fn send_headers(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        cx: &mut JsScope<'_>,
+        kind: JsLocal<'_>,
+        headers: JsLocal<'_>,
+        flags: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.destroyed.get() {
             return Ok(JSValue::js_boolean(false));
         }
-        let [kind_arg, header_tuple, flags] = frame.arguments_as_array::<3>();
+        let kind = kind.to_js();
+        let headers = headers.to_js();
+        let flags = flags.to_js();
         // `buildNgHeaderString` returns [nul-joined string, pair count]; the
         // count is what keeps the latin1 encode below unspliceable.
-        let header_string = header_tuple.get_index(global, 0)?;
-        let header_count = header_tuple.get_index(global, 1)?.coerce_to_i32(global)?;
+        let header_string = headers.get_index(global, 0)?;
+        let header_count = headers.get_index(global, 1)?.coerce_to_i32(global)?;
         // Latin-1 on the wire, as node does (`StringBytes::Write(.., LATIN1)`).
         use crate::webcore::encoding::BunStringEncode as _;
         let bytes = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
-        let is_trailing =
-            kind_arg.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
+        let is_trailing = kind.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
         let eos = is_trailing
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         let Some(s) = self.ls() else {
@@ -996,9 +1046,10 @@ pub(super) unsafe extern "C" fn on_new_stream(
     if is_local {
         if let Some(qs) = session.take_pending_local_stream(id & STREAM_ID_UNI_BIT as u64 != 0) {
             // SAFETY: pending streams are kept alive by their wrapper Strong.
-            unsafe { (*qs).bind_raw(s) };
+            let pending = unsafe { &*qs };
+            pending.bind_raw(s);
             session.push_event(SessionEvent::StreamReady {
-                stream: qs,
+                stream: pending.key,
                 remote: false,
             });
             return qs.cast();
@@ -1023,49 +1074,56 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     }
     // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
-    if let Some(hset) = stream.take_header_set() {
-        let pairs = hset.pairs();
-        /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
-        /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
-        /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
-        const H3_MESSAGE_ERROR: u64 = 0x10e;
-        let has_status = pairs
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .find(|kv| kv[0] == b":status")
-            .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
-        // A :status in a request is malformed: node's nghttp3 resets the
-        // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
-        // the request unanswered until the idle timeout.
-        let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
-        if peer_is_client && has_status.is_some() {
-            if let Some(s) = qs.ls() {
-                // reset() only ends the read side when the peer already
-                // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
-                // request streaming a body into a stream nothing will answer.
-                s.reset(H3_MESSAGE_ERROR);
-                s.stop_sending(H3_MESSAGE_ERROR);
+    // Returns false if a malformed header block reset the stream.
+    let claim_header_sets = || -> bool {
+        while let Some(hset) = stream.take_header_set() {
+            let pairs = hset.pairs();
+            /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
+            /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
+            /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
+            const H3_MESSAGE_ERROR: u64 = 0x10e;
+            let has_status = pairs
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .find(|kv| kv[0] == b":status")
+                .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
+            // A :status in a request is malformed: node's nghttp3 resets the
+            // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
+            // the request unanswered until the idle timeout.
+            let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
+            if peer_is_client && has_status.is_some() {
+                if let Some(s) = qs.ls() {
+                    // reset() only ends the read side when the peer already
+                    // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
+                    // request streaming a body into a stream nothing will answer.
+                    s.reset(H3_MESSAGE_ERROR);
+                    s.stop_sending(H3_MESSAGE_ERROR);
+                }
+                qs.mark_reset(H3_MESSAGE_ERROR);
+                return false;
             }
-            qs.mark_reset(H3_MESSAGE_ERROR);
-            return;
+            // 1xx interim responses are HINTS (RFC 9114 §4.1).
+            let is_interim = has_status.unwrap_or(false);
+            let kind = if is_interim {
+                QUIC_STREAM_HEADERS_KIND_HINTS
+            } else if qs.mark_headers_received() {
+                QUIC_STREAM_HEADERS_KIND_INITIAL
+            } else {
+                QUIC_STREAM_HEADERS_KIND_TRAILING
+            };
+            if let Some(session) = qs.session_ref() {
+                session.push_event(SessionEvent::StreamHeaders {
+                    stream: qs.key,
+                    pairs,
+                    kind,
+                });
+            }
         }
-        // 1xx interim responses are HINTS (RFC 9114 §4.1).
-        let is_interim = has_status.unwrap_or(false);
-        let kind = if is_interim {
-            QUIC_STREAM_HEADERS_KIND_HINTS
-        } else if qs.mark_headers_received() {
-            QUIC_STREAM_HEADERS_KIND_INITIAL
-        } else {
-            QUIC_STREAM_HEADERS_KIND_TRAILING
-        };
-        if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamHeaders {
-                stream: ctx.cast(),
-                pairs,
-                kind,
-            });
-        }
+        true
+    };
+    if !claim_header_sets() {
+        return;
     }
     if stream.received_early_data() {
         qs.with_state(|s| s.received_early_data = 1);
@@ -1082,6 +1140,10 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                 got_any = true;
             }
             0 => {
+                // lsquic returns 0 even if this read decoded one more header block.
+                if !claim_header_sets() {
+                    break;
+                }
                 qs.push_inbound(&[], true);
                 stream.want_read(false);
                 let write_done = qs.with_state(|s| s.fin_sent != 0 || s.write_ended != 0);
@@ -1093,12 +1155,29 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                 got_any = true;
                 break;
             }
-            _ => break,
+            _ => {
+                // lsquic resets a request above the id of a GOAWAY without on_reset,
+                // and calls on_read on every tick until the stream is closed.
+                if stream.reset_received() {
+                    /// RFC 9114 §8.1: the server did no application processing.
+                    const H3_REQUEST_REJECTED: u64 = 0x10b;
+                    qs.mark_reset(H3_REQUEST_REJECTED);
+                    stream.close();
+                    if let Some(session) = qs.session_ref() {
+                        session.push_event(SessionEvent::StreamReset {
+                            stream: qs.key,
+                            code: H3_REQUEST_REJECTED,
+                        });
+                    }
+                    got_any = true;
+                }
+                break;
+            }
         }
     }
     if got_any {
         if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamWake { stream: ctx.cast() });
+            session.push_event(SessionEvent::StreamWake { stream: qs.key });
         }
     }
 }
@@ -1108,18 +1187,15 @@ lsquic_callback! {
         qs.drain_outbound();
     }
 
-    pub(super) fn on_stream_close(
-        ctx: *mut c_void as qs: &QuicStream,
-        _s: *mut lsquic::lsquic_stream,
-    ) {
+    pub(super) fn on_stream_close(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
         // The lsquic_stream is freed immediately after this callback returns.
         qs.raw.set(null_mut());
         if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamClosed { stream: ctx.cast() });
+            session.push_event(SessionEvent::StreamClosed { stream: qs.key });
         }
     }
 
-    pub(super) fn on_stream_reset(ctx: *mut c_void as qs: &QuicStream, how: c_int, code: u64) {
+    pub(super) fn on_stream_reset(qs: &QuicStream, how: c_int, code: u64) {
         if how == 0 || how == 2 {
             qs.mark_reset(code);
             if let Some(s) = qs.ls() {
@@ -1134,10 +1210,10 @@ lsquic_callback! {
             }
             if let Some(session) = qs.session_ref() {
                 session.push_event(SessionEvent::StreamReset {
-                    stream: ctx.cast(),
+                    stream: qs.key,
                     code,
                 });
-                session.push_event(SessionEvent::StreamWake { stream: ctx.cast() });
+                session.push_event(SessionEvent::StreamWake { stream: qs.key });
             }
         }
         if how == 1 || how == 2 {
@@ -1146,10 +1222,10 @@ lsquic_callback! {
             if let Some(session) = qs.session_ref() {
                 // Node's `onstream` still observes a live writer.
                 session.push_event(SessionEvent::StreamStopSending {
-                    stream: ctx.cast(),
+                    stream: qs.key,
                     code,
                 });
-                session.push_event(SessionEvent::StreamWake { stream: ctx.cast() });
+                session.push_event(SessionEvent::StreamWake { stream: qs.key });
             } else {
                 qs.apply_peer_stop_sending(code);
             }

@@ -1,6 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
 use bun_core::strings;
@@ -20,11 +20,12 @@ use crate::{DependencyID, ExtractData, PackageID};
 use crate::PackageManager;
 use crate::bin_real as bin;
 use crate::package_install;
-use crate::package_installer::{NodeModulesFolder, PackageInstaller, TreeContext};
+use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
 use crate::package_manager_task as Task;
+use crate::prune::LinkedNodeModules;
 
 /// `RunTasksCallbacks` impl for the hoisted-install loop, with
 /// `Ctx == PackageInstaller`.
@@ -47,6 +48,134 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     }
 }
 
+/// Restores the trees that `Lockfile::filter` replaced for the install pass, and ends the progress
+/// bar.
+struct RestoreManager {
+    manager: *mut PackageManager,
+    trees: Vec<tree::Tree>,
+    hoisted_dependencies: Vec<DependencyID>,
+    log_level: package_manager::Options::LogLevel,
+}
+
+impl Drop for RestoreManager {
+    fn drop(&mut self) {
+        // SAFETY: `manager` is the provenance root for every access of
+        // `install_hoisted_packages` to its `this`; this runs after all of
+        // its borrows have ended.
+        let this = unsafe { &mut *self.manager };
+        if self.log_level.show_progress() {
+            this.progress.root.end();
+            this.progress = Progress::default();
+        }
+        // The progress-node pointers target stack locals of `install_hoisted_packages`.
+        this.scripts_node = None;
+        this.downloads_node = None;
+        this.lockfile.buffers.trees = core::mem::take(&mut self.trees);
+        this.lockfile.buffers.hoisted_dependencies =
+            core::mem::take(&mut self.hoisted_dependencies);
+    }
+}
+
+/// Runs tasks whenever the event loop wakes up, until `links` is 0 or (`None`) nothing is pending or links wait.
+fn run_tasks_until_done(
+    mgr: *mut PackageManager,
+    installer: &mut PackageInstaller<'_>,
+    links: Option<&AtomicUsize>,
+) -> crate::Result<()> {
+    struct Closure<'a, 'b> {
+        installer: &'a mut PackageInstaller<'b>,
+        err: Option<crate::Error>,
+        // raw `*mut` — `sleep_until` also receives this pointer, so `&mut` here would alias.
+        manager: *mut PackageManager,
+        links: Option<&'a AtomicUsize>,
+    }
+
+    impl<'a, 'b> Closure<'a, 'b> {
+        fn is_done(closure: &mut Self) -> bool {
+            // SAFETY: `closure.manager` is the raw provenance root set
+            // below; `sleep_until`/`tick_raw` hold no `&mut` across
+            // this callback, so this is the unique live borrow.
+            let manager = unsafe { &mut *closure.manager };
+            let log_level = manager.options.log_level;
+            if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
+                manager,
+                closure.installer,
+                true,
+                log_level,
+            ) {
+                closure.err = Some(err);
+                return true;
+            }
+
+            // A script that has ended makes room for one that waits.
+            closure.installer.run_available_scripts(log_level);
+            manager.report_slow_lifecycle_scripts();
+
+            let pending_task_count = manager.pending_task_count();
+            if pending_task_count > 0
+                && PackageManager::verbose_install()
+                && PackageManager::has_enough_time_passed_between_waiting_messages()
+            {
+                bun_core::pretty_errorln!(
+                    "<d>[PackageManager]<r> waiting for {} tasks\n",
+                    pending_task_count
+                );
+            }
+
+            match closure.links {
+                Some(links) => links.load(Ordering::Acquire) == 0,
+                None => {
+                    closure.installer.has_deferred_links()
+                        || (manager.pending_task_count() == 0
+                            && manager.has_no_more_pending_lifecycle_scripts())
+                }
+            }
+        }
+    }
+
+    let mut closure = Closure {
+        installer,
+        err: None,
+        manager: mgr,
+        links,
+    };
+
+    // Whenever the event loop wakes up, we need to call `run_tasks`
+    // If we call sleep() instead of sleep_until(), it will wait forever until there are no more lifecycle scripts
+    // which means it will not call run_tasks until _all_ current lifecycle scripts have finished running
+    // SAFETY: `mgr` is the caller's provenance root for its live exclusive borrow;
+    // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
+    // `Closure::is_done`, so the callback's `&mut *closure.manager`
+    // is the unique live borrow.
+    unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
+
+    closure.err.map_or(Ok(()), Err)
+}
+
+/// Has the thread pool link the waiting packages, including the ones that start waiting in the
+/// meantime. Must not be called from inside `run_tasks`.
+fn link_deferred(
+    mgr: *mut PackageManager,
+    installer: &mut PackageInstaller<'_>,
+    log_level: package_manager::Options::LogLevel,
+) -> crate::Result<()> {
+    while let Some((links, events)) = installer.take_deferred_links() {
+        // Tasks that were already started keep running while the pool links.
+        let mut ran_tasks = Ok(());
+        links.run(&mut |until| {
+            if ran_tasks.is_ok() {
+                ran_tasks = run_tasks_until_done(mgr, installer, Some(until));
+            }
+        });
+        ran_tasks?;
+        if !installer.manager().options.do_.install_packages() {
+            return Err(crate::Error::InstallFailed);
+        }
+        installer.finish_links(links, events, log_level);
+    }
+    Ok(())
+}
+
 pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
     ctx: Command::Context,
@@ -57,26 +186,17 @@ pub(crate) fn install_hoisted_packages(
 ) -> crate::Result<package_install::Summary> {
     analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
 
-    // Restore-buffers guard — side-effecting rollback,
-    // not a free. Captures `*mut PackageManager` so the guard can write back
-    // through the same provenance root the body uses (see `mgr_ptr` below).
     let mgr_ptr: *mut PackageManager = this;
     // SAFETY: `mgr_ptr` is freshly derived from the unique `&mut` fn param;
     // shadowing `this` with a reborrow through it makes every body access a
     // child of `mgr_ptr`, so the guard's later derefs keep provenance.
     let this = unsafe { &mut *mgr_ptr };
 
-    let original_trees = core::mem::take(&mut this.lockfile.buffers.trees);
-    let original_tree_dep_ids = core::mem::take(&mut this.lockfile.buffers.hoisted_dependencies);
-    // Put them back immediately — the rollback below restores the *taken*
-    // originals; `filter()` repopulates the live ones in-place.
-    this.lockfile.buffers.trees.clone_from(&original_trees);
-    this.lockfile
-        .buffers
-        .hoisted_dependencies
-        .clone_from(&original_tree_dep_ids);
+    // `filter()` repopulates the live ones in-place.
+    let original_trees = this.lockfile.buffers.trees.clone();
+    let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies.clone();
 
-    {
+    let places = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -89,77 +209,72 @@ pub(crate) fn install_hoisted_packages(
         // SAFETY: `log` is the always-live logger backref (never null);
         // `mgr_ptr` see shadow-reborrow above.
         unsafe {
-            (*lockfile_ptr).filter(
-                &mut *log,
-                &mut *mgr_ptr,
-                install_root_dependencies,
-                workspace_filters,
-                packages_to_install,
-            )?;
+            (*lockfile_ptr)
+                .filter(
+                    &mut *log,
+                    &mut *mgr_ptr,
+                    install_root_dependencies,
+                    workspace_filters,
+                    packages_to_install,
+                )?
+                .places
         }
-    }
-    // Re-derive after `filter()` so every subsequent `this` use (progress
-    // setup through the install loop) is a fresh child of `mgr_ptr` under
-    // Stacked Borrows — `&mut *mgr_ptr` inside the block above popped the
-    // line-77 reborrow's tag.
+    };
     // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
-    // fn param; the line-77 reborrow's tag was popped by `&mut *mgr_ptr` in the
+    // fn param; the first reborrow's tag was popped by `&mut *mgr_ptr` in the
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
-
-    let _restore_buffers = scopeguard::guard(
-        (original_trees, original_tree_dep_ids),
-        move |(trees, dep_ids)| {
-            // SAFETY: `mgr_ptr` is the provenance root for every body access to
-            // `this` (see shadow-reborrow above); guard runs after all body
-            // borrows have ended.
-            let this = unsafe { &mut *mgr_ptr };
-            this.lockfile.buffers.trees = trees;
-            this.lockfile.buffers.hoisted_dependencies = dep_ids;
-        },
-    );
 
     let mut download_node: ProgressNode;
     let mut install_node: ProgressNode = ProgressNode::default();
     let mut scripts_node: ProgressNode;
 
     if log_level.show_progress() {
-        // Hoist before the `&mut this.progress` borrow so the disjoint
-        // `this.lockfile` read doesn't overlap the live `root_node` reborrow.
         let hoisted_len = this.lockfile.buffers.hoisted_dependencies.len();
         let progress = &mut this.progress;
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        // `Progress::start` returns `&mut Node` (points into `progress.root`);
-        // keep it as a safe reborrow — it's only used to spawn the three
-        // children below and is dead before any other `this.*` write.
         let root_node = progress.start(b"", 0);
         download_node = root_node.start(ProgressStrings::download(), 0);
         install_node = root_node.start(ProgressStrings::install(), hoisted_len);
         scripts_node = root_node.start(ProgressStrings::script(), 0);
-        // The stored pointers target stack locals in this frame; they are
-        // cleared by `_end_progress` below before the frame returns, so
-        // `scripts_node_mut()` / `downloads_node_mut()` never observe a
-        // dangling pointer outside this call.
+        // These are stack locals of this frame. `_restore_manager` clears the pointers before the
+        // function returns.
         this.downloads_node = Some(core::ptr::addr_of_mut!(download_node));
         this.scripts_node = NonNull::new(&raw mut scripts_node);
     }
 
-    // `defer { progress.root.end(); progress = .{} }`
-    let _end_progress = scopeguard::guard(log_level, move |log_level| {
-        if log_level.show_progress() {
-            // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
-            let this = unsafe { &mut *mgr_ptr };
-            this.progress.root.end();
-            this.progress = Progress::default();
+    // Declared after the nodes, so that it ends the progress bar while they're still alive.
+    let _restore_manager = RestoreManager {
+        manager: mgr_ptr,
+        trees: original_trees,
+        hoisted_dependencies: original_tree_dep_ids,
+        log_level,
+    };
+
+    // A partial install (for the security scanner) runs before the real one, so it leaves the
+    // layout alone.
+    let has_isolated_store = packages_to_install.is_none()
+        && this.options.node_linker == bun_install_types::NodeLinker::NodeLinker::Hoisted
+        && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
+            .unwrap_or(false);
+    // If `node_modules` is a symlink, nothing behind it is cleared, so every install finds `.bun`
+    // again. Warn instead of treating each install as a switch away from the isolated linker.
+    let is_linked = has_isolated_store
+        && LinkedNodeModules::is_at(bun_paths::path_literal!("node_modules")) == Some(true);
+    let replacing_isolated_node_modules = has_isolated_store && !is_linked;
+    let old_modules = if replacing_isolated_node_modules {
+        crate::isolated_install::move_node_modules_aside(
+            &this.lockfile,
+            this.options.global,
+            log_level,
+        )
+    } else {
+        if is_linked {
+            let folder = Box::<[u8]>::from(&b"node_modules"[..]);
+            LinkedNodeModules::warn_not_cleared(log_level, &[folder]);
         }
-        // Defensive: the stored progress-node pointers target stack locals in
-        // this frame; clear them so `scripts_node_mut()` / `downloads_node_mut()`
-        // can't observe a dangling pointer after the install pass returns.
-        // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
-        let this = unsafe { &mut *mgr_ptr };
-        this.scripts_node = None;
-        this.downloads_node = None;
-    });
+        None
+    };
 
     // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
     // the packages could still not be in the cache dir
@@ -210,65 +325,37 @@ pub(crate) fn install_hoisted_packages(
     let mut skip_delete = new_node_modules;
     let mut skip_verify_installed_version_number = new_node_modules;
 
-    if this.options.enable.force_install() {
+    // Whatever `move_node_modules_aside` could not move is still deleted before it is reinstalled.
+    if this.options.enable.force_install() || replacing_isolated_node_modules {
         skip_verify_installed_version_number = true;
         skip_delete = false;
     }
 
-    let mut summary = package_install::Summary::default();
+    let mut summary = package_install::Summary {
+        old_modules,
+        places,
+        ..Default::default()
+    };
 
     {
-        // BACKREF — `Tree::Iterator` borrows the four buffer slices,
-        // and `PackageInstaller` simultaneously holds `&mut Lockfile` (plus
-        // `&[T]` column aliases into `lockfile.packages`). Snapshot raw `*const
-        // Vec<_>` headers here so the iterator's slice borrows are derived
-        // through `mgr_ptr` (the same provenance root as `installer.lockfile`),
-        // not through a `&this.lockfile.buffers.X` that the installer's `&mut
-        // Lockfile` would invalidate.
         // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
         // via `Box`, so deref the Box for the heap addr.
-        // Each buffer lives at a fixed offset within it for the install pass —
-        // wrap them as `BackRef` once under a single SAFETY obligation.
-        let (lockfile_ptr, buf_trees, buf_hoisted, buf_deps, buf_strings): (
-            *mut crate::lockfile::Lockfile,
-            bun_ptr::BackRef<Vec<tree::Tree>>,
-            bun_ptr::BackRef<Vec<DependencyID>>,
-            bun_ptr::BackRef<Vec<crate::Dependency>>,
-            bun_ptr::BackRef<Vec<u8>>,
-        ) = unsafe {
-            let lockfile_ptr: *mut crate::lockfile::Lockfile = &raw mut *(*mgr_ptr).lockfile;
-            let buffers = core::ptr::addr_of_mut!((*lockfile_ptr).buffers);
-            (
-                lockfile_ptr,
-                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).trees)),
-                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(
-                    (*buffers).hoisted_dependencies
-                )),
-                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).dependencies)),
-                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).string_bytes)),
-            )
-        };
-        // Safe `BackRef` view of the same heap `Lockfile` as `lockfile_ptr`
-        // (BACKREF — outlives this install pass). `From<NonNull>` is the
-        // safe constructor; the read-only column projections below go
-        // through `Deref` instead of a per-site raw deref.
+        let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
+        // BACKREF — outlives this install pass; `PackageInstaller` reaches `this` at the same time.
         let lockfile_ref = bun_ptr::BackRef::<crate::lockfile::Lockfile>::from(
             core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
         );
 
-        // BACKREF — slices live for the duration of this block; `filter()` (the
-        // only buffer mutator) has already run.
+        // `filter()` (the only mutator of these buffers) has already run.
         let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::from_slices(
-            buf_trees.as_slice(),
-            buf_hoisted.as_slice(),
-            buf_deps.as_slice(),
-            buf_strings.as_slice(),
+            lockfile_ref.buffers.trees.as_slice(),
+            lockfile_ref.buffers.hoisted_dependencies.as_slice(),
+            lockfile_ref.buffers.dependencies.as_slice(),
+            lockfile_ref.buffers.string_bytes.as_slice(),
         );
 
-        #[cfg(unix)]
-        {
-            bin::Linker::ensure_umask();
-        }
+        // Outlives `installer`, whose bin queues point at it.
+        let direct_packages = bin::LinkOrder::direct_packages(&lockfile_ref)?;
 
         let mut installer: PackageInstaller = 'brk: {
             let (completed_trees, tree_ids_to_trees_the_id_depends_on) = 'trees: {
@@ -296,34 +383,6 @@ pub(crate) fn install_hoisted_packages(
                     }
                 }
 
-                if cfg!(debug_assertions) {
-                    if trees.len() > 0 {
-                        // last tree should only depend on one other
-                        debug_assert!(
-                            tree_ids_to_trees_the_id_depends_on
-                                .at(trees.len() - 1)
-                                .count()
-                                == 1
-                        );
-                        // and it should be itself
-                        debug_assert!(
-                            tree_ids_to_trees_the_id_depends_on
-                                .at(trees.len() - 1)
-                                .is_set(trees.len() - 1)
-                        );
-
-                        // root tree should always depend on all trees
-                        debug_assert!(
-                            tree_ids_to_trees_the_id_depends_on.at(0).count() == trees.len()
-                        );
-                    }
-
-                    // a tree should always depend on itself
-                    for j in 0..trees.len() {
-                        debug_assert!(tree_ids_to_trees_the_id_depends_on.at(j).is_set(j));
-                    }
-                }
-
                 break 'trees (completed_trees, tree_ids_to_trees_the_id_depends_on);
             };
 
@@ -331,17 +390,7 @@ pub(crate) fn install_hoisted_packages(
             // so we want to make sure they're not accessible to the rest of this function
             // to make mistakes harder
             //
-            // BACKREF — the `PackageInstaller` slice fields are
-            // `bun_ptr::RawSlice<T>` (raw `*const [T]`, no lifetime), so
-            // wrapping each column with `RawSlice::new` stores the (ptr, len)
-            // without keeping a borrow live — no `&'a → &'a` detach
-            // round-trip needed. Derive through `lockfile_ptr` so the
-            // provenance root matches `installer.lockfile`/`installer.manager`.
-            // RawSlice invariant: `lockfile_ref` derived from `mgr_ptr`;
-            // the packages column buffers are not freed for the lifetime of
-            // `installer` (only grow, which is why
-            // `fix_cached_lockfile_package_slices` re-snapshots). Read-only
-            // projection via the safe `BackRef::Deref`.
+            // RawSlice invariant: on growth `fix_cached_lockfile_package_slices` re-snapshots.
             let parts = lockfile_ref.packages.slice();
             let metas = bun_ptr::RawSlice::new(parts.items_meta());
             let bins = bun_ptr::RawSlice::new(parts.items_bin());
@@ -349,19 +398,10 @@ pub(crate) fn install_hoisted_packages(
             let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
             let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
 
-            // Hoist the by-value reads out of the struct literal so they
-            // finish before the long-lived `&mut *mgr_ptr` borrow for
-            // `manager` begins (struct fields evaluate in source order).
-            let force_install = this.options.enable.force_install();
             let pkg_len = this.lockfile.packages.len();
             let trees_count = this.lockfile.buffers.trees.len();
             let trusted_deps = this.find_trusted_dependencies_from_update_requests();
 
-            // `PackageInstaller.{manager,lockfile,progress}` are BACKREF raw
-            // pointers; copying
-            // `mgr_ptr` into them does not move `this`, so the body below
-            // keeps using `this` for `pending_task_count` / `run_tasks` /
-            // lifecycle ticks via the same provenance root.
             break 'brk PackageInstaller {
                 manager: mgr_ptr,
                 metas,
@@ -371,9 +411,15 @@ pub(crate) fn install_hoisted_packages(
                 resolutions,
                 lockfile: lockfile_ptr,
                 root_node_modules_folder: node_modules_folder,
+                staging_lock: None,
+                tree_dir: None,
+                // Disabled on Windows, where the hardlink backend has its own queue. A batch keeps
+                // up to 64 directories open.
+                deferred: (cfg!(not(windows)) && !FileSystem::get().fs.need_to_close_files())
+                    .then(|| DeferredLinks::init(&lockfile_ref)),
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
-                    path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())
+                    path: strings::without_trailing_slash(FileSystem::get().top_level_dir())
                         .to_vec(),
                     tree_id: 0,
                 },
@@ -381,22 +427,27 @@ pub(crate) fn install_hoisted_packages(
                 progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
+                workspaces_seen: Vec::new(),
                 summary: &mut summary,
-                force_install,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
                 command_ctx: ctx,
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,
+                pending_install_count: 0,
                 trees: 'trees: {
                     let mut trees: Vec<TreeContext> = Vec::with_capacity(trees_count);
                     for _i in 0..trees_count {
                         trees.push(TreeContext {
                             binaries: bin::PriorityQueue::init(bin::PriorityQueueContext {
-                                dependencies: buf_deps,
-                                string_buf: buf_strings,
+                                lockfile: lockfile_ref,
+                                direct_packages: bun_ptr::BackRef::new(&direct_packages),
                             }),
                             pending_installs: Vec::new(),
+                            bins_after_scripts: Vec::new(),
                             install_count: 0,
+                            replaced: Vec::new(),
+                            inside_replaced_folder: false,
+                            outlived_root: false,
                         });
                     }
                     break 'trees trees.into_boxed_slice();
@@ -407,6 +458,7 @@ pub(crate) fn install_hoisted_packages(
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
+                unfinished_scripts: Default::default(),
                 copy_trees: {
                     let self_contained = this.lockfile.self_contained_workspace_ids();
                     let mut set = Bitset::init_empty(trees_count)?;
@@ -426,9 +478,13 @@ pub(crate) fn install_hoisted_packages(
         installer.node_modules.path.push(SEP);
 
         let top_level_len =
-            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
+            strings::without_trailing_slash(FileSystem::get().top_level_dir()).len() + 1;
 
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
+            if installer.must_link_before(node_modules.tree_id) {
+                link_deferred(mgr_ptr, &mut installer, log_level)?;
+            }
+
             installer.node_modules.path.truncate(top_level_len);
             installer
                 .node_modules
@@ -437,6 +493,8 @@ pub(crate) fn install_hoisted_packages(
             installer.node_modules.tree_id = node_modules.tree_id;
             let mut remaining: &[DependencyID] = node_modules.dependencies;
             installer.current_tree_id = node_modules.tree_id;
+            installer.set_inside_replaced_folder(node_modules.tree_id);
+            installer.set_outlived_root(node_modules.tree_id, node_modules.relative_path);
 
             // cache line is 64 bytes on ARM64 and x64
             // PackageIDs are 4 bytes
@@ -486,87 +544,23 @@ pub(crate) fn install_hoisted_packages(
             this.report_slow_lifecycle_scripts();
         }
 
-        while this.pending_task_count() > 0 && this.options.do_.install_packages() {
-            struct Closure<'a, 'b> {
-                installer: &'a mut PackageInstaller<'b>,
-                err: Option<crate::Error>,
-                // raw `*mut` — `sleep_until`
-                // also receives this pointer, so `&mut` here would alias.
-                manager: *mut PackageManager,
+        loop {
+            link_deferred(mgr_ptr, &mut installer, log_level)?;
+            if this.pending_task_count() == 0 || !this.options.do_.install_packages() {
+                break;
             }
-
-            impl<'a, 'b> Closure<'a, 'b> {
-                fn is_done(closure: &mut Self) -> bool {
-                    // SAFETY: `closure.manager` is the raw provenance root set
-                    // below; `sleep_until`/`tick_raw` hold no `&mut` across
-                    // this callback, so this is the unique live borrow.
-                    let manager = unsafe { &mut *closure.manager };
-                    let log_level = manager.options.log_level;
-                    if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                        manager,
-                        closure.installer,
-                        true,
-                        log_level,
-                    ) {
-                        closure.err = Some(err);
-                    }
-
-                    if closure.err.is_some() {
-                        return true;
-                    }
-
-                    manager.report_slow_lifecycle_scripts();
-
-                    if PackageManager::verbose_install() && manager.pending_task_count() > 0 {
-                        let pending_task_count = manager.pending_task_count();
-                        if pending_task_count > 0
-                            && PackageManager::has_enough_time_passed_between_waiting_messages()
-                        {
-                            bun_core::pretty_errorln!(
-                                "<d>[PackageManager]<r> waiting for {} tasks\n",
-                                pending_task_count
-                            );
-                        }
-                    }
-
-                    manager.pending_task_count() == 0
-                        && manager.has_no_more_pending_lifecycle_scripts()
-                }
-            }
-
-            // Derive the raw provenance root *before* building the closure so
-            // both `sleep_until`'s `this` arg and `closure.manager` share the
-            // same SRW tag.
-            let mgr: *mut PackageManager = mgr_ptr;
-            let mut closure = Closure {
-                installer: &mut installer,
-                err: None,
-                manager: mgr,
-            };
-
-            // Whenever the event loop wakes up, we need to call `run_tasks`
-            // If we call sleep() instead of sleep_until(), it will wait forever until there are no more lifecycle scripts
-            // which means it will not call run_tasks until _all_ current lifecycle scripts have finished running
-            // SAFETY: `mgr` is derived from the live exclusive `this` borrow;
-            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
-            // `Closure::is_done`, so the callback's `&mut *closure.manager`
-            // is the unique live borrow.
-            unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
-
-            if let Some(err) = closure.err {
-                return Err(err);
-            }
+            run_tasks_until_done(mgr_ptr, &mut installer, None)?;
         }
+        installer.deferred = None;
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        // Index instead of `.iter()` so the immutable borrow of
-        // `installer.trees` doesn't overlap `&mut self`.
-        for tree_idx in 0..installer.trees.len() {
-            debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
-            // force = true
-            installer.install_available_packages::<true>(log_level);
-        }
+        // A tree never completes if one of its packages failed to download. Install everything
+        // that was still waiting on it (force = true).
+        installer.install_available_packages::<true>(log_level);
+        // Every package is linked. The scripts that still have to run don't need the lock.
+        installer.staging_lock = None;
+        installer.tree_dir = None;
 
         // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, Ordering::Relaxed);
@@ -585,21 +579,9 @@ pub(crate) fn install_hoisted_packages(
             return Err(crate::Error::InstallFailed);
         }
 
-        // `replace` with a fresh empty so `installer` stays whole
-        // for the `link_remaining_bins` / `complete_remaining_scripts` calls
-        // below. Route through `installer.summary` because `summary` itself is
-        // exclusively borrowed by `installer` for this scope.
-        {
-            let taken = core::mem::replace(
-                &mut installer.successfully_installed,
-                Bitset::init_empty(0)?,
-            );
-            installer.summary.successfully_installed = Some(taken);
-        }
-
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download
-        installer.link_remaining_bins(log_level);
+        installer.link_remaining_bins();
         installer.complete_remaining_scripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.
@@ -608,6 +590,10 @@ pub(crate) fn install_hoisted_packages(
 
             this.sleep();
         }
+        installer.link_bins_after_scripts();
+        // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
+        installer.summary.successfully_installed =
+            Some(core::mem::take(&mut installer.successfully_installed));
 
         if log_level.show_progress() {
             // See `activate()` note above — reuse the stored `NonNull`'s

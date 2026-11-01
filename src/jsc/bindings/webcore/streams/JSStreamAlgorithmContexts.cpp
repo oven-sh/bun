@@ -15,6 +15,7 @@ namespace WebCore {
 
 using namespace JSC;
 using Bun::WebStreams::analyzeBarrierEdge;
+using Bun::WebStreams::visitInternalFieldsHidden;
 
 const ClassInfo JSStreamFromIterableContext::s_info = { "StreamFromIterableContext"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStreamFromIterableContext) };
 
@@ -53,9 +54,7 @@ void JSStreamFromIterableContext::visitChildrenImpl(JSCell* cell, Visitor& visit
 {
     auto* thisObject = uncheckedDowncast<JSStreamFromIterableContext>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_iterator);
-    visitor.appendHidden(thisObject->m_nextMethod);
+    visitInternalFieldsHidden(thisObject, visitor);
 }
 
 void JSStreamFromIterableContext::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -63,8 +62,8 @@ void JSStreamFromIterableContext::analyzeHeap(JSCell* cell, HeapAnalyzer& analyz
     auto* thisObject = uncheckedDowncast<JSStreamFromIterableContext>(cell);
     auto& vm = cell->vm();
     Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_iterator, "iterator"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nextMethod, "nextMethod"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Iterator), "iterator"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::NextMethod), "nextMethod"_s);
 }
 
 } // namespace WebCore

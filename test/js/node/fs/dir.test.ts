@@ -14,6 +14,7 @@ describe("fs.opendir", () => {
   // );
 
   it("throws if callback is not provided", () => {
+    // @ts-expect-error
     expect(() => fs.opendir("foo")).toThrow(/The "callback" argument must be of type function/);
   });
 
@@ -72,7 +73,7 @@ describe("fs.Dir", () => {
 
       describe("reading from the directory", () => {
         it.each([0, 1, false, "foo", {}])("throws if passed a non-function callback (%p)", badCb => {
-          expect(() => dir.read(badCb)).toThrow(/The "callback" argument must be of type function/);
+          expect(() => dir.read(badCb as any)).toThrow(/The "callback" argument must be of type function/);
         });
 
         it("it can be read synchronously, even though no entries exist", () => {
@@ -175,6 +176,7 @@ describe("opendirSync string encoding shorthand", () => {
     fs.mkdirSync(dirname);
     try {
       // an invalid encoding passed as the shorthand is validated like node
+      // @ts-expect-error
       expect(() => fs.opendirSync(dirname, "nope")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
     } finally {
       fs.rmSync(dirname, { recursive: true, force: true });
@@ -192,7 +194,7 @@ describe("opendirSync string encoding shorthand", () => {
     // native readdir gap unrelated to the shorthand.)
     fs.writeFileSync(path.join(dirname, "na\u00efve.txt"), "x");
     try {
-      const dir = fs.opendirSync(dirname, "latin1");
+      const dir = fs.opendirSync(dirname, "latin1" as any);
       const entry = dir.readSync();
       expect(entry?.name).toBe(Buffer.from("na\u00efve.txt", "utf8").toString("latin1"));
       dir.closeSync();

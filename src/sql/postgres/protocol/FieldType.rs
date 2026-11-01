@@ -11,6 +11,9 @@ impl FieldType {
     /// Severity: the field contents are ERROR, FATAL, or PANIC (in an error message), or WARNING, NOTICE, DEBUG, INFO, or LOG (in a notice message), or a localized translation of one of these. Always present.
     pub(crate) const SEVERITY: Self = Self(b'S');
 
+    /// Severity: the same as the S field, never localized. It follows the S field. Since PostgreSQL 9.6.
+    pub(crate) const SEVERITY_NOT_LOCALIZED: Self = Self(b'V');
+
     /// Code: the SQLSTATE code for the error (see Appendix A). Not localizable. Always present.
     pub(crate) const CODE: Self = Self(b'C');
 

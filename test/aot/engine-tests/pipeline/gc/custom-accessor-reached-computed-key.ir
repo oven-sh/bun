@@ -1,0 +1,327 @@
+# -- source: custom-accessor-reached-computed-key.js
+# // Members of built-ins that native code answers are read and written under keys that are made at run time, and nothing names a key behind its use.
+# // Flags: --aot-testing=OverwriteDeadValuesAtCollections
+# // Env: BUN_JSC_collectContinuously=1
+# // Env: BUN_JSC_forceDidDeferGCWork=1
+# // Env: BUN_JSC_useZombieMode=1
+# // Env: BUN_JSC_scribbleFreeCells=1
+# function keyOf(parts) {
+#   return parts.join("");
+# }
+# let sum = 0;
+# for (let turn = 0; turn < 20000; turn++) {
+#   /(a)(b)/.exec("ab" + turn);
+#   sum += RegExp[keyOf(["$", "1"])].length + RegExp[keyOf(["last", "Match"])].length;
+#   RegExp[keyOf(["in", "put"])] = "t" + turn;
+#   sum += RegExp[keyOf(["in", "put"])].length;
+#   process.env[keyOf(["K", String(turn & 7)])] = "v" + turn;
+#   sum += process.env[keyOf(["K", String(turn & 7)])].length;
+# }
+# console.log(sum);
+# -- end of source
+# FORM: AsRead
+# OPTIONS: testing=OverwriteDeadValuesAtCollections
+# On Windows process.env is a proxy that the library makes, and this file has no library: nothing is known to lie there, and what comes behind the read is not reached.
+# REQUIRES: not-windows
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="custom-accessor-reached-computed-key.js" displayPath="custom-accessor-reached-computed-key.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[String{value="$"}, String{value="1"}]} module=m0
+data d1 root=Array{contents=anything elements=[String{value="last"}, String{value="Match"}]} module=m0
+data d2 root=Array{contents=anything elements=[String{value="in"}, String{value="put"}]} module=m0
+data d3 root=Array{contents=anything elements=[String{value="in"}, String{value="put"}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Integer @410
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @410
+    v4 = Integer @429
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @429
+    Jump -> next b2(v3, v5) @422
+  b2(v6, v7):
+    LoopHint @422
+    v9 = Integer integer=20000 @439
+    v10 = Less v7, v9 @432
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0) @432
+  b3(v11):
+    Jump -> next b4() @432
+  b4():
+    v12 = NewRegExp pattern="(a)(b)" @458
+    v13 = PropGet v12 key="exec" @458
+    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]} @458
+    v15 = String string="ab" @472
+    v16 = Add v15, v11 @472
+    v17 = Call v14, v12, v16 calleeKey="exec" calleeName="exec" @467
+    v18 = Builtin builtin=RegExp @495
+    v19 = Data data=d0 @508
+    v20 = Convert v19 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @508
+    v21 = Call v1, -, v20 calleeName="keyOf" @502
+    v22 = Convert v21 declared={type=undefined|null|string flags=[IsExpected]} @502
+    v23 = ElemGet v18, v22 @495
+    v24 = PropGet v23 key="length" @518
+    v25 = Builtin builtin=RegExp @530
+    v26 = Data data=d1 @543
+    v27 = Convert v26 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @543
+    v28 = Call v1, -, v27 calleeName="keyOf" @537
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]} @537
+    v30 = ElemGet v25, v29 @530
+    v31 = PropGet v30 key="length" @560
+    v32 = Add v24, v31 @495
+    v33 = Add v6, v32 @495
+    v34 = Convert v33 declared={type=number flags=[IsExpected]} @488
+    v35 = Builtin builtin=RegExp @573
+    v36 = Data data=d2 @586
+    v37 = Convert v36 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @586
+    v38 = Call v1, -, v37 calleeName="keyOf" @580
+    v39 = Convert v38 declared={type=undefined|null|string flags=[IsExpected]} @580
+    v40 = String string="t" @604
+    v41 = Add v40, v11 @604
+    ElemSet v35, v39, v41 @573
+    v43 = Builtin builtin=RegExp @625
+    v44 = Data data=d3 @638
+    v45 = Convert v44 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @638
+    v46 = Call v1, -, v45 calleeName="keyOf" @632
+    v47 = Convert v46 declared={type=undefined|null|string flags=[IsExpected]} @632
+    v48 = ElemGet v43, v47 @625
+    v49 = PropGet v48 key="length" @651
+    v50 = Add v34, v49 @651
+    v51 = Convert v50 declared={type=number flags=[IsExpected]} @618
+    v52 = Builtin builtin=Process @664
+    v53 = PropGet v52 key="env" @664
+    v54 = Convert v53 declared={type=builtin(ProcessEnv) flags=[IsExpected]} @664
+    v55 = String string="K" @683
+    v56 = Builtin builtin=String @688
+    v57 = Integer integer=7 @702
+    v58 = BitAnd v11, v57 @695
+    v59 = Call v56, -, v58 calleeName="String" @688
+    v60 = Convert v59 declared={type=undefined|null|string flags=[IsExpected]} @688
+    v61 = NewArray v55, v60 contents=anything @682
+    v62 = Convert v61 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @682
+    v63 = Call v1, -, v62 calleeName="keyOf" @676
+    v64 = Convert v63 declared={type=undefined|null|string flags=[IsExpected]} @676
+    v65 = String string="v" @710
+    v66 = Add v65, v11 @710
+    v67 = Convert v66 declared={type=undefined|null|string flags=[IsExpected]} @672
+    ElemSet v54, v64, v67 @672
+    v69 = Builtin builtin=Process @731
+    v70 = PropGet v69 key="env" @731
+    v71 = Convert v70 declared={type=builtin(ProcessEnv) flags=[IsExpected]} @731
+    v72 = String string="K" @750
+    v73 = Builtin builtin=String @755
+    v74 = Integer integer=7 @769
+    v75 = BitAnd v11, v74 @762
+    v76 = Call v73, -, v75 calleeName="String" @755
+    v77 = Convert v76 declared={type=undefined|null|string flags=[IsExpected]} @755
+    v78 = NewArray v72, v77 contents=anything @749
+    v79 = Convert v78 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @749
+    v80 = Call v1, -, v79 calleeName="keyOf" @743
+    v81 = Convert v80 declared={type=undefined|null|string flags=[IsExpected]} @743
+    v82 = ElemGet v71, v81 @739
+    v83 = Convert v82 declared={type=undefined|null|string flags=[IsExpected]} @731
+    v84 = PropGet v83 key="length" @772
+    v85 = Convert v84 declared={type=number flags=[IsExpected]} @731
+    v86 = Add v51, v85 @772
+    v87 = Convert v86 declared={type=number flags=[IsExpected]} @724
+    Jump -> next b5() @724
+  b5():
+    v88 = Increment v11 @772
+    v89 = Convert v88 declared={type=i32 flags=[IsExpected]} @446
+    Jump -> next b2(v87, v89) @446
+  b6(v90):
+    Jump -> next b7() @432
+  b7():
+    v91 = Builtin builtin=GlobalThis @785
+    v92 = PropGet v91 key="console" [isFreeName] @785
+    v93 = Convert v92 declared={type=builtin(Console) flags=[IsExpected]} @785
+    v94 = PropGet v93 key="log" @785
+    v95 = Convert v94 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @785
+    v96 = Call v95, v93, v6 calleeKey="log" calleeName="console.log" @793
+    v97 = Undefined @785
+    Return v97 @785
+}
+function f1 name="keyOf" module=m0 position=349 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
+    Jump -> next b1() @349
+  b1():
+    v1 = PropGet v0 key="join" @382
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]} @382
+    v3 = String string="" @393
+    v4 = Call v2, v0, v3 calleeKey="join" calleeName="parts.join" @388
+    ReturnCall v4 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @388
+}
+function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 keyOf
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=743 module=m0}, {callee=f1 callPosition=676 module=m0}, {callee=f1 callPosition=632 module=m0}, {callee=f1 callPosition=580 module=m0}, {callee=f1 callPosition=537 module=m0}, {callee=f1 callPosition=502 module=m0}, {callee=f1 callPosition=537 module=m0}, {callee=f1 callPosition=502 module=m0}, {callee=f1 callPosition=743 module=m0}, {callee=f1 callPosition=676 module=m0}, {callee=f1 callPosition=632 module=m0}, {callee=f1 callPosition=580 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v0, v1)
+# CHECK-NEXT: b1(v2: number ~ 0, v3: int[0, 20000] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v2, v3)
+# CHECK-NEXT: b2(v4: number, v5: int[0, 20000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: 20000 = Integer integer=20000
+# CHECK-NEXT: v8: boolean = Less v5, v7
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b25()
+# CHECK-NEXT: b3(v9: int[0, 19999]):
+# CHECK-NEXT: v10: RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]> = SharedRegExpLiteral pattern="(a)(b)"
+# CHECK-NEXT: v11: RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]> = AssumeType v10 provenType=RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]>
+# CHECK-NEXT: v12: "ab" = String string="ab"
+# CHECK-NEXT: v13: string = Add v12, v9
+# CHECK-NEXT: v14: undefined = CallBuiltin v11, v13 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=0 accessSite=1
+# CHECK-NEXT: v15: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v16: anything = PropGet v15 key="$1" accessSite=3
+# CHECK-NEXT: v17: anything = PropGet v16 key="length" accessSite=4
+# CHECK-NEXT: v18: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v19: anything = PropGet v18 key="lastMatch" accessSite=6
+# CHECK-NEXT: v20: anything = PropGet v19 key="length" accessSite=7
+# CHECK-NEXT: v21: boolean = TypeTest v17 testedType=number
+# CHECK-NEXT: Branch v21 -> taken b4(| 0), notTaken b7(| 0)
+# CHECK-NEXT: b4(v22: number):
+# CHECK-NEXT: v23: boolean = TypeTest v20 testedType=number
+# CHECK-NEXT: Branch v23 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b5(v24: number):
+# CHECK-NEXT: v25: number = Add v22, v24
+# CHECK-NEXT: v26: number = Add v4, v25
+# CHECK-NEXT: v27: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v28: "t" = String string="t"
+# CHECK-NEXT: v29: string = Add v28, v9
+# CHECK-NEXT: PropSet v27, v29 key="input" accessSite=9
+# CHECK-NEXT: Jump -> next b10(v9, v26)
+# CHECK-NEXT: b6(v31: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b8(v4, v9, v22, v31)
+# CHECK-NEXT: b7(v32: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b8(v4, v9, v32, v20)
+# CHECK-NEXT: b8(v33: number|string|bigint ~ number, v34: int[0, 19999], v35: anything, v36: anything) frequency=Unlikely:
+# CHECK-NEXT: v37: number|string|bigint = Add v35, v36
+# CHECK-NEXT: v38: number|string|bigint = Add v33, v37
+# CHECK-NEXT: v39: number|string|bigint ~ number = Upcast v38 castType=number|string|bigint
+# CHECK-NEXT: v40: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v41: "t" = String string="t"
+# CHECK-NEXT: v42: string = Add v41, v34
+# CHECK-NEXT: PropSet v40, v42 key="input" accessSite=9
+# CHECK-NEXT: v44: boolean ~ true = TypeTest v39 testedType=number
+# CHECK-NEXT: Branch v44 -> taken b9(| 0), notTaken b11()
+# CHECK-NEXT: b9(v45: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b10(v34, v45)
+# CHECK-NEXT: b10(v46: int[0, 19999], v47: number):
+# CHECK-NEXT: v48: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v49: anything = PropGet v48 key="input" accessSite=11
+# CHECK-NEXT: v50: anything = PropGet v49 key="length" accessSite=12
+# CHECK-NEXT: v51: boolean = TypeTest v50 testedType=number
+# CHECK-NEXT: Branch v51 -> taken b12(| 0), notTaken b13(| 0)
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: v52: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v53: anything = PropGet v52 key="input" accessSite=11
+# CHECK-NEXT: v54: anything = PropGet v53 key="length" accessSite=12
+# CHECK-NEXT: Jump -> next b14(v34, v39, v54)
+# CHECK-NEXT: b12(v55: number):
+# CHECK-NEXT: v56: number = Add v47, v55
+# CHECK-NEXT: v57: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: Jump -> next b16(v46, v56, v57)
+# CHECK-NEXT: b13(v58: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b14(v46, v47, v58)
+# CHECK-NEXT: b14(v59: int[0, 19999], v60: number|string|bigint ~ number, v61: anything) frequency=Unlikely:
+# CHECK-NEXT: v62: number|string|bigint = Add v60, v61
+# CHECK-NEXT: v63: number|string|bigint ~ number = Upcast v62 castType=number|string|bigint
+# CHECK-NEXT: v64: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: v65: boolean ~ true = TypeTest v63 testedType=number
+# CHECK-NEXT: Branch v65 -> taken b15(| 0), notTaken b17()
+# CHECK-NEXT: b15(v66: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b16(v59, v66, v64)
+# CHECK-NEXT: b16(v67: int[0, 19999], v68: number, v69: object):
+# CHECK-NEXT: v70: object ~ builtin(ProcessEnv) = Upcast v69 castType=anything
+# CHECK-NEXT: v71: "K" = String string="K"
+# CHECK-NEXT: v72: 7 = Integer integer=7
+# CHECK-NEXT: v73: int[0, 7] = BitAnd v67, v72
+# CHECK-NEXT: v74: string = CallBuiltin -, v73 overload=String/0 accessSite=14
+# CHECK-NEXT: v75: string = Strcat v71, v74 [isLikelyKey] @388:2 tail
+# CHECK-NEXT: v76: "v" = String string="v"
+# CHECK-NEXT: v77: string = Add v76, v67
+# CHECK-NEXT: ElemSet v70, v75, v77 accessSite=16
+# CHECK-NEXT: v79: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: v80: object ~ builtin(ProcessEnv) = Upcast v79 castType=anything
+# CHECK-NEXT: v81: "K" = String string="K"
+# CHECK-NEXT: v82: 7 = Integer integer=7
+# CHECK-NEXT: v83: int[0, 7] = BitAnd v67, v82
+# CHECK-NEXT: v84: string = CallBuiltin -, v83 overload=String/0 accessSite=18
+# CHECK-NEXT: v85: string = Strcat v81, v84 [isLikelyKey] @388:1 tail
+# CHECK-NEXT: v86: anything = ElemGet v80, v85 accessSite=20
+# CHECK-NEXT: v87: anything ~ undefined|null|string = Upcast v86 castType=anything
+# CHECK-NEXT: v88: boolean = TypeTest v87 testedType=string
+# CHECK-NEXT: Branch v88 -> taken b18(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b17() frequency=Unlikely:
+# CHECK-NEXT: v89: object ~ builtin(ProcessEnv) = Upcast v64 castType=anything
+# CHECK-NEXT: v90: "K" = String string="K"
+# CHECK-NEXT: v91: 7 = Integer integer=7
+# CHECK-NEXT: v92: int[0, 7] = BitAnd v59, v91
+# CHECK-NEXT: v93: string = CallBuiltin -, v92 overload=String/0 accessSite=14
+# CHECK-NEXT: v94: string = Strcat v90, v93 [isLikelyKey] @388:10 tail
+# CHECK-NEXT: v95: "v" = String string="v"
+# CHECK-NEXT: v96: string = Add v95, v59
+# CHECK-NEXT: ElemSet v89, v94, v96 accessSite=16
+# CHECK-NEXT: v98: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: v99: object ~ builtin(ProcessEnv) = Upcast v98 castType=anything
+# CHECK-NEXT: v100: "K" = String string="K"
+# CHECK-NEXT: v101: 7 = Integer integer=7
+# CHECK-NEXT: v102: int[0, 7] = BitAnd v59, v101
+# CHECK-NEXT: v103: string = CallBuiltin -, v102 overload=String/0 accessSite=18
+# CHECK-NEXT: v104: string = Strcat v100, v103 [isLikelyKey] @388:9 tail
+# CHECK-NEXT: v105: anything = ElemGet v99, v104 accessSite=20
+# CHECK-NEXT: v106: anything ~ undefined|null|string = Upcast v105 castType=anything
+# CHECK-NEXT: Jump -> next b20(v59, v63, v106)
+# CHECK-NEXT: b18(v107: string):
+# CHECK-NEXT: v108: int[0, 2147483647] = GetStringLength v107
+# CHECK-NEXT: v109: number = Add v68, v108
+# CHECK-NEXT: v110: int[1, 20000] = Increment v67
+# CHECK-NEXT: Jump -> next b2(v109, v110)
+# CHECK-NEXT: b19(v111: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b20(v67, v68, v111)
+# CHECK-NEXT: b20(v112: int[0, 19999], v113: number|string|bigint ~ number, v114: anything ~ undefined|null|string) frequency=Unlikely:
+# CHECK-NEXT: v115: anything = PropGet v114 key="length" accessSite=21
+# CHECK-NEXT: v116: anything ~ number = Upcast v115 castType=anything
+# CHECK-NEXT: v117: number|string|bigint ~ number = Add v113, v116
+# CHECK-NEXT: v118: int[1, 20000] = Increment v112
+# CHECK-NEXT: v119: boolean ~ true = TypeTest v117 testedType=number
+# CHECK-NEXT: Branch v119 -> taken b21(| 0), notTaken b22()
+# CHECK-NEXT: b21(v120: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v120, v118)
+# CHECK-NEXT: b22() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v122: 20000 = Integer integer=20000
+# CHECK-NEXT: v123: boolean = Less v118, v122
+# CHECK-NEXT: Branch v123 -> taken b23(| 0), notTaken b24()
+# CHECK-NEXT: b23(v124: int[1, 19999]) frequency=Unlikely:
+# CHECK-NEXT: v125: RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]> = SharedRegExpLiteral pattern="(a)(b)"
+# CHECK-NEXT: v126: RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]> = AssumeType v125 provenType=RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]>
+# CHECK-NEXT: v127: "ab" = String string="ab"
+# CHECK-NEXT: v128: string = Add v127, v124
+# CHECK-NEXT: v129: undefined = CallBuiltin v126, v128 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=0 accessSite=1
+# CHECK-NEXT: v130: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v131: anything = PropGet v130 key="$1" accessSite=3
+# CHECK-NEXT: v132: anything = PropGet v131 key="length" accessSite=4
+# CHECK-NEXT: v133: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v134: anything = PropGet v133 key="lastMatch" accessSite=6
+# CHECK-NEXT: v135: anything = PropGet v134 key="length" accessSite=7
+# CHECK-NEXT: Jump -> next b8(v117, v124, v132, v135)
+# CHECK-NEXT: b24() frequency=Unlikely:
+# CHECK-NEXT: v136: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v137: undefined = CallBuiltin v136, v117 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=24
+# CHECK-NEXT: Jump -> next b26()
+# CHECK-NEXT: b25():
+# CHECK-NEXT: v138: undefined = CallBuiltin -, v4 overload=ConsoleLog/0 accessSite=24
+# CHECK-NEXT: Jump -> next b26()
+# CHECK-NEXT: b26():
+# CHECK-NEXT: v139: undefined = Undefined
+# CHECK-NEXT: Return v139
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="keyOf"
+# CHECK: module=m0 position=349 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

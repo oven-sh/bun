@@ -8,7 +8,7 @@
 namespace Bun {
 using namespace JSC;
 
-/// Adjust a `ZigStackFramePosition` by a number of bytes. This accounts for when the adjustment
+/// Adjust a `ZigStackFramePosition` by a number of code units. This accounts for when the adjustment
 /// crosses line boundaries, and thus requires the source code in order to properly compute
 /// the result.
 void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* code)
@@ -31,20 +31,12 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
         }
 
         auto source = provider->source();
-        if (!source.is8Bit()) {
-            // Debug-only assertion
-            // Bun does not yet use 16-bit sources anywhere. The transpiler ensures everything
-            // fit's into latin1 / 8-bit strings for on-average lower memory usage.
-            ASSERT_NOT_REACHED("16-bit source re-mapping is not implemented here.");
-
-            pos.line_zero_based = 0;
-            pos.column_zero_based = 0;
-            pos.byte_position = 0;
-            return;
-        }
+        unsigned length = source.length();
 
         for (int i = 0; i < amount; i++) {
-            if (source[pos.byte_position - i] == '\n') {
+            // byte_position equals the source length when the callee ends at the end of the source.
+            unsigned index = pos.byte_position - i;
+            if (index < length && source[index] == '\n') {
                 pos.line_zero_based = pos.line_zero_based - 1;
             }
         }
@@ -65,10 +57,12 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
     auto expr = code->expressionInfoForBytecodeIndex(bc);
+    // Expression info has offsets only. The provider derives the line and the column from the divot.
+    auto lineColumn = code->source().provider()->documentLineColumnForOffset(expr.divot);
 
     ZigStackFramePosition pos {
-        .line_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.line).zeroBasedInt(),
-        .column_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.column).zeroBasedInt(),
+        .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),
+        .column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt(),
         .byte_position = (int)expr.divot,
     };
 

@@ -1,0 +1,6 @@
+# sabotage=WalkedKeysStandInTheFirstOrder: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=WalkedKeysStandInTheFirstOrder
+# CHECK-NOT: one c,3,a,2,|,,end
+# PROGRAM-OF: walked-keys-stand-in-the-first-order-left-alone.ir

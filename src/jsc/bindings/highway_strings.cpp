@@ -307,6 +307,43 @@ size_t CountCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, 
     return count;
 }
 
+// Writes the offset of the byte after each `\n` of the 64 bytes at `block`, which are at `pos` in
+// the text, to `out`. Returns the end of what it wrote.
+static HWY_INLINE uint32_t* LineStartsOfBlock(const uint8_t* HWY_RESTRICT block, size_t pos, uint32_t* HWY_RESTRICT out)
+{
+    const hn::CappedTag<uint8_t, 64> d;
+    const size_t N = hn::Lanes(d);
+    const auto vec_newline = hn::Set(d, '\n');
+
+    uint64_t newlines = 0;
+    for (size_t i = 0; i < 64; i += N) {
+        newlines |= hn::BitsFromMask(d, hn::Eq(hn::LoadU(d, block + i), vec_newline)) << i;
+    }
+    const uint32_t after = static_cast<uint32_t>(pos) + 1;
+    while (newlines != 0) {
+        *out++ = after + static_cast<uint32_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(newlines));
+        newlines &= newlines - 1;
+    }
+    return out;
+}
+
+// Writes the offset of the byte after each `\n` of `text` to `out`, in ascending order, and returns
+// how many it wrote. `out` has room for as many as CountCharImpl counts.
+size_t LineStartsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_t* HWY_RESTRICT out)
+{
+    uint32_t* end = out;
+    const size_t whole_blocks = text_len / 64;
+    for (size_t i = 0; i < whole_blocks; ++i) {
+        end = LineStartsOfBlock(text + 64 * i, 64 * i, end);
+    }
+    if (const size_t rest = text_len % 64) {
+        uint8_t last_block[64] = {};
+        std::memcpy(last_block, text + 64 * whole_blocks, rest);
+        end = LineStartsOfBlock(last_block, 64 * whole_blocks, end);
+    }
+    return static_cast<size_t>(end - out);
+}
+
 // --- Implementation Details ---
 
 size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
@@ -449,6 +486,153 @@ size_t LastIndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len,
     }
     return text_len;
 }
+
+// --- node:path (src/node_path/tidy.rs) ---------------------------------------
+
+// Whether the part of `path` that starts at `start` is empty, "." or "..". A part ends in front of a '/' or where `path` ends.
+static HWY_INLINE bool IsUntidyPathPartAt(const uint8_t* HWY_RESTRICT path, size_t len, size_t start)
+{
+    if (path[start] != '.') return path[start] == '/';
+    if (start + 1 == len || path[start + 1] == '/') return true;
+    return path[start + 1] == '.' && (start + 2 == len || path[start + 2] == '/');
+}
+
+// `path` has more bytes than `d` has lanes.
+template<bool stops_at_non_ascii, class D>
+static HWY_INLINE size_t IndexOfUntidySlashBy(D d, const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::RebindToSigned<D> ds;
+    const size_t N = hn::Lanes(d);
+    const auto slash = hn::Set(d, uint8_t { '/' });
+    const auto lowest_bit = hn::Set(d, uint8_t { 1 });
+    // The last block ends with the path, so it may overlap the one before it.
+    const size_t last = len - N - 1;
+    size_t at = 0;
+    while (true) {
+        const auto bytes = hn::LoadU(d, path + at);
+        // A '/' with a '/' or a '.' after it. '.' is '/' without its lowest bit.
+        auto suspects = hn::And(hn::Eq(bytes, slash),
+            hn::Eq(hn::Or(hn::LoadU(d, path + at + 1), lowest_bit), slash));
+        if constexpr (stops_at_non_ascii)
+            suspects = hn::Or(suspects, hn::RebindMask(d, hn::Lt(hn::BitCast(ds, bytes), hn::Zero(ds))));
+        if (HWY_UNLIKELY(!hn::AllFalse(d, suspects))) {
+            for (uint64_t bits = hn::BitsFromMask(d, suspects); bits != 0; bits &= bits - 1) {
+                const size_t found = at + hwy::Num0BitsBelowLS1Bit_Nonzero64(bits);
+                if ((stops_at_non_ascii && path[found] != '/') || IsUntidyPathPartAt(path, len, found + 1)) return found;
+            }
+        }
+        if (at == last) return stops_at_non_ascii && path[len - 1] >= 0x80 ? len - 1 : len;
+        at = HWY_MIN(at + N, last);
+    }
+}
+
+template<bool stops_at_non_ascii>
+static HWY_INLINE size_t IndexOfUntidySlash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::CappedTag<uint8_t, 32> d32;
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    if (len > hn::Lanes(d32)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d32, path, len);
+    if (hn::Lanes(d16) < hn::Lanes(d32) && len > hn::Lanes(d16)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d16, path, len);
+    if (len > hn::Lanes(d8)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d8, path, len);
+    for (size_t at = 0; at + 1 < len; ++at) {
+        if (stops_at_non_ascii && path[at] >= 0x80) return at;
+        if (path[at] == '/' && IsUntidyPathPartAt(path, len, at + 1)) return at;
+    }
+    return stops_at_non_ascii && len != 0 && path[len - 1] >= 0x80 ? len - 1 : len;
+}
+
+// Index of the first '/' in front of a part that is empty, "." or "..", or `len` if there is none.
+size_t IndexOfUntidySlashImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return IndexOfUntidySlash<false>(path, len);
+}
+
+// Index of the first byte that is such a '/' or is not ASCII, or `len` if there is none.
+size_t IndexOfUntidySlashOrNonAsciiImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return IndexOfUntidySlash<true>(path, len);
+}
+
+// Entered only at the target the build is compiled for: see highway_last_index_of_slash.
+#if HWY_TARGET == HWY_STATIC_TARGET
+
+// Index of the last byte that is `a` or `b`, or `len` if there is none. It is expected near the end.
+template<uint8_t a, uint8_t b>
+static HWY_INLINE size_t LastIndexOfEitherNearEnd(const uint8_t* HWY_RESTRICT text, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t end = len;
+    while (end >= hn::Lanes(d16)) {
+        end -= hn::Lanes(d16);
+        const auto bytes = hn::LoadU(d16, text + end);
+        const intptr_t at = hn::FindLastTrue(d16, hn::Or(hn::Eq(bytes, hn::Set(d16, a)), hn::Eq(bytes, hn::Set(d16, b))));
+        if (at >= 0) return end + static_cast<size_t>(at);
+    }
+    if (end >= hn::Lanes(d8)) {
+        end -= hn::Lanes(d8);
+        const auto bytes = hn::LoadU(d8, text + end);
+        const intptr_t at = hn::FindLastTrue(d8, hn::Or(hn::Eq(bytes, hn::Set(d8, a)), hn::Eq(bytes, hn::Set(d8, b))));
+        if (at >= 0) return end + static_cast<size_t>(at);
+    }
+    while (end-- > 0) {
+        if (text[end] == a || text[end] == b) return end;
+    }
+    return len;
+}
+
+size_t LastIndexOfSlashImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return LastIndexOfEitherNearEnd<'/', '/'>(path, len);
+}
+
+size_t LastIndexOfSlashOrDotImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return LastIndexOfEitherNearEnd<'/', '.'>(path, len);
+}
+
+// How many of their first `len` bytes `a` and `b` have in common.
+size_t CommonPrefixLengthImpl(const uint8_t* HWY_RESTRICT a, const uint8_t* HWY_RESTRICT b, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t at = 0;
+    for (; at + hn::Lanes(d16) <= len; at += hn::Lanes(d16)) {
+        const intptr_t differs = hn::FindFirstTrue(d16, hn::Ne(hn::LoadU(d16, a + at), hn::LoadU(d16, b + at)));
+        if (differs >= 0) return at + static_cast<size_t>(differs);
+    }
+    if (at + hn::Lanes(d8) <= len) {
+        const intptr_t differs = hn::FindFirstTrue(d8, hn::Ne(hn::LoadU(d8, a + at), hn::LoadU(d8, b + at)));
+        if (differs >= 0) return at + static_cast<size_t>(differs);
+        at += hn::Lanes(d8);
+    }
+    while (at < len && a[at] == b[at])
+        ++at;
+    return at;
+}
+
+// CountCharImpl of '/' for a few dozen bytes.
+size_t CountSlashesImpl(const uint8_t* HWY_RESTRICT text, size_t len)
+{
+    constexpr uint8_t needle = '/';
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t count = 0;
+    size_t at = 0;
+    for (; at + hn::Lanes(d16) <= len; at += hn::Lanes(d16)) {
+        count += hn::CountTrue(d16, hn::Eq(hn::LoadU(d16, text + at), hn::Set(d16, needle)));
+    }
+    if (at + hn::Lanes(d8) <= len) {
+        count += hn::CountTrue(d8, hn::Eq(hn::LoadU(d8, text + at), hn::Set(d8, needle)));
+        at += hn::Lanes(d8);
+    }
+    for (; at < len; ++at)
+        count += text[at] == needle ? 1 : 0;
+    return count;
+}
+
+#endif // HWY_TARGET == HWY_STATIC_TARGET
 
 // Index of the first byte that HTML-escapes: one of " & ' < >.
 // Returns text_len if none are present.
@@ -749,6 +933,170 @@ size_t IndexOfInterestingCharacterInMultilineCommentImpl(const uint8_t* HWY_REST
     }
 
     return text_len;
+}
+
+// The classes of a byte b are `upper[b >> 4] & lower[b & 15]`. A bit stands for the bytes whose upper
+// half is one of `rows` and whose lower half is one of `columns`.
+struct ScannerNibbles {
+    alignas(16) uint8_t upper[16] {};
+    alignas(16) uint8_t lower[16] {};
+
+    constexpr void add(unsigned bit, unsigned rows, unsigned columns)
+    {
+        for (unsigned i = 0; i < 16; ++i) {
+            if ((rows >> i) & 1) upper[i] |= 1 << bit;
+            if ((columns >> i) & 1) lower[i] |= 1 << bit;
+        }
+    }
+    constexpr uint8_t of(unsigned b) const { return upper[b >> 4] & lower[b & 15]; }
+};
+// A tab or a space has one of the two lowest bits, a byte of an ASCII identifier a higher one.
+static constexpr int8_t kScannerBlankBits = 3;
+static constexpr ScannerNibbles kScannerNameOrBlank = [] {
+    ScannerNibbles nibbles;
+    nibbles.add(0, 1 << 0, 1 << 9); // tab
+    nibbles.add(1, 1 << 2, 1 << 0); // space
+    nibbles.add(2, 1 << 2, 1 << 4); // $
+    nibbles.add(3, 1 << 3, 0x03FF); // 0-9
+    nibbles.add(4, (1 << 4) | (1 << 6), 0xFFFE); // A-O, a-o
+    nibbles.add(5, (1 << 5) | (1 << 7), 0x07FF); // P-Z, p-z
+    nibbles.add(6, 1 << 5, 1 << 15); // _
+    return nibbles;
+}();
+static constexpr ScannerNibbles kScannerStringStop = [] {
+    ScannerNibbles nibbles;
+    nibbles.add(0, 0xFF03, 0xFFFF); // control characters, and what is not ASCII
+    nibbles.add(1, 1 << 2, (1 << 2) | (1 << 4) | (1 << 7)); // " $ '
+    nibbles.add(2, 1 << 5, 1 << 12); // backslash
+    nibbles.add(3, 1 << 6, 1 << 0); // `
+    return nibbles;
+}();
+static_assert([] {
+    for (unsigned b = 0; b < 256; ++b) {
+        const bool is_name = (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_' || b == '$';
+        const bool is_blank = b == '\t' || b == ' ';
+        const bool is_string_stop = b == '"' || b == '\'' || b == '`' || b == '$' || b == '\\' || b < 0x20 || b >= 0x80;
+        const int name_or_blank = kScannerNameOrBlank.of(b);
+        if ((name_or_blank > kScannerBlankBits) != is_name) return false;
+        if ((name_or_blank != 0 && name_or_blank <= kScannerBlankBits) != is_blank) return false;
+        if ((kScannerStringStop.of(b) != 0) != is_string_stop) return false;
+    }
+    return true;
+}());
+
+// ScannerRunStopsImpl for the 64 bytes at `block`: 8 bytes for each bitmap, the first at `plane`.
+static HWY_INLINE void ScannerRunStopsOfBlock(const uint8_t* HWY_RESTRICT block, uint8_t* HWY_RESTRICT plane, size_t plane_len)
+{
+    const hn::CappedTag<uint8_t, 64> d;
+    const hn::RebindToSigned<decltype(d)> di;
+    const size_t N = hn::Lanes(d);
+
+    const auto name_or_blank_by_upper = hn::LoadDup128(d, kScannerNameOrBlank.upper);
+    const auto name_or_blank_by_lower = hn::LoadDup128(d, kScannerNameOrBlank.lower);
+    const auto string_stop_by_upper = hn::LoadDup128(d, kScannerStringStop.upper);
+    const auto string_stop_by_lower = hn::LoadDup128(d, kScannerStringStop.lower);
+    const auto vec_low_half = hn::Set(d, uint8_t { 0x0F });
+    const auto vec_zero = hn::Zero(d);
+    const auto vec_blank_bits = hn::Set(di, kScannerBlankBits);
+
+    uint64_t name = 0, neither = 0, plain = 0;
+    for (size_t i = 0; i < 64; i += N) {
+        const auto vec = hn::LoadU(d, block + i);
+        const auto upper = hn::ShiftRight<4>(vec);
+        const auto lower = hn::And(vec, vec_low_half);
+        const auto name_or_blank = hn::And(hn::TableLookupBytes(name_or_blank_by_upper, upper), hn::TableLookupBytes(name_or_blank_by_lower, lower));
+        const auto stop = hn::And(hn::TableLookupBytes(string_stop_by_upper, upper), hn::TableLookupBytes(string_stop_by_lower, lower));
+        // No class has the sign bit, and x86 before AVX-512 only compares signed bytes.
+        name |= hn::BitsFromMask(di, hn::Gt(hn::BitCast(di, name_or_blank), vec_blank_bits)) << i;
+        neither |= hn::BitsFromMask(d, hn::Eq(name_or_blank, vec_zero)) << i;
+        plain |= hn::BitsFromMask(d, hn::Eq(stop, vec_zero)) << i;
+    }
+    const uint64_t not_identifier = ~name;
+    const uint64_t not_blank = name | neither;
+    const uint64_t string_stop = ~plain;
+
+    std::memcpy(plane, &not_identifier, 8);
+    std::memcpy(plane + plane_len, &not_blank, 8);
+    std::memcpy(plane + 2 * plane_len, &string_stop, 8);
+}
+
+// Stage 1 of the scanner in src/sema/parser/lexer.rs: one pass over the source instead of a call
+// per token. Writes three bitmaps, `plane_len` bytes apart, with one bit per source byte (bit i of
+// byte j is source byte 8 * j + i). A set bit is a byte that ends a run:
+//   plane 0: not an ASCII letter, digit, `_` or `$`
+//   plane 1: not a tab or a space
+//   plane 2: `"`, `'`, `` ` ``, `$`, `\`, a control character, or not ASCII
+// Each plane gets ceil(text_len / 64) * 8 bytes. The bits past the end of the source are set.
+void ScannerRunStopsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
+{
+    const size_t whole_blocks = text_len / 64;
+    for (size_t i = 0; i < whole_blocks; ++i) {
+        ScannerRunStopsOfBlock(text + 64 * i, out + 8 * i, plane_len);
+    }
+    if (const size_t rest = text_len % 64) {
+        uint8_t last_block[64] = {};
+        std::memcpy(last_block, text + 64 * whole_blocks, rest);
+        ScannerRunStopsOfBlock(last_block, out + 8 * whole_blocks, plane_len);
+    }
+}
+
+// What the formatter in src/format takes a closer look at: everything but the printable characters of
+// ASCII other than the backslash, and tab, line feed and carriage return.
+static constexpr ScannerNibbles kOddByte = [] {
+    ScannerNibbles nibbles;
+    nibbles.add(0, 0xFF02, 0xFFFF); // 0x10 to 0x1F, and what is not ASCII
+    nibbles.add(1, 1 << 0, 0xFFFF & ~((1 << 9) | (1 << 10) | (1 << 13))); // 0x00 to 0x0F
+    nibbles.add(2, 1 << 5, 1 << 12); // backslash
+    nibbles.add(3, 1 << 7, 1 << 15); // 0x7F
+    return nibbles;
+}();
+static_assert([] {
+    for (unsigned b = 0; b < 256; ++b) {
+        const bool is_plain = (b >= 0x20 && b <= 0x7E && b != '\\') || b == '\t' || b == '\n' || b == '\r';
+        if ((kOddByte.of(b) == 0) != is_plain) return false;
+    }
+    return true;
+}());
+
+static HWY_INLINE bool HasOddByte(const uint8_t* HWY_RESTRICT block)
+{
+    const hn::CappedTag<uint8_t, 64> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto by_upper = hn::LoadDup128(d, kOddByte.upper);
+    const auto by_lower = hn::LoadDup128(d, kOddByte.lower);
+    const auto vec_low_half = hn::Set(d, uint8_t { 0x0F });
+
+    auto odd = hn::Zero(d);
+    for (size_t i = 0; i < 64; i += N) {
+        const auto vec = hn::LoadU(d, block + i);
+        odd = hn::Or(odd, hn::And(hn::TableLookupBytes(by_upper, hn::ShiftRight<4>(vec)), hn::TableLookupBytes(by_lower, hn::And(vec, vec_low_half))));
+    }
+    return !hn::AllTrue(d, hn::Eq(odd, hn::Zero(d)));
+}
+
+// One bit for every 64 bytes of `text`, the lowest bit of `out[0]` first: whether one of them is odd.
+// `out` gets ceil(text_len / 4096) words. The bits past the end of the text are clear.
+void OddBlocksImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint64_t* HWY_RESTRICT out)
+{
+    const size_t whole_blocks = text_len / 64;
+    uint64_t marks = 0;
+    for (size_t i = 0; i < whole_blocks; ++i) {
+        marks |= uint64_t { HasOddByte(text + 64 * i) } << (i % 64);
+        if (i % 64 == 63) {
+            out[i / 64] = marks;
+            marks = 0;
+        }
+    }
+    if (const size_t rest = text_len % 64) {
+        uint8_t last_block[64];
+        std::memset(last_block, ' ', sizeof(last_block));
+        std::memcpy(last_block, text + 64 * whole_blocks, rest);
+        marks |= uint64_t { HasOddByte(last_block) } << (whole_blocks % 64);
+    }
+    if (text_len % 4096 != 0) {
+        out[text_len / 4096] = marks;
+    }
 }
 
 size_t IndexOfNewlineOrNonASCIIOrHashOrAtImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
@@ -2321,14 +2669,19 @@ HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfNotCharImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
+HWY_EXPORT(IndexOfUntidySlashImpl);
+HWY_EXPORT(IndexOfUntidySlashOrNonAsciiImpl);
 HWY_EXPORT(LastIndexOfAnyCharImpl);
 HWY_EXPORT(LastIndexOfCharImpl);
+HWY_EXPORT(LineStartsImpl);
 HWY_EXPORT(LowerAscii16Impl);
 HWY_EXPORT(LowerAsciiImpl);
 HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(MemRMemImpl);
 HWY_EXPORT(MemMem16Impl);
 HWY_EXPORT(MemRMem16Impl);
+HWY_EXPORT(OddBlocksImpl);
+HWY_EXPORT(ScannerRunStopsImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
 HWY_EXPORT(VisibleLatin1WidthImpl);
 HWY_EXPORT(VisibleUTF16WidthImpl);
@@ -2419,6 +2772,42 @@ size_t highway_last_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t t
     return BUN_HWY_DISPATCH(LastIndexOfAnyCharImpl)(text, text_len, chars, chars_len);
 }
 
+// Up to 32 bytes no target has a wider vector to use, and the call through the table is what would cost.
+size_t highway_index_of_untidy_slash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    if (len <= 32) return HWY_STATIC_DISPATCH(IndexOfUntidySlashImpl)(path, len);
+    return BUN_HWY_DISPATCH(IndexOfUntidySlashImpl)(path, len);
+}
+
+size_t highway_index_of_untidy_slash_or_non_ascii(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    if (len <= 32) return HWY_STATIC_DISPATCH(IndexOfUntidySlashOrNonAsciiImpl)(path, len);
+    return BUN_HWY_DISPATCH(IndexOfUntidySlashOrNonAsciiImpl)(path, len);
+}
+
+// These look at one or two vectors of 16 bytes: the name at the end of a path, what two paths start with, the folders
+// to leave. A call through the table would double that, so they enter the kernel of the target that the build is
+// compiled for, and LTO inlines it into the caller.
+size_t highway_last_index_of_slash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(LastIndexOfSlashImpl)(path, len);
+}
+
+size_t highway_last_index_of_slash_or_dot(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(LastIndexOfSlashOrDotImpl)(path, len);
+}
+
+size_t highway_common_prefix_length(const uint8_t* HWY_RESTRICT a, const uint8_t* HWY_RESTRICT b, size_t len)
+{
+    return HWY_STATIC_DISPATCH(CommonPrefixLengthImpl)(a, b, len);
+}
+
+size_t highway_count_slashes(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(CountSlashesImpl)(path, len);
+}
+
 size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
@@ -2441,6 +2830,11 @@ size_t highway_count_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_
     uint8_t needle)
 {
     return BUN_HWY_DISPATCH(CountCharImpl)(haystack, haystack_len, needle);
+}
+
+size_t highway_line_starts(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_t* HWY_RESTRICT out)
+{
+    return BUN_HWY_DISPATCH(LineStartsImpl)(text, text_len, out);
 }
 
 size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)
@@ -2481,6 +2875,16 @@ size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* H
 size_t highway_index_of_interesting_character_in_multiline_comment(const uint8_t* HWY_RESTRICT text, size_t text_len)
 {
     return BUN_HWY_DISPATCH(IndexOfInterestingCharacterInMultilineCommentImpl)(text, text_len);
+}
+
+void highway_scanner_run_stops(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
+{
+    BUN_HWY_DISPATCH(ScannerRunStopsImpl)(text, text_len, out, plane_len);
+}
+
+void highway_odd_blocks(const uint8_t* HWY_RESTRICT text, size_t text_len, uint64_t* HWY_RESTRICT out)
+{
+    BUN_HWY_DISPATCH(OddBlocksImpl)(text, text_len, out);
 }
 
 size_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
@@ -2618,14 +3022,17 @@ size_t highway_decode_hex16(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RES
 __asm__(".globl _memmem");
 __asm__(".set _memmem, _highway_memmem");
 #elif OS(LINUX)
-// On Linux, override the libc memmem with our implementation
-// This uses the GNU-specific attribute to alias our function to the libc symbol
-// The alias will be visible across the entire program, not just this file
+// On Linux, override the libc memmem with our implementation.
+// A definition rather than __attribute__((alias)): memmem's prototype (const
+// void*, and throw() in glibc) is not highway_memmem's, which clang 23's
+// -Wattribute-alias rejects. highway_memmem is in this file and inlines here.
 extern "C" {
 // Using both "default" visibility and "weak" ensures our implementation is used
 // throughout the entire program when linked, not just in this object file
 __attribute__((visibility("default"), weak, used)) void* memmem(const void* haystack, size_t haystacklen, const void* needle, size_t needlelen)
-    __attribute__((alias("highway_memmem")));
+{
+    return bun::highway_memmem(static_cast<const uint8_t*>(haystack), haystacklen, static_cast<const uint8_t*>(needle), needlelen);
+}
 }
 
 #endif

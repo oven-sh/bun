@@ -1,0 +1,27 @@
+------------------
+{ printWidth: 80 }
+------------------
+setTimeout(() => {
+  p.value = !1;
+}, o);
+setTimeout(function () {
+  p.value = !1;
+}, o);
+a(b, () => {
+  p.value = !1;
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+setTimeout(() => {
+  p.value = !1;
+}, o);
+setTimeout(function () {
+  p.value = !1;
+}, o);
+a(b, () => {
+  p.value = !1;
+});
+
+===================== End =====================

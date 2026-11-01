@@ -896,8 +896,9 @@ test("a send() that waited behind backpressure runs its callback in the store of
   const inStore = <T>(store: string | undefined, fn: () => T) => (store === undefined ? fn() : storage.run(store, fn));
   const socket = storage.run("createSocket()", () => createSocket("udp4"));
   await new Promise<void>((resolve, reject) => socket.once("error", reject).bind(0, "127.0.0.1", resolve));
+  // connect() hands a failure to its callback.
   await new Promise<void>((resolve, reject) =>
-    socket.once("error", reject).connect(socket.address().port, "127.0.0.1", () => resolve()),
+    socket.connect(socket.address().port, "127.0.0.1", (error?: Error) => (error ? reject(error) : resolve())),
   );
 
   const handle = socket[kStateSymbol].handle;
@@ -1100,7 +1101,9 @@ for (const [kind, bind] of Object.entries(icmpBindModes)) {
         const { promise: errored, resolve: onError } = Promise.withResolvers<string>();
         socket.on("error", error => onError(`${storage.getStore()} (${error.message})`));
         await inStore(bindIn, () => bind(socket));
-        await new Promise<void>(resolve => socket.connect(deadPort, "127.0.0.1", () => resolve()));
+        await new Promise<void>((resolve, reject) =>
+          socket.connect(deadPort, "127.0.0.1", (error?: Error) => (error ? reject(error) : resolve())),
+        );
         // Keep sending until the queued ICMP error surfaces. If the native socket is silently closed instead, say
         // that rather than time out.
         const native = socket[kStateSymbol].handle.socket;

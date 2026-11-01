@@ -8,10 +8,16 @@ const kHour = 60 * kMinute;
 const StringPrototypePadStart = String.prototype.padStart;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
-const StringPrototypeReplace = String.prototype.replace;
-const StringPrototypeReplaceAll = String.prototype.replaceAll;
+const StringPrototypeReplaceAll: (this: string, searchValue: string, replaceValue: string) => string =
+  String.prototype.replaceAll;
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const RegExpPrototypeSymbolReplace = RegExp.prototype[Symbol.replace] as (
+  this: RegExp,
+  string: string,
+  replacement: string,
+) => string;
 const ObjectDefineProperty = Object.defineProperty;
+const ArrayPrototypeUnshift = Array.prototype.unshift;
 const StringPrototypeSplit: (this: string, separator: string, limit?: number) => string[] = String.prototype.split;
 const NumberPrototypeToFixed = Number.prototype.toFixed;
 const MathFloor = Math.floor;
@@ -62,7 +68,7 @@ let testEnabled: (set: string) => boolean;
 {
   let debugEnv = Bun.env.NODE_DEBUG;
   if (debugEnv) {
-    debugEnv = StringPrototypeReplace.$call(debugEnv, /[|\\{}()[\]^$+?.]/g, "\\$&");
+    debugEnv = RegExpPrototypeSymbolReplace.$call(/[|\\{}()[\]^$+?.]/g, debugEnv, "\\$&");
     debugEnv = StringPrototypeReplaceAll.$call(debugEnv, "*", ".*");
     debugEnv = StringPrototypeReplaceAll.$call(debugEnv, ",", "$|^");
     const debugEnvRegex = new RegExp(`^${debugEnv}$`, "i");
@@ -94,8 +100,12 @@ function debuglogImpl(enabled: boolean, set: string): DebugLoggerFunction {
       const pid = process.pid;
       emitWarningIfNeeded(set);
       debugImpls[set] = function debug(...args: unknown[]) {
-        const msg = require("internal/util/inspect").format(...args);
-        console.error("%s %d: %s", set, pid, msg);
+        const colors = require("internal/util/colors").shouldColorize(process.stderr);
+        const { format, formatWithOptions, inspect } = require("internal/util/inspect");
+        ArrayPrototypeUnshift.$call(args, { colors });
+        const msg = formatWithOptions.$apply(undefined, args);
+        const coloredPID = inspect(pid, { colors });
+        process.stderr.write(format("%s %s: %s\n", set, coloredPID, msg));
       };
     } else {
       debugImpls[set] = noop;
@@ -116,15 +126,18 @@ function debuglog(set: string, cb?: (fn: DebugLoggerFunction) => void): DebugLog
     init();
     // Only invokes debuglogImpl() when the debug function is called for the first time.
     debug = debuglogImpl(enabled, set);
-    if (typeof cb === "function") cb(debug);
-    switch (args.length) {
-      case 1:
-        return debug(args[0]);
-      case 2:
-        return debug(args[0], args[1]);
-      default:
-        return debug(...args);
+    if (typeof cb === "function") {
+      ObjectDefineProperty(debug, "enabled", {
+        __proto__: null,
+        get() {
+          return enabled;
+        },
+        configurable: true,
+        enumerable: true,
+      } as PropertyDescriptor);
+      cb(debug);
     }
+    return debug.$apply(undefined, args);
   };
   let test = () => {
     init();
@@ -132,14 +145,8 @@ function debuglog(set: string, cb?: (fn: DebugLoggerFunction) => void): DebugLog
     return enabled;
   };
   const logger = (...args: unknown[]) => {
-    switch (args.length) {
-      case 1:
-        return debug(args[0]);
-      case 2:
-        return debug(args[0], args[1]);
-      default:
-        return debug(...args);
-    }
+    if (enabled === false) return;
+    return debug.$apply(undefined, args);
   };
   ObjectDefineProperty(logger, "enabled", {
     __proto__: null,

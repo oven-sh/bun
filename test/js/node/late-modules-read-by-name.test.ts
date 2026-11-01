@@ -39,7 +39,7 @@ const expected = [
   " ",
   "h2 Http2Stream {",
   "  id: '<pe h",
-  "debuglog enabled undefined",
+  "debuglog enabled false",
 ];
 
 test("members of modules that are loaded late", async () => {

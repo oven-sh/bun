@@ -1,5 +1,4 @@
-// Child of "a string source" in bun-write.test.js. It writes into its working directory, or to
-// a pipe that the test made and does not read yet.
+// Child of "a string source" in bun-write.test.js. It writes into its working directory.
 import fs from "node:fs";
 import path from "node:path";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
@@ -16,17 +15,42 @@ const wraps = {
   "a Request body": s => new Request("http://localhost/", { method: "POST", body: s }),
 };
 
+// A FIFO in the working directory. The fixture holds both ends of it and does not wait for the
+// end of the pipe: kqueue does not report that for a FIFO on macOS.
+function makeFifo() {
+  const fifo = path.join(process.cwd(), "fifo");
+  if (Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode !== 0) throw new Error("mkfifo failed");
+  return fifo;
+}
+
+const openReader = fifo => fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+
 // A write to this file waits on the io loop when the pipe is full.
-function openPipe(fifo) {
+function openWriter(fifo) {
   const pipe = Bun.file(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
   void pipe.size; // The write job now knows that this is not a regular file.
   return pipe;
 }
 
+// Takes `length` bytes out of the pipe. When the pipe is empty, the write job has more to write.
+async function read(reader, length) {
+  const bytes = Buffer.alloc(length);
+  for (let offset = 0; offset < length;) {
+    try {
+      const count = fs.readSync(reader, bytes, offset, length - offset);
+      if (count === 0) throw new Error("the pipe ended after " + offset + " bytes");
+      offset += count;
+    } catch (error) {
+      if (error.code !== "EAGAIN") throw error;
+      await new Promise(setImmediate);
+    }
+  }
+  return bytes;
+}
+
 // Writes a string to the pipe and leaves the write as its only holder. The string is a property
 // key by then, which makes it an atom of this thread: no other thread can release it.
-function writeToPipeAndDrop(fifo) {
-  const pipe = openPipe(fifo);
+function writeAndDrop(pipe) {
   const written = (() => {
     const str = Buffer.alloc(MiB, "abcd").toString();
     const written = Bun.write(pipe, str);
@@ -129,23 +153,31 @@ if (mode === "copies") {
   }
   console.log(JSON.stringify(results));
 } else if (mode === "parked") {
-  const written = writeToPipeAndDrop(arg);
-  console.error("parked");
-  console.error(await written);
+  // Nobody reads the pipe before the string is dropped, so the write is pending then.
+  const fifo = makeFifo();
+  const reader = openReader(fifo);
+  const written = writeAndDrop(openWriter(fifo));
+  const piped = await read(reader, MiB);
+  console.log(JSON.stringify({ written: await written, whole: piped.equals(Buffer.alloc(MiB, "abcd")) }));
 } else if (mode === "parked-in-worker") {
-  const worker = new Worker(import.meta.filename, { workerData: arg });
+  // Nobody reads the pipe, so the write of the worker is pending when the worker is terminated.
+  const fifo = makeFifo();
+  openReader(fifo);
+  const worker = new Worker(import.meta.filename, { workerData: fifo });
   const { promise: started, resolve, reject } = Promise.withResolvers();
   worker.once("message", resolve);
   worker.once("error", reject);
   await started;
-  console.error("exit code " + (await worker.terminate()));
+  console.log(JSON.stringify({ exitCode: await worker.terminate() }));
 } else if (mode === "worker") {
-  writeToPipeAndDrop(arg);
+  writeAndDrop(openWriter(arg));
   parentPort.postMessage("started");
 } else if (mode === "substring") {
   // Writes a 2 MiB slice of a 64 MiB string, then drops both strings. The slice refers to the
   // buffer of the long string.
-  const pipe = openPipe(arg);
+  const fifo = makeFifo();
+  const reader = openReader(fifo);
+  const pipe = openWriter(fifo);
   const before = process.memoryUsage.rss();
   let base = new Array(64).fill(Buffer.alloc(MiB, "a").toString()).join("");
   let slice = base.slice(1, 2 * MiB + 1);
@@ -157,8 +189,8 @@ if (mode === "copies") {
     await Bun.sleep(10);
     freed = process.memoryUsage.rss() < before + 32 * MiB;
   }
-  console.error(JSON.stringify({ freed }));
-  console.error(await written);
+  const piped = await read(reader, 2 * MiB);
+  console.log(JSON.stringify({ freed, written: await written, whole: piped.equals(Buffer.alloc(2 * MiB, "a")) }));
 } else {
   throw new Error("unknown mode " + mode);
 }

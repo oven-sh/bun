@@ -1712,34 +1712,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       return { stdout: exitCode === 0 ? JSON.parse(stdout) : stdout, stderr, exitCode };
     }
 
-    // The fixture writes to a pipe that nobody reads before `marker` is on the fixture's stderr,
-    // so its write is still pending then.
-    async function fixtureWithStalledPipe(mode, marker) {
-      using dir = tempDir("bun-write-string-stalled", {});
-      const fifo = join(String(dir), "fifo");
-      expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
-      const held = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-      try {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), fixturePath, mode, fifo],
-          env,
-          stdout: "inherit",
-          stderr: "pipe",
-        });
-        const decoder = new TextDecoder();
-        let stderr = "";
-        let drained;
-        for await (const chunk of proc.stderr) {
-          stderr += decoder.decode(chunk, { stream: true });
-          // This read ends when the fixture has closed the pipe, also when it did so before.
-          if (!drained && stderr.includes(marker)) drained = Bun.file(held).bytes();
-        }
-        return { piped: Buffer.from((await drained) ?? []), stderr, exitCode: await proc.exited };
-      } finally {
-        fs.closeSync(held);
-      }
-    }
-
     it("is not copied inside the call", async () => {
       const size = 16 * 1024 * 1024;
       const inPlace = { copied: false, written: size, same: true };
@@ -1806,28 +1778,23 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     // and the string is an atom by then. Only the thread that made it an atom can release it: on
     // any other thread the release stops the process. Windows has no mkfifo.
     it.skipIf(isWindows)("a write that waits for a full pipe writes the whole string", async () => {
-      const size = 1024 * 1024;
-      const { piped, stderr, exitCode } = await fixtureWithStalledPipe("parked", "parked\n");
-      expect({ whole: piped.equals(Buffer.alloc(size, "abcd")), stderr, exitCode }).toEqual({
-        whole: true,
-        stderr: `parked\n${size}\n`,
+      expect(await fixture("parked")).toEqual({
+        stdout: { written: 1024 * 1024, whole: true },
+        stderr: "",
         exitCode: 0,
       });
     });
 
     it.skipIf(isWindows)("a worker that is terminated while its write is pending exits", async () => {
-      const { stderr, exitCode } = await fixtureWithStalledPipe("parked-in-worker", "exit code");
-      expect({ stderr, exitCode }).toEqual({ stderr: "exit code 1\n", exitCode: 0 });
+      expect(await fixture("parked-in-worker")).toEqual({ stdout: { exitCode: 1 }, stderr: "", exitCode: 0 });
     });
 
     // A slice of a string refers to the buffer of that string. The write copies the slice, so
     // that a pending write does not keep the whole string alive.
     it.skipIf(isWindows)("a write of a substring does not keep the base string alive", async () => {
-      const size = 2 * 1024 * 1024;
-      const { piped, stderr, exitCode } = await fixtureWithStalledPipe("substring", "freed");
-      expect({ whole: piped.equals(Buffer.alloc(size, "a")), stderr, exitCode }).toEqual({
-        whole: true,
-        stderr: `{"freed":true}\n${size}\n`,
+      expect(await fixture("substring")).toEqual({
+        stdout: { freed: true, written: 2 * 1024 * 1024, whole: true },
+        stderr: "",
         exitCode: 0,
       });
     });

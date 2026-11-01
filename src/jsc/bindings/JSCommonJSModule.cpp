@@ -64,6 +64,12 @@
 
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/CyclicModuleRecord.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
+#include <JavaScriptCore/SourceProviderCache.h>
 #include "ModuleLoader.h"
 #include <JavaScriptCore/JSMap.h>
 
@@ -82,6 +88,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include "PathInlines.h"
+#include "EmbedFunctionBody.h"
 #include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
@@ -924,6 +931,138 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     return true;
 }
 
+// Node's explainCommonJSGlobalLikeNotDefinedError (lib/internal/modules/esm/module_job.js), without its sentence about "type": "module" in a package.json.
+static void explainCommonJSNameInESModule(VM& vm, JSValue thrown, bool hasTopLevelAwait)
+{
+    // Node tests e.name, which can run code. Here: an error that ReferenceError made and that has no name of its own.
+    auto* error = dynamicDowncast<ErrorInstance>(thrown);
+    if (!error || error->errorType() != ErrorType::ReferenceError || isValidOffset(error->structure()->get(vm, vm.propertyNames->name)))
+        return;
+    // Node assigns to message and code. Here an own value that an assignment can replace is replaced, and the property keeps its attributes.
+    unsigned attributes;
+    PropertyOffset offset = error->structure()->get(vm, vm.propertyNames->message, attributes);
+    if (!isValidOffset(offset) || (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue))
+        return;
+    JSValue message = error->getDirect(offset);
+    if (!message || !message.isString())
+        return;
+    String text = asString(message)->tryGetValue();
+    static constexpr ASCIILiteral isNotDefined = " is not defined"_s;
+    if (!text.endsWith(isNotDefined))
+        return;
+    StringView name = StringView(text).left(text.length() - isNotDefined.length());
+    ASCIILiteral advice;
+    if (name == "require"_s)
+        advice = "replace require() with import"_s;
+    else if (name == "module"_s || name == "exports"_s)
+        advice = "use export instead of module.exports/exports"_s;
+    else if (name == "__filename"_s)
+        advice = "use import.meta.filename instead"_s;
+    else if (name == "__dirname"_s)
+        advice = "use import.meta.dirname instead"_s;
+    else
+        return;
+    String explained;
+    if (hasTopLevelAwait) {
+        explained = makeString("Cannot determine intended module format because both '"_s, name, "' and top-level await are present. If the code is intended to be CommonJS, wrap await in an async function. If the code is intended to be an ES module, "_s, advice, '.');
+        const Identifier& code = WebCore::builtinNames(vm).codePublicName();
+        unsigned codeAttributes = 0;
+        bool hasCode = isValidOffset(error->structure()->get(vm, code, codeAttributes));
+        if (hasCode ? !(codeAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue) : error->isStructureExtensible())
+            error->putDirect(vm, code, jsNontrivialString(vm, "ERR_AMBIGUOUS_MODULE_SYNTAX"_s), hasCode ? codeAttributes : 0);
+    } else
+        explained = makeString(text, " in ES module scope"_s, name == "require"_s ? ", you can use import instead"_s : ""_s);
+    error->putDirect(vm, vm.propertyNames->message, jsString(vm, WTF::move(explained)), attributes);
+}
+
+// Node's loadESMFromCJS (lib/internal/modules/cjs/loader.js): text that only parses as an ES module is loaded as the ES module of `filename`.
+static NEVER_INLINE EncodedJSValue compileAsESModuleAfterCommonJSThrew(Zig::GlobalObject* globalObject, ThrowScope& scope, JSCommonJSModule* moduleObject, const String& wrappedString, const String& sourceString, const String& filenameString)
+{
+    VM& vm = globalObject->vm();
+    JSC::Exception* exception = scope.exception();
+    auto* error = dynamicDowncast<ErrorInstance>(exception->value());
+    JSModuleGraph* graph = moduleObject->moduleGraph();
+    if (!error || !error->isParseError() || (graph && graph->disposed()))
+        return {};
+    if (!scope.tryClearException())
+        return {};
+    const auto rethrow = [&]() -> EncodedJSValue {
+        scope.throwException(globalObject, exception);
+        return {};
+    };
+
+    // The body can throw a parse error of its own (new Function(), a nested _compile()), so the wrapper is parsed once more: only one that does not parse counts.
+    ParserError commonJSError;
+    {
+        SourceCode wrapped = makeSource(wrappedString, SourceOrigin(), SourceTaintedOrigin::Untainted);
+        bool parses = JSC::checkSyntax(vm, wrapped, commonJSError);
+        vm.sourceProviderCacheMap.remove(wrapped.provider());
+        if (parses || commonJSError.type() != ParserError::SyntaxError)
+            return rethrow();
+    }
+
+    // Node's name is the path of pathToFileURL(filename). Here it is path.resolve(filename): the resolver reads no separator at the end of the name of a module.
+    JSModuleLoader* loader = graph ? graph->loader() : globalObject->moduleLoader();
+    JSValue resolved = Bun::pathResolve(globalObject, jsString(vm, filenameString));
+    if (scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return {};
+        return rethrow();
+    }
+    if (!resolved.isString())
+        return rethrow();
+    // The loader spells the name as a load of it does: a standalone executable has a spelling of its own for its files.
+    Identifier key = loader->resolve(globalObject, resolved, jsUndefined(), nullptr, /* useImportMap */ false);
+    RETURN_IF_EXCEPTION(scope, {});
+    String keyString = key.string();
+
+    // A name that holds something else keeps the CommonJS error. An ES module that is registered under it is the one that loads, as in Node's load cache.
+    if (!graph && Bun::hasCompiledModules()) [[unlikely]] {
+        // In an ahead-of-time executable __filename says where the file lay when the program was built.
+        String known = Bun::pathInExecutable(keyString);
+        if (Bun::isCompiledModule(known.isNull() ? keyString : known))
+            return rethrow();
+    }
+    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules; virtualModules && virtualModules->contains(keyString))
+        return rethrow();
+    ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript);
+    if (entry && (!entry->record() || !entry->record()->inherits<CyclicModuleRecord>()))
+        return rethrow();
+
+    SourceCode moduleSource = makeSource(sourceString, SourceOrigin(URL::fileURLWithFileSystemPath(keyString)), SourceTaintedOrigin::Untainted, keyString, TextPosition(), SourceProviderSourceType::Module);
+    JSPromise* made = loader->makeModule(globalObject, key, JSSourceCode::create(vm, SourceCode(moduleSource)));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (made->status() != JSPromise::Status::Fulfilled) {
+        // Neither parse accepts the text, and the rejection has no position. The error is that of the parse that read more, the CommonJS one on a tie.
+        ParserError moduleError;
+        JSC::checkModuleSyntax(globalObject, moduleSource, moduleError);
+        RETURN_IF_EXCEPTION(scope, {});
+        vm.sourceProviderCacheMap.remove(moduleSource.provider());
+        int commonJSOffset = commonJSError.token().m_startPosition.offset - static_cast<int>(commonJSDefaultWrapperStart.length());
+        if (moduleError.token().m_startPosition.offset <= commonJSOffset)
+            return rethrow();
+        throwException(globalObject, scope, made->result());
+        return {};
+    }
+    // From here the name is the loader's, as it is for a file: a module that does not load, or that throws, stays registered with its error.
+    if (!entry) {
+        entry = loader->ensureRegistered(globalObject, key, ScriptFetchParameters::Type::JavaScript);
+        RETURN_IF_EXCEPTION(scope, {});
+        entry->provideModule(vm, uncheckedDowncast<AbstractModuleRecord>(made->result()));
+    }
+    bool hasTopLevelAwait = entry->record()->hasTLA();
+
+    JSFunction* requireESM = globalObject->requireESMFromHijackedExtension();
+    MarkedArgumentBuffer args;
+    args.append(jsString(vm, keyString));
+    JSC::profiledCall(globalObject, ProfilingReason::API, requireESM, JSC::getCallData(requireESM), moduleObject, args);
+    if (JSC::Exception* thrown = scope.exception()) [[unlikely]] {
+        explainCommonJSNameInESModule(vm, thrown->value(), hasTopLevelAwait);
+        return {};
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto* moduleObject = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
@@ -941,19 +1080,22 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     String filenameString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    String wrappedString;
+    auto [bodyPrefix, body] = embedFunctionBody(sourceString);
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+    bool isDefaultWrapper = !zigGlobalObject->hasOverriddenModuleWrapper;
+    String wrappedString;
+    if (!isDefaultWrapper) [[unlikely]] {
         wrappedString = makeString(
             zigGlobalObject->m_moduleWrapperStart,
-            sourceString,
+            bodyPrefix,
+            body,
             zigGlobalObject->m_moduleWrapperEnd);
     } else {
-        wrappedString = makeString(commonJSDefaultWrapperStart, sourceString, "\n"_s, commonJSDefaultWrapperEnd);
+        wrappedString = makeString(commonJSDefaultWrapperStart, bodyPrefix, body, "\n"_s, commonJSDefaultWrapperEnd);
     }
 
     moduleObject->sourceCode = makeSource(
-        WTF::move(wrappedString),
+        wrappedString,
         SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
         JSC::SourceTaintedOrigin::Untainted,
         filenameString,
@@ -966,14 +1108,18 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     String dirnameString = dirnameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(
         vm,
         uncheckedDowncast<Zig::GlobalObject>(globalObject),
         moduleObject,
         jsString(vm, dirnameString),
         jsString(vm, filenameString));
-    RETURN_IF_EXCEPTION(throwScope, {});
+    if (throwScope.exception()) [[unlikely]] {
+        // Node stops looking for ES modules once Module.wrapper is assigned (wrapSafe, `patched`). Here that lasts while it differs from the default.
+        if (!isDefaultWrapper)
+            return {};
+        RELEASE_AND_RETURN(throwScope, compileAsESModuleAfterCommonJSThrew(zigGlobalObject, throwScope, moduleObject, wrappedString, sourceString, filenameString));
+    }
 
     return JSValue::encode(jsUndefined());
 }

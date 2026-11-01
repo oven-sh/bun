@@ -36,6 +36,7 @@ const never = process.argv.length > 99;
 const glue = (...parts) => parts.join(never ? "x" : "");
 const text = glue("globalThis.RAN", " = (globalThis.RAN || 0)", " + 1; 'value'");
 const moduleText = glue("globalThis.RAN", " = (globalThis.RAN || 0)", " + 1;");
+const esModuleText = glue("globalThis.RAN", " = (globalThis.RAN || 0)", " + 1; export {};");
 function temporaryFile(extension, contents) { const fs = require("node:fs"), os = require("node:os"), path = require("node:path"); const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "unseen-")), glue("code", extension)); fs.writeFileSync(file, contents); return file; }
 async function attempt(f) { let error; try { await f(); await new Promise(r => setTimeout(r, ${wait})); } catch (e) { error = e ?? new Error("threw " + e); } console.log(globalThis.RAN ? "RAN" : error ? "refused " + error.name + (error.code ? " " + error.code : "") : "did not run"); }
 `;
@@ -81,6 +82,9 @@ const routes: Record<string, Record<string, Route>> = {
       body: `const Module = require('node:module'); const m = new Module('/x.js'); m._compile(moduleText, '/x.js')`,
     },
     "module compile of own module": { body: `module._compile(moduleText, '/x.js')`, extension: "cjs" },
+    "module compile of es module text": {
+      body: `const Module = require('node:module'); const m = new Module('/x.mjs'); m._compile(esModuleText, '/x.mjs')`,
+    },
     "module compile through constructor": {
       body: `new module.constructor('/x.js')._compile(moduleText, '/x.js')`,
       extension: "cjs",
@@ -103,6 +107,10 @@ const routes: Record<string, Record<string, Route>> = {
     "module require method": { body: `module.require(temporaryFile('.js', moduleText))`, extension: "cjs" },
     "own extension handler compiles": {
       body: `require.extensions[glue('.unse', 'en')] = (m, f) => m._compile(require('node:fs').readFileSync(f, 'utf8'), f); require(temporaryFile('.unseen', moduleText))`,
+      extension: "cjs",
+    },
+    "own extension handler compiles es module text": {
+      body: `require.extensions[glue('.unse', 'en')] = (m, f) => m._compile(require('node:fs').readFileSync(f, 'utf8'), f); require(temporaryFile('.unseen', esModuleText))`,
       extension: "cjs",
     },
     "module load of vm": { body: `require('node:module')._load(glue('v', 'm')).runInThisContext(text)` },

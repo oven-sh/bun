@@ -7,13 +7,14 @@
  * a process of one file begins and ends.
  */
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { isWindows, nodeExeAtLeast, tempDir } from "harness";
 import { chmodSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 // As Node.js names it in the commands of the runner.
 const tests = realpathSync(join(import.meta.dir, ".."));
-const node = Bun.which("node");
+// The runner is a TypeScript file, which Node.js starts without a flag since 22.18.
+const node = nodeExeAtLeast("22.18.0");
 
 const standIn = `#!/bin/sh
 IFS='\t'

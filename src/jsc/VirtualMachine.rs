@@ -5701,7 +5701,7 @@ impl VirtualMachine {
                     };
 
                     // Only re-query if we previously had something cached.
-                    if self.transpiler.resolver.bust_dir_cache(
+                    if self.transpiler.resolver.bust_dir_cache_key(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     ) || busted_as_spelled
                     {

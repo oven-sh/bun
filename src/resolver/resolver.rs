@@ -2732,18 +2732,34 @@ impl<'a> Resolver<'a> {
 
     /// Bust the directory cache for the given path, which may end in a separator.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        self.bust_dir_cache_keys(path, Fs::DirKeys::Every)
+    }
+
+    /// `bust_dir_cache` for the one cache key `path`: what a retry after a miss drops.
+    pub fn bust_dir_cache_key(&mut self, path: &[u8]) -> bool {
+        self.bust_dir_cache_keys(path, Fs::DirKeys::Walked)
+    }
+
+    fn bust_dir_cache_keys(&mut self, path: &[u8], keys: Fs::DirKeys) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
-        let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache_mut().remove(path);
-        bun_core::scoped_log!(
-            ResolverDev,
-            "Bust {} = {}, {}",
-            bstr::BStr::new(path),
-            first_bust,
-            second_bust
-        );
-        first_bust || second_bust
+        let dir_cache = self.dir_cache();
+        let mut any_bust = false;
+        self.fs_mut()
+            .fs
+            .bust_entries_cache(path, keys, |key, first_bust| {
+                // SAFETY: `dir_cache` is the process-lifetime `DirInfo` map, which locks itself.
+                let second_bust = unsafe { &mut *dir_cache }.remove(key);
+                bun_core::scoped_log!(
+                    ResolverDev,
+                    "Bust {} = {}, {}",
+                    bstr::BStr::new(key),
+                    first_bust,
+                    second_bust
+                );
+                any_bust |= first_bust || second_bust;
+            });
+        any_bust
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve
@@ -2782,8 +2798,8 @@ impl<'a> Resolver<'a> {
         let path = strings::without_trailing_slash_windows_path(path);
         let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
 
-        let a = self.bust_dir_cache(dir);
-        let b = self.bust_dir_cache(path);
+        let a = self.bust_dir_cache_key(dir);
+        let b = self.bust_dir_cache_key(path);
         a || b
     }
 
@@ -6546,6 +6562,25 @@ impl<'a> Resolver<'a> {
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
+                            // A directory below a link has its real path from the parent. It is no link.
+                            let parent_real = if parent_.abs_real_path.is_empty() {
+                                parent_.abs_path
+                            } else {
+                                parent_.abs_real_path
+                            };
+                            let below_parent = self.fs_ref().abs_buf_checked(
+                                &[parent_real, base],
+                                bufs!(dir_info_uncached_filename),
+                            );
+                            let real = strings::without_trailing_slash_windows_path(symlink);
+                            if below_parent != Some(real) {
+                                // SAFETY: `rfs_ptr` points at the process-global RealFS, and the
+                                // caller holds `entries_mutex`.
+                                unsafe { &mut *rfs_ptr }.record_dir_link(
+                                    strings::without_trailing_slash_windows_path(path),
+                                    real,
+                                );
+                            }
                         } else if !parent_.abs_real_path.is_empty()
                             && let Some(joined) = self.fs_ref().abs_buf_checked(
                                 &[parent_.abs_real_path, base],

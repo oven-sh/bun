@@ -33,6 +33,10 @@ BunSpawnSync/1: it is not called: it blocks, starts a process or opens a socket
 BunTestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestJestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestViSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestVitestSpyOn/0: it is not called: it reaches outside JavaScript
 BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
@@ -271,5 +275,12 @@ S3StatPrototypeLastModified/0: no set of operands selects it
 S3StatPrototypeSize/0: no set of operands selects it
 S3StatPrototypeType/0: no set of operands selects it
 ShellInterpreterPrototypeRun/0: no set of operands selects it
+TestContextPrototypeAnnotate/0: no set of operands selects it
+TestContextPrototypeExpect/0: no set of operands selects it
+TestContextPrototypeOnTestFailed/0: no set of operands selects it
+TestContextPrototypeOnTestFinished/0: no set of operands selects it
+TestContextPrototypeSignal/0: no set of operands selects it
+TestContextPrototypeSkip/0: no set of operands selects it
+TestContextPrototypeTask/0: no set of operands selects it
 Worker/1: it is not called: it starts a thread or opens a connection
 Worker/2: it is not called: it starts a thread or opens a connection

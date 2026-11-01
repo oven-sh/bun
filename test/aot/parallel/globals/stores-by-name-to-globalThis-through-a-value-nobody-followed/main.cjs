@@ -98,7 +98,8 @@ console.log(root.between1, root.between39, "between2" in root);
 
 const plain = opaque({ shelf: 0 });
 const below = opaque(Object.create(globalThis));
-const other = opaque(vm.runInNewContext("globalThis"));
+const context = vm.createContext({});
+const other = opaque(vm.runInContext("globalThis", context));
 for (const name in stores) {
   for (let i = 0; i < 60; i++) {
     stores[name](root, "ours " + i);
@@ -113,7 +114,7 @@ for (const name in stores) {
     below.shelf,
     Object.hasOwn(below, "shelf"),
     other.shelf,
-    vm.runInContext("shelf", other),
+    vm.runInContext("shelf", context),
   );
   delete below.shelf;
 }

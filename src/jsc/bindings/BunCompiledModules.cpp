@@ -154,7 +154,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 
 #if ENABLE(AOT)
 
-extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
+extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
 extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObject*);
 extern "C" bool Bun__compiledProgramRunsInPlace();
 extern "C" bool Bun__compiledProgramHoldsFileAsItIs(const BunString*);
@@ -370,7 +370,7 @@ static bool isReadAsCodeByRequire(Zig::GlobalObject* globalObject, AOT::ModuleID
     if (!reloadsFilesFromDisk() || !AOT::isDataFile(module))
         return false;
     BunString pathString = Bun::toString(path);
-    return Bun__getDefaultLoader(globalObject, &pathString) == BunLoaderTypeJS && !AOT::isHeldForImport(globalObject, module);
+    return Bun__getDefaultLoader(globalObject, &pathString, nullptr) == BunLoaderTypeJS && !AOT::isHeldForImport(globalObject, module);
 }
 
 bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool hasImportAttributes)
@@ -446,7 +446,7 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     if (!module || AOT::leavesModuleToHost(globalObject, *module))
         return false;
     BunString pathString = Bun::toString(path);
-    auto loader = Bun__getDefaultLoader(globalObject, &pathString);
+    auto loader = Bun__getDefaultLoader(globalObject, &pathString, nullptr);
     bool isTypeScriptFile = loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX;
     if (isTypeScriptFile != isTypeScriptLoader)
         return false;

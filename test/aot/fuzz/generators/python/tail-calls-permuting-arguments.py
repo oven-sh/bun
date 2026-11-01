@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""tail-calls-permuting-arguments.py <seed>: tail calls whose arguments are the caller's own incoming arguments in another order (a parallel move over the very slots that are overwritten), more than the caller got, fewer, of mixed kinds (objects, strings, doubles, int32s, booleans, nil, arrays, closures), made in the caller just before it goes; the callee makes garbage before it looks at them. Chains (few -> many -> many), self loops that rotate their arguments, pairs that rotate them."""
+"""tail-calls-permuting-arguments.py <seed>: Tail calls whose arguments are the caller's own incoming arguments in
+another order (a parallel move over the slots being overwritten), more than the caller got, fewer, or of mixed types.
+"""
 import random, sys
 random.seed(int(sys.argv[1]) if len(sys.argv) > 1 else 20261015)
 import os

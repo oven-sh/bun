@@ -77,7 +77,11 @@ struct Initializers<'a> {
 #[derive(Default)]
 pub(crate) struct KnownMemberValues {
     by_declaration: RefCell<FxHashMap<DeclarationKey, MemberValues>>,
+    members_by_name: RefCell<FxHashMap<Sym, MembersByName>>,
 }
+
+// `None`: several members have the name.
+type MembersByName = Rc<FxHashMap<Atom, Option<(EnumId, EnumMemberId)>>>;
 
 /// The objects that the build knows whole because nothing but their declaration fills them: the enums at the top of the files of a program, and the
 /// values of its modules of data. Each is found by binding.
@@ -194,27 +198,44 @@ impl<'a, 's> KnownObjects<'a, 's> {
         is_known_whole.then_some(defined)
     }
 
-    fn find_member(&self, enumeration: Sym, name: Atom) -> Option<(EnumId, EnumMemberId)> {
+    fn list_members_by_name(&self, enumeration: Sym) -> MembersByName {
         let (hir, bound) = (
             self.files.hir(enumeration.file),
             self.files.bound(enumeration.file),
         );
-        let mut found = None;
+        let mut members_by_name: FxHashMap<Atom, Option<(EnumId, EnumMemberId)>> =
+            FxHashMap::default();
         for &declaration in bound.symbol(enumeration.id).decls {
             let Decl::Enum(declaration) = declaration else {
-                return None;
+                return MembersByName::default();
             };
             for member in hir[declaration].members.iter() {
-                if hir[member].computed_name.is_none() && hir[member].name == name {
+                if hir[member].computed_name.is_none() {
                     // A later member of the same name stores over the earlier one.
-                    if found.is_some() {
-                        return None;
-                    }
-                    found = Some((declaration, member));
+                    members_by_name
+                        .entry(hir[member].name)
+                        .and_modify(|found| *found = None)
+                        .or_insert(Some((declaration, member)));
                 }
             }
         }
-        found
+        Rc::new(members_by_name)
+    }
+
+    fn find_member(&self, enumeration: Sym, name: Atom) -> Option<(EnumId, EnumMemberId)> {
+        let known = self
+            .known
+            .members_by_name
+            .borrow()
+            .get(&enumeration)
+            .cloned();
+        let members_by_name = known.unwrap_or_else(|| {
+            let listed = self.list_members_by_name(enumeration);
+            let mut members_by_name = self.known.members_by_name.borrow_mut();
+            members_by_name.insert(enumeration, Rc::clone(&listed));
+            listed
+        });
+        members_by_name.get(&name).copied().flatten()
     }
 
     // The member that a read names, with its enum and the declaration that it is written in.
@@ -386,7 +407,9 @@ impl<'a, 's> KnownObjects<'a, 's> {
     /// What a variable of a module of data holds from before any code of the program runs, where that is no object: `import { version } from "./data.json"`.
     pub(crate) fn find_data_variable(&self, variable: Sym) -> Option<(Sym, Constant)> {
         let variable = self.follow_imports(variable)?;
-        if !self.is_data_module(variable.file) {
+        // A mock stores in the variable.
+        let may_be_mocked = || self.graph.may_be_mocked(ModuleRef::File(variable.file));
+        if !self.is_data_module(variable.file) || may_be_mocked() {
             return None;
         }
         let (hir, bound) = (

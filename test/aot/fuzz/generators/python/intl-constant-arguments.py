@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""intl-constant-arguments.py <seed>: Intl formatters and toLocaleString calls with constant arguments format from a pattern made at build time. Each is compared, in the program, with a twin whose arguments the compiler cannot see; a program prints the differences and a count.
-0: odd spellings of locales, options and time zones, and odd uses of a formatter. 1: formatters that travel, options changed in ways a compiler may miss, Intl shadowed. 2: toLocaleString on every kind of receiver. 3: the time zone changes while the program runs. 4: nine threads on the same call sites. 5: many formatters and collections. 6: no time zone option. 7 to 60: named time zones at every change of offset. 61 to 120: numbers with fractions.
-As plain Bun, line by line."""
+"""intl-constant-arguments.py <seed>: Intl formatters and toLocaleString calls with constant arguments format from a
+pattern computed at build time. Each is compared, inside the program, with a twin whose arguments the compiler cannot
+see.
+"""
 import json, os, re, runpy, sys
 seed = int(sys.argv[1]); here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "intl-constant-arguments")
 def run(name, *words):

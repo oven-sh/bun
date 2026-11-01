@@ -1,0 +1,105 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`nodes > attributes are sorted 1`] = `
+<a
+  class="b a"
+  href="/x"
+  id="i"
+>
+  t
+</a>
+`;
+
+exports[`nodes > comment 1`] = `<!-- a comment -->`;
+
+exports[`nodes > empty element 1`] = `<div />`;
+
+exports[`nodes > empty shadow root 1`] = `
+<div>
+  light
+</div>
+`;
+
+exports[`nodes > fragment 1`] = `
+<DocumentFragment>
+  <i />
+  t
+</DocumentFragment>
+`;
+
+exports[`nodes > in an array 1`] = `
+[
+  <p
+    id="x"
+  />,
+  <q />,
+]
+`;
+
+exports[`nodes > in an object 1`] = `
+{
+  "el": <p>
+    x
+  </p>,
+  "n": 1,
+}
+`;
+
+exports[`nodes > nested 1`] = `
+<ul
+  class="l"
+>
+  <li>
+    one
+  </li>
+  <li>
+    <b>
+      two
+    </b>
+     and 
+    <i />
+  </li>
+</ul>
+`;
+
+exports[`nodes > shadow root 1`] = `
+<div>
+  #shadow-root
+    <span>
+      shadow
+    </span>
+  light
+</div>
+`;
+
+exports[`nodes > shadow root and attributes 1`] = `
+<my-host
+  id="h"
+>
+  #shadow-root
+    <slot />
+    <b
+      class="c"
+    >
+      x
+    </b>
+</my-host>
+`;
+
+exports[`nodes > shadow root in a shadow root 1`] = `
+<outer-host>
+  #shadow-root
+    <inner-host>
+      #shadow-root
+        <i />
+    </inner-host>
+</outer-host>
+`;
+
+exports[`nodes > text 1`] = `
+<p>
+  hello
+</p>
+`;
+
+exports[`nodes > text node 1`] = `just &lt;text&gt;`;

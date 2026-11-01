@@ -19,6 +19,8 @@ use crate::modules::ModuleRef;
 pub(crate) struct ReachWhileLoading<'a> {
     /// `Application::Asks`
     pub asks: &'a RuntimeUses,
+    /// `ReachInput::holds_test_files_alone`
+    holds_test_files_alone: bool,
     state: Guarded<State>,
     function_files: Guarded<FxHashMap<RuntimeFunction, Option<FileId>>>,
 }
@@ -180,9 +182,10 @@ impl<'a> ReachWhileLoading<'a> {
         known
     }
 
-    pub(crate) fn new(asks: &'a RuntimeUses) -> Self {
+    pub(crate) fn new(asks: &'a RuntimeUses, holds_test_files_alone: bool) -> Self {
         ReachWhileLoading {
             asks,
+            holds_test_files_alone,
             state: Guarded::new(State::default()),
             function_files: Guarded::default(),
         }
@@ -226,6 +229,7 @@ impl<'a> ReachWhileLoading<'a> {
             further: &RuntimeUses::default(),
             keeps_code_without_names: false,
             holds_guessed_code: false,
+            holds_test_files_alone: self.holds_test_files_alone,
         };
         let mut state = self.state.lock();
         let State { known, told } = &mut *state;

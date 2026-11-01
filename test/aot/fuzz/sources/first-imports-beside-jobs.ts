@@ -1,13 +1,14 @@
-import { startedAs } from "../turns-in-which-imports-settle";
+// A list of programs from ../generators/first-imports-beside-jobs.ts, which describes them.
+import { startedAs } from "../dynamic-import-settle-order";
 import { eventsBesideLoad, make, makeEventBesideLoad, programs } from "../generators/first-imports-beside-jobs";
 import { family } from "../family";
 
-// The reference transpiles on one thread: the texts are read in the order in which they are asked for. An executable reads nothing.
+// Plain Bun transpiles on one thread here, so files are read in request order. An executable reads no files.
 const plainEnv = { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" };
 const always = { plainEnv };
 
-// In the turns in which the loader has fetched the required module and not yet run it, require() runs the module and returns it, where the reference throws (docs/compiler/compatibility.mdx).
-// The lines of those turns. Every other turn is held to the reference.
+// In the ticks in which the loader has fetched the required module but not yet evaluated it, require() evaluates and
+// returns it, where plain Bun throws. The lines of those ticks. Every other tick is compared with plain Bun.
 const requiredWhileLoaded: Record<string, { oneLoad: Record<string, string>; twoLoads: Record<string, string> }> = {
   "requires the lowest module": {
     oneLoad: {
@@ -82,13 +83,13 @@ export default family("first imports beside jobs", [
   ...Object.keys(eventsBesideLoad).map(name => ({
     name: `a job beside the load ${name}`,
     ...always,
-    written: requiredWhileLoaded[name]?.oneLoad,
+    specified: requiredWhileLoaded[name]?.oneLoad,
     make: () => makeEventBesideLoad(name),
   })),
   ...Object.keys(eventsBesideLoad).map(name => ({
     name: `a job beside two loads ${name}`,
     ...always,
-    written: requiredWhileLoaded[name]?.twoLoads,
+    specified: requiredWhileLoaded[name]?.twoLoads,
     make: () => makeEventBesideLoad(name, true),
   })),
   ...(["a further entry point", "imported by name"] as const).flatMap(form => [
@@ -100,7 +101,7 @@ export default family("first imports beside jobs", [
     ...Object.keys(eventsBesideLoad).map(name => ({
       name: `a job beside the load ${name}, ${form}`,
       ...always,
-      written: requiredWhileLoaded[name]?.oneLoad,
+      specified: requiredWhileLoaded[name]?.oneLoad,
       make: () => startedAs(form, makeEventBesideLoad(name)),
     })),
   ]),

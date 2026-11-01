@@ -441,8 +441,8 @@ describe.each(implementations)("ws client connection options ($name)", ({ ws: im
     expect(await store).toBe("the caller's");
   });
 
-  // The handshake runs from the event loop, whoever turns it. `expect().resolves` is deliberately not awaited: it
-  // ticks the event loop until the promise settles, here inside a store. With npm ws, node:tls runs the callback there.
+  // The handshake runs from the event loop, whoever turns it. `Bun.build()` ticks the event loop until an async plugin
+  // `setup()` settles, here inside a store. With npm ws, node:tls runs the callback there.
   test.skipIf(!builtin)(
     "checkServerIdentity of a socket made outside every store doesn't run in the store of a caller that ticks the event loop",
     async () => {
@@ -457,8 +457,15 @@ describe.each(implementations)("ws client connection options ($name)", ({ ws: im
           resolve();
         },
       });
-      storage.run("the waiter's", () => void expect(checked).resolves.toBeUndefined());
+      const build = storage.run("the waiter's", () =>
+        Bun.build({
+          entrypoints: ["/wait.js"],
+          files: { "/wait.js": "" },
+          plugins: [{ name: "wait", setup: () => checked }],
+        }),
+      );
       expect(store).toBe("no store");
+      await build;
     },
   );
 

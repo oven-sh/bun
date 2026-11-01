@@ -211,37 +211,36 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v3: f8 = NewClosure function=f8 allocationSite=2
 # CHECK-NEXT: v4: f8 = NewClass v3 layout=L3
 # CHECK-NEXT: v5: f8 = FinishClass v4 layout=L3
-# CHECK-NEXT: v6: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v7: anything ~ builtin(ProcessArgv) = Upcast v6 castType=anything
+# CHECK-NEXT: v6: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v7: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v8: 2 = Integer integer=2
-# CHECK-NEXT: v9: anything = ElemGet v7, v8 accessSite=1 [keyIsIntegral]
-# CHECK-NEXT: v10: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v11: anything ~ builtin(ProcessArgv) = Upcast v10 castType=anything
+# CHECK-NEXT: v9: undefined|string = ElemGet v7, v8 accessSite=1 [keyIsIntegral]
+# CHECK-NEXT: v10: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v11: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v12: 3 = Integer integer=3
-# CHECK-NEXT: v13: anything = ElemGet v11, v12 accessSite=3 [keyIsIntegral]
-# CHECK-NEXT: v14: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v15: anything ~ builtin(ProcessArgv) = Upcast v14 castType=anything
+# CHECK-NEXT: v13: undefined|string = ElemGet v11, v12 accessSite=3 [keyIsIntegral]
+# CHECK-NEXT: v14: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v15: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v16: 4 = Integer integer=4
-# CHECK-NEXT: v17: anything = ElemGet v15, v16 accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: v17: undefined|string = ElemGet v15, v16 accessSite=6 [keyIsIntegral]
 # CHECK-NEXT: v18: object = NewDictionary
 # CHECK-NEXT: v19: Object = AssumeType v18 provenType=Object
 # CHECK-NEXT: v20: "st" = String string="st"
-# CHECK-NEXT: v21: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v22: anything ~ builtin(ProcessArgv) = Upcast v21 castType=anything
+# CHECK-NEXT: v21: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v22: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v23: 9 = Integer integer=9
-# CHECK-NEXT: v24: anything = ElemGet v22, v23 accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v25: anything ~ undefined|null|string = Upcast v24 castType=anything
-# CHECK-NEXT: v26: string = Add v20, v25
-# CHECK-NEXT: ElemSet v19, v26, v2 accessSite=9
-# CHECK-NEXT: v28: 1 = Integer integer=1
-# CHECK-NEXT: v29: anything ~ object = Construct v5, -, v28 calleeName="Other" accessSite=10 callees=[f8]
-# CHECK-NEXT: v30: 2 = Integer integer=2
-# CHECK-NEXT: v31: anything ~ object = Construct v5, -, v30 calleeName="Other" accessSite=11 callees=[f8]
-# CHECK-NEXT: v32: 3 = Integer integer=3
-# CHECK-NEXT: v33: anything ~ object = Construct v5, -, v32 calleeName="Other" accessSite=12 callees=[f8]
-# CHECK-NEXT: v34: 4 = Integer integer=4
-# CHECK-NEXT: v35: anything ~ object = Construct v5, -, v34 calleeName="Other" accessSite=13 callees=[f8]
-# CHECK-NEXT: v36: absent = GetModuleVariable variable=g1
-# CHECK-NEXT: v37: never = CheckInitialized v36 name="Closed"
+# CHECK-NEXT: v24: undefined|string = ElemGet v22, v23 accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v25: string = Strcat v20, v24 [isLikelyKey]
+# CHECK-NEXT: ElemSet v19, v25, v2 accessSite=9
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: anything ~ object = Construct v5, -, v27 calleeName="Other" accessSite=10 callees=[f8]
+# CHECK-NEXT: v29: 2 = Integer integer=2
+# CHECK-NEXT: v30: anything ~ object = Construct v5, -, v29 calleeName="Other" accessSite=11 callees=[f8]
+# CHECK-NEXT: v31: 3 = Integer integer=3
+# CHECK-NEXT: v32: anything ~ object = Construct v5, -, v31 calleeName="Other" accessSite=12 callees=[f8]
+# CHECK-NEXT: v33: 4 = Integer integer=4
+# CHECK-NEXT: v34: anything ~ object = Construct v5, -, v33 calleeName="Other" accessSite=13 callees=[f8]
+# CHECK-NEXT: v35: absent = GetModuleVariable variable=g1
+# CHECK-NEXT: v36: never = CheckInitialized v35 name="Closed"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

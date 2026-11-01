@@ -2,6 +2,7 @@ use bun_sema::bind::{CodeUnit, ScopeId, SymbolId};
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{Flags, FnId, FnKind, MemberId, MemberKind};
 use bun_sema::util::SharedSort;
+use rustc_hash::FxHashMap;
 
 use super::{Context, Parts, Placements};
 use crate::ir::FunctionKey;
@@ -32,7 +33,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
     let holders = parts.initialized_holders.iter();
     let holders = holders.map(|&(function, symbol)| (walk.functions[function.index()].key, symbol));
     let mut initialized_holders: Vec<(FunctionKey, SymbolId)> = holders.collect();
-    initialized_holders.sort_unstable();
+    initialized_holders.shared_sort_unstable();
     let named_in_unprinted_statements = walk.symbols_named_in_unprinted_statements.iter();
     let named_elsewhere_only_there = named_in_unprinted_statements.filter(|&&symbol| {
         let owner = context.owner_of(BindingRef::Symbol(symbol));
@@ -95,8 +96,31 @@ fn has_local(forms: &[BindingForm], placements: &Placements, binding: BindingRef
 }
 
 // A scope has a greater number than the scope around it.
-pub(super) fn encloses(context: &Context<'_, '_>, outer: ScopeId, inner: ScopeId) -> bool {
+fn encloses(context: &Context<'_, '_>, outer: ScopeId, inner: ScopeId) -> bool {
     scope_chain(context.input.bound, inner).find(|&scope| scope <= outer) == Some(outer)
+}
+
+/// Which scopes enclose `inner`. A statement lists a name once for each store, and the walk outwards is made once for each scope.
+pub(super) struct ScopesAround<'a, 'b, 'c> {
+    context: &'a Context<'b, 'c>,
+    inner: ScopeId,
+    known: FxHashMap<ScopeId, bool>,
+}
+
+impl<'a, 'b, 'c> ScopesAround<'a, 'b, 'c> {
+    pub(super) fn new(context: &'a Context<'b, 'c>, inner: ScopeId) -> Self {
+        let known = FxHashMap::default();
+        ScopesAround {
+            context,
+            inner,
+            known,
+        }
+    }
+
+    pub(super) fn contain(&mut self, outer: ScopeId) -> bool {
+        let (context, inner) = (self.context, self.inner);
+        *(self.known.entry(outer)).or_insert_with(|| encloses(context, outer, inner))
+    }
 }
 
 fn compute_loop_stores(
@@ -108,10 +132,11 @@ fn compute_loop_stores(
     loops.shared_sort_unstable_by_key(|walked| walked.statement);
     let mut stored = Vec::new();
     for (index, &walked) in loops.iter().enumerate() {
+        let mut scopes_around = ScopesAround::new(context, walked.boundary);
         let is_loop_carried = |binding: &BindingRef| {
             has_local(forms, placements, *binding)
                 && context.owner_of(*binding) == Some(walked.function)
-                && encloses(context, context.scope_of(*binding), walked.boundary)
+                && scopes_around.contain(context.scope_of(*binding))
         };
         let bindings = walked.stored.iter().copied().filter(is_loop_carried);
         stored.extend(bindings.map(|binding| (index, binding)));
@@ -133,12 +158,18 @@ fn compute_function_summaries(
     let with_fields_for_handlers = &parts.functions_with_fields_for_handlers;
     let mut summaries = Vec::with_capacity(functions.len());
     let mut captures = Vec::new();
+    let mut flags_of_fields = vec![FunctionFlags::default(); functions.len()];
+    for &(member, function) in &context.walk.function_of_field {
+        flags_of_fields[function.index()] |=
+            compute_arguments_entry_flags(parts, CodeUnit::FieldInitializer(member));
+    }
     for (id, function) in (0..).map(WalkedFunctionId).zip(functions) {
         let start = captures.len() as u32;
         captures.extend_from_slice(&parts.captures.captures[id.index()]);
         summaries.push(FunctionSummary {
             key: function.key,
-            entry_flags: compute_entry_flags(context, function.key, parts),
+            entry_flags: compute_entry_flags(context, function.key, parts)
+                | compute_field_arguments_flags(context, function.key, flags_of_fields[id.index()]),
             undeclared_parameters: count_undeclared_parameters(context, function.key),
             captures: start..captures.len() as u32,
             has_too_many_captures: over_limit.binary_search(&id).is_ok(),
@@ -246,6 +277,20 @@ fn compute_arguments_entry_flags(parts: &Parts, unit: CodeUnit) -> FunctionFlags
         ArgumentsObject::Unmapped | ArgumentsObject::Mapped => {
             FunctionFlags::HAS_ARGUMENT_COUNT | FunctionFlags::HAS_HIDDEN_REST
         }
+    }
+}
+
+/// A constructor makes the `arguments` object of each field value that it evaluates.
+fn compute_field_arguments_flags(
+    context: &Context<'_, '_>,
+    key: FunctionKey,
+    flags: FunctionFlags,
+) -> FunctionFlags {
+    match key {
+        FunctionKey::Source(source) if has_rest_parameter(context, source.function) => {
+            flags.without(FunctionFlags::HAS_HIDDEN_REST)
+        }
+        _ => flags,
     }
 }
 

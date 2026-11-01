@@ -368,7 +368,7 @@ function f26 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="say"
-# CHECK: module=m0 position=479 kind=Arrow length=2 thisType={type=anything} parameters=[{type=string}, {type=undefined|object}] results=[{type=number}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=479 kind=Arrow length=2 thisType={type=anything} parameters=[{type=string}, {type=undefined|object}] results=[{type=int[0, 4294967295]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: string @Cell, v1: undefined|object @JSValue):
 # CHECK-NEXT: v2: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable variable=g0
 # CHECK-NEXT: v3: ": " @Cell = String string=": "
@@ -394,30 +394,85 @@ function f26 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="again"
-# CHECK: module=m0 position=840 kind=Arrow length=2 thisType={type=anything} parameters=[{type=40}, {type=f13}] results=[{type=undefined|object}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=4294967295 module=m0}] {
+# CHECK: module=m0 position=840 kind=Arrow length=2 thisType={type=anything} parameters=[{type=40}, {type=f13}] results=[{type=undefined|object}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=4294967295 module=m0}, {callee=f10 callPosition=4294967295 parent=1 isConstruction=true calleeIsPredicted=true module=m0}, {callee=f8 callPosition=4294967295 parent=1 isConstruction=true calleeIsPredicted=true module=m0}, {callee=f2 callPosition=4294967295 parent=1 isConstruction=true calleeIsPredicted=true module=m0}, {callee=f2 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f2 callPosition=4294967295 parent=3 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: 40 @Int32, v1: f13 @Cell):
-# CHECK-NEXT: v2: undefined @JSValue = Undefined
-# CHECK-NEXT: v3: 0 @Int32 = Integer
-# CHECK-NEXT: Jump -> next b1(v2, v3)
-# CHECK-NEXT: b1(v4: undefined|object @JSValue, v5: int[0, 40] @Int32):
+# CHECK-NEXT: v2: 0 @Int32 = Integer
+# CHECK-NEXT: v3: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v4: undefined|object|unspecified @JSValue = Unspecified valueType=undefined|object
+# CHECK-NEXT: v5: object|unspecified @Cell = Unspecified valueType=object
+# CHECK-NEXT: v6: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v7: object|unspecified @Cell = Unspecified valueType=object
+# CHECK-NEXT: Jump -> next b1(v2, v3, v5, v6, v4, v7)
+# CHECK-NEXT: b1(v8: int[0, 40] @Int32, v9: int[1, 4] @Int32, v10: object|unspecified @Cell, v11: int[1, 4] @Int32, v12: undefined|object|unspecified @JSValue, v13: object|unspecified @Cell):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: boolean @Boolean = Less v5, v0 form=Integers
-# CHECK-NEXT: TestAndBranch v7 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v8: int[0, 39] @Int32):
-# CHECK-NEXT: v9: undefined|f2|f8|f9|f10 @JSValue = GetCapture v1 function=f13
-# CHECK-NEXT: v10: undefined|f1|f2|f3|f8|f9|f10|f11 @JSValue = GetCapture v1 function=f13 index=1
-# CHECK-NEXT: v11: Array<int|whole> @Cell = NewArray v8 contents=int|whole allocationSite=19 [contentsAreProven]
-# CHECK-NEXT: v12: Array<int|whole, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v11 provenType=Array<int|whole, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: TryCallInline -, v9, v12, v10 inlineBuiltin=ReflectConstruct overload=ReflectConstruct/1 accessSite=32 -> done b4(), miss b5()
+# CHECK-NEXT: v15: boolean @Boolean = Less v8, v0 form=Integers
+# CHECK-NEXT: TestAndBranch v15 -> taken b2(| 0), notTaken b10()
+# CHECK-NEXT: b2(v16: int[0, 39] @Int32):
+# CHECK-NEXT: v17: f2|f8|f9|f10 @Cell = GetCapture v1 function=f13
+# CHECK-NEXT: v18: f1|f2|f3|f8|f9|f10|f11 @Cell = GetCapture v1 function=f13 index=1
+# CHECK-NEXT: v19: boolean @Boolean = TypeTest v17 testedType=f2
+# CHECK-NEXT: TestAndBranch v19 -> taken b3(), notTaken b4(| 0)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: b4(v13: anything @JSValue):
-# CHECK-NEXT: v14: object @JSValue = AssumeType v13 provenType=object
-# CHECK-NEXT: v15: int[1, 40] @Int32 = Increment v8 form=Integers
-# CHECK-NEXT: Jump -> next b1(v14, v15)
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v16: anything @JSValue = CallBuiltin -, v9, v12, v10 overload=ReflectConstruct/1 accessSite=32 [isDoneInPlace]
-# CHECK-NEXT: Jump -> next b4(v16)
+# CHECK-NEXT: v20: object @Cell = GetConstructPrototype v18 layout=L1
+# CHECK-NEXT: v21: 2 @Int32 = Integer integer=2
+# CHECK-NEXT: v22: object|unspecified @Cell = Unspecified valueType=object
+# CHECK-NEXT: v23: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v24: object|unspecified @Cell = Unspecified valueType=object
+# CHECK-NEXT: Jump -> next b9(v21, v20, v23, v22, v24)
+# CHECK-NEXT: b4(v25: f8|f9|f10 @Cell):
+# CHECK-NEXT: v26: boolean @Boolean = TypeTest v25 testedType=f8
+# CHECK-NEXT: TestAndBranch v26 -> taken b5(), notTaken b6(| 0)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v27: object @Cell = GetConstructPrototype v18 layout=L1
+# CHECK-NEXT: v28: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v29: object|unspecified @Cell = Unspecified valueType=object
+# CHECK-NEXT: v30: 2 @Int32 = Integer integer=2
+# CHECK-NEXT: v31: object|unspecified @Cell = Unspecified valueType=object|unspecified
+# CHECK-NEXT: Jump -> next b9(v28, v29, v30, v31, v27)
+# CHECK-NEXT: b6(v32: f9|f10 @Cell):
+# CHECK-NEXT: v33: boolean @Boolean = TypeTest v32 testedType=f9
+# CHECK-NEXT: TestAndBranch v33 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v34: f9 @Cell) frequency=Rare:
+# CHECK-NEXT: v35: object @Cell = CallDirect v34, v18, v16 function=f9 accessSite=32 [isConstruction, calleeIsPredicted]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v36: object @Cell = GetConstructPrototype v18 layout=L1
+# CHECK-NEXT: v37: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v38: object|unspecified @Cell = Unspecified valueType=object
+# CHECK-NEXT: v39: 4 @Int32 = Integer integer=4
+# CHECK-NEXT: v40: object|unspecified @Cell = Unspecified valueType=object|unspecified
+# CHECK-NEXT: Jump -> next b9(v37, v38, v39, v40, v36)
+# CHECK-NEXT: b9(v41: int[1, 2] @Int32, v42: object|unspecified @Cell, v43: int[1, 4] @Int32, v44: object|unspecified @Cell, v45: object|unspecified @Cell):
+# CHECK-NEXT: v46: int[1, 40] @Int32 = Increment v16 form=Integers
+# CHECK-NEXT: Jump -> next b1(v46, v41, v42, v43, v44, v45)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: Switch v9 cases=[1, 2] -> case b11(), case b15(), otherwise b16()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: Switch v11 cases=[1, 2] -> case b14(v12), case b12(), otherwise b13()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v47: fact @Void = Specified
+# CHECK-NEXT: v48: object @Cell = AssumeType v13, v47 provenType=object
+# CHECK-NEXT: v49: object @Cell = NewObject v48 layout=L1 allocationSite=17 allocation=1 allocationClass=0
+# CHECK-NEXT: Jump -> next b14(v49)
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v50: fact @Void = Specified
+# CHECK-NEXT: v51: object @Cell = AssumeType v13, v50 provenType=object
+# CHECK-NEXT: v52: object @Cell = NewObject v51 layout=L1 allocationSite=17 allocation=1 allocationClass=0
+# CHECK-NEXT: Jump -> next b14(v52)
+# CHECK-NEXT: b14(v53: undefined|object|unspecified @JSValue):
+# CHECK-NEXT: Jump -> next b17(v53)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v54: fact @Void = Specified
+# CHECK-NEXT: v55: object @Cell = AssumeType v10, v54 provenType=object
+# CHECK-NEXT: v56: object @Cell = NewObject v55 layout=L1 allocationSite=17 allocation=1 allocationClass=0
+# CHECK-NEXT: Jump -> next b17(v56)
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v57: undefined @JSValue = Undefined
+# CHECK-NEXT: Jump -> next b17(v57)
+# CHECK-NEXT: b17(v58: undefined|object|unspecified @JSValue):
+# CHECK-NEXT: v59: fact @Void = Specified
+# CHECK-NEXT: v60: undefined|object @JSValue = AssumeType v58, v59 provenType=undefined|object
+# CHECK-NEXT: Return v60
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Below"
 # CHECK: module=m0 position=998 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|int|whole, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 inlineFrames=[{}, {callee=f2 callPosition=4294967295 isConstruction=true module=m0}] {
@@ -464,7 +519,7 @@ function f26 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=1120 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|int|whole, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 inlineFrames=[{}, {callee=f2 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: function @Cell, v1: anything @JSValue, v2: Array<undefined|int|whole, proven, pristine[Storage, Names, Dense]> @Cell):
 # CHECK-NEXT: v3: f10 @Cell = AssumeType v0 provenType=f10
-# CHECK-NEXT: v4: undefined|f1|f2|f3|f8|f9|f10|f11 @JSValue = AssumeType v1 provenType=undefined|f1|f2|f3|f8|f9|f10|f11
+# CHECK-NEXT: v4: f1|f2|f3|f8|f9|f10|f11 @JSValue = AssumeType v1 provenType=f1|f2|f3|f8|f9|f10|f11
 # CHECK-NEXT: v5: null|object @JSValue = GetSuperBase v3
 # CHECK-NEXT: v6: f2 @JSValue = AssumeType v5 provenType=f2
 # CHECK-NEXT: v7: int[0, 4294967295] @Int64 = CallInline v2 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
@@ -524,7 +579,7 @@ function f26 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: f10 @Cell, v1: anything @JSValue):
 # CHECK-NEXT: v2: anything @JSValue = GetArgument
 # CHECK-NEXT: v3: fact @Void = Entered function=f10 @1120 tail
-# CHECK-NEXT: v4: undefined|f1|f2|f3|f8|f9|f10|f11 @JSValue = AssumeType v2, v3 provenType=undefined|f1|f2|f3|f8|f9|f10|f11
+# CHECK-NEXT: v4: f1|f2|f3|f8|f9|f10|f11 @JSValue = AssumeType v2, v3 provenType=f1|f2|f3|f8|f9|f10|f11
 # CHECK-NEXT: v5: object @Cell = GetConstructPrototype v4 layout=L1
 # CHECK-NEXT: v6: object @Cell = NewObject v5 layout=L1 allocationSite=17 allocation=1 allocationClass=0
 # CHECK-NEXT: v7: object @Cell = Upcast v6 castType=object

@@ -176,6 +176,13 @@ impl IncrementalResult {
         self.failures_added.clear();
         // NOTE: `had_adjusted_edges` is NOT reset here (matches spec).
     }
+
+    /// True if this bundle gave the file a failure. `File.failed` cannot tell that failure from an older one.
+    pub(crate) fn added_failure_for(&self, owner: serialized_failure::OwnerPacked) -> bool {
+        self.failures_added
+            .iter()
+            .any(|failure| failure.file_owner() == Some(owner))
+    }
 }
 
 pub(crate) struct GraphTraceState {
@@ -514,7 +521,7 @@ pub(crate) struct DevServer {
     pub(crate) assets: Assets,
     /// Similar to `assets`, specialized for the additional needs of source mappings.
     pub(crate) source_maps: SourceMapStore,
-    /// All bundling failures are stored until a file is saved and rebuilt.
+    /// All bundling failures are stored until `IncrementalGraph::retract_failure` removes them.
     /// They are stored in the wire format the HMR runtime expects so that
     /// serialization only happens once.
     /// Keyed by `failure.owner`, stored as `OwnerPacked → SerializedFailure`.

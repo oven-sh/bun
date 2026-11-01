@@ -166,22 +166,13 @@ impl DevServer {
                 continue;
             }
             let file_index = html.bundled_file;
-            let failed_in_this_bundle = |failure: &SerializedFailure| {
-                matches!(
-                    failure.get_owner(),
-                    serialized_failure::Owner::Client(owner) if owner == file_index
-                )
-            };
+            let owner = serialized_failure::OwnerPacked::new(bake::Side::Client, file_index.get());
             let has_failure = match route_bundle.server_state {
                 route_bundle::State::Unqueued | route_bundle::State::DeferredToNextBundle => {
                     continue;
                 }
                 // `finalize_bundle` answers this bundle's requests from the failures it added: re-add an older one.
-                route_bundle::State::Bundling => self
-                    .incremental_result
-                    .failures_added
-                    .iter()
-                    .any(failed_in_this_bundle),
+                route_bundle::State::Bundling => self.incremental_result.added_failure_for(owner),
                 // An earlier failure still gates the route, unless this bundle cleared it without delivering html.
                 route_bundle::State::PossibleBundlingFailures | route_bundle::State::Loaded => {
                     self.client_graph.bundled_files.values()[file_index.get() as usize].failed
@@ -198,6 +189,32 @@ impl DevServer {
             )?;
         }
         Ok(())
+    }
+
+    /// Debug builds check that a file has `failed` set exactly when `bundling_failures` holds its failure.
+    pub(super) fn assert_failures_match_failed_files(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        let client = self.client_graph.bundled_files.values().iter().enumerate();
+        let server = self.server_graph.bundled_files.values().iter().enumerate();
+        let files = client
+            .map(|(index, file)| (bake::Side::Client, index, file))
+            .chain(server.map(|(index, file)| (bake::Side::Server, index, file)));
+        let mut failed_files = 0;
+        for (side, index, _) in files.filter(|(_, _, file)| file.failed) {
+            let owner = serialized_failure::OwnerPacked::new(side, index as u32);
+            assert!(
+                self.bundling_failures.contains_key(&owner),
+                "a failed file has no failure: {owner:?}"
+            );
+            failed_files += 1;
+        }
+        assert_eq!(
+            failed_files,
+            self.bundling_failures.count(),
+            "a failure has no failed file"
+        );
     }
 
     pub(super) fn index_failures(&mut self) -> crate::Result<()> {

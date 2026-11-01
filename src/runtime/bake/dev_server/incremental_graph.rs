@@ -368,6 +368,21 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         unsafe { &mut (*self.owner()).bundling_failures }
     }
 
+    /// Clears `File.failed` and removes the `bundling_failures` entry. `index_failures` publishes the removal.
+    fn retract_failure(&mut self, index: FileIndex<SIDE>) {
+        let file = &mut self.bundled_files.values_mut()[index.get() as usize];
+        if !file.failed {
+            return;
+        }
+        file.failed = false;
+        let owner = serialized_failure::OwnerPacked::new(SIDE, index.get());
+        let removed = self.dev_bundling_failures().fetch_swap_remove(&owner);
+        debug_assert!(removed.is_some(), "a failed file has no failure");
+        if let Some((_, failure)) = removed {
+            self.dev_incremental_result().failures_removed.push(failure);
+        }
+    }
+
     /// `IncrementalGraph(side).getFileByIndex` — direct value-slot accessor.
     #[inline]
     pub(crate) fn get_file_by_index(&self, index: FileIndex<SIDE>) -> &File {
@@ -524,13 +539,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
+    /// Returns false if a file still imports the deleted file. The slot then keeps its failure.
     fn disconnect_and_delete_file(
         &mut self,
         directory_watchers: &mut super::DirectoryWatchStore,
         file_index: FileIndex<SIDE>,
-    ) {
+    ) -> bool {
         let lists = &mut self.edge_lists[file_index.get() as usize];
         debug_assert!(lists.first_dep.is_none()); // must have no dependencies
+        // A release build gets here with a component that another client component still imports.
+        let has_importer = lists.first_dep.is_some();
 
         // Disconnect all imports.
         let mut it = lists.first_import.take();
@@ -547,6 +565,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         directory_watchers
             .remove_dependencies_for_file(&self.bundled_files.keys()[file_index.get() as usize]);
 
+        // No build finds a tombstoned slot again to take its failure back.
+        if !has_importer {
+            self.retract_failure(file_index);
+        }
+
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
         // Tombstoned slots are not reused; a free-list is a pending idea.
@@ -554,6 +577,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let lists = &self.edge_lists[file_index.get() as usize];
         debug_assert!(lists.first_dep.is_none());
         debug_assert!(lists.first_import.is_none());
+        !has_importer
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -564,14 +588,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// entry in `bundled_files`. For client, takes ownership of the code slice;
     /// for server, the code is kept in `current_chunk_code` until
     /// `take_js_bundle` consumes it.
+    /// Returns the client file that this call deleted, unless a file still imports it.
     pub(crate) fn receive_chunk(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         index: impl Into<bun_ast::Index>,
         content: ReceiveChunkContent,
         is_ssr_graph: bool,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<Option<ClientFileIndex>, crate::Error> {
         let index: bun_ast::Index = index.into();
+        let mut deleted_file = None;
         // SAFETY: see `owner()`.
         let dev = unsafe { self.owner() };
         // SAFETY: `graph_safety_lock` is a sibling field; debug-assert only.
@@ -624,24 +650,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 let mut is_special_framework_file = false;
 
                 if found_existing {
+                    self.retract_failure(file_index);
                     // Note: take the existing slot out so `free_file_content`
                     // can borrow `&mut self` while we hold the `File` by value.
                     let mut existing = core::mem::take(
                         &mut self.bundled_files.values_mut()[file_index.get() as usize],
                     );
                     self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
-
-                    if existing.failed {
-                        let owner =
-                            serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                        let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
-                        let kv = kv.unwrap_or_else(|| {
-                            bun_core::Output::panic(format_args!(
-                                "Missing SerializedFailure in IncrementalGraph",
-                            ))
-                        });
-                        self.dev_incremental_result().failures_removed.push(kv.1);
-                    }
 
                     html_route_bundle_index = existing.html_route_bundle_index;
                     is_special_framework_file = existing.is_special_framework_file;
@@ -758,7 +773,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     "Client graph's SCB was already deleted",
                                 ))
                             });
-                        client_graph.disconnect_and_delete_file(directory_watchers, client_index);
+                        if client_graph.disconnect_and_delete_file(directory_watchers, client_index)
+                        {
+                            deleted_file = Some(client_index);
+                        }
                         self.bundled_files.values_mut()[file_index.get() as usize]
                             .is_client_component_boundary = false;
                         self.dev_incremental_result()
@@ -766,18 +784,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             .push(ServerFileIndex::init(file_index.get()));
                     }
 
-                    if self.bundled_files.values()[file_index.get() as usize].failed {
-                        self.bundled_files.values_mut()[file_index.get() as usize].failed = false;
-                        let owner =
-                            serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
-                        let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
-                        let kv = kv.unwrap_or_else(|| {
-                            bun_core::Output::panic(format_args!(
-                                "Missing failure in IncrementalGraph",
-                            ))
-                        });
-                        self.dev_incremental_result().failures_removed.push(kv.1);
-                    }
+                    self.retract_failure(file_index);
                 }
 
                 if let ReceiveChunkContent::Js { code, source_map } = content {
@@ -805,7 +812,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
         }
-        Ok(())
+        Ok(deleted_file)
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -1095,25 +1102,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !file.failed {
             return;
         }
-        let failed_in_this_bundle = |failure: &SerializedFailure| {
-            matches!(
-                failure.get_owner(),
-                serialized_failure::Owner::Client(owner) if owner.get() == index.get()
-            )
-        };
-        if self
-            .dev_incremental_result()
-            .failures_added
-            .iter()
-            .any(failed_in_this_bundle)
-        {
+        let owner = serialized_failure::OwnerPacked::new(SIDE, index.get());
+        if self.dev_incremental_result().added_failure_for(owner) {
             return;
         }
-        self.bundled_files.values_mut()[index.get() as usize].failed = false;
-        let owner = serialized_failure::OwnerPacked::new(Side::Client, index.get());
-        if let Some(kv) = self.dev_bundling_failures().fetch_swap_remove(&owner) {
-            self.dev_incremental_result().failures_removed.push(kv.1);
-        }
+        self.retract_failure(index);
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -1484,16 +1477,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let file_index = FileIndex::<SIDE>::init(gop.index as u32);
         let found_existing = gop.found_existing;
-        if !found_existing {
+        if found_existing {
+            // The write below clears `failed`.
+            self.retract_failure(file_index);
+        } else {
             *gop.key_ptr = Box::<[u8]>::from(abs_path);
+            self.edge_lists.push(EdgeLists::default());
         }
-        *gop.value_ptr = File {
+        self.bundled_files.values_mut()[file_index.get() as usize] = File {
             kind: FileKind::Css,
             ..Default::default()
         };
-        if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
-        }
         *ctx.get_cached_index(Side::Server, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
         Ok(())

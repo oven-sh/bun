@@ -1,6 +1,7 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
+import type { Bake } from "bun";
 import { expect } from "bun:test";
-import { MAX_PATH_BYTES } from "harness";
+import { isASAN, isDebug, MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -536,6 +537,149 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// The pages of this framework load a client script: a page that a "Build Failed" tab reloads into connects and logs.
+{
+  const framework = (separateSSRGraph: boolean): Bake.Framework => ({
+    fileSystemRouterTypes: [
+      {
+        root: "routes",
+        style: "nextjs-pages",
+        serverEntryPoint: "./framework/server.ts",
+        clientEntryPoint: "./framework/client.ts",
+      },
+    ],
+    serverComponents: {
+      separateSSRGraph,
+      serverRuntimeImportSource: "./framework/server.ts",
+      serverRegisterClientReferenceExport: "registerClientReference",
+    },
+  });
+  const componentFiles = {
+    "framework/server.ts": `
+      export function render(req, meta) {
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        return new Response("<!DOCTYPE html><html><body>" + meta.pageModule.default() + scripts + "</body></html>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+    "framework/client.ts": `
+      console.log("page: " + document.body.textContent);
+    `,
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default () => typeof Comp.marker;
+    `,
+    "components/Comp.ts": `
+      "use client";
+      export const marker = "initial";
+    `,
+  };
+
+  // Only the browser build of this component fails, so its client copy owns the build error.
+  const browserOnlyComponent = `
+    "use client";
+    import { file } from "bun";
+    export const marker = typeof file;
+  `;
+  const serverComponent = `
+    import { file } from "bun";
+    export const marker = typeof file;
+  `;
+  // The bundle that drops a client copy that never built also builds it one last time.
+  for (const { separateSSRGraph, neverBuilt } of [
+    { separateSSRGraph: true, neverBuilt: false },
+    { separateSSRGraph: false, neverBuilt: false },
+    { separateSSRGraph: false, neverBuilt: true },
+  ]) {
+    devTest(
+      `removing 'use client' from a component that ${neverBuilt ? "never built" : "failed to build"} takes its build error back (separateSSRGraph: ${separateSSRGraph})`,
+      {
+        framework: framework(separateSSRGraph),
+        files: neverBuilt ? { ...componentFiles, "components/Comp.ts": browserOnlyComponent } : componentFiles,
+        async test(dev) {
+          if (!neverBuilt) {
+            await dev.fetch("/").expect.toInclude("<body>object<");
+            await dev.write("components/Comp.ts", browserOnlyComponent, { errors: null });
+          }
+          await using c = await dev.client("/", {
+            errors: ['components/Comp.ts:2:22: error: Browser build cannot import Bun builtin: "bun"'],
+          });
+          await c.expectReload(async () => {
+            await dev.write("components/Comp.ts", serverComponent);
+          });
+          await c.expectMessage("page: string");
+          // A build error that stays stops the reload after a save of server code.
+          await c.expectReload(async () => {
+            await dev.write(
+              "routes/index.ts",
+              `
+                import * as Comp from '../components/Comp';
+                export default () => "edited " + typeof Comp.marker;
+              `,
+            );
+          });
+          await c.expectMessage("page: edited string");
+        },
+      },
+    );
+  }
+  // The plugin fails the browser build of the component: the bundle that drops the client copy fails it first.
+  devTest("removing 'use client' from a component takes back the build error that the same bundle gave it", {
+    framework: framework(false),
+    pluginFile: `
+      export default [
+        {
+          name: "the browser build of Comp.ts fails",
+          setup(build) {
+            build.onLoad({ filter: /Comp\\.ts$/ }, args => {
+              if (args.side !== "client") return undefined;
+              return { contents: "export const marker = ;", loader: "ts" };
+            });
+          },
+        },
+      ];
+    `,
+    files: componentFiles,
+    async test(dev) {
+      await using c = await dev.client("/", {
+        errors: ["components/Comp.ts:1:23: error: Unexpected ;"],
+      });
+      await c.expectReload(async () => {
+        await dev.write("components/Comp.ts", `export const marker = "server only";`);
+      });
+      await c.expectMessage("page: string");
+    },
+  });
+  // A build with debug assertions stops at `debug_assert!(lists.first_dep.is_none())` in `disconnect_and_delete_file`.
+  if (!isDebug && !isASAN) {
+    devTest("a component that another client component imports keeps its build error when it loses 'use client'", {
+      framework: framework(false),
+      files: {
+        ...componentFiles,
+        "routes/index.ts": `
+          import * as Comp from '../components/Comp';
+          import * as Other from '../components/Other';
+          export default () => typeof Comp.marker + typeof Other.other;
+        `,
+        "components/Comp.ts": browserOnlyComponent,
+        "components/Other.ts": `
+          "use client";
+          import { marker } from './Comp';
+          export const other = marker;
+        `,
+      },
+      async test(dev) {
+        expect((await dev.fetch("/")).status).toBe(500);
+        await dev.write("components/Comp.ts", serverComponent, { errors: null });
+        expect((await dev.fetch("/")).status).toBe(500);
+      },
+    });
+  }
+}
 // The bundler has no transform for a module that starts with "use server".
 // Bundling one used to abort the process from a bundler thread (the parser
 // panics on `registerServerReference`), so saving a server-action file took

@@ -3781,13 +3781,24 @@ impl<'a> LinkerContext<'a> {
         }
 
         // Missing re-exports in TypeScript files are indistinguishable from types
-        let other_loader = self.parse_graph().input_files.items_loader()[other_id as usize];
-        if is_exported && other_loader.is_typescript() {
-            return ImportTrackerIterator {
-                value: Default::default(),
-                status: ImportTrackerStatus::ProbablyTypescriptType,
-                ..Default::default()
-            };
+        if is_exported {
+            let input_files = &self.parse_graph().input_files;
+            let loaders = input_files.items_loader();
+            let importer_is_typescript = loaders[id as usize].is_typescript();
+            // Not in esbuild: a plugin can strip the importer's types and return it as JavaScript.
+            let imported_is_typescript = loaders[other_id as usize].is_typescript();
+            // `NoMatch` has the error for a name that a polyfill of a node builtin lacks.
+            let imported_is_node_polyfill = input_files.items_source()[other_id as usize]
+                .path
+                .text
+                .starts_with(NodeFallbackModules::IMPORT_PATH);
+            if (importer_is_typescript || imported_is_typescript) && !imported_is_node_polyfill {
+                return ImportTrackerIterator {
+                    value: Default::default(),
+                    status: ImportTrackerStatus::ProbablyTypescriptType,
+                    ..Default::default()
+                };
+            }
         }
 
         ImportTrackerIterator {
@@ -4561,6 +4572,13 @@ impl<'a> LinkerContext<'a> {
                     );
                 }
                 MatchImportKind::ProbablyTypescriptType => {
+                    // SAFETY: the mutated symbol slot is disjoint from `named_import`
+                    // (graph.ast SoA) and `result` (stack local).
+                    let symbol = unsafe { self.graph.symbol_mut(import_ref) };
+                    // `ns.T`: the namespace does not have the name, so the read is `undefined`.
+                    if symbol.import_item_status == ImportItemStatus::Generated {
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                    }
                     self.graph.meta.items_probably_typescript_type_mut()[source_index as usize]
                         .put(import_ref, ())
                         .expect("unreachable");

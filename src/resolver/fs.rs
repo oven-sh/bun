@@ -356,7 +356,8 @@ impl DirEntryIterator for () {
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct ListingIdentity {
     ino: u64,
-    /// ctime, not mtime: a tool that restores a directory's mtime still moves its ctime.
+    mtime_ns: i64,
+    /// A tool that restores a directory's mtime still moves its ctime.
     ctime_ns: i64,
     /// The read was well after the last change: a later change cannot share its ctime on a coarse clock.
     settled: bool,
@@ -365,16 +366,22 @@ pub(crate) struct ListingIdentity {
 impl ListingIdentity {
     const SETTLED_AFTER_NS: i128 = 2 * bun_core::time::NS_PER_S as i128;
 
+    /// `None` when the file system keeps no change time (FAT reports 0): such a listing is never kept.
     pub(crate) fn read(fd: Fd) -> Option<Self> {
         let stat = bun_sys::PosixStat::init(&bun_sys::fstat(fd).ok()?);
-        let ctime = stat.ctime();
-        let ctime_ns = ctime
-            .sec
-            .saturating_mul(bun_core::time::NS_PER_S as i64)
-            .saturating_add(ctime.nsec);
+        let ns = |t: bun_core::Timespec| {
+            t.sec
+                .saturating_mul(bun_core::time::NS_PER_S as i64)
+                .saturating_add(t.nsec)
+        };
+        let ctime_ns = ns(stat.ctime());
+        if ctime_ns <= 0 {
+            return None;
+        }
         let settled = bun_core::time::nano_timestamp() - ctime_ns as i128 > Self::SETTLED_AFTER_NS;
         Some(Self {
             ino: stat.ino,
+            mtime_ns: ns(stat.mtime()),
             ctime_ns,
             settled,
         })
@@ -383,8 +390,11 @@ impl ListingIdentity {
     /// `fd` is the directory that was read, with nothing added, removed or renamed since.
     pub(crate) fn still_current(&self, fd: Fd) -> bool {
         self.settled
-            && Self::read(fd)
-                .is_some_and(|now| now.ino == self.ino && now.ctime_ns == self.ctime_ns)
+            && Self::read(fd).is_some_and(|now| {
+                now.ino == self.ino
+                    && now.ctime_ns == self.ctime_ns
+                    && now.mtime_ns == self.mtime_ns
+            })
     }
 }
 

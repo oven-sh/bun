@@ -2810,8 +2810,10 @@ impl<'a> Resolver<'a> {
         };
         while let Some(info) = level {
             levels.push(info);
-            let check_manifest = !manifest_seen && info.package_json().is_some();
-            let check_tsconfig = !tsconfig_seen && info.tsconfig_json().is_some();
+            let check_manifest =
+                !manifest_seen && info.flags.contains(DirInfo::Flag::HasPackageJsonFile);
+            let check_tsconfig =
+                !tsconfig_seen && info.flags.contains(DirInfo::Flag::HasTsconfigFile);
             manifest_seen |= check_manifest;
             tsconfig_seen |= check_tsconfig;
             if self.dir_info_is_stale(info, check_manifest, check_tsconfig) {
@@ -2862,19 +2864,30 @@ impl<'a> Resolver<'a> {
                 return true;
             }
         }
-        if check_manifest
-            && let Some(package_json) = info.package_json()
-            && let Some(bytes) = file_bytes_without_bom(package_json.source.path.text)
-            && bytes[..] != package_json.source_contents[..]
-        {
-            return true;
+        // A file that is listed but did not parse is parsed again: it can have been fixed.
+        if check_manifest {
+            match info.package_json() {
+                None => return true,
+                Some(package_json) => {
+                    if let Some(bytes) = file_bytes_without_bom(package_json.source.path.text)
+                        && bytes[..] != package_json.source_contents[..]
+                    {
+                        return true;
+                    }
+                }
+            }
         }
-        if check_tsconfig
-            && let Some(tsconfig) = info.tsconfig_json()
-            && let Some(bytes) = file_bytes_without_bom(&tsconfig.own_abs_path)
-            && bun_wyhash::hash(&bytes) != tsconfig.own_source_hash
-        {
-            return true;
+        if check_tsconfig {
+            match info.tsconfig_json() {
+                None => return true,
+                Some(tsconfig) => {
+                    if let Some(bytes) = file_bytes_without_bom(&tsconfig.own_abs_path)
+                        && bun_wyhash::hash(&bytes) != tsconfig.own_source_hash
+                    {
+                        return true;
+                    }
+                }
+            }
         }
         false
     }

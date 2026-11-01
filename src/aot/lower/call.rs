@@ -170,9 +170,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let function = self.lower_expression(site.callee);
         let callee = Callee::without_key(function, None, self.file.find_callee_name(site.callee));
         let arguments = self.lower_arguments(site.args);
-        if self.file.is_tail_call(expression, tail) {
-            return self.emit_call_expression(expression, callee, arguments, tail);
-        }
         self.file
             .record_construction_by_library(expression, site.callee);
         let value = self.emit_new_expression(expression, callee, arguments);
@@ -392,7 +389,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.convert_argument_values(expression, &mut arguments);
         self.set_position(self.file.construct_position(expression));
         let site = call_site(self.file, expression);
-        if !self.file.is_printed_as_call(site) && !self.file.makes_array_in_caller(site) {
+        if !self.file.is_printed_as_call(expression) && !self.file.makes_array_in_caller(site) {
             self.builder
                 .set_written_position(self.file.hir[expression].pos);
         }
@@ -485,7 +482,7 @@ impl FileLowering<'_, '_, '_, '_> {
             false => {
                 !site.args.is_empty()
                     || self.is_base_of_access(expression)
-                    || self.is_printed_as_call(site)
+                    || self.is_printed_as_call(expression)
             }
         };
         match is_reported_at_callee {
@@ -500,11 +497,23 @@ impl FileLowering<'_, '_, '_, '_> {
         transpiled.is_some_and(|transpiled| transpiled.has_accessed_construction_at(position))
     }
 
-    // A native error constructor, `Function` and `Array` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call, and in tail position the caller leaves the stack.
+    fn is_in_tail_position(&self, construction: ExprId) -> bool {
+        let position = self.hir[construction].pos;
+        let transpiled = self.transpiled.as_ref();
+        transpiled
+            .is_some_and(|transpiled| transpiled.has_construction_in_tail_position_at(position))
+    }
+
+    // A native error constructor, `Function` and `Array` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call.
+    // Not in tail position, where the caller would leave the stack.
     // Of `new Array(..)` without a spread argument it prints a list, or a call that bytecode does in the caller.
-    fn is_printed_as_call(&self, site: Call) -> bool {
+    fn is_printed_as_call(&self, construction: ExprId) -> bool {
+        let site = call_site(self, construction);
         let inner = self.skip_type_syntax(site.callee);
-        if !self.is_free_name(inner) || self.runs_as_written() {
+        if !self.is_free_name(inner)
+            || self.runs_as_written()
+            || self.is_in_tail_position(construction)
+        {
             return false;
         }
         let Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) =
@@ -528,10 +537,6 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             _ => false,
         }
-    }
-
-    fn is_tail_call(&self, construction: ExprId, tail: Tail<'_>) -> bool {
-        matches!(tail, Tail::Yes { .. }) && self.is_printed_as_call(call_site(self, construction))
     }
 
     fn is_free_name(&self, expression: ExprId) -> bool {

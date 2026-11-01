@@ -438,7 +438,7 @@ impl<'a, 's> Alignment<'a, 's> {
         }
     }
 
-    /// `const a = f(); const b = a; return b;` is printed `return f();`: both initializers are evaluated there.
+    /// `const a = o.x; const b = a; return b;` is printed `return o.x;`: both initializers are evaluated there.
     /// Of `const c = 1; g(); return c;` the `return` has the value alone.
     fn align_returned_value(&mut self, value: ExprId, printed: Expr, position: u32) {
         if !self.align_expression(value, printed) {

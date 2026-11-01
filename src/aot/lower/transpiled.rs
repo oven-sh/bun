@@ -203,6 +203,7 @@ impl RuntimeTranspiler<'_> {
             bindings: walker.bindings,
             statements,
             accessed_constructions: walker.accessed_constructions,
+            constructions_in_tail_position: walker.constructions_in_tail_position,
             regexp_literals: walker.regexp_literals,
             require_main_positions: walker.require_main_positions,
             joined_declarators: walker.joined_declarators,
@@ -326,6 +327,8 @@ pub(super) struct TranspiledFile {
     statements: PositionSet,
     // `new` expressions that are called or that a property is read from.
     accessed_constructions: Vec<u32>,
+    // `new` expressions in tail position.
+    constructions_in_tail_position: Vec<u32>,
     regexp_literals: Vec<u32>,
     require_main_positions: Vec<u32>,
     // `a = o.x, b = o.y` is printed `{ x: a, y: b } = o`: the `o` of each declarator of such a run.
@@ -374,6 +377,11 @@ impl TranspiledFile {
 
     pub(super) fn has_accessed_construction_at(&self, position: u32) -> bool {
         self.accessed_constructions.binary_search(&position).is_ok()
+    }
+
+    pub(super) fn has_construction_in_tail_position_at(&self, position: u32) -> bool {
+        let constructions = &self.constructions_in_tail_position;
+        constructions.binary_search(&position).is_ok()
     }
 
     pub(super) fn has_regexp_literal_at(&self, position: u32) -> bool {
@@ -444,6 +452,7 @@ struct Walker<'a> {
     identifiers: PositionSet,
     bindings: PositionSet,
     accessed_constructions: Vec<u32>,
+    constructions_in_tail_position: Vec<u32>,
     regexp_literals: Vec<u32>,
     require_main_positions: Vec<u32>,
     joined_declarators: Vec<JoinedDeclarator>,
@@ -510,6 +519,7 @@ impl<'a> Walker<'a> {
             identifiers: PositionSet::new(text_length),
             bindings: PositionSet::new(text_length),
             accessed_constructions: Vec::new(),
+            constructions_in_tail_position: Vec::new(),
             regexp_literals: Vec::new(),
             require_main_positions: Vec::new(),
             joined_declarators: Vec::new(),
@@ -644,6 +654,7 @@ impl<'a> Walker<'a> {
         }
         self.quoted_brackets_over_lines.sort_unstable();
         self.accessed_constructions.sort_unstable();
+        self.constructions_in_tail_position.sort_unstable();
         self.regexp_literals.sort_unstable();
         self.require_main_positions.sort_unstable();
         self.joined_declarators.shared_sort_unstable();
@@ -1030,6 +1041,9 @@ impl<'a> Walker<'a> {
                 );
             }
             ExprData::ENew(site) => {
+                if site.is_in_tail_position {
+                    push_position(&mut self.constructions_in_tail_position, expression.loc);
+                }
                 self.push_call_at(expression.loc, expression);
                 self.place.is_quoted |= self.may_be_no_constructor(site.target);
                 self.pending_expressions.push(site.target);

@@ -36,8 +36,8 @@
 // CHECK: = IteratorOpen {{*}} @3589
 // CHECK: = IteratorResume {{*}} @3589
 // CHECK-LABEL: function {{*}}name="returnsNativeError"
-// CHECK: [[error]] = Call {{*}}calleeName="RangeError" @3681
-// CHECK-NEXT: ReturnCall [[error]]
+// CHECK: = Construct {{*}}calleeName="RangeError" @3677
+// CHECK: Return [[returnedError]] @3677
 // CHECK-LABEL: function {{*}}name="spreads"
 // CHECK: AppendSpread {{*}} @3751
 // CHECK-LABEL: function {{*}}name="stores"

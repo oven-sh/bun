@@ -50,7 +50,10 @@ console.log([a, b, c, d, e].map(tool => tool.name + " " + tool.describe() + " " 
 // CHECK-NEXT: v21 = Call v20, -, v16, v19, v0 calleeName="Object.defineProperties"
 // CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|[[L_13]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
 // CHECK-NEXT: v23 = Call v7, v6, v22, v5 calleeName="Object.assign"
-// CHECK-NEXT: ReturnCall v23 casts=[{declared={type=undefined|null|[[L_15]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|[[L_10]] site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|[[L_10]] site=[[w_18]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|[[L_3]] site=[[w_4]]}}]
+// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|[[L_15]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|[[L_10]] site=[[w_17]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|[[L_3]] site=[[w_18]]} illTypedCause=FromLooseType
+// CHECK-NEXT: Return v26
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="enabled"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=[[w_19]]}] functionTypes={{*}}[[f_20]]] {

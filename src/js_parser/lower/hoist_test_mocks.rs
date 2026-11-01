@@ -425,39 +425,17 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    fn ends_in_call_that_reads_frame_of_caller(&self, value: &Expr) -> bool {
-        match &value.data {
-            ExprData::ECall(call) => self.reads_frame_of_caller(call),
-            ExprData::EIf(either) => {
-                self.ends_in_call_that_reads_frame_of_caller(&either.yes)
-                    || self.ends_in_call_that_reads_frame_of_caller(&either.no)
-            }
-            ExprData::EBinary(binary) => {
-                matches!(
-                    binary.op,
-                    js_ast::OpCode::BinComma
-                        | js_ast::OpCode::BinLogicalAnd
-                        | js_ast::OpCode::BinLogicalOr
-                        | js_ast::OpCode::BinNullishCoalescing
-                ) && self.ends_in_call_that_reads_frame_of_caller(&binary.right)
-            }
-            _ => false,
-        }
-    }
-
-    /// Whether `value` has to stay out of a `return`, where its last call would be a tail call.
-    pub(crate) fn keeps_frame_for_call(&mut self, value: &Expr) -> bool {
-        let keeps = self.options.features.inject_jest_globals
-            && self.ends_in_call_that_reads_frame_of_caller(value);
-        self.did_apply_test_feature |= keeps;
-        keeps
-    }
-
     /// Splits `return vi.importActual("./a")` into `const value = vi.importActual("./a"); return value`. Returns the first statement.
     pub(crate) fn keep_frame_for_returned_call(&mut self, returned: &mut Expr) -> Option<Stmt> {
-        if self.is_control_flow_dead || !self.keeps_frame_for_call(returned) {
+        if self.is_control_flow_dead
+            || !self.options.features.inject_jest_globals
+            || !returned.any_in_tail_position(&mut |last| {
+                matches!(&last.data, ExprData::ECall(call) if self.reads_frame_of_caller(call))
+            })
+        {
             return None;
         }
+        self.did_apply_test_feature = true;
         let loc = returned.loc;
         let r#ref = self.generate_temp_ref(None);
         let binding = self.b(B::Identifier { r#ref }, loc);

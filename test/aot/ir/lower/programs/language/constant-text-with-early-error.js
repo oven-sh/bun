@@ -95,6 +95,7 @@ console.log(typeof neverCalled);
 // CHECK-NEXT: v1 = PropGet v0 key="Function" [isFreeName]
 // CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Function) flags=[IsExpected]}
 // CHECK-NEXT: v3 = String string="continue;"
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="Function"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|function flags=[IsExpected]}}]
+// CHECK-NEXT: v4 = Construct v2, -, v3 calleeName="Function"
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }

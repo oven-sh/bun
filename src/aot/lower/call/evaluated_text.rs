@@ -109,7 +109,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         arguments: Arguments,
         tail: Tail<'_>,
     ) -> ValueId {
-        if is_construct && !self.file.is_tail_call(call, tail) {
+        if is_construct {
             self.emit_new_expression(call, callee, arguments)
         } else {
             self.emit_call_expression(call, callee, arguments, tail)

@@ -12,9 +12,9 @@ use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{BlockFrequency, RuntimeErrorKind, TypeSiteKind};
 use crate::ir::{BlockId, ValueId, VariableKey};
 use crate::lower::call::emit_call;
-use crate::lower::expression::{Evaluation, Tail, TailCast};
+use crate::lower::expression::Evaluation;
 use crate::lower::member::PropertyName;
-use crate::lower::{FileLowering, FunctionLowering, control, scope};
+use crate::lower::{FileLowering, FunctionLowering, scope};
 use crate::modules::ShownNames;
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -82,24 +82,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let key = self
                     .file
                     .given_name_key(initializer, binding, name, hir[decl.pat].pos);
-                let is_returned = self.file.find_return_printed_with(declaration).is_some();
-                let is_tail = is_returned && control::allows_tail_call(self);
-                let is_annotated = decl.ty.is_some() && self.file.is_checked();
-                let annotation = (is_tail && is_annotated).then(|| TailCast {
-                    position: self
-                        .file
-                        .annotation_position(decl.ty, TypeSiteKind::Variable),
-                    outer: None,
-                });
-                let tail = match is_tail {
-                    true => Tail::Yes {
-                        casts: annotation.as_ref(),
-                    },
-                    false => Tail::No,
-                };
                 let evaluation = Evaluation {
                     name: Some(PropertyName::Constant(key).into()),
-                    ..Evaluation::at_tail(tail)
+                    ..Evaluation::PLAIN
                 };
                 let name = self.file.recorded_binding_position(decl.pat);
                 self.record_store_ahead_of_value(binding, name);

@@ -66,7 +66,10 @@ fn lookup(name: &[u8]) -> Option<KnownGlobal> {
 
 impl KnownGlobal {
     #[inline(always)]
-    fn call_from_new(e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
+    fn call_from_new(e: &mut E::New, loc: crate::Loc) -> Option<js_ast::Expr> {
+        if e.is_in_tail_position {
+            return None;
+        }
         let call = E::Call {
             target: e.target,
             args: bun_alloc::AstAlloc::take(&mut e.args),
@@ -74,7 +77,7 @@ impl KnownGlobal {
             can_be_unwrapped_if_unused: e.can_be_unwrapped_if_unused,
             ..Default::default()
         };
-        js_ast::Expr::init(call, loc)
+        Some(js_ast::Expr::init(call, loc))
     }
 
     // `_bump` is unused; the `Vec` uses the global arena.
@@ -103,7 +106,7 @@ impl KnownGlobal {
         let constructor = lookup(original_name)?;
 
         match constructor {
-            // Error constructors can be called without 'new' with identical behavior
+            // Error constructors can be called without 'new' with identical behavior, except in tail position
             KnownGlobal::Error
             | KnownGlobal::TypeError
             | KnownGlobal::SyntaxError
@@ -113,7 +116,7 @@ impl KnownGlobal {
             | KnownGlobal::URIError
             | KnownGlobal::AggregateError => {
                 // Convert `new Error(...)` to `Error(...)` to save bytes
-                Some(Self::call_from_new(e, loc))
+                Self::call_from_new(e, loc)
             }
 
             KnownGlobal::Object => {
@@ -142,7 +145,7 @@ impl KnownGlobal {
                 }
 
                 // For other cases, just remove 'new'
-                Some(Self::call_from_new(e, loc))
+                Self::call_from_new(e, loc)
             }
 
             KnownGlobal::Array => {
@@ -195,7 +198,7 @@ impl KnownGlobal {
                             js_ast::expr::PrimitiveType::Number => {
                                 let val = match arg.data {
                                     js_ast::ExprData::ENumber(num) => num.value(),
-                                    _ => return Some(Self::call_from_new(e, loc)),
+                                    _ => return Self::call_from_new(e, loc),
                                 };
                                 if
                                 // only want this with whitespace minification
@@ -231,12 +234,12 @@ impl KnownGlobal {
                                         loc,
                                     ));
                                 }
-                                Some(Self::call_from_new(e, loc))
+                                Self::call_from_new(e, loc)
                             }
                             js_ast::expr::PrimitiveType::Unknown
                             | js_ast::expr::PrimitiveType::Mixed => {
                                 // Could be a number, preserve Array() call
-                                Some(Self::call_from_new(e, loc))
+                                Self::call_from_new(e, loc)
                             }
                         }
                     }
@@ -250,7 +253,7 @@ impl KnownGlobal {
                             .iter()
                             .any(|arg| matches!(arg.data, js_ast::ExprData::ESpread(_)))
                         {
-                            return Some(Self::call_from_new(e, loc));
+                            return Self::call_from_new(e, loc);
                         }
                         Some(js_ast::Expr::init(
                             E::Array {
@@ -265,7 +268,7 @@ impl KnownGlobal {
 
             KnownGlobal::Function => {
                 // Just remove 'new' for Function
-                Some(Self::call_from_new(e, loc))
+                Self::call_from_new(e, loc)
             }
             KnownGlobal::RegExp => {
                 // Don't optimize RegExp - the semantics are too complex:

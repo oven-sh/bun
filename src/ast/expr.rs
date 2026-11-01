@@ -159,6 +159,36 @@ impl Expr {
         matches!(self.data, Data::EString(_))
     }
 
+    /// Calls `is_match` with every expression that is in tail position when `self` is the value of a `return`.
+    pub fn any_in_tail_position(&self, is_match: &mut impl FnMut(&Expr) -> bool) -> bool {
+        match &self.data {
+            Data::EIf(either) => {
+                either.yes.any_in_tail_position(is_match) | either.no.any_in_tail_position(is_match)
+            }
+            Data::EBinary(binary)
+                if matches!(
+                    binary.op,
+                    crate::OpCode::BinComma
+                        | crate::OpCode::BinLogicalAnd
+                        | crate::OpCode::BinLogicalOr
+                        | crate::OpCode::BinNullishCoalescing
+                ) =>
+            {
+                binary.right.any_in_tail_position(is_match)
+            }
+            _ => is_match(self),
+        }
+    }
+
+    /// Whether `return self` makes a tail call.
+    pub fn ends_in_call(&self) -> bool {
+        self.any_in_tail_position(&mut |last| match &last.data {
+            Data::ECall(_) | Data::ERequireString(_) | Data::ERequireResolveString(_) => true,
+            Data::ETemplate(template) => template.tag.is_some(),
+            _ => false,
+        })
+    }
+
     /// Materialize an immutable JSON leaf/container value as an `Expr`.
     pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
         match value {
@@ -1848,6 +1878,7 @@ impl Data {
                         .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     close_parens_loc: el.close_parens_loc,
+                    is_in_tail_position: el.is_in_tail_position,
                 });
                 Ok(Data::ENew(StoreRef::from_bump(item)))
             }

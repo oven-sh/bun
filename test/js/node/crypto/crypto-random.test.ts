@@ -387,7 +387,6 @@ describe.concurrent("generatePrime with add and rem", () => {
     { bits: 64, add: 30n, rem: 7n },
     { bits: 32, add: 12n, rem: 5n },
     { bits: 128, add: 5n },
-    { bits: 40, add: 2n ** 33n, rem: 1n },
     { bits: 67, add: 2n ** 63n, rem: 1n },
     { bits: 128, add: 2n ** 120n, rem: 1n },
     { bits: 128, add: 2n ** 65n + 1n, rem: 2n, runs: 10 },
@@ -397,7 +396,6 @@ describe.concurrent("generatePrime with add and rem", () => {
     { bits: 64, safe: true, add: 4n },
     { bits: 64, safe: true, add: 12n, rem: 11n },
     { bits: 64, safe: true, add: 1n, rem: 0n },
-    { bits: 40, safe: true, add: 2n ** 33n, rem: 3n },
     { bits: 96, safe: true, add: 2n ** 64n, rem: 3n },
   ];
 

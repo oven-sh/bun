@@ -114,6 +114,8 @@ A macro runs in Bun, so a macro import resolves with the conditions `"macro"`, `
 
 <Note>
   The `"macro"` condition requires Bun v1.4.5 or newer. Older versions resolve a macro import like any other import.
+  [`bun compile`](/compiler/aot) does not apply the condition: it resolves a macro import like the other imports of the
+  program.
 </Note>
 
 To support older versions too, export the macro file under a subpath of its own and import it as `my-package/macro`:

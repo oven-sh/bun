@@ -1103,9 +1103,14 @@ describe("os and cpu of file: dependencies", () => {
       .split("\n")
       .map(line => line.trim())
       .filter(line => line.startsWith('"@repro/') && line.includes(": ["));
+  // A repeated `--os` adds to the target set, so the default is given only when `flags` has none.
   const install = async (dir: string, ...flags: string[]) => {
+    const target = [
+      ...(flags.includes("--os") ? [] : ["--os", "linux"]),
+      ...(flags.includes("--cpu") ? [] : ["--cpu", "x64"]),
+    ];
     await using proc = spawn({
-      cmd: [bunExe(), "install", "--os", "linux", "--cpu", "x64", ...flags],
+      cmd: [bunExe(), "install", ...target, ...flags],
       cwd: dir,
       env: bunEnv,
       stdout: "pipe",
@@ -1307,26 +1312,38 @@ describe("os and cpu of file: dependencies", () => {
       "pkgs/s/package.json": JSON.stringify({ name: "@repro/s", version: "1.0.0", os: "win32" }),
       "pkgs/n/package.json": JSON.stringify({ name: "@repro/n", version: "1.0.0", os: ["!linux"] }),
       "pkgs/m/package.json": JSON.stringify({ name: "@repro/m", version: "1.0.0", os: ["linux"], libc: ["musl"] }),
+      "pkgs/b/package.json": JSON.stringify({ name: "@repro/b", version: "1.0.0", libc: ["glibc", "musl"] }),
       "package.json": JSON.stringify({
         name: "app",
-        optionalDependencies: { "@repro/s": "file:./pkgs/s", "@repro/n": "file:./pkgs/n", "@repro/m": "file:./pkgs/m" },
+        optionalDependencies: {
+          "@repro/s": "file:./pkgs/s",
+          "@repro/n": "file:./pkgs/n",
+          "@repro/m": "file:./pkgs/m",
+          "@repro/b": "file:./pkgs/b",
+        },
       }),
     });
     const app = String(dir);
 
     expect((await install(app, "--libc", "glibc")).warnings).toEqual([]);
-    expect(await installed(app)).toEqual([]);
+    expect(await installed(app)).toEqual(["b"]);
     expect(await lockLines(app)).toEqual([
+      '"@repro/b": ["@repro/b@file:pkgs/b", {}],',
       '"@repro/m": ["@repro/m@file:pkgs/m", { "os": "linux", "libc": "musl" }],',
       '"@repro/n": ["@repro/n@file:pkgs/n", { "os": "!linux" }],',
       '"@repro/s": ["@repro/s@file:pkgs/s", { "os": "win32" }],',
     ]);
+    // A libc list that allows both reads back from bun.lock as the same value, so nothing changes.
+    const lockfile = await Bun.file(join(app, "bun.lock")).text();
+    const again = await install(app, "--libc", "glibc");
+    expect(again.stdout).toContain("no changes");
+    expect(await Bun.file(join(app, "bun.lock")).text()).toBe(lockfile);
 
     expect((await install(app, "--libc", "musl", "--frozen-lockfile")).warnings).toEqual([]);
-    expect(await installed(app)).toEqual(["m"]);
+    expect(await installed(app)).toEqual(["b", "m"]);
     await rm(join(app, "node_modules"), { recursive: true, force: true });
     expect((await install(app, "--os", "darwin", "--frozen-lockfile")).warnings).toEqual([]);
-    expect(await installed(app)).toEqual(["n"]);
+    expect(await installed(app)).toEqual(["b", "n"]);
   });
 
   // Older versions wrote `{}` for these packages. A folder is compared with its lockfile entry on

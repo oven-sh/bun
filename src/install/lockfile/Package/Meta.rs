@@ -79,6 +79,10 @@ impl Meta {
         }
         if let Some(libc) = json.get(b"libc") {
             self.libc = negatable_from_json::<Libc>(&libc)?;
+            // bun.lock records only a single libc. Both and none mean the same: every libc.
+            if self.libc.single_name().is_none() {
+                self.libc = Libc::NONE;
+            }
         }
         Ok(())
     }

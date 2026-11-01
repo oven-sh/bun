@@ -87,6 +87,83 @@ it("import.meta.resolveSync", () => {
   expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
 });
 
+it.concurrent("detached import.meta.resolve keeps each module's origin and explicit parents", async () => {
+  using dir = tempDir("import-meta-detached", {
+    "entry.mjs": `
+      import assert from "node:assert/strict";
+      import { resolve as first } from "./first/module.mjs";
+      import { resolve as second } from "./second/module.mjs";
+      import { value } from "./overwritten.mjs";
+      import { absent } from "./deleted.mjs";
+      assert.equal(value, 42);
+      assert.equal(absent, undefined);
+      assert.notEqual(first, second);
+      for (const [resolve, directory] of [[first, "first"], [second, "second"]]) {
+        assert.equal(resolve("./missing.mjs"), new URL(directory + "/missing.mjs", import.meta.url).href);
+        assert.equal(resolve("./missing.mjs", import.meta.url), new URL("./missing.mjs", import.meta.url).href);
+      }
+      console.log("ok");
+    `,
+    "first/module.mjs": "export const { resolve } = import.meta;",
+    "second/module.mjs": "export const { resolve } = import.meta;",
+    "overwritten.mjs": "import.meta.resolve = 42; export const value = import.meta.resolve;",
+    "deleted.mjs": "delete import.meta.resolve; export const absent = import.meta.resolve;",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+});
+
+it.concurrent("import.meta.resolve preserves integrity levels before its first access", async () => {
+  const modes = ["freeze", "seal", "preventExtensions", "foreign"];
+  using dir = tempDir("import-meta-resolve-integrity", {
+    "entry.mjs": `${modes.map(mode => `await import("./${mode}.mjs");`).join("\n")}\nconsole.log("ok");`,
+    ...Object.fromEntries(
+      modes.map(mode => [
+        `${mode}.mjs`,
+        `
+          import assert from "node:assert/strict";
+          const mode = ${JSON.stringify(mode)};
+          if (mode !== "foreign") Object[mode](import.meta);
+          const resolve = mode === "foreign"
+            ? Reflect.get(import.meta, "resolve", new Proxy({}, { get() { throw new Error("receiver inspected"); } }))
+            : import.meta.resolve;
+          assert.equal(resolve("./missing.mjs"), new URL("./missing.mjs", import.meta.url).href);
+          assert.deepEqual(Object.getOwnPropertyDescriptor(import.meta, "resolve"), {
+            value: resolve,
+            writable: mode !== "freeze",
+            enumerable: true,
+            configurable: mode !== "freeze" && mode !== "seal",
+          });
+          assert.equal(Object.isExtensible(import.meta), mode === "foreign");
+          if (mode === "freeze") {
+            assert.equal(Object.isFrozen(import.meta), true);
+            assert.throws(() => { import.meta.resolve = null; }, TypeError);
+          }
+          if (mode === "freeze" || mode === "seal") {
+            assert.equal(Reflect.deleteProperty(import.meta, "resolve"), false);
+          }
+        `,
+      ]),
+    ),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});
+
 it("Module.createRequire", () => {
   const require = Module.createRequire(import.meta.path);
   expect(require.resolve(import.meta.path)).toBe(path);

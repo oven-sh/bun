@@ -13,6 +13,9 @@
 namespace v8 {
 namespace shim {
 
+class GlobalInternals;
+struct GlobalHandleLists;
+
 // Stores the V8 handles for one Bun::HandleScopeImpl, which owns this and attaches it on the first
 // V8 call inside the scope. v8::Locals point to the handles, so a SegmentedVector keeps their
 // addresses stable. The owning scope visits the handles, and mutations must lock its cellLock().
@@ -21,7 +24,12 @@ class HandleScopeBuffer {
 
 public:
     HandleScopeBuffer(Bun::HandleScopeImpl* owner, Isolate* isolate);
-    ~HandleScopeBuffer();
+    ~HandleScopeBuffer()
+    {
+        if (m_globalHandleLists) [[unlikely]] {
+            destroyGlobalHandleLists();
+        }
+    }
 
     template<typename T> Local<T> createLocal(JSC::VM& vm, JSC::JSValue value)
     {
@@ -79,6 +87,13 @@ public:
     // returns the location of the new handle's V8 object pointer or Smi
     TaggedPointer* createHandleFromExistingObject(TaggedPointer address, Handle* reuseHandle = nullptr);
 
+    // For GlobalInternals::globalHandles() only. A Local can point into a disposed handle, so it is released when no scope with V8 handles stays open.
+    TaggedPointer* createGlobalHandle(TaggedPointer address);
+    // Does nothing unless `slot` is a live handle of this buffer.
+    void disposeGlobalHandle(TaggedPointer* slot);
+    // Whether `slot` was the handle of a v8::Global that outlived its buffer. If so, forgets it.
+    static bool releaseRetiredGlobalHandle(TaggedPointer* slot);
+
     // Called when the owning scope is closing and about to free this. Restores the isolate's
     // HandleScopeData and moves any handle a live callback return value still points to into `parent`.
     void close(Bun::HandleScopeImpl* parent);
@@ -104,6 +119,8 @@ private:
     // close() restores them so they never point into freed handles.
     uintptr_t* m_savedNext;
     uintptr_t* m_savedLimit;
+    // Owned. Null except in GlobalInternals::globalHandles().
+    GlobalHandleLists* m_globalHandleLists { nullptr };
 
     JSC::VM& vm() const;
     Handle& createEmptyHandle();
@@ -117,6 +134,12 @@ private:
     TaggedPointer appendRescuedLayout(const ObjectLayout& layout);
 
     void evacuateActiveReturnValues(Bun::HandleScopeImpl* parent);
+
+    // Requires the owner's cellLock().
+    void releaseDisposedGlobalHandles(const WTF::AbstractLocker&);
+    // Does nothing while `scope` or a scope around it has V8 handles.
+    static void releaseDisposedGlobalHandlesOutside(GlobalInternals*, Bun::HandleScopeImpl* scope);
+    void destroyGlobalHandleLists();
 };
 
 } // namespace shim

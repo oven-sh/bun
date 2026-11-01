@@ -321,6 +321,45 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("can create, modify, and read the value from global handles", async () => {
       await checkSameOutput("test_v8_global");
     });
+
+    it("lets go of its value when it is reset", async () => {
+      const output = await checkSameOutput("test_v8_global_reset_releases_value");
+      // Node and Bun agree by now. This rules out that neither of them collected the values.
+      expect(output.split(/\r?\n/)).toEqual([
+        "values of Globals reset in the call that created them: collected",
+        "values of Globals not reset yet: alive",
+        "values of Globals reset in a later call: collected",
+      ]);
+    });
+
+    it("does not change the Locals and return values that were read from it when it is reset", async () => {
+      const output = await checkSameOutput("test_v8_global_reset_keeps_locals_and_return_values");
+      expect(output.split(/\r?\n/)).toEqual([
+        'local after Reset = "first"',
+        'local after other Globals were created = "first", its copy = "first"',
+        "returned local = first",
+        'global_return_local_then_reset returned {"name":"second"}, "a string", 12.5, 7, undefined, null, true, false',
+        'global_return_global_then_reset returned {"name":"second"}, "a string", 12.5, 7, undefined, null, true, false',
+        'local after nested calls reset the Global = "third"',
+        "returned after nested calls reset the Global = third",
+        'the Global then held {"name":"fifth"}',
+        "the other Globals held their values = true",
+      ]);
+    });
+
+    it("can be reset while it holds undefined, null, a boolean or a number", async () => {
+      const output = await checkSameOutput("test_v8_global_reset_primitives");
+      // Each round prints the values that the Globals of the round before held, and then
+      // undefined, null, true and false.
+      expect(output.split(/\r?\n/)).toEqual([
+        "round 0: | undefined null true false",
+        'round 1: undefined undefined null true false 0.000000 0.500000 "string 0" | undefined null true false',
+        'round 2: "string 1" undefined undefined null true false 1.000000 1.500000 | undefined null true false',
+        'round 3: 2.500000 "string 2" undefined undefined null true false 2.000000 | undefined null true false',
+        'round 4: 3.000000 3.500000 "string 3" undefined undefined null true false | undefined null true false',
+        'round -1: false 4.000000 4.500000 "string 4" undefined undefined null true | undefined null true false',
+      ]);
+    });
   });
 
   describe("HandleScope", () => {

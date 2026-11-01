@@ -105,6 +105,132 @@ module.exports = debugMode => {
       console.log("global after setting to true =", nativeModule.global_get());
     },
 
+    // uWebSockets.js holds a value in a v8::Global for every request and every WebSocket, so a
+    // Global that is reset has to let go of its value.
+    test_v8_global_reset_releases_value() {
+      const count = 1000;
+      // Leaves room for a few objects that something other than a Global keeps alive.
+      const enough = count - 10;
+      let collectGarbage;
+      if (process.isBun) {
+        collectGarbage = () => Bun.gc(true);
+      } else {
+        // Node only has gc() with --expose-gc, which can still be turned on here.
+        require("node:v8").setFlagsFromString("--expose-gc");
+        collectGarbage = require("node:vm").runInNewContext("gc");
+      }
+      // Both functions have returned before the first collection, so that only a Global could
+      // still refer to the objects that they created.
+      function resetInTheSameCall() {
+        const refs = [];
+        for (let i = 0; i < count; i++) {
+          const object = { i };
+          refs.push(new WeakRef(object));
+          if (nativeModule.global_hold_and_reset(object) !== object) {
+            throw new Error("global_hold_and_reset did not return the value of its Global");
+          }
+        }
+        return refs;
+      }
+      function heldUntilALaterCall() {
+        const refs = [];
+        for (let i = 0; i < count; i++) {
+          const object = { i };
+          refs.push(new WeakRef(object));
+          nativeModule.global_hold(object);
+        }
+        return refs;
+      }
+      const countCollected = refs => refs.filter(ref => ref.deref() === undefined).length;
+      // A WeakRef keeps its target alive until the job that created or read it ends, so each
+      // collection runs in a later turn of the event loop than the one before.
+      async function collect(refs) {
+        let collected = 0;
+        for (let turn = 0; turn < 10 && collected < enough; turn++) {
+          await new Promise(resolve => setImmediate(resolve));
+          collectGarbage();
+          collected = countCollected(refs);
+        }
+        return collected;
+      }
+      // Writes the counts to stderr, and to stdout only when they are too low, because the test
+      // compares what Node and Bun write to stdout.
+      function report(description, state, number, expected) {
+        const counts = `${number} of ${count} ${state}`;
+        console.error(`${description}: ${counts}`);
+        console.log(`${description}:`, number >= expected ? state : `only ${counts}`);
+      }
+      (async () => {
+        const sameCall = resetInTheSameCall();
+        const laterCall = heldUntilALaterCall();
+        report("values of Globals reset in the call that created them", "collected", await collect(sameCall), enough);
+        // The collections above ran while these Globals held their values.
+        report("values of Globals not reset yet", "alive", count - countCollected(laterCall), count);
+        nativeModule.global_reset_held();
+        report("values of Globals reset in a later call", "collected", await collect(laterCall), enough);
+      })();
+    },
+
+    // A Local or a return value that was read from a v8::Global stays the same when the Global is
+    // reset, even if another Global takes over its handle.
+    test_v8_global_reset_keeps_locals_and_return_values() {
+      let othersHeldTheirValues = true;
+      // Calls a native function that resets the stored Global and then creates a Global for each
+      // of its arguments. One of them could take over the handle that the stored Global gave back.
+      const callWithOthers = name => {
+        const others = Array.from({ length: 16 }, (_, i) => ({ name: `other ${i}` }));
+        const result = nativeModule[name](...others);
+        const held = nativeModule.global_held();
+        nativeModule.global_reset_held();
+        if (held.length !== others.length || !held.every((value, i) => value === others[i])) {
+          othersHeldTheirValues = false;
+        }
+        return result;
+      };
+
+      // Only the Global refers to the object.
+      nativeModule.global_store({ name: "first" });
+      console.log("returned local =", callWithOthers("global_local_outlives_reset").name);
+
+      const makeValues = [
+        () => ({ name: "second" }),
+        () => "a string",
+        () => 12.5,
+        () => 7,
+        () => undefined,
+        () => null,
+        () => true,
+        () => false,
+      ];
+      for (const name of ["global_return_local_then_reset", "global_return_global_then_reset"]) {
+        // Each call gets a new object, so that only the Global refers to it.
+        const returned = makeValues.map(makeValue => {
+          nativeModule.global_store(makeValue());
+          return String(JSON.stringify(callWithOthers(name)));
+        });
+        console.log(`${name} returned`, returned.join(", "));
+      }
+
+      nativeModule.global_store({ name: "third" });
+      const nested = nativeModule.global_local_outlives_nested_reset(() => {
+        // Each call resets the Global: it disposes the handle of the previous value and creates
+        // one for the new value.
+        nativeModule.global_store({ name: "fourth" });
+        nativeModule.global_store({ name: "fifth" });
+      });
+      console.log("returned after nested calls reset the Global =", nested.name);
+      console.log("the Global then held", JSON.stringify(nativeModule.global_return_global_then_reset()));
+      console.log("the other Globals held their values =", othersHeldTheirValues);
+    },
+
+    test_v8_global_reset_primitives() {
+      // A round can get the handles that the Globals of an earlier round gave back.
+      for (let round = 0; round < 5; round++) {
+        nativeModule.global_primitives_round(round);
+      }
+      nativeModule.global_primitives_round(-1);
+    },
+
     test_v8_function_template() {
       const f = nativeModule.create_function_with_data();
       if (process.isBun) {

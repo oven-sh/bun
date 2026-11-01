@@ -3922,6 +3922,16 @@ console.log(resolve.length)
       expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
     });
 
+    // Only the bundler and the REPL relocate these: this output is what the runtime transpiler cache stores.
+    it("a var in a for head or in a body without braces keeps its place", () => {
+      expectPrintedNoTrim("for (var x;;) ;", "for (var x;; )\n  ;\nvar x;\n");
+      expectPrintedNoTrim("for (var j, k;;) break;", "for (var j, k;; )\n  break;\nvar j;\nvar k;\n");
+      expectPrintedNoTrim("if (x) var a = 1;", "if (x)\n  var a = 1;\n");
+      expect(ts.transpiledOutput("if (x) enum E { A = 1 }")).toBe(
+        'if (x) {\n  var E;\n  ((E) => {\n    E[E["A"] = 1] = "A";\n  })(E ||= {});\n}\n',
+      );
+    });
+
     it("regexp", () => {
       expectPrinted("/x/g", "/x/g");
       expectPrinted("/x/i", "/x/i");

@@ -12,8 +12,15 @@
 //                               `f0` is the function with that id, for one without a name.
 //
 // So an input does not go stale against the front end, and a change of what a pass prints is this command and a diff to read.
+//
+// With --check-inputs it writes nothing: it says of each file with a source whether the front end still makes the file's IR of it, and
+// exits with 1 if one does not. The files are shared out among as many processes as there are cores.
+//
+// With --counts it then runs every file, marked or not. Where a check line fails and the nearest line of the output differs from it
+// only in numbers (`instructions: 14, patchpoints: 2`), the check line takes those numbers, and the old and the new line are printed.
 import { tempDir } from "harness";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { testaot, toolEnv } from "../shell/tools";
 import { recordsOfSource } from "./ir-test-from-source";
@@ -30,11 +37,15 @@ const filesBelow = (path: string): string[] =>
         .map(name => join(path, name))
     : [path];
 
-/** A pattern that one printed line matches. Positions in the source are left out. */
+/**
+ * A pattern that one printed line matches. Positions in the source are left out. A check line matches part of a line, so the start of a
+ * very long one is enough: a folded string of 70,000 characters is printed on one line.
+ */
 const patternOf = (line: string) =>
   line
     .trim()
     .replace(/( @\d+(:\d+)*)+( callers| constructs)?$/, "")
+    .slice(0, 4000)
     .replace(/\{(?=\{)|\[(?=\[)/g, "{{*}}");
 
 function generate(prefix: string, output: string[], functions: string[]) {
@@ -63,7 +74,7 @@ function generate(prefix: string, output: string[], functions: string[]) {
   return lines;
 }
 
-function update(path: string) {
+function update(path: string, checksInputOnly = false) {
   const before = readFileSync(path, "utf8");
   let lines = before.replace(/\n$/, "").split("\n");
   const sourceAt = lines.findIndex(line => sourceMark.test(line));
@@ -88,6 +99,16 @@ function update(path: string) {
     const comments = lines.slice(0, last).filter(line => line.startsWith("#"));
     lines = [...comments, "", ...records, ...lines.slice(last)];
   }
+  if (checksInputOnly) {
+    if (sourceAt < 0) return "no source";
+    const old = before.replace(/\n$/, "").split("\n");
+    const at = lines.findIndex((line, index) => line !== old[index]);
+    if (at < 0 && lines.length === old.length) return "as it was";
+    console.log(
+      `${path}:${(at < 0 ? lines.length : at) + 1}: the source lowers to something else\n  - ${old[at] ?? ""}\n  + ${lines[at] ?? ""}`,
+    );
+    return "stale";
+  }
 
   const at = marked();
   if (at >= 0) {
@@ -99,7 +120,8 @@ function update(path: string) {
     });
     // A prefix needs a line before testaot runs anything.
     const placeholders = runs.map(({ prefix }) => `# ${prefix}: function`);
-    writeFileSync(path, [...kept, ...placeholders].join("\n") + "\n");
+    // Without the marker: testaot wants a label below it for each function that it names.
+    writeFileSync(path, [...kept.slice(0, -1), ...placeholders].join("\n") + "\n");
     const { stdout, stderr } = Bun.spawnSync([testaot!, "run", path, "--show-output"], { env: toolEnv });
     const printed = stdout.toString().replaceAll("\r\n", "\n").split("\n");
     const outputs = new Map<number, string[]>();
@@ -131,17 +153,75 @@ function update(path: string) {
   return after === before ? "as it was" : "written";
 }
 
-if (!testaot || process.argv.length < 3) {
-  console.error(testaot ? "usage: bun test/aot/tools/update-ir-tests.ts <file or folder> .." : "there is no testaot");
+const withoutNumbers = (text: string) => text.replace(/\d+/g, "0");
+
+/** One round: a later check line of a file is only reached once the earlier ones match. */
+function updateCounts(paths: string[]) {
+  const { stdout } = Bun.spawnSync([testaot!, "run", ...paths], { env: toolEnv });
+  const failure = /^FAIL (.+):(\d+): .*?(?: matches| does not match): (.*); nearest: (.*)$/;
+  let rewritten = 0;
+  for (const printed of stdout.toString().replaceAll("\r\n", "\n").split("\n")) {
+    const [, path, number, pattern, nearest] = failure.exec(printed) ?? [];
+    if (!path || pattern === nearest || withoutNumbers(pattern) !== withoutNumbers(nearest)) continue;
+    const lines = readFileSync(path, "utf8").split("\n");
+    const line = lines[Number(number) - 1];
+    if (!line?.endsWith(pattern)) continue;
+    lines[Number(number) - 1] = line.slice(0, line.length - pattern.length) + nearest;
+    writeFileSync(path, lines.join("\n"));
+    console.log(`${path}:${number}\n  - ${pattern}\n  + ${nearest}`);
+    rewritten++;
+  }
+  return rewritten;
+}
+
+const takesCounts = process.argv.includes("--counts");
+const checksInputs = process.argv.includes("--check-inputs");
+const paths = process.argv.slice(2).filter(argument => !argument.startsWith("--"));
+if (!testaot || paths.length === 0) {
+  console.error(
+    testaot ? "usage: bun test/aot/tools/update-ir-tests.ts [--counts] <file or folder> .." : "there is no testaot",
+  );
   process.exit(2);
 }
+if (checksInputs && paths.some(path => statSync(path).isDirectory())) {
+  const files = paths
+    .flatMap(filesBelow)
+    .filter(
+      path =>
+        sourceMark.test(readFileSync(path, "utf8").split("\n", 1)[0]) ||
+        /^# -- source: /m.test(readFileSync(path, "utf8")),
+    );
+  const shares = Math.min(files.length, availableParallelism());
+  const children = Array.from({ length: shares }, (_, share) =>
+    Bun.spawn(
+      [process.execPath, import.meta.path, "--check-inputs", ...files.filter((_, index) => index % shares === share)],
+      {
+        stdout: "pipe",
+        stderr: "inherit",
+      },
+    ),
+  );
+  const printed = await Promise.all(children.map(child => new Response(child.stdout).text()));
+  const problems = printed.flatMap(text =>
+    text.split("\n").filter(line => line && !/^\d+ (as it was|stale|failed)/.test(line)),
+  );
+  console.log(
+    [
+      ...problems,
+      `${files.length} files with a source, ${problems.filter(line => !line.startsWith("  ")).length} stale or failed`,
+    ].join("\n"),
+  );
+  process.exit(problems.length ? 1 : 0);
+}
 const counts: Record<string, number> = {};
-for (const path of process.argv.slice(2).flatMap(filesBelow)) {
+for (const path of paths.flatMap(filesBelow)) {
   let what = "failed";
   try {
-    what = update(path);
+    what = update(path, checksInputs);
   } catch (error) {
-    console.error(`${path}: ${error instanceof Error ? error.message : error}`);
+    (checksInputs ? console.log : console.error)(
+      `${path}: ${error instanceof Error ? error.message.split("\n")[0] : error}`,
+    );
     process.exitCode = 1;
   }
   counts[what] = (counts[what] ?? 0) + 1;
@@ -152,3 +232,8 @@ console.log(
     .map(([what, count]) => `${count} ${what}`)
     .join(", "),
 );
+if (takesCounts) {
+  let total = 0;
+  for (let rewritten; (rewritten = updateCounts(paths)) > 0;) total += rewritten;
+  console.log(`${total} check lines took other numbers`);
+}

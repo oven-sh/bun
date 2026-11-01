@@ -108,22 +108,18 @@ pub fn own_member(holder: BuiltinId, name: BuiltinName) -> Option<BuiltinId> {
 
 /// What the export `name` holds in the module whose `require` answers `module_object`.
 pub fn find_export(module_object: BuiltinId, name: BuiltinName) -> ExportLookup {
-    let held_by_namespace = match entry(module_object).module {
-        Some(module) => module_data(module).exports_held_by_namespace,
-        None => &[],
-    };
-    if held_by_namespace.contains(&name) {
-        return ExportLookup::HeldByNamespace;
+    if let Some(module) = entry(module_object).module.map(module_data) {
+        if module.exports_held_by_namespace.contains(&name) {
+            return ExportLookup::HeldByNamespace;
+        }
+        if module.exports_holding_module_object.contains(&name) {
+            return ExportLookup::Found(module_object);
+        }
     }
-    let Some(member) = own_member(canonical_id(module_object), name) else {
-        return ExportLookup::Unlisted;
-    };
-    let is_module_object = has_flag(member, BuiltinFlags::IS_DEFAULT_EXPORT);
-    ExportLookup::Found(if is_module_object {
-        module_object
-    } else {
-        member
-    })
+    match own_member(canonical_id(module_object), name) {
+        Some(member) => ExportLookup::Found(member),
+        None => ExportLookup::Unlisted,
+    }
 }
 
 pub fn global(name: BuiltinName) -> Option<BuiltinId> {

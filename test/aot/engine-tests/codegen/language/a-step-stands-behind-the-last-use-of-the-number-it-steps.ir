@@ -1,0 +1,89 @@
+# -- source: main.ts
+# let id = 0;
+# function next(): number {
+#   return id++;
+# }
+# let sum = 0;
+# for (let i = 0; i < 20000000; i++) sum = (sum + next()) & 0xffff;
+# console.log(sum, id);
+# -- end of source
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: lower-to-b3 optimized f0
+# REQUIRES: x86_64 unsanitized-code
+# The sum takes the number in front of its step, so the step comes last and adds in place, and the loop moves nothing back.
+# CHECK: Int32 b@{{*}} = BitAnd(b@{{*}}, $65535(b@{{*}}), v{{*}}:BitAnd)
+# CHECK-NEXT: Int64 b@{{*}} = Add(b@{{*}}, $1(b@{{*}}), v{{*}}:Increment)
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=4 kind=Variable
+typesite w1 module=m0 position=59 kind=Variable
+typesite w2 module=m0 position=12 kind=Result
+typesite w3 module=m0 position=77 kind=Variable
+typesite w4 module=m0 position=116 kind=CallResult
+variable g0 name="id" module=m0 declared={type=number|absent site=w0}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Integer @9
+    v3 = Convert v2 declared={type=number site=w0} @9
+    PutModuleVariable v3 variable=g0 @4
+    v5 = Integer @65
+    v6 = Convert v5 declared={type=number site=w1} @65
+    v7 = Integer @81
+    v8 = Convert v7 declared={type=number site=w3} @81
+    Jump -> next b2(v6, v8) @77
+  b2(v9: number, v10: number):
+    LoopHint @77
+    v12 = Integer integer=20000000 @88
+    v13 = Less v10, v12 @84
+    Branch v13 -> taken b3(| 0), notTaken b6(| 0) @84
+  b3(v14):
+    Jump -> next b4() @84
+  b4():
+    v15 = Convert v9 declared={type=i32 flags=[IsExpected]} @110
+    v16 = Call v1 calleeName="next" @116
+    v17 = Convert v16 declared={type=number site=w4} @116
+    v18 = Add v15, v17 @110
+    v19 = Integer integer=65535 @126
+    v20 = BitAnd v18, v19 @110
+    v21 = Convert v20 declared={type=number site=w1} @103
+    Jump -> next b5() @103
+  b5():
+    v22 = Increment v14 @110
+    v23 = Convert v22 declared={type=number site=w3} @98
+    Jump -> next b2(v21, v23) @98
+  b6(v24):
+    Jump -> next b7() @84
+  b7():
+    v25 = Builtin builtin=GlobalThis @134
+    v26 = PropGet v25 key="console" [isFreeName] @134
+    v27 = Convert v26 declared={type=builtin(Console) flags=[IsExpected]} @134
+    v28 = PropGet v27 key="log" @134
+    v29 = Convert v28 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @134
+    v30 = Convert v9 declared={type=i32 flags=[IsExpected]} @146
+    v31 = GetModuleVariable variable=g0 @153 @151
+    v32 = CheckInitialized v31 name="id" @153 @151
+    v33 = Call v29, v27, v30, v32 calleeKey="log" calleeName="console.log" @142
+    v34 = Undefined @134
+    Return v34 @134
+}
+function f1 name="next" module=m0 position=12 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @12
+  b1():
+    v0 = GetModuleVariable variable=g0 @47
+    v1 = CheckInitialized v0 name="id" @47
+    v2 = ToNumeric v1 @47
+    v3 = Increment v2 @47
+    v4 = Convert v3 declared={type=number site=w0} @47
+    v5 = GetModuleVariable variable=g0 @47
+    v6 = CheckInitialized v5 name="id" @47
+    PutModuleVariable v4 variable=g0 @47
+    v8 = Convert v2 declared={type=number site=w2} @47
+    Return v8 @47
+}

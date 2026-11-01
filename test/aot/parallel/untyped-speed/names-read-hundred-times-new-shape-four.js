@@ -1,6 +1,7 @@
 // Two names are read thirty-two times off an object out of JSON.parse. Once every object has the same names, once each has a name of its own beside them.
 // What a read finds off a new shape is filed at the sixteenth miss at the latest, and the reads behind that find it at once: each of the two names is filed once for each of the hundred and one shapes.
-// COUNT: operation:operationAOTGetByIdAndCache >= 200
+// COUNT: operation:operationAOTGetByIdAndCache >= 197
+// COUNT: operation:operationAOTReadValueAndFillSiteCache >= 5
 // COUNT: operation:operationAOTGetByIdAndCache <= 300
 function sum(record) {
   return record.first + record.second;

@@ -1,51 +1,48 @@
-// Strings that are built and consumed within one function.
-// REMARK+ keyOfIdsLoop (Add|Strcat): stack
-// REMARK- keyOfIdsLoop rejected
-// REMARK+ keyDashLoop (Add|Strcat): stack
-// REMARK- keyDashLoop rejected
-// REMARK+ acrossBranches (Add|Strcat): stack
-// REMARK- acrossBranches rejected
-// REMARK+ lengthsInBetween (Add|Strcat): stack
-// REMARK+ startedAgain (Add|Strcat): stack
-// REMARK+ nested (Add|Strcat): stack
-// REMARK- nested rejected
-// REMARK+ numbersInLoop (Add|Strcat): stack
-// REMARK+ numbersMayBeNil (Add|Strcat): stack
-// REMARK+ wordsAndNumbers (Add|Strcat): stack
-// REMARK+ startsWithText (Add|Strcat): stack
-// REMARK+ startsFromString (Add|Strcat): stack
-// REMARK+ readAfterLoop (Add|Strcat): stack
-// REMARK+ nearTheLimit (Add|Strcat): stack
-// REMARK- nearTheLimit rejected
-// REMARK+ withNilOperands (Add|Strcat): stack
-// REMARK+ readsBetween (Add|Strcat): stack
-// REMARK- readsBetween rejected
-// REMARK- nilPlusNumber stack
-// REMARK- wordsNotAKey stack
+// Strings that are built and consumed within one function. A text that grows by `+=` grows in one builder (StringBuilderBegin, counted by its places in the source), and no string is put together beside it (Strcat). Where the text is read on the way as a string, it is made there (StringBuilderToString). A text that grows at its front, that two texts go on from, that may begin as undefined, or that is one number gets no builder.
+// IR@= 2 keyOfIdsLoop  = StringBuilderBegin
+// IRT= 0 keyOfIdsLoop  = Strcat 
+// IR@= 1 keyDashLoop  = StringBuilderBegin
+// IRT= 0 keyDashLoop  = Strcat 
+// IR@= 1 acrossBranches  = StringBuilderBegin
+// IRT= 0 acrossBranches  = Strcat 
+// IR@= 1 lengthsInBetween  = StringBuilderBegin
+// IR@= 1 startedAgain  = StringBuilderBegin
+// IR@= 1 nested  = StringBuilderBegin
+// IRT= 0 nested  = Strcat 
+// IR@= 1 numbersInLoop  = StringBuilderBegin
+// IR@= 1 numbersMayBeNil  = StringBuilderBegin
+// IR@= 1 wordsAndNumbers  = StringBuilderBegin
+// IR@= 1 startsWithText  = StringBuilderBegin
+// IR@= 1 startsFromString  = StringBuilderBegin
+// IR@= 1 readAfterLoop  = StringBuilderBegin
+// IR@= 1 nearTheLimit  = StringBuilderBegin
+// IRT= 0 nearTheLimit  = Strcat 
+// IR@= 1 withNilOperands  = StringBuilderBegin
+// IR@= 1 readsBetween  = StringBuilderBegin
+// IRT= 0 readsBetween  = Strcat 
+// IR@= 2 nilPlusNumber  = StringBuilderBegin
+// IR@= 1 wordsNotAKey  = StringBuilderBegin
 // IRT= 1 wordsNotAKey  = StringBuilderFinish 
-// REMARK- readByIndex stack
-// REMARK+ readByIndex rejected: intermediate value escapes
-// REMARK- compared stack
-// REMARK- passedOn stack
-// REMARK- reinitialized stack
-// REMARK- onlyStrings stack
+// IR@= 1 readByIndex  = StringBuilderBegin
+// IR@= 1 readByIndex  = StringBuilderToString
+// IR@= 1 compared  = StringBuilderToString
+// IR@= 1 passedOn  = StringBuilderToString
+// IR@= 2 reinitialized  = StringBuilderBegin
+// IR@= 1 onlyStrings  = StringBuilderBegin
 // IRT= 1 onlyStrings  = StringBuilderFinish 
-// REMARK- withHandler stack
-// REMARK- putInFront stack
-// REMARK- addedToTwice stack
-// REMARK- mayStartWithNil stack
-// REMARK+ mayStartWithNil rejected: initial value may not be a string
-// REMARK- oneNumber stack
-// REMARK- withObject stack
+// IR@= 1 withHandler  = StringBuilderToString
+// IR= 0 putInFront StringBuilder
+// IR= 0 addedToTwice StringBuilder
+// IR= 0 mayStartWithNil StringBuilder
+// IR@= 1 mayStartWithNil  = Strcat 
+// IR= 0 oneNumber StringBuilder
+// IR@= 1 withObject  = StringBuilderBegin
 // CALLS+ keyOfIdsLoop StringBuilderFinish
-// CALLS- keyOfIdsLoop operationAOTConcat\b|IntToString
+// CALLS- keyOfIdsLoop Concatenate|IntegerToString
 // CALLS+ keyDashLoop StringBuilder(Finish|Flush)
-// CALLS- keyDashLoop operationAOTConcat\b|IntToString
+// CALLS- keyDashLoop Concatenate|IntegerToString
 // CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
-// CALLS- notAKey ConcatenateWithIntegers|StringBuilder
-// CALLS- readByIndex StringBuilder
-// CALLS- onlyStrings StringBuilder
-// CALLS- wordsNotAKey StringBuilder
+// CALLS- notAKey ConcatenateKey|StringBuilder
 
 interface T { id: number }
 interface R { target: T; args: T[] }

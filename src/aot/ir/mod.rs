@@ -17,6 +17,7 @@ pub mod strings;
 #[cfg(test)]
 mod type_constants;
 pub mod types;
+pub mod waiting_lists;
 
 #[rustfmt::skip]
 pub mod generated;
@@ -52,7 +53,7 @@ pub use ids::{
 };
 pub use keys::{ClassSlot, FunctionKey, LayoutKey, PrivateStatePart, VariableKey};
 pub use name_class::classify_name;
-pub use parallel::{InParallel, drop_each, for_each_mut, run_serially};
+pub use parallel::{InParallel, drop_each, extend_from_boxes, for_each_mut, run_serially};
 #[cfg(any(test, feature = "ir_text"))]
 pub use print::{Printer, print_function, print_program};
 #[cfg(any(test, feature = "ir_text"))]

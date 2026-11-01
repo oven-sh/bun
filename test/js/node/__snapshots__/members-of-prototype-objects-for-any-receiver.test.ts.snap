@@ -253,7 +253,8 @@ node:stream.Readable.prototype compose()
   throws TypeError ERR_INVALID_ARG_TYPE: The "body" argument must be of type function or an instance of Blob, ReadableStream, WritableStream, Stream, Iterable, AsyncIterable, or Promise or { readable, writable } pair. Received an instance of Object <- {}, a proxy of {}
   throws TypeError ERR_INVALID_ARG_TYPE: The "body" argument must be of type function or an instance of Blob, ReadableStream, WritableStream, Stream, Iterable, AsyncIterable, or Promise or { readable, writable } pair. Received [Object: null prototype] {} <- an object without a prototype
   throws TypeError ERR_INVALID_ARG_TYPE: The "body" argument must be of type function or an instance of Blob, ReadableStream, WritableStream, Stream, Iterable, AsyncIterable, or Promise or { readable, writable } pair. Received an instance of Other <- an instance of another class
-  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'streams[0]' must be readable. Received Readable { destroy: [Function: destroy], _undestroy: [Function: undestroy], _destroy: [Function], push: [Function], unshift: [Function], isPaused: [Function], setEncoding: [Function], read: [Function], _read: [Function], pipe: [Function], unpipe: [Function], on: [Function], addListener: [Function], removeListener: [Function], off: [Function], removeAllListeners: [Function], resume: [Function], pause: [Function], wrap: [Function], iterator: [Function], compose: [Function: compose], readable: [Getter/Setter], readableDidRead: [Getter], readableAborted: [Getter], readableHighWaterMark: [Getter], readableBuffer: [Getter], readableFlowing: [Getter/Setter], readableLength: [Getter], readableObjectMode: [Getter], readableEncoding: [Getter], errored: [Getter], closed: [Getter], destroyed: [Getter/Setter], readableEnded: [Getter], drop: [Function], filter: [Function], flatMap: [Function], map: [Function], take: [Function], every: [Function], forEach: [Function], reduce: [Function], toArray: [Function], some: [Function], find: [Function], [Symbol(nodejs.rejection)]: [Function], [Symbol(Symbol.asyncDispose)]: [Function], [Symbol(Symbol.asyncIterator)]: [Function], [Symbol(Stream.toAsyncStreamable)]: [Function], eventNames: [Function: eventNames], setMaxListeners: [Function: setMaxListeners], getMaxListeners: [Function: getMaxListeners], emit: [Function: emit], prependListener: [Function: prependListener], once: [Function: once], prependOnceListener: [Function: prependOnceListener], listeners: [Function: listeners], rawListeners: [Function: rawListeners], listenerCount: [Function: listenerCount], _eventsCount: 0, [Symbol(kCapture)]: false } <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'streams[0]' must be readable. Received Readable { destroy: [Function: destroy], _undestroy: [Function: undestroy], _destroy: [Function], push: [Function], unshift: [Function], isPaused: [Function], setEncoding: [Function], read: [Function], _read: [Function], pipe: [Function], unpipe: [Function], on: [Function], addListener: [Function], removeListener: [Function], off: [Function], removeAllListeners: [Function], resume: [Function], pause: [Function], wrap: [Function], iterator: [Function], compose: [Function: compose], readable: [Getter/Setter], readableDidRead: [Getter], readableAborted: [Getter], readableHighWaterMark: [Getter], readableBuffer: [Getter], readableFlowing: [Getter/Setter], readableLength: [Getter], readableObjectMode: [Getter], readableEncoding: [Getter], errored: [Getter], closed: [Getter], destroyed: [Getter/Setter], readableEnded: [Getter], drop: [Function], filter: [Function], flatMap: [Function], map: [Function], take: [Function], every: [Function], forEach: [Function], reduce: [Function], toArray: [Function], some: [Function], find: [Function], [Symbol(nodejs.rejection)]: [Function], [Symbol(Symbol.asyncDispose)]: [Function], [Symbol(Symbol.asyncIterator)]: [Function], [Symbol(Stream.toAsyncStreamable)]: [Function], eventNames: [Function: eventNames], setMaxListeners: [Function: setMaxListeners], getMaxListeners: [Function: getMaxListeners], emit: [Function: emit], prependListener: [Function: prependListener], once: [Function: once], prependOnceListener: [Function: prependOnceListener], listeners: [Function: listeners], rawListeners: [Function: rawListeners], listenerCount: [Function: listenerCount], _eventsCount: 0, [Symbol(kCapture)]: false } <- an heir of the prototype object, a proxy of such an heir
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'streams[0]' must be readable. Received Readable { destroy: [Function: destroy], _undestroy: [Function: undestroy], _destroy: [Function], push: [Function], unshift: [Function], isPaused: [Function], setEncoding: [Function], read: [Function], _read: [Function], pipe: [Function], unpipe: [Function], on: [Function], addListener: [Function], removeListener: [Function], off: [Function], removeAllListeners: [Function], resume: [Function], pause: [Function], wrap: [Function], iterator: [Function], compose: [Function: compose], [Symbol(nodejs.rejection)]: [Function], [Symbol(Symbol.asyncDispose)]: [Function], [Symbol(Symbol.asyncIterator)]: [Function], [Symbol(Stream.toAsyncStreamable)]: [Function], eventNames: [Function: eventNames], setMaxListeners: [Function: setMaxListeners], getMaxListeners: [Function: getMaxListeners], emit: [Function: emit], prependListener: [Function: prependListener], once: [Function: once], prependOnceListener: [Function: prependOnceListener], listeners: [Function: listeners], rawListeners: [Function: rawListeners], listenerCount: [Function: listenerCount], _eventsCount: 0, [Symbol(kCapture)]: false } <- the prototype object
   throws TypeError ERR_INVALID_ARG_TYPE: The "body" argument must be of type function or an instance of Blob, ReadableStream, WritableStream, Stream, Iterable, AsyncIterable, or Promise or { readable, writable } pair. Received type number (7) <- a number
   throws TypeError ERR_INVALID_ARG_TYPE: The "body" argument must be of type function or an instance of Blob, ReadableStream, WritableStream, Stream, Iterable, AsyncIterable, or Promise or { readable, writable } pair. Received undefined <- a string, undefined
   throws TypeError ERR_INVALID_ARG_TYPE: The "body" argument must be of type function or an instance of Blob, ReadableStream, WritableStream, Stream, Iterable, AsyncIterable, or Promise or { readable, writable } pair. Received null <- null
@@ -5935,6 +5936,76 @@ node:tty.ReadStream.prototype setRawMode("a", 1)
   throws TypeError: fd must be a number, stores [rawModeState] <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: Cannot access property of undefined or null <- undefined, null
+node:tty.ReadStream.prototype _destroy()
+  throws TypeError: what is called is not a function <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.ReadStream.prototype _destroy("a", 1)
+  throws TypeError: what is called is not a function <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype _destroy()
+  throws TypeError: what is called is not a function <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype _destroy("a", 1)
+  throws TypeError: what is called is not a function <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype _refreshSize()
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype _refreshSize("a", 1)
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype clearLine()
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  true <- undefined, null
+node:tty.WriteStream.prototype clearLine("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
+node:tty.WriteStream.prototype clearScreenDown()
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  true <- undefined, null
+node:tty.WriteStream.prototype clearScreenDown("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type string ('a') <- every receiver
+node:tty.WriteStream.prototype cursorTo()
+  true <- every receiver
+node:tty.WriteStream.prototype cursorTo("a", 1)
+  throws TypeError ERR_INVALID_CURSOR_POS: Cannot set cursor row without setting its column <- every object, a number, a string
+  true <- undefined, null
+node:tty.WriteStream.prototype getColorDepth()
+  number <- every receiver
+node:tty.WriteStream.prototype getColorDepth("a", 1)
+  throws TypeError: "a" is not an Object. <- every receiver
+node:tty.WriteStream.prototype getWindowSize()
+  object Array <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype getWindowSize("a", 1)
+  object Array <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype hasColors()
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  false <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype hasColors("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "count" argument must be of type number. Received type string ('a') <- every receiver
+node:tty.WriteStream.prototype moveCursor()
+  true <- every receiver
+node:tty.WriteStream.prototype moveCursor("a", 1)
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  true <- undefined, null
+node:tty.WriteStream.prototype [Symbol.asyncIterator]()
+  object  <- every receiver
+node:tty.WriteStream.prototype [Symbol.asyncIterator]("a", 1)
+  object  <- every receiver
 "
 `;
 
@@ -5965,6 +6036,76 @@ node:tty.ReadStream.prototype setRawMode("a", 1)
   throws Error: setRawMode failed because it was called on something that is not a TTY <- an heir of the prototype object, a proxy of such an heir, the prototype object
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
+node:tty.ReadStream.prototype _destroy()
+  throws TypeError: what is called is not a function <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.ReadStream.prototype _destroy("a", 1)
+  throws TypeError: what is called is not a function <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype _destroy()
+  throws TypeError: what is called is not a function <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype _destroy("a", 1)
+  throws TypeError: what is called is not a function <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype _refreshSize()
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype _refreshSize("a", 1)
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype clearLine()
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  true <- undefined, null
+node:tty.WriteStream.prototype clearLine("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
+node:tty.WriteStream.prototype clearScreenDown()
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  true <- undefined, null
+node:tty.WriteStream.prototype clearScreenDown("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type string ('a') <- every receiver
+node:tty.WriteStream.prototype cursorTo()
+  true <- every receiver
+node:tty.WriteStream.prototype cursorTo("a", 1)
+  throws TypeError ERR_INVALID_CURSOR_POS: Cannot set cursor row without setting its column <- every object, a number, a string
+  true <- undefined, null
+node:tty.WriteStream.prototype getColorDepth()
+  number <- every receiver
+node:tty.WriteStream.prototype getColorDepth("a", 1)
+  number <- every receiver
+node:tty.WriteStream.prototype getWindowSize()
+  object Array <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype getWindowSize("a", 1)
+  object Array <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype hasColors()
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  false <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.WriteStream.prototype hasColors("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "count" argument must be of type number. Received type string ('a') <- every receiver
+node:tty.WriteStream.prototype moveCursor()
+  true <- every receiver
+node:tty.WriteStream.prototype moveCursor("a", 1)
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  true <- undefined, null
+node:tty.WriteStream.prototype [Symbol.asyncIterator]()
+  object  <- every receiver
+node:tty.WriteStream.prototype [Symbol.asyncIterator]("a", 1)
+  object  <- every receiver
 "
 `;
 

@@ -24,17 +24,20 @@ impl<'s> DeferredData<'s> {
 pub fn bundle_pages<'s>(
     sources: &Sources,
     provider: &dyn SourceProvider,
+    is_loaded: &dyn Fn(FileId) -> bool,
     arena: &'s Arena,
     atoms: &Interner<'s>,
     log: &mut Log,
 ) -> Result<DeferredData<'s>, Failed> {
-    let pages = sources.pages();
+    let pages: Vec<&(FileId, Box<[u8]>)> = (sources.pages().iter())
+        .filter(|page| is_loaded(page.0))
+        .collect();
     debug_assert!(pages.is_sorted_by(|a, b| a.0 < b.0));
-    let paths: Vec<&[u8]> = pages.iter().map(|(_, path)| &**path).collect();
+    let paths: Vec<&[u8]> = pages.iter().map(|page| &*page.1).collect();
     let manifests = provider.bundle_pages(&paths, arena, atoms, log)?;
     assert_eq!(manifests.len(), pages.len(), "one manifest for each page");
     provider.check_embedded_files(log)?;
-    let files = pages.iter().map(|&(file, _)| file);
+    let files = pages.iter().map(|page| page.0);
     Ok(DeferredData {
         values: files.zip(manifests).collect(),
     })

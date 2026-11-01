@@ -177,7 +177,7 @@ function f15 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
 # -- generated: f0 Body Wide Gathers at
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f8 callPosition=4294967295 isConstruction=true module=m0}, {callee=f27 callPosition=4294967295 isConstruction=true module=m0}, {callee=f27 callPosition=4294967295 isConstruction=true module=m0}, {callee=f4 callPosition=4294967295 isConstruction=true module=m0}, {callee=f22 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f22 callPosition=4294967295 parent=2 isConstruction=true module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f8 callPosition=4294967295 isConstruction=true module=m0}, {callee=f27 callPosition=4294967295 isConstruction=true module=m0}, {callee=f27 callPosition=4294967295 isConstruction=true module=m0}, {callee=f4 callPosition=4294967295 isConstruction=true module=m0}, {callee=f22 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f22 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f1 callPosition=4294967295 parent=4 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
 # CHECK-NEXT: v1: f1 = NewClass v0 layout=L0
@@ -227,9 +227,9 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v45: "nine" = String string="nine"
 # CHECK-NEXT: v46: 10 = Integer integer=10
 # CHECK-NEXT: v47: L7 = CallDirect v46 function=f6 accessSite=8
-# CHECK-NEXT: v48: "nine" = Upcast v45 castType=undefined|int|string|L7
-# CHECK-NEXT: v49: Array<undefined|int|string|L7, Contiguous> = NewArray v37, v38, v39, v40, v41, v42, v43, v44, v48, v47 contents=undefined|int|string|L7 allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v50: Array<undefined|int|string|L7, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v49 provenType=Array<undefined|int|string|L7, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v48: L7 = Upcast v47 castType=undefined|int|"nine"|L7
+# CHECK-NEXT: v49: Array<undefined|int|"nine"|L7, Contiguous> = NewArray v37, v38, v39, v40, v41, v42, v43, v44, v45, v48 contents=undefined|int|"nine"|L7 allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v50: Array<undefined|int|"nine"|L7, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v49 provenType=Array<undefined|int|"nine"|L7, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v51: "" = String string=""
 # CHECK-NEXT: v52: string = CallBuiltin v50, v51 overload=ArrayPrototypeJoin/0 accessSite=15
 # CHECK-NEXT: v53: 1 = Integer integer=1
@@ -243,52 +243,54 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v61: 9 = Integer integer=9
 # CHECK-NEXT: v62: 10 = Integer integer=10
 # CHECK-NEXT: v63: L7 = CallDirect v62 function=f6 accessSite=10
-# CHECK-NEXT: v64: Array<undefined|int|string|L7, Contiguous> = NewArray v53, v54, v55, v56, v57, v58, v59, v60, v61, v63 contents=undefined|int|string|L7 allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v65: Array<undefined|int|string|L7, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v64 provenType=Array<undefined|int|string|L7, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v66: "" = String string=""
-# CHECK-NEXT: v67: string = CallBuiltin v65, v66 overload=ArrayPrototypeJoin/0 accessSite=15
-# CHECK-NEXT: v68: null|object = ResolveHeritage v8
-# CHECK-NEXT: v69: object = AssumeType v68 provenType=object
-# CHECK-NEXT: v70: f8 = NewClosure function=f8 allocationSite=7
-# CHECK-NEXT: v71: f8 = NewClass v70, v8, v69 layout=L6
-# CHECK-NEXT: v72: undefined = Undefined
-# CHECK-NEXT: Return v72
+# CHECK-NEXT: v64: 9 = Upcast v61 castType=undefined|int|"nine"|L7
+# CHECK-NEXT: v65: L7 = Upcast v63 castType=undefined|int|"nine"|L7
+# CHECK-NEXT: v66: Array<undefined|int|"nine"|L7, Contiguous> = NewArray v53, v54, v55, v56, v57, v58, v59, v60, v64, v65 contents=undefined|int|"nine"|L7 allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v67: Array<undefined|int|"nine"|L7, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v66 provenType=Array<undefined|int|"nine"|L7, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v68: "" = String string=""
+# CHECK-NEXT: v69: string = CallBuiltin v67, v68 overload=ArrayPrototypeJoin/0 accessSite=15
+# CHECK-NEXT: v70: null|object = ResolveHeritage v8
+# CHECK-NEXT: v71: object = AssumeType v70 provenType=object
+# CHECK-NEXT: v72: f8 = NewClosure function=f8 allocationSite=7
+# CHECK-NEXT: v73: f8 = NewClass v72, v8, v71 layout=L6
+# CHECK-NEXT: v74: undefined = Undefined
+# CHECK-NEXT: Return v74
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Body"
-# CHECK: module=m0 position=335 kind=BaseConstructor flags=[HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string}, {type=L7}, {type=undefined}] results=[{type=L3 flags=[IsFromCompiler]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
-# CHECK-NEXT: b0(v0: anything, v1: int[0, 4294967295], v2: string, v3: L7, v4: undefined, v5: Array):
+# CHECK: module=m0 position=335 kind=BaseConstructor flags=[HasNewTarget, HasArgumentCount, HasHiddenRest, HasExplicitName] length=3 thisType={type=anything} parameters=[{type="short"}, {type=L7}, {type=undefined}] results=[{type=L3 flags=[IsFromCompiler]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: anything, v1: int[0, 4294967295], v2: "short", v3: L7, v4: undefined, v5: Array):
 # CHECK-NEXT: v6: f4 = AssumeType v0 provenType=f4
 # CHECK-NEXT: v7: object = GetConstructPrototype v6 layout=L0
-# CHECK-NEXT: v8: object ~ L0|L3|L4 = NewObject v7 layout=L0 allocationSite=8 allocationClass=0
+# CHECK-NEXT: v8: object ~ L3 = NewObject v7 layout=L0 allocationSite=8 allocationClass=0
 # CHECK-NEXT: v9: L3 = AssumeType v8 provenType=L3
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Wide"
-# CHECK: module=m0 position=931 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=10 thisType={type=anything} parameters=[{type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=undefined|int|string|L7}, {type=undefined|int|string|L7}] results=[{type=L5 flags=[IsFromCompiler]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
-# CHECK-NEXT: b0(v0: anything, v1: int, v2: int, v3: int, v4: int, v5: int, v6: int, v7: int, v8: int, v9: undefined|int|string|L7, v10: undefined|int|string|L7):
+# CHECK: module=m0 position=931 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=10 thisType={type=anything} parameters=[{type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=undefined|int|"nine"|L7}, {type=undefined|int|"nine"|L7}] results=[{type=L5 flags=[IsFromCompiler]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+# CHECK-NEXT: b0(v0: anything, v1: int, v2: int, v3: int, v4: int, v5: int, v6: int, v7: int, v8: int, v9: undefined|int|"nine"|L7, v10: undefined|int|"nine"|L7):
 # CHECK-NEXT: v11: f7 = AssumeType v0 provenType=f7
 # CHECK-NEXT: v12: object = GetConstructPrototype v11 layout=L1
-# CHECK-NEXT: v13: object ~ L1|L5 = NewObject v12 layout=L1 allocationSite=9 allocationClass=1
+# CHECK-NEXT: v13: object ~ L5 = NewObject v12 layout=L1 allocationSite=9 allocationClass=1
 # CHECK-NEXT: v14: L5 = AssumeType v13 provenType=L5
-# CHECK-NEXT: v15: Array<undefined|int|string|L7, Contiguous> = NewArray v1, v2, v3, v4, v5, v6, v7, v8, v9, v10 contents=undefined|int|string|L7 allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v16: Array<undefined|int|string|L7, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<undefined|int|string|L7, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v15: Array<undefined|int|"nine"|L7, Contiguous> = NewArray v1, v2, v3, v4, v5, v6, v7, v8, v9, v10 contents=undefined|int|"nine"|L7 allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v16: Array<undefined|int|"nine"|L7, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<undefined|int|"nine"|L7, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v17: "" = String string=""
 # CHECK-NEXT: v18: string = CallBuiltin v16, v17 overload=ArrayPrototypeJoin/0 accessSite=15
 # CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Gathers"
-# CHECK: module=m0 position=1233 kind=BaseConstructor flags=[HasRestParameter, HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L7}, {type=Array<undefined|int|string, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=L6 flags=[IsFromCompiler]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
-# CHECK-NEXT: b0(v0: anything, v1: L7, v2: Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>):
+# CHECK: module=m0 position=1233 kind=BaseConstructor flags=[HasRestParameter, HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L7}, {type=Array<undefined|int|"two", proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=L6 flags=[IsFromCompiler]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+# CHECK-NEXT: b0(v0: anything, v1: L7, v2: Array<undefined|int|"two", proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v3: f8 = AssumeType v0 provenType=f8
 # CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L2
-# CHECK-NEXT: v5: object ~ L2|L6 = NewObject v4 layout=L2 allocationSite=11 allocationClass=2
+# CHECK-NEXT: v5: object ~ L6 = NewObject v4 layout=L2 allocationSite=11 allocationClass=2
 # CHECK-NEXT: v6: L6 = AssumeType v5 provenType=L6
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="at"
 # CHECK: module=m0 position=707 kind=Arrow role=ResultWrapper length=1 thisType={type=anything} parameters=[{type=int[1, 10]}] results=[{type=L7}] functionTypes=[f10] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f18 layout=L7} inlineFrames=[{}, {callee=f18 callPosition=707 module=m0}] {
 # CHECK-NEXT: b0(v0: int[1, 10]):
-# CHECK-NEXT: v1: L7 = NewObject -, v0 layout=L7 fields=[0] allocationSite=12 allocationClass=7
+# CHECK-NEXT: v1: L7 = NewObject -, v0 layout=L7 fields=[0] allocationSite=12 allocationClass=6
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="at"
@@ -300,7 +302,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v3: fact = Entered function=f1 @335 tail
 # CHECK-NEXT: v4: f4 = AssumeType v2, v3 provenType=f4
 # CHECK-NEXT: v5: object = GetConstructPrototype v4 layout=L0
-# CHECK-NEXT: v6: object ~ L0|L3|L4 = NewObject v5 layout=L0 allocationSite=8 allocationClass=0
+# CHECK-NEXT: v6: object ~ L3 = NewObject v5 layout=L0 allocationSite=8 allocationClass=0
 # CHECK-NEXT: v7: L3 = AssumeType v6 provenType=L3
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
@@ -315,21 +317,21 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v18: int = AssumeType v8 provenType=int
 # CHECK-NEXT: v19: int = AssumeType v9 provenType=int
 # CHECK-NEXT: v20: int = AssumeType v10 provenType=int
-# CHECK-NEXT: v21: undefined|int|string|L7 = AssumeType v11 provenType=undefined|int|string|L7
-# CHECK-NEXT: v22: undefined|int|string|L7 = AssumeType v12 provenType=undefined|int|string|L7
+# CHECK-NEXT: v21: undefined|int|"nine"|L7 = AssumeType v11 provenType=undefined|int|"nine"|L7
+# CHECK-NEXT: v22: undefined|int|"nine"|L7 = AssumeType v12 provenType=undefined|int|"nine"|L7
 # CHECK-NEXT: v23: L5 = CallDirect v2, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22 function=f2
 # CHECK-NEXT: ReturnCall v23 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Wide"
-# CHECK: module=m0 position=931 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=10 thisType={type=L1|L5} parameters=[{type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=undefined|int|string|L7}, {type=undefined|int|string|L7}] results=[{type=undefined}] functionTypes=[f11] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}, {original=0}, {original=1}, {original=2}, {original=3}, {original=4}, {original=5}, {original=6}, {original=7}, {original=8}, {original=9}, {original=10}]} creator=Version{provenVersion=f2} constructedClass=L1
+# CHECK: module=m0 position=931 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=10 thisType={type=L1|L5} parameters=[{type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=undefined|int|"nine"|L7}, {type=undefined|int|"nine"|L7}] results=[{type=undefined}] functionTypes=[f11] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}, {original=0}, {original=1}, {original=2}, {original=3}, {original=4}, {original=5}, {original=6}, {original=7}, {original=8}, {original=9}, {original=10}]} creator=Version{provenVersion=f2} constructedClass=L1
 # CHECK-LABEL: function {{*}}name="Gathers"
-# CHECK: module=m0 position=1233 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 takesNewTarget=true} {
+# CHECK: module=m0 position=1233 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 takesNewTarget=true} inlineFrames=[{}, {callee=f3 callPosition=1233 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f3, v1: anything):
 # CHECK-NEXT: v2: anything = GetArgument
-# CHECK-NEXT: v3: anything = GetArgument argumentIndex=1
-# CHECK-NEXT: v4: Array = CreateRest firstArgument=2 storage=Frame
-# CHECK-NEXT: v5: L7 = AssumeType v3 provenType=L7
-# CHECK-NEXT: v6: Array<undefined|int|string, proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v7: L6 = CallDirect v2, v5, v6 function=f3 @1233 tail
+# CHECK-NEXT: v3: fact = Entered function=f3 @1233 tail
+# CHECK-NEXT: v4: f8 = AssumeType v2, v3 provenType=f8
+# CHECK-NEXT: v5: object = GetConstructPrototype v4 layout=L2
+# CHECK-NEXT: v6: object ~ L6 = NewObject v5 layout=L2 allocationSite=11 allocationClass=2
+# CHECK-NEXT: v7: L6 = AssumeType v6 provenType=L6
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }

@@ -493,170 +493,48 @@ function f53 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f54 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f55 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f56 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f57 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=65569 thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L27 site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f58 name="from" module=m2 position=1338 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=47 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f59 name="[Symbol.iterator]" module=m2 position=2834 role=Library flags=[IsChecked, IsNamedByComputedKey] enclosingRuntimeFunction=47 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f60 name="next" module=m3 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f61 name="map" module=m4 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f62 name="call" module=m5 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=12 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f63 name="apply" module=m5 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=4 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f64 name="next" module=m6 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=70 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f65 name="return" module=m6 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=86 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f66 name="throw" module=m6 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=92 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f67 name="iteratorGenericClose" module=m7 position=314 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=131072 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f68 name="next" module=m9 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=71 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f69 name="return" module=m9 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f70 name="next" module=m10 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=72 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f71 name="return" module=m10 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f57 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=JSBufferPrototypeToJSON thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L27 site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f58 name="from" module=m2 position=1338 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayConstructorFrom thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f59 name="[Symbol.iterator]" module=m2 position=2834 role=Library flags=[IsChecked, IsNamedByComputedKey] enclosingRuntimeFunction=ArrayConstructorFrom captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f60 name="next" module=m3 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f61 name="map" module=m4 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f62 name="call" module=m5 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f63 name="apply" module=m5 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f64 name="next" module=m6 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeNext thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f65 name="return" module=m6 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f66 name="throw" module=m6 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f67 name="iteratorGenericClose" module=m7 position=314 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorOperationsIteratorGenericClose thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f68 name="next" module=m9 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f69 name="return" module=m9 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f70 name="next" module=m10 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f71 name="return" module=m10 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f72 name="clampToLength" module=m11 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w11}, {type=number site=w12}] results=[{type=number site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f73 name="storeInNewArray" module=m11 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w14 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w15}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f74 name="appendParts" module=m11 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w16 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w17}, {type=anything}] results=[{type=number site=w18}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f75 name="joinedText" module=m11 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f76 name="finishJoin" module=m11 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w20 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w22}, {type=number site=w23}] results=[{type=undefined|null|string site=w24 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f77 name="finishReduce" module=m11 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w25}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f78 name="traverseArray" module=m11 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27}, {type=undefined|number site=w28}, {type=number site=w29}, {type=undefined|null|Array site=w30 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=4 function=f63
-runtimefunction id=12 function=f62
-runtimefunction id=47 function=f58
-runtimefunction id=65 function=f61
-runtimefunction id=69 function=f60
-runtimefunction id=70 function=f64 visibility=Private
-runtimefunction id=71 function=f68 visibility=Private
-runtimefunction id=72 function=f70
-runtimefunction id=86 function=f65 visibility=Private
-runtimefunction id=87 function=f69
-runtimefunction id=88 function=f71
-runtimefunction id=92 function=f66 visibility=Private
-runtimefunction id=65569 function=f57
-runtimefunction id=131072 function=f67 visibility=Private
-runtimefunction id=131091 function=f78 visibility=Private
+function f78 name="traverseArray" module=m11 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27}, {type=undefined|number site=w28}, {type=number site=w29}, {type=undefined|null|Array site=w30 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=FunctionPrototypeApply function=f63
+runtimefunction id=FunctionPrototypeCall function=f62
+runtimefunction id=ArrayConstructorFrom function=f58
+runtimefunction id=ArrayPrototypeMap function=f61
+runtimefunction id=ArrayIteratorPrototypeNext function=f60
+runtimefunction id=GeneratorPrototypeNext function=f64 visibility=Private
+runtimefunction id=JSIteratorHelperPrototypeNext function=f68 visibility=Private
+runtimefunction id=WrapForValidIteratorPrototypeNext function=f70
+runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
+runtimefunction id=JSIteratorHelperPrototypeReturn function=f69
+runtimefunction id=WrapForValidIteratorPrototypeReturn function=f71
+runtimefunction id=GeneratorPrototypeThrow function=f66 visibility=Private
+runtimefunction id=JSBufferPrototypeToJSON function=f57
+runtimefunction id=IteratorOperationsIteratorGenericClose function=f67 visibility=Private
+runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # -- generated: both make f31 Made f37 V
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0|L13 flags=[IsExpected]} parameters=[{type=int}] results=[{type=undefined|L0}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L0
 # CHECK-LABEL: function {{*}}name="both"
-# CHECK: module=m0 position=391 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=50}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 isConstruction=true module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 parent=6 isConstruction=true module=m0}] {
-# CHECK-NEXT: b0(v0: 50):
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v3: int|whole ~ 0, v4: int[0, 50] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v3, v4)
-# CHECK-NEXT: b2(v5: int|whole, v6: int[0, 50]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: boolean = Less v6, v0
-# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b33()
-# CHECK-NEXT: b3(v9: int[0, 49]):
-# CHECK-NEXT: v10: 7 = Integer integer=7
-# CHECK-NEXT: v11: int[0, 7] = BitAnd v9, v10
-# CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v12 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v13: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
-# CHECK-NEXT: Branch v13 -> taken b7(| 0), notTaken b12()
-# CHECK-NEXT: b7(v14: guard):
-# CHECK-NEXT: v15: 1 = Integer integer=1
-# CHECK-NEXT: v16: int[1, 8] = Add v11, v15
-# CHECK-NEXT: v17: 3 = Integer integer=3
-# CHECK-NEXT: v18: int[0, 3] = BitAnd v9, v17
-# CHECK-NEXT: v19: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v19 -> taken b8(), notTaken b9()
-# CHECK-NEXT: b8():
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: int[1, 4] = Add v18, v20
-# CHECK-NEXT: v22: int[2, 12] = Add v16, v21
-# CHECK-NEXT: v23: int|whole = Add v5, v22
-# CHECK-NEXT: v24: int[1, 50] = Increment v9
-# CHECK-NEXT: Jump -> next b2(v23, v24)
-# CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: v25: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
-# CHECK-NEXT: Branch v25 -> taken b13(), notTaken b14()
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v26: 1 = Integer integer=1
-# CHECK-NEXT: v27: int[1, 8] = Add v11, v26
-# CHECK-NEXT: Jump -> next b16(v27)
-# CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v28: L0 = NewObject -, v11 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v29: anything = PropGet v28 key="get" accessSite=40 receivers=[L0]
-# CHECK-NEXT: v30: undefined|f31 = AssumeType v29 provenType=undefined|f31
-# CHECK-NEXT: v31: boolean = TypeTest v30 testedType=f31
-# CHECK-NEXT: Branch v31 -> taken b15(), notTaken b32()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v32: int|whole = CallDirect v28 function=f31 accessSite=41
-# CHECK-NEXT: Jump -> next b16(v32)
-# CHECK-NEXT: b16(v33: int|whole ~ int[1, 8]) frequency=Unlikely:
-# CHECK-NEXT: v34: 3 = Integer integer=3
-# CHECK-NEXT: v35: int[0, 3] = BitAnd v9, v34
-# CHECK-NEXT: v36: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v36 -> taken b17(), notTaken b18()
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: v37: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
-# CHECK-NEXT: Branch v37 -> taken b20(| 0), notTaken b21(v33, v35)
-# CHECK-NEXT: b20(v38: guard) frequency=Unlikely:
-# CHECK-NEXT: v39: 1 = Integer integer=1
-# CHECK-NEXT: v40: int[1, 4] = Add v35, v39
-# CHECK-NEXT: Jump -> next b25(v40, v33)
-# CHECK-NEXT: b21(v41: int|whole ~ int[1, 8], v42: int[0, 3]) frequency=Rare:
-# CHECK-NEXT: v43: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
-# CHECK-NEXT: Branch v43 -> taken b22(), notTaken b23()
-# CHECK-NEXT: b22() frequency=Rare:
-# CHECK-NEXT: v44: 1 = Integer integer=1
-# CHECK-NEXT: v45: int[1, 4] = Add v42, v44
-# CHECK-NEXT: Jump -> next b25(v45, v41)
-# CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: v46: L0 = NewObject -, v42 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v47: anything = PropGet v46 key="get" accessSite=43 receivers=[L0]
-# CHECK-NEXT: v48: undefined|f31 = AssumeType v47 provenType=undefined|f31
-# CHECK-NEXT: v49: boolean = TypeTest v48 testedType=f31
-# CHECK-NEXT: Branch v49 -> taken b24(), notTaken b31()
-# CHECK-NEXT: b24() frequency=Rare:
-# CHECK-NEXT: v50: int|whole = CallDirect v46 function=f31 accessSite=44
-# CHECK-NEXT: Jump -> next b25(v50, v41)
-# CHECK-NEXT: b25(v51: int|whole ~ int[1, 4], v52: int|whole ~ int[1, 8]) frequency=Unlikely:
-# CHECK-NEXT: v53: boolean ~ true = TypeTest v52 testedType=i32
-# CHECK-NEXT: Branch v53 -> taken b26(| 0), notTaken b29(| 0)
-# CHECK-NEXT: b26(v54: i32 ~ int[1, 8]) frequency=Unlikely:
-# CHECK-NEXT: v55: boolean ~ true = TypeTest v51 testedType=i32
-# CHECK-NEXT: Branch v55 -> taken b27(| 0), notTaken b28(| 0)
-# CHECK-NEXT: b27(v56: i32 ~ int[1, 4]) frequency=Unlikely:
-# CHECK-NEXT: v57: int[-4294967296, 4294967294] ~ int[2, 12] = Add v54, v56
-# CHECK-NEXT: v58: int|whole = Add v5, v57
-# CHECK-NEXT: Jump -> next b30(v58)
-# CHECK-NEXT: b28(v59: int|whole) frequency=Rare:
-# CHECK-NEXT: v60: int|whole = Add v54, v59
-# CHECK-NEXT: v61: int|whole = Add v5, v60
-# CHECK-NEXT: Jump -> next b30(v61)
-# CHECK-NEXT: b29(v62: int|whole) frequency=Rare:
-# CHECK-NEXT: v63: int|whole = Add v62, v51
-# CHECK-NEXT: v64: int|whole = Add v5, v63
-# CHECK-NEXT: Jump -> next b30(v64)
-# CHECK-NEXT: b30(v65: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v66: int[1, 50] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v65, v66)
-# CHECK-NEXT: b31() frequency=Rare:
-# CHECK-NEXT: v67: undefined = Undefined
-# CHECK-NEXT: v68: never = Call v67, v46 calleeKey="get" calleeName="get" accessSite=44 callees=[f31]
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b32() frequency=Rare:
-# CHECK-NEXT: v69: undefined = Undefined
-# CHECK-NEXT: v70: never = Call v69, v28 calleeKey="get" calleeName="get" accessSite=41 callees=[f31]
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b33():
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: }
+# CHECK: module=m0 position=391 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=50}] results=[{type=int|whole}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1972 flags=[HasExplicitName] thisType={type=anything} results=[{type=f36}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
@@ -719,38 +597,14 @@ runtimefunction id=131091 function=f78 visibility=Private
 # CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: L0 = NewObject layout=L0 allocationClass=0
 # CHECK-NEXT: v5: int = AssumeType v3 provenType=int
-# CHECK-NEXT: v6: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v7: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b1()
-# CHECK-NEXT: b1() frequency=Unlikely:
-# CHECK-NEXT: v8: boolean = HasLayoutPrototype v4
-# CHECK-NEXT: Branch v8 -> taken b2(), notTaken b5()
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v9: boolean = TypeTest v5 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v10: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v4, v4, v10 key="x" receivers=[L0] level=Expected accessSite=37
+# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v7: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v4, v4, v7 key="x" receivers=[L0] level=Expected accessSite=37
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v12: boolean = InstanceOf v4, v6 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v12 -> taken b6(), notTaken b7()
-# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: PropSet v4, v5 key="x" accessSite=37 receivers=[L0]
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v14: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v15: boolean = InstanceOf v14, v6 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v15 -> taken b8(), notTaken b9()
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: PropSet v14, v5 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b10(v14)
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v17: L0 = CallDirect v5 function=f83 accessSite=38 [isConstruction]
-# CHECK-NEXT: Jump -> next b10(v17)
-# CHECK-NEXT: b10(v18: L0) frequency=Unlikely:
-# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers constructEntrypoint=f81} inlineFrames=[{}, {callee=f1 callPosition=260 isTailCall=true module=m0}, {callee=f83 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
@@ -791,63 +645,34 @@ runtimefunction id=131091 function=f78 visibility=Private
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: Jump -> next b20(v21) @260 tail
+# CHECK-NEXT: Jump -> next b15(v21) @260 tail
 # CHECK-NEXT: b11():
 # CHECK-NEXT: v22: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v23 -> taken b14(), notTaken b12()
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v24: boolean = HasLayoutPrototype v22
-# CHECK-NEXT: Branch v24 -> taken b13(), notTaken b16()
+# CHECK-NEXT: v23: boolean = TypeTest v3 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v23 -> taken b12(| 0), notTaken b13()
+# CHECK-NEXT: b12(v24: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v22, v22, v24 key="x" receivers=[L0] level=Expected accessSite=37
+# CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: PropSet v22, v3 key="x" accessSite=37 receivers=[L0]
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v25: boolean = TypeTest v3 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v25 -> taken b15(| 0), notTaken b17()
-# CHECK-NEXT: b15(v26: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v22, v22, v26 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Jump -> next b19(v22)
-# CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v28: boolean = InstanceOf v22, v7 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v28 -> taken b17(), notTaken b18()
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: PropSet v22, v3 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b19(v22)
-# CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v30: L0 = CallDirect v3 function=f83 accessSite=38 [isConstruction]
-# CHECK-NEXT: Jump -> next b19(v30)
-# CHECK-NEXT: b19(v31: L0):
-# CHECK-NEXT: Jump -> next b20(v31) @260 tail
-# CHECK-NEXT: b20(v32: undefined|L0):
-# CHECK-NEXT: Return v32
+# CHECK-NEXT: Jump -> next b15(v22) @260 tail
+# CHECK-NEXT: b15(v27: undefined|L0):
+# CHECK-NEXT: Return v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 role=ConstructBody flags=[HasExplicitName, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type=int}] results=[{type=L0}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=1}]} creator=Version{provenVersion=f1} constructedClass=L0 {
 # CHECK-NEXT: b0(v0: int):
 # CHECK-NEXT: v1: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v2: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v4: boolean = TypeTest v0 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v4 -> taken b3(| 0), notTaken b6()
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: boolean = HasLayoutPrototype v1
-# CHECK-NEXT: Branch v5 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b3(v6: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v1, v1, v6 key="x" receivers=[L0] level=Expected accessSite=37
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v3: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v1, v1, v3 key="x" receivers=[L0] level=Expected accessSite=37
 # CHECK-NEXT: Return v1
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v8: boolean = InstanceOf v1, v2 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v8 -> taken b6(), notTaken b7()
-# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: PropSet v1, v0 key="x" accessSite=37 receivers=[L0]
 # CHECK-NEXT: Return v1
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v10: L0 = CallDirect v0 function=f83 accessSite=38 [isConstruction]
-# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 role=BoundFunction length=1 captures=[{type=L0|L13 flags=[IsExpected]}, {type=f1}] thisType={type=anything} parameters=[{type=int}] results=[{type=undefined|L0}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=BoundFunction{target=f1 capturesTargetClosure=true}
@@ -914,33 +739,123 @@ runtimefunction id=131091 function=f78 visibility=Private
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: Jump -> next b20(v21) @260:1 tail
+# CHECK-NEXT: Jump -> next b15(v21) @260:1 tail
 # CHECK-NEXT: b11():
 # CHECK-NEXT: v22: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v23 -> taken b14(), notTaken b12()
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v24: boolean = HasLayoutPrototype v22
-# CHECK-NEXT: Branch v24 -> taken b13(), notTaken b16()
+# CHECK-NEXT: v23: boolean = TypeTest v4 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v23 -> taken b12(| 0), notTaken b13()
+# CHECK-NEXT: b12(v24: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v22, v22, v24 key="x" receivers=[L0] level=Expected accessSite=37
+# CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: PropSet v22, v4 key="x" accessSite=37 receivers=[L0]
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v25: boolean = TypeTest v4 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v25 -> taken b15(| 0), notTaken b17()
-# CHECK-NEXT: b15(v26: int[-2147483643, 2147483647]):
-# CHECK-NEXT: PutSlotOrAdd v22, v22, v26 key="x" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: Jump -> next b19(v22)
-# CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v28: boolean = InstanceOf v22, v7 writtenExpression="this instanceof V"
-# CHECK-NEXT: Branch v28 -> taken b17(), notTaken b18()
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: PropSet v22, v4 key="x" accessSite=37 receivers=[L0]
-# CHECK-NEXT: Jump -> next b19(v22)
-# CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v30: L0 = CallDirect v4 function=f83 accessSite=38 [isConstruction]
-# CHECK-NEXT: Jump -> next b19(v30)
-# CHECK-NEXT: b19(v31: L0):
-# CHECK-NEXT: Jump -> next b20(v31) @260:1 tail
-# CHECK-NEXT: b20(v32: undefined|L0):
-# CHECK-NEXT: Return v32
+# CHECK-NEXT: Jump -> next b15(v22) @260:1 tail
+# CHECK-NEXT: b15(v27: undefined|L0):
+# CHECK-NEXT: Return v27
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="both"
+# CHECK: module=m0 position=391 flags=[HasExplicitName] length=1 thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f14} inlineFrames=[{}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 isConstruction=true module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 parent=6 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 50 = Integer integer=50
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1, v2)
+# CHECK-NEXT: b1(v3: int|whole ~ 0, v4: int[0, 50] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v3, v4)
+# CHECK-NEXT: b2(v5: int|whole, v6: int[0, 50]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = Less v6, v0
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b24()
+# CHECK-NEXT: b3(v9: int[0, 49]):
+# CHECK-NEXT: v10: 7 = Integer integer=7
+# CHECK-NEXT: v11: int[0, 7] = BitAnd v9, v10
+# CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
+# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v13: guard):
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: int[1, 8] = Add v11, v14
+# CHECK-NEXT: v16: 3 = Integer integer=3
+# CHECK-NEXT: v17: int[0, 3] = BitAnd v9, v16
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v18: 1 = Integer integer=1
+# CHECK-NEXT: v19: int[1, 4] = Add v17, v18
+# CHECK-NEXT: v20: int[2, 12] = Add v15, v19
+# CHECK-NEXT: v21: int|whole = Add v5, v20
+# CHECK-NEXT: v22: int[1, 50] = Increment v9
+# CHECK-NEXT: Jump -> next b2(v21, v22)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
+# CHECK-NEXT: Branch v23 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v24: 1 = Integer integer=1
+# CHECK-NEXT: v25: int[1, 8] = Add v11, v24
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v26: L0 = NewObject -, v11 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v27: anything = PropGet v26 key="get" accessSite=40 receivers=[L0]
+# CHECK-NEXT: v28: undefined|f31 = AssumeType v27 provenType=undefined|f31
+# CHECK-NEXT: v29: boolean = TypeTest v28 testedType=f31
+# CHECK-NEXT: Branch v29 -> taken b9(), notTaken b23()
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v30: int|whole = CallDirect v26 function=f31 accessSite=41
+# CHECK-NEXT: Jump -> next b10(v30)
+# CHECK-NEXT: b10(v31: int|whole ~ int[1, 8]) frequency=Unlikely:
+# CHECK-NEXT: v32: 3 = Integer integer=3
+# CHECK-NEXT: v33: int[0, 3] = BitAnd v9, v32
+# CHECK-NEXT: v34: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
+# CHECK-NEXT: Branch v34 -> taken b11(| 0), notTaken b12(v31, v33)
+# CHECK-NEXT: b11(v35: guard) frequency=Unlikely:
+# CHECK-NEXT: v36: 1 = Integer integer=1
+# CHECK-NEXT: v37: int[1, 4] = Add v33, v36
+# CHECK-NEXT: Jump -> next b16(v37, v31)
+# CHECK-NEXT: b12(v38: int|whole ~ int[1, 8], v39: int[0, 3]) frequency=Rare:
+# CHECK-NEXT: v40: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
+# CHECK-NEXT: Branch v40 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: v41: 1 = Integer integer=1
+# CHECK-NEXT: v42: int[1, 4] = Add v39, v41
+# CHECK-NEXT: Jump -> next b16(v42, v38)
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v43: L0 = NewObject -, v39 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v44: anything = PropGet v43 key="get" accessSite=43 receivers=[L0]
+# CHECK-NEXT: v45: undefined|f31 = AssumeType v44 provenType=undefined|f31
+# CHECK-NEXT: v46: boolean = TypeTest v45 testedType=f31
+# CHECK-NEXT: Branch v46 -> taken b15(), notTaken b22()
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v47: int|whole = CallDirect v43 function=f31 accessSite=44
+# CHECK-NEXT: Jump -> next b16(v47, v38)
+# CHECK-NEXT: b16(v48: int|whole ~ int[1, 4], v49: int|whole ~ int[1, 8]) frequency=Unlikely:
+# CHECK-NEXT: v50: boolean ~ true = TypeTest v49 testedType=i32
+# CHECK-NEXT: Branch v50 -> taken b17(| 0), notTaken b20(| 0)
+# CHECK-NEXT: b17(v51: i32 ~ int[1, 8]) frequency=Unlikely:
+# CHECK-NEXT: v52: boolean ~ true = TypeTest v48 testedType=i32
+# CHECK-NEXT: Branch v52 -> taken b18(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b18(v53: i32 ~ int[1, 4]) frequency=Unlikely:
+# CHECK-NEXT: v54: int[-4294967296, 4294967294] ~ int[2, 12] = Add v51, v53
+# CHECK-NEXT: v55: int|whole = Add v5, v54
+# CHECK-NEXT: Jump -> next b21(v55)
+# CHECK-NEXT: b19(v56: int|whole) frequency=Rare:
+# CHECK-NEXT: v57: int|whole = Add v51, v56
+# CHECK-NEXT: v58: int|whole = Add v5, v57
+# CHECK-NEXT: Jump -> next b21(v58)
+# CHECK-NEXT: b20(v59: int|whole) frequency=Rare:
+# CHECK-NEXT: v60: int|whole = Add v59, v48
+# CHECK-NEXT: v61: int|whole = Add v5, v60
+# CHECK-NEXT: Jump -> next b21(v61)
+# CHECK-NEXT: b21(v62: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v63: int[1, 50] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v62, v63)
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: v64: undefined = Undefined
+# CHECK-NEXT: v65: never = Call v64, v43 calleeKey="get" calleeName="get" accessSite=44 callees=[f31]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b23() frequency=Rare:
+# CHECK-NEXT: v66: undefined = Undefined
+# CHECK-NEXT: v67: never = Call v66, v26 calleeKey="get" calleeName="get" accessSite=41 callees=[f31]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b24():
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }

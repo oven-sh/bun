@@ -85,6 +85,7 @@ pub(crate) enum Defined<'a> {
 #[derive(Copy, Clone)]
 pub(crate) struct Fold<'a> {
     pub(crate) defines: &'a [(Path<'a>, Defined<'a>)],
+    pub(crate) user_defined: &'a [Path<'a>],
     pub(crate) dropped_calls: &'a [Path<'a>],
     pub(crate) features: &'a [&'a str],
     pub(crate) preserves_unused_imports: bool,
@@ -95,6 +96,7 @@ pub(crate) struct Fold<'a> {
 impl Fold<'static> {
     pub(crate) const NONE: Fold<'static> = Fold {
         defines: &[],
+        user_defined: &[],
         dropped_calls: &[],
         features: &[],
         preserves_unused_imports: false,
@@ -377,6 +379,7 @@ impl<'s> Workspace<'s> {
                 path: self.define_path(path),
                 value: self.define_value(value),
             }),
+            user_defined: self.map_slice(fold.user_defined, |&path| self.define_path(path)),
             dropped_calls: self.map_slice(fold.dropped_calls, |&path| self.define_path(path)),
             features: self.intern_all(fold.features),
             preserves_unused_imports: fold.preserves_unused_imports,

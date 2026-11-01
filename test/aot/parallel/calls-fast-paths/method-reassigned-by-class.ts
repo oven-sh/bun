@@ -1,12 +1,13 @@
-// `this.step = ..` where `step` is a method of the class: the objects have a field for it and the method stays fixed. A method that nobody stores to has no field, and one that is stored to through a variable is looked for by name.
-// IR+ ^layout L[0-9]+ .*\{name="step" declared=
-// IR+ ^layout L[0-9]+ .*\{name="step" function=f[0-9]+
-// IR- ^layout L[0-9]+ .*\{name="untouched" declared=
-// IR+ ^layout L[0-9]+ .*\{name="untouched" function=f[0-9]+
-// IRM= 0 CallMethod v[0-9]+ \(.*\) name="untouched"(?!.* isFallback)
-// IR- ^layout L[0-9]+ .*\{name="patched" declared=
-// IR+ ^layout L[0-9]+ .*\{name="patched" function=f[0-9]+
-// IRM= 1 CallMethod v[0-9]+ \(.*\) name="patched"(?!.* isFallback)
+// `this.step = ..` where `step` is a method of the class: the objects have a field for it and the method stays fixed. A method that nobody stores to has no field. One that is stored to through a variable has a field that comes late, and a call asks whether it is filled.
+// IR+ ^layout L[0-9]+ .*\{key="step" declared=
+// IR+ ^layout L[0-9]+ .*\{key="step" function=f[0-9]+ mutability=Fixed
+// IR- ^layout L[0-9]+ .*\{key="untouched" declared=
+// IR+ ^layout L[0-9]+ .*\{key="untouched" function=f[0-9]+ mutability=Fixed
+// IRM= 0  = Call.* (calleeKey|key)="untouched"
+// IR+ ^layout L[0-9]+ .*\{key="patched" declared=\{[^}]*\} flags=\[IsAddedLate
+// IR+ ^layout L[0-9]+ .*\{key="patched" function=f[0-9]+ mutability=Fixed
+// IRM= 1  = IsSlotFilled v[0-9]+ key="patched"
+// IRM= 0  = Call.* (calleeKey|key)="patched"
 declare const console: any;
 class Walker {
   total = 0;

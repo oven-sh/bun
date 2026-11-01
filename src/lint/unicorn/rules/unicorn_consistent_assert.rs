@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Enforces consistent usage of the `assert` module.
 pub struct ConsistentAssert;
 
-const INCONSISTENT_ASSERT_USAGE: Message = Message::new("", "Inconsistent assert usage.");
+const INCONSISTENT_ASSERT_USAGE: &Message = &Message::new("", "Inconsistent assert usage.");
 
 impl Rule for ConsistentAssert {
     const META: Meta =

@@ -34,7 +34,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (turbo/spng/libwebp).
+///   • jpeg/png/webp decode+encode → static codecs (turbo/bun_png/libwebp).
 ///     Profiling on M-series found ImageIO no faster: Huffman/inflate
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
 ///     libz vs our zlib-ng. Keeping these static also makes output bytes
@@ -273,7 +273,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         Format::Webp => webp::decode(bytes, max_pixels),
         // Static codecs cover everything we ship; profiling on M-series showed
         // ImageIO is no faster (AppleJPEG ≈ libjpeg-turbo since Huffman is the
-        // bottleneck and isn't vectorisable; spng+zlib-ng beats ImageIO's
+        // bottleneck and isn't vectorisable; for PNG, zlib-ng beats ImageIO's
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
@@ -439,7 +439,7 @@ pub(crate) struct EncodeOptions {
     pub(crate) quality: u8,
     /// WebP only: emit lossless VP8L instead of lossy VP8.
     pub(crate) lossless: bool,
-    /// PNG only: zlib level 0–9. -1 = libspng default.
+    /// PNG only: zlib level 0–9. -1 = zlib's default.
     pub(crate) compression_level: i8,
     /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
     pub(crate) palette: bool,
@@ -448,15 +448,6 @@ pub(crate) struct EncodeOptions {
     pub(crate) dither: bool,
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     pub(crate) progressive: bool,
-    /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
-    /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
-    /// pipeline forwards this from the decode step so a non-sRGB source
-    /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
-    /// re-encode. Borrowed; the caller retains ownership.
-    // SAFETY invariant: borrowed from the caller and only valid for the
-    // duration of `encode()`; raw ptr instead of a lifetime param per the
-    // repo rule against lifetime params on structs.
-    pub(crate) icc_profile: Option<NonNull<[u8]>>,
 }
 
 impl Default for EncodeOptions {
@@ -470,14 +461,13 @@ impl Default for EncodeOptions {
             colors: 256,
             dither: false,
             progressive: false,
-            icc_profile: None,
         }
     }
 }
 
 /// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libwebp's, libc for
-/// libspng); rather than dupe into the global allocator so JS can own it,
+/// codecs each malloc internally (turbojpeg's allocator, libwebp's); rather
+/// than dupe into the global allocator so JS can own it,
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
 ///
@@ -502,7 +492,7 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, libc `free`) to the
+/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`) to the
 /// 2-arg JSC deallocator signature.
 // Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
 // so this is a macro that mints a static trampoline per call site.
@@ -518,7 +508,6 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let (ptr, len, _capacity) = bytes.into_parts();
         Encoded {
@@ -530,15 +519,18 @@ impl Encoded {
     }
 }
 
+/// `icc` is the ICC profile to embed in the output container (JPEG APP2, PNG
+/// iCCP, WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
+/// pipeline forwards this from the decode step so a non-sRGB source
+/// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
+/// re-encode.
 pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
     height: u32,
     opts: EncodeOptions,
+    icc: Option<&[u8]>,
 ) -> Result<Encoded, Error> {
-    // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
-    // duration of this call (raw-ptr stand-in for a lifetime param).
-    let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
         // PNG carries iCCP on both truecolour and indexed images — quantise

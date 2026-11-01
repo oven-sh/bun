@@ -485,8 +485,9 @@ impl CopyFile {
         Ok(())
     }
 
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn do_read_write_loop_capped(&mut self, cap: SizeType) -> Result<(), crate::Error> {
+        // A cap of 0 is an unknown length (#4930), as in `do_copy_file_range`: copy to EOF.
+        let cap = if cap == 0 { MAX_SIZE } else { cap };
         let mut total: u64 = 0;
         match read_write_loop_capped(self.source_fd, self.destination_fd, cap, &mut total) {
             bun_sys::Result::Ok(()) => {
@@ -835,6 +836,13 @@ impl CopyFile {
                 return;
             }
 
+            // A pipe or a block device. An fd with no file type (an eventfd) never reaches EOF.
+            if stat.st_mode as Mode & bun_sys::S::IFMT != 0 {
+                let _ = self.do_read_write_loop_capped(self.max_length);
+                self.do_close();
+                return;
+            }
+
             self.system_error = Some(unsupported_non_regular_file_error());
             self.do_close();
             return;
@@ -844,10 +852,12 @@ impl CopyFile {
         {
             // fcopyfile rewrites dest from offset 0 and the slice trim is
             // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
+            // fcopyfile also refuses a source that is not a regular file.
             if matches!(
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)
-            ) {
+            ) && bun_sys::S::ISREG(stat.st_mode as _)
+            {
                 let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
                     u64::try_from(stat.st_size).expect("int cast"),
                 ) {
@@ -879,10 +889,12 @@ impl CopyFile {
 
         #[cfg(target_os = "freebsd")]
         {
+            // The trim below reads st_size as a length, which only a regular file gives.
             if matches!(
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)
-            ) {
+            ) && bun_sys::S::ISREG(stat.st_mode as _)
+            {
                 let mut total_written: u64 = 0;
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
                     bun_core::ZStr::EMPTY,

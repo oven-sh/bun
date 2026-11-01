@@ -1,5 +1,15 @@
 const path = require("node:path");
 
+// Returns a function that logs `name`, then queues a tick and a promise reaction that log it too.
+function queueingCallback(name) {
+  return () => {
+    console.log(name);
+    process.nextTick(() => console.log(name, "tick"));
+    Promise.resolve().then(() => console.log(name, "microtask"));
+    return name;
+  };
+}
+
 module.exports = debugMode => {
   const nativeModule = require(`./build/${debugMode ? "Debug" : "Release"}/v8tests`);
   return {
@@ -297,6 +307,35 @@ module.exports = debugMode => {
     test_uv_queue_work_on_current_event_loop() {
       const rc = nativeModule.queue_work_and_call((...args) => console.log("after_work_cb", ...args));
       console.log("uv_queue_work", rc);
+    },
+
+    test_make_callback_from_event_loop() {
+      nativeModule.make_callbacks_from_event_loop(queueingCallback("callback 1"), queueingCallback("callback 2"));
+    },
+
+    test_make_callback_from_js() {
+      nativeModule.make_callback_from_js(queueingCallback("callback"));
+      console.log("JS caller continues");
+    },
+
+    test_make_callback_from_event_loop_throws() {
+      process.on("uncaughtException", error => console.log("uncaughtException:", error.message));
+      const callback1 = queueingCallback("callback 1");
+      nativeModule.make_callbacks_from_event_loop(() => {
+        callback1();
+        throw new Error("thrown by callback 1");
+      }, queueingCallback("callback 2"));
+    },
+
+    test_make_callback_from_js_throws() {
+      try {
+        nativeModule.make_callback_from_js(() => {
+          throw new Error("thrown by the callback");
+        });
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught:", e.message);
+      }
     },
 
     test_v8_object_get_set_exceptions() {

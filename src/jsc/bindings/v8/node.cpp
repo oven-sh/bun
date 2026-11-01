@@ -99,7 +99,19 @@ v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
         args.append(argv[i]->localToJSValue());
     }
 
+    // As Node's InternalCallbackScope does with no JavaScript below it: report a throw, otherwise run the ticks and microtasks.
+    bool isOutermost = !vm.entryScope;
     JSC::JSValue result = JSC::call(globalObject, callee, thisValue, args, "node::MakeCallback"_s);
+    if (isOutermost) {
+        if (auto* exception = scope.exception()) {
+            if (!scope.tryClearException())
+                return MaybeLocal<Value>();
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            result = JSC::jsUndefined();
+        } else {
+            globalObject->drainMicrotasks();
+        }
+    }
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
 
     return isolate->currentHandleScope()->createLocal<Value>(vm, result);

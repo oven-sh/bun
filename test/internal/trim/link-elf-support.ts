@@ -1,5 +1,6 @@
 import { trimExecutable } from "bun:internal-for-testing";
-import { afterAll, beforeAll, describe, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll, beforeAll, describe } from "../../aot/harness/declare";
 import { bunEnv, isLinux, tempDir } from "harness";
 import { closeSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

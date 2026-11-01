@@ -13,9 +13,8 @@ import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 if (process.env.BUILDKITE_BUILD_NUMBER)
-  process.env.AOT_WHOLE ??= process.env.BUILDKITE_MESSAGE?.includes("[aot whole]") ? "1" : "0";
+  process.env.AOT_WHOLE ??= /\[aot whole\]/i.test(process.env.BUILDKITE_MESSAGE ?? "") ? "1" : "0";
 
-export const runsWhole = process.env.AOT_WHOLE === "1";
 export const runsTheListAlone = process.env.AOT_WHOLE === "0";
 
 export const linesOf = (...path: string[]) =>

@@ -263,19 +263,20 @@
 # This list against the tree.
 0.1 aot/every-build.test.ts
 
-# These belong on the list and fail on main today. They come back when they pass:
+# One case of each is marked in the file as failing today; the rest runs.
+29.3 aot/engine/ir-1.test.ts
+24.5 aot/engine/native-5.test.ts
+10.8 aot/engine/native-6.test.ts
+2 aot/mock-module-of-data-files.test.ts
+0.9 bundler/compile-aot-size.test.ts
+
+# These belong on the list, and every case of them fails on main today. They come back when they pass:
 #   aot/a-commonjs-file-mocked-before-it-is-loaded.test.ts
 #   aot/a-load-above-a-mock-whose-factory-failed.test.ts
 #   aot/a-missing-export-is-reported-before-a-missing-import-where-a-file-may-be-mocked.test.ts
-#   aot/engine/ir-1.test.ts
-#   aot/engine/native-5.test.ts
-#   aot/engine/native-6.test.ts
-#   aot/mock-module-of-data-files.test.ts
 #   aot/require-behind-a-mock-of-an-es-module-that-was-required.test.ts
-#   bundler/compile-aot-size.test.ts
 
 # Outside test/aot a file is left out only if it stands here.
-off bundler/compile-aot-size.test.ts
 off bundler/compile-aot-crash.test.ts
 off bundler/compile-aot-heap-snapshot.test.ts
 off bundler/compile-aot-perf-map.test.ts

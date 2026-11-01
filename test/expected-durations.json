@@ -1176,11 +1176,11 @@
     "windows-aarch64": 400
   },
   "aot/engine/ir-1.test.ts": {
-    "default": 500,
-    "asan": 500,
-    "musl": 500,
-    "windows": 500,
-    "windows-aarch64": 500
+    "default": 29300,
+    "asan": 36400,
+    "musl": 28700,
+    "windows": 31100,
+    "windows-aarch64": 41000
   },
   "aot/engine/ir-2.test.ts": {
     "default": 24000,
@@ -1246,18 +1246,18 @@
     "windows-aarch64": 21100
   },
   "aot/engine/native-5.test.ts": {
-    "default": 500,
-    "asan": 500,
-    "musl": 500,
-    "windows": 500,
-    "windows-aarch64": 500
+    "default": 24500,
+    "asan": 87900,
+    "musl": 27900,
+    "windows": 30700,
+    "windows-aarch64": 28100
   },
   "aot/engine/native-6.test.ts": {
-    "default": 500,
-    "asan": 500,
-    "musl": 500,
-    "windows": 500,
-    "windows-aarch64": 500
+    "default": 10800,
+    "asan": 48000,
+    "musl": 19200,
+    "windows": 39200,
+    "windows-aarch64": 23000
   },
   "aot/entry-point-names.test.ts": {
     "default": 500,
@@ -51281,11 +51281,11 @@
     "windows-aarch64": 500
   },
   "bundler/compile-aot-size.test.ts": {
-    "default": 500,
-    "asan": 500,
-    "musl": 500,
-    "windows": 500,
-    "windows-aarch64": 500
+    "default": 900,
+    "asan": 2600,
+    "musl": 13600,
+    "windows": 53800,
+    "windows-aarch64": 23500
   },
   "bundler/compile-corrupted-embed.test.ts": {
     "default": 2500,
@@ -55138,8 +55138,8 @@
     "asan": 500
   },
   "aot/mock-module-of-data-files.test.ts": {
-    "default": 500,
-    "asan": 500
+    "default": 2000,
+    "asan": 11200
   },
   "aot/modules-in-a-test-run-in-parallel.test.ts": {
     "default": 500,

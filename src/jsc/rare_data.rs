@@ -39,7 +39,7 @@ use super::uuid::UUID;
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
 //     `__bun_stdio_blob_store_new` (link-time extern).
 //   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.
-//   - `s3_default_client` / `default_client_ssl_ctx` / typed HotMap get/insert
+//   - `default_client_ssl_ctx` / typed HotMap get/insert
 //     → bodies live in `bun_runtime` (they call high-tier ctors); RareData
 //     keeps only the storage slots.
 // ──────────────────────────────────────────────────────────────────────────
@@ -263,7 +263,6 @@ pub struct RareData {
     // was always reached via the main-thread VM, so it was a singleton in
     // practice). Hosting it in the consumer crate removes the upward
     // `s3_signing → jsc` hook.
-    pub s3_default_client: Strong,
     /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
     pub node_quic_callbacks: Strong,
     pub(crate) default_csrf_secret: Box<[u8]>,
@@ -307,7 +306,6 @@ impl Default for RareData {
             compression_scratch: None,
             websocket_inflate_scratch: None,
             libdeflate_decompressor: None,
-            s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
@@ -689,7 +687,6 @@ impl Drop for SocketGroups {
 
 impl RareData {
     pub(crate) fn release_js_handles(&mut self) {
-        self.s3_default_client.deinit();
         self.node_quic_callbacks.deinit();
     }
 
@@ -1093,7 +1090,7 @@ pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
 impl Drop for RareData {
     fn drop(&mut self) {
         // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
+        // default_csrf_secret / cleanup_hooks / path_buf /
         // tls_default_ciphers:
         // all dropped automatically via field Drop.
 

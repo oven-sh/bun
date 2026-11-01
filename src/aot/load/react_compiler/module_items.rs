@@ -233,7 +233,7 @@ pub(crate) fn write_constant(
     write_declaration(file, pat, init)
 }
 
-fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId) -> StmtId {
+pub(crate) fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId) -> StmtId {
     let declarations = file.add_var_decls(&[VarDecl {
         pat,
         ty: TypeNodeId::NONE,

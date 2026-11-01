@@ -42,6 +42,7 @@ using namespace JSC;
     macro(armedTimeout) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
+    macro(asymmetricMatch) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
@@ -67,10 +68,12 @@ using namespace JSC;
     macro(dest) \
     macro(detail) \
     macro(dirname) \
+    macro(document) \
     macro(domain) \
     macro(drain) \
     macro(encoding) \
     macro(end) \
+    macro(env) \
     macro(errno) \
     macro(esmLoadSync) \
     macro(esmNamespaceForCjs) \
@@ -109,6 +112,7 @@ using namespace JSC;
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isEqualNode) \
     macro(isOpen) \
     macro(isPrepared) \
     macro(isUncloneable) \
@@ -137,6 +141,9 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(natives) \
+    macro(nodeName) \
+    macro(nodeType) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \

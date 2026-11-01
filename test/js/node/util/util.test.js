@@ -550,6 +550,76 @@ describe("util", () => {
     assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
   });
 
+  // Expected values are from Node 26.
+  describe("diff", () => {
+    it("compares two strings by code unit", () => {
+      expect(util.diff("12345678", "12!!5!7!")).toEqual([
+        [0, "1"],
+        [0, "2"],
+        [1, "3"],
+        [1, "4"],
+        [-1, "!"],
+        [-1, "!"],
+        [0, "5"],
+        [1, "6"],
+        [-1, "!"],
+        [0, "7"],
+        [1, "8"],
+        [-1, "!"],
+      ]);
+      expect(util.diff("", "a")).toEqual([[-1, "a"]]);
+      expect(util.diff("a", "")).toEqual([[1, "a"]]);
+      expect(util.diff("😀a", "😀b")).toEqual([
+        [0, "\ud83d"],
+        [0, "\ude00"],
+        [1, "a"],
+        [-1, "b"],
+      ]);
+    });
+
+    it("compares two arrays of strings by item", () => {
+      expect(util.diff(["1", "2", "3"], ["1", "3", "4"])).toEqual([
+        [0, "1"],
+        [1, "2"],
+        [0, "3"],
+        [-1, "4"],
+      ]);
+      expect(util.diff(["ab"], "ab")).toEqual([
+        [1, "ab"],
+        [-1, "a"],
+        [-1, "b"],
+      ]);
+    });
+
+    it("returns an empty array for the same value", () => {
+      const lines = ["a"];
+      expect(util.diff("abc", "abc")).toEqual([]);
+      expect(util.diff(lines, lines)).toEqual([]);
+      expect(util.diff(1, 1)).toEqual([]);
+    });
+
+    it("throws for anything but strings", () => {
+      expect(() => util.diff(1, 2)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "actual" argument must be of type string. Received type number (1)',
+        }),
+      );
+      expect(() => util.diff("a")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "expected" argument must be of type string. Received undefined',
+        }),
+      );
+      expect(() => util.diff(["a", 1], ["a"])).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "actual[1]" argument must be of type string. Received type number (1)',
+        }),
+      );
+    });
+  });
+
   describe("getCallSites", () => {
     it("restores Error state when stackTraceLimit is non-writable", () => {
       const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");

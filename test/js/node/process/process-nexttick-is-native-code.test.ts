@@ -88,5 +88,6 @@ test("an init hook is called by the native frame of nextTick", () => {
   } finally {
     hook.disable();
   }
-  expect(framesOf(stack)[1]).toMatch(nextTickFrame);
+  // `bun test` makes no tail calls, so the wrapper of node:async_hooks around `init` has a frame too.
+  expect(framesOf(stack).filter(frame => !frame.includes("node:async_hooks"))[1]).toMatch(nextTickFrame);
 });

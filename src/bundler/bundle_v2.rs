@@ -2779,15 +2779,21 @@ pub mod bv2_impl {
                                     }
                                 }
 
-                                // Tell Bake's Dev Server to wait for the file to be imported.
-                                dev.track_resolution_failure(
-                                    &import_record.source_file,
-                                    &import_record.specifier,
-                                    target.bake_graph(),
-                                    self.graph.input_files.items_loader()
-                                        [import_record.importer_source_index as usize],
-                                )
-                                .expect("oom");
+                                let importer = import_record.importer_source_index as usize;
+                                // The watch store bundles the importer again by its file path. In a plugin namespace that path can name another module.
+                                if self.graph.input_files.items_source()[importer]
+                                    .path
+                                    .is_file()
+                                {
+                                    // Tell Bake's Dev Server to wait for the file to be imported.
+                                    dev.track_resolution_failure(
+                                        &import_record.source_file,
+                                        &import_record.specifier,
+                                        target.bake_graph(),
+                                        self.graph.input_files.items_loader()[importer],
+                                    )
+                                    .expect("oom");
+                                }
 
                                 // Turn this into an invalid AST, so that incremental mode skips it when printing.
                                 // SAFETY: truncating to len 0 never exposes uninitialized elements.
@@ -7015,7 +7021,10 @@ pub mod bv2_impl {
                                             continue 'inner;
                                         }
                                     }
-                                    if let Some(dev) = self.dev_server {
+                                    // As in `run_resolver`: the watch is only for an importer that is a file.
+                                    if let Some(dev) = self.dev_server
+                                        && source.path.is_file()
+                                    {
                                         // Tell DevServer about the resolution failure.
                                         dev.track_resolution_failure(
                                             source.path.text,

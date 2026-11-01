@@ -35,7 +35,7 @@ import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChan
 import { createInternalModuleRegistry, idToEnumName } from "./internal-module-registry-scanner";
 import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
 import { recordedPointer, removableFeatures } from "./removable-entry-points.ts";
-import { define } from "./replacements";
+import { assertNoDestructuredGlobalThis, define } from "./replacements";
 
 const builtinUsesFlag = "--builtin-uses=";
 const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
@@ -286,6 +286,8 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   const output = fs
     .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
     .replace(/\n\/\/# debugId=\w+\n$/, "");
+  // Checks the input, since --minify-syntax turns `var a = globalThis.a; var b = globalThis.b;` into a destructuring.
+  assertNoDestructuredGlobalThis(fs.readFileSync(entrypoint, "utf8"), file_path);
   const sourceMap = JSON.parse(fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path + ".map"), "utf8"));
   const written = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
   bundledNames.push(...listBundledNamesOfModule(moduleList[i], written, output, sourceMap));

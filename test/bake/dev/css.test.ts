@@ -1034,7 +1034,7 @@ devTest("script that does not build is not a stylesheet of a page that reaches i
     // This request bundles "first.html" together with the script that does not build.
     expect((await linkedStylesheets(dev, "/first")).status).toBe(500);
     // The bundle of "second.html" does not hold the script, so this page loads. It must not link the script.
-    expect((await linkedStylesheets(dev, "/second")).sheets).toEqual([]);
+    expect(await linkedStylesheets(dev, "/second")).toEqual({ status: 200, sheets: [] });
   },
 });
 devTest("css file with an @import of a file that is not css is a build error until it is repaired", {
@@ -1080,6 +1080,9 @@ devTest("an open page gets the styles of a css file that did not build when its 
       body {
         color: red;
       }
+      .styles-v1 {
+        width: 1px;
+      }
     `,
     "second.css": `
       h2 {
@@ -1113,6 +1116,9 @@ devTest("an open page gets the styles of a css file that did not build when its 
         h1 {
           color: green;
         }
+        .third-v1 {
+          width: 3px;
+        }
       `,
     );
     await c.style("h1").color.expect.toBe("green");
@@ -1145,13 +1151,19 @@ devTest("an open page gets the styles of a css file that did not build when its 
         h2 {
           color: green;
         }
+        .second-v1 {
+          width: 2px;
+        }
       `,
     );
     await c.style("h2").color.expect.toBe("green");
     await c.style("h1").color.expect.toBe("green");
     await c.style("body").color.expect.toBe("red");
-    // "styles.css", "second.css" and "third.css" each have a link on a new page.
-    expect((await linkedStylesheets(dev, "/")).sheets).toHaveLength(3);
+    // "second.css", "styles.css" and "third.css" each have a link on a new page.
+    expect(await linkedStylesheets(dev, "/")).toEqual({
+      status: 200,
+      sheets: [".second-v1", ".second-v1 .styles-v1", ".third-v1"],
+    });
   },
 });
 devTest("css file that an onLoad plugin turns into javascript is bundled as a module without a stylesheet link", {
@@ -1177,13 +1189,46 @@ devTest("css file that an onLoad plugin turns into javascript is bundled as a mo
   },
   async test(dev) {
     expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [".dep-v1"] });
-    const stylesheet = (await dev.fetch("/").text()).match(/<link[^>]*href="([^"]+)"/)![1];
     await dev.write("dep.css", `/* as javascript */`, { errors: null });
     expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [] });
-    // The dev server no longer serves the stylesheet that the file had.
-    expect((await dev.fetch(stylesheet)).status).toBe(404);
     const script = (await dev.fetch("/").text()).match(/<script[^>]*src="([^"]+)"/)![1];
     expect(await dev.fetch(script).text()).toContain("globalThis.dep = 1;");
+  },
+});
+devTest("css file that an onLoad plugin loads as javascript is a module again after the plugin fails once", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-module-plugin.ts"]
+    `,
+    "css-module-plugin.ts": `
+      export default {
+        name: "css-module-plugin",
+        setup(build) {
+          build.onLoad({ filter: /dep\\.css$/ }, async ({ path }) => {
+            const text = await Bun.file(path).text();
+            if (text.includes("fail")) throw new Error("The plugin does not load this file.");
+            return { contents: "globalThis.dep = " + Number(text) + ";", loader: "js" };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "app.ts": `import "./dep.css";`,
+    "dep.css": `1`,
+  },
+  async test(dev) {
+    const module = async () => {
+      const script = (await dev.fetch("/").text()).match(/<script[^>]*src="([^"]+)"/)![1];
+      return (await dev.fetch(script).text()).match(/globalThis\.dep = (\d+);/)?.[1];
+    };
+    expect(await module()).toBe("1");
+    await dev.write("dep.css", `fail`, { errors: null });
+    // This request bundles the script again. Its import is a file with the css loader that did not build.
+    expect(await linkedStylesheets(dev, "/")).toEqual({ status: 500, sheets: [] });
+    await dev.write("dep.css", `2`, { errors: null });
+    expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [] });
+    expect(await module()).toBe("2");
   },
 });
 devTest("css file with an @import that an onResolve plugin answers fails its page until the import builds", {
@@ -2257,10 +2302,14 @@ devTest("css file saved with an @import that an onResolve plugin declines does n
       plugins = ["./decline-plugin.ts"]
     `,
     "decline-plugin.ts": `
+      import { appendFileSync } from "node:fs";
+      import { join } from "node:path";
       export default {
         name: "decline-plugin",
         setup(build) {
-          build.onResolve({ filter: /declined\\.css$/ }, () => undefined);
+          build.onResolve({ filter: /declined\\.css$/ }, args => {
+            appendFileSync(join(import.meta.dir, "declined.txt"), args.path + "\\n");
+          });
         },
       };
     `,
@@ -2272,9 +2321,54 @@ devTest("css file saved with an @import that an onResolve plugin declines does n
     await c.style("body").color.expect.toBe("red");
     // The plugin declines this import, and then the resolver does not find the file.
     await dev.write("styles.css", `@import "./missing-declined.css";\nbody { color: blue; }`, { errors: null });
+    expect(dev.read("declined.txt")).toContain("./missing-declined.css");
     await c.style("body").color.expect.toBe("red");
     await dev.write("styles.css", `body { color: green; }`);
     await c.style("body").color.expect.toBe("green");
+  },
+});
+devTest("css file in a plugin namespace fails its page until the file that it imports exists", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./virtual-plugin.ts"]
+    `,
+    // The plugin keeps the path of the file, and adds a rule of its own to the file.
+    "virtual-plugin.ts": `
+      import { join } from "node:path";
+      export default {
+        name: "virtual-plugin",
+        setup(build) {
+          build.onResolve({ filter: /^virtual-styles$/ }, () => ({
+            path: join(import.meta.dir, "styles.css"),
+            namespace: "virtual",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, async ({ path }) => ({
+            contents: (await Bun.file(path).text()) + " .plugin-v1 { color: red; }",
+            loader: "css",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["virtual-styles"] }),
+    "styles.css": `@import "./missing.css";\n.styles-v1 { color: red; }`,
+  },
+  async test(dev) {
+    for (const request of [1, 2]) {
+      expect({ request, ...(await linkedStylesheets(dev, "/")) }).toEqual({ request, status: 500, sheets: [] });
+    }
+    // The next request bundles the page again, with the stylesheet that the plugin makes.
+    await Bun.write(dev.join("missing.css"), `.missing-v1 { color: red; }`);
+    expect(await linkedStylesheets(dev, "/")).toEqual({
+      status: 200,
+      sheets: [".missing-v1 .styles-v1 .plugin-v1"],
+    });
+    // A save of the imported file bundles the stylesheet of the plugin, not a copy of its file.
+    await dev.write("missing.css", `.missing-v2 { color: red; }`, { errors: null });
+    expect(await linkedStylesheets(dev, "/")).toEqual({
+      status: 200,
+      sheets: [".missing-v2 .styles-v1 .plugin-v1"],
+    });
   },
 });
 

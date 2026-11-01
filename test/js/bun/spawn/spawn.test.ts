@@ -2466,7 +2466,21 @@ it("doesn't crash when a subprocess pipe is canceled and the event loop runs ins
   }
   expect(stderr).toStartWith("ready\n");
 
-  // An expect().resolves that isn't awaited runs the event loop synchronously.
-  expect(Bun.sleep(1)).resolves.toBeUndefined();
-  expect(fetch(server.url).then(r => r.text())).resolves.toBe("ok");
+  // Bun.build() runs the event loop synchronously until an async plugin setup() settles.
+  let body: string | undefined;
+  const build = Bun.build({
+    entrypoints: ["/turn.js"],
+    files: { "/turn.js": "" },
+    plugins: [
+      {
+        name: "turn",
+        async setup() {
+          await Bun.sleep(1);
+          body = await (await fetch(server.url)).text();
+        },
+      },
+    ],
+  });
+  expect(body).toBe("ok");
+  await build;
 });

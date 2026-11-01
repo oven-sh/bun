@@ -10,8 +10,7 @@ const { Server, ServerResponse } = require("node:_http_server");
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
 if (process.env.NODE_DEBUG) {
-  // Node emits the NODE_DEBUG=http warning from its first http debug line. Bun's
-  // http does not log through debuglog, so resolve the logger when the module loads.
+  // Bun's http does not log through debuglog: resolve it now so NODE_DEBUG=http warns as in node.
   const { debuglog, debuglogImpl } = require("internal/util/debuglog");
   if (debuglog("http").enabled) debuglogImpl(true, "HTTP");
 }

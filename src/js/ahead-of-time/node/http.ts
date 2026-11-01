@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e7ef05254fea76d4a4ddcf410e5f4bde580d9bdcc0fbfb16b23103e3281f799c.
+// Written against that file with the SHA-256 c9212e0ac35685814ac350542ff805f1268326ea0e7397849f34435fee6ce683.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { validateInteger, validateObject } = require("internal/validators");
@@ -14,8 +14,7 @@ const { Server, ServerResponse } = require("node:_http_server");
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
 if (process.env.NODE_DEBUG) {
-  // Node emits the NODE_DEBUG=http warning from its first http debug line. Bun's
-  // http does not log through debuglog, so resolve the logger when the module loads.
+  // Bun's http does not log through debuglog: resolve it now so NODE_DEBUG=http warns as in node.
   const { debuglog, debuglogImpl } = require("internal/util/debuglog");
   if (debuglog("http").enabled) debuglogImpl(true, "HTTP");
 }

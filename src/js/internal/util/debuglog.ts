@@ -1,6 +1,4 @@
-// Port of node v26.3.0 lib/internal/util/debuglog.js: debuglog (used by node:util
-// and internal modules) and the timing formatter shared by console.timeEnd/timeLog.
-// The prototype methods are captured at module load for tamper resistance.
+// Port of node v26.3.0 lib/internal/util/debuglog.js (debuglog and the console.timeEnd formatter).
 const kSecond = 1000;
 const kMinute = 60 * kSecond;
 const kHour = 60 * kMinute;
@@ -114,8 +112,6 @@ function debuglogImpl(enabled: boolean, set: string): DebugLoggerFunction {
   return debugImpls[set];
 }
 
-// The returned logger resolves its section lazily, on the first call or the
-// first read of `enabled`, and hands the resolved implementation to `cb`.
 function debuglog(set: string, cb?: (fn: DebugLoggerFunction) => void): DebugLogger {
   let enabled: boolean;
   function init() {

@@ -2532,6 +2532,7 @@ impl<'a> Resolver<'a> {
             }
         };
 
+        let mut relative_remap_scope: Option<DirInfo::Index> = None;
         if self.care_about_browser_field {
             // Support remapping one package path to another via the "browser" field
             if let Some(browser_scope) = source_dir_info.get_enclosing_browser_scope() {
@@ -2586,6 +2587,9 @@ impl<'a> Resolver<'a> {
                             }
                         }
 
+                        if !is_package_path(remapped) {
+                            relative_remap_scope = Some(source_dir_info.enclosing_browser_scope);
+                        }
                         import_path = remapped;
                         source_dir_info = browser_scope;
                     }
@@ -2630,7 +2634,11 @@ impl<'a> Resolver<'a> {
                     return ResultUnion::Success(result);
                 }
 
-                if res.package_json.is_some() && self.care_about_browser_field {
+                // A path that the "browser" map picked for a main field or an index file is final.
+                if res.package_json.is_some()
+                    && self.care_about_browser_field
+                    && !res.browser_remapped
+                {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
                         None => match self.read_dir_info(result.path_pair.primary.name().dir) {
@@ -2638,7 +2646,10 @@ impl<'a> Resolver<'a> {
                             _ => return ResultUnion::Success(result),
                         },
                     };
-                    if let Some(browser_scope) = base_dir_info.get_enclosing_browser_scope() {
+                    // The map that sent the specifier to a relative path does not apply to it again.
+                    if relative_remap_scope != Some(base_dir_info.enclosing_browser_scope)
+                        && let Some(browser_scope) = base_dir_info.get_enclosing_browser_scope()
+                    {
                         if let Some(remap) = self
                             .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                                 &browser_scope,
@@ -5465,6 +5476,7 @@ impl<'a> Resolver<'a> {
             dec_ret!(MatchStatus::NotFound);
         };
 
+        let mut browser_remapped = false;
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
@@ -5500,6 +5512,7 @@ impl<'a> Resolver<'a> {
                             Some(remapped) => remapped,
                             None => dec_ret!(MatchStatus::NotFound),
                         };
+                        browser_remapped = true;
                     }
                 }
             }
@@ -5507,25 +5520,14 @@ impl<'a> Resolver<'a> {
 
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
-            if let Some(package_json) = dir_info.package_json() {
-                *out = MatchResult {
-                    path_pair: PathPair {
-                        primary: Fs::Path::init(result.path),
-                        secondary: None,
-                    },
-                    package_json: Some(std::ptr::from_ref(package_json)),
-                    dirname_fd: result.dirname_fd,
-                    ..Default::default()
-                };
-                dec_ret!(MatchStatus::Success);
-            }
-
             *out = MatchResult {
                 path_pair: PathPair {
                     primary: Fs::Path::init(result.path),
                     secondary: None,
                 },
+                package_json: dir_info.package_json().map(std::ptr::from_ref),
                 dirname_fd: result.dirname_fd,
+                browser_remapped,
                 ..Default::default()
             };
             dec_ret!(MatchStatus::Success);
@@ -5542,6 +5544,9 @@ impl<'a> Resolver<'a> {
             extension_order,
             out,
         );
+        if browser_remapped && r.is_success() {
+            out.browser_remapped = true;
+        }
         if let Some(d) = self.debug_logs.as_mut() {
             d.decrease_indent();
         }
@@ -5769,6 +5774,7 @@ impl<'a> Resolver<'a> {
                                     primary: Path::init(file_result.path),
                                     secondary: None,
                                 },
+                                browser_remapped: true,
                                 ..Default::default()
                             };
                             return MatchStatus::Success;
@@ -5780,6 +5786,7 @@ impl<'a> Resolver<'a> {
                                 .load_as_index(new_dir, extension_order, out)
                                 .is_success()
                             {
+                                out.browser_remapped = true;
                                 return MatchStatus::Success;
                             }
                         }
@@ -6012,6 +6019,7 @@ impl<'a> Resolver<'a> {
                                     dirname_fd: out.dirname_fd,
                                     package_json,
                                     file_fd: auto_main_result.file_fd,
+                                    browser_remapped: out.browser_remapped,
                                     ..Default::default()
                                 };
                                 dec_ret!(MatchStatus::Success);

@@ -409,11 +409,12 @@
 # CHECK-NEXT: Branch v0 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1() handler=b2():
 # CHECK-NEXT: FinishModuleEvaluation module=m0
+# CHECK-NEXT: FinishCycleMemberEvaluation module=m0
 # CHECK-NEXT: Return
 # CHECK-NEXT: b2() role=CleanupHandler:
-# CHECK-NEXT: v2:{{*}}= CatchException
-# CHECK-NEXT: AbandonModuleEvaluation v2 module=m0
-# CHECK-NEXT: Rethrow v2
+# CHECK-NEXT: v3:{{*}}= CatchException
+# CHECK-NEXT: AbandonModuleEvaluation v3 module=m0
+# CHECK-NEXT: Rethrow v3
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
@@ -829,11 +830,12 @@ function f30 name="moduleEvaluation" module=m0 thisType={type=anything} results=
     Branch v0 -> taken b1(), notTaken b3()
   b1() handler=b2():
     FinishModuleEvaluation module=m0
+    FinishCycleMemberEvaluation module=m0
     Return
   b2() role=CleanupHandler:
-    v2 = CatchException
-    AbandonModuleEvaluation v2 module=m0
-    Rethrow v2
+    v3 = CatchException
+    AbandonModuleEvaluation v3 module=m0
+    Rethrow v3
   b3():
     Return
 }

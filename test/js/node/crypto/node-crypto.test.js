@@ -1460,8 +1460,13 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
       expect(pub2.export({ format: "raw-public" })).toEqual(rawPub);
       expect(priv2.export({ format: "raw-private" })).toEqual(rawPriv);
 
-      // A private key's raw-public export should match the public key's.
-      expect(privateKey.export({ format: "raw-public" })).toEqual(rawPub);
+      // Like Node, a private key has no raw-public format.
+      expect(() => privateKey.export({ format: "raw-public" })).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "The property 'options.format' is invalid. Received 'raw-public'",
+        }),
+      );
     });
 
     if (keyType === "ec") {
@@ -1496,11 +1501,14 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
 
   it("raw key formats reject unsupported combinations", () => {
     const { publicKey: rsaPub, privateKey: rsaPriv } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
-    for (const fmt of ["raw-public", "raw-private", "raw-seed"]) {
+    for (const fmt of ["raw-private", "raw-seed"]) {
       expect(() => rsaPriv.export({ format: fmt })).toThrow(
         expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
       );
     }
+    expect(() => rsaPriv.export({ format: "raw-public" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
     expect(() => rsaPub.export({ format: "raw-public" })).toThrow(
       expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
     );

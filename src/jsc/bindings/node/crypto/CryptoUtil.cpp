@@ -598,6 +598,26 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
     return getArrayBufferOrView(globalObject, scope, value, argName, jsUndefined());
 }
 
+// What Node's getArrayBufferOrView() makes Buffer.from() read a string with. Empty after throwing.
+std::optional<BufferEncodingType> getInputEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
+{
+    if (!encodingValue.isString()) {
+        return BufferEncodingType::utf8;
+    }
+
+    auto encodingView = asString(encodingValue)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (encodingView->isEmpty() || encodingView == "buffer"_s) {
+        return BufferEncodingType::utf8;
+    }
+
+    auto encoding = parseEnumerationFromView<BufferEncodingType>(encodingView);
+    if (!encoding) {
+        ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
+    }
+    return encoding;
+}
+
 // maybe replace other getArrayBufferOrView
 GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue)
 {
@@ -617,19 +637,10 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
         auto strView = str->view(globalObject);
         RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
-        BufferEncodingType encoding = BufferEncodingType::utf8;
-        if (encodingValue.isString()) {
-            auto* encodingString = encodingValue.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
-            auto encodingView = encodingString->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+        auto encoding = getInputEncoding(globalObject, scope, encodingValue);
+        RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
-            if (encodingView != "buffer"_s) {
-                encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
-            }
-        }
-
-        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, strView, encoding));
+        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, strView, *encoding));
         RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
         if (auto* view = dynamicDowncast<JSArrayBufferView>(buffer)) {
@@ -961,7 +972,7 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
                 RETURN_IF_EXCEPTION(scope, );
                 GCOwnedDataScope<WTF::StringView> cipherView = cipherString->view(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
-                config.cipher = getCipherByName(cipherView);
+                config.cipher = Cipher::FromName(cipherView);
                 if (config.cipher == nullptr) {
                     ERR::CRYPTO_UNKNOWN_CIPHER(scope, globalObject, cipherView);
                     return;

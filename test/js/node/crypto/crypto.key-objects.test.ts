@@ -679,6 +679,79 @@ describe("crypto.KeyObjects", () => {
     );
   });
 
+  test("an EC jwk needs strings for its members, a point on its curve, and the d that gives that point", () => {
+    const jwk = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" });
+    const other = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" });
+    const { kty, crv, x, y } = jwk;
+    expect(createPrivateKey({ key: jwk, format: "jwk" }).export({ format: "jwk" })).toEqual(jwk);
+    const publicKey = createPublicKey({ key: jwk, format: "jwk" });
+    expect(publicKey.type).toBe("public");
+    expect(publicKey.export({ format: "jwk" })).toEqual({ kty, crv, x, y });
+
+    const invalid = expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "Invalid JWK EC key" });
+    const wrongMembers = [
+      { d: other.d },
+      { d: "" },
+      { d: 5 },
+      { d: null },
+      { x: other.x },
+      { x: 5 },
+      { x: undefined },
+      { y: undefined },
+      { crv: 5 },
+      { crv: undefined },
+    ];
+    for (const wrong of wrongMembers) {
+      for (const create of [createPrivateKey, createPublicKey]) {
+        expect(() => create({ key: { ...jwk, ...wrong } as JsonWebKey, format: "jwk" })).toThrow(invalid);
+      }
+    }
+    expect(() => createPublicKey({ key: { ...jwk, crv: "nope" }, format: "jwk" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INVALID_CURVE", message: "Invalid EC curve name" }),
+    );
+    // The whole jwk is read before its kind is looked at.
+    expect(() => createPrivateKey({ key: { kty, crv, x: other.x, y }, format: "jwk" })).toThrow(invalid);
+    expect(() => createPrivateKey({ key: { kty, crv, x, y }, format: "jwk" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "JWK does not contain private key material" }),
+    );
+  });
+
+  test("an ECPrivateKey in DER may leave out its public key", () => {
+    const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const d = Buffer.from(privateKey.export({ format: "jwk" }).d!, "base64url");
+    // SEQUENCE { INTEGER 1, OCTET STRING d, [0] { OID prime256v1 } }
+    const body = Buffer.concat([Buffer.from("0201010420", "hex"), d, Buffer.from("a00a06082a8648ce3d030107", "hex")]);
+    const der = Buffer.concat([Buffer.from([0x30, body.length]), body]);
+    const imported = createPrivateKey({ key: der, format: "der", type: "sec1" });
+    expect(imported.equals(privateKey)).toBe(true);
+    expect(createPublicKey(imported).equals(publicKey)).toBe(true);
+  });
+
+  test("the encoding of a key given as a string", () => {
+    const unknown = expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING", message: "Unknown encoding: nope" });
+    expect(() => createSecretKey("abcd", "nope" as BufferEncoding)).toThrow(unknown);
+    expect(() => createPublicKey({ key: publicPem, encoding: "nope" as BufferEncoding })).toThrow(unknown);
+    expect(() => createPrivateKey({ key: privatePem, encoding: "nope" as BufferEncoding })).toThrow(unknown);
+
+    expect(createSecretKey("abcd", "buffer" as BufferEncoding).export()).toEqual(Buffer.from("abcd"));
+    expect(createSecretKey("abcd", "hex").export()).toEqual(Buffer.from([0xab, 0xcd]));
+    expect(createSecretKey("abc", "hex").export()).toEqual(Buffer.from([0xab]));
+    const hex = Buffer.from(privatePem).toString("hex");
+    expect(createPrivateKey({ key: hex, encoding: "hex" }).equals(createPrivateKey(privatePem))).toBe(true);
+  });
+
+  test.each(["aes128", "aes192", "aes256", "des3"])("a private key is exported with the cipher %s", cipher => {
+    const privateKey = createPrivateKey(privatePem);
+    const pem = privateKey.export({ type: "pkcs8", format: "pem", cipher, passphrase: "secret" });
+    expect(createPrivateKey({ key: pem, passphrase: "secret" }).equals(privateKey)).toBe(true);
+  });
+
+  test("a PEM may start with a byte order mark", () => {
+    expect(createPrivateKey("\ufeff" + privatePem).equals(createPrivateKey(privatePem))).toBe(true);
+    expect(createPublicKey("\ufeff" + publicPem).equals(createPublicKey(publicPem))).toBe(true);
+    expect(createPublicKey("\ufeff" + privatePem).equals(createPublicKey(publicPem))).toBe(true);
+  });
+
   test("private encrypted should work", async () => {
     // Reading an encrypted key without a passphrase should fail.
     expect(() => createPrivateKey(privateEncryptedPem)).toThrow();

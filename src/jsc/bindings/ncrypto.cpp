@@ -2133,6 +2133,16 @@ constexpr bool IsEncryptedPrivateKeyInfo(
     return len >= 1 && buffer.data[offset] != 2;
 }
 
+// Not upstream: OpenSSL's PEM reader skips a UTF-8 byte order mark at the start of its input, BoringSSL's does not.
+constexpr Buffer<const unsigned char> SkipByteOrderMark(
+    const Buffer<const unsigned char>& pem)
+{
+    if (pem.len > 3 && pem.data[0] == 0xef && pem.data[1] == 0xbb && pem.data[2] == 0xbf) {
+        return { .data = pem.data + 3, .len = pem.len - 3 };
+    }
+    return pem;
+}
+
 } // namespace
 
 bool EVPKeyPointer::IsRSAPrivateKey(const Buffer<const unsigned char>& buffer)
@@ -2152,7 +2162,8 @@ bool EVPKeyPointer::IsRSAPrivateKey(const Buffer<const unsigned char>& buffer)
 EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
     const Buffer<const unsigned char>& buffer)
 {
-    auto bp = BIOPointer::New(buffer.data, buffer.len);
+    auto pem = SkipByteOrderMark(buffer);
+    auto bp = BIOPointer::New(pem.data, pem.len);
     if (!bp) return ParseKeyResult(PKParseError::FAILED);
 
     // Try parsing as SubjectPublicKeyInfo (SPKI) first.
@@ -2257,7 +2268,7 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
         return ParseKeyResult(WTF::move(pkey));
     };
 
-    auto bio = BIOPointer::New(buffer);
+    auto bio = BIOPointer::New(config.format == PKFormatType::PEM ? SkipByteOrderMark(buffer) : buffer);
     if (!bio) return ParseKeyResult(PKParseError::FAILED);
 
     auto passphrase = GetPassphrase(config);
@@ -2297,7 +2308,10 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
         return keyOrError(EVPKeyPointer(EVP_PKCS82PKEY(p8inf.get())));
     }
     case PKEncodingType::SEC1: {
-        auto key = d2i_PrivateKey_bio(bio.get(), nullptr);
+        // Not upstream: BoringSSL's d2i_PrivateKey_bio() tells the kind of key by the number of
+        // elements, and takes an ECPrivateKey without its optional publicKey for an RSA key.
+        const unsigned char* p = buffer.data;
+        auto key = d2i_PrivateKey(EVP_PKEY_EC, nullptr, &p, buffer.len);
         return keyOrError(EVPKeyPointer(key));
     }
     default: {
@@ -2593,6 +2607,8 @@ const Cipher Cipher::FromName(WTF::StringView name)
         if (remain == "192"_s) return Cipher::AES_192_CBC();
         if (remain == "256"_s) return Cipher::AES_256_CBC();
     }
+
+    if (WTF::equalIgnoringASCIICase(name, "des3"_s)) return Cipher::FromNid(NID_des_ede3_cbc);
 
     return Cipher(getCipherByName(name));
 }

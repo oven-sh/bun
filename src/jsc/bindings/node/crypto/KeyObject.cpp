@@ -644,6 +644,10 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
 
                 ncrypto::EVPKeyPointer::PKFormatType rawFormat;
                 if (formatView == "raw-public"_s) {
+                    if (exportType != CryptoKeyType::Public) {
+                        ERR::INVALID_ARG_VALUE(scope, globalObject, "options.format"_s, formatValue);
+                        return {};
+                    }
                     rawFormat = ncrypto::EVPKeyPointer::PKFormatType::RawPublic;
                 } else if (formatView == "raw-private"_s) {
                     if (exportType != CryptoKeyType::Private) {
@@ -1290,10 +1294,6 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
 
         // The JWK itself decides whether private key material is present.
         CryptoKeyType jwkType = privValue.isString() ? CryptoKeyType::Private : CryptoKeyType::Public;
-        if (keyType == CryptoKeyType::Private && jwkType == CryptoKeyType::Public) {
-            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "JWK does not contain private key material"_s);
-            return {};
-        }
 
         // pubValue / privValue were already read and type-checked above; decode
         // them directly so each JWK property is observed exactly once.
@@ -1324,65 +1324,77 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
             return {};
         }
 
+        if (keyType == CryptoKeyType::Private && jwkType == CryptoKeyType::Public) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "JWK does not contain private key material"_s);
+            return {};
+        }
+
         JSC::ensureStillAliveHere(pubBuf);
         JSC::ensureStillAliveHere(privBuf);
         return create(keyType, WTF::move(key));
     }
     case Kty::Ec: {
-        auto crvView = getJwkStringView(globalObject, scope, jwk, "crv"_s, "key.crv"_s);
+        // Node's ImportJWKEcKey: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_ec.cc#L550
+        const ASCIILiteral invalidKey = "Invalid JWK EC key"_s;
+        VM& vm = globalObject->vm();
+        JSValue crvValue = jwk->get(globalObject, Identifier::fromString(vm, "crv"_s));
         RETURN_IF_EXCEPTION(scope, {});
-
-        if (crvView != "P-256"_s && crvView != "secp256k1"_s && crvView != "P-384"_s && crvView != "P-521"_s) {
-            // validateOneOf
-            ERR::INVALID_ARG_VALUE(scope, globalObject, "key.crv"_s, crvView.owner, "must be one of: 'P-256', 'secp256k1', 'P-384', 'P-521'"_s);
+        if (!crvValue.isString()) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
             return {};
         }
 
-        auto xView = getJwkStringView(globalObject, scope, jwk, "x"_s, "key.x"_s);
+        auto crvView = asString(crvValue)->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto yView = getJwkStringView(globalObject, scope, jwk, "y"_s, "key.y"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        GCOwnedDataScope<WTF::StringView> dView = GCOwnedDataScope<WTF::StringView>(nullptr, WTF::nullStringView());
-
-        if (keyType != CryptoKeyType::Public) {
-            dView = getJwkStringView(globalObject, scope, jwk, "d"_s, "key.d"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-
-        MarkPopErrorOnReturn markPopError;
-
         int nid = Ec::GetCurveIdFromName(crvView);
         if (nid == NID_undef) {
             ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
             return {};
         }
 
+        JSValue xValue = jwk->get(globalObject, Identifier::fromString(vm, "x"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue yValue = jwk->get(globalObject, Identifier::fromString(vm, "y"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue dValue = jwk->get(globalObject, Identifier::fromString(vm, "d"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (!xValue.isString() || !yValue.isString() || (!dValue.isUndefined() && !dValue.isString())) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
+            return {};
+        }
+
+        // The JWK itself decides whether private key material is present.
+        const bool isPrivate = dValue.isString();
+
+        MarkPopErrorOnReturn markPopError;
+
         auto ec = ECKeyPointer::NewByCurveName(nid);
         if (!ec) {
-            ERR::CRYPTO_INVALID_JWK(scope, globalObject);
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
             return {};
         }
 
-        auto* xBuf = decodeJwkString(globalObject, scope, xView, "key.x"_s);
+        BignumPointer x = jwkStringToBn(globalObject, scope, xValue, "key.x"_s);
         RETURN_IF_EXCEPTION(scope, {});
-        auto* yBuf = decodeJwkString(globalObject, scope, yView, "key.y"_s);
+        BignumPointer y = jwkStringToBn(globalObject, scope, yValue, "key.y"_s);
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (!ec.setPublicKeyRaw(jwkBufToBn(xBuf), jwkBufToBn(yBuf))) {
-            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK EC key"_s);
+        if (!ec.setPublicKeyRaw(x, y)) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
             return {};
         }
 
-        if (keyType != CryptoKeyType::Public) {
-            auto* dBuf = decodeJwkString(globalObject, scope, dView, "key.d"_s);
+        if (isPrivate) {
+            BignumPointer d = jwkStringToBn(globalObject, scope, dValue, "key.d"_s);
             RETURN_IF_EXCEPTION(scope, {});
-            auto dBufSpan = dBuf->span();
-            BignumPointer dBn = BignumPointer(dBufSpan.data(), dBufSpan.size());
-            if (!ec.setPrivateKey(dBn) || !ec.checkKey()) {
-                ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK EC key"_s);
+            if (!ec.setPrivateKey(d) || !ec.checkKey()) {
+                ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
                 return {};
             }
+        } else if (keyType == CryptoKeyType::Private) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "JWK does not contain private key material"_s);
+            return {};
         }
 
         auto key = EVPKeyPointer::New();
@@ -1990,19 +2002,10 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             auto dataView = dataString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            BufferEncodingType encoding = BufferEncodingType::utf8;
-            if (encodingValue.isString()) {
-                auto* encodingString = encodingValue.toString(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                auto encodingView = encodingString->view(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
+            auto encoding = getInputEncoding(globalObject, scope, encodingValue);
+            RETURN_IF_EXCEPTION(scope, {});
 
-                if (encodingView != "buffer"_s) {
-                    encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
-                }
-            }
-
-            JSValue decoded = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
+            JSValue decoded = JSValue::decode(constructFromEncoding(globalObject, dataView, *encoding));
             RETURN_IF_EXCEPTION(scope, {});
             if (auto* decodedView = dynamicDowncast<JSArrayBufferView>(decoded)) {
                 EVPKeyPointer::PrivateKeyEncodingConfig config;
@@ -2108,10 +2111,10 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
         auto keyView = keyString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        BufferEncodingType encoding = parseEnumerationAllowBuffer(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
+        auto encoding = getInputEncoding(globalObject, scope, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});
 
-        JSValue buffer = JSValue::decode(constructFromEncoding(globalObject, keyView, encoding));
+        JSValue buffer = JSValue::decode(constructFromEncoding(globalObject, keyView, *encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         if (buffer.isEmpty()) {

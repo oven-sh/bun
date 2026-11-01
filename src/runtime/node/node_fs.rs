@@ -8449,8 +8449,12 @@ impl NodeFS {
                             &[dir, target_path],
                         )
                         .len();
-                    self.sync_error_buf[0..4].copy_from_slice(&paths::windows::LONG_PATH_PREFIX_U8);
                     self.sync_error_buf[4 + target_len] = 0;
+                    // A working directory with no plain spelling (a volume GUID) keeps its `\\?\`.
+                    if self.sync_error_buf[4..].starts_with(&paths::windows::LONG_PATH_PREFIX_U8) {
+                        break 'target ZStr::from_buf(&self.sync_error_buf[4..], target_len);
+                    }
+                    self.sync_error_buf[0..4].copy_from_slice(&paths::windows::LONG_PATH_PREFIX_U8);
                     break 'target ZStr::from_buf(&self.sync_error_buf[..], 4 + target_len);
                 }
                 if paths::is_absolute(target_path) {

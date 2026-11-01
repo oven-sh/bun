@@ -705,4 +705,51 @@ mod tests {
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
     }
+
+    #[test]
+    fn without_verbatim_prefix_w_gives_the_plain_spelling() {
+        let plain = |path: &str| {
+            let mut wide: Vec<u16> = path.encode_utf16().collect();
+            String::from_utf16(bun_core::without_verbatim_prefix_w(&mut wide)).unwrap()
+        };
+        for (path, spelled) in [
+            (r"\\?\C:\", r"C:\"),
+            (r"\\?\c:\dir\file.ts", r"c:\dir\file.ts"),
+            (r"\\?\UNC\server\share", r"\\server\share"),
+            (r"\\?\unc\server\share\dir", r"\\server\share\dir"),
+        ] {
+            assert_eq!(plain(path), spelled);
+        }
+        for whole in [
+            // Plain already.
+            "",
+            r"C:\dir",
+            r"\\server\share\dir",
+            // No plain spelling.
+            r"\\?\Volume{b75e2c83-0000-0000-0000-602f00000000}\dir",
+            r"\\?\GLOBALROOT\Device\HarddiskVolume1\dir",
+            r"\\.\C:\dir",
+            r"\??\C:\dir",
+            // Not a directory of a drive or of a share.
+            r"\\?\",
+            r"\\?\C:",
+            r"\\?\C:dir",
+            r"\\?\1:\dir",
+            r"\\?\UNC",
+            r"\\?\UNC\",
+            r"\\?\UNC\\share",
+            r"\\?\UNCserver\share",
+            r"\\?\XNC\server\share",
+            r"\\?\UXC\server\share",
+            r"\\?\UNX\server\share",
+            // A unit above U+00FF whose low byte is `C`, and three whose low bytes are `UNC`.
+            "\\\\?\\\u{0143}:\\dir",
+            "\\\\?\\\u{0155}\u{014E}\u{0143}\\server\\share",
+            // Only `\` is a separator after the prefix.
+            "//?/C:/dir",
+            r"\\?\C:/dir",
+        ] {
+            assert_eq!(plain(whole), whole);
+        }
+    }
 }

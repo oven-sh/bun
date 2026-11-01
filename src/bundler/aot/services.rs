@@ -544,7 +544,16 @@ mod tests {
         use std::os::unix::ffi::OsStrExt as _;
         use std::path::PathBuf;
 
-        fn project(name: &str, files: &[(&str, &str)]) -> PathBuf {
+        /// Removed when the test ends.
+        struct Project(PathBuf);
+
+        impl Drop for Project {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        fn project(name: &str, files: &[(&str, &str)]) -> Project {
             let unique_name = format!("bun-aot-file-finder-{}-{name}", std::process::id());
             let directory = std::env::temp_dir().join(unique_name);
             let _ = std::fs::remove_dir_all(&directory);
@@ -553,7 +562,7 @@ mod tests {
             for (file, contents) in files {
                 write(&directory, file, contents);
             }
-            directory
+            Project(directory)
         }
 
         fn write(directory: &std::path::Path, file: &str, contents: &str) {
@@ -575,18 +584,19 @@ mod tests {
         #[cfg_attr(miri, ignore)]
         fn a_lookup_that_ran_again_reports_the_failure_of_its_last_run() {
             let manifest = r##"{ "name": "p", "imports": { "#other": "./other.js" } }"##;
-            let directory = project("last-run", &[("package.json", manifest)]);
+            let project = project("last-run", &[("package.json", manifest)]);
+            let directory = &project.0;
             with_test_context(
                 |_| {},
                 |context| {
                     // SAFETY: the context keeps the carrier and its transpiler until this returns.
                     let mut finder = unsafe { FileFinder::new(context.bundle().transpiler(), &[]) };
-                    let search = import(&directory, b"#late");
+                    let search = import(directory, b"#late");
                     let not_defined = FoundCode::NotFound(CodeFailure::PackageImportNotDefined);
                     assert_eq!(finder.find(&search), not_defined);
                     // Now "imports" has the name, and its file is not there.
                     let manifest = r##"{ "name": "p", "imports": { "#late": "./late.js" } }"##;
-                    write(&directory, "package.json", manifest);
+                    write(directory, "package.json", manifest);
                     assert_eq!(finder.find(&search), FoundCode::not_found());
                 },
             );
@@ -595,11 +605,12 @@ mod tests {
         #[test]
         #[cfg_attr(miri, ignore)]
         fn a_finder_takes_a_cached_miss_as_the_resolver_of_its_build_does() {
-            let directory = project("policy", &[("node_modules/other/index.js", "")]);
+            let project = project("policy", &[("node_modules/other/index.js", "")]);
+            let directory = &project.0;
             with_test_context(
                 |_| {},
                 |context| {
-                    let search = import(&directory, b"late");
+                    let search = import(directory, b"late");
                     // SAFETY: as above.
                     let new_finder =
                         || unsafe { FileFinder::new(context.bundle().transpiler(), &[]) };
@@ -612,7 +623,7 @@ mod tests {
                     let transpiler = bundle.transpiler_for_target(bun_ast::Target::Bun);
                     transpiler.resolver.trust_cached_misses();
                     let mut trusting = new_finder();
-                    write(&directory, "node_modules/late/index.js", "");
+                    write(directory, "node_modules/late/index.js", "");
                     assert_eq!(trusting.find(&search), FoundCode::not_found());
                     assert!(matches!(checking.find(&search), FoundCode::File { .. }));
                 },

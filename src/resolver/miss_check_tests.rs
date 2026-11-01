@@ -72,18 +72,29 @@ fn resolver() -> Resolver<'static> {
     Resolver::init1(log, file_system, options())
 }
 
-/// A new directory with `child` below it. Returns both paths.
-fn directories(name: &str, child: &str) -> (Vec<u8>, Vec<u8>) {
+/// A new directory with `below` in it. Removed when the test ends.
+struct Directories {
+    top: Vec<u8>,
+    below: Vec<u8>,
+}
+
+impl Drop for Directories {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(std::ffi::OsStr::from_bytes(&self.top));
+    }
+}
+
+fn directories(name: &str, child: &str) -> Directories {
     let unique_name = format!("bun-resolver-miss-check-{}-{name}", std::process::id());
     let top = std::env::temp_dir().join(unique_name);
     let _ = std::fs::remove_dir_all(&top);
     std::fs::create_dir_all(top.join(child)).expect("directories");
     let top = top.canonicalize().expect("directory");
     let below = top.join(child);
-    (
-        top.as_os_str().as_bytes().to_vec(),
-        below.as_os_str().as_bytes().to_vec(),
-    )
+    Directories {
+        top: top.as_os_str().as_bytes().to_vec(),
+        below: below.as_os_str().as_bytes().to_vec(),
+    }
 }
 
 fn read(resolver: &mut Resolver<'_>, dir: &[u8]) -> DirInfoRef {
@@ -108,7 +119,8 @@ fn mapped(resolver: &mut Resolver<'_>, dir: &[u8]) -> Option<*const DirInfo::Dir
 #[test]
 fn a_miss_that_read_the_mapped_slot_is_current() {
     let mut resolver = resolver();
-    let (_, dir) = directories("current", "src");
+    let made = directories("current", "src");
+    let dir = made.below.clone();
     let slot = read(&mut resolver, &dir);
     let touched = touched(slot, &[SlotUse::Read, SlotUse::SearchLevel]);
     let mut reread = Vec::new();
@@ -120,7 +132,8 @@ fn a_miss_that_read_the_mapped_slot_is_current() {
 #[test]
 fn a_miss_that_read_a_dropped_slot_is_looked_up_again() {
     let mut resolver = resolver();
-    let (_, dir) = directories("dropped", "src");
+    let made = directories("dropped", "src");
+    let dir = made.below.clone();
     let slot = read(&mut resolver, &dir);
     assert!(resolver.bust_dir_cache(&dir));
     let mut reread = Vec::new();
@@ -135,7 +148,8 @@ fn a_miss_that_read_a_dropped_slot_is_looked_up_again() {
 #[test]
 fn a_miss_that_read_a_replaced_slot_is_looked_up_again_and_the_new_slot_stays() {
     let mut resolver = resolver();
-    let (_, dir) = directories("replaced", "src");
+    let made = directories("replaced", "src");
+    let dir = made.below.clone();
     let old = read(&mut resolver, &dir);
     assert!(resolver.bust_dir_cache(&dir));
     let new = read(&mut resolver, &dir);
@@ -160,7 +174,8 @@ fn a_miss_that_read_a_replaced_slot_is_looked_up_again_and_the_new_slot_stays() 
 #[test]
 fn a_stale_slot_is_dropped_only_while_it_is_the_mapped_one() {
     let mut resolver = resolver();
-    let (_, dir) = directories("compare", "src");
+    let made = directories("compare", "src");
+    let dir = made.below.clone();
     let old = read(&mut resolver, &dir);
     assert!(resolver.bust_dir_cache(&dir));
     let new = read(&mut resolver, &dir);
@@ -184,7 +199,8 @@ fn a_stale_slot_is_dropped_only_while_it_is_the_mapped_one() {
 #[test]
 fn a_directory_that_this_lookup_dropped_before_is_not_dropped_again() {
     let mut resolver = resolver();
-    let (_, dir) = directories("reread", "src");
+    let made = directories("reread", "src");
+    let dir = made.below.clone();
     let slot = read(&mut resolver, &dir);
     let key = bun_wyhash::hash(&dir);
     let mut reread = vec![key];
@@ -211,7 +227,8 @@ fn a_directory_that_this_lookup_dropped_before_is_not_dropped_again() {
 #[test]
 fn directories_below_a_replaced_one_are_linked_again_in_one_check() {
     let mut resolver = resolver();
-    let (top, deepest) = directories("relink", "a/b/c");
+    let made = directories("relink", "a/b/c");
+    let (top, deepest) = (made.top.clone(), made.below.clone());
     let slot = read(&mut resolver, &deepest);
     let mut chain = vec![slot];
     while chain.last().unwrap().abs_path.len() > top.len() + 1 {

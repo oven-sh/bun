@@ -1094,6 +1094,131 @@ describe("selectors", () => {
   });
 });
 
+// pnpm: "Specifying the scope of the package is optional, so --filter=core will pick @babel/core if core is not
+// found. However, if the workspace has multiple packages with the same name (for instance, @babel/core and
+// @types/core), then filtering without scope will pick nothing."
+describe.concurrent("a name pattern without a scope", () => {
+  type Manifest = { name?: string; dependencies?: Record<string, string>; workspaces?: string[] };
+
+  // Every script prints the directory of its package.
+  function fixture(packages: Record<string, Manifest>, root: Manifest = {}) {
+    return tempDir("filter-unscoped", {
+      packages: Object.fromEntries(
+        Object.entries(packages).map(([dir, manifest]) => [
+          dir,
+          { "package.json": JSON.stringify({ ...manifest, scripts: { present: `echo ran:${dir}` } }) },
+        ]),
+      ),
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+        ...root,
+        scripts: { present: "echo ran:root" },
+      }),
+    });
+  }
+
+  const fixtures = {
+    // web depends on db
+    "@org/db and @org/web": () =>
+      fixture({ db: { name: "@org/db" }, web: { name: "@org/web", dependencies: { "@org/db": "workspace:*" } } }),
+    "db and @org/db": () => fixture({ db: { name: "db" }, scoped: { name: "@org/db" } }),
+    "@org/db and @other/db": () => fixture({ org: { name: "@org/db" }, other: { name: "@other/db" } }),
+    "@org/db, @org/web and @org/website": () =>
+      fixture({ db: { name: "@org/db" }, web: { name: "@org/web" }, website: { name: "@org/website" } }),
+    "@org/database in packages/dbdir": () => fixture({ dbdir: { name: "@org/database" } }),
+    "@org/db and a package.json with no name": () => fixture({ db: { name: "@org/db" }, noname: {} }),
+    "the root @acme/app and @other/app": () => fixture({ member: { name: "@other/app" } }, { name: "@acme/app" }),
+    "the root acme and @x/acme": () => fixture({ member: { name: "@x/acme" } }, { name: "acme" }),
+    "@org/db listed by two workspaces entries": () =>
+      fixture({ db: { name: "@org/db" }, web: { name: "@org/web" } }, { workspaces: ["packages/*", "packages/db"] }),
+  };
+  type Fixture = keyof typeof fixtures;
+
+  async function run(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, "present"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: [...stdout.matchAll(/ran:(\S+)/g)].map(m => m[1]).sort(), stderr, exitCode };
+  }
+
+  const selections: { in: Fixture; args: string[]; ran: string[] }[] = [
+    { in: "@org/db and @org/web", args: ["run", "--filter=db"], ran: ["db"] },
+    { in: "@org/db and @org/web", args: ["run", "-F", "db"], ran: ["db"] },
+    { in: "@org/db and @org/web", args: ["--filter", "db"], ran: ["db"] },
+    { in: "@org/db and @org/web", args: ["run", "--if-present", "--filter", "db"], ran: ["db"] },
+    { in: "@org/db and @org/web", args: ["run", "--filter", "d*"], ran: ["db"] },
+    { in: "@org/db and @org/web", args: ["run", "--filter", "db", "--filter", "web"], ran: ["db", "web"] },
+    // The relation is walked from the workspace that the name found.
+    { in: "@org/db and @org/web", args: ["run", "--filter", "...db"], ran: ["db", "web"] },
+    { in: "@org/db and @org/web", args: ["run", "--filter", "...^db"], ran: ["web"] },
+    { in: "@org/db and @org/web", args: ["run", "--filter", "db..."], ran: ["db"] },
+    { in: "@org/db and @org/web", args: ["run", "--filter", "web^..."], ran: ["db"] },
+    // `!` excludes that workspace, in either flag order.
+    { in: "@org/db and @org/web", args: ["run", "--filter", "!db"], ran: ["web"] },
+    { in: "@org/db and @org/web", args: ["run", "--filter", "*", "--filter", "!db"], ran: ["web"] },
+    { in: "@org/db and @org/web", args: ["run", "--filter", "!db", "--filter", "*"], ran: ["web"] },
+    // A pattern that has the scope is matched as before.
+    { in: "@org/db and @org/web", args: ["run", "--filter", "@org/db"], ran: ["db"] },
+    { in: "@org/db and @org/web", args: ["run", "--filter", "@org/*"], ran: ["db", "web"] },
+    // A workspace with that full name is the only match.
+    { in: "db and @org/db", args: ["run", "--filter", "db"], ran: ["db"] },
+    { in: "db and @org/db", args: ["run", "--filter", "!db"], ran: ["scoped"] },
+    // A name that two scoped workspaces have excludes neither.
+    { in: "@org/db and @other/db", args: ["run", "--filter", "!db"], ran: ["org", "other"] },
+    { in: "@org/db, @org/web and @org/website", args: ["run", "--filter", "d*"], ran: ["db"] },
+    { in: "@org/db and a package.json with no name", args: ["run", "--filter", "db"], ran: ["db"] },
+    // `bun run --filter` never runs the root, but the root's name counts like any other.
+    { in: "the root @acme/app and @other/app", args: ["run", "--filter", "!app"], ran: ["member"] },
+    { in: "the root acme and @x/acme", args: ["run", "--filter", "!acme"], ran: ["member"] },
+  ];
+  test.each(selections.map(row => [row.in, row.args.join(" "), row] as const))(
+    "in %s, bun %s",
+    async (_, __, { in: name, args, ran }) => {
+      using dir = fixtures[name]();
+      expect(await run(String(dir), args)).toMatchObject({ ran, exitCode: 0 });
+    },
+  );
+
+  const unmatched: { in: Fixture; pattern: string }[] = [
+    { in: "@org/db and @other/db", pattern: "db" },
+    { in: "@org/db and @other/db", pattern: "...db" },
+    { in: "@org/db, @org/web and @org/website", pattern: "web*" },
+    // A pattern with a scope or a slash is matched as written, and names are case-sensitive.
+    { in: "@org/db and @org/web", pattern: "@other/db" },
+    { in: "@org/db and @org/web", pattern: "org/db" },
+    { in: "@org/db and @org/web", pattern: "DB" },
+    // A directory is selected with `./path` or `{dir}`, never by its name.
+    { in: "@org/database in packages/dbdir", pattern: "dbdir" },
+    { in: "@org/db and a package.json with no name", pattern: "noname" },
+    { in: "the root @acme/app and @other/app", pattern: "app" },
+    { in: "the root acme and @x/acme", pattern: "acme" },
+  ];
+  test.each(unmatched.map(row => [row.in, row.pattern, row] as const))(
+    "in %s, --filter %s selects nothing",
+    async (_, __, { in: name, pattern }) => {
+      using dir = fixtures[name]();
+      expect(await run(String(dir), ["run", "--filter", pattern])).toMatchObject({
+        ran: [],
+        stderr: expect.stringContaining(`error: No workspace packages matched the filter "${pattern}"`),
+        exitCode: 1,
+      });
+    },
+  );
+
+  test("a directory that two workspaces entries list is one workspace", async () => {
+    using dir = fixtures["@org/db listed by two workspaces entries"]();
+    const byFullName = await run(String(dir), ["run", "--filter", "@org/db"]);
+    expect(byFullName).toMatchObject({ ran: expect.arrayContaining(["db"]), exitCode: 0 });
+    expect(await run(String(dir), ["run", "--filter", "db"])).toMatchObject({ ran: byFullName.ran, exitCode: 0 });
+  });
+});
+
 describe.concurrent("a '!' entry in \"workspaces\"", () => {
   // Every script prints the directory of its package. `other/*` is outside every entry: the
   // paths equal those of members but for the first segment, and `!packages` is not a glob for

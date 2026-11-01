@@ -3905,6 +3905,16 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("--filter takes a package name without its scope", async () => {
+    using registry = workspaceRegistry();
+    using dir = workspace(registry.mock, { one: { name: "@rec/one", version: "1.0.0" } });
+
+    const { out, exitCode } = await publish(env, String(dir), "--filter", "one", "--dry-run");
+    expect(registry.asked).toEqual(["GET @rec/one"]);
+    expect(published(out)).toEqual([" + @rec/one@1.0.0 (dry-run)"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("--dry-run publishes nothing", async () => {
     using registry = workspaceRegistry();
     using dir = workspace(registry.mock);

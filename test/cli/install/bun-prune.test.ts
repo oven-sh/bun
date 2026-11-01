@@ -2098,6 +2098,25 @@ test.concurrent("hoisted: --filter with no match is an error; path filters resol
   expect(existsSync(junk)).toBeFalse();
 });
 
+test.concurrent("hoisted: --filter takes a workspace name without its scope", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { name: "@org/a", dependencies: { "no-deps": "1.0.0" } } },
+  });
+  const junk = plant(dir, "packages/a/node_modules/junk");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--filter", "a", "--linker", "hoisted");
+  expect(stderr).toBe("");
+  expect(out(stdout)).toMatchInlineSnapshot(`
+    "bun prune <version> (<revision>)
+
+    - junk (node_modules/@org/a/node_modules)
+    1 package removed (checked 4 installed packages)"
+  `);
+  expect(exitCode).toBe(0);
+  expect(existsSync(junk)).toBeFalse();
+});
+
 test.concurrent.each(linkers)(
   "%s: --filter warns about the unmatched pattern and still applies the rest",
   async linker => {

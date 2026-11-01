@@ -46,13 +46,19 @@ type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
 // Borrows the `OwnedWalker` stored next to it in `ActiveWalk`, with the lifetime erased.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
+struct WorkspaceRoot<'a> {
+    dir: &'a [u8],
+    /// Empty when no `workspaces` field was found, or when the root has no name.
+    name: &'a [u8],
+}
+
 fn get_candidate_package_patterns<'a>(
     log: &mut Log,
     out_patterns: &mut Vec<Box<[u8]>>,
     negated: &mut NegatedWorkspaces,
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
-) -> Result<&'a [u8], crate::Error> {
+) -> Result<WorkspaceRoot<'a>, crate::Error> {
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();
     let _store_guard = bun_ast::StoreResetGuard::new();
@@ -131,8 +137,20 @@ fn get_candidate_package_patterns<'a>(
             }
 
             let parent_trimmed = strings::without_trailing_slash(workdir);
-            root_buf[0..parent_trimmed.len()].copy_from_slice(parent_trimmed);
-            return Ok(&root_buf[0..parent_trimmed.len()]);
+            let name = json.get(b"name");
+            let name = name
+                .as_ref()
+                .and_then(|e| e.as_utf8_string_literal())
+                .unwrap_or(b"");
+            let (dir_buf, name_buf) = root_buf[..].split_at_mut(parent_trimmed.len());
+            dir_buf.copy_from_slice(parent_trimmed);
+            // A name that does not fit behind the directory is left out.
+            let name_buf = name_buf.get_mut(..name.len()).unwrap_or_default();
+            name_buf.copy_from_slice(&name[..name_buf.len()]);
+            return Ok(WorkspaceRoot {
+                dir: dir_buf,
+                name: name_buf,
+            });
         }
 
         workdir = match bun_core::dirname(workdir) {
@@ -145,7 +163,10 @@ fn get_candidate_package_patterns<'a>(
     out_patterns.push(Box::<[u8]>::from(b"**/package.json".as_slice()));
     let root_dir = strings::without_trailing_slash(workdir_);
     root_buf[0..root_dir.len()].copy_from_slice(root_dir);
-    Ok(&root_buf[0..root_dir.len()])
+    Ok(WorkspaceRoot {
+        dir: &root_buf[0..root_dir.len()],
+        name: b"",
+    })
 }
 
 pub(crate) struct WorkspacePackage {
@@ -174,15 +195,15 @@ pub(crate) fn select_packages(
     let mut glob_patterns: Vec<Box<[u8]>> = Vec::new();
     let mut negated = NegatedWorkspaces::default();
     let mut root_buf = bun_paths::path_buffer_pool::get();
-    let root_dir: Box<[u8]> = get_candidate_package_patterns(
+    let root = get_candidate_package_patterns(
         // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded and no other `&mut Log` is live.
         unsafe { ctx.log_mut() },
         &mut glob_patterns,
         &mut negated,
         cwd,
         &mut root_buf,
-    )?
-    .into();
+    )?;
+    let root_dir: Box<[u8]> = root.dir.into();
 
     let mut iter = PackageFilterIterator::init(&glob_patterns, &negated, &root_dir)?;
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
@@ -227,6 +248,13 @@ pub(crate) fn select_packages(
         .collect();
     drop(path_buf);
 
+    // `bun run` does not run the root here, but the root's name still decides what a name selects.
+    let root_row = (!root.name.is_empty() && !discovered.iter().any(|p| *p.dir == *root_dir))
+        .then_some(Candidate {
+            name: root.name,
+            abs_posix_dir: b"",
+            is_root: true,
+        });
     let candidates: Vec<Candidate<'_>> = discovered
         .iter()
         .zip(&posix_dirs)
@@ -235,6 +263,7 @@ pub(crate) fn select_packages(
             abs_posix_dir: dir,
             is_root: false,
         })
+        .chain(root_row)
         .collect();
 
     let graph: Option<WorkspaceGraph> =
@@ -252,7 +281,7 @@ pub(crate) fn select_packages(
         cwd,
         &candidates,
         graph.as_ref(),
-        RootSelection::Implicit,
+        RootSelection::MatchOnly,
     );
     let packages: Vec<WorkspacePackage> = discovered
         .into_iter()

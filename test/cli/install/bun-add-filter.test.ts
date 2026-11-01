@@ -825,6 +825,54 @@ test.concurrent("install --filter with a pattern that matches nothing warns and 
   expect(await exists(join(dir, "node_modules", "a-dep"))).toBeFalse();
 });
 
+test.concurrent("install and outdated --filter take a name without its scope", async () => {
+  const api = { name: "@org/api", dependencies: { "no-deps": "1.0.0" } };
+  const dir = await makeMonorepo({ api });
+  const installed = () => Promise.all(["no-deps", "a-dep"].map(name => exists(join(dir, "node_modules", name))));
+
+  {
+    const { stderr, exitCode } = await run(["install", "--filter", "api"], dir, { linker: "hoisted" });
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+    expect(await installed()).toStrictEqual([true, false]);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await run(["outdated", "--filter", "api"], dir);
+    expect(stderr).toBe("");
+    expect(stdoutLines(stdout)).toStrictEqual([
+      HEADER("outdated"),
+      "|--------------------------------------------------|",
+      "| Package  | Current | Update | Latest | Workspace |",
+      "|----------|---------|--------|--------|-----------|",
+      "| no-deps  | 1.0.0   | 1.0.0  | 2.0.0  | @org/api  |",
+      "|--------------------------------------------------|",
+    ]);
+    expect(exitCode).toBe(0);
+  }
+
+  // `!api` excludes it: web's dependency is installed and api's is left out.
+  {
+    await rm(join(dir, "node_modules"), { recursive: true });
+    const { stderr, exitCode } = await run(["install", "--filter", "!api"], dir, { linker: "hoisted" });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(await installed()).toStrictEqual([false, true]);
+  }
+});
+
+test.concurrent("install --filter warns for a name that two scoped workspaces have", async () => {
+  const dir = await makeMonorepo({
+    "pkg-a": { name: "@org/x", dependencies: { "no-deps": "1.0.0" } },
+    "pkg-b": { name: "@other/x" },
+  });
+
+  const { stderr, exitCode } = await run(["install", "--filter", "x"], dir, { linker: "hoisted" });
+  expect(stderr).toBe('warn: No workspace packages matched the filter "x"\nSaved lockfile\n');
+  expect(exitCode).toBe(0);
+  expect(await exists(join(dir, "node_modules", "no-deps"))).toBeFalse();
+});
+
 test.concurrent("outdated --filter with relations", async () => {
   const dir = await makeMonorepo({
     api: { name: "api", dependencies: { "pkg-a": "workspace:*", "no-deps": "1.0.0" } },
@@ -2073,8 +2121,9 @@ test.concurrent("--filter writes the same entry as running bun add inside the wo
   await expectWorkspaces(dir, [ROOT, { name: "api", dependencies }, WEB, { name: "pkg-a", dependencies }, PKG_B]);
 });
 
+// The workspace's name after the scope is not its directory name, so the scope-optional rule below does not apply.
 test.concurrent("a directory name is not a package name for a scoped workspace (pnpm#5601)", async () => {
-  const dir = await makeMonorepo({ "pkg-a": { name: "@org/pkg-a" } });
+  const dir = await makeMonorepo({ "pkg-a": { name: "@org/date-utils" } });
   const before = await allPackageJsonTexts(dir);
 
   {
@@ -2086,14 +2135,112 @@ test.concurrent("a directory name is not a package name for a scoped workspace (
 
   // The second pattern finds the entry the first one wrote, so it has nothing to save: it selected the same workspace.
   for (const [pattern, saved] of [
-    ["*/pkg-a", "Saved lockfile\n"],
+    ["*/date-utils", "Saved lockfile\n"],
     ["./packages/pkg-a", ""],
   ]) {
     const { stderr, exitCode } = await run(["add", "no-deps", "--filter", pattern], dir);
     expect(stderr).toBe(saved);
     expect(exitCode).toBe(0);
   }
-  await expectWorkspaces(dir, [ROOT, API, WEB, plus({ name: "@org/pkg-a" }), PKG_B]);
+  await expectWorkspaces(dir, [ROOT, API, WEB, plus({ name: "@org/date-utils" }), PKG_B]);
+});
+
+// pnpm: "Specifying the scope of the package is optional, so --filter=core will pick @babel/core if core is not found."
+test.concurrent("a name without a scope selects the only scoped workspace that has it", async () => {
+  const scoped = { name: "@org/pkg-a" };
+  const dir = await makeMonorepo({ "pkg-a": scoped });
+
+  {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "pkg-a"], dir);
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+    await expectWorkspaces(dir, [ROOT, API, WEB, plus(scoped), PKG_B]);
+  }
+
+  {
+    const { stderr, exitCode } = await run(["remove", "no-deps", "--filter", "pkg-a"], dir);
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+    await expectWorkspaces(dir, [ROOT, API, WEB, scoped, PKG_B]);
+  }
+
+  // A glob is retried the same way, and the relation is walked from the workspace it found.
+  {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "pkg-a*..."], dir);
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+    await expectWorkspaces(dir, [ROOT, API, WEB, plus(scoped), PKG_B]);
+  }
+});
+
+test.concurrent("a name without a scope selects the workspace with that full name first", async () => {
+  const scoped = { name: "@org/pkg-a" };
+  const dir = await makeMonorepo({ "pkg-b": scoped });
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "pkg-a"], dir);
+  expect(stderr).toBe("Saved lockfile\n");
+  expect(exitCode).toBe(0);
+  await expectWorkspaces(dir, [ROOT, API, WEB, plus(PKG_A), scoped]);
+});
+
+test.concurrent("a name without a scope that two scoped workspaces have selects nothing", async () => {
+  const dir = await makeMonorepo({ "pkg-a": { name: "@org/x" }, "pkg-b": { name: "@other/x" } });
+  const before = await allPackageJsonTexts(dir);
+
+  for (const pattern of ["x", "...x"]) {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", pattern], dir);
+    expect(stderr).toBe(`error: No workspace packages matched the filter "${pattern}"\n`);
+    expect(exitCode).toBe(1);
+  }
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  expect(await exists(join(dir, "bun.lock"))).toBeFalse();
+
+  // Nothing to exclude either: every member gets the dependency.
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "!x"], dir);
+  expect(stderr).toBe("Saved lockfile\n");
+  expect(exitCode).toBe(0);
+  await expectWorkspaces(dir, [ROOT, plus(API), plus(WEB), plus({ name: "@org/x" }), plus({ name: "@other/x" })]);
+});
+
+test.concurrent("a negated name without a scope excludes the scoped workspace", async () => {
+  const scoped = { name: "@org/pkg-a" };
+  const dir = await makeMonorepo({ "pkg-a": scoped });
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "!pkg-a"], dir);
+  expect(stderr).toBe("Saved lockfile\n");
+  expect(exitCode).toBe(0);
+  await expectWorkspaces(dir, [ROOT, plus(API), plus(WEB), scoped, plus(PKG_B)]);
+});
+
+test.concurrent("a name without a scope counts a scoped root like any scoped workspace", async () => {
+  const root = { name: "@org/root", workspaces: ["packages/*"] };
+  {
+    const dir = await makeMonorepo({ root });
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "root"], dir);
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+    await expectWorkspaces(dir, [plus(root), API, WEB, PKG_A, PKG_B]);
+  }
+  {
+    const dir = await makeMonorepo({ root, "pkg-a": { name: "@other/root" } });
+    const before = await allPackageJsonTexts(dir);
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "root"], dir);
+    expect(stderr).toBe('error: No workspace packages matched the filter "root"\n');
+    expect(exitCode).toBe(1);
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  }
+});
+
+test.concurrent("a pattern with a scope, a slash or another case is matched as written", async () => {
+  const dir = await makeMonorepo({ "pkg-a": { name: "@org/pkg-a" } });
+  const before = await allPackageJsonTexts(dir);
+
+  for (const pattern of ["@other/pkg-a", "@pkg-a", "org/pkg-a", "PKG-A"]) {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", pattern], dir);
+    expect(stderr).toBe(`error: No workspace packages matched the filter "${pattern}"\n`);
+    expect(exitCode).toBe(1);
+  }
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
 });
 
 test.concurrent("a name glob does not cross the scope separator (pnpm#3452)", async () => {

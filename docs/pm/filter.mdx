@@ -15,11 +15,13 @@ The flag works with `bun run`, `bun install`, `bun add`, `bun remove`, `bun upda
 
 Name patterns select packages by the `name` field in `package.json`. For example, if you have packages `pkg-a`, `pkg-b` and `other`, you can match all of them with `*`, only `pkg-a` and `pkg-b` with `pkg*`, and a specific package with its full name.
 
+You can leave out the scope of a package name. When no package has the name `core`, `--filter core` selects `@acme/core`. When two packages have that name in different scopes, such as `@acme/core` and `@types/core`, the pattern selects nothing. Write the scope to pick one. The same rule applies to a glob such as `co*`, to `!core`, and to relations such as `core...`.
+
 ### Package Path `--filter ./<glob>`
 
 Path patterns start with `./` and select all packages in directories matching the pattern. For example, to match all packages in subdirectories of `packages`, use `--filter './packages/**'`. To match the package in `packages/foo`, use `--filter ./packages/foo`.
 
-Name patterns match the full package name (`core` does not match `@acme/core`; use `@acme/*`), and `*` does not cross `/`. Path patterns must match the workspace directory itself: `./packages` selects nothing, `./packages/*` selects every workspace directly inside it.
+In a name pattern, `*` does not cross `/`. Use `@acme/*` to select every package in the `@acme` scope. To select a package by its directory, use a path pattern or a directory selector. Path patterns must match the workspace directory itself: `./packages` selects nothing, `./packages/*` selects every workspace directly inside it.
 
 ### Directory `--filter '{<dir>}'`
 

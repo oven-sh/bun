@@ -833,6 +833,28 @@ it.concurrent("--filter with a scoped glob (@scope/*) targets only those members
   });
 });
 
+it.concurrent("--filter with a name that leaves out the scope targets the one member that has it", async () => {
+  using ctx = await testContext();
+  const member = { dependencies: { baz: "~0.0.3" } };
+  const written = await setupWorkspaces(ctx, member, {
+    "scope-a": { name: "@scope/a", ...member },
+    "scope-b": { name: "@scope/b", ...member },
+    other: member,
+  });
+  const moved = { dependencies: { baz: "~0.0.5" } };
+
+  expect((await runUpdate(ctx, ["--filter", "a"])).err).toBe("Saved lockfile\n");
+  await expectWorkspaces(ctx, { ...written, "packages/scope-a": { name: "@scope/a", ...moved } });
+
+  // The same name resolution with a named update.
+  expect((await runUpdate(ctx, ["baz", "--filter", "b"])).err).toBe("Saved lockfile\n");
+  await expectWorkspaces(ctx, {
+    ...written,
+    "packages/scope-a": { name: "@scope/a", ...moved },
+    "packages/scope-b": { name: "@scope/b", ...moved },
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/23507
 // The override pins baz to 0.0.3; --latest must not resolve past it.
 for (const depLiteral of ["^0.0.3", "0.0.3"]) {

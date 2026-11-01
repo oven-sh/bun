@@ -2158,6 +2158,32 @@ describe("workspace integration", () => {
     expectPrefixed(r.stdout, "packages/my-pkg:build", "no-name-ok");
     expect(r.exitCode).toBe(0);
   });
+
+  test.each(["--parallel", "--sequential"])("%s --filter takes a name without its scope", async mode => {
+    const root = JSON.stringify({ name: "monorepo", private: true, workspaces: ["packages/*"] });
+    const pkg = (name: string, out: string) => JSON.stringify({ name, scripts: { build: `echo ${out}` } });
+
+    using dir = tempDir("mr-ws-unscoped", {
+      "package.json": root,
+      "packages/db/package.json": pkg("@org/db", "db-built"),
+      "packages/web/package.json": pkg("@org/web", "web-built"),
+    });
+    const r = await runMulti(["run", mode, "--filter", "db", "build"], String(dir));
+    expectPrefixed(r.stdout, "@org/db:build", "db-built");
+    expect(r.stdout).not.toContain("web-built");
+    expect(r.exitCode).toBe(0);
+
+    // Two scoped packages have the name, so it selects neither.
+    using ambiguous = tempDir("mr-ws-unscoped-two", {
+      "package.json": root,
+      "packages/org/package.json": pkg("@org/db", "org-built"),
+      "packages/other/package.json": pkg("@other/db", "other-built"),
+    });
+    const none = await runMulti(["run", mode, "--filter", "db", "build"], String(ambiguous));
+    expect(none.stderr.trim()).toBe(`error: No workspace packages matched the filter "db"`);
+    expect(none.stdout).toBe("");
+    expect(none.exitCode).toBe(1);
+  });
 });
 
 // ─── BUNFIG [run] SECTION ─────────────────────────────────────────────────────

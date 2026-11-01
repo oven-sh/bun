@@ -24,6 +24,8 @@ pub struct Candidate<'a> {
 pub enum RootSelection {
     Implicit,
     ExplicitOnly,
+    /// The root's name takes part in matching, but the root is never selected.
+    MatchOnly,
 }
 
 pub struct Selection {
@@ -194,6 +196,42 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
     }
 }
 
+/// A name pattern can leave out the scope, as in pnpm. Call this when `glob` matched no full name:
+/// it selects the one workspace whose name after `@scope/` matches, and nothing when several do.
+fn select_only_scoped(
+    glob: &Prepared<Box<[u8]>>,
+    candidates: &[Candidate<'_>],
+    set: &mut DynamicBitSet,
+) {
+    let pattern = glob.pattern();
+    if matches!(pattern.first(), None | Some(b'@' | b'!')) || strings::contains_char(pattern, b'/')
+    {
+        return;
+    }
+    let mut first: Option<&Candidate<'_>> = None;
+    for (i, c) in candidates.iter().enumerate() {
+        let Some((_, unscoped)) = c
+            .name
+            .strip_prefix(b"@")
+            .and_then(|scoped| strings::split_once_char(scoped, b'/'))
+        else {
+            continue;
+        };
+        if !glob.r#match(unscoped).matches() {
+            continue;
+        }
+        // `bun run --filter` lists a directory once for each `workspaces` entry that reaches it.
+        if let Some(first) = first
+            && (first.abs_posix_dir.is_empty() || first.abs_posix_dir != c.abs_posix_dir)
+        {
+            set.unmanaged.set_all(false);
+            return;
+        }
+        first = first.or(Some(c));
+        set.set(i);
+    }
+}
+
 fn bitset(n: usize) -> DynamicBitSet {
     DynamicBitSet::init_empty(n).unwrap_or_oom()
 }
@@ -266,6 +304,9 @@ pub fn select(
     let root_index = explicit_root_only
         .then(|| candidates.iter().position(|c| c.is_root))
         .flatten();
+    let hidden_root = (root == RootSelection::MatchOnly)
+        .then(|| candidates.iter().position(|c| c.is_root))
+        .flatten();
     let mut include = bitset(n);
     let mut exclude = bitset(n);
     let mut any_positive = false;
@@ -275,10 +316,18 @@ pub fn select(
     for (index, raw) in patterns.iter().enumerate() {
         let sel = parse(raw, original_cwd, &mut path_buf.0);
         let mut set = bitset(n);
+        let mut matched = false;
         for (i, c) in candidates.iter().enumerate() {
             if base_matches(&sel.base, c, explicit_root_only) {
                 set.set(i);
+                matched = true;
             }
+        }
+        if !matched && let Base::Name(glob) = &sel.base {
+            select_only_scoped(glob, candidates, &mut set);
+        }
+        if let Some(i) = hidden_root {
+            set.unset(i);
         }
         if sel.dependencies || sel.dependents {
             debug_assert!(graph.is_some());
@@ -302,6 +351,9 @@ pub fn select(
             if base_matches(&Base::All, c, explicit_root_only) {
                 include.set(i);
             }
+        }
+        if let Some(i) = hidden_root {
+            include.unset(i);
         }
     }
 

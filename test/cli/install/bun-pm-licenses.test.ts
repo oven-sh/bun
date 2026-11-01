@@ -1461,6 +1461,23 @@ describe("bun pm licenses", () => {
     });
   });
 
+  test.concurrent("--filter takes a workspace name without its scope", async () => {
+    const dir = await setup("hoisted", {
+      ...monorepoFiles,
+      "packages/foo/package.json": JSON.stringify({
+        ...JSON.parse(monorepoFiles["packages/foo/package.json"]),
+        name: "@org/foo",
+      }),
+    });
+
+    const [unscoped, negated] = await Promise.all([
+      licensesJson(dir, "--filter", "foo"),
+      licensesJson(dir, "--filter", "!foo"),
+    ]);
+    expect(unscoped).toStrictEqual(fooJson);
+    expect(negated).toStrictEqual(barJson);
+  });
+
   test.concurrent("--filter matching nothing is an error", async () => {
     const [stdout, stderr, exitCode] = await licenses(monoDir, "--filter", "nope", "--json");
     expect(stdout).toBe("");

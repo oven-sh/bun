@@ -1,5 +1,5 @@
 //! Single source of truth for Bun's `<tag>` → ANSI colour table **and** the
-//! named ANSI escape constants used directly by REPL / diff-printer / multi-run
+//! named ANSI escape constants used directly by diff-printer / multi-run
 //! output. Zero-dep `#![no_std]` leaf so both the proc-macro crate and runtime
 //! crates can import it without a cycle.
 

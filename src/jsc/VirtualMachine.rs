@@ -5403,7 +5403,7 @@ impl VirtualMachine {
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
-        let mut source_to_use: &[u8] = if !is_special_source {
+        let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
             } else {
@@ -5418,29 +5418,33 @@ impl VirtualMachine {
         } else {
             bun_ast::ImportKind::Require
         };
-        let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
-        let result: bun_resolver::Result = loop {
-            match self.transpiler.resolver.resolve_and_auto_install(
-                source_to_use,
-                normalized_specifier,
-                import_kind,
-                global_cache,
-            ) {
-                ResultUnion::Success(r) => break r,
-                ResultUnion::Failure(e) => return Err(e.into()),
-                ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                    if core::mem::take(&mut may_retry_from_root)
-                        && let Some(root) = self
-                            .standalone_module_graph
-                            .map(|graph| graph.base_public_path_with_default_suffix())
-                            .filter(|root| !source_to_use.starts_with(root))
-                    {
-                        source_to_use = root;
-                        continue;
-                    }
-                    return Err(crate::CrateError::ModuleNotFound);
-                }
+        // An executable that was compiled in place looks from the importer, then from the root of its modules.
+        let root = self
+            .standalone_module_graph
+            .filter(|_| self.finds_entry_points_by_path && !is_special_source)
+            .map(|graph| graph.base_public_path_with_default_suffix())
+            .filter(|root| !source_to_use.starts_with(root));
+        let resolver = &mut self.transpiler.resolver;
+        let lookup = |resolver: &mut bun_resolver::Resolver<'_>, source_dir: &[u8]| match resolver
+            .resolve_and_auto_install(source_dir, normalized_specifier, import_kind, global_cache)
+        {
+            ResultUnion::Success(found) => Ok(Ok(found)),
+            ResultUnion::Failure(error) => Ok(Err(error)),
+            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(()),
+        };
+        let found = match root {
+            None => lookup(resolver, source_to_use),
+            // One check on disk when both miss.
+            Some(root) => {
+                resolver.with_deferred_miss_check(source_to_use, normalized_specifier, |resolver| {
+                    lookup(resolver, source_to_use).or_else(|()| lookup(resolver, root))
+                })
             }
+        };
+        let result: bun_resolver::Result = match found {
+            Ok(Ok(found)) => found,
+            Ok(Err(error)) => return Err(error.into()),
+            Err(()) => return Err(crate::CrateError::ModuleNotFound),
         };
 
         if !self.macro_mode {

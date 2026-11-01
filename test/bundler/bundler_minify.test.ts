@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
@@ -309,6 +310,320 @@ describe("bundler", () => {
       '"Objects are not valid as a React child (found: " + (childString === "[object Object]" ? "object with keys {" + Object.keys(node).join(", ") + "}" : childString) + "). If you meant to render a collection of children, use an array instead."',
     ],
     minifySyntax: true,
+  });
+  // A `--define` value is parsed as JSON, not by the lexer, and is stored as 8-bit WTF-8. The
+  // folds of `[n]`, `.charCodeAt(n)`, `.length`, `<` and unary `+` have to read such a string per
+  // UTF-16 code unit, not per byte.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`minify/DefineNonAsciiStringFolding${backend === "cli" ? "Cli" : "Api"}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          declare const U: string, E: string, D: string, N: string, S: string, H: string, L: string;
+          declare const A: { s: string; n: string[] }, R: string[], B: Record<string, number>, Q: string, P: string, Z: string, C: string;
+          console.log(JSON.stringify([U, U[0], U[1], U[3], \`\${U}\`.length, U.length, (U + "")[0], U + "!", U === "é😀", U.charCodeAt(0), U.charCodeAt(2)]));
+          console.log(JSON.stringify([E === U, E[0], \`\${E}\`.length]));
+          console.log(JSON.stringify([+D, -D, ~D, +N, +U]));
+          console.log(JSON.stringify([S.length, S.charCodeAt(0), \`\${S}\`.length, (H + L).length, (H + L)[0] === H, (H + L).charCodeAt(1), H + L === "😀"]));
+          console.log(JSON.stringify([A.s[0], A.n[0][0], \`\${A.n[0]}\`.length, R[0][0], R[0].length, B.clé, Q.length, Q[0]]));
+          console.log(JSON.stringify([(C + "x")[1], (C + "x").length, (C + "x")[0], ("x" + C)[1], \`\${C}x\`[1], \`\${C}x\`.length]));
+          console.log(JSON.stringify([P < Z, P > Z, Z <= P, U < "z", U >= "z", ({ "Ã©": 1 } as any).é === undefined]));
+          console.log(JSON.stringify([(/é/ + "x")[1], (/é/ + "x").length, ("ab" + "cd")[3], ("ab" + "cd").charCodeAt(2)]));
+          switch (U[0]) {
+            case "é":
+              console.log("case é");
+              break;
+            default:
+              console.log("default");
+          }
+        `,
+      },
+      define: {
+        U: '"é😀"',
+        // the same value spelled in ASCII
+        E: '"\\u00e9\\ud83d\\ude00"',
+        // U+2028 and U+00A0 are StrWhiteSpace for ToNumber
+        D: '"\u2028 12 "',
+        N: '"\u00a01"',
+        // half of a surrogate pair is one code unit, and the two halves join into one character
+        S: '"\\ud800"',
+        H: '"\\ud83d"',
+        L: '"\\ude00"',
+        A: '{"s":"ü!","n":["中文"]}',
+        R: '["é","x"]',
+        B: '{"clé":2}',
+        // not JSON and not an identifier: the value is the text itself
+        Q: "é-x",
+        // U+FF5E is after U+1F600 in UTF-16 code units, and before it in bytes
+        P: '"\uff5e"',
+        Z: '"😀"',
+        C: '"€"',
+      },
+      minifySyntax: true,
+      backend,
+      run: {
+        stdout: [
+          '["é😀","é","\\ud83d",null,3,3,"é","é😀!",true,233,56832]',
+          '[true,"é",3]',
+          "[12,-12,-13,1,null]",
+          "[1,55296,1,2,true,56832,true]",
+          '["ü","中",2,"é",1,2,3,"é"]',
+          '["x",2,"€","€","x",2]',
+          "[false,true,true,false,true,true]",
+          '["é",4,"d",99]',
+          "case é",
+        ].join("\n"),
+      },
+    });
+  }
+  // Every condition is true. A branch is removed only if its condition folds, and the build then
+  // needs no "./missing-*.js". So each row fails the build if its fold is wrong or left out.
+  {
+    const conditions = [
+      // one fold of the define
+      `X.length === 1`,
+      `+X !== +X`,
+      `-X !== -X`,
+      `~X === -1`,
+      `!(X < "z")`,
+      `X[0] === "é"`,
+      `X.charCodeAt(0) === 233`,
+      // the result of [n] in a second fold: the value has to be the character
+      `X[0] + "x" === "éx"`,
+      '`${X[0]}x` === "éx"',
+      `X[0] > "z" && X[0] < "ê"`,
+      `X[0] + X[0] === "éé"`,
+      `(X[0] + "x")[0] === "é"`,
+      `(X[0] + "x").charCodeAt(0) === 233`,
+      `U[0] + "x" === "éx"`,
+      `U[1] + U[2] === "😀"`,
+      `(U[1] + "x").charCodeAt(0) === 0xd83d`,
+      `+W[0] === 0`,
+      // the same shapes where one byte of the character gives the same answer by chance
+      `(X[0] + "x").length === 2`,
+      "`${X[0]}x`.length === 2",
+      `(X[0] + X[0]).length === 2`,
+      `+X[0] !== +X[0]`,
+      `(U[1] + U[2]).length === 2`,
+      `(U[0] + "x").length === 2`,
+      // order is by UTF-16 code unit: inside a sequence, after a shared prefix, against a
+      // literal, and where a code unit and a byte disagree (U+FF5E and U+E000 against U+1F600)
+      `X > EGRAVE && !(X < EGRAVE)`,
+      `ZHONG > DING`,
+      `Z < Z1 && Z <= Z`,
+      `X < XA && XA > X && X <= X && X >= X`,
+      `P > Z && !(P < Z)`,
+      `X < "ü" && X > "à"`,
+      `Z < "\uff5e" && "\uff5e" > Z`,
+      // the entry has the escape: half of a pair cannot be written to a file as it is
+      `!(PRIVATE < "\\ud800")`,
+    ];
+    itBundled("minify/DefineNonAsciiDeadBranch", {
+      files: {
+        "/entry.js": conditions
+          .map((condition, i) => `if (${condition}) console.log(${i}); else require("./missing-${i}.js");`)
+          .join("\n"),
+      },
+      define: {
+        X: '"é"',
+        XA: '"éa"',
+        EGRAVE: '"è"',
+        U: '"é😀"',
+        W: '"\u00a0"',
+        ZHONG: '"中"',
+        DING: '"丁"',
+        Z: '"😀"',
+        Z1: '"😁"',
+        P: '"\uff5e"',
+        PRIVATE: '"\ue000"',
+      },
+      minifySyntax: true,
+      run: { stdout: conditions.map((_, i) => i).join("\n") },
+    });
+  }
+  // What folds and what does not, as it is printed. A literal that is not ASCII is UTF-16: its
+  // `[n]`, `.charCodeAt` and unary `+` are not folded, and neither is a key that is one.
+  itBundled("minify/NonAsciiStringFoldPins", {
+    files: {
+      "/entry.js": /* js */ `
+        capture((C + "xy")[2]);
+        capture((C + "xy").charCodeAt(2));
+        capture((C + "xy")[3]);
+        capture(({ e: 1 }).e);
+        capture(B.clé);
+        capture(({ "é": 1 }).é);
+        capture(({ "Ã©": 1 }).é);
+        capture("é"[0]);
+        capture("é".charCodeAt(0));
+        capture("é" < "z");
+        capture(C < "é");
+      `,
+    },
+    define: { C: '"€"', B: '{"clé":2}' },
+    minifySyntax: true,
+    capture: [
+      '"y"',
+      "121",
+      '"€xy"[3]',
+      "1",
+      "2",
+      '{ "é": 1 }.é',
+      '{ "Ã©": 1 }.é',
+      '"é"[0]',
+      '"é".charCodeAt(0)',
+      "!1",
+      "!1",
+    ],
+  });
+  // A string enum member that is a define goes through the same folds.
+  itBundled("minify/DefineNonAsciiInlinedEnum", {
+    files: {
+      "/entry.ts": /* ts */ `
+        declare const X: string, N: string, PD: string, ZD: string;
+        enum E { A = X, C = N, P = PD, Z = ZD, J = X + "y" }
+        capture(E.A.length);
+        capture(E.A[0]);
+        capture(E.A[1]);
+        capture(+E.C);
+        capture(E.P < E.Z);
+        capture(E.J.length);
+      `,
+    },
+    define: { X: '"é😀"', N: '"\u00a01"', PD: '"\uff5e"', ZD: '"😀"' },
+    minifySyntax: true,
+    capture: ["3", '"é"', '"\\uD83D"', "1", "!1", "4"],
+  });
+  // A join of two 8-bit strings is still resolved at build time when one of them is not ASCII.
+  itBundled("minify/DefineNonAsciiRequireJoin", {
+    files: {
+      "/entry.js": /* js */ `console.log(require(D + "/m.js"));`,
+      "/dér/m.js": /* js */ `module.exports = "from m";`,
+    },
+    define: { D: '"./dér"' },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("from m");
+    },
+    run: { stdout: "from m" },
+  });
+  // The index and charCodeAt folds read every segment of a joined string. An index past the end
+  // is left for run time.
+  itBundled("minify/StringIndexFoldingAcrossJoin", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(("ab" + "cd")[3]);
+        capture(("ab" + "cd").charCodeAt(2));
+        capture(("ab" + "cd")[4]);
+        capture("ab".charCodeAt(2));
+      `,
+    },
+    capture: ['"d"', "99", '"abcd"[4]', '"ab".charCodeAt(2)'],
+    minifySyntax: true,
+  });
+  // `.length` of a string is not folded where it is assigned to, updated or deleted: `1 = 1` does not parse.
+  itBundled("minify/StringLengthFoldNotOnAssignTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        X.length = 1;
+        A.length++;
+        delete X.length;
+        console.log(X.length, A.length);
+      `,
+    },
+    define: { X: '"é"', A: '"abc"' },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('"é".length = 1');
+      expect(out).toContain('"abc".length++');
+      expect(out).toContain('delete "é".length');
+      expect(out).toContain("console.log(1, 3)");
+    },
+  });
+  // `"s"[n]` and `[x][n]` are not folded under `delete`: `delete "a"` is `true`, and `delete g` is another statement.
+  itBundled("minify/ConstantIndexFoldNotOnDeleteTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(delete A[0]);
+        capture(delete X[0]);
+        capture(delete [g][0]);
+        capture(A[0]);
+        capture(X[0]);
+        capture([g][0]);
+      `,
+    },
+    define: { X: '"é"', A: '"abc"' },
+    minifySyntax: true,
+    capture: ['delete "abc"[0]', 'delete "é"[0]', "delete [g][0]", '"a"', '"é"', "g"],
+  });
+  // An index that is negative, not whole, or 2**32 and more is left for run time. -0 is index 0.
+  itBundled("minify/StringIndexFoldingBounds", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(C[-1]);
+        capture(C[1.5]);
+        capture(C[4294967295]);
+        capture(C[4294967296]);
+        capture(C[4294967297]);
+        capture(C[-0]);
+        capture(C.charCodeAt(-1));
+        capture(C.charCodeAt(-0));
+        capture(C.charCodeAt(1.5));
+        capture(C.charCodeAt(4294967296));
+        capture(["p", "q"][-1]);
+        capture(["p", "q"][1.5]);
+        capture(["p", "q"][4294967297]);
+      `,
+    },
+    define: { C: '"€a"' },
+    minifySyntax: true,
+    capture: [
+      '"€a"[-1]',
+      '"€a"[1.5]',
+      '"€a"[4294967295]',
+      '"€a"[4294967296]',
+      '"€a"[4294967297]',
+      '"€"',
+      '"€a".charCodeAt(-1)',
+      "8364",
+      '"€a".charCodeAt(1.5)',
+      '"€a".charCodeAt(4294967296)',
+      '["p", "q"][-1]',
+      '["p", "q"][1.5]',
+      '["p", "q"][4294967297]',
+    ],
+  });
+  // `import.meta.file`/`dir` (cjs output) and `module.filename` are inlined from the file path,
+  // which is 8-bit and can be non-ASCII. Its folds have to read it per UTF-16 code unit, and
+  // `require(import.meta.dir + "/m.js")` still has to resolve at build time.
+  itBundled("minify/InlinedImportMetaPathNonAscii", {
+    files: {
+      "/dér/filé.js": /* js */ `
+        const m = require(import.meta.dir + "/m.js");
+        const t = require(\`\${import.meta.dir}/t.js\`);
+        console.log(JSON.stringify([import.meta.file, import.meta.file[3], import.meta.file[4], import.meta.file.length, import.meta.file.charCodeAt(3), \`\${import.meta.file}\`.length, m.x, t.y]));
+      `,
+      "/dér/m.js": `module.exports.x = "from m";`,
+      "/dér/t.js": `module.exports.y = "from t";`,
+    },
+    format: "cjs",
+    target: "bun",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("from m");
+      expect(code).toContain("from t");
+    },
+    run: { stdout: '["filé.js","é",".",7,233,7,"from m","from t"]' },
+  });
+  itBundled("minify/InlinedModuleFilenameNonAscii", {
+    files: {
+      "/dér/cjé.cjs": /* js */ `
+        console.log(JSON.stringify([module.filename, module.filename[2], module.filename[3], module.filename.length, \`\${module.filename}\`.length]));
+      `,
+    },
+    target: "bun",
+    minifySyntax: true,
+    run: { stdout: '["cjé.cjs","é",".",7,7]' },
   });
   itBundled("minify/FunctionExpressionRemoveName", {
     files: {
@@ -2114,3 +2429,156 @@ test.each(["transformSync", "transform"] as const)(
     expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
   },
 );
+
+// Some string folds need no minify flag: `.charCodeAt(n)` and unary `+` and `-` always run, and `~`, `<` and a join run
+// in an enum initializer. A `define` string is stored as 8-bit WTF-8, and they have to read it per UTF-16 code unit.
+describe("bundler", () => {
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`minify/DefineNonAsciiFoldsWithoutMinifyFlag${backend === "cli" ? "Cli" : "Api"}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          declare const A: string, N: string, D: string, P: string, Z: string;
+          enum E {
+            Code = A.charCodeAt(2) === 97 ? 1 : 2,
+            Not = ~N,
+            Joined = (A + "x").charCodeAt(2),
+            Order = P < Z ? 1 : 2,
+          }
+          console.log(JSON.stringify([A.charCodeAt(2), A.charCodeAt(1), A.charCodeAt(0), +N, -N, +D]));
+          console.log(JSON.stringify([E.Code, E.Not, E.Joined, E.Order]));
+          if (+N === 1) console.log("one"); else require("./missing-number.js");
+        `,
+      },
+      define: {
+        A: '"éa"',
+        // U+00A0 and U+2028 are white space for a number
+        N: '"\u00a01"',
+        D: '"\u2028 12 "',
+        // U+FF5E is after U+1F600 in UTF-16 code units, and before it in bytes
+        P: '"\uff5e"',
+        Z: '"😀"',
+      },
+      backend,
+      run: { stdout: "[null,97,233,1,-1,12]\n[2,-2,120,2]\none" },
+    });
+  }
+});
+
+// Seeded differential of the string folds against the engine: every value is a `define`, which is
+// stored as 8-bit WTF-8 and not by the lexer. The folded bundle has to compute what this process
+// computes for the same expressions, and nothing that can fold may be left in its text: a fold
+// that is left out gives the same value. Replay with BUN_DEFINE_FOLD_SEED=<seed>.
+const DEFINE_FOLD_SEED =
+  process.env.BUN_DEFINE_FOLD_SEED !== undefined ? Number(process.env.BUN_DEFINE_FOLD_SEED) >>> 0 : 0x9e3779b9;
+const DEFINE_FOLD_CASES = Number(process.env.BUN_DEFINE_FOLD_CASES ?? 200);
+const DEFINE_FOLD_LONG_CASES = Number(process.env.BUN_DEFINE_FOLD_LONG_CASES ?? 8);
+
+test(`folds of non-ASCII define strings are what the engine computes (seed=${DEFINE_FOLD_SEED})`, async () => {
+  let seed = DEFINE_FOLD_SEED;
+  const rnd = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = <T>(list: T[]) => list[Math.floor(rnd() * list.length)];
+  // prettier-ignore
+  const atoms = ["a", "z", "A", "0", "1", "9", " ", "x", "-", ".", "é", "ü", "\u00a0", "€", "中", "\u2028", "\ufeff", "\uff5e", "\ue000", "\uffff",
+    "😀", "𠮷", "\u{10000}", "\u{10ffff}", "\ud800", "\udbff", "\udc00", "\udfff", "\ud83d", "\ude00"];
+  // prettier-ignore
+  const numeric = ["1", "12", " 12 ", "\u00a01", "\u20281\u2028", "\ufeff7", "1e3", "0x10", "-5", "", " ", "\u00a0", "1\u00a02", "Infinity", "é1"];
+  const str = () => {
+    if (rnd() < 0.12) return pick(numeric);
+    let text = "";
+    for (let n = Math.floor(rnd() * 6); n > 0; n--) text += pick(atoms);
+    return text;
+  };
+
+  const define: Record<string, string> = {};
+  const lines: string[] = [];
+  const want: unknown[][] = [];
+  // A read at or past the end is left for run time, and so is everything that is made of one.
+  const left = { index: 0, charCodeAt: 0, booleans: 0 };
+  // A long text reaches the SIMD paths of the readers, which the Rust unit tests under Miri cannot call.
+  const long = () => {
+    let text = "";
+    for (let runs = 2 + Math.floor(rnd() * 6); runs > 0; runs--)
+      text += pick(atoms).repeat(Math.floor(rnd() * pick([8, 40, 400])));
+    return text;
+  };
+  for (let k = 0; k < DEFINE_FOLD_CASES + DEFINE_FOLD_LONG_CASES; k++) {
+    let x: string, y: string, z: string;
+    if (k < DEFINE_FOLD_CASES) {
+      x = str();
+      y = rnd() < 0.15 ? x : str();
+      z = rnd() < 0.6 ? x + y : str();
+    } else {
+      x = long();
+      const cut = Math.floor(rnd() * (x.length + 1));
+      y = x.slice(0, cut) + pick(atoms) + x.slice(cut + 1);
+      z = rnd() < 0.6 ? x + y : y + x;
+    }
+    const i = Math.floor(rnd() * (x.length + 2)),
+      j = Math.floor(rnd() * (x.length + y.length + 2));
+    const [X, Y, Z] = [`X${k}`, `Y${k}`, `Z${k}`];
+    define[X] = JSON.stringify(x);
+    define[Y] = JSON.stringify(y);
+    define[Z] = JSON.stringify(z);
+    let line = `[${X}[${i}], ${X}.charCodeAt(${i}), ${X}.length, (${X} + ${Y}).length, (${X} + ${Y})[${j}], (${X} + ${Y}).charCodeAt(${j}), ${X} < ${Y}, ${X} <= ${Y}, ${X} > ${Y}, ${X} >= ${Y}, +${X}, -${X}, ~${Y}, ${X} + ${Y} === ${Z}, ${X} === ${Y}, \`\${${X}}\${${Y}}\`.length, \`\${${X}}-\${${Y}}\`[${j}]`;
+    // prettier-ignore
+    const row: unknown[] = [x[i], x.charCodeAt(i), x.length, (x + y).length, (x + y)[j], (x + y).charCodeAt(j), x < y, x <= y, x > y, x >= y, +x, -x, ~(y as any), x + y === z, x === y, `${x}${y}`.length, `${x}-${y}`[j]];
+    left.index += (i >= x.length ? 1 : 0) + (j >= x.length + y.length ? 1 : 0) + (j > x.length + y.length ? 1 : 0);
+    left.charCodeAt += (i >= x.length ? 1 : 0) + (j >= x.length + y.length ? 1 : 0);
+    left.booleans += 6;
+    if (x.length > 0) {
+      // The result of `[n]` in a second fold.
+      const n = Math.floor(rnd() * x.length);
+      line += `, (${X}[${n}] + ${Y}).length, ${X}[${n}] + ${Y} === ${Z}, ${X}[${n}] < ${Y}, +${X}[${n}], ${X}[${n}][0], ${X}[${n}].charCodeAt(0), \`\${${X}[${n}]}-\`.length`;
+      // prettier-ignore
+      row.push((x[n] + y).length, x[n] + y === z, x[n] < y, +x[n], x[n][0], x[n].charCodeAt(0), `${x[n]}-`.length);
+      left.booleans += 2;
+    }
+    lines.push(line + "],");
+    want.push(row);
+  }
+
+  using dir = tempDir("define-fold-differential", { "entry.js": `rows([\n${lines.join("\n")}\n]);\n` });
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.js")],
+    define,
+    minify: { syntax: true },
+    target: "bun",
+  });
+  expect(result.success).toBe(true);
+  const code = await result.outputs[0].text();
+
+  // The bundle has no import or export: the engine evaluates it as it is, not through the runtime transpiler.
+  let got: unknown[][] = [];
+  new Function("rows", code)((rows: unknown[][]) => (got = rows));
+  const differ: unknown[] = [];
+  for (let k = 0; k < want.length; k++)
+    for (let c = 0; c < want[k].length; c++)
+      if (!Object.is(want[k][c], got[k]?.[c])) differ.push({ k, cell: c, want: want[k][c], got: got[k]?.[c] });
+  expect({ rows: got.length, differ: differ.length, first: differ.slice(0, 5) }).toEqual({
+    rows: DEFINE_FOLD_CASES + DEFINE_FOLD_LONG_CASES,
+    differ: 0,
+    first: [],
+  });
+
+  const count = (re: RegExp) => code.match(re)?.length ?? 0;
+  expect({
+    length: count(/\.length\b/g),
+    charCodeAt: count(/\.charCodeAt\(/g),
+    index: count(/["`]\[\d+\]/g),
+    booleans: count(/![01]\b/g),
+    compares: count(/["`] [<>]=? ["`]/g),
+    unary: count(/(?<=[\[,] )[+\-~]["`]/g),
+  }).toEqual({
+    length: 0,
+    charCodeAt: left.charCodeAt,
+    index: left.index,
+    booleans: left.booleans,
+    compares: 0,
+    unary: 0,
+  });
+});

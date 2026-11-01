@@ -53,13 +53,14 @@ pub const fn is_regexp_word_byte(byte: u8) -> bool {
 }
 #[path = "immutable/wtf8_text.rs"]
 mod wtf8_text;
-use wtf8_text::wtf8_decoded_units;
 pub use wtf8_text::{
-    Wtf8Codepoints, codepoint_len_utf16, push_codepoint_wtf8_joined, push_wtf8,
-    push_wtf8_well_formed, utf8_decoded_len_utf16, utf8_lossy_len_utf16, wtf8_codepoint_at,
-    wtf8_codepoint_count, wtf8_codepoints, wtf8_first_codepoint, wtf8_has_surrogate,
-    wtf8_len_utf16, wtf8_offset_of_utf16_index, wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8,
+    Wtf8CodeUnitAt, Wtf8Codepoints, codepoint_len_utf16, push_codepoint_wtf8_joined, push_wtf8,
+    push_wtf8_well_formed, utf8_decoded_len_utf16, utf8_lossy_len_utf16, wtf8_checked_len_utf16,
+    wtf8_code_unit_at, wtf8_codepoint_at, wtf8_codepoint_count, wtf8_codepoints,
+    wtf8_first_codepoint, wtf8_has_surrogate, wtf8_len_utf16, wtf8_offset_of_utf16_index,
+    wtf8_pair_across, wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8,
 };
+use wtf8_text::{wtf8_checked_units, wtf8_decoded_units};
 
 // UTF-16 surrogate primitives. The single implementation lives in the
 // tier-0 `crate::strings_impl`; re-exported here as part of `bun.strings`.
@@ -1956,6 +1957,39 @@ pub fn order_utf16(a: &[u8], b: &[u8]) -> Ordering {
     wtf8_decoded_units(&a[start..]).cmp(wtf8_decoded_units(&b[start..]))
 }
 
+/// [`order_utf16`], or `None` if an ill-formed byte is at or before the first difference.
+pub fn checked_order_utf16(a: &[u8], b: &[u8]) -> Option<Ordering> {
+    if first_non_ascii(a).is_none() && first_non_ascii(b).is_none() {
+        return Some(a.cmp(b));
+    }
+    let (mut left, mut right) = (wtf8_checked_units(a), wtf8_checked_units(b));
+    loop {
+        let (x, y) = (left.next().map(|it| it.1), right.next().map(|it| it.1));
+        if left.ill_formed() || right.ill_formed() {
+            return None;
+        }
+        if x != y || x.is_none() {
+            return Some(x.cmp(&y));
+        }
+    }
+}
+
+/// Code-unit order of WTF-8 `text` against UTF-16 `units`. `None` as in [`checked_order_utf16`].
+pub fn checked_order_wtf8_utf16(text: &[u8], units: &[u16]) -> Option<Ordering> {
+    let mut left = wtf8_checked_units(text);
+    let mut right = units.iter().copied();
+    loop {
+        let x = left.next().map(|it| it.1);
+        if left.ill_formed() {
+            return None;
+        }
+        let y = right.next();
+        if x != y || x.is_none() {
+            return Some(x.cmp(&y));
+        }
+    }
+}
+
 pub fn cmp_strings_asc(_: (), a: &[u8], b: &[u8]) -> bool {
     order(a, b) == Ordering::Less
 }
@@ -2828,8 +2862,50 @@ mod tests {
                     a_units.cmp(b_units),
                     "{a:x?} {b:x?}"
                 );
+                // The checked order is the same, or none where it depends on an ill-formed byte.
+                let is_wtf8 = |text| super::wtf8_checked_len_utf16(text).is_some();
+                match super::checked_order_utf16(a, b) {
+                    Some(order) => assert_eq!(order, a_units.cmp(b_units), "{a:x?} {b:x?}"),
+                    None => assert!(!is_wtf8(a) || !is_wtf8(b), "{a:x?} {b:x?}"),
+                }
             }
         }
+        // What is after the first difference is not looked at. What is before it is.
+        use std::cmp::Ordering;
+        for (a, b, order) in [
+            (&b"a\xFF"[..], &b"b\xFF"[..], Some(Ordering::Less)),
+            (b"\xC3\xA9\xFF", b"\xC3\xA8\xFF", Some(Ordering::Greater)),
+            (b"\xC3\xA9a\xFF", b"\xC3\xA9b\xFF", Some(Ordering::Less)),
+            (b"\xFFaa", b"\xFFab", None),
+            (b"\xFFa", b"\xFFb", None),
+            (b"\xC3\xA9\xFF", b"\xC3\xA9", None),
+            (b"\xFF", b"\xC3\xA9", None),
+            (b"\xE2\x41\x42", b"\xE2\x41\x43", None),
+            (b"\xE2\x41", b"\xE2\x82\xAC", None),
+        ] {
+            assert_eq!(super::checked_order_utf16(a, b), order, "{a:x?} {b:x?}");
+        }
+        // WTF-8 against UTF-16 is the same order.
+        for (a, a_units) in texts {
+            for (_, b_units) in texts {
+                match super::checked_order_wtf8_utf16(a, b_units) {
+                    Some(order) => assert_eq!(order, a_units.cmp(b_units), "{a:x?} {b_units:x?}"),
+                    None => assert!(super::wtf8_checked_len_utf16(a).is_none(), "{a:x?}"),
+                }
+            }
+        }
+        assert_eq!(
+            super::checked_order_wtf8_utf16("é😀".as_bytes(), &[0xE9, 0xD83D, 0xDE00]),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            super::checked_order_wtf8_utf16(b"a\xFF", &[0x62]),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            super::checked_order_wtf8_utf16(b"a\xFF", &[0x61, 0x62]),
+            None
+        );
     }
 
     #[test]

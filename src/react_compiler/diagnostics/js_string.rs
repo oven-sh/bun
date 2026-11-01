@@ -76,13 +76,9 @@ impl JsString {
     }
 
     /// JS `String.prototype.length` (UTF-16 code-unit count).
-    pub fn len_utf16(&self) -> usize {
-        let s = self.0.get();
-        if let Some(n) = s.javascript_length() {
-            return n as usize;
-        }
-        // 8-bit non-ASCII WTF-8
-        strings::element_length_utf8_into_utf16(s.slice8())
+    /// `None` for 8-bit bytes that are not WTF-8.
+    pub fn len_utf16(&self) -> Option<usize> {
+        self.0.get().javascript_length().map(|n| n as usize)
     }
 }
 

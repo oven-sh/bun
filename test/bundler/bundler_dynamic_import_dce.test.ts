@@ -3158,6 +3158,24 @@ describe("bundler", () => {
     },
   });
 
+  // `require?.("./b.js")` becomes the module, which is no link of an optional
+  // chain, so `.c` after it narrows as it does after `require("./b.js")`.
+  itBundled("dynamic_import_dce/OptionalRequireNarrowsLikeRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require?.("./b.js").c, require?.("react").version);
+      `,
+      "/b.js": `export const c = "kept-c"; export const e = "DROPPED_e";`,
+      "/node_modules/react/package.json": `{ "name": "react", "main": "index.js" }`,
+      "/node_modules/react/index.js": `exports.version = "19"; exports.other = "DROPPED_other";`,
+    },
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "kept-c 19" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROPPED");
+    },
+  });
+
   // Intermediate-variable destructure: `const ns = await import(); const {a} = ns`
   // — the body destructure is tracked like `ns.a`.
   itBundled("dynamic_import_dce/IntermediateDestructureNarrows", {

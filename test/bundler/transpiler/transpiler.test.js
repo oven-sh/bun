@@ -160,10 +160,9 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = [[0, /* @__PURE__ */ a?.()]][0]?.[1].c", "x = [0, a?.()]?.[1].c");
       ts.expectPrintedMin_("x = [0, /* @__PURE__ */ a?.()][1]", "x = [0, a?.()][1]");
 
-      // The outer `?.` on an array literal is dropped at parse time, so these
-      // reach the fold with `optional_chain == None` on the index and the
-      // printer adds the `(a?.b)` wrapper itself. Keep bailing on the fold so
-      // the wrapper isn't load-bearing.
+      // The outer `?.` on an array literal is dropped, and the links after it
+      // are continuations until the visit pass ends them. An inlined `a?.b`
+      // would become the start of the chain of `.c`, so the fold bails here too.
       ts.expectPrintedMin_("x = [a?.b][0]", "x = [a?.b][0]");
       ts.expectPrintedMin_("x = [a?.b]?.[0]", "x = [a?.b][0]");
       ts.expectPrintedMin_("x = [a?.b][0].c", "x = [a?.b][0].c");
@@ -184,6 +183,8 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = new ({f: a?.b.c}).f()", "x = new { f: a?.b.c }.f");
       ts.expectPrintedMin_("({f: a?.b}).f`x`", "({ f: a?.b }).f`x`");
       ts.expectPrintedMin_("x = ({f: a?.b}).f", "x = { f: a?.b }.f");
+      ts.expectPrintedMin_("x = ({f: a?.b})?.f.c", "x = { f: a?.b }.f.c");
+      ts.expectPrintedMin_('x = ({f: a?.b})?.["f"].c', "x = { f: a?.b }.f.c");
 
       // Non-chain items are still inlined.
       ts.expectPrintedMin_("x = [[y]][0]?.[0].c", "x = y.c");
@@ -228,12 +229,23 @@ describe("Bun.Transpiler", () => {
         check("chain ?.[", () => [a?.b]?.[0].c, "TypeError");
         check("chain cont", () => [[a?.b.c]][0]?.[0].d, "TypeError");
         check("chain pure", () => [[0, /* @__PURE__ */ a?.()]][0]?.[1].c, "TypeError");
+        check("chain local", () => { let x = a?.b; return [[x]][0]?.[0].c; }, "TypeError");
+        check("chain local [0]", () => { let x = a?.b; return [[x]][0]?.[0][0]; }, "TypeError");
+        check("chain ||",   () => { let x = a?.b; return (0 || [x])?.[0].c; }, "TypeError");
+        check("chain || [0]", () => { let x = a?.b; return (0 || [x])?.[0][0]; }, "TypeError");
+        globalThis.scope = "global";
+        check("eval",       () => { var scope = "local"; return (0 || [eval])?.[0]("scope"); }, "=> global");
+        check("eval kept",  () => { var scope = "local"; let o = { e: [eval] }; let r = "" + o?.e[0]("scope"); return r + "!"; }, "=> global!");
         var obj = { n: "obj", m() { return this === obj; } };
         check("this",       () => [obj.m][0](), "=> false");
         var o2 = { p: 1 };
         check("assign",     () => ([o2.p][0] = 5, o2.p), "=> 1");
         var ab = { b: class {} };
         check("new obj",    () => new ({ f: ab?.b }).f() instanceof ab.b, "=> true");
+        String.prototype.C = class {};
+        String.prototype.tag = function (strings) { return this + strings[0]; };
+        check("new on +",   () => typeof new ((\`\${obj.n}\` + 1)?.C)(), "=> object");
+        check("tag on +",   () => (("a" + \`\${obj.n}\`)?.tag)\`x\`, "=> aobjx");
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
@@ -251,9 +263,17 @@ describe("Bun.Transpiler", () => {
         "chain ?.[: ok",
         "chain cont: ok",
         "chain pure: ok",
+        "chain local: ok",
+        "chain local [0]: ok",
+        "chain ||: ok",
+        "chain || [0]: ok",
+        "eval: ok",
+        "eval kept: ok",
         "this: ok",
         "assign: ok",
         "new obj: ok",
+        "new on +: ok",
+        "tag on +: ok",
       ]);
       expect(exitCode).toBe(0);
     });
@@ -4266,6 +4286,331 @@ class Foo {
 
     it("unary operator", () => {
       expectPrinted("a = !(b, c)", "a = (b, !c)");
+    });
+
+    // https://github.com/oven-sh/bun/issues/15848
+    describe("optional chain", () => {
+      // The `?.` on a value that is never nullish is dropped only with minify.syntax and dead code elimination.
+      const modes = {
+        "plain": new Bun.Transpiler({ loader: "tsx", target: "browser" }),
+        "minify": transpiler,
+        "minify, no dead code elimination": new Bun.Transpiler({
+          loader: "tsx",
+          target: "browser",
+          minify: { syntax: true },
+          deadCodeElimination: false,
+        }),
+        "runtime": new Bun.Transpiler({ loader: "tsx", target: "bun" }),
+      };
+      // The distinct error messages of a failed transform. An accepted source gives [].
+      const errors = (transpiler_, source, loader) => {
+        try {
+          transpiler_.transformSync(source, loader);
+        } catch (e) {
+          return [...new Set((e instanceof AggregateError ? e.errors : [e]).map(error => error.message))];
+        }
+        return [];
+      };
+      const expectEachToReport = (sources, message, loader = "js") => {
+        for (const [mode, transpiler_] of Object.entries(modes)) {
+          expect(sources.map(source => [mode, source, errors(transpiler_, source, loader)])).toEqual(
+            sources.map(source => [mode, source, [message]]),
+          );
+        }
+      };
+      const expectPrintedInEachMode = (source, expected) => {
+        const printed = {};
+        for (const [mode, transpiler_] of Object.entries(modes)) {
+          printed[mode] = transpiler_.transformSync(source, "js").trim().replace(/;$/, "");
+        }
+        expect(printed).toEqual(expected);
+      };
+      const neverNullish = [
+        "{}",
+        "[]",
+        "1",
+        '"x"',
+        "`t`",
+        "/x/",
+        "1n",
+        "true",
+        "(() => {})",
+        "(function () {})",
+        "(class {})",
+        "(!a)",
+        "(typeof a)",
+        "(a + b)",
+        "(a, 1)",
+      ];
+      const assignmentOperators = "= += -= *= /= %= **= <<= >>= >>>= |= &= ^= ||= &&= ??=".split(" ");
+
+      it("on a value that is never nullish is rejected as an assignment target", () => {
+        expectEachToReport(
+          [
+            ...assignmentOperators.map(operator => `({}?.y ${operator} 0)`),
+            ...neverNullish.map(head => `(${head}?.y = 0)`),
+            "({}?.y)++",
+            "({}?.y)--",
+            "++{}?.y",
+            "--{}?.y",
+            "({}?.[y] = 0)",
+            '({}?.["y"] = 0)',
+            "({}?.y.z = 0)",
+            "({}?.y[z] = 0)",
+            "({}?.y[z].w = 0)",
+            "({}?.y().z = 0)",
+            "({}?.().z = 0)",
+            "({}?.y) = 0",
+            "[{}?.y] = []",
+            "[{}?.y = 0] = []",
+            "[...{}?.y] = []",
+            "({a: {}?.y} = {})",
+            "({a: {}?.y = 1} = {})",
+            "({...{}?.y} = {})",
+            "for ({}?.y of []);",
+            "for ({}?.y in {});",
+            "for ([{}?.y] of [[]]);",
+            "for ([{}?.y = 0] of [[]]);",
+            "if (false) { ({}?.y = 0) }",
+            "class A { #y; m() { ({}?.#y = 0) } }",
+            "class A { #z; m() { ({}?.y.#z = 0) } }",
+          ],
+          "Invalid assignment target",
+        );
+        expectEachToReport(
+          ["({}?.y!.z = 0)", "({}?.y<T>().z = 0)", "({}?.y<<T>() => void>().z = 0)"],
+          "Invalid assignment target",
+          "ts",
+        );
+      });
+
+      it("on a value that is never nullish is rejected as a template tag", () => {
+        expectEachToReport(
+          ["({}?.y`x`)", "({}?.y.z`x`)", "({}?.[y]`x`)", "({}?.y()`x`)", "({}?.()`x`)", "({}?.y`x${1}`)"],
+          "Template literals cannot have an optional chain as a tag",
+        );
+      });
+
+      it("on any other value is rejected as an assignment target and as a template tag", () => {
+        expectEachToReport(
+          [
+            "a?.y = 0",
+            "a?.y.z = 0",
+            "a?.[y] = 0",
+            'a?.["y"] = 0',
+            "a?.y().z = 0",
+            "a?.y += 1",
+            "a?.y++",
+            "++a?.y",
+            "[a?.y] = []",
+            "({x: a?.y} = {})",
+            "for (a?.y of []);",
+          ],
+          "Invalid assignment target",
+        );
+        expectEachToReport(["a?.y!.z = 0"], "Invalid assignment target", "ts");
+        expectEachToReport(
+          ["a?.y`x`", "a?.y.z`x`", "a?.[y]`x`", "a?.y()`x`", "a?.()`x`"],
+          "Template literals cannot have an optional chain as a tag",
+        );
+      });
+
+      it("is rejected in the target of `new`", () => {
+        const message = 'Cannot use an unparenthesized optional chain inside the target of "new"';
+        expectEachToReport(
+          [
+            "new a?.b()",
+            "new a?.b",
+            "new a?.()",
+            "new a.b?.(c)",
+            "new a?.[0]()",
+            "new a?.b?.c()",
+            "new a?.b.c()",
+            "new {y: C}?.y()",
+            "new {}?.()",
+            "new new a?.b()()",
+            "function f() { let x = a?.b; return new [[x]][0]?.[0].c(); }",
+          ],
+          message,
+        );
+        expectEachToReport(["new a?.<T>()", "new a!?.b()", "new a<T>?.b()"], message, "ts");
+        // Parentheses, an index and the arguments are not the target.
+        const valid = [
+          "new (a?.b)()",
+          "new a()?.b",
+          "new a[b?.c]()",
+          "new a(b?.c)",
+          "function f() { return new.target?.b; }",
+        ];
+        for (const [mode, transpiler_] of Object.entries(modes)) {
+          expect(valid.map(source => [mode, source, errors(transpiler_, source, "js")])).toEqual(
+            valid.map(source => [mode, source, []]),
+          );
+        }
+      });
+
+      it("on a value that is never nullish is rejected by the runtime and by the bundler", async () => {
+        const source = 'for ([{ set y(value) { console.log("accessed"); } }?.y = 0] of [[]]);\n';
+        using dir = tempDir("optional-chain-assign-target", { "entry.js": source });
+        const entry = join(String(dir), "entry.js");
+        const build = await Bun.build({ entrypoints: [entry], minify: { syntax: true }, throw: false });
+        expect(build.logs.map(log => log.message)).toEqual(["Invalid assignment target"]);
+        expect(build.success).toBe(false);
+
+        await using file = Bun.spawn({ cmd: [bunExe(), entry], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        await using inline = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        for (const proc of [file, inline]) {
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout).toBe("");
+          expect(stderr).toContain("Invalid assignment target");
+          expect(exitCode).toBe(1);
+        }
+      });
+
+      it("on a value that is never nullish is dropped from a valid program", () => {
+        expectPrinted_("x = {}?.y", "x = {}.y");
+        expectPrinted_("x = {}?.[y]", "x = {}[y]");
+        expectPrinted_("x = {}?.()", "x = {}()");
+        expectPrinted_("x = {}?.y.z.w()", "x = {}.y.z.w()");
+        expectPrinted_("x = {}?.y?.z", "x = {}.y?.z");
+        expectPrinted_("x = {}?.a?.b()", "x = {}.a?.b()");
+        expectPrinted_("x = 1?.toFixed()", "x = 1 .toFixed()");
+        expectPrinted_("delete {}?.y.z", "delete {}.y.z");
+        expectPrinted_("x = typeof {}?.y.z", "x = typeof {}.y.z");
+        // The value is judged as it is written, so a fold or a define does not drop a `?.`.
+        expectPrinted_("x = a?.y.z", "x = a?.y.z");
+        expectPrinted_("x = (0 || {})?.y", "x = {}?.y");
+        expectPrinted_('console.log({x:"hi"}?.x?.length)', 'console.log("hi"?.length)');
+        // A fold of the value does not keep it either.
+        expectPrinted_("x = new ((`${a}` + 1)?.C)()", "x = new `${a}1`.C");
+        expectPrinted_('x = (("a" + `${b}`)?.y)`x`', "x = `a${b}`.y`x`");
+        // The links after the dropped `?.` fold like plain member accesses.
+        expectPrinted_('console.log({x:"hi"}?.x.length)', "console.log(2)");
+        expectPrinted_('x = "s"?.[0].length', "x = 1");
+        expectPrinted_('x = {}?.["y"].z', "x = {}.y.z");
+        expectPrinted_("x = [a]?.[0].b", "x = a.b");
+        expectPrinted_("x = [{}?.y][0].c", "x = {}.y.c");
+        expectPrinted_("x = ({f: {}?.y}).f", "x = {}.y");
+        // Parentheses end the chain, so these are valid.
+        expectPrinted_("x = ({}?.a.b).c", "x = {}.a.b.c");
+        expectPrinted_("({}?.y).z = 0", "({}).y.z = 0");
+        expectPrinted_("({}?.y)`x`", "({}).y`x`");
+        expectPrinted_("x = new ({}?.y)()", "x = new {}.y");
+      });
+
+      it("ends for the links after a link that a fold replaces", () => {
+        expectPrintedInEachMode("x = {}?.y.z", {
+          "plain": "x = {}?.y.z",
+          "minify": "x = {}.y.z",
+          "minify, no dead code elimination": "x = {}?.y.z",
+          "runtime": "x = {}.y.z",
+        });
+        // The call after `?.[0]` is not a call of the name `eval`, so it stays an indirect eval.
+        expectPrintedInEachMode('[eval]?.[0]("y")', {
+          "plain": '[eval]?.[0]("y")',
+          "minify": '(0, eval)("y")',
+          "minify, no dead code elimination": '(0, eval)("y")',
+          "runtime": '(0, eval)("y")',
+        });
+        expectPrintedInEachMode('(0 || [eval])?.[0]("y")', {
+          "plain": '[eval]?.[0]("y")',
+          "minify": '(0, eval)("y")',
+          "minify, no dead code elimination": '(0 || [eval])?.[0]("y")',
+          "runtime": '(0, eval)("y")',
+        });
+        expectPrintedInEachMode('x = (0 || ["s"])?.[0].length', {
+          "plain": 'x = ["s"]?.[0].length',
+          "minify": "x = 1",
+          "minify, no dead code elimination": 'x = (0 || ["s"])?.[0].length',
+          "runtime": "x = 1",
+        });
+      });
+
+      it("is a plain member access once a fold has replaced the start of the chain", () => {
+        // Where a fold is wrong for the plain access it is as wrong here:
+        // #45658 has the `delete` rows, #46818 the call and the tag rows.
+        const printed = source => {
+          const messages = errors(transpiler, source, "js");
+          return messages.length ? messages : transpiler.transformSync(source, "js");
+        };
+        const pairs = [
+          ["delete [(0 || [o])?.[0].p][0]", "delete [o.p][0]"],
+          ["[(0 || [o])?.[0].m][0]()", "[o.m][0]()"],
+          ["[(0 || [o])?.[0].m][0]`x`", "[o.m][0]`x`"],
+          ["({ k: (0 || [o])?.[0].m }).k`x`", "({ k: o.m }).k`x`"],
+          ['x = delete (0 || ["abc"])?.[0].length', 'x = delete "abc".length'],
+          ['if ((0 || ["s"])?.[0].length) a(); else b();', 'if ("s".length) a(); else b();'],
+          ["delete (0 || [import.meta])?.[0].hot.data", "delete import.meta.hot.data"],
+          ["(0 || [import.meta])?.[0].hot.foo", "import.meta.hot.foo"],
+        ];
+        expect(pairs.map(([chain]) => [chain, printed(chain)])).toEqual(
+          pairs.map(([chain, plain]) => [chain, printed(plain)]),
+        );
+      });
+
+      it("does the same after the transform as the source does", () => {
+        const prelude =
+          'var scope = "local"; var n = null; var a = { b: { c: 1, 0: { b: 3 }, K: class {}, tag: s => s[0] }, 0: { b: 2 }, c: "text" };';
+        const heads = [
+          "a",
+          "n",
+          "[a.b]",
+          '"str"',
+          "(0 || { b: a.b, 0: a[0] })",
+          "(0 || [a.b])",
+          "[[a.b]][0]",
+          "({ x: { b: a.b } }).x",
+          "[n][0]",
+          "(0 || [eval])",
+          "[[eval]][0]",
+          "(`${a.c}` + 1)",
+        ];
+        const links = [".b", "?.b", "[0]", "?.[0]", ".b.c", "?.b.c", "?.b?.c", "?.[0].b", '?.[0]("scope")', "?.length"];
+        const contexts = [e => e, e => `typeof ${e}`, e => `(${e})?.c`];
+        const bodies = [];
+        for (const head of heads) {
+          for (const link of links) {
+            for (const context of contexts) {
+              bodies.push(`return ${context(head + link)};`);
+            }
+          }
+        }
+        // A local with one use moves into the next statement, which is then visited again.
+        const locals = ["n?.b", "a?.b", "a?.[0]"];
+        const uses = ["[[x]][0]?.[0]", "(0 || [x])?.[0]", "({ k: [x] }).k?.[0]", "[x]?.[0]", "x"];
+        const linksOfUse = [".b", "[0]", ".b.c", "?.b", '("scope")', ".c.toString()"];
+        for (const local of locals) {
+          for (const use of uses) {
+            for (const link of linksOfUse) {
+              for (const context of contexts) {
+                bodies.push(`let x = ${local}; return ${context(use + link)};`);
+              }
+            }
+          }
+        }
+        bodies.push(
+          "let x = a?.b; return typeof new ([[x]][0]?.[0].K)();",
+          "let x = a?.b; return ([[x]][0]?.[0].tag)`x`;",
+          "var x = (0 || [a])?.[0].b, y = (0 || [a])?.[0].c; return [x, y];",
+        );
+        // One program with a function for each row. Both sides run through an indirect eval, which Bun does not transpile.
+        const functions = bodies.map(body => `() => { ${body} }`);
+        const program = `(function () { ${prelude} return [${functions.join(",\n")}]; })()`;
+        const outcomes = code =>
+          (0, eval)(code).map(row => {
+            try {
+              const value = row();
+              return typeof value === "function" ? "function" : (JSON.stringify(value) ?? String(value));
+            } catch (e) {
+              return "throws " + e.name;
+            }
+          });
+        const transformed = outcomes(modes.runtime.transformSync(program, "js"));
+        const written = outcomes(program);
+        expect(bodies.map((body, row) => [body, transformed[row]])).toEqual(
+          bodies.map((body, row) => [body, written[row]]),
+        );
+      });
     });
 
     it.todo("const inlining", () => {

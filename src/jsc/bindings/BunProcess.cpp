@@ -3227,6 +3227,8 @@ enum class BunProcessStdinFdType : int32_t {
     unknown = 3,
 };
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
+// What the stdio store cached when it was made: never `unknown`. The light streams keep this classification.
+extern "C" BunProcessStdinFdType Bun__Process__getCachedStdinFdType(void*, int fd);
 
 // bun_stdio_tty is from the start of the process. POSIX asks for the type again, and a terminal is never of an unknown type.
 static bool isStdioTerminal(int fd, BunProcessStdinFdType fdType)
@@ -3403,7 +3405,7 @@ static JSObject* lightStandardStreamsOf(JSC::JSGlobalObject* globalObject, JSC::
     JSC::MarkedArgumentBuffer args;
     for (int fd : { 1, 2 }) {
         args.append(jsBoolean(bun_stdio_tty[fd]));
-        args.append(jsBoolean(Bun__Process__getStdinFdType(Bun::vm(vm), fd) == BunProcessStdinFdType::file));
+        args.append(jsBoolean(Bun__Process__getCachedStdinFdType(Bun::vm(vm), fd) == BunProcessStdinFdType::file));
     }
     args.append(JSFunction::create(vm, globalObject, 0, ""_s, Process_functionNeedsWholeOutputStream, JSC::ImplementationVisibility::Private));
     args.append(JSFunction::create(vm, globalObject, 2, ""_s, Process_functionWriteToStandardSink, JSC::ImplementationVisibility::Private));
@@ -3831,7 +3833,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteOfBareStream, (JSC::JSGlobalObject
     if (!sink) {
         sink = openStandardSink(globalObject, fd);
         RETURN_IF_EXCEPTION(scope, {});
-        if (writesSynchronously(Bun__Process__getStdinFdType(Bun::vm(vm), fd)))
+        if (writesSynchronously(Bun__Process__getCachedStdinFdType(Bun::vm(vm), fd)))
             Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
         kept->putDirectIndex(globalObject, fd, sink);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3968,7 +3970,7 @@ static JSValue constructBareStream(JSC::JSGlobalObject* globalObject, JSC::JSObj
         RELEASE_AND_RETURN(scope, wrapBareStreamObject(globalObject, fd, BareStreamLevel::Output, target));
     }
     putMethodsOfBareStream(globalObject, target, methodsOfInputBeforeRef, Process_functionNeedsWholeInputStream);
-    if (bun_stdio_tty[fd] || Bun__Process__getStdinFdType(Bun::vm(vm), fd) != BunProcessStdinFdType::file)
+    if (bun_stdio_tty[fd] || Bun__Process__getCachedStdinFdType(Bun::vm(vm), fd) != BunProcessStdinFdType::file)
         putMethodsOfBareStream(globalObject, target, methodsOfInputThatWaits, Process_functionNeedsWholeInputStream);
     putMethodsOfBareStream(globalObject, target, methodsOfInputAfterRef, Process_functionNeedsWholeInputStream);
     RELEASE_AND_RETURN(scope, wrapBareStreamObject(globalObject, fd, BareStreamLevel::Input, target));
@@ -4004,7 +4006,7 @@ static JSValue constructLightStdioWriteStream(JSC::JSGlobalObject* globalObject,
     JSObject* streams = asObject(kept->getDirectIndex(globalObject, 0));
     JSValue sink = openStandardSink(globalObject, fd);
     RETURN_IF_EXCEPTION(scope, {});
-    if (writesSynchronously(Bun__Process__getStdinFdType(Bun::vm(vm), fd)))
+    if (writesSynchronously(Bun__Process__getCachedStdinFdType(Bun::vm(vm), fd)))
         Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
     kept->putDirectIndex(globalObject, fd, sink);
     RETURN_IF_EXCEPTION(scope, {});

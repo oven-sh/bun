@@ -858,11 +858,17 @@ describe.skipIf(isWindows)("process streams over a descriptor of an unknown type
           fs.closeSync(0);
           Bun.file(0);
           const opened = fs.openSync("fifo", "r+");
-          console.log(JSON.stringify({ opened, unref: typeof process.stdin.unref }));
+          const unref = typeof process.stdin.unref;
+          // "r+" also opens the FIFO for writing, so no end comes: the first chunk is the result.
+          fs.writeSync(opened, "payload");
+          process.stdin.once("data", chunk => {
+            console.log(JSON.stringify({ opened, unref, data: String(chunk) }));
+            process.exit(0);
+          });
         `,
         { cwd: String(dir) },
       ),
-    ).toEqual({ stdout: '{"opened":0,"unref":"function"}\n', stderr: "", exitCode: 0 });
+    ).toEqual({ stdout: '{"opened":0,"unref":"function","data":"payload"}\n', stderr: "", exitCode: 0 });
   });
 
   // The other direction: the store saw fd 1 closed, and the descriptor is a file since.

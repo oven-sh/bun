@@ -196,7 +196,7 @@ impl CleanupHook {
 pub struct RareData {
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
-    /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to re-stat on Windows. On POSIX it does the one `fstat` itself.
+    /// `mode` is cached for [`Bun__Process__getCachedStdinFdType`], which does no `fstat` of its own.
     pub stderr_store: Option<NonNull<c_void>>,
     pub(crate) stderr_mode: Mode,
     pub stdin_store: Option<NonNull<c_void>>,
@@ -1046,32 +1046,12 @@ enum StdinFdType {
     Unknown = 3,
 }
 
+/// The kind from the `fstat` mode that the stdio store cached when it was made. It never answers `Unknown`: the light streams of an AOT executable and Windows use it.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
+extern "C" fn Bun__Process__getCachedStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
     let rare = vm.as_mut().rare_data();
-    // POSIX asks the descriptor now, as libuv's `uv_guess_handle` does: the program may have closed or replaced it.
-    #[cfg(not(windows))]
-    {
-        let mode = syscall::fstat(Fd::from_uv(fd)).map(|stat| stat.st_mode as Mode);
-        let known = Some(mode.as_ref().copied().unwrap_or(0));
-        match fd {
-            0 => rare.stdin_with_mode(known),
-            1 => rare.stdout_with_mode(known),
-            2 => rare.stderr_with_mode(known),
-            _ => unreachable!(),
-        };
-        match mode.map(bun_sys::kind_from_mode) {
-            Ok(bun_sys::FileKind::NamedPipe) => StdinFdType::Pipe,
-            Ok(bun_sys::FileKind::UnixDomainSocket) => StdinFdType::Socket,
-            Ok(bun_sys::FileKind::Directory | bun_sys::FileKind::Unknown) => StdinFdType::Unknown,
-            Err(err) if err.get_errno() == syscall::E::EBADF => StdinFdType::Unknown,
-            // libuv has a block device and every failed `fstat` as unknown too. Bun reads a block device on stdin, and a sandbox can deny `fstat`.
-            _ => StdinFdType::File,
-        }
-    }
     // The store is type-erased here, so `stderr/stdout/stdin()` cache `mode`
     // alongside the pointer.
-    #[cfg(windows)]
     let mode = match fd {
         0 => {
             rare.stdin();
@@ -1090,11 +1070,40 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
     // `kind_from_mode` uses hard-coded u32 octal masks so it works on
     // Windows where libc::S_IFSOCK is undefined and on macOS where the libc
     // constants are u16.
-    #[cfg(windows)]
     match bun_sys::kind_from_mode(mode) {
         bun_sys::FileKind::NamedPipe => StdinFdType::Pipe,
         bun_sys::FileKind::UnixDomainSocket => StdinFdType::Socket,
         _ => StdinFdType::File,
+    }
+}
+
+/// The kind for the whole `process.stdin`, `process.stdout` and `process.stderr`, asked when their getter runs.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
+    #[cfg(windows)]
+    {
+        Bun__Process__getCachedStdinFdType(vm, fd)
+    }
+    // POSIX asks the descriptor now, as libuv's `uv_guess_handle` does: the program may have closed or replaced it.
+    #[cfg(not(windows))]
+    {
+        let rare = vm.as_mut().rare_data();
+        let mode = syscall::fstat(Fd::from_uv(fd)).map(|stat| stat.st_mode as Mode);
+        let known = Some(mode.as_ref().copied().unwrap_or(0));
+        match fd {
+            0 => rare.stdin_with_mode(known),
+            1 => rare.stdout_with_mode(known),
+            2 => rare.stderr_with_mode(known),
+            _ => unreachable!(),
+        };
+        match mode.map(bun_sys::kind_from_mode) {
+            Ok(bun_sys::FileKind::NamedPipe) => StdinFdType::Pipe,
+            Ok(bun_sys::FileKind::UnixDomainSocket) => StdinFdType::Socket,
+            Ok(bun_sys::FileKind::Directory | bun_sys::FileKind::Unknown) => StdinFdType::Unknown,
+            Err(err) if err.get_errno() == syscall::E::EBADF => StdinFdType::Unknown,
+            // libuv has a block device and every failed `fstat` as unknown too. Bun reads a block device on stdin, and a sandbox can deny `fstat`.
+            _ => StdinFdType::File,
+        }
     }
 }
 

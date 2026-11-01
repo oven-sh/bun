@@ -1475,6 +1475,7 @@ for (const [key, blob] of build.outputs) {
           entryPoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           ...(useOutFile ? { outfile: outfile! } : { outdir: outdir! }),
           plugins: pluginArray as any,
+          jsx: jsx.runtime === "preserve" ? "preserve" : undefined,
         });
       }
     }

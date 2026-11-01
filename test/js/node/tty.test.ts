@@ -1750,6 +1750,20 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       const bytes = Buffer.alloc(size, ${JSON.stringify(fill)});
       const sha256 = ${JSON.stringify(sha256)};
     `;
+    // For a row at the descriptor limit. The poll of a write that waits needs a descriptor. Where none is free a
+    // timer drives the write, and libuv polls the descriptor that it has: the write goes out from the loop in both.
+    // A debug build reads its built-in modules from files, so two are loaded while descriptors are free:
+    // internal/async_context_frame, which a write that waits takes and which node:_http_agent loads, and node:util,
+    // which a failed write takes.
+    const limit = `
+      require("node:_http_agent"), require("node:util");
+      const taken = [];
+      const takeAll = () => { try { for (;;) taken.push(fs.openSync("/dev/null", "r")); } catch (err) { return err.code; } };
+      // LeakSanitizer opens files when the process exits.
+      const giveBack = () => { for (const fd of taken.splice(0)) fs.closeSync(fd); };
+      const whileTaken = () => (taken.length ? " with none free" : "");
+    `;
+    const fewDescriptors = { prefix: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh"] };
 
     function openLibc() {
       return dlopen(libcPathForDlopen(), {
@@ -1826,8 +1840,6 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       readFd?: number;
       /** The child writes less than `bytes`, and the test says how much came: as it comes, or only after the child. */
       part?: "while the child runs" | "after the child";
-      /** The test reads one chunk for each millisecond: a child that writes in between fills the pty and is refused. */
-      readSlowly?: boolean;
     };
 
     /** Runs `script` with the pair as fd 3 and fd 4. */
@@ -1863,26 +1875,12 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       const entry = { proc: child, output: () => JSON.stringify(said) };
       unfinishedChildren.add(entry);
       let reader: ReadStream | undefined;
-      let slowReader: ReturnType<typeof setInterval> | undefined;
       try {
         if (opts.childHoldsAlone) {
           closeSync(pair.release("master"));
           closeSync(pair.release("slave"));
         }
-        if (readFd !== undefined && opts.readSlowly) {
-          // No event says that a child now waits in place, so the reader cannot start on one. A stream that flows
-          // can take turns with the writer on a busy machine, and then the pty never refuses.
-          const buffer = Buffer.alloc(65536);
-          slowReader = setInterval(() => {
-            if (!reading) return;
-            try {
-              const n = readSync(readFd, buffer);
-              if (n > 0) take(buffer.subarray(0, n));
-            } catch (err) {
-              if ((err as NodeJS.ErrnoException).code !== "EAGAIN") stop(err as Error);
-            }
-          }, 1);
-        } else if (readFd !== undefined && part !== "after the child") {
+        if (readFd !== undefined && part !== "after the child") {
           reader = new ReadStream(readFd);
           // The stream closes a master. It never closes a slave.
           if (readEnd === "master") pair.release("master");
@@ -1915,7 +1913,6 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           .map(line => JSON.parse(line));
         return { records, stderr: said.stderr, exitCode, ...(read && { read }) };
       } finally {
-        clearInterval(slowReader);
         reader?.destroy();
         if (child.exitCode !== null || child.signalCode !== null) unfinishedChildren.delete(entry);
       }
@@ -2283,6 +2280,217 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           },
         ],
       ],
+      [
+        "a write that the pty refuses with no descriptor free goes out from the loop",
+        fewDescriptors,
+        `
+          ${limit}
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          const hash = crypto.createHash("sha256");
+          let got = 0, cb = "not yet", drained = false;
+          slave.on("drain", () => { drained = true; });
+          master.on("data", chunk => {
+            got += chunk.length;
+            hash.update(chunk);
+            if (got < size) return;
+            setImmediate(() => {
+              say({ cb, drained, got, sameBytes: hash.digest("hex") === sha256, writableLength: slave.writableLength });
+              slave.destroy();
+              master.destroy();
+            });
+          });
+          slave.write(Buffer.alloc(0), () => {
+            const atTheLimit = takeAll();
+            // The descriptors stay taken until the write is complete: no part of it goes out behind a poll.
+            const ret = slave.write(bytes, err => { cb = (err ? err.code : null) + whileTaken(); giveBack(); });
+            const waits = slave._handle.writeQueueSize;
+            say({ atTheLimit, ret, writableLength: slave.writableLength, aPartWaits: waits > 0 && waits < size });
+          });
+        `,
+        [
+          { atTheLimit: "EMFILE", ret: false, writableLength: size, aPartWaits: true },
+          { cb: "null with none free", drained: true, got: size, sameBytes: true, writableLength: 0 },
+        ],
+      ],
+      [
+        "a write that waits with no descriptor free holds the loop after unref()",
+        fewDescriptors,
+        `
+          ${limit}
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          let cb = "not yet";
+          master.on("data", () => {});
+          slave.write(Buffer.alloc(0), () => {
+            const atTheLimit = takeAll();
+            const ret = slave.write(bytes, err => { cb = (err ? err.code : null) + whileTaken(); });
+            slave.unref();
+            master.unref();
+            process.on("exit", () => {
+              giveBack();
+              say({ atTheLimit, ret, cb });
+            });
+          });
+        `,
+        [{ atTheLimit: "EMFILE", ret: false, cb: "null with none free" }],
+      ],
+      [
+        "destroy() cancels the writes that wait with no descriptor free",
+        fewDescriptors,
+        `
+          ${limit}
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          const events = [];
+          slave.on("error", err => events.push("error " + err.code));
+          slave.on("close", hadError => {
+            events.push("close " + hadError + whileTaken());
+            giveBack();
+            say({ events });
+            master.destroy();
+          });
+          slave.write(Buffer.alloc(0), () => {
+            const atTheLimit = takeAll();
+            const ret = slave.write(bytes, err => events.push("first " + (err ? err.code + " " + err.syscall : null)));
+            slave.write("second", err => events.push("second " + (err ? err.code : null)));
+            slave.destroy();
+            say({ atTheLimit, ret, destroyed: slave.destroyed, writableLength: slave.writableLength });
+          });
+        `,
+        [
+          { atTheLimit: "EMFILE", ret: false, destroyed: true, writableLength: size + 6 },
+          { events: ["first ECANCELED write", "second ECANCELED", "close false with none free"] },
+        ],
+      ],
+      [
+        "destroy() in the callback of a write that waited with no descriptor free cancels the write behind it",
+        fewDescriptors,
+        `
+          ${limit}
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          const events = [];
+          master.on("data", () => {});
+          slave.on("error", err => events.push("error " + err.code));
+          slave.on("close", hadError => {
+            events.push("close " + hadError + whileTaken());
+            giveBack();
+            say({ events });
+            master.destroy();
+          });
+          slave.write(Buffer.alloc(0), () => {
+            const atTheLimit = takeAll();
+            const ret = slave.write(bytes.subarray(0, size / 2), err => {
+              events.push("first " + (err ? err.code : null));
+              slave.destroy();
+            });
+            slave.write(bytes.subarray(size / 2), err => events.push("second " + (err ? err.code : null)));
+            say({ atTheLimit, ret, writableLength: slave.writableLength });
+          });
+        `,
+        [
+          { atTheLimit: "EMFILE", ret: false, writableLength: size },
+          { events: ["first null", "second ECANCELED", "close false with none free"] },
+        ],
+      ],
+      [
+        "a second write and end() wait behind a write that waits with no descriptor free",
+        fewDescriptors,
+        `
+          ${limit}
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          const events = [];
+          const told = name => err => events.push(name + " " + (err ? err.code : null) + " " + slave.writableLength);
+          master.on("data", () => {});
+          slave.on("error", err => events.push("error " + err.code));
+          slave.on("finish", () => events.push("finish"));
+          slave.write(Buffer.alloc(0), () => {
+            const atTheLimit = takeAll();
+            const first = slave.write(bytes, told("first"));
+            const second = slave.write(bytes.subarray(0, 1 << 16), told("second"));
+            slave.end("TAIL", () => events.push("end"));
+            slave.unref();
+            master.unref();
+            process.on("exit", () => {
+              const noneFree = taken.length > 0;
+              giveBack();
+              say({ atTheLimit, first, second, events, bytesWritten: slave.bytesWritten, noneFree });
+            });
+          });
+        `,
+        [
+          {
+            atTheLimit: "EMFILE",
+            first: false,
+            second: false,
+            // With each callback, what still waits behind it.
+            events: [`first null ${(1 << 16) + 4}`, "second null 0", "end", "finish"],
+            bytesWritten: size + (1 << 16) + 4,
+            noneFree: true,
+          },
+        ],
+      ],
+      [
+        "the stream reads what the other side says while a write of its own waits with no descriptor free",
+        fewDescriptors,
+        `
+          ${limit}
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          const hash = crypto.createHash("sha256");
+          let got = 0, heard = "", cb = "not yet", asked = 0, said = false;
+          const done = () => {
+            if (said || got < size || heard.length < 3 || cb === "not yet") return;
+            said = true;
+            say({ cb, got, sameBytes: hash.digest("hex") === sha256, heard, writableLength: slave.writableLength });
+            slave.destroy();
+            master.destroy();
+          };
+          slave.on("data", chunk => { heard += chunk; done(); });
+          slave.on("error", err => say({ error: err.code, syscall: err.syscall }));
+          master.on("data", chunk => {
+            got += chunk.length;
+            hash.update(chunk);
+            // The master says a letter at each quarter of what it has read.
+            while (asked < 3 && got >= (asked + 1) * (size >> 2)) fs.writeSync(3, "abc"[asked++]);
+            done();
+          });
+          setImmediate(() => {
+            const atTheLimit = takeAll();
+            const ret = slave.write(bytes, err => { cb = (err ? err.code : null) + whileTaken(); giveBack(); done(); });
+            say({ atTheLimit, ret, reading: !!slave._handle.reading, writableLength: slave.writableLength });
+          });
+        `,
+        [
+          { atTheLimit: "EMFILE", ret: false, reading: true, writableLength: size },
+          { cb: "null with none free", got: size, sameBytes: true, heard: "abc", writableLength: 0 },
+        ],
+      ],
+      [
+        "a write that waits with no descriptor free fails with EIO when the master closes",
+        { childHoldsAlone: true, ...fewDescriptors },
+        `
+          ${limit}
+          const slave = new tty.ReadStream(4);
+          const events = [];
+          slave.on("error", err => events.push("error " + err.code + " " + err.syscall + " " + err.errno));
+          slave.on("close", hadError => {
+            events.push("close " + hadError + whileTaken());
+            giveBack();
+            say({ events, bytesWritten: slave.bytesWritten, writableLength: slave.writableLength });
+          });
+          slave.write(Buffer.alloc(0), () => {
+            const atTheLimit = takeAll();
+            const ret = slave.write(bytes, err => events.push("cb " + (err ? err.code : null)));
+            say({ atTheLimit, ret, writableLength: slave.writableLength });
+            fs.closeSync(3);
+          });
+        `,
+        [
+          { atTheLimit: "EMFILE", ret: false, writableLength: size },
+          {
+            events: ["cb EIO", "error EIO write -5", "close true with none free"],
+            bytesWritten: size,
+            writableLength: 0,
+          },
+        ],
+      ],
     ];
 
     /** Runs `script` with a FIFO of the test, whose path the child has as `fifo`. With `readFifo` the test reads it. */
@@ -2308,7 +2516,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     // The loop finishes a write to a FIFO on Linux alone. On macOS the handle writes a FIFO in place, because
     // kqueue can stay silent for a FIFO.
     type FifoResult = { records: object[]; read?: { got: number; sameBytes: boolean } };
-    const fifoRows: [name: string, opts: { readFifo?: boolean }, script: string, result: FifoResult][] = [
+    const fifoRows: [name: string, opts: PairOptions & { readFifo?: boolean }, script: string, result: FifoResult][] = [
       [
         "a FIFO that does not block is finished from the loop too",
         {},
@@ -2414,6 +2622,39 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           read: { got: size, sameBytes: true },
         },
       ],
+      [
+        "a write that a FIFO refuses with no descriptor free goes out from the loop",
+        fewDescriptors,
+        `
+          ${limit}
+          const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+          const writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+          const input = new tty.ReadStream(reader), output = new tty.ReadStream(writer);
+          const hash = crypto.createHash("sha256");
+          let got = 0, cb = "not yet";
+          input.on("data", chunk => {
+            got += chunk.length;
+            hash.update(chunk);
+            if (got < size) return;
+            setImmediate(() => {
+              say({ cb, got, sameBytes: hash.digest("hex") === sha256 });
+              output.destroy();
+              input.destroy();
+            });
+          });
+          output.write(Buffer.alloc(0), () => {
+            const atTheLimit = takeAll();
+            const ret = output.write(bytes, err => { cb = (err ? err.code : null) + whileTaken(); giveBack(); });
+            say({ atTheLimit, ret, writableLength: output.writableLength });
+          });
+        `,
+        {
+          records: [
+            { atTheLimit: "EMFILE", ret: false, writableLength: size },
+            { cb: "null with none free", got: size, sameBytes: true },
+          ],
+        },
+      ],
     ];
 
     describe.each(runtimes)("as in Node (%s)", (_runtime, exe) => {
@@ -2504,6 +2745,38 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           aPartCame: true,
         });
       });
+
+      // The same with no descriptor free at the write: the process ends with the timer of the write in the heap.
+      test
+        .skipIf(!exe)
+        .concurrent(
+          "process.exit() behind a write that waits with no descriptor free drops the part that waits",
+          async () => {
+            const script = `
+            ${limit}
+            const slave = new tty.ReadStream(4);
+            slave.write(Buffer.alloc(0), () => {
+              const atTheLimit = takeAll();
+              const ret = slave.write(bytes);
+              say({ atTheLimit, ret, writableLength: slave.writableLength });
+              giveBack();
+              process.exit(0);
+            });
+          `;
+            const { read, ...result } = await withPair(script, {
+              exe: exe!,
+              readEnd: "master",
+              part: "after the child",
+              ...fewDescriptors,
+            });
+            expect({ ...result, aPartCame: read!.got > 0 && read!.got < size }).toEqual({
+              records: [{ atTheLimit: "EMFILE", ret: false, writableLength: size }],
+              stderr: "",
+              exitCode: 0,
+              aPartCame: true,
+            });
+          },
+        );
 
       // A write to a master is complete when write() returns, so the end of the process behind it loses nothing.
       test.skipIf(!exe).concurrent("process.exit() behind a write to a master loses nothing", async () => {
@@ -2851,6 +3124,196 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       expect(await withPair(script)).toEqual({ records: [{ completed: [0, 0, 0, 0] }], stderr: "", exitCode: 0 });
     });
 
+    // A timer needs no descriptor, and it drives its write to the end: no tick asks the loop for a poll. Here the
+    // descriptors come free at the first chunk that the master reads, with most of the megabyte still queued. The
+    // poll of the next refusal needs a descriptor, which the handle keeps until it closes.
+    test.concurrent(
+      "a write that waits with no descriptor free stays on its timer when descriptors come free, and the next refusal takes the one of the poll",
+      async () => {
+        const script = `
+          ${limit}
+          ${descriptors}
+          const master = new tty.ReadStream(3), slave = new tty.ReadStream(4);
+          let freeWhileItWaits = false;
+          master.on("data", () => {
+            if (!taken.length) return;
+            giveBack();
+            freeWhileItWaits = slave._handle.writeQueueSize > 0;
+          });
+          slave.write(Buffer.alloc(0), () => {
+            const before = open();
+            const atTheLimit = takeAll();
+            const first = slave.write(bytes, err => {
+              const afterTheFirst = held(before);
+              const second = slave.write(bytes, err => {
+                say({ second, cb: err ? err.code : null, afterTheSecond: held(before) });
+                slave.destroy();
+                master.destroy();
+              });
+              say({ atTheLimit, first, cb: err ? err.code : null, freeWhileItWaits, afterTheFirst });
+            });
+          });
+        `;
+        expect(await withPair(script, fewDescriptors)).toEqual({
+          records: [
+            { atTheLimit: "EMFILE", first: false, cb: null, freeWhileItWaits: true, afterTheFirst: 0 },
+            { second: false, cb: null, afterTheSecond: 1 },
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // A poll wakes when the descriptor takes bytes. A tick of the timer comes by the clock, so it asks first. Here
+    // the terminal is stopped as by Ctrl-S and the descriptor of the handle blocks: a tick that wrote would wait in
+    // write(2), and the timeout that starts the terminal again would never run. No event says that a tick has run,
+    // so the timeout is later than the first tick, which is due after 1 ms. A stopped pty of Linux takes nothing.
+    test
+      .skipIf(!isLinux)
+      .concurrent("a tick of the timer does not write to a descriptor that blocks and takes nothing", async () => {
+        const script = `
+          ${limit}
+          const { tcflow } = require("bun:ffi").dlopen(process.env.TTY_TEST_LIBC, {
+            tcflow: { args: ["int", "int"], returns: "int" },
+          }).symbols;
+          const TCOOFF = 0, TCOON = 1;
+          const slave = new tty.ReadStream(4);
+          slave.write(Buffer.alloc(0), () => {
+            const stopped = tcflow(4, TCOOFF);
+            const atTheLimit = takeAll();
+            let cb = "not yet";
+            const ret = slave.write("hello", err => {
+              cb = (err ? err.code : null) + whileTaken();
+              giveBack();
+              say({ cb });
+              slave.destroy();
+            });
+            const waits = slave._handle.writeQueueSize;
+            const blocking = slave._handle.setBlocking(true);
+            setTimeout(() => say({ aTimeoutRan: true, cb, started: tcflow(4, TCOON) }), 5);
+            say({ stopped, atTheLimit, ret, waits, blocking });
+          });
+        `;
+        expect(await withPair(script, fewDescriptors)).toEqual({
+          records: [
+            { stopped: 0, atTheLimit: "EMFILE", ret: true, waits: 5, blocking: 0 },
+            { aTimeoutRan: true, cb: "not yet", started: 0 },
+            { cb: "null with none free" },
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+    // The completion of the first write closes the handle from inside the tick of the timer that told it, with the
+    // second write still queued.
+    test.concurrent("close() in a completion that a timer told cancels the write behind it", async () => {
+      const script = `
+        ${limit}
+        const { TTY } = process.binding("tty_wrap");
+        const master = new tty.ReadStream(3);
+        master.on("data", () => {});
+        const handle = new TTY(4, {});
+        const completed = [];
+        handle.onwritecomplete = status => {
+          completed.push(status);
+          if (completed.length > 1) return;
+          handle.close(() => {
+            const noneFree = taken.length > 0;
+            giveBack();
+            say({ completed, noneFree, fd: handle.fd });
+            master.destroy();
+          });
+        };
+        const atTheLimit = takeAll();
+        const first = handle.writeBuffer(null, bytes.subarray(0, size / 2));
+        const second = handle.writeBuffer(null, bytes.subarray(size / 2));
+        say({ atTheLimit, first, second, bothWait: handle.writeQueueSize > size / 2 });
+      `;
+      expect(await withPair(script, fewDescriptors)).toEqual({
+        records: [
+          { atTheLimit: "EMFILE", first: 1, second: 1, bothWait: true },
+          { completed: [0, isLinux ? -125 : -89], noneFree: true, fd: -1 }, // UV_ECANCELED
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // As the rows above for a poll: nothing but its queue holds the handle, and here a timer drives the queue.
+    test.concurrent(
+      "a handle that nobody holds keeps the writes that a timer drives through a collection",
+      async () => {
+        const script = `
+          ${limit}
+          const { TTY } = process.binding("tty_wrap");
+          const master = new tty.ReadStream(3);
+          master.on("data", () => {});
+          master.unref();
+          const completed = [];
+          let atTheLimit;
+          (() => {
+            const handle = new TTY(4, {});
+            handle.onwritecomplete = status => {
+              completed.push(status + whileTaken());
+              Bun.gc(true);
+            };
+            atTheLimit = takeAll();
+            for (const chunk of [bytes, Buffer.from("a"), Buffer.from("b"), Buffer.from("c")]) handle.writeBuffer(null, chunk);
+          })();
+          Bun.gc(true);
+          setImmediate(() => Bun.gc(true));
+          process.on("exit", () => {
+            giveBack();
+            say({ atTheLimit, completed });
+          });
+        `;
+        const toldWithNoneFree = "0 with none free";
+        expect(await withPair(script, fewDescriptors)).toEqual({
+          records: [
+            {
+              atTheLimit: "EMFILE",
+              completed: [toldWithNoneFree, toldWithNoneFree, toldWithNoneFree, toldWithNoneFree],
+            },
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // The end of a Worker closes its handles, here with the timer of one in the heap of timers of the Worker. The
+    // test does not read the master, so the write waits until then.
+    // One at a time: a debug build takes seconds to start a Worker, and more with other children beside it.
+    test("the end of a Worker ends a write that a timer drives", async () => {
+      const inTheWorker = `
+        const { parentPort } = require("node:worker_threads");
+        const tty = require("node:tty"), fs = require("node:fs");
+        ${limit}
+        const slave = new tty.ReadStream(4);
+        slave.write(Buffer.alloc(0), () => {
+          const atTheLimit = takeAll();
+          const ret = slave.write(Buffer.alloc(${size}, "x"));
+          const waits = slave._handle.writeQueueSize;
+          // The end of the Worker needs descriptors, and so does the thread of the program.
+          giveBack();
+          parentPort.postMessage({ atTheLimit, ret, aPartWaits: waits > 0 && waits < ${size} });
+        });
+      `;
+      const script = `
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(${JSON.stringify(inTheWorker)}, { eval: true });
+        worker.on("error", err => say({ error: String(err) }));
+        worker.once("message", async message => say({ ...message, terminated: await worker.terminate() }));
+      `;
+      expect(await withPair(script, fewDescriptors)).toEqual({
+        records: [{ atTheLimit: "EMFILE", ret: false, aPartWaits: true, terminated: 1 }],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     // The handle has a descriptor of its own from the start, also where it could not open the terminal again.
     // libuv has the number of the caller alone there, and Node answers EBADF. destroy() closes the number of the
     // caller only while it still names the file of the handle: a number that the caller closed is no longer the
@@ -2987,66 +3450,6 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           ],
           stderr: "",
           exitCode: 0,
-        });
-      },
-    );
-
-    // The poll of a write that waits needs a descriptor. Where none is free that one write waits in place, as every
-    // write of a uv_tty_t for which libuv got no descriptor of its own, and the next write asks the loop again.
-    // libuv polls the descriptor that it has, so under Node the first half is complete later too, from the loop. A
-    // write that waits in place needs a reader in another process: the test.
-    test.concurrent(
-      "a write that the pty refuses with no descriptor free waits in place, and the next one goes out from the loop",
-      async () => {
-        const script = `
-          // The test holds a master of its own. With this one closed the child ends when the test stops reading.
-          fs.closeSync(3);
-          // A debug build reads its built-in modules from files. A write of nothing loads what a write takes, and
-          // node:util is what a failed write takes, while descriptors are free.
-          require("node:util");
-          const events = [];
-          const slave = new tty.ReadStream(4);
-          slave.on("error", err => events.push("error " + err.code + " " + err.syscall));
-          slave.on("close", hadError => {
-            events.push("close " + hadError);
-            say({ events });
-          });
-          // Each half is more than the pty takes at once.
-          const half = size / 2;
-          slave.write(Buffer.alloc(0), () => {
-            const held = [];
-            let atTheLimit;
-            try { for (;;) held.push(fs.openSync("/dev/null", "r")); } catch (err) { atTheLimit = err.code; }
-            const ret = slave.write(bytes.subarray(0, half), err => {
-              events.push("cb " + (err ? err.code : null));
-              // Descriptors are free again.
-              const ret = slave.write(bytes.subarray(half), err => {
-                events.push("cb " + (err ? err.code : null));
-                slave.destroy();
-              });
-              say({ ret, writableLength: slave.writableLength });
-            });
-            const left = { writableLength: slave.writableLength, writeQueueSize: slave._handle.writeQueueSize };
-            // LeakSanitizer opens files when the process exits.
-            for (const fd of held.splice(0)) fs.closeSync(fd);
-            say({ atTheLimit, ret, ...left });
-          });
-        `;
-        expect(
-          await withPair(script, {
-            readEnd: "master",
-            readSlowly: true,
-            prefix: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh"],
-          }),
-        ).toEqual({
-          records: [
-            { atTheLimit: "EMFILE", ret: true, writableLength: 0, writeQueueSize: 0 },
-            { ret: false, writableLength: size / 2 },
-            { events: ["cb null", "cb null", "close false"] },
-          ],
-          stderr: "",
-          exitCode: 0,
-          read: { got: size, sameBytes: true },
         });
       },
     );

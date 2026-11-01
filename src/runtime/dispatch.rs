@@ -1360,6 +1360,22 @@ pub(crate) unsafe fn __bun_fire_timer(
                 |c, _now, _vm| WebWorker::on_room_timer(c)
             )
         }
+        EventLoopTimerTag::TtyWriteRetry => {
+            #[cfg(unix)]
+            {
+                use crate::node::tty_wrap::{TTY, WriteRetry};
+                timer_arm!(WriteRetry, timer, |c, _now, _vm| TTY::on_write_retry(c))
+            }
+            #[cfg(not(unix))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!(
+                        "TtyWriteRetry timer on Windows, where a write to a console is complete at once"
+                    );
+                }
+                Ok(())
+            }
+        }
         EventLoopTimerTag::GcRepeating => {
             timer_arm!(
                 GarbageCollectionController,

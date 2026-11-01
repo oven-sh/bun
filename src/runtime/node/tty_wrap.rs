@@ -8,6 +8,8 @@ use core::ptr::NonNull;
 use std::collections::VecDeque;
 
 use bun_core::UnwrapOrOom as _;
+#[cfg(unix)]
+use bun_core::{Timespec, TimespecMockMode};
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
@@ -23,6 +25,11 @@ use bun_jsc::{
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, Fd};
 
+#[cfg(unix)]
+use crate::jsc_hooks::timer_all_mut;
+#[cfg(unix)]
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+
 bun_output::declare_scope!(TTYWrap, hidden);
 
 pub(crate) use crate::generated_bindgen::tty_wrap::js_TTY as js;
@@ -32,6 +39,10 @@ const UV_EOF: i32 = -4095;
 /// What `writeBuffer()` answers for a write that the loop finishes. A libuv status is 0 or negative.
 #[cfg(unix)]
 const WRITE_PENDING: i32 = 1;
+
+/// How often the wait of a timer that drives a write doubles while the descriptor takes nothing: from 1 ms up to 64 ms.
+#[cfg(unix)]
+const WRITE_RETRY_MAX_DOUBLINGS: u8 = 6;
 
 /// What the loop answers for a kind of descriptor that it cannot poll: `EPERM` from `epoll_ctl`, `EINVAL` from `kevent`.
 #[cfg(unix)]
@@ -81,7 +92,7 @@ bitflags::bitflags! {
     }
 }
 
-/// What the descriptor refused, in call order, and the poll that says when it takes more.
+/// What the descriptor refused, in call order, and what drives the rest out: the poll, or a timer where the loop had no poll to give.
 #[cfg(unix)]
 #[derive(Default)]
 struct WriteQueue {
@@ -91,6 +102,58 @@ struct WriteQueue {
     /// A dup of `own_fd` for the poll alone, because the reader's poll has the number of `own_fd`: epoll keys on the number, and on kqueue the forced unregister of a poll that fired deletes both filters of its number.
     poll_fd: Option<Fd>,
     poll: Option<NonNull<FilePoll>>,
+    /// Made at the first refusal for which the loop had no descriptor or no memory for the poll.
+    retry: Option<Box<WriteRetry>>,
+}
+
+/// Stands in for the poll of one refusal: a timer needs no descriptor and no registration. `dispatch.rs` recovers it from `timer`.
+#[cfg(unix)]
+pub(crate) struct WriteRetry {
+    pub(crate) timer: EventLoopTimer,
+    tty: *const TTY,
+    /// Ticks in a row that wrote nothing, up to `WRITE_RETRY_MAX_DOUBLINGS`: the wait doubles with each.
+    idle_ticks: u8,
+    /// Active while the timer drives a refusal: a queued write holds the loop, and a timer of the runtime holds nothing.
+    hold: bun_io::KeepAlive,
+}
+
+#[cfg(unix)]
+impl WriteRetry {
+    /// Puts the node into the heap of timers, `after_ms` from now on the real clock.
+    fn schedule(&mut self, after_ms: i64) {
+        let node: *mut WriteRetry = self;
+        let next = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, after_ms);
+        // SAFETY: `node` is the live box. The pointer to its timer keeps the provenance of the whole node, which `dispatch.rs` recovers.
+        timer_all_mut().update(unsafe { &raw mut (*node).timer }, &next);
+    }
+
+    /// The refusal is over, or the queue goes: the heap of timers lets go of the node, and the node of the loop.
+    fn leave_loop(&mut self, ctx: bun_io::EventLoopCtx) {
+        if self.timer.state == EventLoopTimerState::ACTIVE {
+            timer_all_mut().remove(&raw mut self.timer);
+        }
+        self.hold.unref(ctx);
+    }
+}
+
+#[cfg(unix)]
+impl Drop for WriteRetry {
+    fn drop(&mut self) {
+        debug_assert!(
+            self.timer.state != EventLoopTimerState::ACTIVE,
+            "the heap of timers still has the retry timer of a write queue that is dropped",
+        );
+    }
+}
+
+/// What the loop answered when the handle asked it to say when the descriptor takes more.
+#[cfg(unix)]
+enum WritePoll {
+    Armed,
+    /// The loop cannot poll this kind of descriptor: its writes wait in place from here on.
+    Unpollable,
+    /// No descriptor or no memory for the poll, which says nothing of the next refusal: a timer drives this one.
+    Failed,
 }
 
 #[derive(bun_ptr::RefCounted)]
@@ -706,9 +769,11 @@ impl TTY {
                 if flags.intersects(Flags::BLOCKING_WRITES | Flags::BLOCKING_ASKED) {
                     return write_in_place(fd, rest);
                 }
-                // Without a poll the rest waits in place as well, where libuv has the watcher of the stream: the wait ends when another thread or process reads the other end.
-                if !self.arm_write_poll() {
-                    return write_in_place(fd, rest);
+                match self.arm_write_poll() {
+                    WritePoll::Armed => {}
+                    WritePoll::Unpollable => return write_in_place(fd, rest),
+                    // The rest waits in the queue as behind a poll, where libuv has the watcher of the stream.
+                    WritePoll::Failed => self.arm_write_retry(),
                 }
             }
             self.writes.with_mut(|q| {
@@ -729,9 +794,9 @@ impl TTY {
             .is_some_and(|q| !q.pending.is_empty())
     }
 
-    /// Asks the loop to say when the descriptor takes more, until `idle_write_poll`. A queued write holds the loop whatever `unref()` said, as an active `uv_write_t` does. False where the loop does not watch the descriptor: the write then waits in place, as every write of a `uv_tty_t` for which libuv got no descriptor of its own.
+    /// Asks the loop to say when the descriptor takes more, until `idle_write_driver`. A queued write holds the loop whatever `unref()` said, as an active `uv_write_t` does.
     #[cfg(unix)]
-    fn arm_write_poll(&self) -> bool {
+    fn arm_write_poll(&self) -> WritePoll {
         let ctx = self.event_loop_handle.as_event_loop_ctx();
         let own_fd = self.own_fd.get();
         let armed = self.writes.with_mut(|q| {
@@ -762,14 +827,70 @@ impl TTY {
             Ok::<(), sys::Error>(())
         });
         let Err(err) = armed else {
-            return true;
+            return WritePoll::Armed;
         };
         bun_output::scoped_log!(TTYWrap, "no write poll: {:?}", err);
-        // A kind of descriptor that the loop cannot poll stays so. No descriptor or no memory for the poll says nothing of the next write.
-        if err.get_errno() == UNPOLLABLE_KIND {
-            self.update_flags(|f| f.insert(Flags::BLOCKING_WRITES));
+        if err.get_errno() != UNPOLLABLE_KIND {
+            return WritePoll::Failed;
         }
-        false
+        self.update_flags(|f| f.insert(Flags::BLOCKING_WRITES));
+        WritePoll::Unpollable
+    }
+
+    /// Drives this refusal from a timer until nothing is queued: at each tick one write where the descriptor takes bytes, and no new try for the poll. It holds the loop as the poll does.
+    #[cfg(unix)]
+    #[cold]
+    fn arm_write_retry(&self) {
+        let ctx = self.event_loop_handle.as_event_loop_ctx();
+        let tty = self.as_ctx_ptr().cast_const();
+        self.writes.with_mut(|q| {
+            let retry = q.get_or_insert_default().retry.get_or_insert_with(|| {
+                Box::new(WriteRetry {
+                    timer: EventLoopTimer::init_paused(EventLoopTimerTag::TtyWriteRetry),
+                    tty,
+                    idle_ticks: 0,
+                    hold: bun_io::KeepAlive::init(),
+                })
+            });
+            retry.idle_ticks = 0;
+            retry.hold.ref_(ctx);
+            retry.schedule(1);
+        });
+    }
+
+    /// `Tag::TtyWriteRetry` fire body: one write where the descriptor takes bytes, as a wakeup of the poll is. SAFETY: `node` is the retry of a live handle, just popped from the heap of timers.
+    #[cfg(unix)]
+    #[cold]
+    #[inline(never)]
+    pub(crate) unsafe fn on_write_retry(node: *mut WriteRetry) {
+        // SAFETY: fn contract. `FIRED` says that the heap no longer has the node.
+        let this = unsafe {
+            debug_assert!(
+                (*node).hold.is_active(),
+                "the retry timer of a write queue fired with nothing queued",
+            );
+            (*node).timer.state = EventLoopTimerState::FIRED;
+            &*(*node).tty
+        };
+        // A completion runs JS, which can close the handle and drop the queue with `node` in it: nothing below reads `node`.
+        this.ref_();
+        // A wakeup of the poll says that the descriptor takes bytes, and a tick has to ask: a write to a full descriptor that blocks, as after `setBlocking(true)`, would stop the thread.
+        let wrote = bun_core::is_writable(this.own_fd.get()) != bun_core::Pollable::NotReady
+            && this.drain_writes();
+        this.writes.with_mut(|q| {
+            let Some(retry) = q.as_mut().and_then(|q| q.retry.as_mut()) else {
+                return;
+            };
+            // The refusal ended, or a write from a completion began a new one, which armed what drives it.
+            if !retry.hold.is_active() || retry.timer.state == EventLoopTimerState::ACTIVE {
+                return;
+            }
+            // 1 ms behind a tick that wrote, and twice the last wait behind a tick that wrote nothing.
+            let idle_ticks = if wrote { 0 } else { retry.idle_ticks + 1 };
+            retry.idle_ticks = idle_ticks.min(WRITE_RETRY_MAX_DOUBLINGS);
+            retry.schedule(1 << retry.idle_ticks);
+        });
+        this.deref_();
     }
 
     /// The loop says that the descriptor takes more. SAFETY: `this` is the owner of a poll that `arm_write_poll` made and that `release_write_poll` has not dropped.
@@ -783,21 +904,23 @@ impl TTY {
         this.deref_();
     }
 
-    /// One write for each time that the loop says so, as `uv__write()` after a short write: what a full descriptor left goes out at the next turn of the loop.
+    /// One write for each time that the loop says so, as `uv__write()` after a short write: what a full descriptor left goes out at the next turn of the loop. Answers whether the descriptor took bytes.
     #[cfg(unix)]
-    fn drain_writes(&self) {
+    fn drain_writes(&self) -> bool {
         let fd = self.own_fd.get();
         // The wrapper is strong here: a write is queued. It stays on this stack until each write that is complete now is told, whatever the first of them does to the handle.
         let Some(this_value) = self.this_value.get().try_get() else {
-            return;
+            return false;
         };
         // The status of each write that is complete now, oldest first.
         let mut completed: Vec<i32> = Vec::new();
+        let mut wrote = false;
         let failed = self.writes.with_mut(|q| {
             let q = q.as_mut()?;
             match sys::write(fd, q.bytes.slice()) {
                 Ok(0) => Some(uv_errno(sys::E::EIO as u16)),
                 Ok(n) => {
+                    wrote = true;
                     q.bytes.wrote(n);
                     let mut written = n;
                     while let Some(front) = q.pending.front_mut() {
@@ -834,13 +957,14 @@ impl TTY {
             q.pending.is_empty()
         });
         if drained {
-            self.idle_write_poll();
+            self.idle_write_driver();
         }
         self.sync_wrapper_hold();
         for status in completed {
             self.call_onwritecomplete(this_value, status);
         }
         this_value.ensure_still_alive();
+        wrote
     }
 
     /// libuv reads before it writes in one wakeup: what the other side sent, and its hangup, reach `onread` before the failure of a write does. At most 32 reads, as `uv__read()`.
@@ -863,25 +987,33 @@ impl TTY {
         }
     }
 
-    /// Nothing is queued: the poll leaves the loop, which it held, and stays for the next refusal.
+    /// Nothing is queued: the poll or the timer leaves the loop, which it held, and stays for the next refusal.
     #[cfg(unix)]
-    fn idle_write_poll(&self) {
+    fn idle_write_driver(&self) {
         let ctx = self.event_loop_handle.as_event_loop_ctx();
         let poll = self.writes.get().as_ref().and_then(|q| q.poll);
         if let Some(poll) = poll {
             // SAFETY: see `arm_write_poll`.
             let _ = unsafe { (*poll.as_ptr()).unregister(ctx.platform_event_loop(), false) };
         }
+        self.writes.with_mut(|q| {
+            if let Some(retry) = q.as_mut().and_then(|q| q.retry.as_mut()) {
+                retry.leave_loop(ctx);
+            }
+        });
     }
 
-    /// Drops the queue and its poll, and closes the descriptor of the poll. Before `own_fd` closes: the loop keys on the number.
+    /// Drops the queue, its poll and its timer, and closes the descriptor of the poll. Before `own_fd` closes: the loop keys on the number.
     #[cfg(unix)]
     fn release_write_poll(&self) {
-        let Some(q) = self.writes.take() else {
+        let Some(mut q) = self.writes.take() else {
             return;
         };
+        let ctx = self.event_loop_handle.as_event_loop_ctx();
+        if let Some(retry) = q.retry.as_mut() {
+            retry.leave_loop(ctx);
+        }
         if let Some(poll) = q.poll {
-            let ctx = self.event_loop_handle.as_event_loop_ctx();
             // SAFETY: see `arm_write_poll`.
             unsafe {
                 let poll = &mut *poll.as_ptr();
@@ -1015,7 +1147,10 @@ impl TTY {
         #[cfg(unix)]
         {
             let queue = self.writes.get().as_ref();
-            queue.map_or(0, |q| size_of::<WriteQueue>() + q.bytes.memory_cost())
+            queue.map_or(0, |q| {
+                let retry = q.retry.as_ref().map_or(0, |_| size_of::<WriteRetry>());
+                size_of::<WriteQueue>() + q.bytes.memory_cost() + retry
+            })
         }
         #[cfg(windows)]
         {

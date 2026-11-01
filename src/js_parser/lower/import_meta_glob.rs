@@ -975,10 +975,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     fn import_meta_glob_throws(&mut self, message: &[u8], loc: Loc) -> Expr {
-        let type_error = self
-            .find_symbol(loc, b"TypeError")
-            .expect("unreachable")
-            .r#ref;
+        let type_error = self.find_global_symbol(loc, b"TypeError");
         throwing_function(
             self.arena,
             type_error,

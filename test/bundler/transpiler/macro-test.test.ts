@@ -1854,14 +1854,23 @@ describe("a macro import that is used outside of a call", () => {
         `class A { @plain accessor x = 1; }`,
         `console.log("accessor", WeakMap(), new A().x);`,
       ].join("\n"),
+      // A call of `import.meta.glob` that Bun cannot expand becomes a function that throws a TypeError.
+      "glob.ts": [
+        `import { m as TypeError } from "./m.ts" with { type: "macro" };`,
+        `const pattern: string = ["./*", "nothing"].join(".");`,
+        `const load = () => import.meta.glob(pattern);`,
+        `let thrown: unknown;`,
+        `try { load(); } catch (e) { thrown = e; }`,
+        `console.log("glob", TypeError(), thrown instanceof globalThis.TypeError);`,
+      ].join("\n"),
       // Each file as it is, then as a bundle with and without short names.
       "load.ts": `
-        for (const file of ["./metadata.ts", "./accessor.js"]) {
+        for (const file of ["./metadata.ts", "./accessor.js", "./glob.ts"]) {
           await import(file);
           for (const identifiers of [false, true]) {
             const outdir = "out/" + identifiers;
             const build = await Bun.build({ entrypoints: [file], target: "bun", minify: { identifiers }, outdir, throw: false });
-            for (const log of build.logs) console.log(String(log.message));
+            for (const log of build.logs) if (log.level === "error") console.log(String(log.message));
             for (const output of build.outputs) await import(output.path);
           }
         }
@@ -1869,7 +1878,7 @@ describe("a macro import that is used outside of a call", () => {
     });
     const { lines, stderr, exitCode } = await run(String(dir), "load.ts");
     expect({ lines, stderr }).toEqual({
-      lines: [...Array(3).fill("metadata 42 declared true"), ...Array(3).fill("accessor 42 1")],
+      lines: ["metadata 42 declared true", "accessor 42 1", "glob 42 true"].flatMap(line => Array(3).fill(line)),
       stderr: "",
     });
     expect(exitCode).toBe(0);
@@ -1934,6 +1943,8 @@ describe("a macro import that is used outside of a call", () => {
       `  @field regular!: other.Settings;`,
       `  @field method(a: Settings): ns.Settings { return a; }`,
       `}`,
+      // Dead code that the file keeps. The names in the types above leave no count that makes it an error.
+      `if (false) { switch (Settings as unknown) {} switch (ns as unknown) {} }`,
       `const is = (key: string) => types[key] === Object;`,
       `console.log("${label}", JSON.stringify(new Holder().plain), is("plain:design:type"), is("dotted:design:type"),`,
       `  (types["method:design:paramtypes"] as unknown[])[0] === Object, is("method:design:returntype"));`,
@@ -1951,6 +1962,14 @@ describe("a macro import that is used outside of a call", () => {
       // The type is a macro import when the import comes first, and a name that is not bound yet when it comes last.
       "import-first.ts": [...imports, ...body("import-first"), ``].join("\n"),
       "type-first.ts": [...body("type-first"), ...imports, ``].join("\n"),
+      // The type of a setter is in its metadata twice. The reference after it is still counted.
+      "setter.ts": [
+        imports[0],
+        `function field(..._: unknown[]) {}`,
+        `class Holder { @field set value(v: Settings) {} }`,
+        `export const alias = Settings;`,
+        ``,
+      ].join("\n"),
       // One bundle of both files: a debug build of Bun needs a second for each.
       "check.ts": `
         const files = ["./import-first.ts", "./type-first.ts"];
@@ -1961,6 +1980,8 @@ describe("a macro import that is used outside of a call", () => {
           const lines = (await output.text()).split("\\n").filter(line => line.includes("__legacyMetadataTS("));
           console.log(JSON.stringify(lines.map(line => line.trim())));
         }
+        const refused = await Bun.build({ entrypoints: ["./setter.ts"], target: "bun", throw: false });
+        console.log(JSON.stringify(refused.logs.map(log => [log.message, log.position?.line, log.position?.column])));
       `,
     });
     // The parser leaks the list of names of a dotted type in decorator metadata, with or without a macro import. This
@@ -1988,7 +2009,13 @@ describe("a macro import that is used outside of a call", () => {
       `__legacyMetadataTS("design:returntype", Object)`,
     ];
     expect({ lines: lines.map(line => (line.startsWith("[") ? JSON.parse(line) : line)), stderr }).toEqual({
-      lines: [`import-first {"a":1} true true true true`, `type-first {"a":1} true true true true`, metadata, metadata],
+      lines: [
+        `import-first {"a":1} true true true true`,
+        `type-first {"a":1} true true true true`,
+        metadata,
+        metadata,
+        [[notDefined("Settings"), 4, 22]],
+      ],
       stderr: "",
     });
     expect(exitCode).toBe(0);
